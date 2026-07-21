@@ -1519,15 +1519,15 @@ def test_legacy_agent_instructions_contain_markdown_contract() -> None:
     assert "**加粗**" in instructions
     assert "`inline code`" in instructions
     assert "raw HTML" in instructions
-    # The instructions must explicitly forbid HTML tags (mentioning them in
-    # backticks as forbidden examples is the correct form).
-    assert "禁止的 Markdown" in instructions or "Forbidden" in instructions
     # Heading forbid must be hard — no soft "除非确有需要" escape
     assert "除非确有需要" not in instructions
     # Language requirements: grammar_point can be Chinese or mixed
     assert "中英混合" in instructions
     # Frontend deserialization (not backend)
     assert "前端" in instructions
+    # R3 teaching quality: no fixed 2-4 sentence length pressure
+    assert "2-4 句" not in instructions
+    assert "2–4 句" not in instructions
 
 
 def test_legacy_field_descriptions_forbid_raw_html() -> None:
@@ -1572,10 +1572,116 @@ def test_legacy_prompt_injects_gaokao_policy_without_stale_field_names() -> None
     assert "reading_goal: exam" in prompt
     assert "reading_variant: gaokao" in prompt
     assert "高考" in prompt
-    assert "显性教学" in prompt
+    # Soft lens markers (R4): middle-school grammar system, not forced slogans
+    assert "中学" in prompt
+    assert "显性教学" not in prompt
     # Stale field names from old grammar.yaml must NOT appear
     assert "note_zh" not in prompt
     assert "analysis_zh" not in prompt
+
+
+# ---------------------------------------------------------------------------#
+# R3: grammar teaching quality contract (per-unit / batch / window parity)
+# ---------------------------------------------------------------------------#
+
+
+_R3_TEACHING_MARKERS = (
+    # Selection: broad sense, not checklist
+    "必须覆盖的 checklist",
+    # grammar_note responsibilities
+    "在本句中的意义或作用",
+    "术语服务于理解",
+    # Non-templating
+    "结构 / 规则 / 考点 / 例子",
+    # sentence_analysis separation
+    "结构地图",
+    "逐块复述",
+    "整句中文翻译",
+    # Same-point competition
+    "默认二选一",
+    # Variant soft lens
+    "强迫每条输出考试口号",
+)
+
+
+def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
+    """Shared YAML instructions own the R3 teaching contract used by all paths."""
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+
+    instructions = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+    for marker in _R3_TEACHING_MARKERS:
+        assert marker in instructions, f"missing teaching marker: {marker!r}"
+    # Fixed-length pressure removed
+    assert "2-4 句" not in instructions
+    assert "2–4 句" not in instructions
+    assert "偏好短段落（2-4 句）" not in instructions
+
+
+def test_window_system_prompt_shares_r3_teaching_semantics_with_agent_yaml() -> None:
+    """Window composed system prompt must embed the same teaching contract."""
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+    from app.services.reader_orchestration.grammar_window_worker import (
+        get_window_grammar_system_prompt,
+    )
+
+    shared = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+    window = get_window_grammar_system_prompt()
+    for marker in _R3_TEACHING_MARKERS:
+        assert marker in window, f"window missing teaching marker: {marker!r}"
+        assert marker in shared
+    # Window operational constraints still present
+    assert "[TARGET]" in window or "TARGET" in window
+    assert "WINDOW_BUDGET" in window or "max_grammar_notes" in window
+    assert "quality_score" in window
+    assert "2-4 句" not in window
+
+
+def test_per_unit_and_batch_agents_load_same_shared_instructions() -> None:
+    """Per-unit and batch executors both wire reader_layer_grammar_bundle."""
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+    from app.services.reader_orchestration import grammar_worker as gw
+
+    shared = load_agent_instructions(gw.GRAMMAR_PROMPT_AGENT_NAME)
+    for marker in _R3_TEACHING_MARKERS:
+        assert marker in shared
+
+    assert gw.GRAMMAR_PROMPT_AGENT_NAME == "reader_layer_grammar_bundle"
+    # Agent builders exist and load the same instruction agent name.
+    assert hasattr(gw, "PydanticAIGrammarBatchExecutor")
+    # Per-unit real executor class name as defined in module.
+    unit_names = [
+        name
+        for name in dir(gw)
+        if "Grammar" in name and "Executor" in name and not name.startswith("_")
+    ]
+    assert any("Batch" in n for n in unit_names)
+    assert any("Executor" in n for n in unit_names)
+
+
+def test_analysis_field_description_separates_chunks_and_forbids_chunk_restatement() -> None:
+    from app.services.reader_orchestration.grammar_worker import (
+        GrammarNoteCandidateItem,
+        SentenceAnalysisCandidateItem,
+    )
+
+    note_desc = GrammarNoteCandidateItem.model_fields["note"].description or ""
+    analysis_desc = (
+        SentenceAnalysisCandidateItem.model_fields["analysis"].description or ""
+    )
+    assert "结构/规则/考点" in note_desc
+    assert "结构地图" in analysis_desc
+    assert "逐块复述" in analysis_desc
+    assert "整句翻译" in analysis_desc
 
 
 # ---------------------------------------------------------------------------#

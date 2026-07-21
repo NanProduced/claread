@@ -42,12 +42,16 @@ from app.schemas.reader_orchestration import (
     GrammarBundleOutput,
     ReaderTextRangeAnchor,
 )
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.analysis.prompting.prompt_loader import (
+    get_prompt_version,
+    load_agent_instructions,
+)
 from app.services.reader_orchestration.grammar_worker import (
     FAKE_GRAMMAR_MODEL_NAME,
     FAKE_GRAMMAR_MODEL_PROFILE,
     FAKE_GRAMMAR_MODEL_PROVIDER,
     FAKE_GRAMMAR_PROMPT_VERSION,
+    GRAMMAR_PROMPT_AGENT_NAME,
 )
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
@@ -367,12 +371,17 @@ class _WindowGrammarCandidateOutput(BaseModel):
     )
 
 
-_WINDOW_GRAMMAR_SYSTEM_PROMPT = """\
+# Window-only operational rules (target/context fencing, budget, self-rating).
+# Teaching semantics come from the shared agent instructions
+# (reader_layer_grammar_bundle.yaml) so per-unit / batch / window stay aligned.
+_WINDOW_GRAMMAR_OPERATIONAL_RULES = """\
 你是 Claread Reader 的窗口级语法分析 agent。
 
 你会在一次调用中收到一个阅读窗口内所有 target anchor（跨多个 unit），需要为其中最有价值的 anchor 产出 grammar_note 和 sentence_analysis candidate。
 
-## 关键规则
+教学选点、grammar_note / sentence_analysis 职责、同点竞争、非模板化与 Markdown 合同，遵循下方「共享教学合同」（与 per-unit / batch 同源）。
+
+## 窗口操作规则
 
 1. 输出 anchor 约束：每个输出 item 的 anchor_segment_id 必须是 [TARGET] anchor 之一。禁止编造 anchor id。
 
@@ -382,12 +391,7 @@ _WINDOW_GRAMMAR_SYSTEM_PROMPT = """\
 
 4. 空输出合法：如果没有任何 anchor 值得标注，返回空数组。这是成功结果，不是失败。
 
-5. 质量优先于数量：只标注符合以下条件的 anchor：
-   - 有清晰的语法点（grammar_note）
-   - 有值得做结构拆解的长句/复杂句（sentence_analysis）
-   - 阻碍理解句意
-   - 考试相关结构
-   跳过低价值 anchor。
+5. 质量优先于数量：只标注真正有理解/学习价值的点；跳过透明基础结构与低价值 anchor。不要为凑满预算而输出。
 
 6. 自评分必填：每个 item 必须包含：
    - quality_score (1-5)：窗口内优先级（5 最高）
@@ -398,26 +402,32 @@ _WINDOW_GRAMMAR_SYSTEM_PROMPT = """\
 
 7. 同 unit span 约束：单条 grammar_note item 内所有 span 必须属于同一个 unit_id。跨 unit span 会被拒绝。
 
-## 输出风格
-
-- `note` 和 `analysis` 必须是简体中文 Markdown string。
-- 允许的 Markdown：`**加粗**` 强调关键术语，`` `inline code` `` 标记英文 pattern/结构，短无序列表仅当确实提升扫读性时使用。
-- 禁止的 Markdown：raw HTML、Markdown 标题（`#` / `##` / `###`）、长段落、嵌套列表、引用块。
-- 偏好短段落（2-4 句）。用 **结构名** / `pattern` 突出重要语法形式。
-- `analysis` 不要逐块复述 chunks 的 label/text；chunks 已负责成分切分，`analysis` 讲解结构关系和阅读顺序。
-
-## 语言要求
-
-- `note` 和 `analysis` 必须用简体中文。
-- `grammar_point` 可用中文或中英混合，优先贴合中文英语教学语境（如 `让步状语从句`、`even if 引导让步状语从句`、`非谓语动词作后置定语`、`被动语态`）。
-- `pattern` 保持英文结构标记（如 `even if + clause`、`be + past participle`、`prep + which`）。
-- `dedup_hint` 保持英文 canonical key（如 `even_if_concession`）。
-- `reason_code` 保持英文 enum 值。
+8. `reason_code` 保持英文 enum 值；`dedup_hint` 保持英文 canonical key。
 
 ## 输出格式
 
-返回符合 _WindowGrammarCandidateOutput schema 的结构化输出。grammar_note 每个 span 的 selected_text 必须逐字复制自 target anchor 的原文；sentence_analysis 的 selected_text 必须逐字复制自 target anchor 的原文。
+返回符合 schema 的结构化输出。grammar_note 每个 span 的 selected_text 必须逐字复制自 target anchor 的原文；sentence_analysis 的 selected_text 必须逐字复制自 target anchor 的原文。
 """
+
+
+def get_window_grammar_system_prompt() -> str:
+    """Compose window operational rules + shared grammar teaching contract.
+
+    Shared teaching text is loaded from ``reader_layer_grammar_bundle`` so
+    window stays in lockstep with per-unit / batch agent instructions.
+    """
+    shared = load_agent_instructions(GRAMMAR_PROMPT_AGENT_NAME).strip()
+    return (
+        f"{_WINDOW_GRAMMAR_OPERATIONAL_RULES.strip()}\n\n"
+        f"# 共享教学合同（与 per-unit / batch 同源）\n\n"
+        f"{shared}\n"
+    )
+
+
+# Back-compat name used by existing tests; always reflects the composed prompt.
+# Evaluated lazily on first access via module-level helper in tests should call
+# get_window_grammar_system_prompt() for the full string.
+_WINDOW_GRAMMAR_SYSTEM_PROMPT = _WINDOW_GRAMMAR_OPERATIONAL_RULES
 
 
 def _find_unique_utf16_occurrences(
@@ -750,11 +760,16 @@ class PydanticAIGrammarWindowExecutor:
         return "\n".join(lines)
 
     def _build_window_agent(self, *, model: Any) -> Agent:
-        """构建 window-scoped PydanticAI Agent。"""
+        """构建 window-scoped PydanticAI Agent。
+
+        System instructions = window operational rules + shared teaching
+        contract from ``reader_layer_grammar_bundle.yaml`` (same source as
+        per-unit / batch).
+        """
         return Agent(
             model=model,
             output_type=_WindowGrammarCandidateOutput,
-            instructions=_WINDOW_GRAMMAR_SYSTEM_PROMPT,
+            instructions=get_window_grammar_system_prompt(),
             name="reader_layer_grammar_window_agent",
             retries={"tools": 1, "output": 2},
         )

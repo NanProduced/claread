@@ -211,8 +211,10 @@ class GrammarNoteCandidateItem(BaseModel):
         max_length=MAX_GRAMMAR_FIELD_LENGTH,
         description=(
             "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
-            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。前端会把 Markdown "
-            "反序列化为 Plate children 渲染。"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。"
+            "讲清当前形式、句中作用及最有价值的可选发散；术语须配白话解释；"
+            "不要固定「结构/规则/考点/例子」模板，不要用固定句数压力。"
+            "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
 
@@ -239,9 +241,10 @@ class SentenceAnalysisCandidateItem(BaseModel):
         max_length=MAX_GRAMMAR_FIELD_LENGTH,
         description=(
             "简体中文 Markdown string。允许 **加粗**、`inline code`、短无序列表；"
-            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。讲解结构关系和阅读"
-            "顺序，不要逐块复述 chunks。前端会把 Markdown 反序列化为 Plate "
-            "children 渲染。"
+            "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。"
+            "chunks 负责结构地图；analysis 负责主干定位、阅读顺序、修饰关系与"
+            "理解障碍，禁止逐块复述 chunks 或复述整句翻译。"
+            "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
     chunks: list[SentenceAnalysisChunkCandidate] = Field(

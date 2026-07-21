@@ -844,53 +844,54 @@ async def test_t13_build_window_prompt_falls_back_when_budget_missing() -> None:
 
 
 async def test_window_system_prompt_contains_markdown_output_contract() -> None:
-    """The window system prompt must declare the Markdown output contract:
-    note/analysis are Simplified Chinese Markdown, allow bold/inline-code/short
-    bullets, forbid raw HTML and headings (hard forbid, no "unless explicitly
-    needed"). Must not contain the conflicting legacy line "Write grammar_point,
-    note, and analysis in Chinese".
+    """The composed window system prompt must declare the Markdown output
+    contract via the shared teaching instructions: note/analysis are Simplified
+    Chinese Markdown, allow bold/inline-code/short bullets, forbid raw HTML and
+    headings (hard forbid, no "unless explicitly needed").
     """
     from app.services.reader_orchestration.grammar_window_worker import (
-        _WINDOW_GRAMMAR_SYSTEM_PROMPT,
+        get_window_grammar_system_prompt,
     )
 
-    assert "Markdown" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "**加粗**" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "`inline code`" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "raw HTML" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    # Forbidden: no HTML tags in the prompt itself
-    assert "<b>" not in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "<span>" not in _WINDOW_GRAMMAR_SYSTEM_PROMPT
+    prompt = get_window_grammar_system_prompt()
+    assert "Markdown" in prompt
+    assert "**加粗**" in prompt
+    assert "`inline code`" in prompt
+    assert "raw HTML" in prompt
+    # Forbidden: do not include literal HTML open-tags as allowed syntax
+    assert "<b>" not in prompt
+    assert "<span>" not in prompt
     # Heading forbid must be hard — no soft "unless explicitly needed" escape
-    assert "unless explicitly needed" not in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "除非确有需要" not in _WINDOW_GRAMMAR_SYSTEM_PROMPT
+    assert "unless explicitly needed" not in prompt
+    assert "除非确有需要" not in prompt
+    # Fixed length template pressure must be gone
+    assert "2-4 句" not in prompt
+    assert "2–4 句" not in prompt
+    assert "偏好短段落（2-4 句）" not in prompt
     # The conflicting legacy line must be gone
-    assert "Write grammar_point, note, and analysis in Chinese" not in (
-        _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    )
+    assert "Write grammar_point, note, and analysis in Chinese" not in prompt
 
 
 async def test_window_system_prompt_language_requirements_unified() -> None:
-    """The window system prompt must declare unified language requirements:
-    note/analysis in Simplified Chinese; grammar_point can be Chinese or
-    Chinese-English mixed; pattern/dedup_hint stay English.
+    """The composed window system prompt must declare unified language
+    requirements: note/analysis in Simplified Chinese; grammar_point can be
+    Chinese or Chinese-English mixed; pattern/dedup_hint stay English.
     """
     from app.services.reader_orchestration.grammar_window_worker import (
-        _WINDOW_GRAMMAR_SYSTEM_PROMPT,
+        get_window_grammar_system_prompt,
     )
 
+    prompt = get_window_grammar_system_prompt()
     # grammar_point can be Chinese or mixed (not "stay in English")
-    assert "grammar_point" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "中英混合" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
+    assert "grammar_point" in prompt
+    assert "中英混合" in prompt
     # pattern stays English
-    assert "pattern" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    assert "保持英文" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
+    assert "pattern" in prompt
+    assert "保持英文" in prompt
     # dedup_hint stays English
-    assert "dedup_hint" in _WINDOW_GRAMMAR_SYSTEM_PROMPT
+    assert "dedup_hint" in prompt
     # The old conflicting line "grammar_point ... stay in English" must be gone
-    assert "grammar_point`, `pattern`, and `dedup_hint` stay in English" not in (
-        _WINDOW_GRAMMAR_SYSTEM_PROMPT
-    )
+    assert "grammar_point`, `pattern`, and `dedup_hint` stay in English" not in prompt
 
 
 async def test_window_prompt_injects_gaokao_policy_lines() -> None:
@@ -927,9 +928,10 @@ async def test_window_prompt_injects_gaokao_policy_lines() -> None:
     assert "reading_goal: exam" in prompt
     assert "reading_variant: gaokao" in prompt
     assert f"layer_policy_hash: {grammar_layer.policy_hash}" in prompt
-    # Gaokao-specific policy content must reach the prompt
+    # Gaokao-specific soft-lens content must reach the prompt
     assert "高考" in prompt
-    assert "显性教学" in prompt
+    assert "中学" in prompt
+    assert "显性教学" not in prompt
     # No stale field names
     assert "note_zh" not in prompt
     assert "analysis_zh" not in prompt
