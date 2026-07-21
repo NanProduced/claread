@@ -534,3 +534,58 @@ def test_gate7_anchor_ratio_accumulates_across_windows():
         f"after accepting a3 in same window), got: {result3.rejected}"
     )
     assert a4_rejection[0].gate == SelectionGate.ANCHOR_RATIO
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: density_cap symmetry + cross-type coexist design choice
+# ---------------------------------------------------------------------------
+
+
+def test_sentence_analysis_default_density_cap_is_2_0():
+    """Phase 5: sentence_analysis default density_cap is 2.0.
+
+    Old default 1.0 was asymmetric with grammar_note's 3.0 and caused
+    sentence_analysis candidates to be silently rejected by RECORD_DENSITY
+    before they could compete with grammar_note on merit. Symmetric 2.0
+    keeps sentence_analysis viable while still bounded.
+    """
+    ledger = SelectorLedger()
+    assert ledger.density_cap["grammar_note"] == 3.0
+    assert ledger.density_cap["sentence_analysis"] == 2.0
+
+
+def test_grammar_note_and_sentence_analysis_can_coexist_on_same_anchor():
+    """Phase 5 design choice: backend does not perform cross-type
+    deduplication between grammar_note and sentence_analysis. They compete
+    at the prompt layer (shared teaching contract declares same-point
+    competition as a generation responsibility, not a backend gate).
+
+    Gates 1 (DUP) and 3 (ANCHOR_CAP) are per-item-type, so a grammar_note
+    and a sentence_analysis marking the same anchor with the same
+    semantic_dedup_key are both accepted. Cross-type dedup is the LLM's
+    job (prompt-level), not the selector's.
+    """
+    ledger = SelectorLedger(total_anchors=10)
+    grammar_candidate = make_candidate(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        semantic_dedup_key="shared_point",
+        quality_score=0.5,
+    )
+    sentence_candidate = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a1",
+        semantic_dedup_key="shared_point",  # same key, different item_type
+        quality_score=0.5,
+    )
+    result = select_candidates(
+        [grammar_candidate, sentence_candidate],
+        ledger=ledger,
+        window_budget={"grammar_note": 2, "sentence_analysis": 2},
+    )
+    # Both accepted — no cross-type dedup at the selector layer
+    assert len(result.accepted) == 2
+    assert {c.item_type for c in result.accepted} == {
+        "grammar_note",
+        "sentence_analysis",
+    }

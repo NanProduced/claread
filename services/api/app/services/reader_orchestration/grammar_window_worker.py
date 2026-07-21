@@ -396,7 +396,7 @@ _WINDOW_GRAMMAR_OPERATIONAL_RULES = """\
 6. 自评分必填：每个 item 必须包含：
    - quality_score (1-5)：窗口内优先级（5 最高）
    - reading_blocker (bool)：是否阻碍理解句意
-   - reason_code：取值之一 grammar_pattern | long_sentence | exam_relevant | meaning_blocker | discourse_signal | low_value
+   - reason_code：取值之一 grammar_pattern | exam_relevant | meaning_blocker | discourse_signal | low_value
    - confidence (0.0-1.0)：对此标注的置信度
    - dedup_hint：此语法点的短英文 canonical key（如 "though_concession"）
 

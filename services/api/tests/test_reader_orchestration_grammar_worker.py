@@ -38,7 +38,10 @@ from app.services.reader_orchestration.grammar_worker import (
     GrammarExecutionResult,
     GrammarJobContext,
     PydanticAIGrammarBundleExecutor,
+    SentenceAnalysisCandidateItem,
+    SentenceAnalysisChunkCandidate,
     _build_grammar_batch_prompt,
+    _build_grammar_output_from_candidates,
     _build_grammar_prompt,
     _validate_grammar_strategy_metadata,
 )
@@ -2447,3 +2450,79 @@ async def test_t41c_batch_worker_no_job_for_long_article(
     )
     # No batch job for GROUPED_WINDOWED
     assert result is None
+
+
+# ---------------------------------------------------------------------------#
+# Phase 5: per-unit sentence_analysis candidates sorted by quality_score
+# ---------------------------------------------------------------------------#
+
+
+def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None:
+    """Phase 5: per-unit path must sort sentence_analysis candidates by
+    ``quality_score`` descending before resolving, so higher-quality
+    candidates are published first.
+
+    The window path already sorts by quality_score in ``window_selector``.
+    The per-unit path (``_build_grammar_output_from_candidates``) previously
+    had no self-rating field on ``SentenceAnalysisCandidateItem`` and no
+    sort, so per-unit sentence_analyses were published in LLM-returned
+    order. Phase 5 adds ``quality_score`` (and the rest of the self-rating
+    family) to ``SentenceAnalysisCandidateItem`` and sorts by it.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    # 3 candidates on the same anchor with different quality_score.
+    # Input order is deliberately low → high to prove sort, not pass-through.
+    candidates = [
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="low",
+            analysis="low quality analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=0.3,
+        ),
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="high",
+            analysis="high quality analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=0.9,
+        ),
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="mid",
+            analysis="mid quality analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=0.6,
+        ),
+    ]
+    candidate_output = GrammarBundleCandidateOutput(sentence_analyses=candidates)
+
+    output, _diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # All 3 should be accepted (no per-unit dedup at this layer).
+    assert len(output.sentence_analyses) == 3
+    # Sorted by quality_score descending: high → mid → low
+    assert output.sentence_analyses[0].analysis == "high quality analysis"
+    assert output.sentence_analyses[1].analysis == "mid quality analysis"
+    assert output.sentence_analyses[2].analysis == "low quality analysis"

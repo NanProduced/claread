@@ -251,6 +251,17 @@ class SentenceAnalysisCandidateItem(BaseModel):
         min_length=1,
         max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,
     )
+    # Phase 5: self-rating family (mirrors window path's
+    # _WindowSentenceAnalysisCandidate). Defaults keep the model permissive
+    # for legacy per-unit LLM output that does not emit these fields; when
+    # the LLM does emit them, _build_grammar_output_from_candidates sorts
+    # sentence_analyses by quality_score descending so higher-quality
+    # candidates are published first.
+    quality_score: float = 0.0
+    reading_blocker: bool = False
+    reason_code: str = "grammar_pattern"
+    confidence: float = 0.0
+    dedup_hint: str = ""
 
 
 class GrammarBundleCandidateOutput(BaseModel):
@@ -2605,7 +2616,18 @@ def _build_grammar_output_from_candidates(
                 )
             )
 
-    for item_index, item in enumerate(candidate_output.sentence_analyses):
+    # Phase 5: sort sentence_analysis candidates by quality_score descending
+    # so higher-quality candidates are resolved/published first. Python's
+    # sorted is stable, so candidates with equal quality_score preserve their
+    # LLM-returned order. Per-unit GrammarNoteCandidateItem does not carry a
+    # quality_score field (Phase 5 only extends SentenceAnalysisCandidateItem),
+    # so grammar_notes keep their LLM-returned order.
+    sorted_sentence_analyses = sorted(
+        candidate_output.sentence_analyses,
+        key=lambda item: item.quality_score,
+        reverse=True,
+    )
+    for item_index, item in enumerate(sorted_sentence_analyses):
         segment = segments_by_id.get(item.anchor_segment_id)
         if segment is not None and segment.segment_type == "fallback_window":
             skipped_items.append(

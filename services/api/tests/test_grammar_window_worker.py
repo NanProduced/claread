@@ -965,3 +965,48 @@ async def test_window_field_descriptions_forbid_raw_html() -> None:
     # Heading forbid must be hard
     assert "除非确有需要" not in note_desc
     assert "除非确有需要" not in analysis_desc
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: reason_code enum must not imply long-sentence-first selection
+# ---------------------------------------------------------------------------
+
+
+def test_reason_code_enum_excludes_long_sentence() -> None:
+    """Phase 5: the reason_code enum declared in the window operational
+    rules must NOT include ``long_sentence``.
+
+    Sentence length is not a valid selection reason — selection must be
+    based on structural层次 / 修饰跨度 / 指代省略 / 信息关系 / 实际阅读障碍,
+    not on word count. Keeping ``long_sentence`` in the enum leaks a
+    length-based hint into the LLM's reasoning.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        get_window_grammar_system_prompt,
+    )
+
+    prompt = get_window_grammar_system_prompt()
+    assert "long_sentence" not in prompt
+
+
+def test_reason_code_enum_includes_expected_values() -> None:
+    """Phase 5: the reason_code enum declared in the window operational
+    rules must include at least the 5 expected values (after dropping
+    ``long_sentence``).
+
+    Expected: grammar_pattern / exam_relevant / meaning_blocker /
+    discourse_signal / low_value.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        get_window_grammar_system_prompt,
+    )
+
+    prompt = get_window_grammar_system_prompt()
+    for code in (
+        "grammar_pattern",
+        "exam_relevant",
+        "meaning_blocker",
+        "discourse_signal",
+        "low_value",
+    ):
+        assert code in prompt

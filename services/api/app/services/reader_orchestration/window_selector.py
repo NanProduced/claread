@@ -90,10 +90,13 @@ class SelectorLedger:
     )
     # §7.3 density_cap：每 1000 UTF-16 chars 的最大 annotation 数（ratio 上限）。
     # 旧实现误把它当作 raw count，P2-6 修正为 per-1000-chars ratio。
+    # Phase 5: sentence_analysis 从 1.0 提升到 2.0，与 grammar_note 的 3.0
+    # 保持对称。旧值 1.0 过紧，导致 sentence_analysis 在 RECORD_DENSITY 阶段
+    # 被静默拒绝，无法与 grammar_note 在选点质量上公平竞争。
     density_cap: dict[str, float] = field(
         default_factory=lambda: {
             "grammar_note": 3.0,
-            "sentence_analysis": 1.0,
+            "sentence_analysis": 2.0,
         }
     )
     # base text 总长度（UTF-16 code units），用于将 density_by_record 折算为
