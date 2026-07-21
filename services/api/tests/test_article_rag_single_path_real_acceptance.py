@@ -910,6 +910,28 @@ async def _preflight_zilliz(
     return await asyncio.to_thread(_sync)
 
 
+# ======================================================================
+# R4 — Fixed safe messages for SDK exception wrapping.
+# ======================================================================
+# These constants are the ONLY message text that may appear on a
+# propagating SDK exception from the cleanup helper.  They MUST NOT
+# interpolate collection, chunk_id, stable_document_id, URI, token,
+# key, or row content.  The helper constructs the safe error INSIDE
+# the except block and raises it OUTSIDE the except block so that
+# ``__cause__`` and ``__context__`` are both ``None``.
+# ======================================================================
+
+_CLEANUP_DELETE_FAILED_SAFE_MESSAGE = (
+    "article-rag acceptance cleanup: delete operation failed; "
+    "manual cleanup required"
+)
+
+_CLEANUP_POST_DELETE_QUERY_FAILED_SAFE_MESSAGE = (
+    "article-rag acceptance cleanup: post-delete verification query "
+    "failed; manual cleanup verification required"
+)
+
+
 @dataclass
 class _CleanupResult:
     """Result of precise fixture cleanup by chunk_id set.
@@ -968,12 +990,13 @@ async def _precise_cleanup_by_chunk_ids(
     saved_chunk_ids: tuple[str, ...],
     stable_document_id: UUID,
     preflight: _ZillizPreflightSnapshot,
+    vector_write_attempted: bool = False,
 ) -> _CleanupResult:
     """Delete EXACTLY the union of (expected, saved, discovered)
     chunk_ids by primary key, then verify deletion + collection
     integrity.
 
-    R3 design — closes the failure-path cleanup gap:
+    R4 design — closes the remaining fail-closed gaps from R3:
 
       1. ``expected_chunk_ids`` is built from the PostgreSQL plan
          BEFORE any paid vector write.  If the worker wrote vectors
@@ -985,13 +1008,50 @@ async def _precise_cleanup_by_chunk_ids(
       3. ``discovered_chunk_ids`` is queried from Zilliz by
          ``stable_document_id`` IN FINALLY — this is the only use
          of ``stable_document_id`` as a filter, and it is for
-         DISCOVERY only, never for delete.
-      4. ``cleanup_target`` = union of all three.  Delete by
-         precise ``chunk_id in [...]`` primary-key filter.
-      5. ``delete_call_count`` = 1 if a delete was issued, 0 if
-         cleanup_target was empty (no delete call made).
+         DISCOVERY only, never for delete.  Discovery is supplementary
+         evidence; it is NOT a prerequisite for cleanup.
+      4. ``vector_write_attempted`` is the real smoke signal that
+         the counting writer was actually called
+         (``call_count > 0``).  When ``True`` and discovery query
+         FAILS with no ``saved_chunk_ids``, the helper falls back to
+         deleting ``expected_chunk_ids`` by precise PK filter —
+         closing the R3 gap where writer wrote vectors but discovery
+         failure + empty saved caused a no-op.
+      5. ``cleanup_target`` = union of all three (deterministic
+         sorted order).  Delete by precise ``chunk_id in [...]``
+         primary-key filter.
+      6. ``delete_call_count`` = 1 if a delete was issued, 0 if
+         no delete was needed.
 
-    Per the R3 task spec:
+    Behavior matrix (``vector_write_attempted`` × evidence ×
+    discovery):
+
+      | writer attempted | saved/discovered evidence | discovery | behavior |
+      |------------------|---------------------------|-----------|----------|
+      | False            | none                      | any       | no delete |
+      | True             | none                      | failure   | delete expected IDs |
+      | any              | saved non-empty           | failure   | delete expected ∪ saved |
+      | any              | discovered non-empty      | success   | delete all three ID sets |
+
+    In the last row, "all three ID sets" = expected ∪ saved ∪
+    discovered (deduped, deterministic order).
+
+    SDK exception safety (R4):
+      - Discovery query failure is an INTERNAL fallback state —
+        it does NOT propagate.  The helper continues with
+        ``discovered_chunk_ids = ()`` and, if ``vector_write_attempted``
+        is True, falls back to expected IDs.
+      - Delete failure and post-delete verification query failure
+        MUST propagate (fail closed) but are wrapped in a fixed
+        safe error (``_CLEANUP_DELETE_FAILED_SAFE_MESSAGE`` /
+        ``_CLEANUP_POST_DELETE_QUERY_FAILED_SAFE_MESSAGE``) that
+        does NOT interpolate collection, chunk_id,
+        stable_document_id, URI, token, key, or row content.
+      - The safe error is constructed INSIDE the except block and
+        raised OUTSIDE the except block so ``__cause__`` and
+        ``__context__`` are both ``None``.
+
+    Per the task spec:
       - Never use ``stable_document_id`` as a delete filter.
       - Only delete by exact chunk_id primary keys.
       - Never drop/recreate the collection.
@@ -1007,6 +1067,12 @@ async def _precise_cleanup_by_chunk_ids(
         # exist in Zilliz right now (in finally).  This is the ONLY
         # use of stable_document_id as a filter — for DISCOVERY,
         # never for delete.
+        #
+        # R4: discovery query failure is an INTERNAL fallback state.
+        # It does NOT propagate.  The helper continues with
+        # ``discovered_chunk_ids = ()`` and, if ``vector_write_attempted``
+        # is True, falls back to deleting ``expected_chunk_ids``.
+        discovery_failed = False
         try:
             discover_result = client.query(  # type: ignore[attr-defined]
                 collection_name=collection,
@@ -1014,8 +1080,9 @@ async def _precise_cleanup_by_chunk_ids(
                 output_fields=["chunk_id"],
                 limit=512,
             )
-        except Exception:  # noqa: BLE001 — defensive
+        except Exception:  # noqa: BLE001 — internal fallback
             discover_result = []
+            discovery_failed = True
 
         discovered_chunk_ids: tuple[str, ...] = ()
         if discover_result:
@@ -1032,35 +1099,56 @@ async def _precise_cleanup_by_chunk_ids(
         cleanup_target_set.update(discovered_chunk_ids)
         cleanup_target = tuple(sorted(cleanup_target_set))
 
-        # 3. Delete by chunk_id set (single delete call with filter)
-        # ONLY if there is evidence of actual vectors in the backend
-        # (``discovered_chunk_ids`` or ``saved_chunk_ids`` is non-empty).
+        # 3. Decide whether to delete (R4 behavior matrix).
         #
-        # R3 failure-path design (Test D in the spec):
-        # If no vector write happened, ``discovered_chunk_ids`` is empty
-        # (no rows in backend for our ``stable_document_id``) and
-        # ``saved_chunk_ids`` is empty (D4 not reached).  In that case
-        # we MUST NOT call delete even if ``expected_chunk_ids`` is
-        # non-empty — there is nothing in the backend to delete, and
-        # the spec requires ``delete_call_count == 0``.
+        #   - ``backend_has_evidence``: saved or discovered is
+        #     non-empty → vectors are known to exist.
+        #   - ``writer_attempted_and_discovery_failed``: writer was
+        #     called but discovery failed → fall back to expected IDs.
+        #     This closes the R3 gap where writer wrote vectors but
+        #     discovery failure + empty saved caused a no-op.
+        #   - If neither condition holds, no delete is issued
+        #     (no write attempt, or writer attempted + discovery
+        #     succeeded with 0 rows — nothing to delete).
         #
-        # ``cleanup_target`` (the union of all three sets) is still
-        # recorded in the result for the report; only the actual
-        # ``client.delete`` call is skipped.
+        # Delete by precise ``chunk_id in [...]`` primary-key filter.
+        # NEVER use stable_document_id as a delete filter.
         delete_call_count = 0
         backend_has_evidence = bool(
             discovered_chunk_ids or saved_chunk_ids
         )
-        if cleanup_target and backend_has_evidence:
+        writer_attempted_and_discovery_failed = (
+            vector_write_attempted and discovery_failed
+        )
+        should_delete = bool(
+            cleanup_target
+            and (
+                backend_has_evidence
+                or writer_attempted_and_discovery_failed
+            )
+        )
+
+        delete_result: Any = {"delete_count": 0}
+        # R4: wrap delete SDK exception in fixed safe error.
+        # Construct INSIDE except, raise OUTSIDE except so
+        # __cause__ and __context__ are both None.
+        delete_safe_error: Exception | None = None
+        if should_delete:
             id_list = ", ".join(f'"{cid}"' for cid in cleanup_target)
             delete_filter = f"chunk_id in [{id_list}]"
-            delete_result = client.delete(  # type: ignore[attr-defined]
-                collection_name=collection,
-                filter=delete_filter,
-            )
-            delete_call_count = 1
-        else:
-            delete_result = {"delete_count": 0}
+            try:
+                delete_result = client.delete(  # type: ignore[attr-defined]
+                    collection_name=collection,
+                    filter=delete_filter,
+                )
+                delete_call_count = 1
+            except Exception:  # noqa: BLE001 — wrap in safe error
+                delete_safe_error = RuntimeError(
+                    _CLEANUP_DELETE_FAILED_SAFE_MESSAGE
+                )
+        # Raise OUTSIDE the except block so __context__ is None.
+        if delete_safe_error is not None:
+            raise delete_safe_error
 
         # pymilvus delete returns a dict with "delete_count" on some
         # versions; fall back to 0 if the shape differs.
@@ -1097,13 +1185,29 @@ async def _precise_cleanup_by_chunk_ids(
                 per_chunk_verified[cid] = False
 
         # 6. Query by stable_document_id to confirm 0 rows remain.
-        post_delete = client.query(  # type: ignore[attr-defined]
-            collection_name=collection,
-            filter=f'stable_document_id == "{stable_document_id}"',
-            output_fields=["chunk_id"],
-            limit=1,
-        )
-        post_delete_query_count = len(post_delete) if post_delete else 0
+        #
+        # R4: wrap post-delete verification query SDK exception in
+        # fixed safe error.  Construct INSIDE except, raise OUTSIDE
+        # except so __cause__ and __context__ are both None.
+        post_delete_query_count = 0
+        post_delete_safe_error: Exception | None = None
+        try:
+            post_delete = client.query(  # type: ignore[attr-defined]
+                collection_name=collection,
+                filter=f'stable_document_id == "{stable_document_id}"',
+                output_fields=["chunk_id"],
+                limit=1,
+            )
+            post_delete_query_count = (
+                len(post_delete) if post_delete else 0
+            )
+        except Exception:  # noqa: BLE001 — wrap in safe error
+            post_delete_safe_error = RuntimeError(
+                _CLEANUP_POST_DELETE_QUERY_FAILED_SAFE_MESSAGE
+            )
+        # Raise OUTSIDE the except block so __context__ is None.
+        if post_delete_safe_error is not None:
+            raise post_delete_safe_error
 
         # 7. Collection still exists + schema identity comparison.
         collection_still_exists = bool(
@@ -2235,6 +2339,7 @@ async def test_single_path_real_chain_acceptance(
             saved_chunk_ids=tuple(saved_chunk_ids),
             stable_document_id=ids.stable_document_id,
             preflight=preflight,
+            vector_write_attempted=counting_writer.call_count > 0,
         )
         # R3: ``vector_delete_calls`` comes from the MEASURED
         # ``delete_call_count`` in the cleanup result — NOT hardcoded
@@ -2911,6 +3016,19 @@ class _FakeZillizClient:
         # rows — simulates a ghost-row / eventual-consistency issue
         # so per-chunk verification finds them still present (Test F2).
         self.delete_is_noop: bool = False
+        # R4: When True, the FIRST ``stable_document_id == "..."``
+        # query (the discovery query in cleanup) raises a
+        # RuntimeError.  Subsequent stable_document_id queries
+        # (post-delete count) succeed — so per-chunk verification
+        # and post-delete count still work.  Used by RED-A.
+        self.discovery_query_should_fail: bool = False
+        self._discovery_query_attempted: bool = False
+        # R4: When True, ``delete`` raises a RuntimeError whose
+        # message contains sentinel substrings that mimic a real
+        # SDK exception leaking URI/token/key/upstream message.
+        # Used by RED-B to prove the cleanup helper wraps delete
+        # exceptions in a fixed safe error.
+        self.delete_malicious_exception: bool = False
 
     # -- schema / collection introspection ------------------------------
 
@@ -2944,6 +3062,18 @@ class _FakeZillizClient:
         # Pattern 1: stable_document_id == "<uuid>"
         m = re.match(r'^stable_document_id == "([^"]+)"$', filter)
         if m:
+            # R4: discovery query failure injection — only the FIRST
+            # stable_document_id query (discovery) raises; subsequent
+            # stable_document_id queries (post-delete count) succeed.
+            if (
+                self.discovery_query_should_fail
+                and not self._discovery_query_attempted
+            ):
+                self._discovery_query_attempted = True
+                raise RuntimeError(
+                    "fake discovery query failure: connection reset"
+                )
+            self._discovery_query_attempted = True
             target = m.group(1)
             matches = [
                 {"chunk_id": r["chunk_id"]}
@@ -2977,6 +3107,18 @@ class _FakeZillizClient:
         filter: str,  # noqa: A002 — matches SDK signature
     ) -> dict[str, Any]:
         self.delete_calls.append(filter)
+        if self.delete_malicious_exception:
+            # R4: simulates a real SDK exception that leaks URI,
+            # token, key, and upstream message into the error.
+            # The cleanup helper MUST wrap this in a fixed safe
+            # error that does NOT contain any of these sentinels.
+            raise RuntimeError(
+                "MilvusException: describe collection failed: "
+                "uri=https://zilliz.example.com:443 "
+                "token=sk-abc123def456ghi789jkl012mno345pqr678 "
+                "api_key=sk-zilliz-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx "
+                "upstream_msg=connection refused by peer"
+            )
         if self.delete_should_fail:
             raise RuntimeError("fake delete failure")
         import re  # noqa: PLC0415 — local import
@@ -3047,11 +3189,19 @@ def _run_cleanup(
     saved_chunk_ids: tuple[str, ...],
     stable_document_id: UUID,
     preflight: _ZillizPreflightSnapshot,
+    vector_write_attempted: bool = False,
 ) -> _CleanupResult:
     """Synchronous wrapper around the async ``_precise_cleanup_by_chunk_ids``.
 
     The cleanup helper is async (it uses ``asyncio.to_thread``); the
     offline failure-injection tests run it via ``asyncio.run``.
+
+    R4: ``vector_write_attempted`` is the real smoke signal that the
+    counting writer was actually called (``call_count > 0``).  When
+    ``True`` and discovery query fails with no ``saved_chunk_ids``,
+    the cleanup helper falls back to deleting ``expected_chunk_ids``
+    by precise PK filter — closing the R3 gap where writer wrote
+    vectors but discovery failure + empty saved caused a no-op.
     """
     return asyncio.run(
         _precise_cleanup_by_chunk_ids(
@@ -3061,6 +3211,7 @@ def _run_cleanup(
             saved_chunk_ids=saved_chunk_ids,
             stable_document_id=stable_document_id,
             preflight=preflight,
+            vector_write_attempted=vector_write_attempted,
         )
     )
 
@@ -3397,8 +3548,9 @@ class TestR3FailurePathCleanup:
     #   * ``client.delete_should_fail = True`` → delete raises.
     #   * The exception MUST propagate (fail closed) — the helper does
     #     NOT swallow delete failures.
-    #   * The exception message is the fake's safe message; production
-    #     code uses fixed safe messages that do NOT echo URI/token/key.
+    #   * R4: the exception is wrapped in the fixed safe message
+    #     (``_CLEANUP_DELETE_FAILED_SAFE_MESSAGE``) — the raw fake
+    #     message does NOT appear in str(err).
     # ------------------------------------------------------------------
 
     def test_F1_delete_failure_propagates_fail_closed(self) -> None:
@@ -3424,9 +3576,12 @@ class TestR3FailurePathCleanup:
         preflight = _build_fake_preflight(
             client, stable_document_id=stable_doc_id
         )
-        # The delete failure MUST propagate — fail closed.  The helper
-        # MUST NOT swallow it and report a False PASS.
-        with pytest.raises(RuntimeError, match="fake delete failure"):
+        # The delete failure MUST propagate — fail closed.  R4 wraps
+        # it in the fixed safe message; the raw "fake delete failure"
+        # does NOT appear in the error.
+        with pytest.raises(
+            RuntimeError, match="delete operation failed"
+        ):
             _run_cleanup(
                 client,
                 collection="article_rag_chunks",
@@ -3528,3 +3683,478 @@ class TestR3FailurePathCleanup:
         # ``all(per_chunk_verified.values())`` and FAIL — proving the
         # failure is NOT masked as a PASS.
         assert any(v is False for v in result.per_chunk_id_verified.values())
+
+
+# ======================================================================
+# R4 — Failure-Path Cleanup Fail-Closed Closure
+# ======================================================================
+#
+# R3 left two fail-closed gaps that R4 must close with TDD:
+#
+#   RED-A: writer was called (call_count > 0) but discovery query
+#          raises and ``saved_chunk_ids`` is empty.  R3 swallowed the
+#          discovery exception into an empty collection, concluded
+#          ``backend_has_evidence = False``, and skipped delete —
+#          leaving expected rows in the backend.  R4 introduces the
+#          ``vector_write_attempted`` signal so that, when the writer
+#          was called, discovery failure falls back to deleting the
+#          pre-built ``expected_chunk_ids`` by precise PK filter.
+#
+#   RED-B: the Zilliz/Milvus SDK raises a ``delete`` exception whose
+#          message leaks URI, token, api_key, and upstream message.
+#          R3 propagated the original exception as-is.  R4 wraps
+#          every propagating SDK exception in a fixed local message
+#          that does NOT interpolate collection, chunk_id,
+#          stable_document_id, URI, token, key, or row content, and
+#          raises it OUTSIDE the except block so ``__cause__`` and
+#          ``__context__`` are both ``None``.
+#
+# Both RED tests below are written FIRST and must fail against the
+# R3 helper logic; the R4 fix then turns them GREEN.
+# ======================================================================
+
+
+class TestR4FailurePathCleanupClosure:
+    """R4 — close the two remaining fail-closed gaps.
+
+    RED-A: writer attempted + discovery failure + saved empty
+           → must delete expected IDs (R3 skipped).
+    RED-B: malicious delete SDK exception
+           → must wrap in fixed safe error, cause/context None.
+
+    Additional GREEN tests cover the full behavior matrix.
+    """
+
+    # ------------------------------------------------------------------
+    # RED-A: writer attempted + discovery failure + saved empty.
+    #
+    #   * expected_chunk_ids = (A1, A2, A3) — built before paid call.
+    #   * vector_write_attempted = True (counting_writer.call_count > 0).
+    #   * saved_chunk_ids = () — D2 failed before D4 capture.
+    #   * discovery query raises (first stable_document_id query).
+    #   * Fake backend actually has A1, A2, A3 for our stable_document_id.
+    #   * Unrelated sentinel row U1 (different stable_document_id).
+    #
+    # R3 behavior (BUG): discovery exception → discovered = () →
+    #   backend_has_evidence = False → delete skipped → A1/A2/A3
+    #   remain in backend.
+    #
+    # R4 behavior (FIX): vector_write_attempted=True + discovery
+    #   failure → fall back to expected IDs → one precise PK delete
+    #   → A1/A2/A3 gone, U1 preserved.
+    # ------------------------------------------------------------------
+
+    def test_RED_A_writer_attempted_discovery_failure_deletes_expected(
+        self,
+    ) -> None:
+        stable_doc_id = uuid4()
+        a1, a2, a3 = "RED-A-1", "RED-A-2", "RED-A-3"
+        u1 = "RED-A-UNRELATED"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": a1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": a2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": a3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": u1,
+                    "stable_document_id": str(uuid4()),
+                },
+            ]
+        )
+        # Discovery query (first stable_document_id query) will raise.
+        client.discovery_query_should_fail = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(a1, a2, a3),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+            vector_write_attempted=True,
+        )
+        # delete was called exactly once with expected IDs.
+        assert result.delete_call_count == 1
+        assert len(client.delete_calls) == 1
+        delete_filter = client.delete_calls[0]
+        for cid in (a1, a2, a3):
+            assert f'"{cid}"' in delete_filter
+        # U1 NOT in delete filter.
+        assert f'"{u1}"' not in delete_filter
+        # delete filter is precise PK — no stable_document_id filter.
+        assert "stable_document_id" not in delete_filter
+        # All expected rows gone.
+        assert result.post_delete_query_count == 0
+        # Per-chunk verification: all expected IDs verified gone.
+        for cid in (a1, a2, a3):
+            assert result.per_chunk_id_verified.get(cid) is True
+        # U1 still present in backend.
+        u1_query = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'chunk_id == "{u1}"',
+            output_fields=["chunk_id"],
+            limit=1,
+        )
+        assert len(u1_query) == 1
+        # Schema identity unchanged.
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # RED-B: malicious delete SDK exception.
+    #
+    #   * Fake backend has B1, B2, B3 for our stable_document_id.
+    #   * ``client.delete_malicious_exception = True`` → delete raises
+    #     RuntimeError with sentinel substrings: URI, token, api_key,
+    #     upstream SDK message.
+    #   * The cleanup helper MUST wrap this in a fixed safe error.
+    #
+    # R3 behavior (BUG): original RuntimeError propagates as-is →
+    #   str(err) contains URI/token/key.
+    #
+    # R4 behavior (FIX): wrap in fixed safe RuntimeError →
+    #   err.__cause__ is None, err.__context__ is None, sentinel
+    #   not in str/repr/args/traceback.
+    # ------------------------------------------------------------------
+
+    def test_RED_B_malicious_delete_exception_wrapped_safely(self) -> None:
+        import traceback  # noqa: PLC0415 — test-only
+
+        stable_doc_id = uuid4()
+        b1, b2, b3 = "RED-B-1", "RED-B-2", "RED-B-3"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": b1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": b2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": b3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        client.delete_malicious_exception = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        # The delete failure MUST propagate (fail closed) — but
+        # wrapped in a fixed safe error.
+        raised: Exception | None = None
+        try:
+            _run_cleanup(
+                client,
+                collection="article_rag_chunks",
+                expected_chunk_ids=(b1, b2, b3),
+                saved_chunk_ids=(),
+                stable_document_id=stable_doc_id,
+                preflight=preflight,
+                vector_write_attempted=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — test asserts raise
+            raised = exc
+        # An exception MUST have been raised (fail closed).
+        assert raised is not None, (
+            "Malicious delete exception MUST propagate (fail closed); "
+            "the helper MUST NOT swallow it."
+        )
+        # cause and context MUST both be None — no exception chaining.
+        assert raised.__cause__ is None, (
+            f"Safe error __cause__ must be None, got {raised.__cause__!r}"
+        )
+        assert raised.__context__ is None, (
+            f"Safe error __context__ must be None, got "
+            f"{raised.__context__!r}"
+        )
+        # Sentinel substrings MUST NOT appear in any error surface.
+        sentinels = (
+            "zilliz.example.com",
+            "sk-abc123",
+            "sk-zilliz",
+            "api_key=",
+            "token=",
+            "uri=",
+            "MilvusException",
+            "connection refused by peer",
+            "upstream_msg",
+        )
+        # str(err)
+        err_str = str(raised)
+        for s in sentinels:
+            assert s not in err_str, (
+                f"Sentinel {s!r} found in str(err): {err_str!r}"
+            )
+        # repr(err)
+        err_repr = repr(raised)
+        for s in sentinels:
+            assert s not in err_repr, (
+                f"Sentinel {s!r} found in repr(err): {err_repr!r}"
+            )
+        # err.args
+        for arg in raised.args:
+            arg_str = str(arg)
+            for s in sentinels:
+                assert s not in arg_str, (
+                    f"Sentinel {s!r} found in err.args: {arg_str!r}"
+                )
+        # traceback.format_exception(err)
+        tb_text = "".join(
+            traceback.format_exception(type(raised), raised, None)
+        )
+        for s in sentinels:
+            assert s not in tb_text, (
+                f"Sentinel {s!r} found in traceback: {tb_text!r}"
+            )
+        # delete was attempted (fail closed AFTER the call).
+        assert len(client.delete_calls) == 1
+
+    # ------------------------------------------------------------------
+    # GREEN-A: writer NOT attempted + discovery failure + saved empty
+    #          → no delete, no rows touched.
+    #
+    # Even if discovery fails, if the writer was never called there
+    # is nothing to clean up.  ``delete_call_count == 0``.
+    # ------------------------------------------------------------------
+
+    def test_writer_not_attempted_discovery_failure_no_delete(self) -> None:
+        stable_doc_id = uuid4()
+        d1, d2, d3 = "GREEN-A-1", "GREEN-A-2", "GREEN-A-3"
+        u1 = "GREEN-A-UNRELATED"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": u1,
+                    "stable_document_id": str(uuid4()),
+                },
+            ]
+        )
+        client.discovery_query_should_fail = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(d1, d2, d3),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+            vector_write_attempted=False,
+        )
+        # No delete called — writer was not attempted.
+        assert result.delete_call_count == 0
+        assert client.delete_calls == []
+        # U1 preserved.
+        u1_query = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'chunk_id == "{u1}"',
+            output_fields=["chunk_id"],
+            limit=1,
+        )
+        assert len(u1_query) == 1
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # GREEN-B: saved non-empty + discovery failure
+    #          → delete expected ∪ saved.
+    #
+    # Discovery failure does not block cleanup when ``saved_chunk_ids``
+    # is non-empty.  The union of (expected, saved) is used; discovered
+    # is empty because discovery failed.
+    # ------------------------------------------------------------------
+
+    def test_saved_nonempty_discovery_failure_deletes_union(self) -> None:
+        stable_doc_id = uuid4()
+        c1, c2, c3 = "GREEN-B-1", "GREEN-B-2", "GREEN-B-3"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": c1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": c2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": c3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        client.discovery_query_should_fail = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(c1, c2, c3),
+            saved_chunk_ids=(c1, c2),  # D4 captured 2 of 3
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+            vector_write_attempted=True,
+        )
+        # delete called once.
+        assert result.delete_call_count == 1
+        assert len(client.delete_calls) == 1
+        # cleanup_target = expected ∪ saved (discovered empty due to
+        # failure).
+        assert set(result.cleanup_target_chunk_ids) == {c1, c2, c3}
+        # All 3 verified gone.
+        for cid in (c1, c2, c3):
+            assert result.per_chunk_id_verified.get(cid) is True
+        assert result.post_delete_query_count == 0
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # GREEN-C: writer attempted + discovery success + discovered empty
+    #          → no delete (discovery confirmed no rows).
+    #
+    # Even though writer was called, discovery succeeded and found 0
+    # rows — the backend has nothing to delete.  ``delete_call_count
+    # == 0``.  This is the idempotent no-op case.
+    # ------------------------------------------------------------------
+
+    def test_writer_attempted_discovery_success_empty_no_delete(self) -> None:
+        stable_doc_id = uuid4()
+        e1, e2 = "GREEN-C-1", "GREEN-C-2"
+        # Backend has 0 rows for our stable_document_id.
+        client = _FakeZillizClient(initial_rows=[])
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(e1, e2),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+            vector_write_attempted=True,
+        )
+        # Discovery succeeded and found 0 rows — no delete needed.
+        assert result.delete_call_count == 0
+        assert client.delete_calls == []
+        assert result.discovered_chunk_ids == ()
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # GREEN-D: post-delete verification query also raises malicious
+    #          exception → wrapped safely.
+    #
+    # If the post-delete ``stable_document_id`` query (step 6 in the
+    # helper) raises an SDK exception, it must also be wrapped in the
+    # fixed safe error — not leaked.
+    # ------------------------------------------------------------------
+
+    def test_post_delete_query_malicious_exception_wrapped_safely(
+        self,
+    ) -> None:
+        import traceback  # noqa: PLC0415 — test-only
+
+        stable_doc_id = uuid4()
+        p1, p2 = "GREEN-D-1", "GREEN-D-2"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": p1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": p2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        # Make the SECOND stable_document_id query (post-delete count)
+        # raise a malicious exception.  The first query (discovery)
+        # succeeds; the second (post-delete) raises.
+        client.discovery_query_should_fail = False
+        client._discovery_query_attempted = True  # noqa: SLF001 — test-only
+        # Override query to raise on the second call.
+        original_query = client.query
+        call_count = {"n": 0}
+
+        def malicious_post_delete_query(
+            *,
+            collection_name: str,
+            filter: str,  # noqa: A002
+            output_fields: list[str],
+            limit: int = 1,
+        ) -> list[dict[str, Any]]:
+            import re  # noqa: PLC0415
+
+            m = re.match(r'^stable_document_id == "([^"]+)"$', filter)
+            if m:
+                call_count["n"] += 1
+                if call_count["n"] >= 2:
+                    raise RuntimeError(
+                        "MilvusException: query failed: "
+                        "uri=https://zilliz.example.com:443 "
+                        "token=sk-post-delete-xxxxxxxxxxxxxxxxxxxxxxxx "
+                        "api_key=sk-post-delete-key"
+                    )
+            return original_query(
+                collection_name=collection_name,
+                filter=filter,
+                output_fields=output_fields,
+                limit=limit,
+            )
+
+        client.query = malicious_post_delete_query  # type: ignore[method-assign]
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        raised: Exception | None = None
+        try:
+            _run_cleanup(
+                client,
+                collection="article_rag_chunks",
+                expected_chunk_ids=(p1, p2),
+                saved_chunk_ids=(),
+                stable_document_id=stable_doc_id,
+                preflight=preflight,
+                vector_write_attempted=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — test asserts raise
+            raised = exc
+        assert raised is not None, (
+            "Post-delete query malicious exception MUST propagate."
+        )
+        assert raised.__cause__ is None
+        assert raised.__context__ is None
+        sentinels = (
+            "zilliz.example.com",
+            "sk-post-delete",
+            "api_key=",
+            "token=",
+            "uri=",
+            "MilvusException",
+        )
+        for s in sentinels:
+            assert s not in str(raised), (
+                f"Sentinel {s!r} in str(err): {str(raised)!r}"
+            )
+            assert s not in repr(raised)
+            for arg in raised.args:
+                assert s not in str(arg)
+        tb_text = "".join(
+            traceback.format_exception(type(raised), raised, None)
+        )
+        for s in sentinels:
+            assert s not in tb_text
