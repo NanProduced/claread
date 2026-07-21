@@ -195,6 +195,10 @@ def test_exam_grammar_bundle_lines_differ_between_cet_gaokao_kaoyan() -> None:
     assert any("四六级" in line for line in cet_lines)
     assert any("高考" in line for line in gaokao_lines)
     assert any("考研" in line for line in kaoyan_lines)
+    # Soft lenses stay distinct (R4)
+    assert any("信息定位" in line or "信息" in line for line in cet_lines)
+    assert any("中学" in line for line in gaokao_lines)
+    assert any("层次" in line for line in kaoyan_lines)
 
 
 def test_daily_vocabulary_lines_differ_across_three_variants() -> None:
@@ -211,6 +215,9 @@ def test_daily_vocabulary_lines_differ_across_three_variants() -> None:
     assert beg_lines != int_lines
     assert beg_lines != ins_lines
     assert int_lines != ins_lines
+    assert any("白话" in line or "初学者" in line for line in beg_lines)
+    assert any("语境" in line for line in int_lines)
+    assert any("深度" in line or "修辞" in line for line in ins_lines)
 
 
 def test_daily_grammar_bundle_lines_differ_across_three_variants() -> None:
@@ -227,6 +234,135 @@ def test_daily_grammar_bundle_lines_differ_across_three_variants() -> None:
     assert beg_lines != int_lines
     assert beg_lines != ins_lines
     assert int_lines != ins_lines
+    assert any("术语门槛" in line or "白话" in line for line in beg_lines)
+    assert any("术语" in line or "复杂从句" in line for line in int_lines)
+    assert any("克制" in line or "承载意义" in line for line in ins_lines)
+
+
+# Mechanical templates + stable-contract leakage must not appear in soft lenses.
+_R4_FORBIDDEN_POLICY_FRAGMENTS = (
+    # Old mechanical exam scripts
+    "最高优先级",
+    "释义要包含同义表达",
+    "释义必须包含常见同义表达",
+    "reason 应提示",
+    "reason 字段可提示",
+    "超过 25 词",
+    "显性教学",
+    "理解提速 + 轻显性讲解",
+    "专八常考察",
+    "四六级选项常用该词的常见义设置干扰",
+    "TOEFL 可能考这句的修辞目的",
+    "IELTS 的 T/F/NG 可能利用其中的限定条件出题",
+    "找主干、看枝叶、理层次",
+    "找主干、去枝叶、理层次",
+    "有清晰名称",
+    # Schema / item-type routing (owned by agent YAML, not variants)
+    "phrase_gloss",
+    "context_gloss",
+    "vocab_highlight",
+    "phrase_type",
+    "selected_text",
+    "grammar_note",
+    "sentence_analysis",
+    "默认二选一",
+    "逐块复述",
+    "不复述 chunks",
+    "禁止复述 chunks",
+    "chunks",
+)
+
+
+@pytest.mark.parametrize("goal,variant", LEGAL_PAIRS)
+def test_vocabulary_and_grammar_policies_drop_mechanical_templates(
+    goal: str, variant: str
+) -> None:
+    strategy = resolve_reader_variant_strategy(goal, variant)
+    vocab_text = "\n".join(strategy.layers["vocabulary"].prompt_lines)
+    grammar_text = "\n".join(strategy.layers["grammar_bundle"].prompt_lines)
+    combined = f"{vocab_text}\n{grammar_text}"
+    for fragment in _R4_FORBIDDEN_POLICY_FRAGMENTS:
+        assert fragment not in combined, (
+            f"{variant}/{goal} still contains forbidden fragment: {fragment!r}"
+        )
+
+
+@pytest.mark.parametrize("goal,variant", LEGAL_PAIRS)
+def test_vocabulary_grammar_variants_omit_schema_and_type_routing(
+    goal: str, variant: str
+) -> None:
+    """Architecture boundary: soft lenses must not restate stable contracts."""
+    strategy = resolve_reader_variant_strategy(goal, variant)
+    vocab = "\n".join(strategy.layers["vocabulary"].prompt_lines)
+    grammar = "\n".join(strategy.layers["grammar_bundle"].prompt_lines)
+    # Vocabulary field / item routing
+    for token in (
+        "phrase_gloss",
+        "context_gloss",
+        "vocab_highlight",
+        "phrase_type",
+        "selected_text",
+        "reason ",
+    ):
+        assert token not in vocab, f"{variant} vocabulary leaks {token!r}"
+    # Grammar type duties / competition / chunks bans
+    for token in (
+        "grammar_note",
+        "sentence_analysis",
+        "默认二选一",
+        "chunks",
+        "逐块复述",
+    ):
+        assert token not in grammar, f"{variant} grammar_bundle leaks {token!r}"
+
+
+def test_gaokao_grammar_allows_broad_scope_without_name_gate() -> None:
+    """Gaokao lens uses middle-school terminology style, not a name-based gate."""
+    lines = resolve_reader_variant_strategy("exam", "gaokao").layers[
+        "grammar_bundle"
+    ].prompt_lines
+    text = "\n".join(lines)
+    assert "中学" in text
+    assert "清晰名称" not in text
+    assert "有清晰名称" not in text
+    # Broad grammar awareness, not a structure checklist admission rule
+    assert any(
+        key in text
+        for key in ("广义", "搭配", "指代", "形义", "易混", "逻辑")
+    )
+
+
+def test_exam_vocabulary_soft_lenses_remain_distinguishable() -> None:
+    """R4: exam vocabulary policies stay differentiated without forced scripts."""
+    cet = "\n".join(
+        resolve_reader_variant_strategy("exam", "cet").layers["vocabulary"].prompt_lines
+    )
+    gaokao = "\n".join(
+        resolve_reader_variant_strategy("exam", "gaokao")
+        .layers["vocabulary"]
+        .prompt_lines
+    )
+    kaoyan = "\n".join(
+        resolve_reader_variant_strategy("exam", "kaoyan")
+        .layers["vocabulary"]
+        .prompt_lines
+    )
+    tem = "\n".join(
+        resolve_reader_variant_strategy("exam", "tem").layers["vocabulary"].prompt_lines
+    )
+    ielts = "\n".join(
+        resolve_reader_variant_strategy("exam", "ielts_toefl")
+        .layers["vocabulary"]
+        .prompt_lines
+    )
+
+    assert "四六级" in cet
+    assert "阅读" in cet
+    assert "高考" in gaokao and "高中" in gaokao
+    assert "考研" in kaoyan and ("熟词僻义" in kaoyan or "精确" in kaoyan)
+    assert "英语专业" in tem or "文学" in tem
+    assert "雅思" in ielts or "托福" in ielts or "学术" in ielts
+    assert len({cet, gaokao, kaoyan, tem, ielts}) == 5
 
 
 def test_each_variant_has_distinct_profile_id() -> None:
