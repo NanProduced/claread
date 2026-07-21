@@ -895,80 +895,128 @@ class GrammarBundleWorkerService:
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
     ) -> GrammarJobProcessResult:
         context: GrammarJobContext | None = None
+        execution: GrammarExecutionResult | None = None
+
+        # Phase 4: lease renewal for the per-unit generate → publish
+        # phase. A generate call longer than the lease let
+        # recover_stale_leases requeue the job and a parallel worker
+        # re-process it; the shared LeaseHeartbeat renews the claim
+        # for the whole model call + publish phase. The publisher's
+        # in-transaction fence remains the authoritative ownership
+        # check.
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=self._batch_lease_duration,
+            heartbeat_interval=self._batch_heartbeat_interval,
+        )
 
         try:
             context = await self._load_job_context(claim.job_id)
-            execution = await self._executor.generate(context)
+            await heartbeat.start()
             try:
-                bundle_output = GrammarBundleOutput.model_validate(execution.output)
-            except ValidationError as exc:
-                raise GrammarExecutionError(
-                    f"grammar bundle produced invalid structured output: {exc}",
-                    retryable=False,
-                    failure_class="validation",
-                    failure_code="grammar_bundle_output_invalid",
+                execution = await self._executor.generate(context)
+                try:
+                    bundle_output = GrammarBundleOutput.model_validate(execution.output)
+                except ValidationError as exc:
+                    raise GrammarExecutionError(
+                        f"grammar bundle produced invalid structured output: {exc}",
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code="grammar_bundle_output_invalid",
+                        prompt_version=execution.prompt_version,
+                        model_route=execution.model_route,
+                        model_profile=execution.model_profile,
+                        model_provider=execution.model_provider,
+                        model_name=execution.model_name,
+                    ) from exc
+
+                sanitized_output, diagnostics = _sanitize_grammar_bundle_output(
+                    context,
+                    bundle_output,
+                )
+                quality_json = _build_quality_json(
+                    sanitized_output,
+                    execution,
+                    diagnostics,
+                )
+                # R7-3b: actively probe ownership before publishing so
+                # a lease lost during generation aborts the attempt
+                # without publishing. The publisher's in-transaction
+                # fence is still the final authoritative check.
+                await heartbeat.verify_ownership()
+                published_bundle = await self._layer_publisher.publish_unit_grammar_bundle(
+                    job_id=claim.job_id,
+                    lease_token=claim.lease_token,
+                    grammar_note_output=(
+                        GrammarNoteLayerOutput(items=sanitized_output.grammar_notes)
+                        if sanitized_output.grammar_notes
+                        else None
+                    ),
+                    sentence_analysis_output=(
+                        SentenceAnalysisLayerOutput(
+                            items=sanitized_output.sentence_analyses
+                        )
+                        if sanitized_output.sentence_analyses
+                        else None
+                    ),
+                    quality_json=quality_json,
+                )
+                event_id = await self._record_usage_event(
+                    context=context,
+                    execution=execution,
+                    published_bundle=published_bundle,
+                    status=STATUS_SUCCEEDED,
+                )
+                await end_worker_span_success(
+                    ai_usage_event_id=event_id,
+                    usage_data=execution.usage_data,
+                    model_route=execution.model_route,
+                    model_name=execution.model_name,
+                    model_provider=execution.model_provider,
+                    capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="succeeded",
+                    output=sanitized_output,
+                    published_bundle=published_bundle,
+                    usage_data=execution.usage_data,
                     prompt_version=execution.prompt_version,
                     model_route=execution.model_route,
                     model_profile=execution.model_profile,
                     model_provider=execution.model_provider,
                     model_name=execution.model_name,
-                ) from exc
-
-            sanitized_output, diagnostics = _sanitize_grammar_bundle_output(
-                context,
-                bundle_output,
-            )
-            quality_json = _build_quality_json(
-                sanitized_output,
-                execution,
-                diagnostics,
-            )
-            published_bundle = await self._layer_publisher.publish_unit_grammar_bundle(
-                job_id=claim.job_id,
-                lease_token=claim.lease_token,
-                grammar_note_output=(
-                    GrammarNoteLayerOutput(items=sanitized_output.grammar_notes)
-                    if sanitized_output.grammar_notes
-                    else None
-                ),
-                sentence_analysis_output=(
-                    SentenceAnalysisLayerOutput(
-                        items=sanitized_output.sentence_analyses
-                    )
-                    if sanitized_output.sentence_analyses
-                    else None
-                ),
-                quality_json=quality_json,
-            )
-            event_id = await self._record_usage_event(
-                context=context,
-                execution=execution,
-                published_bundle=published_bundle,
-                status=STATUS_SUCCEEDED,
-            )
-            await end_worker_span_success(
-                ai_usage_event_id=event_id,
-                usage_data=execution.usage_data,
-                model_route=execution.model_route,
-                model_name=execution.model_name,
-                model_provider=execution.model_provider,
-                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
-            )
-            return GrammarJobProcessResult(
-                claim=claim,
-                context=context,
-                status="succeeded",
-                output=sanitized_output,
-                published_bundle=published_bundle,
-                usage_data=execution.usage_data,
-                prompt_version=execution.prompt_version,
-                model_route=execution.model_route,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name,
-            )
+                )
+            finally:
+                # Cleanup on success, exception AND external
+                # cancellation: the renewal task never survives this
+                # method. Renewal failures stay visible via
+                # heartbeat.lost (logged in the loop); stop() itself
+                # does not raise.
+                await heartbeat.stop()
         except FenceViolationError:
             await end_worker_span_fence_violation()
+            # The model call completed (tokens spent) but the publish
+            # fence failed — record the invocation's usage so the
+            # usage table reflects real model consumption. The
+            # invocation key namespaces this row within the per-unit
+            # path (distinct from the batch path's
+            # reader_grammar_batch: namespace).
+            await self._record_failed_usage_event(
+                context=context,
+                error_code="publish_fence_failed",
+                error_message="grammar unit publish fence failed",
+                prompt_version=(execution.prompt_version if execution else None),
+                model_route=(execution.model_route if execution else GRAMMAR_MODEL_ROUTE),
+                model_profile=(execution.model_profile if execution else None),
+                model_provider=(execution.model_provider if execution else None),
+                model_name=(execution.model_name if execution else None),
+                usage_data=(execution.usage_data if execution else None),
+                invocation_key=self._per_unit_invocation_key(claim),
+            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1349,6 +1397,8 @@ class GrammarBundleWorkerService:
         model_profile: str | None = None,
         model_provider: str | None = None,
         model_name: str | None = None,
+        usage_data: dict | None = None,
+        invocation_key: str | None = None,
     ) -> UUID | None:
         if context is None:
             return None
@@ -1362,6 +1412,7 @@ class GrammarBundleWorkerService:
                 reading_record_id=context.reading_record_id,
                 reader_run_id=context.run_id,
                 reader_job_id=context.job_id,
+                request_id=invocation_key,
                 workflow_name="reader_orchestration",
                 workflow_version=GRAMMAR_WORKFLOW_VERSION,
                 prompt_version=prompt_version,
@@ -1371,6 +1422,7 @@ class GrammarBundleWorkerService:
                 model_provider=model_provider,
                 model_name=model_name,
                 planner_kind="llm_worker",
+                usage_data=usage_data,
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
                 error_message=error_message,
@@ -2040,6 +2092,21 @@ class GrammarBundleWorkerService:
         reuses this key and never produces a second row.
         """
         return f"reader_grammar_batch:{claim.job_id}:{claim.lease_token}"
+
+    @staticmethod
+    def _per_unit_invocation_key(claim: ClaimResult) -> str:
+        """Phase 4: stable idempotency key for one per-unit model invocation.
+
+        Carried in ``ai_usage_events.request_id`` within the reserved
+        ``reader_grammar_per_unit:`` namespace (distinct from the batch
+        path's ``reader_grammar_batch:`` namespace). The per-unit path
+        is not covered by migration 0022's partial unique index; the
+        key still carries the same job_id + lease_token identity so a
+        retried job attempt (new lease token) gets a genuinely new
+        invocation event. A retried persistence of the same attempt
+        reuses this key.
+        """
+        return f"reader_grammar_per_unit:{claim.job_id}:{claim.lease_token}"
 
     async def _persist_batch_invocation_usage(
         self,
