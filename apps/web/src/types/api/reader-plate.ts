@@ -89,12 +89,10 @@ export type VocabularyItemType =
   | "phrase_gloss"
   | "context_gloss";
 export type VocabularyPhraseType =
-  | "collocation"
-  | "phrasal_verb"
-  | "idiom"
-  | "proper_noun"
-  | "compound"
-  | "other";
+  | "verb_expression"
+  | "fixed_collocation"
+  | "name_or_term"
+  | "idiom";
 
 export type ReaderPlateOwner =
   | "stable"
@@ -285,6 +283,7 @@ export interface VocabularyPhraseGlossItemDto {
   phrase: string;
   phrase_type: VocabularyPhraseType;
   gloss: string;
+  learning_note?: string | null;
   example?: string | null;
 }
 
@@ -675,6 +674,7 @@ export interface ReaderPhraseGlossMarkDto extends ReaderVocabularyMarkBaseDto {
   phrase: string;
   phrase_type: VocabularyPhraseType;
   gloss: string;
+  learning_note?: string | null;
   example?: string | null;
 }
 

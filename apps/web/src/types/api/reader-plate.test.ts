@@ -38,8 +38,9 @@ function makeUnit(): ReaderUnitNodeDto {
     starts_here: true,
     ends_here: true,
     phrase: "few can turn",
-    phrase_type: "collocation",
+    phrase_type: "fixed_collocation",
     gloss: "少数人能做到",
+    learning_note: "强调**能力稀缺**，不是字面“转动”。",
     example: "Only a few can turn talent into impact.",
   };
   const grammarNoteMark: ReaderGrammarNoteMarkDto = {
@@ -261,7 +262,7 @@ function makeSnapshot(): ReaderPlateSnapshotDto {
                 hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
               },
               phrase: "few can turn",
-              phrase_type: "collocation",
+              phrase_type: "fixed_collocation",
               gloss: "少数人能做到",
               example: "Only a few can turn talent into impact.",
             },
@@ -533,6 +534,9 @@ describe("Reader Plate DTO shapes", () => {
       throw new Error("expected phrase_gloss vocabulary mark");
     }
     expect(mark.gloss).toContain("少数人");
+    expect(mark.phrase_type).toBe("fixed_collocation");
+    expect(mark.learning_note).toContain("能力稀缺");
+    expect(mark.example).toContain("Only a few");
     expect(mark.starts_here).toBe(true);
   });
 

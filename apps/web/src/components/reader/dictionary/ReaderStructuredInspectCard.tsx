@@ -4,9 +4,11 @@ import { Sparkles } from "lucide-react";
 import { readerCommandControl, readerIconAction } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import type { ReaderStructuredInspectIntent } from "@/lib/reader-plate";
+import { LearningNoteMarkdown } from "./LearningNoteMarkdown";
 import {
   contextualGlossaryExample,
   contextualGlossaryExampleTranslation,
+  contextualGlossaryLearningNote,
   contextualGlossaryReason,
   contextualGlossaryText,
   phraseGlossarySubtypeLabel,
@@ -33,10 +35,11 @@ export function ReaderStructuredInspectCard({
   const subtype = phraseGlossarySubtypeLabel(intent.glossary);
   const toneClassName = structuredInspectToneClass(intent.annotationType);
   const displayAnchorText = intent.lookupText ?? intent.anchorText;
-  const summary =
+  const gloss =
     contextualGlossaryText(intent.glossary) ||
     intent.lookupText ||
     "该标注更适合先查看结构化解释，再决定是否继续查词。";
+  const learningNote = contextualGlossaryLearningNote(intent.glossary);
   const example = contextualGlossaryExample(intent.glossary);
   const exampleTranslation = contextualGlossaryExampleTranslation(intent.glossary);
   const reason = contextualGlossaryReason(intent.glossary);
@@ -45,6 +48,7 @@ export function ReaderStructuredInspectCard({
     Boolean(onLookupPhrase) &&
     intent.annotationType !== "phrase_gloss" &&
     intent.annotationType !== "context_gloss";
+  const isPhraseGloss = intent.annotationType === "phrase_gloss";
 
   return (
     <div
@@ -69,8 +73,12 @@ export function ReaderStructuredInspectCard({
           <h3 className="mt-2 reader-serif text-[1.25rem] leading-tight text-ink">{displayAnchorText}</h3>
         </div>
       ) : null}
-      <div className="space-y-2">
-        <p className="text-sm leading-6 text-ink-soft">{summary}</p>
+      <div className="max-h-[min(50vh,22rem)] space-y-2 overflow-y-auto overscroll-contain pr-0.5">
+        {/* gloss is always the primary scannable content */}
+        <p className="text-sm leading-6 text-ink-soft">{gloss}</p>
+        {isPhraseGloss && learningNote ? (
+          <LearningNoteMarkdown markdown={learningNote} />
+        ) : null}
         {example ? (
           <div className="rounded-[7px] border border-hairline/60 bg-ink/[0.012] px-2.5 py-2">
             <p className="text-[0.68rem] font-semibold text-muted-foreground">例句</p>

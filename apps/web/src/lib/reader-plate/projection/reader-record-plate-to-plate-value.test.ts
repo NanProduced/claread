@@ -57,8 +57,9 @@ function makeVocabularyMark(
     vocabulary: {
       itemType: "phrase_gloss",
       phrase: "Institutional memory",
-      phraseType: "collocation",
+      phraseType: "fixed_collocation",
       gloss: "制度记忆",
+      learningNote: "机构内部的**经验沉淀**，不是个人记忆。",
       example: "Institutional memory shapes future choices.",
     },
     ...overrides,

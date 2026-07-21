@@ -7,6 +7,7 @@ import type {
   WebDictAIRequest,
   WebDictAIResult,
 } from "@/types/api/dict-ai";
+import type { VocabularyPhraseType } from "@/types/api/reader-plate";
 import type { InlineGlossary } from "@/types/view/ReaderMockVm";
 import type { DictionaryLookupSnapshot } from "./contracts";
 import { firstMeaning } from "./contracts";
@@ -51,13 +52,20 @@ export type DictionaryRenderableEntry = Pick<
   homographNo?: number;
 };
 
-const phraseTypeLabel: Record<NonNullable<InlineGlossary["phraseType"]>, string> = {
-  collocation: "固定搭配",
-  phrasal_verb: "动词短语",
+/**
+ * Exhaustive Reader vocabulary phrase_type → Chinese subtype labels.
+ * No silent fallback for unknown values: every VocabularyPhraseType must map.
+ */
+export const VOCABULARY_PHRASE_TYPE_LABELS = {
+  verb_expression: "动词短语",
+  fixed_collocation: "固定搭配",
+  name_or_term: "专名及术语",
   idiom: "习语",
-  proper_noun: "专名",
-  compound: "复合表达",
-};
+} as const satisfies Record<VocabularyPhraseType, string>;
+
+export function vocabularyPhraseTypeLabel(phraseType: VocabularyPhraseType): string {
+  return VOCABULARY_PHRASE_TYPE_LABELS[phraseType];
+}
 
 const dictionaryAIConfidenceLabelMap: Record<NonNullable<WebDictAIResult["confidence"]>, string> = {
   high: "高置信",
@@ -110,7 +118,7 @@ export function contextualGlossaryText(glossary?: InlineGlossary) {
 }
 
 export function phraseGlossarySubtypeLabel(glossary?: InlineGlossary) {
-  return glossary?.phraseType ? phraseTypeLabel[glossary.phraseType] : null;
+  return glossary?.phraseType ? vocabularyPhraseTypeLabel(glossary.phraseType) : null;
 }
 
 export function structuredInspectCategoryLabel(annotationType: string) {
@@ -134,6 +142,10 @@ export function structuredInspectToneClass(annotationType: string) {
     return "text-context-blue";
   }
   return "text-vocab-amber";
+}
+
+export function contextualGlossaryLearningNote(glossary?: InlineGlossary) {
+  return glossary?.learningNote?.trim() || "";
 }
 
 export function contextualGlossaryExample(glossary?: InlineGlossary) {
@@ -598,7 +610,7 @@ export function structuredInspectLabel(
   phraseType?: InlineGlossary["phraseType"],
 ): string {
   if (annotationType === "phrase_gloss" && phraseType) {
-    return phraseTypeLabel[phraseType];
+    return vocabularyPhraseTypeLabel(phraseType);
   }
   if (annotationType === "context_gloss") {
     return "语境义";

@@ -273,6 +273,7 @@ export interface ReaderRecordPlateVocabularyMark
         phrase: string;
         phraseType: VocabularyPhraseType;
         gloss: string;
+        learningNote?: string | null;
         example?: string | null;
       }
     | {
@@ -940,6 +941,7 @@ function mapVocabularyMark(
           phrase: mark.phrase,
           phraseType: mark.phrase_type,
           gloss: mark.gloss,
+          learningNote: mark.learning_note,
           example: mark.example,
         },
       };

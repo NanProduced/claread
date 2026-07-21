@@ -89,8 +89,8 @@ function sentenceIdForTranslation(
 
 function phraseTypeForWorkbench(
   phraseType: VocabularyPhraseType,
-): PhraseType | undefined {
-  return phraseType === "other" ? undefined : phraseType;
+): PhraseType {
+  return phraseType;
 }
 
 function glossaryFromVocabularyMark(
@@ -107,6 +107,8 @@ function glossaryFromVocabularyMark(
     return {
       gloss: mark.gloss,
       phraseType: phraseTypeForWorkbench(mark.phrase_type),
+      learningNote: mark.learning_note ?? undefined,
+      example: mark.example ?? undefined,
     };
   }
 

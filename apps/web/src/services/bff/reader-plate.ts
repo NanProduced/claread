@@ -70,6 +70,7 @@ export type ReaderPlateBffError = {
     | "auth_required"
     | "upstream_auth_failed"
     | "record_not_found"
+    | "record_not_ready"
     | "artifact_not_found"
     | "upstream_unavailable"
     | "upstream_error"
@@ -354,6 +355,18 @@ export async function getReaderPlateSnapshotFromWeb(
   );
 
   if (!upstreamResult.ok) {
+    if (
+      upstreamResult.status === 409
+      && upstreamResult.message === "reader snapshot requires an active base"
+    ) {
+      return {
+        ok: false,
+        status: 409,
+        code: "record_not_ready",
+        message: "文档仍在解析，请稍后重试。",
+      };
+    }
+
     return upstreamError(upstreamResult.status, upstreamResult.message);
   }
 

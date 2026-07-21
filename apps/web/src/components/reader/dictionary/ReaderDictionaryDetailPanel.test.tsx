@@ -84,7 +84,7 @@ function createPhraseGlossLookup(): DictionaryLookupSnapshot {
     visualTone: "phrase",
     glossary: {
       gloss: "政策选择",
-      phraseType: "collocation",
+      phraseType: "fixed_collocation",
       example: "Policy choices shape institutions.",
     },
     state: {

@@ -53,7 +53,7 @@ describe("ReaderQuickPeek", () => {
           lookupText: "policy choices",
           glossary: {
             zh: "政策选择",
-            phraseType: "collocation",
+            phraseType: "fixed_collocation",
             example: "Institutional memory shapes policy choices.",
             reason: "这里强调固定搭配。",
           },
@@ -102,7 +102,7 @@ describe("ReaderQuickPeek", () => {
           lookupText: "refer to ... as",
           glossary: {
             zh: "把……称作……",
-            phraseType: "collocation",
+            phraseType: "fixed_collocation",
           },
           title: "固定搭配",
           label: "固定搭配",
@@ -271,5 +271,102 @@ describe("ReaderQuickPeek", () => {
       expect(label.className).toContain("text-context-blue");
       expect(label.className).not.toContain("text-phrase-lavender");
     }
+  });
+
+  it.each([
+    ["verb_expression", "动词短语"] as const,
+    ["fixed_collocation", "固定搭配"] as const,
+    ["name_or_term", "专名及术语"] as const,
+    ["idiom", "习语"] as const,
+  ])("shows Chinese subtype label for %s", (phraseType, label) => {
+    render(
+      <ReaderQuickPeek
+        inspect={{
+          kind: "structured_annotation_inspect",
+          sentenceId: "s1",
+          contextSentence: "Sample sentence for phrase type labels.",
+          markId: `mark-${phraseType}`,
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          anchorText: "sample phrase",
+          lookupText: "sample phrase",
+          glossary: {
+            gloss: "示例释义",
+            phraseType,
+          },
+          title: label,
+          label,
+        }}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const dialog = within(screen.getAllByRole("dialog").at(-1)!);
+    expect(dialog.getByText(label)).toBeTruthy();
+    expect(dialog.getByText("示例释义")).toBeTruthy();
+  });
+
+  it("renders learning_note markdown when present and omits empty optional chrome when absent", () => {
+    const { rerender } = render(
+      <ReaderQuickPeek
+        inspect={{
+          kind: "structured_annotation_inspect",
+          sentenceId: "s1",
+          contextSentence: "She gave up smoking last year.",
+          markId: "mark-give-up",
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          anchorText: "gave up",
+          lookupText: "give up",
+          glossary: {
+            gloss: "放弃；戒掉",
+            phraseType: "verb_expression",
+            learningNote: "常见搭配：`give up` + 名词。\n- 不要写成 give uping",
+            example: "She gave up smoking.",
+          },
+          title: "动词短语",
+          label: "动词短语",
+        }}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    let dialogEl = screen.getAllByRole("dialog").at(-1)!;
+    let dialog = within(dialogEl);
+    expect(dialog.getByText("放弃；戒掉")).toBeTruthy();
+    expect(dialog.getByText("例句")).toBeTruthy();
+    expect(dialog.getByText("She gave up smoking.")).toBeTruthy();
+    // Streamdown renders inline code as a code element
+    expect(dialogEl.querySelector("code")?.textContent).toBe("give up");
+    expect(dialog.getByText(/不要写成 give uping/)).toBeTruthy();
+
+    rerender(
+      <ReaderQuickPeek
+        inspect={{
+          kind: "structured_annotation_inspect",
+          sentenceId: "s1",
+          contextSentence: "She gave up smoking last year.",
+          markId: "mark-give-up",
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          anchorText: "gave up",
+          lookupText: "give up",
+          glossary: {
+            gloss: "放弃；戒掉",
+            phraseType: "verb_expression",
+          },
+          title: "动词短语",
+          label: "动词短语",
+        }}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    dialogEl = screen.getAllByRole("dialog").at(-1)!;
+    dialog = within(dialogEl);
+    expect(dialog.getByText("放弃；戒掉")).toBeTruthy();
+    expect(dialog.queryByText("例句")).toBeNull();
+    expect(dialog.queryByText("She gave up smoking.")).toBeNull();
+    expect(dialogEl.querySelector("code")).toBeNull();
   });
 });

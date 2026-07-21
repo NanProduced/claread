@@ -53,8 +53,9 @@ function makeVocabularyMark(
     starts_here: true,
     ends_here: true,
     phrase: "Institutional memory",
-    phrase_type: "collocation",
+    phrase_type: "fixed_collocation",
     gloss: "制度记忆",
+    learning_note: "机构内部的**经验沉淀**，不是个人记忆。",
     example: "Institutional memory shapes future choices.",
     ...overrides,
   } as ReaderVocabularyMarkDto;
@@ -686,6 +687,17 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
         segmentEndOffset: 20,
       },
     });
+    const phraseMark = phraseLeaf?.marks[0];
+    expect(phraseMark?.kind).toBe("phrase_gloss");
+    if (phraseMark && "vocabulary" in phraseMark) {
+      expect(phraseMark.vocabulary).toMatchObject({
+        itemType: "phrase_gloss",
+        phraseType: "fixed_collocation",
+        gloss: "制度记忆",
+        learningNote: "机构内部的**经验沉淀**，不是个人记忆。",
+        example: "Institutional memory shapes future choices.",
+      });
+    }
     expect(phraseLeaf?.marks[0].anchor.selectedText).toBe("Institutional memory");
     expect(phraseLeaf?.marks[0].anchor.textHash).toBe(
       computeUtf16FNV1a("Institutional memory"),

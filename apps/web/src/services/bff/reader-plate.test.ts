@@ -387,6 +387,23 @@ describe("reader-plate BFF snapshot", () => {
     });
   });
 
+  it("maps a pre-base snapshot conflict to record_not_ready", async () => {
+    vi.mocked(getUpstreamReaderPlateSnapshot).mockResolvedValue({
+      ok: false,
+      status: 409,
+      message: "reader snapshot requires an active base",
+    });
+
+    const result = await getReaderPlateSnapshotFromWeb("rec_1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      code: "record_not_ready",
+      message: "文档仍在解析，请稍后重试。",
+    });
+  });
+
   it("maps upstream 409 to upstream_error", async () => {
     vi.mocked(getUpstreamReaderPlateSnapshot).mockResolvedValue({
       ok: false,

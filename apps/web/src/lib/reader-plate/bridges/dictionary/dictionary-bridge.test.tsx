@@ -152,7 +152,7 @@ describe("dictionary bridge adapters", () => {
         lookupText: "policy choices",
         glossary: {
           zh: "政策选择",
-          phraseType: "collocation",
+          phraseType: "fixed_collocation",
         },
       },
       sentence,

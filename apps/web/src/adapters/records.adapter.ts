@@ -138,11 +138,10 @@ function toPhraseKind(value: unknown): PhraseKind | undefined {
 
 function toGlossaryPhraseType(value: unknown): InlineGlossary["phraseType"] {
   if (
-    value === "collocation" ||
-    value === "phrasal_verb" ||
-    value === "idiom" ||
-    value === "proper_noun" ||
-    value === "compound"
+    value === "verb_expression" ||
+    value === "fixed_collocation" ||
+    value === "name_or_term" ||
+    value === "idiom"
   ) {
     return value;
   }
@@ -253,6 +252,11 @@ function mapGlossary(value: unknown): InlineGlossary | undefined {
     zh: readOptionalString(value.zh),
     gloss: readOptionalString(value.gloss ?? value.context_definition ?? value.contextDefinition),
     reason: readOptionalString(value.reason),
+    example: readOptionalString(value.example),
+    exampleTranslation: readOptionalString(
+      value.example_translation ?? value.exampleTranslation,
+    ),
+    learningNote: readOptionalString(value.learning_note ?? value.learningNote),
     phraseType,
   };
 }

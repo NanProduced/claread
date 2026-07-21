@@ -66,16 +66,14 @@ function inferLookupType(text: string, hint?: InlineMarkModel["lookupKind"]): Di
 function inferInspectLabel(mark: ReaderLookupMark, anchorText: string): string {
   if (mark.annotationType === "phrase_gloss" && mark.glossary?.phraseType) {
     switch (mark.glossary.phraseType) {
-      case "collocation":
-        return "固定搭配";
-      case "phrasal_verb":
+      case "verb_expression":
         return "动词短语";
+      case "fixed_collocation":
+        return "固定搭配";
+      case "name_or_term":
+        return "专名及术语";
       case "idiom":
         return "习语";
-      case "proper_noun":
-        return "专名";
-      case "compound":
-        return "复合表达";
       default:
         break;
     }
