@@ -214,9 +214,21 @@ class GrammarNoteCandidateItem(BaseModel):
             "禁止 raw HTML 和 Markdown 标题（# / ## / ###）。"
             "讲清当前形式、句中作用及最有价值的可选发散；术语须配白话解释；"
             "不要固定「结构/规则/考点/例子」模板，不要用固定句数压力。"
+            "禁止「高考中常考」「高考常见的...考点」「这是...考点」等总结性考试话术。"
             "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
+    # Phase 5: self-rating family (mirrors window path's
+    # _WindowGrammarNoteCandidate and SentenceAnalysisCandidateItem).
+    # Defaults keep the model permissive for legacy per-unit / batch LLM
+    # output that does not emit these fields; when the LLM does emit them,
+    # _split_batch_candidates_by_unit sorts grammar_notes by quality_score
+    # descending so higher-quality candidates win the per-unit budget.
+    quality_score: float = 0.0
+    reading_blocker: bool = False
+    reason_code: str = "grammar_pattern"
+    confidence: float = 0.0
+    dedup_hint: str = ""
 
 
 class SentenceAnalysisChunkCandidate(BaseModel):
@@ -2554,7 +2566,25 @@ def _build_grammar_output_from_candidates(
     sentence_analyses: list[SentenceAnalysisItem] = []
     skipped_items: list[dict[str, Any]] = []
 
-    for item_index, item in enumerate(candidate_output.grammar_notes):
+    # Phase 5: sort grammar_note and sentence_analysis candidates by
+    # quality_score descending so higher-quality candidates are
+    # resolved/published first. Python's sorted is stable, so candidates
+    # with equal quality_score preserve their LLM-returned order. Both
+    # candidate item types now carry the self-rating family; legacy LLM
+    # output without these fields defaults quality_score=0.0 and falls
+    # back to LLM-returned order.
+    sorted_grammar_notes = sorted(
+        candidate_output.grammar_notes,
+        key=lambda item: item.quality_score,
+        reverse=True,
+    )
+    sorted_sentence_analyses = sorted(
+        candidate_output.sentence_analyses,
+        key=lambda item: item.quality_score,
+        reverse=True,
+    )
+
+    for item_index, item in enumerate(sorted_grammar_notes):
         resolved_spans: list[ReaderTextRangeAnchor] = []
         note_rejected = False
         for span_index, span in enumerate(item.spans):
@@ -2616,17 +2646,6 @@ def _build_grammar_output_from_candidates(
                 )
             )
 
-    # Phase 5: sort sentence_analysis candidates by quality_score descending
-    # so higher-quality candidates are resolved/published first. Python's
-    # sorted is stable, so candidates with equal quality_score preserve their
-    # LLM-returned order. Per-unit GrammarNoteCandidateItem does not carry a
-    # quality_score field (Phase 5 only extends SentenceAnalysisCandidateItem),
-    # so grammar_notes keep their LLM-returned order.
-    sorted_sentence_analyses = sorted(
-        candidate_output.sentence_analyses,
-        key=lambda item: item.quality_score,
-        reverse=True,
-    )
     for item_index, item in enumerate(sorted_sentence_analyses):
         segment = segments_by_id.get(item.anchor_segment_id)
         if segment is not None and segment.segment_type == "fallback_window":
@@ -3085,7 +3104,25 @@ def _split_batch_candidates_by_unit(
     }
     skipped_items: list[dict[str, Any]] = []
 
-    for item_index, item in enumerate(candidate_output.grammar_notes):
+    # Phase 5: sort grammar_note and sentence_analysis candidates by
+    # quality_score descending before per-unit budget truncation, so
+    # higher-quality candidates win the per-unit budget. Python's sorted
+    # is stable, so candidates with equal quality_score preserve their
+    # LLM-returned order. Both candidate item types now carry the
+    # self-rating family; legacy LLM output without these fields defaults
+    # quality_score=0.0 and falls back to LLM-returned order.
+    sorted_grammar_notes = sorted(
+        candidate_output.grammar_notes,
+        key=lambda item: item.quality_score,
+        reverse=True,
+    )
+    sorted_sentence_analyses = sorted(
+        candidate_output.sentence_analyses,
+        key=lambda item: item.quality_score,
+        reverse=True,
+    )
+
+    for item_index, item in enumerate(sorted_grammar_notes):
         first_span = item.spans[0] if item.spans else None
         if first_span is None:
             skipped_items.append(
@@ -3188,7 +3225,7 @@ def _split_batch_candidates_by_unit(
                 )
             )
 
-    for item_index, item in enumerate(candidate_output.sentence_analyses):
+    for item_index, item in enumerate(sorted_sentence_analyses):
         mapping = units_by_segment.get(item.anchor_segment_id)
         if mapping is None:
             skipped_items.append(

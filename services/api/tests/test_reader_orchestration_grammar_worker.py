@@ -32,17 +32,21 @@ from app.services.reader_orchestration.grammar_worker import (
     GrammarBatchJobContext,
     GrammarBatchJobProcessResult,
     GrammarBatchUnitContext,
+    GrammarBatchCandidateOutput,
     GrammarBundleCandidateOutput,
     GrammarBundleWorkerService,
+    GrammarCandidateSpan,
     GrammarExecutionError,
     GrammarExecutionResult,
     GrammarJobContext,
+    GrammarNoteCandidateItem,
     PydanticAIGrammarBundleExecutor,
     SentenceAnalysisCandidateItem,
     SentenceAnalysisChunkCandidate,
     _build_grammar_batch_prompt,
     _build_grammar_output_from_candidates,
     _build_grammar_prompt,
+    _split_batch_candidates_by_unit,
     _validate_grammar_strategy_metadata,
 )
 from app.services.reader_orchestration.job_bootstrap import (
@@ -2526,3 +2530,380 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
     assert output.sentence_analyses[0].analysis == "high quality analysis"
     assert output.sentence_analyses[1].analysis == "mid quality analysis"
     assert output.sentence_analyses[2].analysis == "low quality analysis"
+
+
+# ---------------------------------------------------------------------------#
+# Phase 5b: grammar_note self-rating + batch path quality_score sorting
+# ---------------------------------------------------------------------------#
+
+
+def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None:
+    """Phase 5b: GrammarNoteCandidateItem must carry the same self-rating
+    family as SentenceAnalysisCandidateItem so the batch path can sort
+    grammar_notes by quality_score before per-unit budget truncation.
+
+    Previously GrammarNoteCandidateItem lacked these fields, making the
+    batch path's quality_score sort a no-op for grammar_notes and
+    leaving per-unit grammar_notes in LLM-returned order. DB inspection
+    of bc8afd86 / 6f9e6fdf showed reason_code=NULL and quality_score
+    absent on all published grammar_notes, confirming the fields were
+    not wired through the candidate schema.
+    """
+    from app.services.reader_orchestration.grammar_worker import (
+        SentenceAnalysisCandidateItem as _SAItem,
+    )
+
+    expected_fields = (
+        "quality_score",
+        "reading_blocker",
+        "reason_code",
+        "confidence",
+        "dedup_hint",
+    )
+    for field_name in expected_fields:
+        assert field_name in GrammarNoteCandidateItem.model_fields, (
+            f"GrammarNoteCandidateItem missing Phase 5 field {field_name!r}"
+        )
+        assert field_name in _SAItem.model_fields, (
+            f"SentenceAnalysisCandidateItem missing Phase 5 field {field_name!r}"
+        )
+
+    # Defaults must mirror SentenceAnalysisCandidateItem so legacy LLM
+    # output without these fields degrades to LLM-returned order
+    # (quality_score=0.0) rather than failing validation.
+    note_defaults = {
+        f: GrammarNoteCandidateItem.model_fields[f].default
+        for f in expected_fields
+    }
+    sa_defaults = {
+        f: _SAItem.model_fields[f].default for f in expected_fields
+    }
+    assert note_defaults == sa_defaults, (
+        f"GrammarNoteCandidateItem defaults {note_defaults} must mirror "
+        f"SentenceAnalysisCandidateItem defaults {sa_defaults}"
+    )
+
+
+def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
+    """Phase 5b: per-unit path must sort grammar_note candidates by
+    ``quality_score`` descending before resolving, so higher-quality
+    candidates are published first.
+
+    Previously only sentence_analyses were sorted; grammar_notes kept
+    LLM-returned order. DB inspection showed low-quality mechanical
+    exam-jargon notes sometimes preceded higher-quality teaching notes
+    on the same anchor.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    # 3 grammar_note candidates on the same anchor with different
+    # quality_score. Input order is deliberately low → high to prove
+    # sort, not pass-through. ``selected_text`` must be a real substring
+    # of the source text so anchor resolution succeeds.
+    candidates = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point="low",
+            note="low quality note",
+            quality_score=0.2,
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point="high",
+            note="high quality note",
+            quality_score=0.95,
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point="mid",
+            note="mid quality note",
+            quality_score=0.5,
+        ),
+    ]
+    candidate_output = GrammarBundleCandidateOutput(grammar_notes=candidates)
+
+    output, _diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # All 3 should be accepted (no per-unit dedup at this layer).
+    assert len(output.grammar_notes) == 3
+    # Sorted by quality_score descending: high → mid → low
+    assert output.grammar_notes[0].note == "high quality note"
+    assert output.grammar_notes[1].note == "mid quality note"
+    assert output.grammar_notes[2].note == "low quality note"
+
+
+def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> None:
+    """Phase 5b: batch path ``_split_batch_candidates_by_unit`` must sort
+    grammar_note candidates by ``quality_score`` descending before
+    per-unit budget truncation, so higher-quality candidates win the
+    per-unit budget.
+
+    Previously the batch path iterated candidates in LLM-returned order
+    and truncated at MAX_GRAMMAR_NOTE_ITEMS per unit, dropping
+    higher-quality candidates that appeared later in the LLM output.
+    DB inspection confirmed reason_code=NULL and quality_score absent
+    on all published grammar_notes — the batch path treated
+    quality_score as a decorative schema field.
+    """
+    from app.services.reader_orchestration.grammar_worker import (
+        MAX_GRAMMAR_NOTE_ITEMS,
+    )
+
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    # Build MAX_GRAMMAR_NOTE_ITEMS + 2 candidates on the same anchor,
+    # with the highest-quality candidates placed LAST in input order to
+    # prove sort happens before budget truncation. ``selected_text`` must
+    # be a real substring of the source text so anchor resolution
+    # succeeds. ``GrammarBatchCandidateOutput`` has no max_length cap
+    # (unlike ``GrammarBundleCandidateOutput`` which is capped at
+    # MAX_GRAMMAR_NOTE_ITEMS) — per-unit budget is enforced inside
+    # ``_split_batch_candidates_by_unit``.
+    low_quality_count = MAX_GRAMMAR_NOTE_ITEMS + 1
+    candidates: list[GrammarNoteCandidateItem] = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point=f"low-{i}",
+            note=f"low quality note {i}",
+            quality_score=0.1,
+        )
+        for i in range(low_quality_count)
+    ]
+    # The two highest-quality candidates come last in input order.
+    candidates.append(
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point="high-A",
+            note="high quality note A",
+            quality_score=0.9,
+        )
+    )
+    candidates.append(
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1",
+                    selected_text="revise",
+                )
+            ],
+            grammar_point="high-B",
+            note="high quality note B",
+            quality_score=0.8,
+        )
+    )
+    candidate_output = GrammarBatchCandidateOutput(grammar_notes=candidates)
+
+    outputs, diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    # Per-unit budget truncates to MAX_GRAMMAR_NOTE_ITEMS; the two
+    # highest-quality candidates must survive (sort before truncation).
+    assert len(unit_output.grammar_notes) == MAX_GRAMMAR_NOTE_ITEMS
+    notes = [item.note for item in unit_output.grammar_notes]
+    assert "high quality note A" in notes
+    assert "high quality note B" in notes
+    # The two highest-quality candidates must be first in published order.
+    assert unit_output.grammar_notes[0].note == "high quality note A"
+    assert unit_output.grammar_notes[1].note == "high quality note B"
+    # At least one low-quality candidate was skipped due to budget.
+    assert diagnostics["skipped_item_count"] >= 1
+
+
+def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() -> None:
+    """Phase 5b: batch path ``_split_batch_candidates_by_unit`` must sort
+    sentence_analysis candidates by ``quality_score`` descending before
+    per-unit budget truncation, mirroring grammar_notes.
+
+    Previously the batch path iterated sentence_analyses in LLM-returned
+    order; the per-unit path already sorted but the batch path did not.
+    """
+    from app.services.reader_orchestration.grammar_worker import (
+        MAX_SENTENCE_ANALYSIS_ITEMS,
+    )
+
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    low_quality_count = MAX_SENTENCE_ANALYSIS_ITEMS + 1
+    candidates: list[SentenceAnalysisCandidateItem] = [
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label=f"low-{i}",
+            analysis=f"low quality analysis {i}",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=0.1,
+        )
+        for i in range(low_quality_count)
+    ]
+    candidates.append(
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="high",
+            analysis="high quality analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=0.95,
+        )
+    )
+    candidate_output = GrammarBatchCandidateOutput(
+        sentence_analyses=candidates
+    )
+
+    outputs, diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    assert len(unit_output.sentence_analyses) == MAX_SENTENCE_ANALYSIS_ITEMS
+    # The highest-quality candidate must survive and be first.
+    assert unit_output.sentence_analyses[0].analysis == "high quality analysis"
+    assert diagnostics["skipped_item_count"] >= 1
+
+
+# ---------------------------------------------------------------------------#
+# Phase 5b: grammar mechanical exam-jargon ban (prompt + variant policy)
+# ---------------------------------------------------------------------------#
+
+
+_MECHANICAL_EXAM_JARGON_PATTERNS = (
+    "高考中常考",
+    "高考常见的",
+    "高考高频考点",
+    "四六级常考",
+    "考研常考",
+    "这是...考点",
+    "这是高考",
+)
+
+
+def test_grammar_bundle_prompt_bans_mechanical_exam_jargon() -> None:
+    """The shared grammar_bundle prompt must hard-ban mechanical
+    exam-jargon closing patterns.
+
+    DB inspection of bc8afd86 / 6f9e6fdf showed LLM emitting phrases
+    like 「高考中常考 with 复合结构作状语」「这是高考常见的时态考点」
+    as summary closing lines. The previous prompt allowed these when
+    「紧跟具体、贴切的教学内容时」 — LLM abused this exception and
+    appended exam slogans to nearly every note.
+    """
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+
+    instructions = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+    # The ban line must enumerate concrete patterns so the model cannot
+    # mistake it for a generic reminder.
+    assert "高考中常考" in instructions
+    assert "高考常见的" in instructions
+    assert "一律禁止" in instructions
+    # The previous exception clause must be gone.
+    assert "紧跟具体、贴切的教学内容时才可接受" not in instructions
+    # The prompt must steer toward direct distinction instead of slogans.
+    assert "直接讲区分本身" in instructions
+
+
+def test_grammar_note_field_description_documents_jargon_ban() -> None:
+    """GrammarNoteCandidateItem.note description must document the
+    mechanical exam-jargon ban so schema introspection surfaces the
+    same constraint the prompt enforces."""
+    note_desc = GrammarNoteCandidateItem.model_fields["note"].description or ""
+    assert "高考中常考" in note_desc
+    assert "总结性考试话术" in note_desc
+
+
+@pytest.mark.parametrize(
+    "goal,variant",
+    [
+        ("exam", "gaokao"),
+        ("exam", "ielts_toefl"),
+    ],
+)
+def test_variant_grammar_bundle_soft_lens_drops_exam_jargon_exception(
+    goal: str, variant: str
+) -> None:
+    """Variant grammar_bundle soft lens must NOT contain exam-jargon
+    exception clauses like 「考试角度仅在...时自然带出」 or 「题型或考点
+    角度仅在...时可选」. LLM historically abused these exceptions to
+    append mechanical exam slogans.
+
+    The soft lens may keep variant identity (e.g. 「高考备考学生」) but
+    must not authorize exam-jargon output.
+    """
+    strategy = resolve_reader_variant_strategy(goal, variant)
+    text = "\n".join(strategy.layers["grammar_bundle"].prompt_lines)
+
+    # The exception clauses must be gone.
+    assert "考试角度仅在" not in text
+    assert "题型或考点角度仅在" not in text
+    assert "确实相关时自然带出" not in text
+    assert "确实支持时可选" not in text
+
+    # The hard prohibition must be present.
+    assert "不输出考试口号" in text or "不输出题型判断" in text
+
+    # Variant identity may remain.
+    assert "备考学生" in text
