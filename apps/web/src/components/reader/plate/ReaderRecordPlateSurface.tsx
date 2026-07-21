@@ -1450,6 +1450,7 @@ function vocabularyGlossary(mark: ReaderRecordPlateVocabularyMark): ReaderRecord
     return {
       gloss: mark.vocabulary.gloss,
       phraseType: phraseTypeForInspect(mark.vocabulary.phraseType),
+      learningNote: mark.vocabulary.learningNote ?? undefined,
       example: mark.vocabulary.example ?? undefined,
     };
   }
@@ -1463,11 +1464,10 @@ function phraseTypeForInspect(
   phraseType: string | undefined,
 ): NonNullable<ReaderStructuredInspectIntent["glossary"]>["phraseType"] {
   if (
-    phraseType === "collocation" ||
-    phraseType === "phrasal_verb" ||
-    phraseType === "idiom" ||
-    phraseType === "proper_noun" ||
-    phraseType === "compound"
+    phraseType === "verb_expression" ||
+    phraseType === "fixed_collocation" ||
+    phraseType === "name_or_term" ||
+    phraseType === "idiom"
   ) {
     return phraseType;
   }
@@ -1564,6 +1564,7 @@ function structuredInspectIntentFromVocabularyMark(
       glossary: {
         gloss: mark.vocabulary.gloss,
         phraseType: phraseTypeForInspect(mark.vocabulary.phraseType),
+        learningNote: mark.vocabulary.learningNote ?? undefined,
         example: mark.vocabulary.example ?? undefined,
       },
       anchorOffsets: {

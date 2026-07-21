@@ -16,6 +16,7 @@ import type {
   ReaderUnitNodeDto,
   ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
+import { vocabularyPhraseTypeLabel } from "@/components/reader/dictionary/shared";
 import { Editor, EditorContainer } from "../../ui/editor";
 
 /**
@@ -135,22 +136,7 @@ function vocabularyChipClassName(itemType: ReaderVocabularyMarkDto["item_type"])
   return "border-amber-200/80 bg-amber-50 text-amber-900";
 }
 
-function phraseTypeLabel(phraseType: string) {
-  switch (phraseType) {
-    case "collocation":
-      return "搭配";
-    case "phrasal_verb":
-      return "短语动词";
-    case "idiom":
-      return "习语";
-    case "proper_noun":
-      return "专名";
-    case "compound":
-      return "复合词";
-    default:
-      return "短语";
-  }
-}
+
 
 function vocabularyChipLabel(mark: ReaderVocabularyMarkDto) {
   if (mark.item_type === "vocab_highlight") {
@@ -159,7 +145,7 @@ function vocabularyChipLabel(mark: ReaderVocabularyMarkDto) {
       : `词汇 · ${mark.headword}`;
   }
   if (mark.item_type === "phrase_gloss") {
-    return `${phraseTypeLabel(mark.phrase_type)} · ${mark.gloss}`;
+    return `${vocabularyPhraseTypeLabel(mark.phrase_type)} · ${mark.gloss}`;
   }
   return `语境 · ${mark.gloss}`;
 }
@@ -171,7 +157,7 @@ function vocabularyMarkTitle(mark: ReaderVocabularyMarkDto) {
       : mark.headword;
   }
   if (mark.item_type === "phrase_gloss") {
-    return `${mark.phrase} (${phraseTypeLabel(mark.phrase_type)})`;
+    return `${mark.phrase} (${vocabularyPhraseTypeLabel(mark.phrase_type)})`;
   }
   return `${mark.display}: ${mark.reason}`;
 }

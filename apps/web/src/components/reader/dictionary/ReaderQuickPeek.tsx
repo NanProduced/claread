@@ -13,6 +13,7 @@ import { firstMeaning } from "./contracts";
 import {
   contextualGlossaryExample,
   contextualGlossaryExampleTranslation,
+  contextualGlossaryLearningNote,
   contextualGlossaryReason,
   contextualGlossaryText,
   contextualGlossaryTitle,
@@ -22,6 +23,7 @@ import {
   structuredInspectToneClass,
 } from "./shared";
 import type { DictionaryAIViewState, WebDictAIRequest } from "@/types/api/dict-ai";
+import { LearningNoteMarkdown } from "./LearningNoteMarkdown";
 import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
 
 function getInspectColorClass(annotationType: string) {
@@ -247,6 +249,7 @@ export function ReaderQuickPeek({
   const glossarySubtype = phraseGlossarySubtypeLabel(lookup.glossary);
   const glossaryExample = contextualGlossaryExample(lookup.glossary);
   const glossaryExampleTranslation = contextualGlossaryExampleTranslation(lookup.glossary);
+  const glossaryLearningNote = contextualGlossaryLearningNote(lookup.glossary);
   const glossaryReason = contextualGlossaryReason(lookup.glossary);
   const isVocabHighlight = lookup.annotationType === "vocab_highlight";
   const result = lookup.state.kind === "ready" ? lookup.state.result : null;
@@ -412,6 +415,12 @@ export function ReaderQuickPeek({
                   ) : null}
                 </span>
                 <span className="mt-1.5 block text-[0.86rem] leading-6 text-ink-soft">{glossaryText}</span>
+                {glossaryLearningNote ? (
+                  <span className="mt-2 block border-t border-hairline/50 pt-2">
+                    <span className="block text-[0.68rem] font-semibold text-muted-foreground">学习提示</span>
+                    <LearningNoteMarkdown markdown={glossaryLearningNote} className="mt-1" />
+                  </span>
+                ) : null}
                 {glossaryExample ? (
                   <span className="mt-2 block border-t border-hairline/50 pt-2">
                     <span className="block text-[0.68rem] font-semibold text-muted-foreground">例句</span>

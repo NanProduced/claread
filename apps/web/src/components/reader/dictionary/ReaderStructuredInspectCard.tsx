@@ -77,7 +77,10 @@ export function ReaderStructuredInspectCard({
         {/* gloss is always the primary scannable content */}
         <p className="text-sm leading-6 text-ink-soft">{gloss}</p>
         {isPhraseGloss && learningNote ? (
-          <LearningNoteMarkdown markdown={learningNote} />
+          <div className="rounded-[7px] border border-hairline/60 bg-ink/[0.012] px-2.5 py-2">
+            <p className="text-[0.68rem] font-semibold text-muted-foreground">学习提示</p>
+            <LearningNoteMarkdown markdown={learningNote} className="mt-1" />
+          </div>
         ) : null}
         {example ? (
           <div className="rounded-[7px] border border-hairline/60 bg-ink/[0.012] px-2.5 py-2">

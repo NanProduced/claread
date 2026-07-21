@@ -129,6 +129,8 @@ export interface InlineGlossary {
   reason?: string
   example?: string
   exampleTranslation?: string
+  /** Optional simplified-Chinese Markdown learning increment for phrase_gloss. */
+  learningNote?: string
   phraseType?: PhraseType
 }
 
@@ -143,11 +145,10 @@ export type AnnotationType =
 export type VisualTone = 'vocab' | 'phrase' | 'context' | 'grammar' | 'term' | 'logic'
 
 export type PhraseType =
-  | 'collocation'
-  | 'phrasal_verb'
+  | 'verb_expression'
+  | 'fixed_collocation'
+  | 'name_or_term'
   | 'idiom'
-  | 'proper_noun'
-  | 'compound'
 
 export type PhraseKind =
   | 'word'

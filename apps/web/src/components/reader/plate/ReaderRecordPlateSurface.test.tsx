@@ -174,7 +174,7 @@ function makeVocabularyMark(
     starts_here: true,
     ends_here: true,
     phrase: "memory",
-    phrase_type: "collocation",
+    phrase_type: "fixed_collocation",
     gloss: "记忆",
     example: "Institutional memory shapes choices.",
     ...overrides,
@@ -816,7 +816,7 @@ function makeGroupedSeg2PhraseGlossSnapshot(): ReaderPlateSnapshotDto {
     segment_end_utf16: 21,
     selected_text: "policy choices",
     phrase: "policy choices",
-    phrase_type: "collocation",
+    phrase_type: "fixed_collocation",
     gloss: "政策选择",
     example: "Policy choices shape institutions.",
   });
@@ -3966,7 +3966,7 @@ describe("ReaderRecordPlateSurface", () => {
       mark: makeVocabularyMark({
         item_type: "phrase_gloss",
         phrase: "memory",
-        phrase_type: "collocation",
+        phrase_type: "fixed_collocation",
         gloss: "记忆",
         example: "Institutional memory shapes choices.",
       }),
@@ -4028,6 +4028,122 @@ describe("ReaderRecordPlateSurface", () => {
       ).toHaveLength(0);
     },
   );
+
+  it("opens phrase_gloss Quick Peek from snapshot with subtype, gloss, learning_note, and example", async () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto => child.type === "reader_source_block",
+    );
+    if (!sourceBlock) {
+      throw new Error("Expected source block");
+    }
+    const segment = sourceBlock.children.find(
+      (child): child is ReaderAnchorSegmentNodeDto =>
+        "type" in child && child.type === "reader_anchor_segment",
+    );
+    if (!segment) {
+      throw new Error("Expected anchor segment");
+    }
+
+    const phraseMark = makeVocabularyMark({
+      mark_id: "vocab_mark_phrase_peek",
+      item_type: "phrase_gloss",
+      start_offset: 0,
+      end_offset: 20,
+      segment_start_utf16: 0,
+      segment_end_utf16: 20,
+      selected_text: "Institutional memory",
+      phrase: "Institutional memory",
+      phrase_type: "verb_expression",
+      gloss: "制度记忆",
+      learning_note: "机构内部的**经验沉淀**，不是个人记忆。常见：`institutional memory`",
+      example: "Institutional memory shapes future choices.",
+    });
+    segment.children = [
+      {
+        ...segment.children[0],
+        reader_vocabulary_marks: [phraseMark],
+      },
+    ];
+
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const markEl = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_phrase_peek"]',
+    );
+    expect(markEl).not.toBeNull();
+    fireEvent.click(markEl!);
+
+    const peek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    const peekView = within(peek);
+    expect(peekView.getByText("动词短语")).toBeTruthy();
+    expect(peekView.getByText("制度记忆")).toBeTruthy();
+    expect(peekView.getByText("例句")).toBeTruthy();
+    expect(peekView.getByText("Institutional memory shapes future choices.")).toBeTruthy();
+
+    const noteRoot = peek.querySelector('[data-testid="learning-note-markdown"]');
+    expect(noteRoot).toBeTruthy();
+    expect(
+      noteRoot?.querySelector('strong, b, [data-streamdown="strong"]')?.textContent,
+    ).toBe("经验沉淀");
+    expect(
+      noteRoot?.querySelector('code, [data-streamdown="inline-code"]')?.textContent,
+    ).toBe("institutional memory");
+    expect(noteRoot?.textContent).toContain("不是个人记忆");
+  });
+
+  it("opens phrase_gloss Quick Peek without empty chrome when learning_note and example are absent", async () => {
+    const snapshot = makeSnapshot();
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto => child.type === "reader_source_block",
+    );
+    if (!sourceBlock) {
+      throw new Error("Expected source block");
+    }
+    const segment = sourceBlock.children.find(
+      (child): child is ReaderAnchorSegmentNodeDto =>
+        "type" in child && child.type === "reader_anchor_segment",
+    );
+    if (!segment) {
+      throw new Error("Expected anchor segment");
+    }
+
+    const phraseMark = makeVocabularyMark({
+      mark_id: "vocab_mark_phrase_minimal",
+      item_type: "phrase_gloss",
+      start_offset: 0,
+      end_offset: 20,
+      segment_start_utf16: 0,
+      segment_end_utf16: 20,
+      selected_text: "Institutional memory",
+      phrase: "Institutional memory",
+      phrase_type: "fixed_collocation",
+      gloss: "制度记忆",
+      learning_note: null,
+      example: null,
+    });
+    segment.children = [
+      {
+        ...segment.children[0],
+        reader_vocabulary_marks: [phraseMark],
+      },
+    ];
+
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const markEl = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_phrase_minimal"]',
+    );
+    expect(markEl).not.toBeNull();
+    fireEvent.click(markEl!);
+
+    const peek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    const peekView = within(peek);
+    expect(peekView.getByText("固定搭配")).toBeTruthy();
+    expect(peekView.getByText("制度记忆")).toBeTruthy();
+    expect(peekView.queryByText("例句")).toBeNull();
+    expect(peek.querySelector('[data-testid="learning-note-markdown"]')).toBeNull();
+  });
 
   it("opens grouped phrase_gloss in the dictionary rail with the AI gloss inserted above definitions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
