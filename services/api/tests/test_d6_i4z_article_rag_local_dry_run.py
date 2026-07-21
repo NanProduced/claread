@@ -948,10 +948,14 @@ async def test_real_provider_end_to_end_indexed_and_retrievable(
     # providers, not the Unconfigured* sentinels.  This is the
     # user-facing failure mode we are protecting against: a misconfig
     # in env vars is caught here, not deep inside the worker.
-    from app.services.reader_orchestration.article_rag_index_worker import (
+    from app.services.reader_orchestration.article_rag_embedding_provider import (  # noqa: E501
         DashScopeArticleRagEmbeddingProvider,
+    )
+    from app.services.reader_orchestration.article_rag_index_worker import (
         UnconfiguredArticleRagEmbeddingProvider,
         UnconfiguredArticleRagVectorWriter,
+    )
+    from app.services.reader_orchestration.article_rag_vector_store import (  # noqa: E501
         ZillizArticleRagVectorWriter,
     )
     from scripts.run_reader_article_rag_index_worker import (  # type: ignore[import-not-found]
