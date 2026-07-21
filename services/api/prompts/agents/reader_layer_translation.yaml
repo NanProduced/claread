@@ -4,27 +4,37 @@ content: |
 
   任务只针对单个 reading unit，输出结构化 `TranslationLayerGenerationOutput`（生成态结构，由后续层负责补齐 `group_id` / `source_text_hash` / 持久化字段）。
 
-  Group 粒度（必须遵守）：
-  - 你的主要翻译对象是完整的 unit `source_text`，不是逐句填表。
-  - 必须输出"semantic reading groups"：每个 group 覆盖一段在语义上属于同一阅读单元（同一动作、同一论证步骤、同一个例子、同一个转折、同一条解释链）的连续 anchor segments。
-  - 严禁机械地为每个 anchor segment 单独建组（"one group per anchor segment"）。`target_segments` 是你需要在结果里回填的 anchor handles，不是输出粒度模板。
+  ## Group 粒度（必须遵守）
+
+  - 主要翻译对象是完整的 unit `source_text`，不是逐句填表。
+  - 必须输出 semantic reading groups：每个 group 覆盖一段在语义上属于同一阅读单元（同一动作、同一论证步骤、同一个例子、同一个转折、同一条解释链）的连续 anchor segments。
+  - 严禁机械地为每个 anchor segment 单独建组（one group per anchor segment）。`target_segments` 是需要在结果里回填的 anchor handles，不是输出粒度模板。
   - 一个 group 可以包含 1 个或多个连续 anchor_segment_ids。
   - 短而连续的句子如果共同表达一个语义动作、论证步骤、例子、转折或解释链，应合并为一个 group。
   - 标题、列表项、独立段落的超长复杂句可以单独成组。
-  - 不要追求把整段压成一个 group；也不要追求逐句拆开。让语义阅读单元决定粒度。
+  - 不要追求把整段压成一个 group，也不要追求逐句拆开；由语义阅读单元决定粒度。
   - 不要为了凑数量而硬拆，也不要为了简洁而硬合。
   - 没有硬性的 group size 阈值；由语义决定。
 
-  输出结构约束（生成态严格白名单）：
-  - 顶层只输出 `TranslationLayerGenerationOutput`（即 `groups: [...]` 数组）。
-  - 每个 group 仅允许两个字段：`groups[].anchor_segment_ids`（string[]，连续 anchor_segment_id 列表）和 `groups[].translated_text`（string）。只输出 `groups[].anchor_segment_ids` 和 `groups[].translated_text`。
-  - 严禁输出：`group_id`、`source_text`、`source_text_hash`、`segment_sources`、`profile`、`source_language`、`target_language`、`diagnostics`、`confidence`、`reason`、`notes`、`coverage_json`、`quality_json`，以及任何 UI / Plate / Slate / DOM 字段。`group_id` 与 `source_text_hash` 由 publisher 在收到本结构后基于 anchor_segment_ids 跨度计算补齐，不要在生成态写入。
+  ## 输出结构约束（生成态严格白名单）
+
+  - 顶层只输出 `TranslationLayerGenerationOutput`（即 `groups: [...]`）。
+  - 每个 group 仅允许两个字段：`groups[].anchor_segment_ids`（string[]）和 `groups[].translated_text`（string）。只输出 `groups[].anchor_segment_ids` 和 `groups[].translated_text`。
+  - 严禁输出：`group_id`、`source_text`、`source_text_hash`、`segment_sources`、`profile`、`source_language`、`target_language`、`diagnostics`、`confidence`、`reason`、`notes`、`coverage_json`、`quality_json`，以及任何 UI / Plate / Slate / DOM 字段。`group_id` 与 `source_text_hash` 由 publisher 补齐。
   - 不要输出解释段落或额外字段。
 
-  语言与翻译质量：
-  - 目标语言由任务上下文（本 prompt 头部 `target_language` 行）指定；不要在生成结构中回写 `target_language` 字段。
+  ## 翻译质量合同
+
+  - 目标语言由任务上下文（prompt 头部 `target_language` 行）指定；不要在生成结构中回写 `target_language` 字段。
   - `translated_text` 必须使用简体中文（即使原文是英文）。
-  - 只翻译给定 `source_text`，不要补充未出现的信息。
-  - 每个 group 的 `translated_text` 必须完整覆盖该 group 内所有 anchor segments 的语义，不省略。
-  - `translated_text` 输出纯文本，不要使用 Markdown 格式；前端会用固定样式（灰色小字、引用块边框）渲染译文，与原文形成视觉区分。
-  - 翻译应自然、忠实，并保留引号、强调和关键专有名词语义。
+  - 准确完整：只翻译给定 `source_text`，不增删原意，不补充未出现的信息。
+  - 每个 group 的 `translated_text` 必须完整覆盖该 group 内所有 anchor segments 的语义。
+  - 自然中文优先：通顺、可读；不要机械贴合英语语序或逐词硬译。
+  - 保留因果、转折、让步、比较、限定、指代等关键逻辑关系；不要漏掉从句、插入语或关键限定信息。
+  - 在准确性优先的前提下，可兼顾语气与文体（庄重、口语、文学等随原文而定）。
+  - 人名、地名、机构名与术语：有通行中文译名时用通行译名；缩写或英文对识别确有必要时才保留；不要臆造中文译名；同一输出内译名保持一致。
+  - `translated_text` 只包含译文，纯文本：禁止 Markdown；禁止追加语法、词汇、同义替换、题型、修辞或任何教学点评（包括括号里的教学备注）。
+
+  ## 策略行
+
+  若 prompt 中提供 reading_goal / reading_variant 策略行：仅作轻量语体/用户背景提示；不得推翻上述质量合同。

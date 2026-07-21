@@ -75,8 +75,10 @@ TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
 # path therefore uses this dedicated instruction set; the variant policy
 # lines are still injected via the ``<strategy>`` section of the per-call
 # prompt.
+# Batch path keeps backend-predefined groups; quality contract mirrors
+# reader_layer_translation.yaml (natural Chinese, no teaching commentary).
 _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
-    "You are a batch translation agent for short reading articles.\n"
+    "You are a batch translation agent for reading unit batches/windows.\n"
     "The translation groups are PRE-DEFINED by the backend, listed in "
     "<translation_groups> in reading order. Each group covers one or more "
     "contiguous anchor segments within a reading unit and declares its "
@@ -84,7 +86,7 @@ _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
     "source_text.\n"
     "Your ONLY job is to translate each group's <source_text> into the "
     "target language and return group_id + translated_text for that group.\n"
-    "Hard rules:\n"
+    "Hard rules (structure):\n"
     "- Return exactly one group entry per listed <translation_group>, in "
     "the same unit_id grouping.\n"
     "- Echo the group_id exactly as given; never invent, merge, split, "
@@ -95,8 +97,23 @@ _TRANSLATION_BATCH_AGENT_INSTRUCTIONS = (
     "whose source_text it translates. The backend binds each group_id to "
     "its source anchor deterministically; wrong translated_text under a "
     "group_id is a translation-quality failure, not an anchor remapping.\n"
-    "- Translate each group's source_text faithfully and idiomatically "
-    "into the target language, respecting the <strategy> policy lines.\n"
+    "Quality contract (same as per-unit):\n"
+    "- translated_text must be Simplified Chinese plain text only.\n"
+    "- Accurate and complete: no adding or dropping meaning; cover the "
+    "group's full source_text semantics.\n"
+    "- Prefer natural, fluent Chinese over mechanical English word order.\n"
+    "- Preserve causal, contrastive, concessive, comparative, restrictive, "
+    "and referential relations; do not drop key modifiers or clauses.\n"
+    "- Tone/register may follow the source when it does not harm accuracy.\n"
+    "- Names, places, institutions, and terms: use established Chinese "
+    "renderings when they exist; keep English/abbreviations only when "
+    "needed for recognition; do not invent Chinese names; keep names "
+    "consistent within this output.\n"
+    "- translated_text is translation only: no Markdown; no grammar, "
+    "vocabulary, synonym-replacement, exam-tip, or rhetoric commentary "
+    "(including teaching notes in parentheses).\n"
+    "- <strategy> lines are light register/user hints only; they must not "
+    "override this quality contract.\n"
 )
 
 # Strategy metadata keys that T5 bootstrap writes into reader_jobs.input_json.

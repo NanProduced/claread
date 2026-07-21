@@ -1091,6 +1091,160 @@ def test_translation_agent_instructions_require_semantic_groups_and_drop_legacy_
         )
 
 
+_R5_QUALITY_MARKERS = (
+    "准确完整",
+    "自然",
+    "因果",
+    "转折",
+    "指代",
+    "通行中文译名",
+    "同一输出内译名保持一致",
+    "纯文本",
+    "教学点评",
+)
+
+_R5_BATCH_QUALITY_MARKERS = (
+    "natural, fluent Chinese",
+    "Accurate and complete",
+    "causal, contrastive",
+    "established Chinese",
+    "consistent within this output",
+    "translation only",
+    "teaching notes",
+)
+
+
+def test_per_unit_translation_instructions_contain_r5_quality_contract() -> None:
+    """Per-unit agent YAML carries the shared translation quality contract."""
+    instructions = load_agent_instructions("reader_layer_translation")
+    for marker in _R5_QUALITY_MARKERS:
+        assert marker in instructions, f"missing quality marker: {marker!r}"
+    assert "机械贴合英语语序" in instructions or "不要机械贴合" in instructions
+    assert "同义替换" in instructions  # forbidden as commentary in quality contract
+    assert "Markdown" in instructions
+    # No first-mention state machine requirement
+    assert "全文首次出现" not in instructions
+    assert "first-mention" not in instructions.lower()
+
+
+def test_batch_translation_instructions_contain_r5_quality_contract() -> None:
+    """Batch path instructions share the same quality contract (English phrasing)."""
+    from app.services.reader_orchestration.translation_worker import (
+        _TRANSLATION_BATCH_AGENT_INSTRUCTIONS,
+    )
+
+    batch = _TRANSLATION_BATCH_AGENT_INSTRUCTIONS
+    for marker in _R5_BATCH_QUALITY_MARKERS:
+        assert marker in batch, f"batch missing quality marker: {marker!r}"
+    # Structural batch contract preserved
+    assert "PRE-DEFINED" in batch
+    assert "group_id" in batch
+    assert "translated_text" in batch
+    assert "never invent, merge, split" in batch.lower()
+    assert "first-mention" not in batch.lower()
+    assert "full-article" not in batch.lower()
+
+
+# Soft-lens boundary: these belong only in agent quality contracts, not variants.
+_R5_VARIANT_LAYER_FORBIDDEN = (
+    # Quality-contract bans / mechanics
+    "教学点评",
+    "词汇注释",
+    "题型提示",
+    "题型",
+    "拆句",
+    "合句",
+    "英语语序",
+    "英文语序",
+    "逐词硬译",
+    "增删原意",
+    "Markdown",
+    "同义替换",
+    "语法讲解",
+    "词汇讲解",
+    "修辞分析",
+    "教学说明",
+    "教学备注",
+    "固定拆合",
+    "硬性规定",
+    # Legacy hard templates
+    "尽量保留原文的逻辑顺序和句子结构",
+    "句法映射",
+    "适当拆分为短句",
+    "此处 contribute to",
+    "此处 be attributed to",
+    "此处原文用暗喻",
+    "此处 XX 指的是",
+    "通行中文译名",  # quality contract, not soft lens
+)
+
+
+@pytest.mark.parametrize(
+    "goal,variant",
+    [
+        ("daily_reading", "beginner_reading"),
+        ("daily_reading", "intermediate_reading"),
+        ("daily_reading", "intensive_reading"),
+        ("exam", "gaokao"),
+        ("exam", "cet"),
+        ("exam", "kaoyan"),
+        ("exam", "tem"),
+        ("exam", "ielts_toefl"),
+    ],
+)
+def test_translation_variant_soft_lenses_omit_quality_contract_rules(
+    goal: str, variant: str
+) -> None:
+    """Variant translation lines must not restate the stable quality contract
+    (including teaching bans and hard sentence-handling rules)."""
+    strategy = resolve_reader_variant_strategy(goal, variant)
+    text = "\n".join(strategy.layers["translation"].prompt_lines)
+    for fragment in _R5_VARIANT_LAYER_FORBIDDEN:
+        assert fragment not in text, (
+            f"{variant} translation soft lens still contains {fragment!r}"
+        )
+    assert strategy.layers["translation"].prompt_lines
+    assert all(line.strip() for line in strategy.layers["translation"].prompt_lines)
+    # Soft lenses stay short: 1–2 lines of user/register orientation.
+    assert 1 <= len(strategy.layers["translation"].prompt_lines) <= 2
+
+
+def test_translation_variant_soft_lenses_remain_distinguishable() -> None:
+    """Variants keep light differentiation without becoming templates."""
+    beginner = "\n".join(
+        resolve_reader_variant_strategy("daily_reading", "beginner_reading")
+        .layers["translation"]
+        .prompt_lines
+    )
+    intensive = "\n".join(
+        resolve_reader_variant_strategy("daily_reading", "intensive_reading")
+        .layers["translation"]
+        .prompt_lines
+    )
+    kaoyan = "\n".join(
+        resolve_reader_variant_strategy("exam", "kaoyan")
+        .layers["translation"]
+        .prompt_lines
+    )
+    ielts = "\n".join(
+        resolve_reader_variant_strategy("exam", "ielts_toefl")
+        .layers["translation"]
+        .prompt_lines
+    )
+    tem = "\n".join(
+        resolve_reader_variant_strategy("exam", "tem")
+        .layers["translation"]
+        .prompt_lines
+    )
+
+    assert "初学者" in beginner or "通俗" in beginner
+    assert "语气" in intensive or "节奏" in intensive or "文体" in intensive
+    assert "层次" in kaoyan or "论证" in kaoyan
+    assert "学术" in ielts
+    assert "语气" in tem or "节奏" in tem or "文体" in tem
+    assert len({beginner, intensive, kaoyan, ielts, tem}) == 5
+
+
 def test_build_translation_prompt_differs_between_daily_intermediate_and_exam_cet() -> None:
     """daily_reading/intermediate_reading and exam/cet must produce
     different strategy sections in the prompt."""
