@@ -1444,3 +1444,178 @@ async def test_mismatched_source_provenance_cannot_publish_layer_or_event(
         )
     after_publish = await _seq_and_layer_counts(outline_env, article.record_id)
     assert after_publish == before_publish
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: run state machine closure (TDD)
+#   (a) generic Exception + max_attempts -> reader_runs.failed_terminal
+#   (b) FenceViolation -> reader_runs.superseded
+#   (c) success -> reader_runs.completed (safety net)
+# ---------------------------------------------------------------------------
+
+
+class _RaisingSemanticOutlineGenerator:
+    """Test double: raises a generic Exception on generate (not FenceViolation,
+    not SemanticOutlineGenerationError) to exercise the worker's outer
+    except-Exception branch where reader_runs must transition to
+    failed_terminal together with reader_jobs.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+        self.calls: list[SemanticOutlineJobContext] = []
+
+    async def generate(
+        self, context: SemanticOutlineJobContext
+    ) -> SemanticOutlineExecutionResult:
+        self.calls.append(context)
+        raise self._exc
+
+
+class _FenceViolatingPublisher:
+    """Test double: publish_from_candidates always raises FenceViolationError
+    so the worker's FenceViolation handler is exercised end-to-end.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def publish_from_candidates(self, **kwargs: object) -> None:
+        self.calls.append(dict(kwargs))
+        raise FenceViolationError("publish_fence_failed")
+
+
+async def _latest_job_and_run_status(
+    pool: asyncpg.Pool, job_type: str
+) -> tuple[str | None, str | None]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT j.status AS job_status, r.status AS run_status
+            FROM reader_jobs j
+            JOIN reader_runs r ON r.id = j.run_id
+            WHERE j.job_type = $1
+            ORDER BY j.created_at DESC
+            LIMIT 1
+            """,
+            job_type,
+        )
+    if row is None:
+        return None, None
+    return row["job_status"], row["run_status"]
+
+
+async def test_run_transitions_to_failed_terminal_on_generic_exception_max_attempts(
+    outline_env: asyncpg.Pool,
+) -> None:
+    """Generic Exception on the final attempt must terminalize both
+    reader_jobs and reader_runs. RED point: run stays in 'running' today."""
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env, user_id=user_id, plain_text="Generic exc body."
+    )
+    await _bootstrap_outline(
+        outline_env, record_id=article.record_id, user_id=user_id
+    )
+    # Force attempt_count >= max_attempts so the generic Exception branch
+    # takes the failed_terminal sub-path (not retry_later).
+    async with outline_env.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET max_attempts = 1 WHERE job_type = $1",
+            SEMANTIC_OUTLINE_JOB_TYPE,
+        )
+    worker = SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=_RaisingSemanticOutlineGenerator(RuntimeError("boom")),
+    )
+    result = await worker.process_next_semantic_outline_job(
+        lease_owner="outline-generic-exc",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert result is not None
+    assert result.status == "failed_terminal"
+    assert result.error_code == "RuntimeError"
+
+    job_status, run_status = await _latest_job_and_run_status(
+        outline_env, SEMANTIC_OUTLINE_JOB_TYPE
+    )
+    assert job_status == "failed_terminal"
+    # RED: current code transitions the job but leaves the run in 'running'.
+    assert run_status == "failed_terminal"
+
+
+async def test_run_transitions_to_superseded_on_fence_violation(
+    outline_env: asyncpg.Pool,
+) -> None:
+    """FenceViolation during publish must supersede both reader_jobs and
+    reader_runs. RED point: run stays in 'running' today."""
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env, user_id=user_id, plain_text="Fence violation body."
+    )
+    await _bootstrap_outline(
+        outline_env, record_id=article.record_id, user_id=user_id
+    )
+    worker = SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=FakeSemanticOutlineGenerator(_nested_candidates()),
+        publisher=_FenceViolatingPublisher(),
+    )
+    with pytest.raises(FenceViolationError):
+        await worker.process_next_semantic_outline_job(
+            lease_owner="outline-fence",
+            lease_duration=timedelta(seconds=30),
+        )
+
+    job_status, run_status = await _latest_job_and_run_status(
+        outline_env, SEMANTIC_OUTLINE_JOB_TYPE
+    )
+    assert job_status == "superseded"
+    # RED: current code supersedes the job but leaves the run in 'running'.
+    assert run_status == "superseded"
+
+
+async def test_run_stays_completed_on_success(
+    outline_env: asyncpg.Pool,
+) -> None:
+    """Success path must mark both reader_jobs and reader_runs as completed.
+    Safety net: confirms the success path is not broken by the fix."""
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env, user_id=user_id, plain_text="Success body."
+    )
+    async with outline_env.acquire() as conn:
+        unit_id = await conn.fetchval(
+            "SELECT unit_id FROM reading_units WHERE reading_record_id = $1 LIMIT 1",
+            article.record_id,
+        )
+    candidates = (
+        SemanticOutlineCandidateNode(
+            candidate_ref="only",
+            parent_candidate_ref=None,
+            depth=1,
+            title="Only",
+            start_unit_id=unit_id,
+            end_unit_id=unit_id,
+        ),
+    )
+    await _bootstrap_outline(
+        outline_env, record_id=article.record_id, user_id=user_id
+    )
+    worker = SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=FakeSemanticOutlineGenerator(candidates),
+    )
+    result = await worker.process_next_semantic_outline_job(
+        lease_owner="outline-success",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert result is not None
+    assert result.status == "succeeded"
+
+    job_status, run_status = await _latest_job_and_run_status(
+        outline_env, SEMANTIC_OUTLINE_JOB_TYPE
+    )
+    # reader_jobs uses STATUS_SUCCEEDED="succeeded"; reader_runs uses "completed".
+    assert job_status == "succeeded"
+    assert run_status == "completed"

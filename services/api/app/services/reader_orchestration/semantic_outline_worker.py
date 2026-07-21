@@ -431,6 +431,14 @@ class SemanticOutlineWorkerService:
                 await self._mark_claimed_job_superseded(
                     claim, rationale_code="publish_fence_failed"
                 )
+                # Mirror grammar_worker: supersede the run together with the
+                # job so reader_runs does not stick in 'running' after a
+                # publish-fence failure (see grammar_worker.py L978-984).
+                await self._mark_run_superseded(
+                    claim.run_id,
+                    failure_class="publish_guard",
+                    failure_code="publish_fence_failed",
+                )
                 raise
 
             if publish_result.outcome in {"published", "idempotent_reuse"}:
@@ -541,6 +549,13 @@ class SemanticOutlineWorkerService:
                     failure_code=type(exc).__name__,
                     failure_message=str(exc)[:240],
                     rationale_code="semantic_outline_worker_error",
+                )
+                # Close the run together with the job so reader_runs does not
+                # stick in 'running' after the worker's final attempt fails.
+                await self._mark_run_failed_terminal(
+                    claim.run_id,
+                    failure_class="worker",
+                    failure_code=type(exc).__name__,
                 )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
@@ -775,6 +790,39 @@ class SemanticOutlineWorkerService:
                 """
                 UPDATE reader_runs
                 SET status = 'failed_terminal',
+                    failure_class = $2,
+                    failure_code = $3,
+                    finished_at = COALESCE(finished_at, NOW()),
+                    updated_at = NOW()
+                WHERE id = $1
+                  AND status IN (
+                      'queued', 'running', 'waiting_user', 'waiting_quota', 'paused'
+                  )
+                """,
+                run_id,
+                failure_class,
+                failure_code,
+            )
+
+    async def _mark_run_superseded(
+        self,
+        run_id: UUID,
+        *,
+        failure_class: str,
+        failure_code: str,
+    ) -> None:
+        """Transition reader_runs to 'superseded' alongside a superseded job.
+
+        Mirrors :meth:`_mark_run_failed_terminal` shape (guarded WHERE so an
+        already-terminal run is never overwritten). Mirrors grammar_worker's
+        ``_mark_run_status(status="superseded", ...)`` (see grammar_worker.py
+        L978-984).
+        """
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_runs
+                SET status = 'superseded',
                     failure_class = $2,
                     failure_code = $3,
                     finished_at = COALESCE(finished_at, NOW()),
