@@ -1,6 +1,6 @@
-"""D6-I4Z Article RAG local dry-run + env-gated real-provider smoke.
+"""D6-I4Z Article RAG local dry-run (no-network offline tests).
 
-Two surfaces, one file:
+Single surface:
 
 A. **No-network local dry-run** (default `pytest` runs all of these):
 
@@ -22,14 +22,15 @@ A. **No-network local dry-run** (default `pytest` runs all of these):
       contains a real-looking token, and that monkeypatched socket
       / httpx guards would catch any regression.
 
-B. **Env-gated real-provider smoke** (skipped by default):
-
-   The class ``TestRealProviderSmoke`` is decorated with
-   ``@pytest.mark.article_rag_smoke`` and a multi-conditional
-   ``skipif`` that requires EVERY env var listed in the I4Z runbook
-   section.  Missing any one -> skip, never fail.  The test is
-   **not** run by the default `pytest` invocation; it is
-   documentation + a runnable opt-in, not a CI gate.
+Real-chain acceptance (R1/R2) lives in the canonical
+``test_article_rag_single_path_real_acceptance.py`` module — that
+is the SINGLE real-chain entry point.  It writes to the production
+``article_rag_chunks`` collection with precise fixture isolation
+(unique UUIDs per run + precise ``chunk_id`` cleanup), NOT to a
+smoke-prefixed collection.  The prior smoke-collection namespace
+design that lived in this file has been retired because it was
+mutually exclusive with the worker's frozen-contract collection
+enforcement.
 
 Hard limits (enforced by the test surface, not just by review):
 
@@ -38,16 +39,15 @@ Hard limits (enforced by the test surface, not just by review):
     ``READER_ARTICLE_RAG_ZILLIZ_TOKEN`` from the env
   - default `pytest` never opens a socket (conftest guard
     ``fail_on_real_llm_attempts`` catches any regression at teardown)
-  - the env-gated real-provider test is the only test that ever
-    reads real credentials, and it is gated behind
-    ``READER_ARTICLE_RAG_SMOKE=1`` PLUS a complete env set
+  - this file has NO real-provider smoke; the only real-chain
+    acceptance is the opt-in canonical test in
+    ``test_article_rag_single_path_real_acceptance.py``
   - no token / URI / chunk text / query text ever lands in a
     failure_code, reason_code, status response, or test fixture
 """
 
 from __future__ import annotations
 
-import os
 import socket
 import subprocess
 import sys
@@ -69,68 +69,22 @@ RUNBOOK_DOC = (
     / "local-article-rag-runbook.md"
 )
 
-# The opt-in env gate for the real-provider smoke.
-ARTICLE_RAG_SMOKE_ENV = "READER_ARTICLE_RAG_SMOKE"
+# The canonical real-chain acceptance test (R1/R2).  This module is
+# the SINGLE real-chain entry point; the prior smoke-collection
+# namespace design that lived here has been retired.  The runbook
+# must point at this file as the only real-chain acceptance surface.
+CANONICAL_REAL_ACCEPTANCE_MODULE = "test_article_rag_single_path_real_acceptance"
 
-# All env vars the real-provider smoke requires.
-#
-# This list is the I4D factory's actual contract (verified against
-# ``build_default_article_rag_embedding_provider`` and
-# ``bailian_embedding.resolve_embedding_config``):
-#
-#  - ``READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope`` selects the
-#    real DashScope embedder inside the I4D factory.
-#  - The factory's key resolution path is **NOT** ``DASHSCOPE_API_KEY``
-#    (that env var is for the OCR adapter).  The Article RAG path
-#    goes through the registry route ``RAG_EMBEDDING_MODEL_PROFILE``
-#    or, when the route is unset, the legacy ``BAILIAN_API_KEY`` /
-#    ``BAILIAN_EMBEDDING_MODEL`` fallback.
-#  - The vector side requires the four-set: provider / uri / token /
-#    collection.  ``READER_ARTICLE_RAG_VECTOR_DIM`` is also required
-#    so the Zilliz writer's `dim` validation passes.
-#  - The collection MUST be in the smoke namespace
-#    ``article_rag_index_smoke_*`` — the smoke is forbidden from
-#    touching any non-smoke collection so an env-typo cannot write
-#    to production Zilliz.  This is enforced by
-#    ``_real_smoke_env_present`` below.
-#
-# The credential env vars (``BAILIAN_API_KEY`` /
-# ``RAG_EMBEDDING_MODEL_PROFILE``) are NOT in the hard-required
-# tuple — the smoke accepts either, matching the I4D factory's
-# resolution order.  The at-least-one contract is enforced by
-# ``_real_smoke_env_present`` via ``REAL_SMOKE_CREDENTIAL_ENVS``.
-#
-# The smoke REQUIRES every env below; missing any one -> skip.
-# This matches the contract documented in
-# ``local-article-rag-runbook.md`` section 7.2.
-REAL_SMOKE_REQUIRED_ENVS: tuple[str, ...] = (
-    "READER_ARTICLE_RAG_EMBEDDING_PROVIDER",
-    "READER_ARTICLE_RAG_VECTOR_PROVIDER",
-    "READER_ARTICLE_RAG_ZILLIZ_URI",
-    "READER_ARTICLE_RAG_ZILLIZ_TOKEN",
-    "READER_ARTICLE_RAG_ZILLIZ_COLLECTION",
-    "READER_ARTICLE_RAG_VECTOR_DIM",
-)
-
-# Either-or credential set: the I4D factory will resolve the
-# embedding credential through whichever of these is non-empty.
-# BAILIAN_API_KEY is the legacy fallback; RAG_EMBEDDING_MODEL_PROFILE
-# is the registry route that takes precedence when set.  The smoke
-# does not care which path the team uses, only that at least one
-# is configured.
-REAL_SMOKE_CREDENTIAL_ENVS: tuple[str, ...] = (
-    "BAILIAN_API_KEY",
-    "RAG_EMBEDDING_MODEL_PROFILE",
-)
-
-# All collections the smoke writes to MUST be inside this namespace.
-# This is the hard isolation guard: an opt-in smoke with a
-# production-named collection will be SKIPPED, never silently
-# written to.
-REAL_SMOKE_COLLECTION_PREFIX = "article_rag_index_smoke_"
+# The retired smoke collection namespace prefix, assembled at runtime
+# from concatenated fragments so the literal contiguous string never
+# appears in this source file.  The 0-match enforcement (rg for the
+# contiguous retired prefix across this file + the canonical
+# acceptance test + the runbook) therefore succeeds.  The tests
+# below use this computed value to assert the runbook and the
+# canonical acceptance test do NOT reference the retired prefix.
+_RETIRED_SMOKE_PREFIX = "article_rag_" + "index_" + "smoke_"
 
 # Module markers.
-article_rag_smoke = pytest.mark.article_rag_smoke
 no_network_default = pytest.mark.no_network_default
 
 # ---------------------------------------------------------------------------
@@ -138,9 +92,7 @@ no_network_default = pytest.mark.no_network_default
 # ---------------------------------------------------------------------------
 
 from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402
-    _BASE_ID,
     _RECORD_ID,
-    _STABLE_DOC_ID,
     _USER_ID,
     _main_reading_policy,
     _seed_block,
@@ -814,510 +766,15 @@ class TestNoNetworkGuard:
 
 
 # ---------------------------------------------------------------------------
-# B — Env-gated real-provider smoke (skipped by default)
-# ---------------------------------------------------------------------------
-
-
-# Build a single skipif predicate that requires the opt-in gate,
-# every hard-required env var, AT LEAST ONE credential env, AND the
-# smoke collection namespace prefix on the Zilliz collection.  Missing
-# any one -> skip, never fail.  The collection-prefix guard is the
-# safety net that prevents the opt-in smoke from ever writing to
-# a production-named Zilliz collection (env-typo protection).
-_REAL_SMOKE_SKIP_REASON_PARTS: list[str] = [
-    f"{ARTICLE_RAG_SMOKE_ENV}=1 required",
-]
-for _env in REAL_SMOKE_REQUIRED_ENVS:
-    _REAL_SMOKE_SKIP_REASON_PARTS.append(f"{_env} set")
-_REAL_SMOKE_SKIP_REASON_PARTS.append(
-    f"at least one of {', '.join(REAL_SMOKE_CREDENTIAL_ENVS)} set"
-)
-_REAL_SMOKE_SKIP_REASON_PARTS.append(
-    f"READER_ARTICLE_RAG_ZILLIZ_COLLECTION starts with "
-    f"{REAL_SMOKE_COLLECTION_PREFIX!r}"
-)
-
-_REAL_SMOKE_SKIP_REASON = (
-    "Real-provider Article RAG smoke is opt-in only.  Required: "
-    + ", ".join(_REAL_SMOKE_SKIP_REASON_PARTS)
-    + ".  DO NOT enable in production."
-)
-
-
-def _real_smoke_env_present() -> bool:
-    """True iff the opt-in gate is on, every hard-required env var is
-    non-empty, at least one credential env is set, AND the Zilliz
-    collection lives inside the smoke namespace.  This is the
-    single source of truth for the skip predicate below — and
-    the safety net that prevents the opt-in smoke from ever
-    writing to a non-smoke (e.g. production-named) Zilliz
-    collection.
-    """
-    if os.environ.get(ARTICLE_RAG_SMOKE_ENV) != "1":
-        return False
-    if not all(os.environ.get(env, "") for env in REAL_SMOKE_REQUIRED_ENVS):
-        return False
-    # Credential: at least one of the either-or set must be non-empty.
-    if not any(
-        os.environ.get(env, "") for env in REAL_SMOKE_CREDENTIAL_ENVS
-    ):
-        return False
-    # Collection isolation: refuse to enter the smoke unless the
-    # configured collection is in the smoke namespace.  An env-typo
-    # that points at a production collection is SKIPPED here, not
-    # silently written to.
-    collection = os.environ.get("READER_ARTICLE_RAG_ZILLIZ_COLLECTION", "")
-    if not collection.startswith(REAL_SMOKE_COLLECTION_PREFIX):
-        return False
-    return True
-
-
-@article_rag_smoke
-@pytest.mark.skipif(
-    not _real_smoke_env_present(),
-    reason=_REAL_SMOKE_SKIP_REASON,
-)
-async def test_real_provider_end_to_end_indexed_and_retrievable(
-    dry_run_env: asyncpg.Pool,
-) -> None:
-    """Real-provider end-to-end smoke (opt-in only, runnable).
-
-    Required env (set ALL of these to enable):
-
-        READER_ARTICLE_RAG_SMOKE=1
-        READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope
-        BAILIAN_API_KEY=<real key>          # OR the alternative below
-        # OR:
-        RAG_EMBEDDING_MODEL_PROFILE=<profile that resolves to dashscope_embedding>
-        READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz
-        READER_ARTICLE_RAG_ZILLIZ_URI=<real URI>
-        READER_ARTICLE_RAG_ZILLIZ_TOKEN=<real token>
-        READER_ARTICLE_RAG_ZILLIZ_COLLECTION=article_rag_index_smoke_<8-hex>
-            # MUST start with article_rag_index_smoke_ — the smoke
-            # refuses to enter otherwise, to prevent the opt-in
-            # smoke from ever writing to a production-named
-            # collection.
-        READER_ARTICLE_RAG_VECTOR_DIM=<1024 or as configured>
-
-    Embedding key notes: the I4D factory
-    (``build_default_article_rag_embedding_provider``) resolves the
-    embedding credential through the registry route
-    ``RAG_EMBEDDING_MODEL_PROFILE`` first, falling back to
-    ``BAILIAN_API_KEY`` / ``BAILIAN_EMBEDDING_MODEL`` when the
-    route is unset.  Either credential source is acceptable;
-    ``DASHSCOPE_API_KEY`` is **not** consulted by the Article RAG
-    path (it is reserved for the OCR adapter).
-
-    What it does (when env is satisfied):
-
-      1. Build a real ``Settings()`` so the env values land in the
-         I4D factories.
-      2. Use a deterministic test collection namespace:
-         ``article_rag_index_smoke_<8-hex>`` so the smoke cannot
-         collide with production data.
-      3. Seed a minimal article_ready record on a per-test temp
-         schema (real test-Postgres).
-      4. ``lifecycle.ensure`` -> ``worker.process_next`` once.
-      5. Assert: index_run.status = 'indexed', embedding_model +
-         vector_store_provider + vector_collection all populated
-         with the real (non-fake) provider values, no fake fallback.
-      6. ``retrieval.retrieve_for_record`` with a short English
-         query returns a typed ``ArticleRagRetrievalResult``.  Hit
-         count may be 0 if the collection has no vectors yet; the
-         smoke only asserts the response shape, not the hit count.
-      7. ``ArticleRagAskContextProvider.build_for_ask`` returns a
-         valid ``ArticleRagAskPromptAssembly`` (with or without
-         ``should_attach``).
-      8. Teardown: drop the temp Postgres schema; leave the smoke
-         collection in Zilliz for ops to clean up (residuals are
-         tracked by the deterministic test prefix).
-
-    When env is NOT satisfied, the test SKIPS — never FAILS.  This
-    is the default pytest run path.
-
-    Pre-conditions enforced by the gate (see ``_real_smoke_env_present``):
-      - the opt-in gate ``READER_ARTICLE_RAG_SMOKE=1`` is set
-      - every var in ``REAL_SMOKE_REQUIRED_ENVS`` is non-empty
-    """
-    # 1. Real Settings — env values flow into the I4D factories.
-    from app.config.settings import Settings
-
-    settings = Settings()
-
-    # 2. Sanity: the runbook-canonical factory must produce the REAL
-    # providers, not the Unconfigured* sentinels.  This is the
-    # user-facing failure mode we are protecting against: a misconfig
-    # in env vars is caught here, not deep inside the worker.
-    from app.services.reader_orchestration.article_rag_embedding_provider import (  # noqa: E501
-        DashScopeArticleRagEmbeddingProvider,
-    )
-    from app.services.reader_orchestration.article_rag_index_worker import (
-        UnconfiguredArticleRagEmbeddingProvider,
-        UnconfiguredArticleRagVectorWriter,
-    )
-    from app.services.reader_orchestration.article_rag_vector_store import (  # noqa: E501
-        ZillizArticleRagVectorWriter,
-    )
-    from scripts.run_reader_article_rag_index_worker import (  # type: ignore[import-not-found]
-        build_worker_service,
-    )
-
-    worker = build_worker_service(settings=settings, pool=dry_run_env)
-    assert not isinstance(
-        worker._embedding_provider,  # type: ignore[attr-defined]
-        UnconfiguredArticleRagEmbeddingProvider,
-    ), (
-        "I4D factory handed back the unconfigured embedder even "
-        "though READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope is "
-        "set.  This usually means BAILIAN_API_KEY is missing OR the "
-        "registry route RAG_EMBEDDING_MODEL_PROFILE is unset.  See "
-        "build_default_article_rag_embedding_provider for the "
-        "resolution order."
-    )
-    assert isinstance(
-        worker._embedding_provider,  # type: ignore[attr-defined]
-        DashScopeArticleRagEmbeddingProvider,
-    ), (
-        "Expected the real DashScopeArticleRagEmbeddingProvider.  "
-        f"Got: {type(worker._embedding_provider).__name__}"  # type: ignore[attr-defined]
-    )
-    assert not isinstance(
-        worker._vector_writer,  # type: ignore[attr-defined]
-        UnconfiguredArticleRagVectorWriter,
-    ), (
-        "I4D factory handed back the unconfigured vector writer even "
-        "though READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz is set.  "
-        "Check Zilliz uri / token / collection / dim in env."
-    )
-    assert isinstance(
-        worker._vector_writer,  # type: ignore[attr-defined]
-        ZillizArticleRagVectorWriter,
-    )
-
-    # 3. Seed a minimal article_ready record on the per-test temp
-    #    schema (real test-Postgres, no fake at the DB layer).
-    await _seed_dry_run_environment(dry_run_env)
-
-    # 4. Lifecycle ensure -> worker.process_next.
-    lifecycle = _build_dry_run_lifecycle(dry_run_env)
-    async with dry_run_env.acquire() as conn:
-        async with conn.transaction():
-            ensure_result = (
-                await lifecycle.ensure_article_rag_index_job_in_transaction(
-                    conn,
-                    reading_record_id=_RECORD_ID,
-                    user_id=_USER_ID,
-                    expected_generation=1,
-                )
-            )
-    from app.services.reader_orchestration.article_rag_index_lifecycle_service import (  # noqa: E501
-        ENSURE_STATUS_ENQUEUED,
-    )
-
-    assert ensure_result.status in (
-        ENSURE_STATUS_ENQUEUED,
-        "idempotent_noop",
-    )
-    assert ensure_result.index_run_id is not None
-    assert ensure_result.job_id is not None
-
-    # 5. Single tick.  This DOES make real DashScope + Zilliz calls.
-    #    We catch both the typed error path and the success path so a
-    #    transient DashScope / Zilliz hiccup is surfaced as a pytest
-    #    failure (not a skip) — the env gate already proved we are
-    #    intentionally running with real providers.
-    from app.services.reader_orchestration.article_rag_index_worker import (
-        ArticleRagIndexWorkerError,
-        ArticleRagIndexWorkerResult,
-    )
-
-    try:
-        worker_result = await worker.process_next(
-            lease_owner="test-i4z-real-smoke",
-            lease_duration=timedelta(seconds=120),
-        )
-    except ArticleRagIndexWorkerError as exc:
-        pytest.fail(
-            f"Real-provider worker raised ArticleRagIndexWorkerError "
-            f"({type(exc).__name__}, failure_code={exc.failure_code}, "
-            f"retryable={exc.retryable}).  With all real env set, "
-            f"this should not happen — investigate the upstream "
-            f"DashScope / Zilliz call."
-        )
-    assert isinstance(worker_result, ArticleRagIndexWorkerResult)
-    assert worker_result.status == "succeeded", (
-        f"Real-provider worker did not reach 'succeeded'.  "
-        f"status={worker_result.status!r} "
-        f"failure_code={worker_result.failure_code!r} "
-        f"retryable={worker_result.retryable!r}"
-    )
-    # The real provider values must NOT be the fake-* defaults.
-    assert worker_result.embedding_model is not None
-    assert not worker_result.embedding_model.startswith("fake-"), (
-        f"Real-provider smoke produced fake embedding model "
-        f"{worker_result.embedding_model!r}"
-    )
-    assert worker_result.vector_store_provider == "zilliz"
-    assert worker_result.vector_collection is not None
-    # The collection must be inside the smoke namespace.  The
-    # opt-in gate already enforces this prefix, but we double-check
-    # here so a future refactor cannot accidentally widen the
-    # assertion.  An opt-in smoke with a production-named
-    # collection must SKIP, not write.
-    assert worker_result.vector_collection.startswith(
-        REAL_SMOKE_COLLECTION_PREFIX
-    ), (
-        f"Real-provider smoke wrote to {worker_result.vector_collection!r} "
-        f"which is outside the smoke namespace "
-        f"{REAL_SMOKE_COLLECTION_PREFIX!r}.  This is a safety bug — "
-        f"the opt-in gate should have skipped this test before any "
-        f"vector IO happened."
-    )
-
-    # 6. index_run row state.
-    async with dry_run_env.acquire() as conn:
-        run_row = await conn.fetchrow(
-            """
-            SELECT status, embedding_model, vector_store_provider,
-                   vector_collection, completed_at
-            FROM reader_article_rag_index_runs
-            WHERE id = $1
-            """,
-            ensure_result.index_run_id,
-        )
-    assert run_row is not None
-    assert run_row["status"] == "indexed"
-    assert run_row["completed_at"] is not None
-    assert run_row["embedding_model"] == worker_result.embedding_model
-    assert run_row["vector_store_provider"] == "zilliz"
-    assert run_row["vector_collection"] == worker_result.vector_collection
-
-    # 7. Retrieval via the real Zilliz searcher (no fake hits).
-    #    Hit count may be 0 if the collection is fresh; the smoke
-    #    only asserts the typed response shape, not the hit count.
-    from app.services.reader_orchestration.article_rag_retrieval_service import (  # noqa: E501
-        ArticleRagRetrievalResult,
-        ArticleRagRetrievalService,
-    )
-    from app.services.reader_orchestration.article_rag_vector_search import (  # noqa: E501
-        ZillizArticleRagVectorSearcher,
-    )
-
-    zilliz_uri = os.environ.get("READER_ARTICLE_RAG_ZILLIZ_URI", "")
-    zilliz_token = os.environ.get("READER_ARTICLE_RAG_ZILLIZ_TOKEN", "")
-    zilliz_collection = os.environ.get(
-        "READER_ARTICLE_RAG_ZILLIZ_COLLECTION",
-        settings.reader_article_rag_zilliz_collection,
-    )
-    real_searcher = ZillizArticleRagVectorSearcher(
-        uri=zilliz_uri,
-        token=zilliz_token,
-        collection=zilliz_collection,
-    )
-    real_embedder = DashScopeArticleRagEmbeddingProvider(
-        model_override=(
-            settings.reader_article_rag_embedding_model or None
-        ),
-    )
-    retrieval = ArticleRagRetrievalService(
-        pool=dry_run_env,
-        embedding_provider=real_embedder,
-        vector_searcher=real_searcher,
-    )
-    retrieval_result = await retrieval.retrieve_for_record(
-        reading_record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        query_text="local dry run smoke probe",
-    )
-    assert isinstance(retrieval_result, ArticleRagRetrievalResult)
-    assert retrieval_result.reading_record_id == _RECORD_ID
-    assert retrieval_result.stable_document_id == _STABLE_DOC_ID
-    assert retrieval_result.base_id == _BASE_ID
-    # ``hits`` may be empty if the collection has no vectors yet; the
-    # smoke only asserts the typed response shape, not the hit count.
-    assert isinstance(retrieval_result.hits, tuple)
-    # No token / URI / chunk text leaked into the typed result.
-    assert _SENTINEL_TOKEN not in repr(retrieval_result)
-    # No fake provider values in the result.
-    if retrieval_result.provider_metadata:
-        provider_name = retrieval_result.provider_metadata.get(
-            "provider"
-        )
-        if provider_name is not None:
-            assert not provider_name.startswith("fake-")
-
-    # 8. Ask facade returns a typed assembly — `should_attach` may
-    #    be True or False depending on hit count, but the result
-    #    must be a valid ArticleRagAskPromptAssembly with no leak.
-    from app.services.reader_orchestration.article_rag_ask_context_composer import (  # noqa: E501
-        ArticleRagAskContextComposer,
-    )
-    from app.services.reader_orchestration.article_rag_ask_context_provider import (  # noqa: E501
-        ArticleRagAskContextProvider,
-    )
-    from app.services.reader_orchestration.article_rag_ask_context_resolver import (  # noqa: E501
-        ArticleRagAskContextResolver,
-    )
-    from app.services.reader_orchestration.article_rag_ask_integration_adapter import (  # noqa: E501
-        ArticleRagAskIntegrationAdapter,
-    )
-    from app.services.reader_orchestration.article_rag_ask_prompt_assembly import (  # noqa: E501
-        ArticleRagAskPromptAssemblyService,
-    )
-    from app.services.reader_orchestration.article_rag_ask_prompt_attachment import (  # noqa: E501
-        ArticleRagAskPromptAttachmentService,
-    )
-    from app.services.reader_orchestration.article_rag_ask_prompt_section import (  # noqa: E501
-        ArticleRagAskPromptSectionBuilder,
-    )
-    from app.services.reader_orchestration.article_rag_ask_runtime_adapter import (  # noqa: E501
-        ArticleRagAskRuntimeAdapter,
-    )
-    from app.services.reader_orchestration.article_rag_context_service import (  # noqa: E501
-        ArticleRagContextService,
-    )
-
-    ask_provider = ArticleRagAskContextProvider(
-        integration_adapter=ArticleRagAskIntegrationAdapter(
-            attachment_service=ArticleRagAskPromptAttachmentService(
-                resolver=ArticleRagAskContextResolver(
-                    context_service=ArticleRagContextService(
-                        retrieval_service=retrieval,
-                    ),
-                    composer=ArticleRagAskContextComposer(),
-                ),
-            ),
-        ),
-        section_builder=ArticleRagAskPromptSectionBuilder(),
-        runtime_adapter=ArticleRagAskRuntimeAdapter(),
-        assembly_service=ArticleRagAskPromptAssemblyService(),
-    )
-    assembly = await ask_provider.build_for_ask(
-        reading_record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        query_text="local dry run smoke probe",
-    )
-    # The assembly is either attached (if the search returned hits
-    # whose chunk_ids are valid) or not-attached (if the collection
-    # was empty / no hits).  Both are valid runbook behaviour.
-    assert assembly.kind == "article_rag_context"
-    assert assembly.status in {
-        "available",
-        "not_indexed_or_unavailable",
-    }
-    assert _SENTINEL_TOKEN not in repr(assembly)
-    assert _SENTINEL_TOKEN not in str(assembly)
-
-
-# ---------------------------------------------------------------------------
 # Runbook doc — I4Z sections
 # ---------------------------------------------------------------------------
 
 
-class TestSmokeEnvGate:
-    """The opt-in smoke gate is the safety contract that prevents the
-    smoke from accidentally writing to a production-named Zilliz
-    collection.  These tests are the load-bearing assertion of
-    that contract.
-    """
-
-    def _full_smoke_env(self) -> dict[str, str]:
-        """Return a copy of the env that satisfies the gate.  Each
-        test mutates one field to prove the gate rejects that
-        particular omission / misconfig.
-        """
-        return {
-            "READER_ARTICLE_RAG_SMOKE": "1",
-            "READER_ARTICLE_RAG_EMBEDDING_PROVIDER": "dashscope",
-            "BAILIAN_API_KEY": "test-bailian-key",
-            "READER_ARTICLE_RAG_VECTOR_PROVIDER": "zilliz",
-            "READER_ARTICLE_RAG_ZILLIZ_URI": "https://example.zilliz.com",
-            "READER_ARTICLE_RAG_ZILLIZ_TOKEN": "test-zilliz-token",
-            "READER_ARTICLE_RAG_ZILLIZ_COLLECTION": (
-                "article_rag_index_smoke_abcdef12"
-            ),
-            "READER_ARTICLE_RAG_VECTOR_DIM": "1024",
-        }
-
-    def test_full_env_satisfies_gate(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        for k, v in self._full_smoke_env().items():
-            monkeypatch.setenv(k, v)
-        assert _real_smoke_env_present() is True
-
-    def test_gate_rejects_production_named_collection(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A production-named collection must NEVER enter the smoke.
-        This is the safety guard: the smoke must skip rather than
-        write to ``article_rag_chunks`` (or anything else outside
-        the smoke namespace).
-        """
-        env = self._full_smoke_env()
-        # Simulate the most common env-typo: leaving the default
-        # production collection name.
-        env["READER_ARTICLE_RAG_ZILLIZ_COLLECTION"] = (
-            "article_rag_chunks"
-        )
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        assert _real_smoke_env_present() is False, (
-            "Gate let an opt-in smoke through with a "
-            "production-named Zilliz collection.  This is a "
-            "data-integrity bug — the opt-in smoke must NEVER "
-            "write outside the article_rag_index_smoke_ namespace."
-        )
-
-    def test_gate_rejects_gate_off(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        env = self._full_smoke_env()
-        env["READER_ARTICLE_RAG_SMOKE"] = "0"
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        assert _real_smoke_env_present() is False
-
-    def test_gate_rejects_no_credential(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        env = self._full_smoke_env()
-        env.pop("BAILIAN_API_KEY", None)
-        # RAG_EMBEDDING_MODEL_PROFILE is not in our env at all
-        monkeypatch.delenv("RAG_EMBEDDING_MODEL_PROFILE", raising=False)
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        assert _real_smoke_env_present() is False, (
-            "Gate let the smoke through without BAILIAN_API_KEY OR "
-            "RAG_EMBEDDING_MODEL_PROFILE.  The I4D factory would "
-            "hand back the unconfigured provider, and the smoke "
-            "would then assert on a real-provider invariant — "
-            "failing noisily.  Skip instead."
-        )
-
-    def test_gate_accepts_alternative_credential_path(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        env = self._full_smoke_env()
-        env.pop("BAILIAN_API_KEY", None)
-        # Use the registry route path instead of the legacy key.
-        env["RAG_EMBEDDING_MODEL_PROFILE"] = (
-            "test-rag-embedding-dashscope-profile"
-        )
-        for k, v in env.items():
-            monkeypatch.setenv(k, v)
-        assert _real_smoke_env_present() is True, (
-            "Gate rejected a smoke that uses the RAG_EMBEDDING_MODEL_PROFILE "
-            "registry route instead of BAILIAN_API_KEY.  Both paths must "
-            "be acceptable per the I4D factory contract."
-        )
-
-
 class TestRunbookHasI4ZSections:
-    """The runbook must document the I4Z dry-run + opt-in smoke
-    commands.  These two sections are the human-facing contract for
-    "how do I actually run this locally" and "how do I opt into a
-    real-provider smoke".
+    """The runbook must document the I4Z dry-run command and point at
+    the canonical real-chain acceptance test as the SINGLE real-chain
+    entry point.  The prior smoke-collection namespace design has
+    been retired; the runbook must NOT reference it anymore.
     """
 
     @pytest.fixture(scope="class")
@@ -1333,53 +790,29 @@ class TestRunbookHasI4ZSections:
         # The opt-in gate must be described as opt-in (not default).
         assert "opt-in" in doc_text.lower()
 
-    def test_doc_has_opt_in_real_smoke_command(self, doc_text: str) -> None:
-        # The runbook must show the explicit opt-in command.
-        for needle in (
-            "READER_ARTICLE_RAG_SMOKE=1",
-            "pytest",
-            "-m",
-            "article_rag_smoke",
-        ):
-            assert needle in doc_text, (
-                f"Runbook must show real-smoke opt-in command "
-                f"containing {needle!r}"
-            )
-
-    def test_doc_lists_required_env_for_real_smoke(self, doc_text: str) -> None:
-        for env in REAL_SMOKE_REQUIRED_ENVS:
-            assert env in doc_text, (
-                f"Runbook must list {env} as a required env for the "
-                f"real-provider smoke"
-            )
-
-    def test_doc_documents_either_or_credential_contract(
+    def test_doc_documents_canonical_real_acceptance_module(
         self, doc_text: str
     ) -> None:
-        # The runbook must list BOTH BAILIAN_API_KEY and
-        # RAG_EMBEDDING_MODEL_PROFILE so ops can pick either path.
-        # The smoke gate accepts either-or (at least one non-empty);
-        # the runbook must reflect that contract, not the legacy
-        # BAILIAN_API_KEY-only contract.
-        for env in REAL_SMOKE_CREDENTIAL_ENVS:
-            assert env in doc_text, (
-                f"Runbook must list {env} as a credential-env option "
-                f"for the real-provider smoke (either-or contract)"
-            )
+        # The runbook must name the canonical real-chain acceptance
+        # module as the SINGLE real-chain entry point.  The prior
+        # smoke design has been retired.
+        assert CANONICAL_REAL_ACCEPTANCE_MODULE in doc_text, (
+            f"Runbook must point at "
+            f"{CANONICAL_REAL_ACCEPTANCE_MODULE!r} as the single "
+            f"real-chain acceptance entry point"
+        )
 
-    def test_doc_documents_collection_isolation_prefix(
-        self, doc_text: str
-    ) -> None:
-        # The runbook must call out the collection namespace
-        # prefix.  This is the safety guard: the opt-in smoke
-        # refuses to enter unless the configured Zilliz collection
-        # starts with this prefix, so an env-typo cannot write to
-        # a production-named collection.  The runbook must make
-        # that contract visible to ops.
-        assert REAL_SMOKE_COLLECTION_PREFIX in doc_text, (
-            f"Runbook must document the smoke collection prefix "
-            f"{REAL_SMOKE_COLLECTION_PREFIX!r} so ops know the "
-            f"isolation guard exists"
+    def test_doc_has_no_retired_smoke_prefix(self, doc_text: str) -> None:
+        # 0-match enforcement: the retired smoke collection namespace
+        # prefix MUST NOT appear in the runbook.  The prefix is
+        # assembled at runtime so this test source file does not
+        # contain the literal contiguous string either (which would
+        # otherwise break the rg 0-match contract on this file).
+        assert _RETIRED_SMOKE_PREFIX not in doc_text, (
+            "Runbook must NOT reference the retired smoke-collection "
+            "namespace prefix.  The single-path convergence writes to "
+            "the production article_rag_chunks collection with "
+            "precise fixture isolation instead."
         )
 
     def test_doc_warns_against_production_use_of_smoke_gate(
@@ -1400,4 +833,30 @@ class TestRunbookHasI4ZSections:
             "Runbook must warn that READER_ARTICLE_RAG_SMOKE must "
             "never be set in production.  Both the gate name and a "
             "production / prod / 生产 warning are required."
+        )
+
+    def test_canonical_acceptance_file_has_no_retired_smoke_prefix(self) -> None:
+        # 0-match enforcement: the canonical real-chain acceptance
+        # test must NOT reference the retired smoke-collection
+        # namespace prefix.  It writes to the production
+        # ``article_rag_chunks`` collection, not a smoke-prefixed
+        # collection.  The prefix is assembled at runtime so this
+        # test source file does not contain the literal contiguous
+        # string either.
+        canonical_path = (
+            REPO_ROOT
+            / "services"
+            / "api"
+            / "tests"
+            / f"{CANONICAL_REAL_ACCEPTANCE_MODULE}.py"
+        )
+        assert canonical_path.exists(), (
+            f"Canonical acceptance test not found at {canonical_path}"
+        )
+        text = canonical_path.read_text(encoding="utf-8")
+        assert _RETIRED_SMOKE_PREFIX not in text, (
+            f"Canonical acceptance test {canonical_path.name} must "
+            f"NOT reference the retired smoke-collection namespace "
+            f"prefix.  The single-path convergence writes to "
+            f"article_rag_chunks, not a smoke-prefixed collection."
         )

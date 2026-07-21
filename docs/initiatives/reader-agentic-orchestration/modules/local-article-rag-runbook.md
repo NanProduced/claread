@@ -313,42 +313,47 @@ uv run pytest -q tests/test_d6_i4z_article_rag_local_dry_run.py
 
 # 跑 I4Y + I4Z（readiness + dry-run），都不触网
 uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/test_d6_i4z_article_rag_local_dry_run.py
-
-# 跑除 article_rag_smoke 之外的所有 I4 测试（显式排除真实 smoke）
-uv run pytest -q -m "not article_rag_smoke" tests/test_d6_i4z_article_rag_local_dry_run.py
 ```
 
-预期结果：所有 default-passes 测试 `passed`，真实 smoke 标记的测试 `skipped`，**无** `failed`。
+预期结果：所有 default-passes 测试 `passed`，**无** `failed`。`test_d6_i4z_article_rag_local_dry_run.py` 已经不再注册任何 `article_rag_smoke` 标记的真实 smoke 测试 —— 真实链路 smoke 已收敛到唯一入口（见 7.2）。
 
-### 7.2 真实 provider 烟囱测试（opt-in，生产禁止）
+### 7.2 真实链路验收（opt-in，唯一入口，生产禁止）
 
-`tests/test_d6_i4z_article_rag_local_dry_run.py::test_real_provider_end_to_end_indexed_and_retrievable` 是真实 DashScope (Bailian) + Zilliz 链路 smoke，**默认 skip**。要 opt-in 跑，必须同时满足以下条件：
+**唯一真实验收入口**：`tests/test_article_rag_single_path_real_acceptance.py::test_single_path_real_chain_acceptance`。该测试是 Article RAG 单路径收敛后的 canonical 真实链路 smoke，替代了之前在本文件里基于 smoke-collection 命名空间的旧设计（旧设计与 worker frozen-contract collection enforcement 互斥，已退役）。
+
+设计合同：
+
+- **单一 collection identity**：测试写入 `ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection`（即 `article_rag_chunks`），与生产同一个 collection。不再有第二个 smoke collection、不再有 prefix allowlist、不再有 compatibility flag。worker 的 fail-closed contract enforcement 不被放松。
+- **精确 fixture 隔离**：每次 smoke 运行生成唯一 UUIDs（user / record / base / stable_document）。cleanup 按 D4 保存的**精确 `chunk_id` 集合**逐主键删除，绝不按 `stable_document_id` filter 删整批，更不会 drop / recreate collection。Protected collections（`grammar_note_examples` / `sentence_analysis_examples`）从不触碰。
+- **bounded real-call budget（单次执行）**：
+  - 1 document embedding batch
+  - 1 query embedding（retrieval query）
+  - 1 vector write
+  - 1 vector search
+  - 1 vector delete（精确 chunk_id 集合）
+  - **0 Ask model calls**（R1/R2 只走到 Ask context assembly；真实 Ask 模型验收单列 BLOCKED）
+- **失败不重试**：单次执行；任何 D1-D8 assertion 失败都直接 fail，`finally` 仍按精确 chunk_id 完成清理，不第二次发起真实调用。
+- **默认 skip**：未 opt-in 时测试 `skipped`，provider attempts=0，无任何 socket 调用。
+
+opt-in gate（必须同时满足）：
 
 ```text
 READER_ARTICLE_RAG_SMOKE=1
 READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope
-# 二选一（任一非空即可）：
-BAILIAN_API_KEY=<real key>
-# 或者：
-RAG_EMBEDDING_MODEL_PROFILE=<profile that resolves to dashscope_embedding>
 READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz
 READER_ARTICLE_RAG_ZILLIZ_URI=<real URI>
 READER_ARTICLE_RAG_ZILLIZ_TOKEN=<real token>
-# 强制 namespace 隔离：collection 名必须以 article_rag_index_smoke_ 开头
-# （防止 env-typo 把 smoke 数据写到生产 collection）
-READER_ARTICLE_RAG_ZILLIZ_COLLECTION=article_rag_index_smoke_<8-hex>
-READER_ARTICLE_RAG_VECTOR_DIM=<1024 或按真实 provider 配>
+# MUST equal ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection.
+# 任何其它值 -> skip（绝不写入 mismatched collection）。
+READER_ARTICLE_RAG_ZILLIZ_COLLECTION=article_rag_chunks
+READER_ARTICLE_RAG_VECTOR_DIM=1024
+# Plus at least one of:
+BAILIAN_API_KEY=<real key>
+# OR:
+RAG_EMBEDDING_MODEL_PROFILE=<profile that resolves to dashscope_embedding>
 ```
 
-**关键合同**（与 I4D 工厂 `build_default_article_rag_embedding_provider` 一致）：
-
-- `DASHSCOPE_API_KEY` **不**是 Article RAG 嵌入 provider 的 key。`DASHSCOPE_API_KEY` 是 OCR adapter 用的 env；Article RAG 走 registry 路由（`RAG_EMBEDDING_MODEL_PROFILE` 必须解析到 `dashscope_embedding` adapter）或 legacy fallback（`BAILIAN_API_KEY` + `BAILIAN_EMBEDDING_MODEL`）。
-- 凭据 env **任一非空**即可：smoke gate 接受 `BAILIAN_API_KEY` 或 `RAG_EMBEDDING_MODEL_PROFILE` 二选一。只设其中一个（team 走哪条路径）都行。
-- 只设 `DASHSCOPE_API_KEY` + `READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope` 仍然会让工厂返回 `UnconfiguredArticleRagEmbeddingProvider` —— 这是历史 bug 修复后的预期行为，不是配置错误。
-- 任一 env 缺失 → test `skip`，**不** `fail`（保护 CI 不会因为缺凭据变红）。
-- **Collection 隔离硬规则**：`READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 必须以 `article_rag_index_smoke_` 开头，否则 smoke 在进入测试体前就 SKIP，不会向 Zilliz 发起任何写入。生产 collection 名（如 `article_rag_index_v1`）会让 smoke 静默 skip，不会误写。
-
-opt-in 命令：
+opt-in 命令（**精确 test node + -vv + -rs，单次执行，禁止 retry**）：
 
 ```powershell
 cd services/api
@@ -362,22 +367,14 @@ $env:BAILIAN_API_KEY = "<real key>"
 $env:READER_ARTICLE_RAG_VECTOR_PROVIDER = "zilliz"
 $env:READER_ARTICLE_RAG_ZILLIZ_URI = "<real URI>"
 $env:READER_ARTICLE_RAG_ZILLIZ_TOKEN = "<real token>"
-# 强制 collection 隔离：必须以 article_rag_index_smoke_ 开头
-$env:READER_ARTICLE_RAG_ZILLIZ_COLLECTION = "article_rag_index_smoke_<8-hex>"
+$env:READER_ARTICLE_RAG_ZILLIZ_COLLECTION = "article_rag_chunks"
 $env:READER_ARTICLE_RAG_VECTOR_DIM = "1024"
 
-uv run pytest -q -m article_rag_smoke tests/test_d6_i4z_article_rag_local_dry_run.py
+uv run pytest -vv -rs tests/test_article_rag_single_path_real_acceptance.py::test_single_path_real_chain_acceptance
 ```
 
-真实 smoke 行为（实现细节）：
-
-1. 用真实 `Settings()` 构造 `DashScopeArticleRagEmbeddingProvider` + `ZillizArticleRagVectorWriter` + `ZillizArticleRagVectorSearcher`（**不** fake）
-2. seed 一个最小 article_ready record（短英文，无敏感内容）
-3. `lifecycle.ensure` → `worker.process_next` → 断言 `index_run.status='indexed'`，`embedding_model` / `vector_store_provider` / `vector_collection` 都是真实 provider 名（**不** 是 `fake-*`）
-4. `retrieval.retrieve_for_record` 用同句短 query 返回 typed `ArticleRagRetrievalResult`（hits 可能为 0，因为 collection 是干净的；smoke 只断言响应 shape，不强求 hit 数）
-5. `ArticleRagAskContextProvider.build_for_ask` 返回 valid `ArticleRagAskPromptAssembly`（`should_attach` 取决于 hit 数；hit 数 > 0 → True，hit 数 = 0 → False，状态 `not_indexed_or_unavailable`）
-6. 残留策略：测试用 deterministic collection prefix `article_rag_index_smoke_<8-hex>`，**不**自动删除 Zilliz 数据；需要 ops 在测试结束后手动清。日志 / 失败消息都 scrub 过 token / URI。
+预期结果：`1 passed`，**不得**是 `skipped` / `xfailed` / `deselected`。失败时 `finally` 仍按精确 chunk_id 完成清理，不得第二次真实调用。
 
 ### 7.3 真实 smoke gate 严禁进入生产
 
-`READER_ARTICLE_RAG_SMOKE=1` 是个测试 opt-in gate。生产部署 / staging 长期运行**绝对不要**设这个变量。CI 也不会设。如果生产环境的 `.env` / secret manager 里看到这个变量，**请删掉**——它会打开真实 DashScope + Zilliz 流量，与生产 RAG 流量混在同一个 Zilliz collection namespace 下，会污染 / 干扰正式数据。
+`READER_ARTICLE_RAG_SMOKE=1` 是个测试 opt-in gate。生产部署 / staging 长期运行**绝对不要**设这个变量。CI 也不会设。如果生产环境的 `.env` / secret manager 里看到这个变量，**请删掉** —— 它会打开真实 DashScope + Zilliz 流量，直接写入生产 `article_rag_chunks` collection（依赖唯一 UUIDs + 精确 chunk_id cleanup 隔离测试数据，不会触碰 protected collections，但仍会让真实流量混进生产 vector namespace，必须避免）。
