@@ -113,7 +113,7 @@ class TestSettingsSurface:
         # Collection has a safe default but uri / token are empty.
         assert (
             settings.reader_article_rag_zilliz_collection
-            == "article_rag_index_v1"
+            == "article_rag_chunks"
         )
         assert settings.reader_article_rag_zilliz_uri == ""
         assert settings.reader_article_rag_zilliz_token == ""
@@ -271,17 +271,11 @@ class TestFactoriesReturnUnconfiguredByDefault:
                     ),
                     base_id=UUID("00000000-0000-0000-0000-000000000000"),
                     record_generation=1,
-                    index_version="probe",
-                    chunker_version="probe",
                     plan_content_sha256="0" * 64,
                     chunk_count=0,
-                    # P1-D-R1: profile_fingerprint is now a required field;
-                    # this construction only feeds an unconfigured writer
-                    # which raises before reading the fingerprint, so a
-                    # canonical-shape placeholder is sufficient.
-                    profile_fingerprint="0" * 64,
                     # P1-G: embedding_model / embedding_dimension /
-                    # embedding_text_type are now required fields.  This
+                    # embedding_text_type are required fields sourced from
+                    # the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  This
                     # construction only feeds an unconfigured writer which
                     # raises before reading any of these fields, so
                     # canonical-shape placeholders are sufficient.

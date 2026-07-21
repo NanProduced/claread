@@ -8,12 +8,13 @@
 --   * add API routes or event types
 --
 -- 1. Create reader_article_rag_index_runs state table.
---    One row per (stable_document_id, index_version) index attempt.
---    Stores only truth-layer hashes and counts — never chunk text,
---    Plate JSON, Markdown syntax, DOM selections, or Slate paths.
---    A partial unique index enforces at most one active row per
---    (stable_document_id, index_version) so duplicate queued jobs
---    cannot accumulate.
+--    One row per stable_document_id index attempt.  The Article RAG
+--    index is a single path — no ``index_version`` / ``chunker_version``
+--    / ``profile_fingerprint`` identity columns exist.  Stores only
+--    truth-layer hashes and counts — never chunk text, Plate JSON,
+--    Markdown syntax, DOM selections, or Slate paths.  A partial
+--    unique index enforces at most one active row per
+--    ``stable_document_id`` so duplicate queued jobs cannot accumulate.
 --
 -- 2. Extend reader_jobs.job_type CHECK to include 'article_rag_index_build'.
 --    This job is base-scoped: base_id IS NOT NULL. The existing
@@ -45,9 +46,6 @@ CREATE TABLE reader_article_rag_index_runs (
     status TEXT NOT NULL CHECK (status IN (
         'planned', 'queued', 'indexing', 'indexed', 'failed', 'superseded'
     )),
-
-    index_version TEXT NOT NULL,
-    chunker_version TEXT NOT NULL,
 
     -- Embedding / vector store fields are nullable placeholders. They are
     -- populated only when a later milestone actually calls an embedding
@@ -81,11 +79,11 @@ CREATE TABLE reader_article_rag_index_runs (
 );
 
 -- At most one active / planned / queued / indexing / indexed row per
--- (stable_document_id, index_version). 'failed' and 'superseded' rows
--- are excluded so a re-index after failure / supersession can insert a
--- fresh row.
+-- stable_document_id.  The Article RAG index is a single path — there
+-- is no version dimension.  'failed' and 'superseded' rows are excluded
+-- so a re-index after failure / supersession can insert a fresh row.
 CREATE UNIQUE INDEX uq_reader_article_rag_index_runs_active
-    ON reader_article_rag_index_runs (stable_document_id, index_version)
+    ON reader_article_rag_index_runs (stable_document_id)
     WHERE status IN ('planned', 'queued', 'indexing', 'indexed');
 
 CREATE INDEX idx_reader_article_rag_index_runs_record
@@ -93,13 +91,10 @@ CREATE INDEX idx_reader_article_rag_index_runs_record
     WHERE status IN ('planned', 'queued', 'indexing', 'indexed');
 
 COMMENT ON TABLE reader_article_rag_index_runs IS
-    'Persistent state for Article RAG index builds. One row per (stable_document_id, index_version) index attempt. Stores only truth-layer hashes and counts; never chunk text, Plate JSON, Markdown syntax, DOM selections, or Slate paths.';
+    'Persistent state for Article RAG index builds. One row per stable_document_id index attempt. The Article RAG index is a single path — no index_version / chunker_version / profile_fingerprint identity columns exist. Stores only truth-layer hashes and counts; never chunk text, Plate JSON, Markdown syntax, DOM selections, or Slate paths.';
 
 COMMENT ON COLUMN reader_article_rag_index_runs.plan_content_sha256 IS
     'SHA-256 of the deterministic plan content (chunk ids, content hashes, citation refs). Computed by compute_plan_content_sha256 in article_rag_index_plan.py.';
-
-COMMENT ON COLUMN reader_article_rag_index_runs.index_version IS
-    'Versioning scheme for the index itself (embedding model, vector store contract). Distinct from chunker_version which captures the chunking algorithm.';
 
 COMMENT ON COLUMN reader_article_rag_index_runs.embedding_model IS
     'Nullable placeholder. Populated only when a later milestone calls an embedding provider. D6-I4B leaves this NULL.';

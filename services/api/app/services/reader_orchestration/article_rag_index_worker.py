@@ -48,9 +48,9 @@ from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 
 from .article_rag_index_bootstrap import (
+    ARTICLE_RAG_EMBEDDING_CONTRACT,
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
     ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
-    DEFAULT_INDEX_VERSION,
     compute_article_rag_index_build_input_hash,
 )
 from .article_rag_index_plan import (
@@ -58,10 +58,6 @@ from .article_rag_index_plan import (
     ArticleRagIndexPlanError,
     ArticleRagIndexPlanService,
     compute_plan_content_sha256,
-)
-from .article_rag_index_profile import (
-    ArticleRagIndexProfileResolutionError,
-    resolve_article_rag_index_profile,
 )
 from .job_runtime import (
     ClaimResult,
@@ -81,17 +77,17 @@ ARTICLE_RAG_INDEX_WORKER_VERSION = "d6-i4c-article-rag-index-worker"
 ARTICLE_RAG_INDEX_JOB_SOURCE = "article_rag_index_bootstrap"
 
 # Default vector store metadata (fake — no real Zilliz/Milvus connection).
-# P1-G: the fake embedding provider's defaults now match the V1 profile
-# (document_embedding_model / document_embedding_dimension /
-# vector_namespace) so the worker's profile enforcement accepts fake
-# embeddings out of the box without each test having to opt in.  The
-# fake remains obviously-named via ``DEFAULT_FAKE_VECTOR_STORE_PROVIDER``;
-# only the model/dim/collection values are aligned with V1 so the
-# frozen vector-space contract is satisfiable in test fixtures.
-DEFAULT_FAKE_EMBEDDING_MODEL = "text-embedding-v4"
+# The fake embedding provider's defaults match the frozen
+# ArticleRagEmbeddingContract so the worker's contract enforcement
+# accepts fake embeddings out of the box without each test having to
+# opt in.  The fake remains obviously-named via
+# ``DEFAULT_FAKE_VECTOR_STORE_PROVIDER``; only the model/dim/collection
+# values are aligned with the contract so the frozen vector-space
+# contract is satisfiable in test fixtures.
+DEFAULT_FAKE_EMBEDDING_MODEL = ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_model
 DEFAULT_FAKE_VECTOR_STORE_PROVIDER = "fake-in-memory"
-DEFAULT_FAKE_VECTOR_COLLECTION = "article_rag_index_v1"
-DEFAULT_FAKE_EMBEDDING_DIM = 1024
+DEFAULT_FAKE_VECTOR_COLLECTION = ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection
+DEFAULT_FAKE_EMBEDDING_DIM = ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_dimension
 
 # Failure codes.
 FAILURE_CODE_INPUT_JSON_INVALID = "input_json_invalid"
@@ -106,18 +102,16 @@ FAILURE_CODE_EMBEDDING_FAILED = "embedding_failed"
 FAILURE_CODE_VECTOR_WRITE_FAILED = "vector_write_failed"
 FAILURE_CODE_ALREADY_INDEXED = "already_indexed"
 
-# P1-D: Worker frozen profile validation failure codes.
-# All three are retryable=False, failed_terminal, fixed safe message.
-# They MUST NOT interpolate caller-supplied values (expected/persisted/caller).
-FAILURE_CODE_INDEX_PROFILE_INVALID = "index_profile_invalid"
-FAILURE_CODE_INDEX_PROFILE_MISMATCH = "index_profile_mismatch"
+# Worker frozen input-hash validation failure code.
+# retryable=False, failed_terminal, fixed safe message.
+# MUST NOT interpolate caller-supplied values (expected/persisted/caller).
 FAILURE_CODE_JOB_INPUT_HASH_MISMATCH = "job_input_hash_mismatch"
-# P1-D-R1: cardinality check on reader_article_rag_index_runs.job_id.
+# Cardinality check on reader_article_rag_index_runs.job_id.
 # There is NO unique constraint on job_id, so 0 / multiple / id-mismatched
 # linkages all fail-closed with this fixed safe code.
 FAILURE_CODE_INDEX_RUN_LINK_INVALID = "index_run_link_invalid"
 
-# P1-G: Article RAG frozen document embedding and vector write contract
+# Article RAG frozen document embedding and vector write contract
 # failure codes.  All retryable=False, failed_terminal, fixed safe
 # message.  They MUST NOT interpolate caller-supplied values
 # (provider-returned model, vector content, chunk text, key/URI,
@@ -131,78 +125,58 @@ FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH = "embedding_dimension_mismatch"
 FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
     "vector_write_result_collection_mismatch"
 )
-# P1-G-R1: indexed idempotent identity drift failure code.  Fires when
-# an already-``indexed`` row's persisted ``embedding_model`` or
-# ``vector_collection`` no longer matches the resolved V1 profile.
+# Indexed idempotent identity drift failure code.  Fires when an
+# already-``indexed`` row's persisted ``embedding_model`` or
+# ``vector_collection`` no longer matches the frozen contract.
 # All retryable=False, failed_terminal, fixed safe message.  MUST NOT
 # interpolate caller-supplied values (persisted model, collection,
-# fingerprint, version, sentinel).
+# sentinel).
 FAILURE_CODE_INDEXED_IDENTITY_MISMATCH = "index_run_indexed_identity_mismatch"
 
-# Fixed safe error messages for P1-D validation failures.  These strings
-# are intentionally generic and free of any caller-supplied value so a
-# malicious payload cannot leak through error surfaces.
-_P1D_MSG_PROFILE_NOT_REGISTERED = (
-    "Article RAG index profile is not registered"
-)
-_P1D_MSG_FINGERPRINT_MISSING_OR_MALFORMED = (
-    "Article RAG index profile fingerprint is missing or malformed"
-)
-_P1D_MSG_FINGERPRINT_MISMATCH = (
-    "Article RAG index profile fingerprint does not match the resolved profile"
-)
-_P1D_MSG_CHUNKER_MISMATCH = (
-    "Article RAG index plan chunker_version does not match the resolved profile"
-)
+# Fixed safe error messages for input-hash / linkage validation failures.
+# These strings are intentionally generic and free of any caller-supplied
+# value so a malicious payload cannot leak through error surfaces.
 _P1D_MSG_INPUT_HASH_MISMATCH = (
     "Article RAG index job input_hash does not match the canonical algorithm"
 )
-_P1D_MSG_INDEX_RUN_FINGERPRINT_MISMATCH = (
-    "Article RAG index run profile_fingerprint does not match the resolved profile"
-)
-_P1D_MSG_INDEX_RUN_FINGERPRINT_DRIFTED = (
-    "Article RAG index run profile_fingerprint drifted before vector write"
-)
-# P1-D-R1: cardinality / linkage failure message.  Must NOT echo job_id,
-# index_run_id, row count, fingerprint/hash, payload, URI/key/sentinel.
+# Cardinality / linkage failure message.  Must NOT echo job_id,
+# index_run_id, row count, hash, payload, URI/key/sentinel.
 _P1D_MSG_INDEX_RUN_LINK_INVALID = (
     "Article RAG index job link to index run is not resolvable"
 )
 
-# P1-G: fixed safe messages for embedding/vector-write contract failures.
+# Fixed safe messages for embedding/vector-write contract failures.
 # Must NOT echo provider-returned model, vector content, chunk text,
 # collection name, dim value, or any caller-supplied value.
 _P1G_MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED = (
-    "Article RAG document embedding text_type is not supported by the V1 profile"
+    "Article RAG document embedding text_type is not supported by the frozen contract"
 )
 _P1G_MSG_VECTOR_COLLECTION_MISMATCH = (
-    "Article RAG worker runtime collection does not match the resolved profile vector namespace"
+    "Article RAG worker runtime collection does not match the frozen contract vector collection"
 )
 _P1G_MSG_EMBEDDING_MODEL_MISMATCH = (
-    "Article RAG embedding provider returned a model that does not match the resolved profile"
+    "Article RAG embedding provider returned a model that does not match the frozen contract"
 )
 _P1G_MSG_EMBEDDING_DIMENSION_MISMATCH = (
     "Article RAG embedding provider returned a dimension or vector "
-    "length that does not match the resolved profile"
+    "length that does not match the frozen contract"
 )
 _P1G_MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
     "Article RAG vector writer returned a collection that does not "
-    "match the resolved profile vector namespace"
+    "match the frozen contract vector collection"
 )
-# P1-G-R1: fixed safe message for indexed idempotent identity drift.
-# Must NOT echo persisted model, collection, fingerprint, version, or
-# any caller-supplied sentinel.
+# Fixed safe message for indexed idempotent identity drift.
+# Must NOT echo persisted model, collection, or any caller-supplied sentinel.
 _P1G_R1_MSG_INDEXED_IDENTITY_MISMATCH = (
     "Article RAG index run indexed identity does not match the "
-    "resolved V1 profile"
+    "frozen contract"
 )
 
 # Canonical SHA-256 shape: 64-character lowercase hex string.
-# Used by _validate_canonical_sha256 to reject malformed fingerprints
-# and hashes without echoing the offending value.
-# P1-D-R1: re.fullmatch (not re.match + $) — Python ``$`` accepts a
-# single trailing newline, which would let ``"a"*64 + "\n"`` pass.
-# Trailing LF/CRLF is malformed (not a mismatch).
+# Used by _validate_canonical_sha256 to reject malformed hashes without
+# echoing the offending value.  re.fullmatch (not re.match + $) —
+# Python ``$`` accepts a single trailing newline, which would let
+# ``"a"*64 + "\n"`` pass.  Trailing LF/CRLF is malformed (not a mismatch).
 _SHA256_HEX_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -285,23 +259,14 @@ class ArticleRagVectorWriteMetadata:
     stable_document_id: UUID
     base_id: UUID
     record_generation: int
-    index_version: str
-    chunker_version: str
     plan_content_sha256: str
     chunk_count: int
-    # P1-D: canonical profile_fingerprint carried as diagnostic identity.
-    # Does NOT change collection routing in V1; downstream retrieval /
-    # citation truth is unaffected by this field.
-    # P1-D-R1: required (no default).  Omitting it must raise TypeError
-    # at construction time so callers cannot accidentally write a vector
-    # without identity provenance.
-    profile_fingerprint: str
-    # P1-G: frozen document embedding + vector-space contract fields.
+    # Frozen document embedding + vector-space contract fields.
     # All three are required (no default).  They MUST be sourced from
-    # the resolved ArticleRagIndexProfile — never from provider return
-    # values, writer return values, settings, or runtime configuration.
-    # The writer uses them for defence-in-depth validation before any
-    # client / network / upsert call.
+    # the frozen ARTICLE_RAG_EMBEDDING_CONTRACT — never from provider
+    # return values, writer return values, settings, or runtime
+    # configuration.  The writer uses them for defence-in-depth
+    # validation before any client / network / upsert call.
     embedding_model: str
     embedding_dimension: int
     embedding_text_type: str
@@ -543,16 +508,13 @@ class ArticleRagIndexWorkerResult:
 class _JobContext:
     """Validated job payload.
 
-    P1-D: ``profile_fingerprint`` is the canonical SHA-256 of the
-    resolved ArticleRagIndexProfile, validated against the resolver
-    and the persisted ``reader_jobs.input_hash``.  It is the trust
-    basis for all downstream index-run + pre-vector-write guards.
-
-    P1-G: ``document_embedding_model``, ``document_embedding_dimension``,
-    ``document_embedding_text_type`` and ``vector_namespace`` are
-    sourced verbatim from the resolved ArticleRagIndexProfile.  They
-    are the single source of truth for the embedding call, the vector
-    write metadata, and the persisted index-run identity columns.
+    The embedding + vector contract fields
+    (``document_embedding_model``, ``document_embedding_dimension``,
+    ``document_embedding_text_type`` and ``vector_namespace``) are
+    sourced verbatim from the frozen
+    :data:`ARTICLE_RAG_EMBEDDING_CONTRACT`.  They are the single source
+    of truth for the embedding call, the vector write metadata, and the
+    persisted index-run identity columns.
     """
 
     job_id: UUID
@@ -563,10 +525,7 @@ class _JobContext:
     base_id: UUID
     record_generation: int
     index_run_id: UUID
-    index_version: str
-    chunker_version: str
-    profile_fingerprint: str
-    # P1-G: profile-derived frozen embedding + vector-space contract.
+    # Frozen embedding + vector-space contract (single source of truth).
     document_embedding_model: str
     document_embedding_dimension: int
     document_embedding_text_type: str
@@ -678,11 +637,11 @@ class ArticleRagIndexWorkerService:
         try:
             context = await self._load_job_context(claim)
 
-            # P1-G pre-call validation: runtime/default collection must
-            # precisely equal profile.vector_namespace.  No strip, no
-            # case-normalisation, no fallback.  Fail-closed BEFORE any
-            # embedding provider call so a misconfigured worker cannot
-            # trigger paid embedding work for a wrong vector space.
+            # Pre-call validation: runtime/default collection must
+            # precisely equal the frozen contract vector_collection.
+            # No strip, no case-normalisation, no fallback.  Fail-closed
+            # BEFORE any embedding provider call so a misconfigured worker
+            # cannot trigger paid embedding work for a wrong vector space.
             if self._default_vector_collection != context.vector_namespace:
                 raise ArticleRagIndexWorkerError(
                     _P1G_MSG_VECTOR_COLLECTION_MISMATCH,
@@ -692,12 +651,11 @@ class ArticleRagIndexWorkerService:
                     rationale_code=FAILURE_CODE_VECTOR_COLLECTION_MISMATCH,
                 )
 
-            # P1-G pre-call validation: V1 profile only supports the
+            # Pre-call validation: the frozen contract only supports the
             # ``provider_default`` document_embedding_text_type.  Any
-            # other value (including future V2 text types smuggled via
-            # a runtime override) must fail-closed BEFORE the embedding
-            # provider is called.  The real text_type provider seam is
-            # an independent task.
+            # other value must fail-closed BEFORE the embedding provider
+            # is called.  The real text_type provider seam is an
+            # independent task.
             if context.document_embedding_text_type != "provider_default":
                 raise ArticleRagIndexWorkerError(
                     _P1G_MSG_EMBEDDING_TEXT_TYPE_UNSUPPORTED,
@@ -718,8 +676,8 @@ class ArticleRagIndexWorkerService:
             )
 
             # Phase 3: embed (outside DB tx).
-            # P1-G: explicitly pass the profile document_embedding_model
-            # so provider factory ``model_override`` / settings cannot
+            # Explicitly pass the contract document_embedding_model so
+            # provider factory ``model_override`` / settings cannot
             # silently substitute a different model.
             embeddings = await self._embedding_provider.embed_texts(
                 [chunk.text for chunk in plan.chunks],
@@ -738,7 +696,7 @@ class ArticleRagIndexWorkerService:
             )
 
             # Phase 4: vector write (outside DB tx).
-            # P1-G: collection is sourced from the profile vector_namespace,
+            # Collection is sourced from the contract vector_collection,
             # not from the worker's default_vector_collection (which has
             # already been validated to equal it above).
             vector_chunks = self._build_vector_chunks(plan, embeddings)
@@ -748,12 +706,9 @@ class ArticleRagIndexWorkerService:
                 stable_document_id=context.stable_document_id,
                 base_id=context.base_id,
                 record_generation=context.record_generation,
-                index_version=context.index_version,
-                chunker_version=context.chunker_version,
                 plan_content_sha256=index_run_snapshot["plan_content_sha256"],
                 chunk_count=len(plan.chunks),
-                profile_fingerprint=context.profile_fingerprint,
-                # P1-G: profile-derived frozen contract fields.
+                # Frozen contract fields.
                 embedding_model=context.document_embedding_model,
                 embedding_dimension=context.document_embedding_dimension,
                 embedding_text_type=context.document_embedding_text_type,
@@ -773,10 +728,10 @@ class ArticleRagIndexWorkerService:
                     failure_code=FAILURE_CODE_VECTOR_WRITE_FAILED,
                 )
 
-            # P1-G: write_result.collection must precisely equal the
-            # profile vector_namespace.  A writer that returns a
-            # different collection (e.g. SDK-routed, alias-resolved,
-            # or malicious) cannot be trusted — refuse to mark indexed.
+            # write_result.collection must precisely equal the contract
+            # vector_collection.  A writer that returns a different
+            # collection (e.g. SDK-routed, alias-resolved, or malicious)
+            # cannot be trusted — refuse to mark indexed.
             if write_result.collection != context.vector_namespace:
                 raise ArticleRagIndexWorkerError(
                     _P1G_MSG_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH,
@@ -791,10 +746,10 @@ class ArticleRagIndexWorkerService:
                 )
 
             # Phase 5: mark indexed + transition job succeeded (one tx).
-            # P1-G: persist profile-derived embedding_model and
+            # Persist contract-derived embedding_model and
             # vector_collection — NOT embeddings[0].model or
-            # write_result.collection (both have already been
-            # validated to equal the profile values).
+            # write_result.collection (both have already been validated
+            # to equal the contract values).
             return await self._mark_indexed_and_succeed(
                 claim=claim,
                 context=context,
@@ -877,8 +832,7 @@ class ArticleRagIndexWorkerService:
                 row = await conn.fetchrow(
                     """
                     SELECT id, status, job_id, base_id, stable_document_id,
-                           record_generation, index_version, chunker_version,
-                           profile_fingerprint,
+                           record_generation,
                            plan_content_sha256, chunk_count,
                            embedding_model, vector_store_provider,
                            vector_collection
@@ -911,13 +865,12 @@ class ArticleRagIndexWorkerService:
                         )
                     # Verify fields match (defense in depth).
                     self._validate_index_run_fields(row, claim, context)
-                    # P1-G-R1: verify persisted indexed identity still
-                    # matches the resolved V1 profile.  This MUST run
-                    # before the no-op transition to ``succeeded`` so a
-                    # drifted row (e.g. ``embedding_model`` or
-                    # ``vector_collection`` mutated out-of-band) fails
-                    # closed as ``failed_terminal`` instead of returning
-                    # an idempotent success.
+                    # Verify persisted indexed identity still matches the
+                    # frozen contract.  This MUST run before the no-op
+                    # transition to ``succeeded`` so a drifted row (e.g.
+                    # ``embedding_model`` or ``vector_collection`` mutated
+                    # out-of-band) fails closed as ``failed_terminal``
+                    # instead of returning an idempotent success.
                     self._validate_indexed_identity(row, context)
 
                     # Transition job to succeeded with rationale
@@ -1017,20 +970,11 @@ class ArticleRagIndexWorkerService:
         claim: ClaimResult,
         context: _JobContext,
     ) -> None:
-        """Validate that index run fields match claim + input_json.
-
-        P1-D: also validates ``profile_fingerprint`` against the
-        ``_JobContext.profile_fingerprint`` (which was itself validated
-        against the P1-B resolver).  A mismatch here means the persisted
-        index-run row has drifted from the bootstrap-frozen identity
-        and must fail-closed with ``index_profile_mismatch``.
-        """
+        """Validate that index run fields match claim + input_json."""
         if (
             str(row["base_id"]) != str(context.base_id)
             or str(row["stable_document_id"]) != str(context.stable_document_id)
             or int(row["record_generation"]) != context.record_generation
-            or str(row["index_version"]) != context.index_version
-            or str(row["chunker_version"]) != context.chunker_version
         ):
             raise ArticleRagIndexWorkerError(
                 f"index run {context.index_run_id} fields do not match "
@@ -1039,42 +983,27 @@ class ArticleRagIndexWorkerService:
                 failure_class="index_run_state",
                 failure_code=FAILURE_CODE_INDEX_RUN_FIELD_MISMATCH,
             )
-        # P1-D: persisted profile_fingerprint must precisely equal the
-        # context fingerprint (already validated against the resolver).
-        # The persisted value is NOT used as a trust source here — only
-        # as a drift detector.  Fixed safe message; no echo of expected
-        # or persisted value.
-        persisted_fp = row["profile_fingerprint"]
-        if not isinstance(persisted_fp, str) or persisted_fp != context.profile_fingerprint:
-            raise ArticleRagIndexWorkerError(
-                _P1D_MSG_INDEX_RUN_FINGERPRINT_MISMATCH,
-                retryable=False,
-                failure_class="index_profile_mismatch",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
-            )
 
     def _validate_indexed_identity(
         self,
         row: asyncpg.Record,
         context: _JobContext,
     ) -> None:
-        """Validate persisted indexed identity matches resolved profile.
+        """Validate persisted indexed identity matches the frozen contract.
 
-        P1-G-R1: when an index run is already ``indexed`` and the worker
-        is about to short-circuit with an idempotent no-op success, the
-        persisted ``embedding_model`` and ``vector_collection`` columns
-        MUST be non-NULL and exactly equal the resolved V1 profile values
+        When an index run is already ``indexed`` and the worker is about
+        to short-circuit with an idempotent no-op success, the persisted
+        ``embedding_model`` and ``vector_collection`` columns MUST be
+        non-NULL and exactly equal the frozen contract values
         (``context.document_embedding_model`` and
         ``context.vector_namespace``).
 
         This guard prevents a drifted indexed row (e.g. out-of-band
         UPDATE on ``embedding_model`` or ``vector_collection``) from
         being silently re-confirmed as a successful no-op.  On drift the
-        worker fails closed with ``failed_terminal`` and the unique
-        failure code ``index_run_indexed_identity_mismatch`` — the
-        persisted malicious model/collection is NEVER echoed in any
-        error surface.
+        worker fails closed with ``failed_terminal`` and the failure code
+        ``index_run_indexed_identity_mismatch`` — the persisted malicious
+        model/collection is NEVER echoed in any error surface.
 
         This check is ONLY applied on the ``indexed`` no-op branch.
         ``queued`` / ``indexing`` rows are not yet required to have
@@ -1123,18 +1052,10 @@ class ArticleRagIndexWorkerService:
         async with self.get_pool().acquire() as conn:
             # Rebuild plan (read-only — no transaction needed, but we
             # use the connection for a consistent snapshot).
-            # P1-E: worker explicitly passes its P1-D-validated
-            # ``context.index_version`` to the plan service so the
-            # plan / chunker identity is derived from the same frozen
-            # profile that was validated at job-claim time.  The plan
-            # service re-resolves the profile through its own dispatch
-            # seam; an already-queued V1 job's plan interpretation
-            # stays frozen because the V1 profile is immutable.
             plan = await self._plan_service.build_index_plan_in_transaction(
                 conn,
                 record_id=context.reading_record_id,
                 user_id=context.user_id,
-                index_version=context.index_version,
             )
 
             row = await conn.fetchrow(
@@ -1327,8 +1248,7 @@ class ArticleRagIndexWorkerService:
                 index_row = await conn.fetchrow(
                     """
                     SELECT id, status, job_id, base_id, stable_document_id,
-                           record_generation, index_version, chunker_version,
-                           profile_fingerprint,
+                           record_generation,
                            plan_content_sha256, chunk_count
                     FROM reader_article_rag_index_runs
                     WHERE id = $1
@@ -1360,24 +1280,6 @@ class ArticleRagIndexWorkerService:
                         retryable=False,
                         failure_class="index_run_state",
                         failure_code=FAILURE_CODE_INDEX_RUN_WRONG_JOB_ID,
-                    )
-                # P1-D: pre-vector-write TOCTOU fingerprint drift guard.
-                # The persisted profile_fingerprint may have drifted
-                # during the (slow) embedding call.  Re-validate against
-                # the context fingerprint (which was itself validated
-                # against the resolver).  Fixed safe message; no echo of
-                # expected or persisted value.
-                persisted_fp_before_write = index_row["profile_fingerprint"]
-                if (
-                    not isinstance(persisted_fp_before_write, str)
-                    or persisted_fp_before_write != context.profile_fingerprint
-                ):
-                    raise ArticleRagIndexWorkerError(
-                        _P1D_MSG_INDEX_RUN_FINGERPRINT_DRIFTED,
-                        retryable=False,
-                        failure_class="index_profile_mismatch",
-                        failure_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
-                        rationale_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
                     )
                 self._validate_index_run_fields(index_row, claim, context)
                 if (
@@ -1494,8 +1396,6 @@ class ArticleRagIndexWorkerService:
                     "stable_document_id": str(context.stable_document_id),
                     "base_id": str(context.base_id),
                     "record_generation": context.record_generation,
-                    "index_version": context.index_version,
-                    "chunker_version": context.chunker_version,
                     "chunk_count": len(plan.chunks),
                     "embedding_model": embedding_model,
                     "vector_store_provider": vector_store_provider,
@@ -1816,28 +1716,22 @@ class ArticleRagIndexWorkerService:
     async def _load_job_context(self, claim: ClaimResult) -> _JobContext:
         """Load and validate the job payload.
 
-        P1-D: validates the bootstrap-frozen profile identity before
-        returning the context.  Validation layers (in order):
+        Validation layers (in order):
 
-          1. Basic JSON object + IDs + record_generation (existing).
-          2. ``profile_fingerprint`` is a non-empty string with the
-             canonical SHA-256 shape (64-char lowercase hex).
-          3. ``index_version`` resolves via the P1-B public resolver
-             (no fallback to default, no runtime override).
-          4. ``profile_fingerprint`` precisely equals
-             ``resolution.profile_fingerprint`` for the resolved
-             ``index_version`` (no shape-only check).
-          5. ``chunker_version`` precisely equals
-             ``resolution.profile.chunker_version``.
-          6. ``reader_jobs.input_hash`` precisely equals the canonical
-             P1-C hash computed via the public bootstrap seam
-             ``compute_article_rag_index_build_input_hash``.
+          1. Basic JSON object + IDs + record_generation.
+          2. Cross-validate with claim (reading_record_id / base_id /
+             expected_generation / target_key).
+          3. ``reader_jobs.input_hash`` precisely equals the canonical
+             hash computed via the public bootstrap seam
+             ``compute_article_rag_index_build_input_hash``.  The worker
+             must NOT duplicate the hash algorithm.
+          4. Cardinality check on
+             ``reader_article_rag_index_runs.job_id`` — exactly 1 linked
+             row whose id equals ``input_json.index_run_id``.
 
-        All P1-D failures raise :class:`ArticleRagIndexWorkerError`
-        directly (retryable=False) with one of the new failure codes
-        ``index_profile_invalid`` / ``index_profile_mismatch`` /
-        ``job_input_hash_mismatch`` and a fixed safe message that does
-        not echo any caller-supplied value.
+        Embedding + vector contract fields are sourced verbatim from
+        :data:`ARTICLE_RAG_EMBEDDING_CONTRACT` — no settings, no env,
+        no runtime override, no provider/writer return value.
         """
         async with self.get_pool().acquire() as conn:
             row = await conn.fetchrow(
@@ -1882,15 +1776,6 @@ class ArticleRagIndexWorkerService:
             "index_run_id",
         )
         for field_name in required_str_fields:
-            val = input_json.get(field_name)
-            if not isinstance(val, str) or not val:
-                raise _InputJsonError(
-                    f"job {claim.job_id} input_json.{field_name} is missing "
-                    f"or not a non-empty string"
-                )
-
-        # index_version / chunker_version must be non-empty strings.
-        for field_name in ("index_version", "chunker_version"):
             val = input_json.get(field_name)
             if not isinstance(val, str) or not val:
                 raise _InputJsonError(
@@ -1952,89 +1837,20 @@ class ArticleRagIndexWorkerService:
             )
 
         # -----------------------------------------------------------------
-        # P1-D: Worker frozen profile validation.
+        # input_hash validation via the public bootstrap seam.
         # -----------------------------------------------------------------
-
-        # Layer 2: profile_fingerprint must be a non-empty str with the
-        # canonical SHA-256 shape.  Reject None / bool / int / empty /
-        # whitespace / wrong length / uppercase / non-hex / key-like /
-        # URI / unicode / newline / sentinel without echoing the value.
-        payload_fingerprint = input_json.get("profile_fingerprint")
-        if not isinstance(payload_fingerprint, str) or not payload_fingerprint:
-            raise ArticleRagIndexWorkerError(
-                _P1D_MSG_FINGERPRINT_MISSING_OR_MALFORMED,
-                retryable=False,
-                failure_class="index_profile_invalid",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-            )
-        if _SHA256_HEX_PATTERN.fullmatch(payload_fingerprint) is None:
-            raise ArticleRagIndexWorkerError(
-                _P1D_MSG_FINGERPRINT_MISSING_OR_MALFORMED,
-                retryable=False,
-                failure_class="index_profile_invalid",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-            )
-
-        # Layer 3: index_version must resolve via the P1-B public resolver.
-        # The resolver fail-closes on unknown/blank/whitespace/malicious
-        # versions with a fixed local message that does not echo input.
-        payload_index_version = str(input_json["index_version"])
-        # P1-D-R1: construct the outer error inside the except block but
-        # raise it OUTSIDE, so both __cause__ and __context__ are None.
-        # We do NOT copy the resolver exception's type / message / repr /
-        # args; only the fixed local safe message is preserved.
-        resolution_error_to_raise: ArticleRagIndexWorkerError | None = None
-        try:
-            resolution = resolve_article_rag_index_profile(payload_index_version)
-        except ArticleRagIndexProfileResolutionError:
-            resolution_error_to_raise = ArticleRagIndexWorkerError(
-                _P1D_MSG_PROFILE_NOT_REGISTERED,
-                retryable=False,
-                failure_class="index_profile_invalid",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-            )
-        if resolution_error_to_raise is not None:
-            raise resolution_error_to_raise
-
-        # Layer 4: payload fingerprint must precisely equal the resolver
-        # fingerprint.  A format-valid but wrong fingerprint (e.g.
-        # "a" * 64) must fail-closed — shape-only check is not enough.
-        if payload_fingerprint != resolution.profile_fingerprint:
-            raise ArticleRagIndexWorkerError(
-                _P1D_MSG_FINGERPRINT_MISMATCH,
-                retryable=False,
-                failure_class="index_profile_mismatch",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_MISMATCH,
-            )
-
-        # Layer 5: chunker_version must precisely equal the resolved
-        # profile's chunker_version.  A valid fingerprint but wrong
-        # chunker_version must fail-closed with a fixed safe message.
-        payload_chunker_version = str(input_json["chunker_version"])
-        if payload_chunker_version != resolution.profile.chunker_version:
-            raise ArticleRagIndexWorkerError(
-                _P1D_MSG_CHUNKER_MISMATCH,
-                retryable=False,
-                failure_class="index_profile_invalid",
-                failure_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-                rationale_code=FAILURE_CODE_INDEX_PROFILE_INVALID,
-            )
-
-        # Layer 6: reader_jobs.input_hash must precisely equal the
-        # canonical P1-C hash computed via the public bootstrap seam.
-        # The worker must NOT duplicate the hash algorithm; it must
-        # call ``compute_article_rag_index_build_input_hash`` so a
-        # future algorithm change has a single source of truth.
         #
-        # The hash covers (stable_document_id, base_id, plan_content_sha256,
-        # index_version, profile_fingerprint).  ``plan_content_sha256`` is
-        # NOT in input_json; the worker must recover it from a trusted
-        # source.  We load the linked index-run row via the trusted DB
-        # relationship ``reader_article_rag_index_runs.job_id = claim.job_id``
+        # ``reader_jobs.input_hash`` must precisely equal the canonical
+        # hash computed via ``compute_article_rag_index_build_input_hash``.
+        # The worker must NOT duplicate the hash algorithm; it must call
+        # the public seam so a future algorithm change has a single
+        # source of truth.
+        #
+        # The hash covers (stable_document_id, base_id, plan_content_sha256).
+        # ``plan_content_sha256`` is NOT in input_json; the worker must
+        # recover it from a trusted source.  We load the linked index-run
+        # row via the trusted DB relationship
+        # ``reader_article_rag_index_runs.job_id = claim.job_id``
         # (NOT via the potentially corrupt ``input_json.index_run_id``).
         # If no linked row exists, the input_hash cannot be validated and
         # the job must fail-closed.
@@ -2056,7 +1872,7 @@ class ArticleRagIndexWorkerService:
         # input_json.index_run_id.  This is the same relationship the
         # context=None terminalization path uses (see _handle_failed_terminal).
         #
-        # P1-D-R1: ``reader_article_rag_index_runs.job_id`` has NO unique
+        # ``reader_article_rag_index_runs.job_id`` has NO unique
         # constraint, so a ``fetchrow`` would arbitrarily pick one row.
         # We must read the FULL candidate set and verify cardinality:
         #   - exactly 1 row, AND its id == payload_index_run_id → proceed
@@ -2092,8 +1908,6 @@ class ArticleRagIndexWorkerService:
             stable_document_id=payload_stable_doc_id,
             base_id=payload_base_id,
             plan_content_sha256=trusted_plan_content_sha256,
-            index_version=payload_index_version,
-            profile_fingerprint=payload_fingerprint,
         )
         if persisted_input_hash != expected_input_hash:
             raise ArticleRagIndexWorkerError(
@@ -2113,20 +1927,17 @@ class ArticleRagIndexWorkerService:
             base_id=payload_base_id,
             record_generation=gen_raw,
             index_run_id=payload_index_run_id,
-            index_version=payload_index_version,
-            chunker_version=payload_chunker_version,
-            profile_fingerprint=payload_fingerprint,
-            # P1-G: source embedding + vector-space contract exclusively
-            # from the resolved immutable profile.  No settings, no env,
-            # no runtime override, no provider/writer return value.
-            document_embedding_model=resolution.profile.document_embedding_model,
+            # Source embedding + vector-space contract exclusively from
+            # the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  No settings,
+            # no env, no runtime override, no provider/writer return value.
+            document_embedding_model=ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_model,
             document_embedding_dimension=(
-                int(resolution.profile.document_embedding_dimension)
+                int(ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_dimension)
             ),
             document_embedding_text_type=(
-                resolution.profile.document_embedding_text_type
+                ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_text_type
             ),
-            vector_namespace=resolution.profile.vector_namespace,
+            vector_namespace=ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection,
         )
 
     # ------------------------------------------------------------------

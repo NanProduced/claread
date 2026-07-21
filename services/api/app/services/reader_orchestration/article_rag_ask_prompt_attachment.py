@@ -153,10 +153,10 @@ class ArticleRagAskPromptAttachment:
         RAG.
 
     Stable ids (``reading_record_id`` / ``stable_document_id`` /
-    ``base_id`` / ``record_generation`` / ``plan_content_sha256``
-    / ``index_version``) are echoed from the resolver result
-    whenever the resolver has them — the Ask layer can use them
-    for cache keys, log dedup, and prompt-source attribution.
+    ``base_id`` / ``record_generation`` / ``plan_content_sha256``)
+    are echoed from the resolver result whenever the resolver has
+    them — the Ask layer can use them for cache keys, log dedup, and
+    prompt-source attribution.
 
     The attachment NEVER carries ``provider_metadata`` or
     ``query_text`` — only ``query_sha256`` for traceability.

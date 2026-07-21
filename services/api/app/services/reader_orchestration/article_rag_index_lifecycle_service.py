@@ -53,7 +53,6 @@ from uuid import UUID
 
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
-    DEFAULT_INDEX_VERSION,
     ArticleRagIndexBootstrapError,
     ArticleRagIndexBootstrapService,
 )
@@ -91,12 +90,6 @@ _ACTIVE_INDEX_RUN_STATUSES: frozenset[str] = frozenset(
 #   plan_hash_mismatch  — bootstrap detected plan hash drift
 #   bootstrap_inconsistent — existing run has dead/inconsistent job
 #   error               — unexpected bootstrap failure
-#
-# NOTE: ``chunker_version_mismatch`` was removed because validating it
-# *after* bootstrap would violate the "not enqueue" contract — the
-# bootstrap's fresh path has already written index_runs / reader_runs /
-# reader_jobs by the time it returns.  The bootstrap plan service is the
-# authority on chunker_version.
 
 ENSURE_STATUS_ENQUEUED = "enqueued"
 ENSURE_STATUS_IDEMPOTENT_NOOP = "idempotent_noop"
@@ -210,7 +203,6 @@ class ArticleRagIndexLifecycleService:
         reading_record_id: UUID,
         user_id: UUID,
         expected_generation: int,
-        chunker_version: str | None = None,
         now: datetime | None = None,
     ) -> ArticleRagIndexEnsureResult:
         """Validate readiness, then delegate to bootstrap.
@@ -223,16 +215,6 @@ class ArticleRagIndexLifecycleService:
           * ``expected_generation`` != actual ``generation``
           * bootstrap raises ``plan_hash_mismatch``
           * bootstrap raises ``idempotent_run_inconsistent``
-
-        ``chunker_version`` is accepted for API compatibility but is NOT
-        validated here.  Validating it *after* bootstrap would violate the
-        "not enqueue" contract, because the bootstrap's fresh path has
-        already inserted ``reader_article_rag_index_runs`` /
-        ``reader_runs`` / ``reader_jobs`` before returning.  The bootstrap
-        plan service is the authority on ``chunker_version``; callers
-        that need to assert a specific version must do so before invoking
-        this method (or assert it against the returned ``chunker_version``
-        field on the success paths).
 
         Returns ``enqueued`` or ``idempotent_noop`` on success.
         """
@@ -307,7 +289,6 @@ class ArticleRagIndexLifecycleService:
                     conn,
                     reading_record_id=reading_record_id,
                     user_id=user_id,
-                    index_version=DEFAULT_INDEX_VERSION,
                     now=now,
                 )
             )
@@ -318,13 +299,6 @@ class ArticleRagIndexLifecycleService:
             )
 
         # 7. Translate bootstrap result → ensure result.
-        #
-        # NOTE: chunker_version is intentionally NOT validated here.
-        # Bootstrap has already written index_runs / reader_runs /
-        # reader_jobs by this point, so a mismatch returned as a
-        # "no-enqueue" result would contradict the dataclass contract
-        # that non-enqueue paths must not populate IDs.  The bootstrap
-        # plan service is the authority on chunker_version.
         if bootstrap_result.idempotent_noop:
             return ArticleRagIndexEnsureResult(
                 reading_record_id=reading_record_id,
@@ -449,21 +423,19 @@ class ArticleRagIndexLifecycleService:
                 reason_code="stable_generation_mismatch",
             )
 
-        # 4. Latest index run for this stable_document + index_version.
+        # 4. Latest index run for this stable_document.
         #    Only read truth-layer identifiers / hashes / counts —
         #    NEVER chunk text / embedding / vector payload.
         index_row = await conn.fetchrow(
             """
             SELECT id, base_id, record_generation, stable_document_id,
-                   plan_content_sha256, chunk_count, status, index_version
+                   plan_content_sha256, chunk_count, status
             FROM reader_article_rag_index_runs
             WHERE stable_document_id = $1
-              AND index_version = $2
             ORDER BY created_at DESC
             LIMIT 1
             """,
             stable_document_id,
-            DEFAULT_INDEX_VERSION,
         )
         if index_row is None:
             return ArticleRagIndexLifecycleStatus(

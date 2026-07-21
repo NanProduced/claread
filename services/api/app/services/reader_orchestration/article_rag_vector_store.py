@@ -68,10 +68,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .article_rag_index_profile import (
-    ArticleRagIndexProfileResolutionError,
-    resolve_article_rag_index_profile,
-)
+from .article_rag_index_bootstrap import ARTICLE_RAG_EMBEDDING_CONTRACT
 from .article_rag_index_worker import (
     ArticleRagIndexWorkerError,
     ArticleRagVectorChunk,
@@ -116,19 +113,18 @@ _P1G_MSG_WRITER_MODEL_MISMATCH = (
 _P1G_R1_MSG_WRITER_UNCONFIGURED_DIM = (
     "ZillizArticleRagVectorWriter requires a positive integer dim"
 )
-# P1-G-R1: fixed safe message for writer profile metadata mismatch.
-# Used when the 5 profile fields (fingerprint, collection, model, dim,
-# text_type) do not match the resolved V1 profile.  Must NOT echo any
-# caller-supplied value (version, fingerprint, model, text type,
-# collection, dim).
-_P1G_R1_MSG_WRITER_PROFILE_MISMATCH = (
-    "Article RAG vector writer metadata does not match the resolved "
-    "V1 profile identity"
+# P1-G-R1: fixed safe message for writer contract metadata mismatch.
+# Used when the 4 contract fields (collection, model, dim, text_type)
+# do not match the frozen ARTICLE_RAG_EMBEDDING_CONTRACT.  Must NOT
+# echo any caller-supplied value (model, text type, collection, dim).
+_P1G_R1_MSG_WRITER_CONTRACT_MISMATCH = (
+    "Article RAG vector writer metadata does not match the frozen "
+    "embedding + vector-space contract"
 )
 
-# P1-G-R1: failure code for writer profile metadata mismatch.
-FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH = (
-    "vector_writer_profile_mismatch"
+# P1-G-R1: failure code for writer contract metadata mismatch.
+FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH = (
+    "vector_writer_contract_mismatch"
 )
 
 if TYPE_CHECKING:
@@ -152,7 +148,6 @@ ZILLIZ_DEFAULT_VECTOR_DIM = 1024
 _ARTICLE_RAG_CHUNK_ID_MAX_LEN = 64
 _ARTICLE_RAG_HASH_MAX_LEN = 64
 _ARTICLE_RAG_MODEL_MAX_LEN = 64
-_ARTICLE_RAG_VERSION_MAX_LEN = 32
 _ARTICLE_RAG_UUID_MAX_LEN = 64
 _ARTICLE_RAG_ID_LIST_MAX_LEN = 2048
 _ARTICLE_RAG_JSON_MAX_LEN = 8192
@@ -311,17 +306,14 @@ def _build_article_rag_upsert_row(
 
       ``chunk_id, content_sha256, embedding_text_sha256, embedding_model,
       vector, reading_record_id, stable_document_id, base_id,
-      record_generation, index_version, chunker_version,
-      plan_content_sha256, block_ids, unit_ids, anchor_segment_ids,
-      canonical_start_utf16, canonical_end_utf16,
+      record_generation, plan_content_sha256, block_ids, unit_ids,
+      anchor_segment_ids, canonical_start_utf16, canonical_end_utf16,
       citation_metadata_json, metadata_json``
 
-    The ``index_version`` field is read from ``metadata.index_version``
-    directly: per D6-I4D Fix 3 the row's identity tag must reflect the
-    I4B job's plan-level tag, not the writer's collection name.  The
-    writer no longer accepts an ``index_version`` constructor
-    argument — collection name and ``index_version`` are separate
-    concerns.
+    The Article RAG index is a single path — no ``index_version`` or
+    ``chunker_version`` identity tags travel on the row.  Collection
+    name is a writer-construction concern; embedding identity is
+    enforced by the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
 
     Defence in depth:
       * The top-level row dict is denylist-checked.
@@ -418,16 +410,6 @@ def _build_article_rag_upsert_row(
             str(metadata.base_id), _ARTICLE_RAG_UUID_MAX_LEN, "base_id"
         ),
         "record_generation": int(metadata.record_generation),
-        "index_version": _truncate_or_raise(
-            str(metadata.index_version),
-            _ARTICLE_RAG_VERSION_MAX_LEN,
-            "index_version",
-        ),
-        "chunker_version": _truncate_or_raise(
-            str(metadata.chunker_version),
-            _ARTICLE_RAG_VERSION_MAX_LEN,
-            "chunker_version",
-        ),
         "plan_content_sha256": _truncate_or_raise(
             str(metadata.plan_content_sha256),
             _ARTICLE_RAG_HASH_MAX_LEN,
@@ -554,8 +536,6 @@ def _build_article_rag_collection_schema(dim: int) -> dict[str, Any]:
     stable_document_id            VARCHAR(64)
     base_id                       VARCHAR(64)
     record_generation             INT64
-    index_version                 VARCHAR(32)
-    chunker_version               VARCHAR(32)
     plan_content_sha256           VARCHAR(64)
     block_ids                     VARCHAR(2048)        JSON list serialised
     unit_ids                      VARCHAR(2048)        JSON list serialised
@@ -592,8 +572,6 @@ def _build_article_rag_collection_schema(dim: int) -> dict[str, Any]:
             {"name": "stable_document_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
             {"name": "base_id", "type": "VARCHAR", "max_length": _ARTICLE_RAG_UUID_MAX_LEN},
             {"name": "record_generation", "type": "INT64"},
-            {"name": "index_version", "type": "VARCHAR", "max_length": _ARTICLE_RAG_VERSION_MAX_LEN},
-            {"name": "chunker_version", "type": "VARCHAR", "max_length": _ARTICLE_RAG_VERSION_MAX_LEN},
             {"name": "plan_content_sha256", "type": "VARCHAR", "max_length": _ARTICLE_RAG_HASH_MAX_LEN},
             {"name": "block_ids", "type": "VARCHAR", "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN},
             {"name": "unit_ids", "type": "VARCHAR", "max_length": _ARTICLE_RAG_ID_LIST_MAX_LEN},
@@ -688,16 +666,6 @@ def _build_pymilvus_collection_schema(dim: int) -> Any:
             max_length=_ARTICLE_RAG_UUID_MAX_LEN,
         ),
         FieldSchema(name="record_generation", dtype=DataType.INT64),
-        FieldSchema(
-            name="index_version",
-            dtype=DataType.VARCHAR,
-            max_length=_ARTICLE_RAG_VERSION_MAX_LEN,
-        ),
-        FieldSchema(
-            name="chunker_version",
-            dtype=DataType.VARCHAR,
-            max_length=_ARTICLE_RAG_VERSION_MAX_LEN,
-        ),
         FieldSchema(
             name="plan_content_sha256",
             dtype=DataType.VARCHAR,
@@ -869,10 +837,10 @@ class ZillizArticleRagVectorWriter:
         self._token = token  # held only for SDK construction; never logged.
         self._collection = collection.strip()
         self._dim = int(dim)
-        # NOTE: per Fix 3, ``index_version`` is a per-row identity tag
-        # that lives on the chunk metadata (``ArticleRagVectorWriteMetadata``).
-        # The writer no longer owns an ``index_version`` field — collection
-        # name and ``index_version`` are separate concerns.
+        # The Article RAG index is a single path — no ``index_version``
+        # or ``chunker_version`` identity tags exist.  Collection name
+        # and embedding identity are enforced by the frozen
+        # ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
         self._client: "MilvusClient | None" = None
 
     @property
@@ -897,8 +865,6 @@ class ZillizArticleRagVectorWriter:
                 failure_class="sdk_unavailable",
                 failure_code="vector_writer_sdk_missing",
             ) from exc
-        # Per Fix 3 the writer no longer carries an ``index_version``
-        # field — that identity tag lives on ``metadata.index_version``.
         logger.debug(
             "Constructing pymilvus MilvusClient for article RAG vector writer "
             "(uri=%s, collection=%s, dim=%d)",
@@ -969,63 +935,41 @@ class ZillizArticleRagVectorWriter:
                 failure_code=FAILURE_CODE_VECTOR_WRITER_COLLECTION_MISMATCH,
             )
 
-        # P1-G-R1 check 2: resolver/profile metadata identity.
-        # Validate all 5 frozen profile fields against the resolved V1
-        # profile via the public resolver.  This MUST happen BEFORE the
-        # empty-batch early return so that invalid metadata fails closed
-        # even when ``chunks_with_embeddings == []``.
+        # P1-G-R1 check 2: frozen embedding + vector-space contract.
+        # Validate all 4 contract fields (collection, model, dim,
+        # text_type) against the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
+        # This MUST happen BEFORE the empty-batch early return so that
+        # invalid metadata fails closed even when
+        # ``chunks_with_embeddings == []``.
         #
-        # Safe exception unwrapping: if the resolver raises, we capture
-        # the failure signal inside the except block but construct and
-        # raise the outer exception OUTSIDE the except block.  This
-        # ensures ``__cause__ is None`` and ``__context__ is None`` —
-        # the resolver's internal exception (which may echo the
-        # malicious version) is not reachable via the error chain.
-        resolver_failed = False
-        try:
-            resolution = resolve_article_rag_index_profile(
-                metadata.index_version
-            )
-        except ArticleRagIndexProfileResolutionError:
-            resolver_failed = True
-            resolution = None  # type: ignore[assignment]
-
-        if resolver_failed or resolution is None:
-            raise ZillizArticleRagVectorWriterError(
-                _P1G_R1_MSG_WRITER_PROFILE_MISMATCH,
-                retryable=False,
-                failure_class="vector_writer_profile_mismatch",
-                failure_code=FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
-            )
-
-        # At this point resolution is non-None — mypy can't infer the
-        # narrowing through the ``resolver_failed`` flag, so assert.
-        assert resolution is not None
-
-        profile = resolution.profile
+        # The contract is a module-level frozen dataclass — no resolver
+        # call, no exception unwrapping, no caller-supplied version
+        # string traverses the error chain.  All 4 fields are compared
+        # by structural equality; any mismatch raises a fixed safe
+        # message that does NOT echo the offending value.
+        contract = ARTICLE_RAG_EMBEDDING_CONTRACT
         if (
-            metadata.profile_fingerprint != resolution.profile_fingerprint
-            or metadata.collection != profile.vector_namespace
-            or metadata.embedding_model != profile.document_embedding_model
+            metadata.collection != contract.vector_collection
+            or metadata.embedding_model != contract.document_embedding_model
             or metadata.embedding_dimension
-            != profile.document_embedding_dimension
+            != contract.document_embedding_dimension
             or metadata.embedding_text_type
-            != profile.document_embedding_text_type
+            != contract.document_embedding_text_type
         ):
             raise ZillizArticleRagVectorWriterError(
-                _P1G_R1_MSG_WRITER_PROFILE_MISMATCH,
+                _P1G_R1_MSG_WRITER_CONTRACT_MISMATCH,
                 retryable=False,
-                failure_class="vector_writer_profile_mismatch",
-                failure_code=FAILURE_CODE_VECTOR_WRITER_PROFILE_MISMATCH,
+                failure_class="vector_writer_contract_mismatch",
+                failure_code=FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH,
             )
 
         # P1-G check 2 (legacy): metadata.embedding_dimension must be a
         # non-bool int and equal the writer's configured dim.  This is
-        # now redundant with the profile check above (which validates
-        # dim == profile.document_embedding_dimension == 1024 == self._dim
-        # in normal operation), but kept for defence in depth — if a
-        # future change decouples writer dim from profile dim, this
-        # check still catches the mismatch.
+        # now redundant with the contract check above (which validates
+        # dim == contract.document_embedding_dimension == 1024 ==
+        # self._dim in normal operation), but kept for defence in depth
+        # — if a future change decouples writer dim from contract dim,
+        # this check still catches the mismatch.
         metadata_dim = metadata.embedding_dimension
         if isinstance(metadata_dim, bool) or not isinstance(metadata_dim, int):
             raise ZillizArticleRagVectorWriterError(
@@ -1224,10 +1168,10 @@ def build_default_article_rag_vector_writer(
         )
         return UnconfiguredArticleRagVectorWriter()
 
-    # Per Fix 3, the writer no longer accepts ``index_version`` — that
-    # identity tag travels on ``ArticleRagVectorWriteMetadata.index_version``
-    # and is stamped onto each row at write time.  Collection name and
-    # ``index_version`` are separate concerns.
+    # The Article RAG index is a single path — no ``index_version``
+    # identity tag exists.  Collection name and embedding identity are
+    # separate concerns, both enforced by the frozen
+    # ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
     return ZillizArticleRagVectorWriter(
         uri=uri,
         token=token,

@@ -42,20 +42,41 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-启动 Reader enhancement worker（独立进程，不挂到 FastAPI lifespan）：
+Reader orchestration 目前有 3 个进程级 worker entrypoint：
+
+- `reader-enhancement-worker`：生成 translation / vocabulary / grammar 等增强层；默认必启。
+- `reader-artifact-pipeline-worker`：处理 PDF、Markdown、图片 OCR 等 artifact-backed input 的提取与 materialization；文件上传链路必启。
+- `reader-article-rag-index-worker`：构建文章 RAG 索引；仅在 `READER_ARTICLE_RAG_ENABLED=true` 时启用。
+
+本地完整文件上传链路默认需要 API、Web、enhancement worker 和 artifact worker。推荐从仓库根目录一键启动：
+
+```powershell
+pnpm reader:dev
+```
+
+日志会保留在同一个终端，并带有 `api`、`web`、`enhancement`、`artifact` 彩色前缀。需要单独观察某个进程时，使用以下独立命令分别开终端：
+
+```powershell
+pnpm reader:api
+pnpm reader:web
+pnpm reader:worker:enhancement
+pnpm reader:worker:artifact
+```
+
+只聚合启动两个默认 worker：
+
+```powershell
+pnpm reader:workers
+```
+
+启用 Article RAG 时使用 `pnpm reader:dev:rag` 或 `pnpm reader:workers:rag`。单次诊断消费仍可在 `services/api` 下运行：
 
 ```powershell
 uv run reader-enhancement-worker --once
-uv run reader-enhancement-worker
+uv run reader-artifact-pipeline-worker --once
 ```
 
-新 Reading Record / agentic orchestration 本地页面验证至少需要三个进程同时运行：
-
-- API：`uv run uvicorn app.main:app --reload`
-- Web：仓库根目录运行 `pnpm web:dev` 或 `pnpm --dir apps/web run dev`
-- Worker：`uv run reader-enhancement-worker`；只想手动消费一次队列时用 `uv run reader-enhancement-worker --once`
-
-如果 `/app/read` 或 `/app/reader-plate` 提交后只看到 `article_ready`，而 `translate_unit` 等 `reader_jobs` 长时间停在 `queued`，页面持续显示“批注生成中”，通常不是解析失败，而是 reader enhancement worker 没有运行或没有消费队列。完整本地链路和诊断 SQL 见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。
+如果上传文件已经写入 OSS，但 `input_artifact_extraction` 长时间保持 `queued`、`attempt_count = 0`，且 Reading Record 没有 active base，通常是 artifact worker 未启动或未消费队列。如果纯文本已进入 `article_ready`，但 `translate_unit` 等任务持续排队，则检查 enhancement worker。完整本地链路和诊断 SQL 见 `docs/initiatives/reader-agentic-orchestration/modules/local-real-chain-runbook.md`。
 
 运行测试：
 
@@ -102,7 +123,7 @@ uv run mypy app
   - 本地启用：`READER_ARTICLE_RAG_ENABLED=true`、`READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope`、`READER_ARTICLE_RAG_VECTOR_PROVIDER=zilliz`
   - Embedding 路由使用 `RAG_EMBEDDING_MODEL_PROFILE=rag-embedding-v4`，该 profile 在 `config/model-profiles.json` 中解析到 `text-embedding-v4` / `dashscope_embedding`
   - Zilliz 优先读取 `READER_ARTICLE_RAG_ZILLIZ_URI/TOKEN`；二者为空时 fallback 到 few-shot/Grammar RAG 的 `ZILLIZ_URI/TOKEN`
-  - `READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 仍必须保持 Article RAG 专用，例如 `article_rag_index_v1`，不要复用 `grammar_note_examples` / `sentence_analysis_examples`
+  - `READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 仍必须保持 Article RAG 专用，例如 `article_rag_chunks`，不要复用 `grammar_note_examples` / `sentence_analysis_examples`
 - `DEFAULT_MODEL_PROFILE` / `ANNOTATION_MODEL_PROFILE` / `ASK_CLAREAD_PROFILE`
 - `READER_ASK_REPLAN_MODEL_PROFILE`
 - `RAG_EMBEDDING_MODEL_PROFILE` / `RAG_RERANK_MODEL_PROFILE`

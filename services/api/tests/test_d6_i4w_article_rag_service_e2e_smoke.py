@@ -79,7 +79,6 @@ from app.services.reader_orchestration.article_rag_context_service import (
     ArticleRagContextService,
 )
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
-    DEFAULT_INDEX_VERSION,
     ArticleRagIndexBootstrapService,
 )
 from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
@@ -130,17 +129,11 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# P1-C: migration 0021 adds the durable ``profile_fingerprint`` column
-# (NOT NULL, SHA-256 CHECK) to ``reader_article_rag_index_runs``.  The
-# bootstrap service now writes this column on every fresh insert, so
-# the Article RAG e2e smoke test schema must apply migration 0021 on
-# top of BASELINE_SQL.  Per-file append (not a global BASELINE_SQL mutation).
-_MIGRATION_0021_PATH = (
-    REPO_ROOT / "infra" / "migrations" / "0021_reader_article_rag_profile_fingerprint.sql"
-)
-_MIGRATION_0021_SQL = _MIGRATION_0021_PATH.read_text(encoding="utf-8")
-
-INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL + "\n" + _MIGRATION_0021_SQL
+# The Article RAG index is a single path — no ``index_version`` /
+# ``chunker_version`` / ``profile_fingerprint`` columns exist on
+# ``reader_article_rag_index_runs``.  BASELINE_SQL (which includes
+# migration 0010) is sufficient; no migration 0021 append is needed.
+INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +370,6 @@ async def _fetch_index_run(
         SELECT id, reading_record_id, stable_document_id, base_id,
                record_generation,
                plan_content_sha256, chunk_count, status,
-               index_version, chunker_version,
                embedding_model, vector_store_provider, vector_collection,
                job_id, completed_at
         FROM reader_article_rag_index_runs
@@ -529,7 +521,6 @@ async def test_article_ready_to_ask_full_e2e_flow(smoke_env: asyncpg.Pool) -> No
         score=0.91,
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
-        index_version=DEFAULT_INDEX_VERSION,
         plan_content_sha256=index_run_row["plan_content_sha256"],
     )
     retrieval = _build_retrieval_service(

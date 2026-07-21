@@ -110,7 +110,6 @@ def test_fake_searcher_records_every_call() -> None:
             query_vector=(0.5, 0.6),
             limit=5,
             stable_document_id=stable_doc_id,
-            index_version="article_rag_index_v1",
         )
 
     asyncio.run(_run())
@@ -120,7 +119,6 @@ def test_fake_searcher_records_every_call() -> None:
     assert call["query_vector"] == (0.5, 0.6)
     assert call["limit"] == 5
     assert call["stable_document_id"] == str(stable_doc_id)
-    assert call["index_version"] == "article_rag_index_v1"
 
 
 def test_fake_searcher_zero_limit_returns_empty_result() -> None:
@@ -324,7 +322,6 @@ async def test_zilliz_searcher_returns_sanitised_hits(
             "distance": 0.95,
             "stable_document_id": str(uuid.uuid4()),
             "base_id": str(uuid.uuid4()),
-            "index_version": "article_rag_index_v1",
             "plan_content_sha256": "deadbeef",
             # pymilvus can include extra payload fields; the adapter
             # MUST NOT surface these to the caller.
@@ -336,7 +333,6 @@ async def test_zilliz_searcher_returns_sanitised_hits(
             "distance": 0.7,
             "stable_document_id": str(uuid.uuid4()),
             "base_id": str(uuid.uuid4()),
-            "index_version": "article_rag_index_v1",
             "plan_content_sha256": "beefdead",
         },
     ]
@@ -361,7 +357,6 @@ async def test_zilliz_searcher_returns_sanitised_hits(
         assert not hasattr(h, "text")
         assert not hasattr(h, "plate_json")
     assert result.hits[0].score == 0.95
-    assert result.hits[0].index_version == "article_rag_index_v1"
 
     # The stub was actually called via asyncio.to_thread.
     assert len(fake_client.search_calls) == 1
@@ -377,7 +372,6 @@ async def test_zilliz_searcher_returns_sanitised_hits(
         "chunk_id",
         "stable_document_id",
         "base_id",
-        "index_version",
         "plan_content_sha256",
     }
 
@@ -398,12 +392,10 @@ async def test_zilliz_searcher_assembles_filter_when_guard_supplied(
         query_vector=(0.1,),
         limit=3,
         stable_document_id=stable_doc_id,
-        index_version="article_rag_index_v1",
     )
     call = fake_client.search_calls[0]
     assert call["filter"] is not None
     assert str(stable_doc_id) in call["filter"]
-    assert "article_rag_index_v1" in call["filter"]
     # URI / token MUST NOT be embedded in the filter.
     assert _FAKE_URI not in call["filter"]
     assert _FAKE_TOKEN not in call["filter"]
@@ -722,7 +714,7 @@ async def test_real_zilliz_search_smoke_is_opt_in_only() -> None:
     real_token = os.environ.get("READER_ARTICLE_RAG_ZILLIZ_TOKEN") or ""
     real_collection = (
         os.environ.get("READER_ARTICLE_RAG_ZILLIZ_COLLECTION")
-        or "article_rag_index_v1"
+        or "article_rag_chunks"
     )
     if not (real_uri and real_token):
         pytest.skip("real Zilliz URI/token not set; smoke skipped")
@@ -976,7 +968,6 @@ async def test_zilliz_searcher_reads_guard_metadata_from_entity_wrapper(
                 "chunk_id": "abc",
                 "stable_document_id": str(uuid.uuid4()),
                 "base_id": other_base,  # mismatches — see retrieval test
-                "index_version": "article_rag_index_v1",
                 "plan_content_sha256": other_psha,
             },
             "distance": 0.9,
@@ -994,11 +985,10 @@ async def test_zilliz_searcher_reads_guard_metadata_from_entity_wrapper(
     assert len(result.hits) == 1
     hit = result.hits[0]
     assert hit.chunk_id == "abc"
-    # All four guard fields must be populated from the entity wrapper.
+    # All three guard fields must be populated from the entity wrapper.
     assert hit.base_id is not None
     assert str(hit.base_id) == other_base
     assert hit.plan_content_sha256 == other_psha
-    assert hit.index_version == "article_rag_index_v1"
 
 
 @pytest.mark.anyio
@@ -1014,7 +1004,6 @@ async def test_zilliz_searcher_mixed_shape_guard_metadata(
             "chunk_id": "a",
             "stable_document_id": str(uuid.uuid4()),
             "base_id": other_base,  # top-level
-            "index_version": "article_rag_index_v1",
             "plan_content_sha256": "deadbeef",
             "distance": 0.9,
         },
@@ -1024,7 +1013,6 @@ async def test_zilliz_searcher_mixed_shape_guard_metadata(
                 "chunk_id": "b",
                 "stable_document_id": str(uuid.uuid4()),
                 "base_id": other_base,
-                "index_version": "article_rag_index_v1",
                 "plan_content_sha256": "deadbeef",
             },
             "distance": 0.8,

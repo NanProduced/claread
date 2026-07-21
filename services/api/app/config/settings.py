@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     reader_article_rag_vector_provider: str = ""
     reader_article_rag_zilliz_uri: str = ""
     reader_article_rag_zilliz_token: str = ""
-    reader_article_rag_zilliz_collection: str = "article_rag_index_v1"
+    reader_article_rag_zilliz_collection: str = "article_rag_chunks"
     reader_article_rag_vector_dim: int = 1024
     reader_article_rag_enabled: bool = False
     reader_article_rag_smoke: bool = False

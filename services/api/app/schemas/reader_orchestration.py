@@ -1541,10 +1541,10 @@ class ReaderArticleRagIndexStatusResponse(BaseModel):
 class ReaderArticleRagIndexEnsureRequest(BaseModel):
     """POST /reader/records/{record_id}/article-rag-index/ensure body.
 
-    ``extra="forbid"`` so unknown fields (including ``user_id``,
-    ``index_version``, and ``chunker_version``) are rejected with 422.
-    ``user_id`` is sourced only from ``AuthUserDep``.  Index identity is
-    fixed server-side; clients cannot select a version.
+    ``extra="forbid"`` so unknown fields (including ``user_id``) are
+    rejected with 422.  ``user_id`` is sourced only from
+    ``AuthUserDep``.  The Article RAG index is a single path — there
+    is no version selection.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -751,7 +751,7 @@ class _FakeSettings:
             "reader_article_rag_enabled": False,
             "reader_article_rag_zilliz_uri": "",
             "reader_article_rag_zilliz_token": "",
-            "reader_article_rag_zilliz_collection": "article_rag_index_v1",
+            "reader_article_rag_zilliz_collection": "article_rag_chunks",
             "reader_article_rag_embedding_provider": "",
             "reader_article_rag_embedding_model": "",
             "reader_article_rag_vector_provider": "",

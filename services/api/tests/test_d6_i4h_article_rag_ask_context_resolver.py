@@ -17,7 +17,7 @@ Covers:
     FAILURE_CODE_RESOLVER_UNEXPECTED_ERROR; original message NOT
     leaked in result.
   * query_sha256 deterministic, never contains query_text.
-  * parameter passthrough: limit / max_context_chars / index_version
+  * parameter passthrough: limit / max_context_chars
     reach the context service.
   * result never carries provider_metadata.
   * missing context_service / composer config → fail-soft with

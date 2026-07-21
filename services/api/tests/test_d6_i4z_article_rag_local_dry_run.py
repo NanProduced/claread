@@ -153,17 +153,11 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# P1-C: migration 0021 adds the durable ``profile_fingerprint`` column
-# (NOT NULL, SHA-256 CHECK) to ``reader_article_rag_index_runs``.  The
-# bootstrap service now writes this column on every fresh insert, so
-# the Article RAG local dry-run test schema must apply migration 0021
-# on top of BASELINE_SQL.  Per-file append (not a global BASELINE_SQL mutation).
-_MIGRATION_0021_PATH = (
-    REPO_ROOT / "infra" / "migrations" / "0021_reader_article_rag_profile_fingerprint.sql"
-)
-_MIGRATION_0021_SQL = _MIGRATION_0021_PATH.read_text(encoding="utf-8")
-
-ARTICLE_RAG_DRY_RUN_SCHEMA_SQL = BASELINE_SQL + "\n" + _MIGRATION_0021_SQL
+# The Article RAG index is a single path — no ``index_version`` /
+# ``chunker_version`` / ``profile_fingerprint`` columns exist on
+# ``reader_article_rag_index_runs``.  BASELINE_SQL (which includes
+# migration 0010) is sufficient; no migration 0021 append is needed.
+ARTICLE_RAG_DRY_RUN_SCHEMA_SQL = BASELINE_SQL
 
 
 async def _make_pool(schema_name: str) -> asyncpg.Pool:
@@ -1251,14 +1245,14 @@ class TestSmokeEnvGate:
     ) -> None:
         """A production-named collection must NEVER enter the smoke.
         This is the safety guard: the smoke must skip rather than
-        write to ``article_rag_index_v1`` (or anything else outside
+        write to ``article_rag_chunks`` (or anything else outside
         the smoke namespace).
         """
         env = self._full_smoke_env()
         # Simulate the most common env-typo: leaving the default
         # production collection name.
         env["READER_ARTICLE_RAG_ZILLIZ_COLLECTION"] = (
-            "article_rag_index_v1"
+            "article_rag_chunks"
         )
         for k, v in env.items():
             monkeypatch.setenv(k, v)

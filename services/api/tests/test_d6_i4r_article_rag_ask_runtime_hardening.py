@@ -64,7 +64,7 @@ class _FakeSettings:
             "reader_article_rag_enabled": False,
             "reader_article_rag_zilliz_uri": "",
             "reader_article_rag_zilliz_token": "",
-            "reader_article_rag_zilliz_collection": "article_rag_index_v1",
+            "reader_article_rag_zilliz_collection": "article_rag_chunks",
             "reader_article_rag_embedding_provider": "",
             "reader_article_rag_embedding_model": "",
             "reader_article_rag_vector_provider": "",
@@ -84,7 +84,7 @@ def _make_complete_settings() -> _FakeSettings:
         reader_article_rag_enabled=True,
         reader_article_rag_zilliz_uri="https://zilliz.example.com",
         reader_article_rag_zilliz_token="zilliz-secret-token",
-        reader_article_rag_zilliz_collection="article_rag_index_v1",
+        reader_article_rag_zilliz_collection="article_rag_chunks",
         reader_article_rag_embedding_provider="dashscope",
         reader_article_rag_embedding_model="text-embedding-v3",
         reader_article_rag_vector_provider="zilliz",
@@ -481,7 +481,20 @@ class TestRepairMergeClearsArticleRag:
 
         assert target.article_rag_citations == []
         assert target.article_rag_context_ids == []
-        assert target.article_rag_metadata == {}
+        # D6-I4Q (Round 2): the metadata now carries an explicit
+        # ``status=stale_due_to_repair`` so the frontend can
+        # distinguish "RAG was never enabled" from "RAG was enabled
+        # but cleared because the repair branch bypassed
+        # integration".  The stale citations / context_ids are
+        # gone, and ``should_attach`` is forced to ``False``.
+        assert target.article_rag_metadata["status"] == "stale_due_to_repair"
+        assert (
+            target.article_rag_metadata["failure_code"]
+            == "article_rag_repair_citations_dropped"
+        )
+        assert target.article_rag_metadata["should_attach"] is False
+        assert target.article_rag_metadata["citations"] == []
+        assert target.article_rag_metadata["context_ids"] == []
 
 
 # ===========================================================================

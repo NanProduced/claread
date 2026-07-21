@@ -54,8 +54,6 @@ _INDEX_RUN_ID = UUID("00000000-0000-0000-0000-000000000030")
 _JOB_ID = UUID("00000000-0000-0000-0000-000000000040")
 _RUN_ID = UUID("00000000-0000-0000-0000-000000000050")
 _GENERATION = 3
-_INDEX_VERSION = "article_rag_index_v1"
-_CHUNKER_VERSION = "stable_doc_blocks_v1"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +130,6 @@ def _make_index_row(
     stable_document_id: UUID = _STABLE_DOC_ID,
     plan_sha: str = "a" * 64,
     chunk_count: int = 5,
-    index_version: str = _INDEX_VERSION,
     index_run_id: UUID = _INDEX_RUN_ID,
 ) -> dict[str, Any]:
     return {
@@ -143,7 +140,6 @@ def _make_index_row(
         "plan_content_sha256": plan_sha,
         "chunk_count": chunk_count,
         "status": status,
-        "index_version": index_version,
     }
 
 
@@ -172,7 +168,6 @@ class _FakeBootstrapService:
         *,
         reading_record_id: UUID,
         user_id: UUID,
-        index_version: str = _INDEX_VERSION,
         now: Any = None,
     ) -> ArticleRagIndexBootstrapResult:
         self.calls.append(
@@ -180,7 +175,6 @@ class _FakeBootstrapService:
                 "conn": conn,
                 "reading_record_id": reading_record_id,
                 "user_id": user_id,
-                "index_version": index_version,
                 "now": now,
             }
         )
@@ -193,7 +187,6 @@ class _FakeBootstrapService:
 def _make_bootstrap_result(
     *,
     idempotent_noop: bool = False,
-    chunker_version: str = _CHUNKER_VERSION,
 ) -> ArticleRagIndexBootstrapResult:
     return ArticleRagIndexBootstrapResult(
         index_run_id=_INDEX_RUN_ID,
@@ -201,14 +194,8 @@ def _make_bootstrap_result(
         stable_document_id=_STABLE_DOC_ID,
         base_id=_BASE_ID,
         record_generation=_GENERATION,
-        index_version=_INDEX_VERSION,
-        chunker_version=chunker_version,
         plan_content_sha256="a" * 64,
         chunk_count=5,
-        # Internal bootstrap identity (not an external lifecycle DTO field).
-        profile_fingerprint=(
-            "e443f581eb3e86aeb9dbcdcee806783186bd85da6c987c60357b61905ea86d6d"
-        ),
         job_id=_JOB_ID,
         job_status="queued",
         idempotent_noop=idempotent_noop,
@@ -403,7 +390,6 @@ class TestEnsureHappyPath:
         assert len(bootstrap.calls) == 1
         assert bootstrap.calls[0]["reading_record_id"] == _RECORD_ID
         assert bootstrap.calls[0]["user_id"] == _USER_ID
-        assert bootstrap.calls[0]["index_version"] == _INDEX_VERSION
 
     async def test_bootstrap_idempotent_noop_is_passed_through(self) -> None:
         bootstrap = _FakeBootstrapService(
@@ -423,59 +409,6 @@ class TestEnsureHappyPath:
         assert result.reason_code == "idempotent_noop"
         assert result.idempotent_noop is True
         assert result.index_run_id == _INDEX_RUN_ID
-
-    async def test_chunker_version_not_validated_post_bootstrap(self) -> None:
-        """P1 contract: chunker_version is NOT validated post-bootstrap.
-
-        Bootstrap has already written index_runs / reader_runs /
-        reader_jobs by the time it returns, so a mismatch returned as
-        a "no-enqueue" result would violate the dataclass contract that
-        non-enqueue paths must not populate IDs.  The bootstrap plan
-        service is the authority on chunker_version.  Callers that need
-        to assert a specific version must do so before invoking this
-        method (or assert it against the returned ``chunker_version``
-        field on the success paths).
-        """
-        bootstrap = _FakeBootstrapService(
-            result=_make_bootstrap_result(chunker_version="different_v2"),
-        )
-        service = _make_service(bootstrap=bootstrap)
-        conn = _FakeConn(record_row=_make_record_row())
-
-        result = await service.ensure_article_rag_index_job_in_transaction(
-            conn,
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            expected_generation=_GENERATION,
-            chunker_version=_CHUNKER_VERSION,  # differs from bootstrap's
-        )
-
-        # Despite the mismatch, the ensure path returns ``enqueued``
-        # (not chunker_version_mismatch).  EnsureResult no longer echoes
-        # chunker_version on the public lifecycle DTO.
-        assert result.status == ENSURE_STATUS_ENQUEUED
-        assert result.idempotent_noop is False
-        assert result.index_run_id == _INDEX_RUN_ID
-        assert result.job_id == _JOB_ID
-        assert not hasattr(result, "chunker_version")
-
-    async def test_chunker_version_match_returns_enqueued(self) -> None:
-        bootstrap = _FakeBootstrapService(
-            result=_make_bootstrap_result(chunker_version=_CHUNKER_VERSION),
-        )
-        service = _make_service(bootstrap=bootstrap)
-        conn = _FakeConn(record_row=_make_record_row())
-
-        result = await service.ensure_article_rag_index_job_in_transaction(
-            conn,
-            reading_record_id=_RECORD_ID,
-            user_id=_USER_ID,
-            expected_generation=_GENERATION,
-            chunker_version=_CHUNKER_VERSION,
-        )
-
-        assert result.status == ENSURE_STATUS_ENQUEUED
-        assert not hasattr(result, "chunker_version")
 
 
 # ===========================================================================

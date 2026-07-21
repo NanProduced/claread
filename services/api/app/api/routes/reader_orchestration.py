@@ -1330,8 +1330,8 @@ async def ensure_reader_article_rag_index_job(
 
     The route opens the transaction; the service writes ``index_runs`` /
     ``reader_runs`` / ``reader_jobs`` inside it.  ``user_id`` comes only
-    from ``AuthUserDep``.  Index identity is fixed server-side; clients
-    cannot select ``index_version`` or ``chunker_version``.
+    from ``AuthUserDep``.  The Article RAG index is a single path —
+    there is no version selection.
 
     HTTP mapping:
       * ``status=record_not_found`` → 404

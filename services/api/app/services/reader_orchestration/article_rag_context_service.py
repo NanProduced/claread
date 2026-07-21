@@ -48,7 +48,7 @@ Security contract
   being placed on the pack.  Only a tiny set of explicitly-safe
   scalar keys (``provider``, ``collection``, ``hit_count``, ``limit``,
   ``latency_ms``, ``total_latency_ms``, ``embedding_model``,
-  ``index_version``, ``plan_content_sha256``, ``region``,
+  ``plan_content_sha256``, ``region``,
   ``namespace``) with non-suspicious scalar values passes through;
   anything else — unknown keys, list values, dict values, scalar
   values containing forbidden substrings (e.g. ``token=``,
@@ -517,8 +517,6 @@ class ArticleRagContextService:
             Total character budget for the chunk text in ``items``.
             Must be a positive integer; 0 or negative fails closed
             with ``failure_code=context_invalid_budget``.
-        index_version
-            The Article RAG index version to target.
 
         Raises
         ------
@@ -606,7 +604,7 @@ class ArticleRagContextService:
         if not retrieval_result.hits:
             logger.debug(
                 "Article RAG context pack served 0 items for record=%s "
-                "limit=%d index_version=%s",
+                "limit=%d",
                 reading_record_id,
                 limit,
             )

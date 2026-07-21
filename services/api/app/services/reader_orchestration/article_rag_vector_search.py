@@ -12,10 +12,10 @@ Truth boundary
 
 A vector hit returned by a searcher carries ``chunk_id`` and a ``score``
 *only*.  Anything else returned by the searcher
-(``stable_document_id``, ``base_id``, ``index_version``,
-``plan_content_sha256``) is **guard metadata**, never a fact source —
-the I4E retrieval service ignores the hit's payload-derived citation
-fields and joins the hit against the current
+(``stable_document_id``, ``base_id``, ``plan_content_sha256``) is
+**guard metadata**, never a fact source — the I4E retrieval service
+ignores the hit's payload-derived citation fields and joins the hit
+against the current
 :class:`app.services.reader_orchestration.article_rag_index_plan.ArticleRagIndexPlan`
 on ``chunk_id``.  Citation truth therefore always returns to Postgres
 (``stable_document_blocks`` / ``reading_bases.text`` /
@@ -36,7 +36,7 @@ Security contract
   or higher; only the collection name and the limit are logged at
   DEBUG level.
 * Vector hits returned by the SDK are sanitised: the adapter extracts
-  only ``chunk_id`` and ``score``, plus the four named guard fields if
+  only ``chunk_id`` and ``score``, plus the three named guard fields if
   the SDK happens to surface them.  No other SDK response field
   crosses the wire.
 """
@@ -121,8 +121,8 @@ class ArticleRagVectorSearchHit:
     """One hit returned by a vector searcher.
 
     The hit carries ``chunk_id`` + ``score`` as the canonical contract.
-    The four guard fields below (``stable_document_id``, ``base_id``,
-    ``index_version``, ``plan_content_sha256``) are populated by the
+    The three guard fields below (``stable_document_id``,
+    ``base_id``, ``plan_content_sha256``) are populated by the
     adapter **only** when the SDK surfaces them as named columns — they
     are diagnostics, never a fact source.  The I4E retrieval service
     uses them at most as a guard; it joins hits against the current plan
@@ -135,7 +135,6 @@ class ArticleRagVectorSearchHit:
     # surface them, or if the hit row's column was NULL.
     stable_document_id: UUID | None = None
     base_id: UUID | None = None
-    index_version: str | None = None
     plan_content_sha256: str | None = None
 
 
@@ -169,7 +168,7 @@ class ArticleRagVectorSearcher(Protocol):
 
     Implementations MUST:
       * return hits in score-descending order
-      * populate ``chunk_id`` + ``score`` on every hit; the four guard
+      * populate ``chunk_id`` + ``score`` on every hit; the three guard
         fields may be ``None`` when the SDK does not surface them
       * be idempotent (no state changes) — this is a read-only service
     """
@@ -181,7 +180,6 @@ class ArticleRagVectorSearcher(Protocol):
         query_vector: tuple[float, ...],
         limit: int,
         stable_document_id: UUID | None = None,
-        index_version: str | None = None,
     ) -> ArticleRagVectorSearchResult: ...
 
 
@@ -200,7 +198,6 @@ class UnconfiguredArticleRagVectorSearcher:
         query_vector: tuple[float, ...],
         limit: int,
         stable_document_id: UUID | None = None,
-        index_version: str | None = None,
     ) -> ArticleRagVectorSearchResult:
         raise ArticleRagVectorSearcherError(
             "article RAG vector searcher is not configured; inject an "
@@ -249,7 +246,6 @@ class FakeArticleRagVectorSearcher:
         query_vector: tuple[float, ...],
         limit: int,
         stable_document_id: UUID | None = None,
-        index_version: str | None = None,
     ) -> ArticleRagVectorSearchResult:
         self.search_calls.append(
             {
@@ -259,7 +255,6 @@ class FakeArticleRagVectorSearcher:
                 "stable_document_id": (
                     str(stable_document_id) if stable_document_id else None
                 ),
-                "index_version": index_version,
             }
         )
         if limit <= 0:
@@ -458,7 +453,6 @@ class ZillizArticleRagVectorSearcher:
         query_vector: tuple[float, ...],
         limit: int,
         stable_document_id: UUID | None = None,
-        index_version: str | None = None,
     ) -> ArticleRagVectorSearchResult:
         """Search ``collection`` for the ``limit`` nearest neighbours.
 
@@ -466,7 +460,7 @@ class ZillizArticleRagVectorSearcher:
         API accepts a ``filter`` expression; we apply an optional
         ``stable_document_id`` filter when supplied.  Vector payload
         text / citation content is never read — only ``chunk_id``,
-        ``score``, and the four named guard columns are extracted.
+        ``score``, and the three named guard columns are extracted.
         """
         if limit <= 0:
             return ArticleRagVectorSearchResult(
@@ -495,15 +489,8 @@ class ZillizArticleRagVectorSearcher:
         # values are forwarded; we never concatenate the URI / token /
         # query text into the filter.
         filter_expr: str | None = None
-        if stable_document_id is not None or index_version is not None:
-            parts: list[str] = []
-            if stable_document_id is not None:
-                parts.append(
-                    f'stable_document_id == "{stable_document_id}"'
-                )
-            if index_version is not None and (index_version or "").strip():
-                parts.append(f'index_version == "{index_version}"')
-            filter_expr = " and ".join(parts) if parts else None
+        if stable_document_id is not None:
+            filter_expr = f'stable_document_id == "{stable_document_id}"'
 
         def _sync_search() -> list[dict[str, Any]]:
             client = self._ensure_client()
@@ -522,7 +509,6 @@ class ZillizArticleRagVectorSearcher:
                     "chunk_id",
                     "stable_document_id",
                     "base_id",
-                    "index_version",
                     "plan_content_sha256",
                 ],
                 filter=filter_expr,
@@ -585,8 +571,6 @@ class ZillizArticleRagVectorSearcher:
                 base_uuid = UUID(str(base_raw)) if base_raw else None
             except (TypeError, ValueError):
                 base_uuid = None
-            iv_raw = _extract_field(entry, "index_version")
-            iv_str = str(iv_raw) if iv_raw else None
             psha_raw = _extract_field(entry, "plan_content_sha256")
             psha_str = str(psha_raw) if psha_raw else None
             hits.append(
@@ -595,7 +579,6 @@ class ZillizArticleRagVectorSearcher:
                     score=score,
                     stable_document_id=sd_uuid,
                     base_id=base_uuid,
-                    index_version=iv_str,
                     plan_content_sha256=psha_str,
                 )
             )
