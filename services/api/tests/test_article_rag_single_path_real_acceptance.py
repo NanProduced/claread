@@ -916,6 +916,18 @@ class _CleanupResult:
 
     All schema-identity fields are compared against the preflight
     snapshot to prove the cleanup did not alter the collection structure.
+
+    R3 changes:
+      - ``delete_call_count``: 0 if no cleanup target existed (no
+        delete issued), 1 if a delete was issued.  This is the
+        MEASURED value used for ``counts.vector_delete_calls``;
+        callers MUST NOT hardcode the count after success.
+      - ``cleanup_target_chunk_ids``: the union of
+        (expected_chunk_ids, saved_chunk_ids, discovered_chunk_ids)
+        actually used as the delete filter.  Used for the report.
+      - ``expected_chunk_ids`` / ``saved_chunk_ids`` /
+        ``discovered_chunk_ids``: the three input sets, recorded
+        separately for the report and for failure-injection tests.
     """
 
     deleted_count: int
@@ -937,45 +949,116 @@ class _CleanupResult:
     protected_collections_unchanged: dict[str, bool]
     # Row count after (informational only — Milvus compaction is async).
     collection_row_count_after: int | None
+    # R3: measured delete call count (0 or 1).
+    delete_call_count: int = 0
+    # R3: the union of (expected, saved, discovered) chunk_ids that
+    # was used as the delete filter.
+    cleanup_target_chunk_ids: tuple[str, ...] = ()
+    # R3: the three input sets, recorded for the report.
+    expected_chunk_ids: tuple[str, ...] = ()
+    saved_chunk_ids: tuple[str, ...] = ()
+    discovered_chunk_ids: tuple[str, ...] = ()
 
 
 async def _precise_cleanup_by_chunk_ids(
     client: object,
     *,
     collection: str,
-    chunk_ids: tuple[str, ...],
+    expected_chunk_ids: tuple[str, ...],
+    saved_chunk_ids: tuple[str, ...],
     stable_document_id: UUID,
     preflight: _ZillizPreflightSnapshot,
 ) -> _CleanupResult:
-    """Delete EXACTLY the chunks in ``chunk_ids`` by primary key, then
-    verify deletion + collection integrity.
+    """Delete EXACTLY the union of (expected, saved, discovered)
+    chunk_ids by primary key, then verify deletion + collection
+    integrity.
 
-    Per the R2 task spec:
-      1. Delete by the saved chunk_id set (NOT by stable_document_id filter).
-      2. Query each chunk_id individually to confirm deletion.
-      3. Query by stable_document_id to confirm 0 rows remain.
-      4. Verify collection still exists.
-      5. Compare schema identity (field names, types, PK, vector dim, index/metric).
-      6. Compare collection list before/after.
-      7. Verify protected collections unchanged.
-      8. Never drop/recreate the collection.
-      9. Never execute collection-wide compaction.
+    R3 design — closes the failure-path cleanup gap:
+
+      1. ``expected_chunk_ids`` is built from the PostgreSQL plan
+         BEFORE any paid vector write.  If the worker wrote vectors
+         but D2/D3/D4 failed, ``saved_chunk_ids`` is empty but
+         ``expected_chunk_ids`` still identifies the chunks that
+         SHOULD have been written.
+      2. ``saved_chunk_ids`` is what D4 captured from Zilliz (may
+         be empty if D4 was not reached or poll timed out).
+      3. ``discovered_chunk_ids`` is queried from Zilliz by
+         ``stable_document_id`` IN FINALLY — this is the only use
+         of ``stable_document_id`` as a filter, and it is for
+         DISCOVERY only, never for delete.
+      4. ``cleanup_target`` = union of all three.  Delete by
+         precise ``chunk_id in [...]`` primary-key filter.
+      5. ``delete_call_count`` = 1 if a delete was issued, 0 if
+         cleanup_target was empty (no delete call made).
+
+    Per the R3 task spec:
+      - Never use ``stable_document_id`` as a delete filter.
+      - Only delete by exact chunk_id primary keys.
+      - Never drop/recreate the collection.
+      - Never execute collection-wide compaction.
+      - Never touch protected collections.
 
     Never touches protected collections.  If post-delete verification
     fails, the result records the failure (the caller asserts).
     """
 
     def _sync() -> _CleanupResult:
-        # 1. Delete by chunk_id set (single delete call with filter).
-        if chunk_ids:
-            # Build a Milvus filter: chunk_id in ["cid1", "cid2", ...]
-            # Each chunk_id is a string; quote with double quotes.
-            id_list = ", ".join(f'"{cid}"' for cid in chunk_ids)
+        # 1. Discover any chunks with our stable_document_id that
+        # exist in Zilliz right now (in finally).  This is the ONLY
+        # use of stable_document_id as a filter — for DISCOVERY,
+        # never for delete.
+        try:
+            discover_result = client.query(  # type: ignore[attr-defined]
+                collection_name=collection,
+                filter=f'stable_document_id == "{stable_document_id}"',
+                output_fields=["chunk_id"],
+                limit=512,
+            )
+        except Exception:  # noqa: BLE001 — defensive
+            discover_result = []
+
+        discovered_chunk_ids: tuple[str, ...] = ()
+        if discover_result:
+            discovered_chunk_ids = tuple(
+                str(r["chunk_id"]) for r in discover_result
+            )
+
+        # 2. Compute cleanup target = union of (expected, saved,
+        # discovered).  Order is deterministic (sorted) for the
+        # report; the set semantics ensure no duplicate delete.
+        cleanup_target_set: set[str] = set()
+        cleanup_target_set.update(expected_chunk_ids)
+        cleanup_target_set.update(saved_chunk_ids)
+        cleanup_target_set.update(discovered_chunk_ids)
+        cleanup_target = tuple(sorted(cleanup_target_set))
+
+        # 3. Delete by chunk_id set (single delete call with filter)
+        # ONLY if there is evidence of actual vectors in the backend
+        # (``discovered_chunk_ids`` or ``saved_chunk_ids`` is non-empty).
+        #
+        # R3 failure-path design (Test D in the spec):
+        # If no vector write happened, ``discovered_chunk_ids`` is empty
+        # (no rows in backend for our ``stable_document_id``) and
+        # ``saved_chunk_ids`` is empty (D4 not reached).  In that case
+        # we MUST NOT call delete even if ``expected_chunk_ids`` is
+        # non-empty — there is nothing in the backend to delete, and
+        # the spec requires ``delete_call_count == 0``.
+        #
+        # ``cleanup_target`` (the union of all three sets) is still
+        # recorded in the result for the report; only the actual
+        # ``client.delete`` call is skipped.
+        delete_call_count = 0
+        backend_has_evidence = bool(
+            discovered_chunk_ids or saved_chunk_ids
+        )
+        if cleanup_target and backend_has_evidence:
+            id_list = ", ".join(f'"{cid}"' for cid in cleanup_target)
             delete_filter = f"chunk_id in [{id_list}]"
             delete_result = client.delete(  # type: ignore[attr-defined]
                 collection_name=collection,
                 filter=delete_filter,
             )
+            delete_call_count = 1
         else:
             delete_result = {"delete_count": 0}
 
@@ -987,7 +1070,7 @@ async def _precise_cleanup_by_chunk_ids(
         elif isinstance(delete_result, int):
             deleted_count = delete_result
 
-        # 2. Flush (best-effort) so the delete is durable for the
+        # 4. Flush (best-effort) so the delete is durable for the
         # subsequent query.  Some Zilliz plans flush automatically.
         # NOTE: flush is NOT compaction — it just makes deletes visible
         # to subsequent queries.  Per the task spec, we do NOT execute
@@ -997,9 +1080,9 @@ async def _precise_cleanup_by_chunk_ids(
         except Exception:  # noqa: BLE001 — flush is best-effort
             pass
 
-        # 3. Per-chunk_id verification: query each chunk_id individually.
+        # 5. Per-chunk_id verification: query each chunk_id individually.
         per_chunk_verified: dict[str, bool] = {}
-        for cid in chunk_ids:
+        for cid in cleanup_target:
             try:
                 result = client.query(  # type: ignore[attr-defined]
                     collection_name=collection,
@@ -1013,7 +1096,7 @@ async def _precise_cleanup_by_chunk_ids(
             except Exception:  # noqa: BLE001 — defensive
                 per_chunk_verified[cid] = False
 
-        # 4. Query by stable_document_id to confirm 0 rows remain.
+        # 6. Query by stable_document_id to confirm 0 rows remain.
         post_delete = client.query(  # type: ignore[attr-defined]
             collection_name=collection,
             filter=f'stable_document_id == "{stable_document_id}"',
@@ -1022,7 +1105,7 @@ async def _precise_cleanup_by_chunk_ids(
         )
         post_delete_query_count = len(post_delete) if post_delete else 0
 
-        # 5. Collection still exists + schema identity comparison.
+        # 7. Collection still exists + schema identity comparison.
         collection_still_exists = bool(
             client.has_collection(collection_name=collection)  # type: ignore[attr-defined]
         )
@@ -1040,22 +1123,22 @@ async def _precise_cleanup_by_chunk_ids(
         )
         field_count_after = len(field_names_after)
 
-        # 5b. Index/metric info after.
+        # 7b. Index/metric info after.
         index_info_after = _extract_index_info(client, collection)
 
-        # 6. Collection list after.
+        # 8. Collection list after.
         all_collections_after = tuple(
             client.list_collections()  # type: ignore[attr-defined]
         )
 
-        # 7. Protected collections unchanged.
+        # 9. Protected collections unchanged.
         protected_unchanged: dict[str, bool] = {}
         for protected in PROTECTED_ZILLIZ_COLLECTIONS:
             protected_unchanged[protected] = bool(
                 client.has_collection(collection_name=protected)  # type: ignore[attr-defined]
             )
 
-        # 8. Row count after (informational only — Milvus compaction
+        # 10. Row count after (informational only — Milvus compaction
         # is async, so row_count may not immediately reflect deletes).
         row_count_after: int | None = None
         try:
@@ -1082,6 +1165,11 @@ async def _precise_cleanup_by_chunk_ids(
             all_collections_after=all_collections_after,
             protected_collections_unchanged=protected_unchanged,
             collection_row_count_after=row_count_after,
+            delete_call_count=delete_call_count,
+            cleanup_target_chunk_ids=cleanup_target,
+            expected_chunk_ids=expected_chunk_ids,
+            saved_chunk_ids=saved_chunk_ids,
+            discovered_chunk_ids=discovered_chunk_ids,
         )
 
     return await asyncio.to_thread(_sync)
@@ -1408,12 +1496,64 @@ async def test_single_path_real_chain_acceptance(
     assert ensure_result.job_id is not None
 
     # -----------------------------------------------------------------
+    # R3: Pre-build the Article RAG index plan from PostgreSQL BEFORE
+    # any paid vector write.  This gives us a deterministic
+    # ``expected_chunk_ids`` set that survives any subsequent failure
+    # (D2/D3/D4 assertion failures, poll timeouts, etc.).  The plan
+    # service reads only from PostgreSQL — no paid calls.
+    #
+    # The pre-built plan is ALSO reused at D7 (no second plan
+    # construction).  ``rebuilt_plan`` at D7 is the SAME object.
+    # -----------------------------------------------------------------
+    from app.services.reader_orchestration.article_rag_index_plan import (  # noqa: E501
+        ArticleRagIndexPlanService,
+    )
+
+    prebuilt_plan_service = ArticleRagIndexPlanService(pool=acceptance_env)
+    prebuilt_plan = await prebuilt_plan_service.build_index_plan(
+        record_id=ids.record_id,
+        user_id=ids.user_id,
+    )
+    expected_chunk_ids: tuple[str, ...] = tuple(
+        chunk.chunk_id for chunk in prebuilt_plan.chunks
+    )
+    # R3 preflight: expected_chunk_ids must be non-empty and unique.
+    assert len(expected_chunk_ids) > 0, (
+        "Pre-built plan produced 0 chunks — cannot run smoke without "
+        "a deterministic expected chunk_id set."
+    )
+    assert len(set(expected_chunk_ids)) == len(expected_chunk_ids), (
+        f"Pre-built plan produced duplicate chunk_ids: "
+        f"{expected_chunk_ids}"
+    )
+    # R3 preflight: each expected chunk_id must NOT already exist in
+    # Zilliz (no leftover from a prior aborted run with the same
+    # plan — extremely unlikely given unique fixture UUIDs, but
+    # fail-closed regardless).
+    for cid in expected_chunk_ids:
+        existing = zilliz_client.query(  # type: ignore[attr-defined]
+            collection_name=contract_collection,
+            filter=f'chunk_id == "{cid}"',
+            output_fields=["chunk_id"],
+            limit=1,
+        )
+        assert not existing, (
+            f"R3 preflight FAILED: expected chunk_id={cid!r} already "
+            f"exists in Zilliz — a prior run may have failed to clean "
+            f"up.  Refusing to proceed."
+        )
+
+    # -----------------------------------------------------------------
     # OUTER TRY: all paid calls (worker + Ask context) are wrapped
     # so that ``_precise_cleanup_by_chunk_ids`` runs in ``finally``
-    # regardless of success or failure.  The saved chunk_id set is
-    # populated at D4; in the failure path before D4, the set is
-    # empty (no cleanup needed) — but we still call cleanup for
-    # safety (it is a no-op when chunk_ids is empty).
+    # regardless of success or failure.
+    #
+    # R3: ``expected_chunk_ids`` is populated BEFORE any paid call,
+    # so the finally cleanup ALWAYS has a deterministic target even
+    # if D4 was never reached.  ``saved_chunk_ids`` is what D4
+    # actually captured from Zilliz (may be empty on failure paths).
+    # The cleanup helper computes the union of (expected, saved,
+    # discovered) and deletes by precise chunk_id primary keys.
     # -----------------------------------------------------------------
     saved_chunk_ids: list[str] = []  # populated at D4
     cleanup_result: _CleanupResult | None = None
@@ -1521,17 +1661,18 @@ async def test_single_path_real_chain_acceptance(
             "reader_runs row missing — could not resolve via "
             "index_run.reader_run_id or reader_jobs.run_id"
         )
-        # R2 fix: the worker sets ``reader_runs.status = 'completed'``
+        # R3: the worker sets ``reader_runs.status = 'completed'``
         # at ``article_rag_index_worker.py:897,1418`` (both the
         # already-indexed idempotent path and the fresh-index success
         # path).  ``'succeeded'`` is the terminal value for
         # ``reader_jobs`` and ``'indexed'`` for ``index_runs``; runs
-        # use ``'completed'``.  Accept both ``'completed'`` and
-        # ``'succeeded'`` defensively in case a future worker revision
-        # aligns the vocabularies, but require ``'completed'`` for now.
-        assert run_row["status"] in ("completed", "succeeded"), (
+        # use ``'completed'``.  R3 tightens this to EXACTLY
+        # ``'completed'`` — no allowlist, no future-compatibility
+        # fallback.  If the worker vocabulary changes, this test
+        # must be updated explicitly.
+        assert run_row["status"] == "completed", (
             f"reader_runs.status={run_row['status']!r} "
-            f"(expected 'completed' or 'succeeded')."
+            f"(expected 'completed')."
         )
         assert run_row["failure_class"] is None, (
             f"reader_runs.failure_class={run_row['failure_class']!r} "
@@ -1844,20 +1985,18 @@ async def test_single_path_real_chain_acceptance(
             )
 
         # -----------------------------------------------------------------
-        # D7: Rebuild the plan via ArticleRagIndexPlanService and
-        # compare all 9 citation fields per chunk_id.  This proves
-        # the retrieval citation EXACTLY matches the Postgres plan
-        # truth — not just "non-empty" or "contains paragraph".
+        # D7: Reuse the pre-built plan (R3 — no second plan
+        # construction) and compare all 9 citation fields per
+        # chunk_id.  This proves the retrieval citation EXACTLY
+        # matches the Postgres plan truth — not just "non-empty" or
+        # "contains paragraph".
         # -----------------------------------------------------------------
-        from app.services.reader_orchestration.article_rag_index_plan import (  # noqa: E501
-            ArticleRagIndexPlanService,
-        )
-
-        plan_service = ArticleRagIndexPlanService(pool=acceptance_env)
-        rebuilt_plan = await plan_service.build_index_plan(
-            record_id=ids.record_id,
-            user_id=ids.user_id,
-        )
+        # R3: ``prebuilt_plan`` was built BEFORE the paid vector write
+        # (see above).  Reuse it here — no second plan construction,
+        # no second PostgreSQL read.  The plan is deterministic per
+        # (record_id, user_id); rebuilding would return the same
+        # chunks + citations.
+        rebuilt_plan = prebuilt_plan
         # Build expected citation map: chunk_id -> ArticleRagCitationRef.
         expected_citation_by_chunk_id: dict[str, Any] = {
             chunk.chunk_id: chunk.citation
@@ -2076,32 +2215,42 @@ async def test_single_path_real_chain_acceptance(
         assert counts.ask_model_calls == 0
     finally:
         # -----------------------------------------------------------------
-        # D11: Precise cleanup by saved chunk_id set (runs in finally
-        # regardless of pass/fail).  Deletes by EXACT chunk_id
-        # primary keys — NEVER by stable_document_id filter, NEVER
-        # drop/recreate the collection.
+        # D11: Precise cleanup by union of (expected, saved, discovered)
+        # chunk_id sets (runs in finally regardless of pass/fail).
+        # Deletes by EXACT chunk_id primary keys — NEVER by
+        # stable_document_id filter, NEVER drop/recreate the collection.
         # -----------------------------------------------------------------
-        # If D4 was not reached (failure before Zilliz write), the
-        # saved_chunk_ids list is empty — cleanup is a no-op but we
-        # still call it to verify schema identity is unchanged.
+        # R3: ``expected_chunk_ids`` was built from the PostgreSQL plan
+        # BEFORE any paid call — so even if D4 was never reached (D2/D3
+        # failure) or the D4 poll timed out, the cleanup still has a
+        # deterministic target.  ``saved_chunk_ids`` is what D4 actually
+        # captured.  ``discovered_chunk_ids`` is what the cleanup helper
+        # queries by stable_document_id in finally (DISCOVERY only,
+        # never delete).  The helper computes the union and deletes by
+        # precise chunk_id primary keys.
         cleanup_result = await _precise_cleanup_by_chunk_ids(
             zilliz_client,
             collection=contract_collection,
-            chunk_ids=tuple(saved_chunk_ids),
+            expected_chunk_ids=expected_chunk_ids,
+            saved_chunk_ids=tuple(saved_chunk_ids),
             stable_document_id=ids.stable_document_id,
             preflight=preflight,
         )
-        counts.vector_delete_calls = 1 if saved_chunk_ids else 0
+        # R3: ``vector_delete_calls`` comes from the MEASURED
+        # ``delete_call_count`` in the cleanup result — NOT hardcoded
+        # after success.  1 if a delete was issued, 0 if cleanup_target
+        # was empty.
+        counts.vector_delete_calls = cleanup_result.delete_call_count
 
-        # Each chunk_id must be individually verified gone.
-        if saved_chunk_ids:
-            for cid, gone in (
-                cleanup_result.per_chunk_id_verified.items()
-            ):
-                assert gone is True, (
-                    f"Cleanup FAILED: chunk_id={cid!r} still exists "
-                    f"after delete.  Manual cleanup required."
-                )
+        # Each chunk_id in the cleanup target must be individually
+        # verified gone.
+        for cid, gone in (
+            cleanup_result.per_chunk_id_verified.items()
+        ):
+            assert gone is True, (
+                f"Cleanup FAILED: chunk_id={cid!r} still exists "
+                f"after delete.  Manual cleanup required."
+            )
         # 0 rows by stable_document_id query (authoritative).
         assert cleanup_result.post_delete_query_count == 0, (
             f"Cleanup FAILED: {cleanup_result.post_delete_query_count} "
@@ -2113,8 +2262,25 @@ async def test_single_path_real_chain_acceptance(
         _assert_schema_identity_unchanged(preflight, cleanup_result)
 
         # Cleanup report print — always runs for the delivery report.
-        print("\n=== R2 Cleanup Result ===")
+        print("\n=== R3 Cleanup Result ===")
         print(f"  deleted_count: {cleanup_result.deleted_count}")
+        print(f"  delete_call_count: {cleanup_result.delete_call_count}")
+        print(
+            f"  cleanup_target_chunk_ids: "
+            f"{cleanup_result.cleanup_target_chunk_ids}"
+        )
+        print(
+            f"  expected_chunk_ids: "
+            f"{cleanup_result.expected_chunk_ids}"
+        )
+        print(
+            f"  saved_chunk_ids: "
+            f"{cleanup_result.saved_chunk_ids}"
+        )
+        print(
+            f"  discovered_chunk_ids: "
+            f"{cleanup_result.discovered_chunk_ids}"
+        )
         print(
             f"  post_delete_query_count: "
             f"{cleanup_result.post_delete_query_count}"
@@ -2142,7 +2308,7 @@ async def test_single_path_real_chain_acceptance(
                 f"{cleanup_result.collection_row_count_after} "
                 f"(preflight={preflight.collection_row_count})"
             )
-        print("=== End R2 Cleanup Result ===")
+        print("=== End R3 Cleanup Result ===")
 
     # -----------------------------------------------------------------
     # Success-path report print — only runs if try body succeeded
@@ -2643,3 +2809,722 @@ class TestOfflineRetrievalHitShapeTracer:
         assert counting_e.call_count == 1
         assert counting_w.call_count == 1
         assert counting_s.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# R3 Phase 2 — Offline failure injection tests for the cleanup helper.
+#
+# These tests exercise ``_precise_cleanup_by_chunk_ids`` directly with a
+# fully in-memory fake Zilliz client.  No network, no real provider, no
+# real Zilliz, no Postgres.  They close the failure-path cleanup gap
+# identified in the R3 task spec:
+#
+#   - ``expected_chunk_ids`` is pre-built from the PostgreSQL plan
+#     BEFORE any paid vector write.
+#   - ``saved_chunk_ids`` is what D4 captured (may be empty).
+#   - ``discovered_chunk_ids`` is queried by ``stable_document_id`` in
+#     finally (DISCOVERY only, never delete filter).
+#   - ``cleanup_target`` = union of all three.
+#   - ``delete_call_count`` = 1 iff there is evidence of actual vectors
+#     in the backend (discovered or saved is non-empty).
+#
+# Scenarios A-F mirror the R3 task spec section 二.
+# ---------------------------------------------------------------------------
+
+
+class _FakeZillizClient:
+    """In-memory fake Zilliz/Milvus client for offline failure injection.
+
+    Simulates the subset of the ``MilvusClient`` API used by
+    ``_precise_cleanup_by_chunk_ids`` and ``_preflight_zilliz``:
+
+      * ``has_collection(collection_name=...) -> bool``
+      * ``describe_collection(collection_name=...) -> dict``
+      * ``list_collections() -> list[str]``
+      * ``list_indexes(collection_name=...) -> list[dict]``
+      * ``get_collection_stats(collection_name=...) -> dict``
+      * ``query(collection_name=..., filter=..., output_fields=...,
+                limit=...) -> list[dict]``
+      * ``delete(collection_name=..., filter=...) -> dict``
+      * ``flush(collection_name=...) -> None``
+
+    Supports the three filter shapes produced by the cleanup helper:
+
+      1. ``stable_document_id == "<uuid>"``  (discovery + post-delete)
+      2. ``chunk_id == "<id>"``              (per-chunk verification)
+      3. ``chunk_id in ["id1", "id2", ...]`` (delete)
+
+    No network.  No real provider.  All state is in-memory.
+    """
+
+    KNOWN_COLLECTIONS: tuple[str, ...] = (
+        "article_rag_chunks",
+        "grammar_note_examples",
+        "sentence_analysis_examples",
+    )
+
+    SCHEMA_FIELDS: list[dict[str, Any]] = [
+        {
+            "name": "chunk_id",
+            "type": "VARCHAR",
+            "is_primary": True,
+            "params": {},
+        },
+        {
+            "name": "stable_document_id",
+            "type": "VARCHAR",
+            "is_primary": False,
+            "params": {},
+        },
+        {
+            "name": "vector",
+            "type": 101,
+            "is_primary": False,
+            "params": {"dim": 1024},
+        },
+    ]
+
+    INDEX_INFO: list[dict[str, Any]] = [
+        {
+            "index_name": "vector_idx",
+            "field_name": "vector",
+            "index_type": "AUTOINDEX",
+            "metric_type": "COSINE",
+            "params": {},
+        }
+    ]
+
+    def __init__(
+        self,
+        *,
+        initial_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
+        # rows keyed by chunk_id for O(1) lookup.
+        self._rows: dict[str, dict[str, Any]] = {}
+        for r in (initial_rows or []):
+            self._rows[r["chunk_id"]] = dict(r)
+        # Track every delete filter string for assertions.
+        self.delete_calls: list[str] = []
+        # When True, ``delete`` raises (Test F1).
+        self.delete_should_fail: bool = False
+        # When True, ``delete`` returns success but does NOT remove
+        # rows — simulates a ghost-row / eventual-consistency issue
+        # so per-chunk verification finds them still present (Test F2).
+        self.delete_is_noop: bool = False
+
+    # -- schema / collection introspection ------------------------------
+
+    def has_collection(self, *, collection_name: str) -> bool:
+        return collection_name in self.KNOWN_COLLECTIONS
+
+    def describe_collection(self, *, collection_name: str) -> dict[str, Any]:
+        return {"fields": [dict(f) for f in self.SCHEMA_FIELDS]}
+
+    def list_collections(self) -> list[str]:
+        return list(self.KNOWN_COLLECTIONS)
+
+    def list_indexes(self, *, collection_name: str) -> list[dict[str, Any]]:
+        return [dict(idx) for idx in self.INDEX_INFO]
+
+    def get_collection_stats(self, *, collection_name: str) -> dict[str, Any]:
+        return {"row_count": len(self._rows)}
+
+    # -- query / delete -------------------------------------------------
+
+    def query(
+        self,
+        *,
+        collection_name: str,
+        filter: str,  # noqa: A002 — matches SDK signature
+        output_fields: list[str],
+        limit: int = 1,
+    ) -> list[dict[str, Any]]:
+        import re  # noqa: PLC0415 — local import keeps test self-contained
+
+        # Pattern 1: stable_document_id == "<uuid>"
+        m = re.match(r'^stable_document_id == "([^"]+)"$', filter)
+        if m:
+            target = m.group(1)
+            matches = [
+                {"chunk_id": r["chunk_id"]}
+                for r in self._rows.values()
+                if r.get("stable_document_id") == target
+            ]
+            return matches[:limit]
+
+        # Pattern 2: chunk_id == "<id>"
+        m = re.match(r'^chunk_id == "([^"]+)"$', filter)
+        if m:
+            target = m.group(1)
+            for r in self._rows.values():
+                if r["chunk_id"] == target:
+                    return [{"chunk_id": r["chunk_id"]}]
+            return []
+
+        # Pattern 3: chunk_id in ["id1", "id2", ...]
+        m = re.match(r"^chunk_id in \[(.+)\]$", filter)
+        if m:
+            ids_str = m.group(1)
+            ids = re.findall(r'"([^"]+)"', ids_str)
+            return [{"chunk_id": i} for i in ids if i in self._rows]
+
+        return []
+
+    def delete(
+        self,
+        *,
+        collection_name: str,
+        filter: str,  # noqa: A002 — matches SDK signature
+    ) -> dict[str, Any]:
+        self.delete_calls.append(filter)
+        if self.delete_should_fail:
+            raise RuntimeError("fake delete failure")
+        import re  # noqa: PLC0415 — local import
+
+        m = re.match(r"^chunk_id in \[(.+)\]$", filter)
+        if not m:
+            return {"delete_count": 0}
+        ids_str = m.group(1)
+        ids = re.findall(r'"([^"]+)"', ids_str)
+        if self.delete_is_noop:
+            # Return success but do NOT remove rows — simulates
+            # ghost rows that per-chunk verification will catch.
+            return {"delete_count": len(ids)}
+        count = 0
+        for cid in ids:
+            if cid in self._rows:
+                del self._rows[cid]
+                count += 1
+        return {"delete_count": count}
+
+    def flush(self, *, collection_name: str) -> None:
+        pass
+
+
+def _build_fake_preflight(
+    client: _FakeZillizClient,
+    *,
+    stable_document_id: UUID,
+) -> _ZillizPreflightSnapshot:
+    """Build a ``_ZillizPreflightSnapshot`` from the fake client.
+
+    Simulates the preflight taken BEFORE any paid vector write — the
+    snapshot records the schema identity, collection list, and
+    ``fixture_chunk_count=0`` (no rows for our ``stable_document_id``
+    at preflight time).
+    """
+    describe = client.describe_collection(collection_name="article_rag_chunks")
+    (
+        field_descriptions,
+        primary_key_field,
+        vector_field,
+        vector_dim,
+    ) = _extract_schema_identity(describe)
+    field_names = tuple(fd["name"] for fd in field_descriptions)
+    return _ZillizPreflightSnapshot(
+        collection_exists=True,
+        field_count=len(field_names),
+        field_names=field_names,
+        field_descriptions=field_descriptions,
+        primary_key_field=primary_key_field,
+        vector_field=vector_field,
+        vector_dim=vector_dim,
+        index_info=_extract_index_info(client, "article_rag_chunks"),
+        protected_collections_present={
+            p: True for p in PROTECTED_ZILLIZ_COLLECTIONS
+        },
+        all_collections=tuple(client.list_collections()),
+        fixture_chunk_count=0,
+        collection_row_count=len(client._rows),  # noqa: SLF001 — test-only
+    )
+
+
+def _run_cleanup(
+    client: _FakeZillizClient,
+    *,
+    collection: str,
+    expected_chunk_ids: tuple[str, ...],
+    saved_chunk_ids: tuple[str, ...],
+    stable_document_id: UUID,
+    preflight: _ZillizPreflightSnapshot,
+) -> _CleanupResult:
+    """Synchronous wrapper around the async ``_precise_cleanup_by_chunk_ids``.
+
+    The cleanup helper is async (it uses ``asyncio.to_thread``); the
+    offline failure-injection tests run it via ``asyncio.run``.
+    """
+    return asyncio.run(
+        _precise_cleanup_by_chunk_ids(
+            client,
+            collection=collection,
+            expected_chunk_ids=expected_chunk_ids,
+            saved_chunk_ids=saved_chunk_ids,
+            stable_document_id=stable_document_id,
+            preflight=preflight,
+        )
+    )
+
+
+class TestR3FailurePathCleanup:
+    """R3 Phase 2 — offline failure injection for the cleanup helper.
+
+    Each test constructs a ``_FakeZillizClient`` with seeded rows,
+    builds a preflight snapshot, calls ``_precise_cleanup_by_chunk_ids``
+    directly, and asserts the ``_CleanupResult`` matches the expected
+    outcome for that failure scenario.
+
+    These tests MUST NOT touch the network, real Zilliz, real provider,
+    or Postgres.  They are pure in-memory unit tests of the cleanup
+    helper's failure-path logic.
+    """
+
+    # ------------------------------------------------------------------
+    # Test A — worker/vector write succeeded, but D2 assertion failed.
+    #
+    #   * expected_chunk_ids = (A1, A2, A3) — built from plan BEFORE
+    #     the paid vector write.
+    #   * saved_chunk_ids = () — D2 failed before D4 could capture.
+    #   * Fake backend has rows A1, A2, A3 for our stable_document_id.
+    #   * Cleanup discovers (A1, A2, A3) by stable_document_id.
+    #   * cleanup_target = union(expected, saved, discovered) = (A1, A2, A3).
+    #   * delete_call_count == 1 (discovered is non-empty).
+    #   * All 3 chunk_ids verified gone.
+    #   * post_delete_query_count == 0.
+    # ------------------------------------------------------------------
+
+    def test_A_worker_write_d2_fail_cleanup_deletes_all(self) -> None:
+        stable_doc_id = uuid4()
+        a1, a2, a3 = "A1-aaaa", "A2-aaaa", "A3-aaaa"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": a1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": a2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": a3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(a1, a2, a3),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+        )
+        # delete was called exactly once.
+        assert result.delete_call_count == 1
+        # All 3 chunk_ids were in the cleanup target.
+        assert set(result.cleanup_target_chunk_ids) == {a1, a2, a3}
+        # All 3 verified gone.
+        assert all(result.per_chunk_id_verified.values())
+        assert set(result.per_chunk_id_verified.keys()) == {a1, a2, a3}
+        # post-delete query by stable_document_id returns 0.
+        assert result.post_delete_query_count == 0
+        # expected / saved / discovered recorded separately.
+        assert set(result.expected_chunk_ids) == {a1, a2, a3}
+        assert result.saved_chunk_ids == ()
+        assert set(result.discovered_chunk_ids) == {a1, a2, a3}
+        # Schema identity unchanged.
+        _assert_schema_identity_unchanged(preflight, result)
+        # Fake backend has 0 rows for our stable_document_id.
+        remaining = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'stable_document_id == "{stable_doc_id}"',
+            output_fields=["chunk_id"],
+            limit=512,
+        )
+        assert remaining == []
+        # delete filter contained ONLY our chunk_ids (precise PK filter).
+        assert len(client.delete_calls) == 1
+        delete_filter = client.delete_calls[0]
+        assert "stable_document_id" not in delete_filter
+        for cid in (a1, a2, a3):
+            assert f'"{cid}"' in delete_filter
+
+    # ------------------------------------------------------------------
+    # Test B — D4 poll timed out; leftover from a previous run.
+    #
+    #   * expected_chunk_ids = (B1, B2) — current plan had 2 chunks.
+    #   * saved_chunk_ids = () — D4 poll timed out before capture.
+    #   * Fake backend has B1, B2 (current plan) + B3 (leftover from a
+    #     previous run with the SAME stable_document_id but a different
+    #     plan content hash).
+    #   * Cleanup discovers (B1, B2, B3) by stable_document_id.
+    #   * cleanup_target = union = (B1, B2, B3) — B3 caught by
+    #     ``discovered`` even though not in ``expected``.
+    #   * delete_call_count == 1.
+    #   * All 3 deleted.
+    # ------------------------------------------------------------------
+
+    def test_B_d4_timeout_leftover_caught_by_discovery(self) -> None:
+        stable_doc_id = uuid4()
+        b1, b2, b3 = "B1-bbbb", "B2-bbbb", "B3-leftover"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": b1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": b2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": b3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(b1, b2),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+        )
+        assert result.delete_call_count == 1
+        # B3 was caught by ``discovered`` even though not in ``expected``.
+        assert set(result.cleanup_target_chunk_ids) == {b1, b2, b3}
+        assert set(result.discovered_chunk_ids) == {b1, b2, b3}
+        assert set(result.expected_chunk_ids) == {b1, b2}
+        # All 3 verified gone.
+        assert all(result.per_chunk_id_verified.values())
+        assert result.post_delete_query_count == 0
+        _assert_schema_identity_unchanged(preflight, result)
+        # Fake backend has 0 rows for our stable_document_id.
+        remaining = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'stable_document_id == "{stable_doc_id}"',
+            output_fields=["chunk_id"],
+            limit=512,
+        )
+        assert remaining == []
+
+    # ------------------------------------------------------------------
+    # Test C — D4 captured partial IDs.
+    #
+    #   * expected_chunk_ids = (C1, C2, C3).
+    #   * saved_chunk_ids = (C1, C2) — D4 captured 2 of 3 before timing
+    #     out.
+    #   * Fake backend has C1, C2, C3.
+    #   * cleanup_target = union(expected, saved, discovered) = (C1, C2, C3).
+    #   * delete_call_count == 1.
+    #   * All 3 deleted.
+    # ------------------------------------------------------------------
+
+    def test_C_d4_partial_capture_union_deletes_all(self) -> None:
+        stable_doc_id = uuid4()
+        c1, c2, c3 = "C1-cccc", "C2-cccc", "C3-cccc"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": c1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": c2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": c3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(c1, c2, c3),
+            saved_chunk_ids=(c1, c2),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+        )
+        assert result.delete_call_count == 1
+        assert set(result.cleanup_target_chunk_ids) == {c1, c2, c3}
+        # Three input sets recorded separately; they are NOT identical.
+        assert set(result.expected_chunk_ids) == {c1, c2, c3}
+        assert set(result.saved_chunk_ids) == {c1, c2}
+        assert set(result.discovered_chunk_ids) == {c1, c2, c3}
+        # All 3 verified gone.
+        assert all(result.per_chunk_id_verified.values())
+        assert result.post_delete_query_count == 0
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # Test D — no vector write.
+    #
+    #   * expected_chunk_ids = (D1, D2, D3) — plan was built.
+    #   * saved_chunk_ids = () — D4 not reached.
+    #   * Fake backend has 0 rows for our stable_document_id.
+    #   * discovered = () — no rows to find.
+    #   * cleanup_target = union = (D1, D2, D3) BUT backend_has_evidence
+    #     is False (discovered=() and saved=()).
+    #   * delete_call_count == 0 — no delete issued.
+    #   * Schema/list checks still pass.
+    # ------------------------------------------------------------------
+
+    def test_D_no_vector_write_no_delete_called(self) -> None:
+        stable_doc_id = uuid4()
+        d1, d2, d3 = "D1-dddd", "D2-dddd", "D3-dddd"
+        # Fake has 0 rows for our stable_document_id.
+        client = _FakeZillizClient(initial_rows=[])
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(d1, d2, d3),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+        )
+        # No delete called.
+        assert result.delete_call_count == 0
+        assert client.delete_calls == []
+        # cleanup_target still recorded for the report (union of 3 sets).
+        assert set(result.cleanup_target_chunk_ids) == {d1, d2, d3}
+        assert set(result.expected_chunk_ids) == {d1, d2, d3}
+        assert result.saved_chunk_ids == ()
+        assert result.discovered_chunk_ids == ()
+        # per-chunk verification: each chunk_id queried individually
+        # returns 0 rows (nothing exists), so verified=True for all.
+        assert all(result.per_chunk_id_verified.values())
+        # post-delete query by stable_document_id returns 0.
+        assert result.post_delete_query_count == 0
+        # Schema/list checks still pass.
+        _assert_schema_identity_unchanged(preflight, result)
+        assert result.collection_still_exists is True
+
+    # ------------------------------------------------------------------
+    # Test E — unrelated rows preserved.
+    #
+    #   * Our fixture: expected = (E1, E2), saved = ().
+    #   * Fake backend has E1, E2 (our stable_document_id) + U1
+    #     (DIFFERENT stable_document_id — an unrelated row that MUST
+    #     NOT be deleted).
+    #   * cleanup_target = (E1, E2) — U1 is not in any of the 3 sets.
+    #   * delete filter contains ONLY E1, E2.
+    #   * After cleanup: E1, E2 gone; U1 still present.
+    # ------------------------------------------------------------------
+
+    def test_E_unrelated_rows_preserved(self) -> None:
+        our_doc_id = uuid4()
+        unrelated_doc_id = uuid4()
+        e1, e2 = "E1-eeee", "E2-eeee"
+        u1 = "U1-unrelated"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": e1,
+                    "stable_document_id": str(our_doc_id),
+                },
+                {
+                    "chunk_id": e2,
+                    "stable_document_id": str(our_doc_id),
+                },
+                {
+                    "chunk_id": u1,
+                    "stable_document_id": str(unrelated_doc_id),
+                },
+            ]
+        )
+        preflight = _build_fake_preflight(
+            client, stable_document_id=our_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(e1, e2),
+            saved_chunk_ids=(),
+            stable_document_id=our_doc_id,
+            preflight=preflight,
+        )
+        assert result.delete_call_count == 1
+        assert set(result.cleanup_target_chunk_ids) == {e1, e2}
+        # U1 is NOT in the cleanup target.
+        assert u1 not in result.cleanup_target_chunk_ids
+        # delete filter does NOT contain U1.
+        assert len(client.delete_calls) == 1
+        delete_filter = client.delete_calls[0]
+        assert f'"{u1}"' not in delete_filter
+        assert f'"{e1}"' in delete_filter
+        assert f'"{e2}"' in delete_filter
+        # E1, E2 verified gone.
+        assert result.per_chunk_id_verified[e1] is True
+        assert result.per_chunk_id_verified[e2] is True
+        assert u1 not in result.per_chunk_id_verified
+        # U1 still in the fake backend.
+        u1_query = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'chunk_id == "{u1}"',
+            output_fields=["chunk_id"],
+            limit=1,
+        )
+        assert len(u1_query) == 1
+        # Our fixture rows gone.
+        our_remaining = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'stable_document_id == "{our_doc_id}"',
+            output_fields=["chunk_id"],
+            limit=512,
+        )
+        assert our_remaining == []
+        _assert_schema_identity_unchanged(preflight, result)
+
+    # ------------------------------------------------------------------
+    # Test F1 — cleanup delete raises → fail closed.
+    #
+    #   * Fake backend has F1, F2, F3 for our stable_document_id.
+    #   * ``client.delete_should_fail = True`` → delete raises.
+    #   * The exception MUST propagate (fail closed) — the helper does
+    #     NOT swallow delete failures.
+    #   * The exception message is the fake's safe message; production
+    #     code uses fixed safe messages that do NOT echo URI/token/key.
+    # ------------------------------------------------------------------
+
+    def test_F1_delete_failure_propagates_fail_closed(self) -> None:
+        stable_doc_id = uuid4()
+        f1, f2, f3 = "F1-ffff", "F2-ffff", "F3-ffff"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": f1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": f2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": f3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        client.delete_should_fail = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        # The delete failure MUST propagate — fail closed.  The helper
+        # MUST NOT swallow it and report a False PASS.
+        with pytest.raises(RuntimeError, match="fake delete failure"):
+            _run_cleanup(
+                client,
+                collection="article_rag_chunks",
+                expected_chunk_ids=(f1, f2, f3),
+                saved_chunk_ids=(),
+                stable_document_id=stable_doc_id,
+                preflight=preflight,
+            )
+        # delete was attempted (fail closed AFTER the call, not before).
+        assert len(client.delete_calls) == 1
+        # Rows are still present (delete was a no-op because it raised).
+        remaining = client.query(
+            collection_name="article_rag_chunks",
+            filter=f'stable_document_id == "{stable_doc_id}"',
+            output_fields=["chunk_id"],
+            limit=512,
+        )
+        assert len(remaining) == 3
+
+    # ------------------------------------------------------------------
+    # Test F2 — per-chunk verification finds remaining chunks → fail
+    # closed.
+    #
+    #   * Fake backend has F1, F2, F3.
+    #   * ``client.delete_is_noop = True`` → delete returns success but
+    #     does NOT remove rows (simulates ghost rows / eventual
+    #     consistency issue).
+    #   * Per-chunk verification queries each chunk_id, finds them still
+    #     present → ``per_chunk_verified[cid] = False``.
+    #   * The caller MUST assert ``all(per_chunk_verified.values())``
+    #     and fail — the helper records the failure, does NOT mask it
+    #     as a PASS.
+    #   * The result fields contain ONLY safe fixture identity
+    #     (chunk_ids, counts, schema fields) — NO URI/token/key.
+    # ------------------------------------------------------------------
+
+    def test_F2_verification_failure_detected_fail_closed(self) -> None:
+        stable_doc_id = uuid4()
+        f1, f2, f3 = "F2-1-fff", "F2-2-fff", "F2-3-fff"
+        client = _FakeZillizClient(
+            initial_rows=[
+                {
+                    "chunk_id": f1,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": f2,
+                    "stable_document_id": str(stable_doc_id),
+                },
+                {
+                    "chunk_id": f3,
+                    "stable_document_id": str(stable_doc_id),
+                },
+            ]
+        )
+        client.delete_is_noop = True
+        preflight = _build_fake_preflight(
+            client, stable_document_id=stable_doc_id
+        )
+        result = _run_cleanup(
+            client,
+            collection="article_rag_chunks",
+            expected_chunk_ids=(f1, f2, f3),
+            saved_chunk_ids=(),
+            stable_document_id=stable_doc_id,
+            preflight=preflight,
+        )
+        # delete was called (returned success) but rows still present.
+        assert result.delete_call_count == 1
+        assert len(client.delete_calls) == 1
+        # Per-chunk verification: each chunk_id still present → False.
+        assert set(result.per_chunk_id_verified.keys()) == {f1, f2, f3}
+        assert not all(result.per_chunk_id_verified.values()), (
+            "Per-chunk verification should have detected the ghost rows "
+            "remaining after the no-op delete.  The helper MUST NOT "
+            "mask this as a PASS."
+        )
+        # post_delete_query_count is non-zero (rows still present).
+        assert result.post_delete_query_count > 0
+        # The result fields contain ONLY safe fixture identity — no
+        # URI, token, key, or secret material.  This is the "safe
+        # fixture identity" requirement from the R3 task spec.
+        unsafe_substrings = ("uri=", "token", "api_key", "secret", "password")
+        for field_val in (
+            result.cleanup_target_chunk_ids,
+            result.expected_chunk_ids,
+            result.saved_chunk_ids,
+            result.discovered_chunk_ids,
+        ):
+            for cid in field_val:
+                lowered = cid.lower()
+                for substr in unsafe_substrings:
+                    assert substr not in lowered, (
+                        f"Unsafe substring {substr!r} found in chunk_id "
+                        f"{cid!r} — result must contain ONLY safe fixture "
+                        f"identity."
+                    )
+        # The caller (real test) would now assert
+        # ``all(per_chunk_verified.values())`` and FAIL — proving the
+        # failure is NOT masked as a PASS.
+        assert any(v is False for v in result.per_chunk_id_verified.values())
