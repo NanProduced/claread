@@ -369,4 +369,140 @@ describe("ReaderQuickPeek", () => {
     expect(dialog.queryByText("She gave up smoking.")).toBeNull();
     expect(dialogEl.querySelector("code")).toBeNull();
   });
+
+  it("renders learning_note markdown in the lookup path when the dictionary panel is open", () => {
+    render(
+      <ReaderQuickPeek
+        lookup={{
+          query: "policy choices",
+          lookupType: "phrase",
+          contextSentence: "Institutional memory shapes policy choices.",
+          recordId: "record-1",
+          sentenceId: "s1",
+          anchorText: "policy choices",
+          title: "短语",
+          label: "短语",
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          glossary: {
+            gloss: "政策选择",
+            phraseType: "fixed_collocation",
+            learningNote: "注意 `policy choices` 与 `policy decisions` 的区分。",
+            example: "Policy choices shape institutions.",
+          },
+          state: {
+            kind: "ready",
+            result: {
+              kind: "entry",
+              query: "policy choices",
+              provider: "mock-dict",
+              cached: false,
+              entry: {
+                id: 32,
+                word: "policy choices",
+                baseWord: "policy choice",
+                phonetic: undefined,
+                meanings: [
+                  {
+                    partOfSpeech: "n.",
+                    definitions: [
+                      { meaning: "choices about public policy" },
+                    ],
+                  },
+                ],
+                examples: [],
+                phrases: [],
+                entryKind: "entry",
+                exchange: [],
+                tags: [],
+              },
+            },
+          },
+        }}
+        onDismiss={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    const dialogEl = screen.getAllByRole("dialog").at(-1)!;
+    const dialog = within(dialogEl);
+    // subtype label is shown alongside the phrase_gloss eyebrow
+    expect(dialog.getAllByText("固定搭配").length).toBeGreaterThan(0);
+    // gloss remains the primary content
+    expect(dialog.getByText("政策选择")).toBeTruthy();
+    // learning_note label and markdown content render in the lookup branch
+    expect(dialog.getByText("学习提示")).toBeTruthy();
+    const noteRoot = dialogEl.querySelector('[data-testid="learning-note-markdown"]');
+    expect(noteRoot).toBeTruthy();
+    const codeNodes = Array.from(noteRoot!.querySelectorAll("code"));
+    expect(codeNodes.map((node) => node.textContent ?? "")).toEqual([
+      "policy choices",
+      "policy decisions",
+    ]);
+    // example still renders after learning_note
+    expect(dialog.getByText("例句")).toBeTruthy();
+    expect(dialog.getByText("Policy choices shape institutions.")).toBeTruthy();
+  });
+
+  it("omits learning_note chrome in the lookup path when phrase_gloss has no learning_note", () => {
+    render(
+      <ReaderQuickPeek
+        lookup={{
+          query: "policy choices",
+          lookupType: "phrase",
+          contextSentence: "Institutional memory shapes policy choices.",
+          recordId: "record-1",
+          sentenceId: "s1",
+          anchorText: "policy choices",
+          title: "短语",
+          label: "短语",
+          annotationType: "phrase_gloss",
+          visualTone: "phrase",
+          glossary: {
+            gloss: "政策选择",
+            phraseType: "fixed_collocation",
+          },
+          state: {
+            kind: "ready",
+            result: {
+              kind: "entry",
+              query: "policy choices",
+              provider: "mock-dict",
+              cached: false,
+              entry: {
+                id: 32,
+                word: "policy choices",
+                baseWord: "policy choice",
+                phonetic: undefined,
+                meanings: [
+                  {
+                    partOfSpeech: "n.",
+                    definitions: [
+                      { meaning: "choices about public policy" },
+                    ],
+                  },
+                ],
+                examples: [],
+                phrases: [],
+                entryKind: "entry",
+                exchange: [],
+                tags: [],
+              },
+            },
+          },
+        }}
+        onDismiss={vi.fn()}
+        onOpenDetail={vi.fn()}
+      />,
+    );
+
+    const dialogEl = screen.getAllByRole("dialog").at(-1)!;
+    const dialog = within(dialogEl);
+    expect(dialog.getAllByText("固定搭配").length).toBeGreaterThan(0);
+    expect(dialog.getByText("政策选择")).toBeTruthy();
+    expect(dialog.queryByText("学习提示")).toBeNull();
+    expect(dialogEl.querySelector('[data-testid="learning-note-markdown"]')).toBeNull();
+    // glossary had no example either — no example chrome should leak.
+    expect(dialog.queryByText("例句")).toBeNull();
+  });
 });

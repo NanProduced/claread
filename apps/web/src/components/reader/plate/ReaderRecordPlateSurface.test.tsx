@@ -4207,6 +4207,109 @@ describe("ReaderRecordPlateSurface", () => {
     expect(lookupUrl.searchParams.get("context")).toContain("policy choices");
   });
 
+  it("opens phrase_gloss Quick Peek in the dictionary rail with learning_note rendered via the lookup path", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(makeDictionaryEntryResult("policy choices")), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const snapshot = makeGroupedSeg2PhraseGlossSnapshot();
+    // Equip the seg_2 phrase_gloss mark with a learning_note + subtype to verify
+    // the lookup-path rail rendering preserves them end-to-end.
+    const unit = snapshot.value[0];
+    const sourceBlock = unit.children.find(
+      (child): child is ReaderSourceBlockNodeDto => child.type === "reader_source_block",
+    );
+    if (!sourceBlock) {
+      throw new Error("Expected source block");
+    }
+    const secondSegment = sourceBlock.children.find(
+      (child): child is ReaderAnchorSegmentNodeDto =>
+        "type" in child &&
+        child.type === "reader_anchor_segment" &&
+        child.anchor_segment_id === "seg_2",
+    );
+    if (!secondSegment) {
+      throw new Error("Expected seg_2 fixture");
+    }
+    const seg2Leaf = secondSegment.children[0];
+    const seg2Mark = seg2Leaf.reader_vocabulary_marks?.[0];
+    if (!seg2Mark || seg2Mark.item_type !== "phrase_gloss") {
+      throw new Error("Expected seg_2 phrase_gloss mark");
+    }
+    seg2Mark.phrase_type = "verb_expression";
+    seg2Mark.learning_note =
+      "注意 `policy choices` 与 `policy decisions` 的区分：前者强调选项，后者强调决策动作。";
+    seg2Mark.example = "Policy choices shape institutions.";
+    seg2Leaf.reader_vocabulary_marks = [seg2Mark];
+
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+    const seg2MarkEl = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_seg_2"]',
+    );
+    expect(seg2MarkEl).not.toBeNull();
+    if (!seg2MarkEl) {
+      throw new Error("Expected seg_2 vocabulary mark element");
+    }
+
+    fireEvent.click(seg2MarkEl);
+
+    // Dictionary panel starts closed, so the first click opens the structured
+    // inspect Quick Peek. The "打开词典" action then opens the rail, which
+    // takes the lookup path (runDictionaryLookupRequest) — this is the path
+    // that previously dropped learning_note.
+    const panel = await screen.findByTestId("reader-record-plate-lookup-panel");
+    fireEvent.click(within(panel).getByLabelText("打开词典"));
+
+    await waitFor(() => {
+      const rail = container.querySelector<HTMLElement>(
+        '[data-reader-record-dictionary-rail="docked"]',
+      );
+      if (!rail) {
+        throw new Error("Expected dictionary rail");
+      }
+      const railView = within(rail);
+      // "policy choices" appears both as the rail headword and as inline code
+      // inside the learning_note markdown — assert headword role explicitly to
+      // disambiguate.
+      expect(railView.getByRole("heading", { name: "policy choices" })).toBeTruthy();
+      expect(railView.getByText("动词短语")).toBeTruthy();
+      expect(railView.getByText("政策选择")).toBeTruthy();
+      expect(railView.getByText("解析提示")).toBeTruthy();
+      expect(railView.getByText("学习提示")).toBeTruthy();
+      const noteRoot = rail.querySelector('[data-testid="learning-note-markdown"]');
+      expect(noteRoot).toBeTruthy();
+      const codeNodes = Array.from(noteRoot!.querySelectorAll("code"));
+      expect(codeNodes.map((node) => node.textContent ?? "")).toEqual([
+        "policy choices",
+        "policy decisions",
+      ]);
+      expect(railView.getByText("例句")).toBeTruthy();
+      expect(railView.getByText("Policy choices shape institutions.")).toBeTruthy();
+    });
+
+    const lookupCalls = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
+    );
+    expect(lookupCalls).toHaveLength(1);
+    const lookupUrl = new URL(lookupCalls[0]![0] as string, "http://localhost");
+    expect(lookupUrl.searchParams.get("word")).toBe("policy choices");
+    expect(lookupUrl.searchParams.get("type")).toBe("phrase");
+  });
+
   it("keeps the dictionary rail closed when the workspace sidebar is locked", async () => {
     const releaseSidebarForReadingTool = vi.fn();
     const fetchMock = vi.fn().mockImplementation((url: string) => {

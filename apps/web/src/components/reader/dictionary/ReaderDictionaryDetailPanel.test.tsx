@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { hashAnchorText } from "@/lib/reader-plate";
 import { ReaderDictionaryDetailPanel } from "./ReaderDictionaryDetailPanel";
 import type { DictionaryLookupSnapshot } from "./contracts";
@@ -165,6 +165,9 @@ describe("ReaderDictionaryDetailPanel", () => {
       configurable: true,
       value: vi.fn(),
     });
+  });
+  afterEach(() => {
+    cleanup();
   });
 
   it("renders a collapsed AI stub and re-expands cached context explain results", () => {
@@ -420,6 +423,136 @@ describe("ReaderDictionaryDetailPanel", () => {
     expect(annotation?.className).not.toContain("border");
     expect(annotation?.className).not.toContain("rounded");
   });
+
+  it("renders phrase_gloss learning_note markdown inside the rail contextual annotation inset", () => {
+    const lookup = createPhraseGlossLookup();
+    lookup.glossary = {
+      ...lookup.glossary,
+      learningNote: "注意 `policy choices` 与 `policy decisions` 的区分：前者强调选项，后者强调决策动作。",
+    };
+
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={lookup}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="policy choices"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    const annotation = screen
+      .getByText("解析提示")
+      .closest("[data-reader-dictionary-contextual-annotation]");
+    expect(annotation).not.toBeNull();
+
+    const noteRoot = within(annotation as HTMLElement).getByTestId("learning-note-markdown");
+    expect(noteRoot).toBeTruthy();
+    const codeNodes = Array.from(noteRoot.querySelectorAll("code"));
+    expect(codeNodes.map((node) => node.textContent ?? "")).toEqual([
+      "policy choices",
+      "policy decisions",
+    ]);
+    expect(noteRoot.textContent).toContain("前者强调选项");
+    expect(noteRoot.textContent).toContain("后者强调决策动作");
+
+    // Example still renders after learning_note so order is subtype → gloss → note → example.
+    expect(within(annotation as HTMLElement).getByText("例句")).toBeTruthy();
+    expect(within(annotation as HTMLElement).getByText("Policy choices shape institutions.")).toBeTruthy();
+  });
+
+  it("omits learning_note chrome in the rail inset when phrase_gloss has no learning_note", () => {
+    const lookup = createPhraseGlossLookup();
+    // createPhraseGlossLookup ships glossary without learningNote; assert baseline.
+    expect(lookup.glossary?.learningNote).toBeUndefined();
+
+    render(
+      <ReaderDictionaryDetailPanel
+        lookup={lookup}
+        readingGoal="general"
+        saveState={{ kind: "idle" }}
+        dictionaryAI={{ kind: "idle" }}
+        dictionaryAIPanelOpen={false}
+        dictionaryAINoteState={{ kind: "idle" }}
+        searchQuery="policy choices"
+        searchExpanded={false}
+        onSave={vi.fn()}
+        onRequestAI={vi.fn()}
+        onCreateAINote={vi.fn()}
+        onSelectAISuggestedQuery={vi.fn()}
+        onSearchQueryChange={vi.fn()}
+        onSearchSubmit={vi.fn()}
+        onSelectCandidate={vi.fn()}
+        onToggleAIPanel={vi.fn()}
+        onToggleSearchExpanded={vi.fn()}
+      />,
+    );
+
+    const annotation = screen
+      .getByText("解析提示")
+      .closest("[data-reader-dictionary-contextual-annotation]");
+    expect(annotation).not.toBeNull();
+    expect(within(annotation as HTMLElement).queryByText("学习提示")).toBeNull();
+    expect(within(annotation as HTMLElement).queryByTestId("learning-note-markdown")).toBeNull();
+    // Example still renders — only the optional learning_note chrome is suppressed.
+    expect(within(annotation as HTMLElement).getByText("例句")).toBeTruthy();
+  });
+
+  it.each([
+    ["verb_expression", "动词短语"] as const,
+    ["fixed_collocation", "固定搭配"] as const,
+    ["name_or_term", "专名及术语"] as const,
+    ["idiom", "习语"] as const,
+  ])(
+    "renders the %s subtype label inside the rail contextual annotation inset",
+    (phraseType, label) => {
+      const lookup = createPhraseGlossLookup();
+      lookup.glossary = {
+        ...lookup.glossary,
+        phraseType,
+      };
+
+      render(
+        <ReaderDictionaryDetailPanel
+          lookup={lookup}
+          readingGoal="general"
+          saveState={{ kind: "idle" }}
+          dictionaryAI={{ kind: "idle" }}
+          dictionaryAIPanelOpen={false}
+          dictionaryAINoteState={{ kind: "idle" }}
+          searchQuery="policy choices"
+          searchExpanded={false}
+          onSave={vi.fn()}
+          onRequestAI={vi.fn()}
+          onCreateAINote={vi.fn()}
+          onSelectAISuggestedQuery={vi.fn()}
+          onSearchQueryChange={vi.fn()}
+          onSearchSubmit={vi.fn()}
+          onSelectCandidate={vi.fn()}
+          onToggleAIPanel={vi.fn()}
+          onToggleSearchExpanded={vi.fn()}
+        />,
+      );
+
+      const annotation = screen
+        .getByText("解析提示")
+        .closest("[data-reader-dictionary-contextual-annotation]");
+      expect(annotation).not.toBeNull();
+      expect(within(annotation as HTMLElement).getByText(label)).toBeTruthy();
+    },
+  );
 
   it("keeps context_gloss typography blue even when the lookup itself is phrase-shaped", () => {
     render(

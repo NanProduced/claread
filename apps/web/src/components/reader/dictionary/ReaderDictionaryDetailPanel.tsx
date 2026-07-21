@@ -31,6 +31,7 @@ import {
   contextualGlossaryReason,
   contextualGlossaryExample,
   contextualGlossaryExampleTranslation,
+  contextualGlossaryLearningNote,
   dictionaryAIActionLabel,
   dictionaryAIClassificationLabel as dictionaryAIClassificationBadgeLabel,
   dictionaryAITranslationVisible,
@@ -44,6 +45,7 @@ import {
   dictionaryLookupHistorySummary,
   phraseGlossarySubtypeLabel,
 } from "./shared";
+import { LearningNoteMarkdown } from "./LearningNoteMarkdown";
 import { ReaderStructuredInspectCard } from "./ReaderStructuredInspectCard";
 
 function ScrollWrapper({ scrollable, className, children }: { scrollable: boolean, className: string, children: React.ReactNode }) {
@@ -222,6 +224,7 @@ export function ReaderDictionaryDetailPanel({
   const glossaryReason = contextualGlossaryReason(lookup?.glossary);
   const glossaryExample = contextualGlossaryExample(lookup?.glossary);
   const glossaryExampleTranslation = contextualGlossaryExampleTranslation(lookup?.glossary);
+  const glossaryLearningNote = contextualGlossaryLearningNote(lookup?.glossary);
   const glossarySubtype = phraseGlossarySubtypeLabel(lookup?.glossary);
   const isVocabHighlightLookup = lookup?.annotationType === "vocab_highlight";
   const glossaryDuplicatesDictionaryMeaning =
@@ -467,6 +470,12 @@ export function ReaderDictionaryDetailPanel({
         </div>
         {glossaryText && !glossaryDuplicatesDictionaryMeaning ? (
           <p className="text-[0.86rem] leading-6 text-ink-soft/92 select-text">{glossaryText}</p>
+        ) : null}
+        {glossaryLearningNote ? (
+          <div className="space-y-1 pt-1">
+            <p className="text-[0.68rem] font-semibold text-muted-foreground">学习提示</p>
+            <LearningNoteMarkdown markdown={glossaryLearningNote} className="mt-1" />
+          </div>
         ) : null}
         {glossaryExample ? (
           <div className="space-y-1 pt-1">
