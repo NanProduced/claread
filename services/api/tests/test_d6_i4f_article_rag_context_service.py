@@ -1225,7 +1225,7 @@ async def test_provider_metadata_keeps_only_whitelisted_scalar_keys() -> None:
     set (all scalars) round-trips through the scrub unchanged."""
     provider_metadata = {
         "provider": "zilliz",
-        "collection": "article_rag_index_v1",
+        "collection": "article_rag_chunks",
         "hit_count": 5,
         "limit": 8,
         "latency_ms": 42,

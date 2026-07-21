@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 from app.database import connection as db_connection
 from app.schemas.reader_orchestration import (
@@ -542,6 +543,12 @@ def _make_runner(
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         enable_zplus_grammar=False,
+        # _env_file=None: offline tests must not pick up real LLM /
+        # embedding / vector credentials from the local .env file.
+        # This keeps semantic_outline_generation_enabled=False (default)
+        # so the PydanticAISemanticOutlineGenerator is never constructed
+        # and no real LLM call is attempted during the test.
+        settings=Settings(_env_file=None),
     )
 
 
@@ -932,6 +939,9 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
     await ReaderEnhancementPipelineRunner(
         pool=worker_loop_env,
         enable_zplus_grammar=False,
+        # _env_file=None: prevent .env leakage into the offline test
+        # (see _make_runner for the full rationale).
+        settings=Settings(_env_file=None),
     ).bootstrap_missing_jobs(
         record_id=article.record_id,
         user_id=user_id,
@@ -1515,7 +1525,7 @@ async def _insert_article_rag_index_build_job(
                 VALUES (
                     $1, $2, $3, $4, 'article_rag_index_build',
                     'record', $5, $6, $7,
-                    'article_rag_index_v1', 'rag_index_build_1'
+                    'article_rag_index_build_v1', 'rag_index_build_1'
                 )
                 RETURNING id
                 """,

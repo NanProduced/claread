@@ -44,11 +44,11 @@ from uuid import UUID
 
 import asyncpg
 
+from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 
 from .article_rag_index_bootstrap import (
-    ARTICLE_RAG_EMBEDDING_CONTRACT,
     ARTICLE_RAG_INDEX_BUILD_JOB_TYPE,
     ARTICLE_RAG_INDEX_BUILD_TARGET_TYPE,
     compute_article_rag_index_build_input_hash,

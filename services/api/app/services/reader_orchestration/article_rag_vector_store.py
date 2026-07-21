@@ -68,7 +68,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .article_rag_index_bootstrap import ARTICLE_RAG_EMBEDDING_CONTRACT
+from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
+
 from .article_rag_index_worker import (
     ArticleRagIndexWorkerError,
     ArticleRagVectorChunk,
@@ -310,10 +311,9 @@ def _build_article_rag_upsert_row(
       anchor_segment_ids, canonical_start_utf16, canonical_end_utf16,
       citation_metadata_json, metadata_json``
 
-    The Article RAG index is a single path — no ``index_version`` or
-    ``chunker_version`` identity tags travel on the row.  Collection
-    name is a writer-construction concern; embedding identity is
-    enforced by the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
+    The Article RAG index is a single path.  Collection name is a
+    writer-construction concern; embedding identity is enforced by
+    the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
 
     Defence in depth:
       * The top-level row dict is denylist-checked.
@@ -837,10 +837,8 @@ class ZillizArticleRagVectorWriter:
         self._token = token  # held only for SDK construction; never logged.
         self._collection = collection.strip()
         self._dim = int(dim)
-        # The Article RAG index is a single path — no ``index_version``
-        # or ``chunker_version`` identity tags exist.  Collection name
-        # and embedding identity are enforced by the frozen
-        # ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
+        # Collection name and embedding identity are enforced by the
+        # frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
         self._client: "MilvusClient | None" = None
 
     @property
@@ -1168,10 +1166,8 @@ def build_default_article_rag_vector_writer(
         )
         return UnconfiguredArticleRagVectorWriter()
 
-    # The Article RAG index is a single path — no ``index_version``
-    # identity tag exists.  Collection name and embedding identity are
-    # separate concerns, both enforced by the frozen
-    # ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
+    # Collection name and embedding identity are enforced by the
+    # frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at upsert time.
     return ZillizArticleRagVectorWriter(
         uri=uri,
         token=token,

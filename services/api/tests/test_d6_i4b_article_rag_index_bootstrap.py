@@ -74,8 +74,7 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
 )
 
 # Single-path convergence: BASELINE_SQL already contains the full
-# Article RAG schema.  The deleted migration 0021 (profile_fingerprint
-# column) is no longer applied.
+# Article RAG schema.
 INDEX_BOOTSTRAP_SCHEMA_SQL = BASELINE_SQL
 
 

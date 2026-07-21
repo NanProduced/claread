@@ -19,10 +19,8 @@ fail-closed end-to-end:
     is checked for consistency with the current plan; mismatches fail
     closed (we do not want to serve cross-document contamination).
 
-The Article RAG index is a single path — no ``index_version`` /
-``chunker_version`` / ``profile_fingerprint`` identity fields exist.
-Embedding + vector-space identity is enforced by the frozen
-``ARTICLE_RAG_EMBEDDING_CONTRACT``.
+The Article RAG index is a single path.  Embedding + vector-space
+identity is enforced by the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
 
 Truth boundary
 --------------
@@ -61,7 +59,8 @@ from uuid import UUID
 
 import asyncpg
 
-from .article_rag_index_bootstrap import ARTICLE_RAG_EMBEDDING_CONTRACT
+from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
+
 from .article_rag_index_plan import (
     ArticleRagIndexChunk,
     ArticleRagIndexPlan,
@@ -290,10 +289,8 @@ class _IndexedRunSnapshot:
     query vector and the indexed vectors would be in different
     embedding spaces, producing silently bad results.
 
-    The Article RAG index is a single path — no ``index_version`` /
-    ``chunker_version`` / ``profile_fingerprint`` identity fields
-    exist.  Embedding + vector-space identity is enforced by the
-    frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
+    The Article RAG index is a single path.  Embedding + vector-space
+    identity is enforced by the frozen ``ARTICLE_RAG_EMBEDDING_CONTRACT``.
     """
 
     index_run_id: UUID
@@ -683,8 +680,7 @@ class ArticleRagRetrievalService:
         refused.  If multiple rows exist (shouldn't happen but we
         defend against it), the most recently updated one wins.
 
-        The Article RAG index is a single path — no ``index_version``
-        filter is needed.
+        The Article RAG index is a single path.
         """
         row = await conn.fetchrow(
             """

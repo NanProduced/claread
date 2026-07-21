@@ -2192,17 +2192,17 @@ _P1G_R1_FAILURE_CODE_VECTOR_WRITER_CONTRACT_MISMATCH = (
 # P1-G V1 contract literals (must match ARTICLE_RAG_EMBEDDING_CONTRACT
 # exactly).  The single-path convergence froze these values; the writer
 # validates metadata against the frozen contract before any upsert.
-_P1G_V1_DOC_EMBEDDING_MODEL = "text-embedding-v4"
-_P1G_V1_DOC_EMBEDDING_DIM = 1024
-_P1G_V1_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
-_P1G_V1_VECTOR_NAMESPACE = "article_rag_chunks"
+_P1G_DOC_EMBEDDING_MODEL = "text-embedding-v4"
+_P1G_DOC_EMBEDDING_DIM = 1024
+_P1G_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
+_P1G_VECTOR_NAMESPACE = "article_rag_chunks"
 
 
 def _p1g_make_embedding(
     *,
     text: str,
-    model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
-    dim: int = _P1G_V1_DOC_EMBEDDING_DIM,
+    model: str = _P1G_DOC_EMBEDDING_MODEL,
+    dim: int = _P1G_DOC_EMBEDDING_DIM,
     vector_len: int | None = None,
 ) -> ArticleRagEmbedding:
     """Build a deterministic ArticleRagEmbedding with explicit dim and
@@ -2222,8 +2222,8 @@ def _p1g_make_embedding(
 def _p1g_make_chunk(
     *,
     text: str,
-    model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
-    dim: int = _P1G_V1_DOC_EMBEDDING_DIM,
+    model: str = _P1G_DOC_EMBEDDING_MODEL,
+    dim: int = _P1G_DOC_EMBEDDING_DIM,
     vector_len: int | None = None,
     chunk_id: str | None = None,
 ) -> ArticleRagVectorChunk:
@@ -2251,10 +2251,10 @@ def _p1g_make_chunk(
 
 def _p1g_make_write_metadata(
     *,
-    collection: str = _P1G_V1_VECTOR_NAMESPACE,
-    embedding_model: str = _P1G_V1_DOC_EMBEDDING_MODEL,
-    embedding_dimension: int = _P1G_V1_DOC_EMBEDDING_DIM,
-    embedding_text_type: str = _P1G_V1_DOC_EMBEDDING_TEXT_TYPE,
+    collection: str = _P1G_VECTOR_NAMESPACE,
+    embedding_model: str = _P1G_DOC_EMBEDDING_MODEL,
+    embedding_dimension: int = _P1G_DOC_EMBEDDING_DIM,
+    embedding_text_type: str = _P1G_DOC_EMBEDDING_TEXT_TYPE,
     chunk_count: int = 1,
 ) -> ArticleRagVectorWriteMetadata:
     """Build ArticleRagVectorWriteMetadata with all P1-G required fields.
@@ -2293,8 +2293,8 @@ async def test_p1g_zilliz_writer_call_collection_mismatch_zero_upsert(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     chunk = _p1g_make_chunk(text="call-collection-mismatch")
     metadata = _p1g_make_write_metadata()
@@ -2332,8 +2332,8 @@ async def test_p1g_zilliz_writer_metadata_collection_mismatch_zero_upsert(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     chunk = _p1g_make_chunk(text="metadata-collection-mismatch")
     # Metadata carries a WRONG collection while call collection matches
@@ -2342,7 +2342,7 @@ async def test_p1g_zilliz_writer_metadata_collection_mismatch_zero_upsert(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[chunk],
             metadata=metadata,
         )
@@ -2437,7 +2437,7 @@ async def test_p1g_zilliz_writer_dim_matrix_zero_upsert(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
+        collection=_P1G_VECTOR_NAMESPACE,
         dim=writer_dim,
     )
     chunk = _p1g_make_chunk(
@@ -2449,7 +2449,7 @@ async def test_p1g_zilliz_writer_dim_matrix_zero_upsert(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[chunk],
             metadata=metadata,
         )
@@ -2482,8 +2482,8 @@ async def test_p1g_zilliz_writer_chunk_model_mismatch_zero_upsert(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     # Chunk claims a different model than the metadata.
     chunk = _p1g_make_chunk(text="chunk-model-mismatch", model="wrong-chunk-model")
@@ -2491,7 +2491,7 @@ async def test_p1g_zilliz_writer_chunk_model_mismatch_zero_upsert(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[chunk],
             metadata=metadata,
         )
@@ -2515,8 +2515,8 @@ async def test_p1g_zilliz_writer_multi_chunk_second_model_mismatch_zero_upsert(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     chunks = [
         _p1g_make_chunk(text="first-chunk-ok"),
@@ -2527,7 +2527,7 @@ async def test_p1g_zilliz_writer_multi_chunk_second_model_mismatch_zero_upsert(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=chunks,
             metadata=metadata,
         )
@@ -2557,8 +2557,8 @@ async def test_p1g_zilliz_writer_valid_v1_metadata_upserts(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     chunks = [
         _p1g_make_chunk(text="valid-chunk-one"),
@@ -2567,23 +2567,23 @@ async def test_p1g_zilliz_writer_valid_v1_metadata_upserts(
     metadata = _p1g_make_write_metadata(chunk_count=2)
 
     result = await writer.upsert_chunks(
-        collection=_P1G_V1_VECTOR_NAMESPACE,
+        collection=_P1G_VECTOR_NAMESPACE,
         chunks_with_embeddings=chunks,
         metadata=metadata,
     )
 
-    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert result.collection == _P1G_VECTOR_NAMESPACE
     assert result.upserted_count == 2
     assert len(fake_client.upsert_calls) == 1
-    assert fake_client.upsert_calls[0]["collection_name"] == _P1G_V1_VECTOR_NAMESPACE
+    assert fake_client.upsert_calls[0]["collection_name"] == _P1G_VECTOR_NAMESPACE
     rows = fake_client.upsert_calls[0]["data"]
     assert len(rows) == 2
     # Row carries the embedding_model (already a pre-P1-G row field).
     # P1-G defence-in-depth validates chunk.embedding.model ==
     # metadata.embedding_model before this point, so the row value is
     # guaranteed to equal the contract model.
-    assert rows[0]["embedding_model"] == _P1G_V1_DOC_EMBEDDING_MODEL
-    assert rows[1]["embedding_model"] == _P1G_V1_DOC_EMBEDDING_MODEL
+    assert rows[0]["embedding_model"] == _P1G_DOC_EMBEDDING_MODEL
+    assert rows[1]["embedding_model"] == _P1G_DOC_EMBEDDING_MODEL
 
 
 # ---------------------------------------------------------------------
@@ -2609,8 +2609,8 @@ async def test_p1g_zilliz_writer_sentinel_not_in_error_surface(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
 
     sentinel_model = "sk-P1G-SENTINEL-MODEL-DO-NOT-LEAK-1234567890abcdef"
@@ -2629,8 +2629,8 @@ async def test_p1g_zilliz_writer_sentinel_not_in_error_surface(
         embedding=ArticleRagEmbedding(
             text_sha256=chunk.embedding.text_sha256,
             model=sentinel_model,
-            vector=tuple([sentinel_vector_marker] * _P1G_V1_DOC_EMBEDDING_DIM),
-            dim=_P1G_V1_DOC_EMBEDDING_DIM,
+            vector=tuple([sentinel_vector_marker] * _P1G_DOC_EMBEDDING_DIM),
+            dim=_P1G_DOC_EMBEDDING_DIM,
         ),
         citation=chunk.citation,
         metadata=chunk.metadata,
@@ -2639,7 +2639,7 @@ async def test_p1g_zilliz_writer_sentinel_not_in_error_surface(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[chunk],
             metadata=metadata,
         )
@@ -2849,8 +2849,8 @@ async def test_p1g_r1_empty_batch_invalid_metadata_fails_closed(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     metadata = _p1g_r1_make_valid_metadata()
     # Apply the invalid override.
@@ -2858,7 +2858,7 @@ async def test_p1g_r1_empty_batch_invalid_metadata_fails_closed(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[],
             metadata=metadata,
         )
@@ -2885,19 +2885,19 @@ async def test_p1g_r1_empty_batch_valid_metadata_returns_zero(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     metadata = _p1g_r1_make_valid_metadata()
 
     result = await writer.upsert_chunks(
-        collection=_P1G_V1_VECTOR_NAMESPACE,
+        collection=_P1G_VECTOR_NAMESPACE,
         chunks_with_embeddings=[],
         metadata=metadata,
     )
 
     assert result.upserted_count == 0
-    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert result.collection == _P1G_VECTOR_NAMESPACE
     # No client / upsert call for empty batch.
     assert fake_client.upsert_calls == []
     assert fake_client.has_collection_calls == []
@@ -2945,8 +2945,8 @@ async def test_p1g_r1_writer_contract_metadata_4_field_validation(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     metadata = _p1g_make_write_metadata(chunk_count=1)
     # Override one field with a wrong value.
@@ -2955,7 +2955,7 @@ async def test_p1g_r1_writer_contract_metadata_4_field_validation(
 
     with pytest.raises(ZillizArticleRagVectorWriterError) as exc_info:
         await writer.upsert_chunks(
-            collection=_P1G_V1_VECTOR_NAMESPACE,
+            collection=_P1G_VECTOR_NAMESPACE,
             chunks_with_embeddings=[chunk],
             metadata=metadata,
         )
@@ -2994,18 +2994,18 @@ async def test_p1g_r1_writer_valid_contract_metadata_passes(
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
-        collection=_P1G_V1_VECTOR_NAMESPACE,
-        dim=_P1G_V1_DOC_EMBEDDING_DIM,
+        collection=_P1G_VECTOR_NAMESPACE,
+        dim=_P1G_DOC_EMBEDDING_DIM,
     )
     metadata = _p1g_make_write_metadata(chunk_count=1)
     chunk = _p1g_make_chunk(text="valid-contract-metadata")
 
     result = await writer.upsert_chunks(
-        collection=_P1G_V1_VECTOR_NAMESPACE,
+        collection=_P1G_VECTOR_NAMESPACE,
         chunks_with_embeddings=[chunk],
         metadata=metadata,
     )
 
     assert result.upserted_count == 1
-    assert result.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert result.collection == _P1G_VECTOR_NAMESPACE
     assert len(fake_client.upsert_calls) == 1

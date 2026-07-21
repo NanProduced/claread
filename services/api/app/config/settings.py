@@ -6,6 +6,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.contracts.article_rag_contract import ARTICLE_RAG_EMBEDDING_CONTRACT
+
 
 def _get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
@@ -186,13 +188,18 @@ class Settings(BaseSettings):
     # 默认 disabled + 无 zilliz 凭证 / 无 embedding provider 时，
     # factory 返回 Unconfigured* 包装（fail closed，不联网）。
     # README/Zilliz 仅作为 index replica；citation truth 永远回 Postgres。
+    #
+    # The default Zilliz collection + vector dim are sourced from the
+    # frozen contract in ``app.contracts.article_rag_contract`` so there
+    # is a single Python source of truth for the Article RAG vector-space
+    # identity (no duplicate ``article_rag_chunks`` literal here).
     reader_article_rag_embedding_provider: str = ""
     reader_article_rag_embedding_model: str = ""
     reader_article_rag_vector_provider: str = ""
     reader_article_rag_zilliz_uri: str = ""
     reader_article_rag_zilliz_token: str = ""
-    reader_article_rag_zilliz_collection: str = "article_rag_chunks"
-    reader_article_rag_vector_dim: int = 1024
+    reader_article_rag_zilliz_collection: str = ARTICLE_RAG_EMBEDDING_CONTRACT.vector_collection
+    reader_article_rag_vector_dim: int = ARTICLE_RAG_EMBEDDING_CONTRACT.document_embedding_dimension
     reader_article_rag_enabled: bool = False
     reader_article_rag_smoke: bool = False
 

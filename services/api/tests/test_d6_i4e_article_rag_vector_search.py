@@ -51,7 +51,7 @@ from app.services.reader_orchestration.article_rag_index_worker import (
 
 _FAKE_URI = "https://example.zilliz.cloud"
 _FAKE_TOKEN = "fake-zilliz-token-DO-NOT-LOG"
-_FAKE_COLLECTION = "article_rag_index_v1_test"
+_FAKE_COLLECTION = "article_rag_chunks_test"
 
 
 # ---------------------------------------------------------------------------

@@ -9,12 +9,11 @@
 --
 -- 1. Create reader_article_rag_index_runs state table.
 --    One row per stable_document_id index attempt.  The Article RAG
---    index is a single path — no ``index_version`` / ``chunker_version``
---    / ``profile_fingerprint`` identity columns exist.  Stores only
---    truth-layer hashes and counts — never chunk text, Plate JSON,
---    Markdown syntax, DOM selections, or Slate paths.  A partial
---    unique index enforces at most one active row per
---    ``stable_document_id`` so duplicate queued jobs cannot accumulate.
+--    index is a single path.  Stores only truth-layer hashes and
+--    counts — never chunk text, Plate JSON, Markdown syntax, DOM
+--    selections, or Slate paths.  A partial unique index enforces
+--    at most one active row per ``stable_document_id`` so duplicate
+--    queued jobs cannot accumulate.
 --
 -- 2. Extend reader_jobs.job_type CHECK to include 'article_rag_index_build'.
 --    This job is base-scoped: base_id IS NOT NULL. The existing
@@ -91,7 +90,7 @@ CREATE INDEX idx_reader_article_rag_index_runs_record
     WHERE status IN ('planned', 'queued', 'indexing', 'indexed');
 
 COMMENT ON TABLE reader_article_rag_index_runs IS
-    'Persistent state for Article RAG index builds. One row per stable_document_id index attempt. The Article RAG index is a single path — no index_version / chunker_version / profile_fingerprint identity columns exist. Stores only truth-layer hashes and counts; never chunk text, Plate JSON, Markdown syntax, DOM selections, or Slate paths.';
+    'Persistent state for Article RAG index builds. One row per stable_document_id index attempt. The Article RAG index is a single path. Stores only truth-layer hashes and counts; never chunk text, Plate JSON, Markdown syntax, DOM selections, or Slate paths.';
 
 COMMENT ON COLUMN reader_article_rag_index_runs.plan_content_sha256 IS
     'SHA-256 of the deterministic plan content (chunk ids, content hashes, citation refs). Computed by compute_plan_content_sha256 in article_rag_index_plan.py.';

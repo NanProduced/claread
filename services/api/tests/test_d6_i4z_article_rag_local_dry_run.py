@@ -153,10 +153,8 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# The Article RAG index is a single path — no ``index_version`` /
-# ``chunker_version`` / ``profile_fingerprint`` columns exist on
-# ``reader_article_rag_index_runs``.  BASELINE_SQL (which includes
-# migration 0010) is sufficient; no migration 0021 append is needed.
+# The Article RAG index is a single path.  BASELINE_SQL (which includes
+# migration 0010) is sufficient.
 ARTICLE_RAG_DRY_RUN_SCHEMA_SQL = BASELINE_SQL
 
 
@@ -307,7 +305,11 @@ def _build_dry_run_worker(
         build_worker_service,
     )
 
-    settings = Settings()
+    # _env_file=None: the offline dry-run must not pick up real
+    # DASHSCOPE_API_KEY / ZILLIZ_TOKEN from the local .env file.
+    # monkeypatch.delenv in callers only clears os.environ, not the
+    # .env file that Settings() would otherwise read.
+    settings = Settings(_env_file=None)
     return build_worker_service(settings=settings, pool=pool)
 
 
@@ -361,7 +363,7 @@ class TestWorkerConstructionWithNoConfig:
             pass
 
         service = build_worker_service(
-            settings=Settings(), pool=_SentinelPool()
+            settings=Settings(_env_file=None), pool=_SentinelPool()
         )
         assert isinstance(service, ArticleRagIndexWorkerService)
         assert isinstance(
@@ -763,7 +765,7 @@ class TestNoNetworkGuard:
             pass
 
         service = build_worker_service(
-            settings=Settings(), pool=_SentinelPool()
+            settings=Settings(_env_file=None), pool=_SentinelPool()
         )
         # Both providers are the unconfigured sentinels, regardless
         # of what the env says (because the env is stripped above).
@@ -803,7 +805,7 @@ class TestNoNetworkGuard:
         class _SentinelPool:
             pass
 
-        build_worker_service(settings=Settings(), pool=_SentinelPool())
+        build_worker_service(settings=Settings(_env_file=None), pool=_SentinelPool())
         assert opened_sockets == [], (
             "build_worker_service must not open a raw socket at "
             "construction time.  Found: "

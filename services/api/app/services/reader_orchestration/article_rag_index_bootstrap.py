@@ -34,6 +34,10 @@ from uuid import UUID
 
 import asyncpg
 
+from app.contracts.article_rag_contract import (  # noqa: F401
+    ARTICLE_RAG_EMBEDDING_CONTRACT,
+    ArticleRagEmbeddingContract,
+)
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlanService,
@@ -60,33 +64,14 @@ _DEAD_JOB_STATUSES = frozenset({"failed_terminal", "cancelled", "superseded"})
 
 
 # ---------------------------------------------------------------------------
-# Article RAG embedding + vector contract (single source of truth)
+# Article RAG embedding + vector contract — re-export from the low-dependency
+# contract seam (``app.contracts.article_rag_contract``).
 # ---------------------------------------------------------------------------
 #
-# Replaces the deleted ``article_rag_index_profile`` module.  Captures
-# the 5 fields downstream code (worker / vector writer / retrieval)
-# actually needs.  No ``index_version`` / ``chunker_version`` /
-# ``profile_fingerprint`` — the Article RAG index is a single path.
-@dataclass(frozen=True, slots=True)
-class ArticleRagEmbeddingContract:
-    """Frozen embedding + vector identity for the single Article RAG path."""
-
-    document_embedding_model: str
-    document_embedding_dimension: int
-    document_embedding_text_type: str
-    query_embedding_model: str
-    query_embedding_text_type: str
-    vector_collection: str
-
-
-ARTICLE_RAG_EMBEDDING_CONTRACT = ArticleRagEmbeddingContract(
-    document_embedding_model="text-embedding-v4",
-    document_embedding_dimension=1024,
-    document_embedding_text_type="provider_default",
-    query_embedding_model="text-embedding-v4",
-    query_embedding_text_type="provider_default",
-    vector_collection="article_rag_chunks",
-)
+# The contract is a single source of truth shared with worker / vector
+# writer / retrieval / settings.  Re-exported here so existing imports
+# `from .article_rag_index_bootstrap import ARTICLE_RAG_EMBEDDING_CONTRACT`
+# continue to work after the seam extraction.
 
 
 def compute_article_rag_index_build_input_hash(
@@ -484,8 +469,9 @@ class ArticleRagIndexBootstrapService:
         )
 
         # 5. Enqueue reader_run + reader_job.
-        #    operation_fingerprint / idempotency_key no longer include
-        #    a version tag — the Article RAG index is a single path.
+        #    operation_fingerprint / idempotency_key carry the job-type
+        #    version (article_rag_index_build_v1) — the Article RAG
+        #    index is a single path.
         operation_fingerprint = "article_rag_index_build_v1"
         idempotency_key = (
             f"article_rag_index_build_v1:"
@@ -499,8 +485,8 @@ class ArticleRagIndexBootstrapService:
 
         # Job payload: only IDs and run params.  No chunk text, no
         # Plate JSON, no Markdown syntax, no DOM / Slate / UI fields.
-        # No ``index_version`` / ``chunker_version`` / ``profile_fingerprint``
-        # — the Article RAG index is a single path.
+        # Embedding + vector-space identity is enforced by the frozen
+        # ``ARTICLE_RAG_EMBEDDING_CONTRACT`` at write time.
         input_json = {
             "source": "article_rag_index_bootstrap",
             "reading_record_id": str(reading_record_id),

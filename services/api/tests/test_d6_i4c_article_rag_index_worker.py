@@ -96,8 +96,7 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
 )
 
 # Single-path convergence: BASELINE_SQL already contains the full
-# Article RAG schema.  The deleted migration 0021 (profile_fingerprint
-# column) is no longer applied.
+# Article RAG schema.
 INDEX_WORKER_SCHEMA_SQL = BASELINE_SQL
 
 
@@ -2607,10 +2606,10 @@ def _p1d_assert_no_sentinel_in_surfaces(
 # V1 profile runtime-verified field values (sourced from the P1-B
 # resolver, not hardcoded by the test — these literals must match the
 # resolver output exactly).
-_P1G_V1_DOC_EMBEDDING_MODEL = "text-embedding-v4"
-_P1G_V1_DOC_EMBEDDING_DIM = 1024
-_P1G_V1_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
-_P1G_V1_VECTOR_NAMESPACE = "article_rag_chunks"
+_P1G_DOC_EMBEDDING_MODEL = "text-embedding-v4"
+_P1G_DOC_EMBEDDING_DIM = 1024
+_P1G_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
+_P1G_VECTOR_NAMESPACE = "article_rag_chunks"
 
 # P1-G failure codes (must be unique per scenario; exact-match only).
 _P1G_FAILURE_CODE_TEXT_TYPE_UNSUPPORTED = "embedding_text_type_unsupported"
@@ -2637,7 +2636,7 @@ class _P1GCapturingEmbeddingProvider:
     def __init__(
         self,
         *,
-        model_override: Any = _P1G_V1_DOC_EMBEDDING_MODEL,
+        model_override: Any = _P1G_DOC_EMBEDDING_MODEL,
         dim_override: int | None = None,
         vector_len_override: int | None = None,
     ) -> None:
@@ -2646,7 +2645,7 @@ class _P1GCapturingEmbeddingProvider:
         self.last_texts: list[str] | None = None
         self._model_override = model_override
         self._dim_override = (
-            dim_override if dim_override is not None else _P1G_V1_DOC_EMBEDDING_DIM
+            dim_override if dim_override is not None else _P1G_DOC_EMBEDDING_DIM
         )
         self._vector_len_override = (
             vector_len_override
@@ -2714,8 +2713,8 @@ class _P1GPerItemEmbeddingProvider:
                 if i < len(self._per_item_configs)
                 else {}
             )
-            emb_model = cfg.get("model", model or _P1G_V1_DOC_EMBEDDING_MODEL)
-            emb_dim = cfg.get("dim", _P1G_V1_DOC_EMBEDDING_DIM)
+            emb_model = cfg.get("model", model or _P1G_DOC_EMBEDDING_MODEL)
+            emb_dim = cfg.get("dim", _P1G_DOC_EMBEDDING_DIM)
             vec_len = cfg.get("vector_len", emb_dim)
             vector = tuple(float(j) / max(vec_len, 1) for j in range(vec_len))
             results.append(
@@ -2855,7 +2854,7 @@ async def test_p1g_worker_passes_v1_doc_embedding_model_to_provider(
     assert provider.call_count == 1
     # The worker must explicitly pass the V1 profile's document
     # embedding model — NOT None, NOT a settings override.
-    assert provider.last_model_param == _P1G_V1_DOC_EMBEDDING_MODEL
+    assert provider.last_model_param == _P1G_DOC_EMBEDDING_MODEL
 
 
 # ---------------------------------------------------------------------
@@ -3178,18 +3177,18 @@ async def test_p1g_happy_path_profile_fields_propagated(
     assert result.status == "succeeded"
 
     # Provider received the V1 profile model.
-    assert provider.last_model_param == _P1G_V1_DOC_EMBEDDING_MODEL
+    assert provider.last_model_param == _P1G_DOC_EMBEDDING_MODEL
 
     # Metadata carries all profile-derived fields.
     assert writer.captured_metadata is not None
     captured = writer.captured_metadata
-    assert captured.embedding_model == _P1G_V1_DOC_EMBEDDING_MODEL
-    assert captured.embedding_dimension == _P1G_V1_DOC_EMBEDDING_DIM
-    assert captured.embedding_text_type == _P1G_V1_DOC_EMBEDDING_TEXT_TYPE
-    assert captured.collection == _P1G_V1_VECTOR_NAMESPACE
+    assert captured.embedding_model == _P1G_DOC_EMBEDDING_MODEL
+    assert captured.embedding_dimension == _P1G_DOC_EMBEDDING_DIM
+    assert captured.embedding_text_type == _P1G_DOC_EMBEDDING_TEXT_TYPE
+    assert captured.collection == _P1G_VECTOR_NAMESPACE
 
     # Writer received the profile namespace as the collection argument.
-    assert writer.captured_collection == _P1G_V1_VECTOR_NAMESPACE
+    assert writer.captured_collection == _P1G_VECTOR_NAMESPACE
 
     # Index-run persisted profile model and namespace.
     async with worker_env.acquire() as conn:
@@ -3198,12 +3197,12 @@ async def test_p1g_happy_path_profile_fields_propagated(
             "FROM reader_article_rag_index_runs WHERE id = $1",
             bootstrap_result.index_run_id,
         )
-    assert row["embedding_model"] == _P1G_V1_DOC_EMBEDDING_MODEL
-    assert row["vector_collection"] == _P1G_V1_VECTOR_NAMESPACE
+    assert row["embedding_model"] == _P1G_DOC_EMBEDDING_MODEL
+    assert row["vector_collection"] == _P1G_VECTOR_NAMESPACE
 
     # Worker result carries profile model and namespace.
-    assert result.embedding_model == _P1G_V1_DOC_EMBEDDING_MODEL
-    assert result.vector_collection == _P1G_V1_VECTOR_NAMESPACE
+    assert result.embedding_model == _P1G_DOC_EMBEDDING_MODEL
+    assert result.vector_collection == _P1G_VECTOR_NAMESPACE
 
 
 # ---------------------------------------------------------------------

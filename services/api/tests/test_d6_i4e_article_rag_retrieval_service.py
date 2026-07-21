@@ -156,10 +156,10 @@ _OTHER_BASE_ID = uuid.UUID("66666666-6666-6666-6666-666666666666")
 # that contract-mismatch failures are pinned to the one field under
 # test rather than to a default-vs-contract drift in the fixture
 # itself.
-_V1_DOCUMENT_EMBEDDING_MODEL = "text-embedding-v4"
-_V1_QUERY_EMBEDDING_MODEL = "text-embedding-v4"
-_V1_DOCUMENT_EMBEDDING_DIMENSION = 1024
-_V1_VECTOR_NAMESPACE = "article_rag_chunks"
+_DEFAULT_DOCUMENT_EMBEDDING_MODEL = "text-embedding-v4"
+_DEFAULT_QUERY_EMBEDDING_MODEL = "text-embedding-v4"
+_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION = 1024
+_DEFAULT_VECTOR_NAMESPACE = "article_rag_chunks"
 
 
 def _make_chunk(
@@ -231,8 +231,8 @@ def _indexed_run_row(
     plan_content_sha256: str | None = None,
     *,
     status: str = "indexed",
-    vector_collection: str | None = _V1_VECTOR_NAMESPACE,
-    embedding_model: str | None = _V1_DOCUMENT_EMBEDDING_MODEL,
+    vector_collection: str | None = _DEFAULT_VECTOR_NAMESPACE,
+    embedding_model: str | None = _DEFAULT_DOCUMENT_EMBEDDING_MODEL,
 ) -> dict[str, Any]:
     """Build the ``reader_article_rag_index_runs`` row that the
     retrieval service's ``_load_indexed_run`` queries.
@@ -273,7 +273,7 @@ def _build_service(
     pre-stubbed.  No real DB.
 
     The default embedding provider is constructed with
-    ``model=_V1_QUERY_EMBEDDING_MODEL`` so successful retrievals return
+    ``model=_DEFAULT_QUERY_EMBEDDING_MODEL`` so successful retrievals return
     a query embedding whose model matches the frozen contract.
     """
     from app.services.reader_orchestration.article_rag_index_plan import (
@@ -322,8 +322,8 @@ def _build_service(
     # the frozen contract's ``query_embedding_model``.  Tests that need
     # a different model (e.g. mismatch tests) override this.
     embedding_provider = embedding_provider or FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     if searcher is None:
         searcher = FakeArticleRagVectorSearcher(hits=[])
@@ -533,8 +533,8 @@ async def test_p1f_indexed_run_plan_identity_drift_fails_closed(
     row = _indexed_run_row(plan)
     row[field_name] = drifted_value
     provider = FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
@@ -1192,7 +1192,7 @@ async def test_vector_collection_passed_to_searcher_from_indexed_run(
     no longer reachable because V1 is the only registered profile."""
     plan = _make_plan()
     row = _indexed_run_row(
-        plan, vector_collection=_V1_VECTOR_NAMESPACE
+        plan, vector_collection=_DEFAULT_VECTOR_NAMESPACE
     )
     searcher = FakeArticleRagVectorSearcher(
         hits=[
@@ -1211,7 +1211,7 @@ async def test_vector_collection_passed_to_searcher_from_indexed_run(
     # collection matches the V1 profile's ``vector_namespace``.
     assert len(searcher.search_calls) == 1
     assert (
-        searcher.search_calls[0]["collection"] == _V1_VECTOR_NAMESPACE
+        searcher.search_calls[0]["collection"] == _DEFAULT_VECTOR_NAMESPACE
     )
 
 
@@ -1288,14 +1288,14 @@ async def test_embedding_model_passed_to_provider_from_indexed_run() -> None:
     # V1-aligned indexed run: ``embedding_model`` equals
     # ``profile.document_embedding_model`` so Phase C.3 Field 4 passes.
     row = _indexed_run_row(
-        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
+        plan, embedding_model=_DEFAULT_DOCUMENT_EMBEDDING_MODEL
     )
     # Provider returns embeddings whose model equals
     # ``profile.query_embedding_model`` (V1 query model) so Phase D.2
     # passes.
     provider = FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
@@ -1351,7 +1351,7 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
     # V1-aligned indexed run so Phase C.3 Field 4 passes; the mismatch
     # is isolated to the provider's returned model (Phase D.2).
     row = _indexed_run_row(
-        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
+        plan, embedding_model=_DEFAULT_DOCUMENT_EMBEDDING_MODEL
     )
     service = _build_service(
         plan=plan,
@@ -1374,8 +1374,8 @@ async def test_embedding_model_mismatch_fails_closed() -> None:
     # interpolate any caller-supplied value.
     msg = str(exc_info.value)
     assert "some-other-model" not in msg
-    assert _V1_QUERY_EMBEDDING_MODEL not in msg
-    assert _V1_DOCUMENT_EMBEDDING_MODEL not in msg
+    assert _DEFAULT_QUERY_EMBEDDING_MODEL not in msg
+    assert _DEFAULT_DOCUMENT_EMBEDDING_MODEL not in msg
 
 
 @pytest.mark.anyio
@@ -1388,11 +1388,11 @@ async def test_embedding_model_match_does_not_fail_closed() -> None:
     policy's positive case for the V1-aligned happy path."""
     plan = _make_plan()
     row = _indexed_run_row(
-        plan, embedding_model=_V1_DOCUMENT_EMBEDDING_MODEL
+        plan, embedding_model=_DEFAULT_DOCUMENT_EMBEDDING_MODEL
     )
     provider = FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
@@ -1423,7 +1423,7 @@ async def test_embedding_model_null_on_indexed_run_fails_closed() -> None:
     plan = _make_plan()
     row = _indexed_run_row(plan, embedding_model=None)
     provider = FakeArticleRagEmbeddingProvider(
-        dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(
@@ -1644,7 +1644,7 @@ async def test_p1f_indexed_run_embedding_model_null_fails_closed(
     row = _indexed_run_row(plan, embedding_model=None)
     provider = provider_call_counter(
         FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
     )
     searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
@@ -1681,7 +1681,7 @@ async def test_p1f_indexed_run_embedding_model_mismatch_fails_closed(
     )
     provider = provider_call_counter(
         FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
     )
     searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
@@ -1721,7 +1721,7 @@ async def test_p1f_indexed_run_vector_collection_null_fails_closed(
     row = _indexed_run_row(plan, vector_collection=None)
     provider = provider_call_counter(
         FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
     )
     searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
@@ -1755,7 +1755,7 @@ async def test_p1f_indexed_run_vector_collection_empty_fails_closed(
     row = _indexed_run_row(plan, vector_collection="   ")
     provider = provider_call_counter(
         FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
     )
     searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
@@ -1790,7 +1790,7 @@ async def test_p1f_indexed_run_vector_collection_mismatch_fails_closed(
     )
     provider = provider_call_counter(
         FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
     )
     searcher = searcher_call_counter(FakeArticleRagVectorSearcher(hits=[]))
@@ -1850,7 +1850,7 @@ async def test_p1f_query_embedding_returns_model_mismatch_fails_closed(
         indexed_run_row=row,
         searcher=searcher,
         embedding_provider=_MismatchProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         ),
     )
     with pytest.raises(ArticleRagRetrievalServiceError) as exc_info:
@@ -1873,8 +1873,8 @@ async def test_p1f_query_embedding_returns_model_mismatch_fails_closed(
 @pytest.mark.parametrize(
     "returned_model",
     [
-        pytest.param(_V1_QUERY_EMBEDDING_MODEL + " ", id="trailing_space"),
-        pytest.param(_V1_QUERY_EMBEDDING_MODEL + "\n", id="trailing_lf"),
+        pytest.param(_DEFAULT_QUERY_EMBEDDING_MODEL + " ", id="trailing_space"),
+        pytest.param(_DEFAULT_QUERY_EMBEDDING_MODEL + "\n", id="trailing_lf"),
         pytest.param(None, id="none"),
         pytest.param(1, id="integer"),
         pytest.param(True, id="bool"),
@@ -1904,7 +1904,7 @@ async def test_p1f_query_embedding_model_requires_raw_exact_string_match(
     plan = _make_plan()
     searcher = FakeArticleRagVectorSearcher(hits=[])
     provider = _ReturnedModelProvider(
-        dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+        dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
     )
     service = _build_service(
         plan=plan,
@@ -1954,7 +1954,7 @@ async def test_p1f_query_embedding_dimension_matches_frozen_profile(
                     text_sha256=hashlib.sha256(
                         texts[0].encode("utf-8")
                     ).hexdigest(),
-                    model=_V1_QUERY_EMBEDDING_MODEL,
+                    model=_DEFAULT_QUERY_EMBEDDING_MODEL,
                     vector=(0.1,) * vector_length,
                     dim=reported_dim,
                 )
@@ -1963,8 +1963,8 @@ async def test_p1f_query_embedding_dimension_matches_frozen_profile(
     plan = _make_plan()
     searcher = FakeArticleRagVectorSearcher(hits=[])
     provider = _DimensionProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     service = _build_service(
         plan=plan,
@@ -2020,7 +2020,7 @@ async def test_p1f_all_contract_mismatch_paths_zero_embedding_and_search_calls(
 
     for row in mismatch_rows:
         provider = FakeArticleRagEmbeddingProvider(
-            dim=8, model=_V1_QUERY_EMBEDDING_MODEL
+            dim=8, model=_DEFAULT_QUERY_EMBEDDING_MODEL
         )
         searcher = FakeArticleRagVectorSearcher(hits=[])
         service = _build_service(
@@ -2065,8 +2065,8 @@ async def test_p1f_normal_v1_retrieval_uses_profile_model_and_namespace() -> Non
     plan = _make_plan()
     row = _indexed_run_row(plan)
     provider = FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     searcher = FakeArticleRagVectorSearcher(
         hits=[
@@ -2093,7 +2093,7 @@ async def test_p1f_normal_v1_retrieval_uses_profile_model_and_namespace() -> Non
     assert result.hits[0].chunk_id == "chunk-aaa"
     # Vector search was routed to the profile's vector_namespace.
     assert len(searcher.search_calls) == 1
-    assert searcher.search_calls[0]["collection"] == _V1_VECTOR_NAMESPACE
+    assert searcher.search_calls[0]["collection"] == _DEFAULT_VECTOR_NAMESPACE
     # Citation comes from the current plan chunk.
     aaa = result.hits[0]
     assert aaa.text == "alpha text"
@@ -2183,8 +2183,8 @@ async def test_round1_retrieve_rejects_legacy_index_version_kwarg_before_io() ->
     """Legacy index_version= kwarg is not part of the public interface."""
     plan = _make_plan()
     provider = FakeArticleRagEmbeddingProvider(
-        dim=_V1_DOCUMENT_EMBEDDING_DIMENSION,
-        model=_V1_QUERY_EMBEDDING_MODEL,
+        dim=_DEFAULT_DOCUMENT_EMBEDDING_DIMENSION,
+        model=_DEFAULT_QUERY_EMBEDDING_MODEL,
     )
     searcher = FakeArticleRagVectorSearcher(hits=[])
     service = _build_service(

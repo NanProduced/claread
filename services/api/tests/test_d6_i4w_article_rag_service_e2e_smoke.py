@@ -129,10 +129,8 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# The Article RAG index is a single path — no ``index_version`` /
-# ``chunker_version`` / ``profile_fingerprint`` columns exist on
-# ``reader_article_rag_index_runs``.  BASELINE_SQL (which includes
-# migration 0010) is sufficient; no migration 0021 append is needed.
+# The Article RAG index is a single path.  BASELINE_SQL (which includes
+# migration 0010) is sufficient.
 INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL
 
 

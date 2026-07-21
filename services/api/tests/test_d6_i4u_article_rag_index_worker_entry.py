@@ -131,7 +131,7 @@ def _make_result(
     chunk_count: int = 5,
     embedding_model: str | None = "text-embedding-v4",
     vector_store_provider: str | None = "zilliz",
-    vector_collection: str | None = "article_rag_index_v1",
+    vector_collection: str | None = "article_rag_chunks",
     retryable: bool | None = None,
     failure_code: str | None = None,
     idempotent_noop: bool = False,
@@ -225,7 +225,7 @@ class TestBuildWorkerService:
             reader_article_rag_vector_provider="zilliz",
             reader_article_rag_zilliz_uri="https://zilliz.example.com",
             reader_article_rag_zilliz_token="",  # missing token
-            reader_article_rag_zilliz_collection="article_rag_index_v1",
+            reader_article_rag_zilliz_collection="article_rag_chunks",
             reader_article_rag_vector_dim=1024,
         )
         service = build_worker_service(settings=settings, pool=object())
@@ -380,7 +380,7 @@ class TestBuildResultPayload:
             chunk_count=7,
             embedding_model="text-embedding-v4",
             vector_store_provider="zilliz",
-            vector_collection="article_rag_index_v1",
+            vector_collection="article_rag_chunks",
         )
         payload = _build_result_payload(result)
         assert payload["job_id"] == str(job_id)
@@ -388,7 +388,7 @@ class TestBuildResultPayload:
         assert payload["chunk_count"] == 7
         assert payload["embedding_model"] == "text-embedding-v4"
         assert payload["vector_store_provider"] == "zilliz"
-        assert payload["vector_collection"] == "article_rag_index_v1"
+        assert payload["vector_collection"] == "article_rag_chunks"
         assert "idempotent_noop" not in payload  # False → omitted
 
     def test_failure_result_serialized(self) -> None:
