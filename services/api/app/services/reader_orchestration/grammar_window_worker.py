@@ -52,6 +52,8 @@ from app.services.reader_orchestration.grammar_worker import (
     FAKE_GRAMMAR_MODEL_PROVIDER,
     FAKE_GRAMMAR_PROMPT_VERSION,
     GRAMMAR_PROMPT_AGENT_NAME,
+    MAX_GRAMMAR_DEDUP_HINT_LENGTH,
+    GrammarReasonCode,
 )
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
@@ -316,10 +318,10 @@ class _WindowGrammarNoteCandidate(BaseModel):
         ),
     )
     quality_score: int = Field(ge=1, le=5)
-    reading_blocker: bool = False
-    reason_code: str = Field(min_length=1)
+    reading_blocker: bool
+    reason_code: GrammarReasonCode
     confidence: float = Field(ge=0.0, le=1.0)
-    dedup_hint: str = Field(min_length=1)
+    dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
 
 
 class _WindowSentenceChunk(BaseModel):
@@ -353,10 +355,10 @@ class _WindowSentenceAnalysisCandidate(BaseModel):
     )
     chunks: list[_WindowSentenceChunk] = Field(min_length=1, max_length=8)
     quality_score: int = Field(ge=1, le=5)
-    reading_blocker: bool = False
-    reason_code: str = Field(min_length=1)
+    reading_blocker: bool
+    reason_code: GrammarReasonCode
     confidence: float = Field(ge=0.0, le=1.0)
-    dedup_hint: str = Field(min_length=1)
+    dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
 
 
 class _WindowGrammarCandidateOutput(BaseModel):
@@ -379,7 +381,7 @@ _WINDOW_GRAMMAR_OPERATIONAL_RULES = """\
 
 你会在一次调用中收到一个阅读窗口内所有 target anchor（跨多个 unit），需要为其中最有价值的 anchor 产出 grammar_note 和 sentence_analysis candidate。
 
-教学选点、grammar_note / sentence_analysis 职责、同点竞争、非模板化与 Markdown 合同，遵循下方「共享教学合同」（与 per-unit / batch 同源）。
+教学选点、grammar_note / sentence_analysis 职责、同点竞争、非模板化与 Markdown 合同、self-rating 字段合同，遵循下方「共享教学合同」（与 per-unit / batch 同源）。
 
 ## 窗口操作规则
 
@@ -393,16 +395,7 @@ _WINDOW_GRAMMAR_OPERATIONAL_RULES = """\
 
 5. 质量优先于数量：只标注真正有理解/学习价值的点；跳过透明基础结构与低价值 anchor。不要为凑满预算而输出。
 
-6. 自评分必填：每个 item 必须包含：
-   - quality_score (1-5)：窗口内优先级（5 最高）
-   - reading_blocker (bool)：是否阻碍理解句意
-   - reason_code：取值之一 grammar_pattern | exam_relevant | meaning_blocker | discourse_signal | low_value
-   - confidence (0.0-1.0)：对此标注的置信度
-   - dedup_hint：此语法点的短英文 canonical key（如 "though_concession"）
-
-7. 同 unit span 约束：单条 grammar_note item 内所有 span 必须属于同一个 unit_id。跨 unit span 会被拒绝。
-
-8. `reason_code` 保持英文 enum 值；`dedup_hint` 保持英文 canonical key。
+6. 同 unit span 约束：单条 grammar_note item 内所有 span 必须属于同一个 unit_id。跨 unit span 会被拒绝。
 
 ## 输出格式
 

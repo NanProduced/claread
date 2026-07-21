@@ -1692,6 +1692,302 @@ def test_analysis_field_description_separates_chunks_and_forbids_chunk_restateme
 
 
 # ---------------------------------------------------------------------------#
+# P1-1: sentence_analysis must not re-template "按三步走"
+# ---------------------------------------------------------------------------#
+
+
+def test_shared_grammar_prompt_drops_fixed_three_step_template() -> None:
+    """P1-1: shared grammar prompt must NOT contain the fixed ``按三步走``
+    template that previously forced mechanical sentence_analysis output.
+
+    The three reading actions (主干定位 / 暂放修饰 / 跨越障碍) remain
+    available as optional tools, but the prompt must explicitly state
+    they are not fixed steps, not required to be exhaustive, and not
+    required to follow a fixed order.
+    """
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+
+    instructions = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+    # The mechanical template phrase must be gone.
+    assert "按三步走" not in instructions
+    # The new contract must be explicit.
+    assert "不是固定步骤" in instructions
+    assert "不要求三项齐全" in instructions
+    assert "也不要求固定顺序" in instructions
+    # The three reading actions are still available as optional tools.
+    assert "主干定位" in instructions
+    assert "暂放修饰" in instructions
+    assert "跨越障碍" in instructions
+    # No new fixed heading / sentence-count / Markdown structure pressure.
+    assert "不要引入新的固定标题" in instructions
+    assert "不是学术句法报告" in instructions
+
+
+def test_window_prompt_inherits_de_templated_analysis_contract() -> None:
+    """P1-1: window composed system prompt must inherit the de-templated
+    analysis contract from the shared YAML, so per-unit / batch / window
+    stay aligned on the same teaching semantics.
+    """
+    from app.services.reader_orchestration.grammar_window_worker import (
+        get_window_grammar_system_prompt,
+    )
+
+    prompt = get_window_grammar_system_prompt()
+    assert "按三步走" not in prompt
+    assert "不是固定步骤" in prompt
+    assert "不要求三项齐全" in prompt
+    assert "也不要求固定顺序" in prompt
+
+
+# ---------------------------------------------------------------------------#
+# P1-2: shared grammar prompt must own the self-rating contract
+# ---------------------------------------------------------------------------#
+
+
+def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
+    """P1-2: the shared grammar YAML must be the single authoritative
+    source for the self-rating field contract. The window operational
+    rules must NOT duplicate the field-by-field self-rating explanation.
+    """
+    from app.services.analysis.prompting.prompt_loader import (
+        load_agent_instructions,
+    )
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WINDOW_GRAMMAR_OPERATIONAL_RULES,
+        get_window_grammar_system_prompt,
+    )
+
+    shared = load_agent_instructions(
+        grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
+    )
+    # The shared YAML must explain all five self-rating fields.
+    assert "quality_score" in shared
+    assert "reading_blocker" in shared
+    assert "reason_code" in shared
+    assert "confidence" in shared
+    assert "dedup_hint" in shared
+    # The five allowed reason_code values must appear in the shared YAML.
+    for code in (
+        "grammar_pattern",
+        "exam_relevant",
+        "meaning_blocker",
+        "discourse_signal",
+        "low_value",
+    ):
+        assert code in shared, f"shared YAML missing reason_code {code!r}"
+    # The long_sentence ban must be stated in the shared YAML.
+    assert "long_sentence" in shared
+    # The self-rating fields are internal metadata — the prompt must
+    # forbid writing them into note / analysis prose.
+    assert "内部候选元数据" in shared
+    # The window operational rules must NOT duplicate the field-by-field
+    # self-rating explanation (single authoritative source).
+    assert "quality_score (1-5)" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    assert "dedup_hint：此语法点的短英文" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    # But the composed window prompt must still carry the contract via
+    # the embedded shared YAML.
+    composed = get_window_grammar_system_prompt()
+    assert "quality_score" in composed
+    assert "reason_code" in composed
+    assert "dedup_hint" in composed
+
+
+# ---------------------------------------------------------------------------#
+# P1-2: self-rating schema validation (per-unit / batch candidate schemas)
+# ---------------------------------------------------------------------------#
+
+
+def _minimal_grammar_note_kwargs() -> dict:
+    """Return the minimum kwargs required to construct a valid
+    GrammarNoteCandidateItem under the tightened P1-2 schema."""
+    return {
+        "spans": [GrammarCandidateSpan(anchor_segment_id="s1", selected_text="x")],
+        "grammar_point": "p",
+        "note": "n",
+        "quality_score": 3,
+        "reading_blocker": False,
+        "reason_code": "grammar_pattern",
+        "confidence": 0.5,
+        "dedup_hint": "k",
+    }
+
+
+def _minimal_sentence_analysis_kwargs() -> dict:
+    """Return the minimum kwargs required to construct a valid
+    SentenceAnalysisCandidateItem under the tightened P1-2 schema."""
+    return {
+        "anchor_segment_id": "s1",
+        "selected_text": "x",
+        "label": "l",
+        "analysis": "a",
+        "chunks": [SentenceAnalysisChunkCandidate(label="c", text="x")],
+        "quality_score": 3,
+        "reading_blocker": False,
+        "reason_code": "grammar_pattern",
+        "confidence": 0.5,
+        "dedup_hint": "k",
+    }
+
+
+def test_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
+    """P1-2: GrammarNoteCandidateItem must reject candidates that omit
+    any of the five self-rating fields."""
+    from pydantic import ValidationError
+
+    base = _minimal_grammar_note_kwargs()
+    for field in (
+        "quality_score",
+        "reading_blocker",
+        "reason_code",
+        "confidence",
+        "dedup_hint",
+    ):
+        incomplete = dict(base)
+        del incomplete[field]
+        with pytest.raises(ValidationError) as exc_info:
+            GrammarNoteCandidateItem(**incomplete)
+        assert field in str(exc_info.value), (
+            f"missing field {field!r} must surface in ValidationError"
+        )
+
+
+def test_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> None:
+    """P1-2: SentenceAnalysisCandidateItem must reject candidates that
+    omit any of the five self-rating fields."""
+    from pydantic import ValidationError
+
+    base = _minimal_sentence_analysis_kwargs()
+    for field in (
+        "quality_score",
+        "reading_blocker",
+        "reason_code",
+        "confidence",
+        "dedup_hint",
+    ):
+        incomplete = dict(base)
+        del incomplete[field]
+        with pytest.raises(ValidationError) as exc_info:
+            SentenceAnalysisCandidateItem(**incomplete)
+        assert field in str(exc_info.value), (
+            f"missing field {field!r} must surface in ValidationError"
+        )
+
+
+def test_grammar_note_candidate_rejects_out_of_range_quality_score() -> None:
+    """P1-2: quality_score must be int in [1, 5]. 0, 6, and floats are
+    rejected."""
+    from pydantic import ValidationError
+
+    base = _minimal_grammar_note_kwargs()
+    for bad in (0, 6, -1):
+        with pytest.raises(ValidationError):
+            GrammarNoteCandidateItem(**{**base, "quality_score": bad})
+
+
+def test_sentence_analysis_candidate_rejects_out_of_range_quality_score() -> None:
+    """P1-2: quality_score must be int in [1, 5]."""
+    from pydantic import ValidationError
+
+    base = _minimal_sentence_analysis_kwargs()
+    for bad in (0, 6, -1):
+        with pytest.raises(ValidationError):
+            SentenceAnalysisCandidateItem(**{**base, "quality_score": bad})
+
+
+def test_grammar_note_candidate_rejects_out_of_range_confidence() -> None:
+    """P1-2: confidence must be float in [0.0, 1.0]."""
+    from pydantic import ValidationError
+
+    base = _minimal_grammar_note_kwargs()
+    for bad in (-0.1, 1.1, 2.0):
+        with pytest.raises(ValidationError):
+            GrammarNoteCandidateItem(**{**base, "confidence": bad})
+
+
+def test_sentence_analysis_candidate_rejects_out_of_range_confidence() -> None:
+    """P1-2: confidence must be float in [0.0, 1.0]."""
+    from pydantic import ValidationError
+
+    base = _minimal_sentence_analysis_kwargs()
+    for bad in (-0.1, 1.1, 2.0):
+        with pytest.raises(ValidationError):
+            SentenceAnalysisCandidateItem(**{**base, "confidence": bad})
+
+
+def test_grammar_note_candidate_rejects_invalid_reason_code() -> None:
+    """P1-2: reason_code must be one of the 5 allowed Literal values.
+    ``long_sentence`` and arbitrary strings are rejected at the schema
+    boundary, not via natural-language prompt enforcement."""
+    from pydantic import ValidationError
+
+    base = _minimal_grammar_note_kwargs()
+    for bad in ("long_sentence", "unknown", "", "GRAMMAR_PATTERN"):
+        with pytest.raises(ValidationError):
+            GrammarNoteCandidateItem(**{**base, "reason_code": bad})
+
+
+def test_sentence_analysis_candidate_rejects_invalid_reason_code() -> None:
+    """P1-2: reason_code must be one of the 5 allowed Literal values."""
+    from pydantic import ValidationError
+
+    base = _minimal_sentence_analysis_kwargs()
+    for bad in ("long_sentence", "unknown", "", "MEANING_BLOCKER"):
+        with pytest.raises(ValidationError):
+            SentenceAnalysisCandidateItem(**{**base, "reason_code": bad})
+
+
+def test_grammar_note_candidate_accepts_all_five_reason_codes() -> None:
+    """P1-2: all five reason_code values must be accepted."""
+    base = _minimal_grammar_note_kwargs()
+    for code in (
+        "grammar_pattern",
+        "exam_relevant",
+        "meaning_blocker",
+        "discourse_signal",
+        "low_value",
+    ):
+        item = GrammarNoteCandidateItem(**{**base, "reason_code": code})
+        assert item.reason_code == code
+
+
+def test_grammar_note_candidate_rejects_empty_dedup_hint() -> None:
+    """P1-2: dedup_hint must be a non-empty canonical key."""
+    from pydantic import ValidationError
+
+    base = _minimal_grammar_note_kwargs()
+    with pytest.raises(ValidationError):
+        GrammarNoteCandidateItem(**{**base, "dedup_hint": ""})
+
+
+def test_sentence_analysis_candidate_rejects_empty_dedup_hint() -> None:
+    """P1-2: dedup_hint must be a non-empty canonical key."""
+    from pydantic import ValidationError
+
+    base = _minimal_sentence_analysis_kwargs()
+    with pytest.raises(ValidationError):
+        SentenceAnalysisCandidateItem(**{**base, "dedup_hint": ""})
+
+
+def test_grammar_note_candidate_rejects_overlong_dedup_hint() -> None:
+    """P1-2: dedup_hint must be ≤ MAX_GRAMMAR_DEDUP_HINT_LENGTH chars."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_worker import (
+        MAX_GRAMMAR_DEDUP_HINT_LENGTH,
+    )
+
+    base = _minimal_grammar_note_kwargs()
+    with pytest.raises(ValidationError):
+        GrammarNoteCandidateItem(
+            **{**base, "dedup_hint": "x" * (MAX_GRAMMAR_DEDUP_HINT_LENGTH + 1)}
+        )
+
+
+# ---------------------------------------------------------------------------#
 # T8: _validate_grammar_strategy_metadata fail-closed unit tests
 # ---------------------------------------------------------------------------#
 
@@ -2485,6 +2781,9 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
 
     # 3 candidates on the same anchor with different quality_score.
     # Input order is deliberately low → high to prove sort, not pass-through.
+    # P1-2: quality_score is now int 1-5 (required), and the full self-rating
+    # family (reading_blocker / reason_code / confidence / dedup_hint) is
+    # required so the LLM cannot emit bare candidates that degrade sorting.
     candidates = [
         SentenceAnalysisCandidateItem(
             anchor_segment_id="s1",
@@ -2494,7 +2793,11 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             chunks=[
                 SentenceAnalysisChunkCandidate(label="clause", text=source_text)
             ],
-            quality_score=0.3,
+            quality_score=2,
+            reading_blocker=False,
+            reason_code="grammar_pattern",
+            confidence=0.3,
+            dedup_hint="low-analysis",
         ),
         SentenceAnalysisCandidateItem(
             anchor_segment_id="s1",
@@ -2504,7 +2807,11 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             chunks=[
                 SentenceAnalysisChunkCandidate(label="clause", text=source_text)
             ],
-            quality_score=0.9,
+            quality_score=5,
+            reading_blocker=True,
+            reason_code="meaning_blocker",
+            confidence=0.9,
+            dedup_hint="high-analysis",
         ),
         SentenceAnalysisCandidateItem(
             anchor_segment_id="s1",
@@ -2514,7 +2821,11 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             chunks=[
                 SentenceAnalysisChunkCandidate(label="clause", text=source_text)
             ],
-            quality_score=0.6,
+            quality_score=3,
+            reading_blocker=False,
+            reason_code="discourse_signal",
+            confidence=0.6,
+            dedup_hint="mid-analysis",
         ),
     ]
     candidate_output = GrammarBundleCandidateOutput(sentence_analyses=candidates)
@@ -2538,16 +2849,17 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
 
 
 def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None:
-    """Phase 5b: GrammarNoteCandidateItem must carry the same self-rating
-    family as SentenceAnalysisCandidateItem so the batch path can sort
-    grammar_notes by quality_score before per-unit budget truncation.
+    """P1-2: GrammarNoteCandidateItem and SentenceAnalysisCandidateItem must
+    carry the same self-rating family, and all five fields must be REQUIRED
+    (no permissive defaults) so the LLM cannot emit bare candidates that
+    degrade sorting to LLM-returned order.
 
-    Previously GrammarNoteCandidateItem lacked these fields, making the
-    batch path's quality_score sort a no-op for grammar_notes and
-    leaving per-unit grammar_notes in LLM-returned order. DB inspection
-    of bc8afd86 / 6f9e6fdf showed reason_code=NULL and quality_score
-    absent on all published grammar_notes, confirming the fields were
-    not wired through the candidate schema.
+    Previously these fields had wide defaults (quality_score=0.0,
+    reading_blocker=False, reason_code="grammar_pattern", confidence=0.0,
+    dedup_hint=""), so the model could omit every field and the sort key
+    collapsed to a constant. DB inspection of bc8afd86 / 6f9e6fdf showed
+    reason_code=NULL and quality_score absent on all published
+    grammar_notes, confirming the fields were not wired through.
     """
     from app.services.reader_orchestration.grammar_worker import (
         SentenceAnalysisCandidateItem as _SAItem,
@@ -2568,20 +2880,20 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
             f"SentenceAnalysisCandidateItem missing Phase 5 field {field_name!r}"
         )
 
-    # Defaults must mirror SentenceAnalysisCandidateItem so legacy LLM
-    # output without these fields degrades to LLM-returned order
-    # (quality_score=0.0) rather than failing validation.
-    note_defaults = {
-        f: GrammarNoteCandidateItem.model_fields[f].default
-        for f in expected_fields
-    }
-    sa_defaults = {
-        f: _SAItem.model_fields[f].default for f in expected_fields
-    }
-    assert note_defaults == sa_defaults, (
-        f"GrammarNoteCandidateItem defaults {note_defaults} must mirror "
-        f"SentenceAnalysisCandidateItem defaults {sa_defaults}"
-    )
+    # P1-2: all five self-rating fields must be required (is_required=True)
+    # so the schema rejects candidates that omit them. Pydantic marks a
+    # field as required when it has no default and no default_factory.
+    for field_name in expected_fields:
+        for schema_cls in (GrammarNoteCandidateItem, _SAItem):
+            field_info = schema_cls.model_fields[field_name]
+            assert field_info.is_required(), (
+                f"{schema_cls.__name__}.{field_name} must be required "
+                f"(no default) so the LLM cannot omit self-rating fields; "
+                f"got is_required=False"
+            )
+
+
+
 
 
 def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
@@ -2607,7 +2919,8 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
     # 3 grammar_note candidates on the same anchor with different
     # quality_score. Input order is deliberately low → high to prove
     # sort, not pass-through. ``selected_text`` must be a real substring
-    # of the source text so anchor resolution succeeds.
+    # of the source text so anchor resolution succeeds. P1-2: the full
+    # self-rating family is required on every candidate.
     candidates = [
         GrammarNoteCandidateItem(
             spans=[
@@ -2618,7 +2931,11 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             ],
             grammar_point="low",
             note="low quality note",
-            quality_score=0.2,
+            quality_score=2,
+            reading_blocker=False,
+            reason_code="low_value",
+            confidence=0.2,
+            dedup_hint="low-note",
         ),
         GrammarNoteCandidateItem(
             spans=[
@@ -2629,7 +2946,11 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             ],
             grammar_point="high",
             note="high quality note",
-            quality_score=0.95,
+            quality_score=5,
+            reading_blocker=True,
+            reason_code="meaning_blocker",
+            confidence=0.95,
+            dedup_hint="high-note",
         ),
         GrammarNoteCandidateItem(
             spans=[
@@ -2640,7 +2961,11 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             ],
             grammar_point="mid",
             note="mid quality note",
-            quality_score=0.5,
+            quality_score=3,
+            reading_blocker=False,
+            reason_code="grammar_pattern",
+            confidence=0.5,
+            dedup_hint="mid-note",
         ),
     ]
     candidate_output = GrammarBundleCandidateOutput(grammar_notes=candidates)
@@ -2704,7 +3029,11 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             ],
             grammar_point=f"low-{i}",
             note=f"low quality note {i}",
-            quality_score=0.1,
+            quality_score=1,
+            reading_blocker=False,
+            reason_code="low_value",
+            confidence=0.1,
+            dedup_hint=f"low-{i}",
         )
         for i in range(low_quality_count)
     ]
@@ -2719,7 +3048,11 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             ],
             grammar_point="high-A",
             note="high quality note A",
-            quality_score=0.9,
+            quality_score=5,
+            reading_blocker=True,
+            reason_code="meaning_blocker",
+            confidence=0.9,
+            dedup_hint="high-a",
         )
     )
     candidates.append(
@@ -2732,7 +3065,11 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             ],
             grammar_point="high-B",
             note="high quality note B",
-            quality_score=0.8,
+            quality_score=4,
+            reading_blocker=False,
+            reason_code="grammar_pattern",
+            confidence=0.8,
+            dedup_hint="high-b",
         )
     )
     candidate_output = GrammarBatchCandidateOutput(grammar_notes=candidates)
@@ -2789,7 +3126,11 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
             chunks=[
                 SentenceAnalysisChunkCandidate(label="clause", text=source_text)
             ],
-            quality_score=0.1,
+            quality_score=1,
+            reading_blocker=False,
+            reason_code="low_value",
+            confidence=0.1,
+            dedup_hint=f"low-{i}",
         )
         for i in range(low_quality_count)
     ]
@@ -2802,7 +3143,11 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
             chunks=[
                 SentenceAnalysisChunkCandidate(label="clause", text=source_text)
             ],
-            quality_score=0.95,
+            quality_score=5,
+            reading_blocker=True,
+            reason_code="meaning_blocker",
+            confidence=0.95,
+            dedup_hint="high-analysis",
         )
     )
     candidate_output = GrammarBatchCandidateOutput(
@@ -2873,6 +3218,12 @@ def test_grammar_note_field_description_documents_jargon_ban() -> None:
     note_desc = GrammarNoteCandidateItem.model_fields["note"].description or ""
     assert "高考中常考" in note_desc
     assert "总结性考试话术" in note_desc
+
+
+
+
+
+
 
 
 @pytest.mark.parametrize(

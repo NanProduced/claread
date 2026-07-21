@@ -137,6 +137,20 @@ MAX_GRAMMAR_LABEL_LENGTH = 120
 MAX_GRAMMAR_FIELD_LENGTH = 360
 MAX_GRAMMAR_CHUNKS_PER_ANALYSIS = 8
 MAX_GRAMMAR_DIAGNOSTIC_ITEMS = 8
+MAX_GRAMMAR_DEDUP_HINT_LENGTH = 120
+
+# Shared self-rating reason_code enum. The same Literal is reused by the
+# window path (``_WindowGrammarNoteCandidate`` / ``_WindowSentenceAnalysisCandidate``)
+# so per-unit / batch / window cannot drift on the allowed values.
+# ``low_value`` replaces the older ``long_sentence`` hint — sentence length
+# is not a valid selection reason.
+GrammarReasonCode = Literal[
+    "grammar_pattern",
+    "exam_relevant",
+    "meaning_blocker",
+    "discourse_signal",
+    "low_value",
+]
 MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH = 80
 
 # T8: variant-first strategy metadata keys read from reader_jobs.input_json.
@@ -218,17 +232,20 @@ class GrammarNoteCandidateItem(BaseModel):
             "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
-    # Phase 5: self-rating family (mirrors window path's
-    # _WindowGrammarNoteCandidate and SentenceAnalysisCandidateItem).
-    # Defaults keep the model permissive for legacy per-unit / batch LLM
-    # output that does not emit these fields; when the LLM does emit them,
-    # _split_batch_candidates_by_unit sorts grammar_notes by quality_score
-    # descending so higher-quality candidates win the per-unit budget.
-    quality_score: float = 0.0
-    reading_blocker: bool = False
-    reason_code: str = "grammar_pattern"
-    confidence: float = 0.0
-    dedup_hint: str = ""
+    # Phase 5 → P1-2: self-rating family (mirrors window path's
+    # _WindowGrammarNoteCandidate). All five fields are required and
+    # range-checked so the LLM cannot emit a bare candidate that
+    # degrades sorting to LLM-returned order. ``reason_code`` is
+    # constrained to the shared ``GrammarReasonCode`` Literal so
+    # per-unit / batch / window cannot drift on the allowed values.
+    # ``_split_batch_candidates_by_unit`` sorts grammar_notes by
+    # quality_score descending so higher-quality candidates win the
+    # per-unit budget.
+    quality_score: int = Field(ge=1, le=5)
+    reading_blocker: bool
+    reason_code: GrammarReasonCode
+    confidence: float = Field(ge=0.0, le=1.0)
+    dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
 
 
 class SentenceAnalysisChunkCandidate(BaseModel):
@@ -263,17 +280,18 @@ class SentenceAnalysisCandidateItem(BaseModel):
         min_length=1,
         max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,
     )
-    # Phase 5: self-rating family (mirrors window path's
-    # _WindowSentenceAnalysisCandidate). Defaults keep the model permissive
-    # for legacy per-unit LLM output that does not emit these fields; when
-    # the LLM does emit them, _build_grammar_output_from_candidates sorts
-    # sentence_analyses by quality_score descending so higher-quality
+    # Phase 5 → P1-2: self-rating family (mirrors window path's
+    # _WindowSentenceAnalysisCandidate). All five fields are required and
+    # range-checked so the LLM cannot emit a bare candidate that degrades
+    # sorting to LLM-returned order. ``reason_code`` is constrained to the
+    # shared ``GrammarReasonCode`` Literal. ``_build_grammar_output_from_candidates``
+    # sorts sentence_analyses by quality_score descending so higher-quality
     # candidates are published first.
-    quality_score: float = 0.0
-    reading_blocker: bool = False
-    reason_code: str = "grammar_pattern"
-    confidence: float = 0.0
-    dedup_hint: str = ""
+    quality_score: int = Field(ge=1, le=5)
+    reading_blocker: bool
+    reason_code: GrammarReasonCode
+    confidence: float = Field(ge=0.0, le=1.0)
+    dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
 
 
 class GrammarBundleCandidateOutput(BaseModel):

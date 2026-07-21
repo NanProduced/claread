@@ -885,11 +885,12 @@ async def test_window_system_prompt_language_requirements_unified() -> None:
     # grammar_point can be Chinese or mixed (not "stay in English")
     assert "grammar_point" in prompt
     assert "中英混合" in prompt
-    # pattern stays English
+    # pattern / dedup_hint must stay English. YAML currently phrases this as
+    # "`pattern`、`dedup_hint`：英文。" — match the actual contract instead
+    # of the older "保持英文" wording that was removed in e5314cb56.
     assert "pattern" in prompt
-    assert "保持英文" in prompt
-    # dedup_hint stays English
     assert "dedup_hint" in prompt
+    assert "`pattern`、`dedup_hint`：英文" in prompt
     # The old conflicting line "grammar_point ... stay in English" must be gone
     assert "grammar_point`, `pattern`, and `dedup_hint` stay in English" not in prompt
 
@@ -973,20 +974,34 @@ async def test_window_field_descriptions_forbid_raw_html() -> None:
 
 
 def test_reason_code_enum_excludes_long_sentence() -> None:
-    """Phase 5: the reason_code enum declared in the window operational
-    rules must NOT include ``long_sentence``.
+    """Phase 5: the shared ``GrammarReasonCode`` Literal must NOT include
+    ``long_sentence`` as an allowed value.
 
     Sentence length is not a valid selection reason — selection must be
     based on structural层次 / 修饰跨度 / 指代省略 / 信息关系 / 实际阅读障碍,
     not on word count. Keeping ``long_sentence`` in the enum leaks a
     length-based hint into the LLM's reasoning.
+
+    P1-2: the enum is now the shared ``GrammarReasonCode`` Literal imported
+    from ``grammar_worker``. The shared YAML is allowed to mention
+    ``long_sentence`` in prose as a forbidden value; what matters is that
+    the Literal type itself rejects it.
     """
-    from app.services.reader_orchestration.grammar_window_worker import (
-        get_window_grammar_system_prompt,
+    import typing
+
+    from app.services.reader_orchestration.grammar_worker import (
+        GrammarReasonCode,
     )
 
-    prompt = get_window_grammar_system_prompt()
-    assert "long_sentence" not in prompt
+    args = typing.get_args(GrammarReasonCode)
+    assert "long_sentence" not in args
+    assert set(args) == {
+        "grammar_pattern",
+        "exam_relevant",
+        "meaning_blocker",
+        "discourse_signal",
+        "low_value",
+    }
 
 
 def test_reason_code_enum_includes_expected_values() -> None:
@@ -996,6 +1011,12 @@ def test_reason_code_enum_includes_expected_values() -> None:
 
     Expected: grammar_pattern / exam_relevant / meaning_blocker /
     discourse_signal / low_value.
+
+    P1-2: the enum is now declared in the shared grammar YAML (single
+    authoritative source) and the window operational rules no longer
+    duplicate the field-by-field self-rating explanation. The composed
+    window prompt must still carry all 5 values via the embedded shared
+    YAML.
     """
     from app.services.reader_orchestration.grammar_window_worker import (
         get_window_grammar_system_prompt,
@@ -1010,3 +1031,236 @@ def test_reason_code_enum_includes_expected_values() -> None:
         "low_value",
     ):
         assert code in prompt
+
+
+# ---------------------------------------------------------------------------
+# P1-2: window candidate schema validation (mirrors per-unit / batch)
+# ---------------------------------------------------------------------------
+
+
+def _minimal_window_grammar_note_kwargs() -> dict[str, Any]:
+    """Return the minimum kwargs required to construct a valid
+    _WindowGrammarNoteCandidate under the tightened P1-2 schema."""
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarSpan,
+    )
+
+    return {
+        "anchor_segment_id": "anchor-1",
+        "spans": [
+            _WindowGrammarSpan(
+                anchor_segment_id="anchor-1", selected_text="team"
+            )
+        ],
+        "grammar_point": "p",
+        "pattern": None,
+        "note": "n",
+        "quality_score": 3,
+        "reading_blocker": False,
+        "reason_code": "grammar_pattern",
+        "confidence": 0.5,
+        "dedup_hint": "k",
+    }
+
+
+def _minimal_window_sentence_analysis_kwargs() -> dict[str, Any]:
+    """Return the minimum kwargs required to construct a valid
+    _WindowSentenceAnalysisCandidate under the tightened P1-2 schema."""
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowSentenceChunk,
+    )
+
+    return {
+        "anchor_segment_id": "anchor-1",
+        "selected_text": "x",
+        "label": "l",
+        "analysis": "a",
+        "chunks": [_WindowSentenceChunk(order=1, label="c", text="x")],
+        "quality_score": 3,
+        "reading_blocker": False,
+        "reason_code": "grammar_pattern",
+        "confidence": 0.5,
+        "dedup_hint": "k",
+    }
+
+
+def test_window_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
+    """P1-2: _WindowGrammarNoteCandidate must reject candidates that omit
+    any of the five self-rating fields, mirroring per-unit / batch."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+    )
+
+    base = _minimal_window_grammar_note_kwargs()
+    for field in (
+        "quality_score",
+        "reading_blocker",
+        "reason_code",
+        "confidence",
+        "dedup_hint",
+    ):
+        incomplete = dict(base)
+        del incomplete[field]
+        with pytest.raises(ValidationError) as exc_info:
+            _WindowGrammarNoteCandidate(**incomplete)
+        assert field in str(exc_info.value)
+
+
+def test_window_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> None:
+    """P1-2: _WindowSentenceAnalysisCandidate must reject candidates that
+    omit any of the five self-rating fields, mirroring per-unit / batch."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    base = _minimal_window_sentence_analysis_kwargs()
+    for field in (
+        "quality_score",
+        "reading_blocker",
+        "reason_code",
+        "confidence",
+        "dedup_hint",
+    ):
+        incomplete = dict(base)
+        del incomplete[field]
+        with pytest.raises(ValidationError) as exc_info:
+            _WindowSentenceAnalysisCandidate(**incomplete)
+        assert field in str(exc_info.value)
+
+
+def test_window_candidate_rejects_invalid_reason_code() -> None:
+    """P1-2: window schemas must reject reason_code values outside the
+    shared GrammarReasonCode Literal, including ``long_sentence``."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    for bad in ("long_sentence", "unknown", "", "GRAMMAR_PATTERN"):
+        with pytest.raises(ValidationError):
+            _WindowGrammarNoteCandidate(**{**note_base, "reason_code": bad})
+        with pytest.raises(ValidationError):
+            _WindowSentenceAnalysisCandidate(**{**sa_base, "reason_code": bad})
+
+
+def test_window_candidate_rejects_out_of_range_quality_score() -> None:
+    """P1-2: window schemas must reject quality_score outside [1, 5]."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    for bad in (0, 6, -1):
+        with pytest.raises(ValidationError):
+            _WindowGrammarNoteCandidate(**{**note_base, "quality_score": bad})
+        with pytest.raises(ValidationError):
+            _WindowSentenceAnalysisCandidate(**{**sa_base, "quality_score": bad})
+
+
+def test_window_candidate_rejects_out_of_range_confidence() -> None:
+    """P1-2: window schemas must reject confidence outside [0.0, 1.0]."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    for bad in (-0.1, 1.1, 2.0):
+        with pytest.raises(ValidationError):
+            _WindowGrammarNoteCandidate(**{**note_base, "confidence": bad})
+        with pytest.raises(ValidationError):
+            _WindowSentenceAnalysisCandidate(**{**sa_base, "confidence": bad})
+
+
+def test_window_candidate_rejects_empty_dedup_hint() -> None:
+    """P1-2: window schemas must reject empty dedup_hint."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    with pytest.raises(ValidationError):
+        _WindowGrammarNoteCandidate(**{**note_base, "dedup_hint": ""})
+    with pytest.raises(ValidationError):
+        _WindowSentenceAnalysisCandidate(**{**sa_base, "dedup_hint": ""})
+
+
+def test_window_candidate_rejects_overlong_dedup_hint() -> None:
+    """P1-2: window schemas must reject dedup_hint longer than
+    MAX_GRAMMAR_DEDUP_HINT_LENGTH, mirroring per-unit / batch."""
+    from pydantic import ValidationError
+
+    from app.services.reader_orchestration.grammar_worker import (
+        MAX_GRAMMAR_DEDUP_HINT_LENGTH,
+    )
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    too_long = "x" * (MAX_GRAMMAR_DEDUP_HINT_LENGTH + 1)
+    with pytest.raises(ValidationError):
+        _WindowGrammarNoteCandidate(**{**note_base, "dedup_hint": too_long})
+    with pytest.raises(ValidationError):
+        _WindowSentenceAnalysisCandidate(**{**sa_base, "dedup_hint": too_long})
+
+
+def test_window_candidate_accepts_all_five_reason_codes() -> None:
+    """P1-2: window schemas must accept all 5 reason_code values."""
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WindowGrammarNoteCandidate,
+        _WindowSentenceAnalysisCandidate,
+    )
+
+    note_base = _minimal_window_grammar_note_kwargs()
+    sa_base = _minimal_window_sentence_analysis_kwargs()
+    for code in (
+        "grammar_pattern",
+        "exam_relevant",
+        "meaning_blocker",
+        "discourse_signal",
+        "low_value",
+    ):
+        note = _WindowGrammarNoteCandidate(**{**note_base, "reason_code": code})
+        assert note.reason_code == code
+        sa = _WindowSentenceAnalysisCandidate(**{**sa_base, "reason_code": code})
+        assert sa.reason_code == code
+
+
+def test_window_operational_rules_no_longer_duplicate_self_rating_section() -> None:
+    """P1-2: the window operational rules must NOT carry the hardcoded
+    field-by-field self-rating explanation (items 6 and 8 in the old
+    layout). The shared YAML is now the single authoritative source."""
+    from app.services.reader_orchestration.grammar_window_worker import (
+        _WINDOW_GRAMMAR_OPERATIONAL_RULES,
+    )
+
+    # The old hardcoded self-rating section must be gone.
+    assert "quality_score (1-5)" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    assert "dedup_hint：此语法点的短英文" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    assert "reason_code：取值之一" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    # The window rules must still carry window-only operational concerns.
+    assert "[TARGET]" in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    assert "[WINDOW_BUDGET]" in _WINDOW_GRAMMAR_OPERATIONAL_RULES
+    assert "同 unit span 约束" in _WINDOW_GRAMMAR_OPERATIONAL_RULES

@@ -179,11 +179,12 @@ def test_convert_output_empty_input() -> None:
 
 @pytest.mark.anyio
 async def test_generate_with_empty_target_anchors_returns_empty() -> None:
-    """generate 在 target_anchors 为空时返回空列表，不调用 LLM。"""
+    """generate 在 target_anchors 为空时返回空 candidates 列表，不调用 LLM。"""
     executor = PydanticAIGrammarWindowExecutor()
     context: dict[str, Any] = {"target_anchors": []}
     result = await executor.generate(context)
-    assert result == []
+    assert result.candidates == []
+    assert result.usage_data is None
 
 
 @pytest.mark.anyio
@@ -230,7 +231,7 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
                 ],
                 quality_score=5,
                 reading_blocker=False,
-                reason_code="long_sentence",
+                reason_code="discourse_signal",
                 confidence=0.95,
                 dedup_hint="main_clause_svo",
             ),
@@ -298,14 +299,14 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
         # SINGLE LLM call (window-scoped, not per-unit)
         assert mock_run_agent.call_count == 1
         # 返回 2 个 candidate（1 grammar_note + 1 sentence_analysis）
-        assert len(result) == 2
-        item_types = {c.item_type for c in result}
+        assert len(result.candidates) == 2
+        item_types = {c.item_type for c in result.candidates}
         assert item_types == {"grammar_note", "sentence_analysis"}
         # 验证 candidate 的 anchor_segment_id 来自 LLM 输出
-        anchor_ids = {c.anchor_segment_id for c in result}
+        anchor_ids = {c.anchor_segment_id for c in result.candidates}
         assert anchor_ids == {"anchor-1", "anchor-2"}
         # 验证 self-rating 字段被填充
-        grammar_note = next(c for c in result if c.item_type == "grammar_note")
+        grammar_note = next(c for c in result.candidates if c.item_type == "grammar_note")
         assert grammar_note.quality_score == 4.0
         assert grammar_note.reading_blocker is False
         assert grammar_note.grammar_point == "主谓一致"
@@ -315,7 +316,7 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
         assert grammar_note.spans[0]["anchor_segment_id"] == "anchor-1"
         assert grammar_note.spans[0]["selected_text"] == "team"
         # 验证 sentence_analysis self-rating
-        sent_analysis = next(c for c in result if c.item_type == "sentence_analysis")
+        sent_analysis = next(c for c in result.candidates if c.item_type == "sentence_analysis")
         assert sent_analysis.quality_score == 5.0
         assert sent_analysis.label == "main clause"
         assert sent_analysis.analysis == "简单 SVO 句型。"
