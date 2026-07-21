@@ -1091,58 +1091,154 @@ def test_translation_agent_instructions_require_semantic_groups_and_drop_legacy_
         )
 
 
-_R5_QUALITY_MARKERS = (
+# Shared Chinese quality-contract markers — both the per-unit YAML and the
+# batch-path instructions must contain these exact fragments. The two paths
+# historically drifted (per-unit Chinese, batch English) which let the
+# batch path emit traditional Chinese characters. They now share one
+# stable Chinese contract.
+_R5_SHARED_QUALITY_MARKERS = (
+    "简体中文",
+    "禁止输出繁体字",
     "准确完整",
-    "自然",
+    "自然中文优先",
+    "不要机械贴合英语语序",
     "因果",
     "转折",
     "指代",
-    "通行中文译名",
+    "大陆地区通行译名",
+    "无可靠通行译名时保留英文",
     "同一输出内译名保持一致",
-    "纯文本",
+    "禁止 Markdown",
     "教学点评",
 )
 
-_R5_BATCH_QUALITY_MARKERS = (
-    "natural, fluent Chinese",
-    "Accurate and complete",
-    "causal, contrastive",
-    "established Chinese",
-    "consistent within this output",
-    "translation only",
-    "teaching notes",
-)
+# Sample traditional characters enumerated in the ban line. The contract
+# must name concrete samples so the model cannot mistake the ban for a
+# generic "use Simplified Chinese" reminder.
+_TRADITIONAL_CHAR_SAMPLES_IN_BAN = ("英國", "將", "與", "們", "個", "來", "說", "這", "對", "關")
 
 
 def test_per_unit_translation_instructions_contain_r5_quality_contract() -> None:
     """Per-unit agent YAML carries the shared translation quality contract."""
     instructions = load_agent_instructions("reader_layer_translation")
-    for marker in _R5_QUALITY_MARKERS:
-        assert marker in instructions, f"missing quality marker: {marker!r}"
-    assert "机械贴合英语语序" in instructions or "不要机械贴合" in instructions
+    for marker in _R5_SHARED_QUALITY_MARKERS:
+        assert marker in instructions, f"per-unit missing quality marker: {marker!r}"
+    # Traditional-character ban must be explicit and enumerate samples
+    assert "禁止输出繁体字" in instructions
+    for sample in _TRADITIONAL_CHAR_SAMPLES_IN_BAN:
+        assert sample in instructions, (
+            f"per-unit ban line must enumerate traditional sample {sample!r}"
+        )
     assert "同义替换" in instructions  # forbidden as commentary in quality contract
-    assert "Markdown" in instructions
     # No first-mention state machine requirement
     assert "全文首次出现" not in instructions
     assert "first-mention" not in instructions.lower()
 
 
 def test_batch_translation_instructions_contain_r5_quality_contract() -> None:
-    """Batch path instructions share the same quality contract (English phrasing)."""
+    """Batch path instructions share the same Chinese quality contract.
+
+    The batch path previously used an English-phrased quality contract that
+    drifted from the per-unit YAML; it now mirrors the per-unit Chinese
+    contract verbatim for the hard simplified-Chinese ban and mainland
+    rendering requirement. Structural batch-only rules (PRE-DEFINED
+    groups, group_id echo) remain in Chinese phrasing.
+    """
     from app.services.reader_orchestration.translation_worker import (
         _TRANSLATION_BATCH_AGENT_INSTRUCTIONS,
     )
 
     batch = _TRANSLATION_BATCH_AGENT_INSTRUCTIONS
-    for marker in _R5_BATCH_QUALITY_MARKERS:
+    for marker in _R5_SHARED_QUALITY_MARKERS:
         assert marker in batch, f"batch missing quality marker: {marker!r}"
-    # Structural batch contract preserved
-    assert "PRE-DEFINED" in batch
+    # Traditional-character ban must be explicit and enumerate samples
+    assert "禁止输出繁体字" in batch
+    for sample in _TRADITIONAL_CHAR_SAMPLES_IN_BAN:
+        assert sample in batch, (
+            f"batch ban line must enumerate traditional sample {sample!r}"
+        )
+    # Structural batch contract preserved (Chinese phrasing)
+    assert "预先定义" in batch
     assert "group_id" in batch
     assert "translated_text" in batch
-    assert "never invent, merge, split" in batch.lower()
+    assert "不得臆造、合并、拆分" in batch
     assert "first-mention" not in batch.lower()
     assert "full-article" not in batch.lower()
+
+
+def test_per_unit_and_batch_share_symmetric_simplified_chinese_contract() -> None:
+    """Both paths must use identical Chinese phrasing for the hard
+    simplified-Chinese ban and mainland-rendering requirement.
+
+    Asymmetric phrasing (per-unit Chinese, batch English) historically let
+    the batch path drift and emit traditional characters. The two paths
+    must agree verbatim on the hard ban line and the mainland-rendering
+    requirement.
+    """
+    from app.services.reader_orchestration.translation_worker import (
+        _TRANSLATION_BATCH_AGENT_INSTRUCTIONS,
+    )
+
+    per_unit = load_agent_instructions("reader_layer_translation")
+    batch = _TRANSLATION_BATCH_AGENT_INSTRUCTIONS
+
+    # The hard simplified-Chinese ban line must appear in both paths.
+    assert "禁止输出繁体字" in per_unit
+    assert "禁止输出繁体字" in batch
+
+    # Both must require mainland renderings + English fallback.
+    for fragment in ("大陆地区通行译名", "无可靠通行译名时保留英文"):
+        assert fragment in per_unit, f"per-unit missing {fragment!r}"
+        assert fragment in batch, f"batch missing {fragment!r}"
+
+    # Both must enumerate the same traditional-character samples.
+    for sample in _TRADITIONAL_CHAR_SAMPLES_IN_BAN:
+        assert sample in per_unit, f"per-unit missing traditional sample {sample!r}"
+        assert sample in batch, f"batch missing traditional sample {sample!r}"
+
+
+def test_translation_schema_documented_simplified_chinese_contract() -> None:
+    """Pydantic Field descriptions on ``translated_text`` must document the
+    simplified-Chinese-only contract so schema introspection (JSON Schema
+    export, OpenAPI) surfaces the same guarantee the prompt enforces.
+
+    This is documentation-only — no pattern validator, to avoid
+    false-negative rejections of borderline characters. The real
+    enforcement is the prompt + model; the description is a contract
+    signal for downstream consumers and an audit anchor for drift
+    detection.
+    """
+    from app.schemas.reader_orchestration import (
+        TranslationBatchGroupOutput,
+        TranslationGenerationGroup,
+        TranslationGroup,
+    )
+
+    for model_cls in (
+        TranslationGenerationGroup,
+        TranslationBatchGroupOutput,
+        TranslationGroup,
+    ):
+        field_info = model_cls.model_fields["translated_text"]
+        description = field_info.description or ""
+        assert "Simplified-Chinese plain text only" in description, (
+            f"{model_cls.__name__}.translated_text missing simplified-Chinese "
+            f"contract description"
+        )
+        assert "Traditional characters" in description, (
+            f"{model_cls.__name__}.translated_text missing traditional-character "
+            f"ban in description"
+        )
+        assert "Mainland China renderings" in description, (
+            f"{model_cls.__name__}.translated_text missing mainland-rendering "
+            f"requirement in description"
+        )
+        # Description must enumerate at least one concrete traditional
+        # sample so the ban is unambiguous.
+        assert "英國" in description, (
+            f"{model_cls.__name__}.translated_text description must enumerate "
+            f"concrete traditional-character samples"
+        )
 
 
 # Soft-lens boundary: these belong only in agent quality contracts, not variants.
@@ -1176,6 +1272,9 @@ _R5_VARIANT_LAYER_FORBIDDEN = (
     "此处原文用暗喻",
     "此处 XX 指的是",
     "通行中文译名",  # quality contract, not soft lens
+    "禁止输出繁体字",  # hard simplified-Chinese ban, not soft lens
+    "大陆地区通行译名",  # mainland-rendering requirement, not soft lens
+    "无可靠通行译名时保留英文",  # English-fallback rule, not soft lens
 )
 
 

@@ -241,7 +241,17 @@ class TranslationGenerationGroup(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     anchor_segment_ids: list[str] = Field(min_length=1)
-    translated_text: str = Field(min_length=1)
+    translated_text: str = Field(
+        min_length=1,
+        description=(
+            "Simplified-Chinese plain text only. Traditional characters "
+            "(e.g. 英國/將/與/們/個/來/說/這/對/關) and mixed traditional/"
+            "simplified output violate the per-unit translation contract. "
+            "Mainland China renderings for names/places/institutions/terms; "
+            "keep English/abbreviations when no established rendering exists. "
+            "Translation only: no Markdown, no teaching commentary."
+        ),
+    )
 
 
 class TranslationLayerGenerationOutput(BaseModel):
@@ -269,7 +279,17 @@ class TranslationBatchGroupOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     group_id: str = Field(min_length=1)
-    translated_text: str = Field(min_length=1)
+    translated_text: str = Field(
+        min_length=1,
+        description=(
+            "Simplified-Chinese plain text only. Traditional characters "
+            "(e.g. 英國/將/與/們/個/來/說/這/對/關) and mixed traditional/"
+            "simplified output violate the batch translation contract. "
+            "Mainland China renderings for names/places/institutions/terms; "
+            "keep English/abbreviations when no established rendering exists. "
+            "Translation only: no Markdown, no teaching commentary."
+        ),
+    )
 
 
 class TranslationBatchUnitOutput(BaseModel):
@@ -312,7 +332,17 @@ class TranslationGroup(BaseModel):
     group_id: str = Field(min_length=1)
     anchor_segment_ids: list[str] = Field(min_length=1)
     source_text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
-    translated_text: str = Field(min_length=1)
+    translated_text: str = Field(
+        min_length=1,
+        description=(
+            "Simplified-Chinese plain text only. Traditional characters "
+            "(e.g. 英國/將/與/們/個/來/說/這/對/關) and mixed traditional/"
+            "simplified output violate the translation contract. "
+            "Mainland China renderings for names/places/institutions/terms; "
+            "keep English/abbreviations when no established rendering exists. "
+            "Translation only: no Markdown, no teaching commentary."
+        ),
+    )
 
 
 class TranslationLayerOutput(BaseModel):
