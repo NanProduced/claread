@@ -14,7 +14,6 @@ phase (window_locked.status == 'running' fence) rejects the output.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
@@ -55,6 +54,7 @@ from app.services.reader_orchestration.job_runtime import (
     IllegalTransitionError,
     ReaderJobRuntime,
 )
+from app.services.reader_orchestration.lease_heartbeat import LeaseHeartbeat
 from app.services.reader_orchestration.reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -1143,21 +1143,25 @@ class GrammarWindowWorkerService:
         # 2. load window context (target anchors + source text)
         context = await self._load_window_context(claim.job_id)
 
-        # 3. LLM call with heartbeat (§8.6)
-        heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(
-                job_id=claim.job_id,
-                lease_token=claim.lease_token,
-            )
+        # 3. LLM call with heartbeat (§8.6). R7-3: the renewal loop is
+        # the shared LeaseHeartbeat implementation (same manager as the
+        # grammar batch path). If a renewal fails during the LLM call
+        # (lease expired / token mismatch / job no longer claimed), the
+        # failure is captured + logged and re-raised after cleanup so
+        # this attempt fails instead of publishing on a dead lease.
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=self._lease_duration,
+            heartbeat_interval=self._heartbeat_interval,
         )
+        await heartbeat.start()
         try:
             execution = await self._call_llm(context)
         finally:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+            await heartbeat.stop()
+        heartbeat.assert_ownership()
 
         # 4. Return candidates_ready. The pipeline runner wires the publisher
         # after this return (see ``_run_grammar_window_attempt``).
@@ -1186,17 +1190,19 @@ class GrammarWindowWorkerService:
         job_id: UUID,
         lease_token: UUID,
     ) -> None:
-        """Renew the lease every ``heartbeat_interval`` while the LLM runs.
+        """Renew the lease every ``heartbeat_interval`` (compat wrapper).
 
-        Cancels cleanly from ``process_window_job`` once the LLM call returns.
+        R7-3: delegates to the shared :class:`LeaseHeartbeat` renewal
+        loop so the window and batch workers share ONE implementation.
+        Runs until cancelled, mirroring the pre-R7-3 behavior.
         """
-        while True:
-            await asyncio.sleep(self._heartbeat_interval.total_seconds())
-            await self._job_runtime.heartbeat(
-                job_id=job_id,
-                lease_token=lease_token,
-                lease_duration=self._lease_duration,
-            )
+        await LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=job_id,
+            lease_token=lease_token,
+            lease_duration=self._lease_duration,
+            heartbeat_interval=self._heartbeat_interval,
+        ).run_forever()
 
     # ------------------------------------------------------------------
     # §8.3 context loading

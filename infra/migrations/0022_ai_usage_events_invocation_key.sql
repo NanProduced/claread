@@ -1,0 +1,46 @@
+-- 0022_ai_usage_events_invocation_key.sql
+--
+-- R7-3b: Idempotent model-invocation usage persistence.
+--
+-- Grammar batch workers (and future reader workers) persist exactly
+-- ONE ai_usage_events row per real model invocation. The row is
+-- written as soon as the model call returns (before publish) and its
+-- publication outcome is later UPDATED on the same row (never a
+-- second insert). Each invocation carries a stable invocation key in
+-- the existing nullable ``request_id`` column, namespaced as:
+--
+--     reader_grammar_batch:{job_id}:{lease_token}
+--
+-- A retried job attempt gets a NEW lease token and therefore a NEW
+-- invocation key (a genuinely new model call); a retried PERSISTENCE
+-- of the same invocation reuses the same key and must not insert a
+-- second row.
+--
+-- Application-level persistence is check-then-insert
+-- (app/services/ai_usage/service.py::record_model_invocation_usage_event).
+-- This unique PARTIAL index is the DB-level backstop: even concurrent
+-- duplicate inserts collapse to one row (the loser errors, the worker
+-- treats the failure as "not recorded" and the idempotent retry finds
+-- the existing row).
+--
+-- The index is PARTIAL and namespace-scoped on purpose: legacy
+-- analysis paths reuse request_id for shared HTTP request ids
+-- (multiple usage events per request id), which must remain allowed.
+--
+-- Pre-apply safety check (must return zero rows; the feature has not
+-- shipped before this migration, so no matching rows should exist):
+--
+--   SELECT request_id, count(*)
+--   FROM ai_usage_events
+--   WHERE request_id LIKE 'reader_grammar_batch:%'
+--   GROUP BY 1
+--   HAVING count(*) > 1;
+--
+-- Status: AUTHORED, NOT EXECUTED (R7-3b task boundary: no local DB
+-- migration / reset). The application paths work without the index
+-- (check-then-insert covers sequential retries); the index hardens
+-- against concurrent duplicate inserts once applied.
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_usage_events_invocation_key
+  ON ai_usage_events (request_id)
+  WHERE request_id LIKE 'reader_grammar_batch:%';

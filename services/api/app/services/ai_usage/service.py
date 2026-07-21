@@ -378,3 +378,118 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 )
             )
         return None
+
+
+async def fetch_usage_event_id_by_invocation_key(
+    invocation_key: str,
+) -> UUID | None:
+    """R7-3b: look up an already-persisted model-invocation usage event
+    by its stable invocation key (carried in ``request_id``).
+
+    Returns the existing row id, or ``None`` when no row exists / the
+    lookup failed. Used by :func:`record_model_invocation_usage_event`
+    to keep persistence retries idempotent.
+    """
+    pool = db_connection.DB_POOL
+    if pool is None:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            existing = await conn.fetchval(
+                "SELECT id FROM ai_usage_events WHERE request_id = $1 LIMIT 1",
+                invocation_key,
+            )
+    except Exception:
+        logger.exception(
+            "Failed to look up ai_usage_event by invocation key"
+        )
+        return None
+    return existing if isinstance(existing, UUID) else None
+
+
+async def record_model_invocation_usage_event(
+    event: AIUsageEventCreate,
+) -> UUID | None:
+    """R7-3b: persist one model invocation's usage, idempotently.
+
+    The caller MUST set ``event.request_id`` to a stable invocation
+    key (e.g. ``reader_grammar_batch:{job_id}:{lease_token}`` — a new
+    lease token means a new real invocation and a new key). Contract:
+
+    - If an event with the same invocation key already exists (a
+      retried persistence of the SAME invocation), the existing row's
+      id is returned and NO second row is inserted.
+    - Otherwise the event is inserted through the standard
+      :func:`record_ai_usage_event` path (correlation + usage-presence
+      diagnostics unchanged).
+    - Returns ``None`` only when persistence could not be confirmed
+      (pool down / write error). Callers MUST NOT treat ``None`` as
+      "recorded"; they may retry later — the invocation key keeps
+      retries from ever producing a second event.
+
+    DB backstop (migration 0022): a unique PARTIAL index on
+    ``request_id`` scoped to invocation-key namespaces makes even
+    concurrent duplicate inserts collapse to one row (the losing
+    insert errors, ``None`` is returned, and the retry finds the row).
+    The index is partial because legacy analysis paths reuse
+    ``request_id`` for shared HTTP request ids (multiple events per
+    request), which must remain allowed.
+    """
+    if event.request_id:
+        existing = await fetch_usage_event_id_by_invocation_key(
+            event.request_id
+        )
+        if existing is not None:
+            return existing
+    return await record_ai_usage_event(event)
+
+
+async def update_ai_usage_event_outcome(
+    event_id: UUID,
+    *,
+    status: str,
+    metadata_patch: dict[str, Any] | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """R7-3b: update the publication outcome of an ALREADY-PERSISTED
+    model-invocation usage event — the SAME row, never a second event.
+
+    Sets the terminal ``status`` (e.g. ``layer_published`` /
+    ``publication_failed`` / ``ownership_lost`` /
+    ``publication_interrupted``), merges ``metadata_patch`` into
+    ``metadata_json`` (``jsonb ||``) and fills the error fields when
+    provided. Idempotent: re-running with the same arguments is a
+    no-op. Returns True iff exactly one row was updated; False on
+    missing pool / row or DB failure (callers may retry).
+    """
+    pool = db_connection.DB_POOL
+    if pool is None:
+        logger.warning(
+            "Skipping ai_usage outcome update because database pool "
+            "is not initialized"
+        )
+        return False
+    try:
+        async with pool.acquire() as conn:
+            updated = await conn.execute(
+                """
+                UPDATE ai_usage_events
+                SET status = $2,
+                    metadata_json = metadata_json || $3::jsonb,
+                    error_code = COALESCE($4, error_code),
+                    error_message = COALESCE($5, error_message)
+                WHERE id = $1
+                """,
+                event_id,
+                status,
+                jsonb_param(dict(metadata_patch or {})),
+                error_code,
+                (error_message or "")[:1000] or None,
+            )
+        return updated == "UPDATE 1"
+    except Exception:
+        logger.exception(
+            "Failed to update ai_usage_event outcome for %s", event_id
+        )
+        return False

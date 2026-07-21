@@ -35,7 +35,13 @@ from .helpers import (
     extract_schema_version_from_render_scene,
     resolve_model_metadata,
 )
-from .service import AIUsageEventCreate, record_ai_usage_event
+from .service import (
+    AIUsageEventCreate,
+    fetch_usage_event_id_by_invocation_key,
+    record_ai_usage_event,
+    record_model_invocation_usage_event,
+    update_ai_usage_event_outcome,
+)
 from .types import (
     BILLING_MODE_INTERNAL_ONLY,
     BILLING_MODE_NO_CHARGE,
@@ -95,6 +101,9 @@ __all__ = [
     "compute_reader_ask_cost_points",
     "extract_request_id_from_render_scene",
     "extract_schema_version_from_render_scene",
+    "fetch_usage_event_id_by_invocation_key",
     "record_ai_usage_event",
+    "record_model_invocation_usage_event",
     "resolve_model_metadata",
+    "update_ai_usage_event_outcome",
 ]

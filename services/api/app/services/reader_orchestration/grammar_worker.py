@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -35,6 +37,8 @@ from app.services.ai_usage import (
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
     record_ai_usage_event,
+    record_model_invocation_usage_event,
+    update_ai_usage_event_outcome,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 from app.services.analysis.prompting.prompt_loader import (
@@ -50,12 +54,18 @@ from .job_bootstrap import (
     GRAMMAR_TARGET_SCOPE,
     _fingerprint_matches_base,
 )
-from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
+from .job_runtime import (
+    ClaimResult,
+    FenceViolationError,
+    IllegalTransitionError,
+    ReaderJobRuntime,
+)
 from .layer_publisher import (
     GrammarBundleLayerPublisher,
     PublishedGrammarBatch,
     PublishedGrammarBundle,
 )
+from .lease_heartbeat import LeaseHeartbeat
 from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -68,6 +78,49 @@ from .span_recorder import (
 )
 
 DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
+
+logger = logging.getLogger(__name__)
+
+# R7-3: grammar batch lease heartbeat configuration. A batch
+# generate_batch + publish cycle routinely exceeds the 120s claim
+# lease, so the worker renews the lease in the background every
+# heartbeat interval for the WHOLE generate → publish phase. The
+# interval is strictly shorter than the lease (and the shared
+# LeaseHeartbeat manager defaults a missing interval to lease/4);
+# the fix is continuous renewal, never a longer lease.
+DEFAULT_GRAMMAR_BATCH_LEASE_DURATION = timedelta(seconds=120)
+DEFAULT_GRAMMAR_BATCH_HEARTBEAT_INTERVAL = timedelta(seconds=30)
+
+# R7-3: usage status labels for grammar batch model invocations.
+# Every model call that actually completes (returns, with or without
+# usage_data) is persisted exactly once with one of these statuses so
+# token consumption is recorded even when the attempt never publishes:
+#   - layer_published:    model completed AND the batch published;
+#   - publication_failed: model completed but publish/fence failed;
+#   - ownership_lost:     model completed but the lease was already
+#                         invalid (heartbeat lost) so publish was
+#                         skipped.
+# Every such event also carries metadata_json.model_call_completed=True
+# and metadata_json.attempt_lease_token so retries (each a fresh
+# invocation with its own lease token) are distinguishable. Model
+# failures BEFORE any usage is produced keep the pre-existing
+# STATUS_FAILED error event with usage_data=None (never fabricated
+# tokens).
+GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED = "layer_published"
+GRAMMAR_USAGE_STATUS_PUBLICATION_FAILED = "publication_failed"
+GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST = "ownership_lost"
+# R7-3b: the invocation usage row is written with this status the
+# moment the model call returns (real tokens, outcome not yet known),
+# then the SAME row is updated to one of the terminal statuses above.
+# ``publication_interrupted`` covers cancellation between the persist
+# and the publication outcome update.
+GRAMMAR_USAGE_STATUS_MODEL_CALL_COMPLETED = "model_call_completed"
+GRAMMAR_USAGE_STATUS_PUBLICATION_INTERRUPTED = "publication_interrupted"
+
+# R7-3b: strong references for detached usage-outcome finalization
+# tasks spawned from cancelled publish attempts (done-callback
+# discards). Prevents GC of fire-and-forget outcome updates.
+_DETACHED_USAGE_FINALIZATION_TASKS: set[asyncio.Task] = set()
 GRAMMAR_WORKFLOW_VERSION = "d5-v6-grammar-worker"
 GRAMMAR_PROMPT_AGENT_NAME = "reader_layer_grammar_bundle"
 GRAMMAR_MODEL_ROUTE = MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
@@ -517,6 +570,15 @@ class GrammarBatchJobProcessResult:
     model_profile: str | None = None
     model_provider: str | None = None
     model_name: str | None = None
+    # R7-3: True when the lease heartbeat reported ownership loss
+    # (lease expired / token mismatch / job no longer claimed). In
+    # that case the worker skips publish and job transitions — the
+    # stale-lease recovery owns the job state — and the completed
+    # model invocation's usage is recorded with status
+    # GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST. ``status`` remains a value
+    # the pipeline runner already understands ("retry_later": the
+    # recovery requeues the job).
+    ownership_lost: bool = False
 
 
 class GrammarBatchExecutor(Protocol):
@@ -678,6 +740,8 @@ class GrammarBundleWorkerService:
         layer_publisher: GrammarBundleLayerPublisher | None = None,
         executor: GrammarBundleExecutor | None = None,
         batch_executor: GrammarBatchExecutor | None = None,
+        batch_lease_duration: timedelta = DEFAULT_GRAMMAR_BATCH_LEASE_DURATION,
+        batch_heartbeat_interval: timedelta = DEFAULT_GRAMMAR_BATCH_HEARTBEAT_INTERVAL,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
@@ -687,6 +751,13 @@ class GrammarBundleWorkerService:
         # Defaults to PydanticAIGrammarBatchExecutor (real LLM); tests inject
         # FakeGrammarBatchExecutor to avoid real LLM calls.
         self._batch_executor = batch_executor or PydanticAIGrammarBatchExecutor()
+        # R7-3: lease renewal for the batch generate → publish phase.
+        # When the claim caller provides its own lease_duration it is
+        # used for renewals (see process_claimed_grammar_batch_job);
+        # these constructor values are the fallback for direct
+        # claim-based processing and tests.
+        self._batch_lease_duration = batch_lease_duration
+        self._batch_heartbeat_interval = batch_heartbeat_interval
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -1359,7 +1430,12 @@ class GrammarBundleWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
     ) -> GrammarBatchJobProcessResult | None:
-        """Claim and process the next grammar batch job for the record."""
+        """Claim and process the next grammar batch job for the record.
+
+        R7-3: ``lease_duration`` (the same value used for the claim)
+        is forwarded to the heartbeat so renewals extend the lease by
+        exactly the claimed duration.
+        """
         claim = await self.claim_grammar_batch_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -1372,6 +1448,7 @@ class GrammarBundleWorkerService:
         return await self.process_claimed_grammar_batch_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     @with_execution_correlation(CAPABILITY_READER_GRAMMAR_BUNDLE)
@@ -1380,74 +1457,83 @@ class GrammarBundleWorkerService:
         *,
         claim: ClaimResult,
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
+        lease_duration: timedelta | None = None,
     ) -> GrammarBatchJobProcessResult:
         """Run the batch LLM call and publish N per-unit grammar layers.
 
-        Exception handling mirrors ``process_claimed_grammar_job``:
-        ``FenceViolationError`` → ``superseded``;
-        ``GrammarExecutionError`` (retryable) → ``retry_later``;
-        ``GrammarExecutionError`` (non-retryable) → ``failed_terminal``;
-        any other ``Exception`` → ``failed_terminal``.
+        R7-3 + R7-3b contracts:
+
+        Heartbeat: a shared :class:`LeaseHeartbeat` renews the claim
+        lease from BEFORE ``generate_batch`` until AFTER publish (or
+        any exit path). Once the heartbeat reports ownership loss
+        (lease expired / token mismatch / job no longer claimed), this
+        attempt does NOT publish and writes NOTHING to ``reader_jobs``
+        or ``reader_runs`` — those updates are unfenced by run_id and
+        could clobber a new attempt's state; the stale-lease recovery
+        / current owner decides subsequent state. The publisher's
+        in-transaction claim/fence validation remains the
+        authoritative ownership check.
+
+        Usage (exactly-once per real model invocation):
+
+            generate_batch returns
+            → persist this invocation's usage IMMEDIATELY
+              (status=model_call_completed, idempotent by invocation
+              key ``reader_grammar_batch:{job_id}:{lease_token}``)
+            → check ownership
+            → publish
+            → UPDATE THE SAME usage row with the publication outcome
+              (layer_published / publication_failed / ownership_lost /
+              publication_interrupted).
+
+        The publication outcome never inserts a second usage event.
+        A retried persistence of the same invocation reuses the key
+        and never duplicates tokens; a retried job attempt has a new
+        lease token → a new invocation → its own event. Model failures
+        BEFORE any usage is returned keep the pre-existing
+        ``STATUS_FAILED`` error event with ``usage_data=None`` (never
+        fabricated tokens). Cancellation between the persist and the
+        outcome update flips the existing row to
+        ``publication_interrupted`` from a detached task.
+
+        Other exception handling mirrors ``process_claimed_grammar_job``:
+        ``FenceViolationError`` → ``superseded`` (while ownership is
+        still held); ``GrammarExecutionError`` (retryable) →
+        ``retry_later``; ``GrammarExecutionError`` (non-retryable) →
+        ``failed_terminal``; any other ``Exception`` →
+        ``failed_terminal``. When ownership was lost the result is
+        ``retry_later`` with ``ownership_lost=True`` instead.
         """
         context: GrammarBatchJobContext | None = None
+        execution: GrammarBatchExecutionResult | None = None
+        published_batch: PublishedGrammarBatch | None = None
 
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration or self._batch_lease_duration,
+            heartbeat_interval=self._batch_heartbeat_interval,
+        )
+
+        # --- context loading (pre-model; failures are not invocations) ---
         try:
             context = await self._load_batch_job_context(claim.job_id)
-            execution = await self._batch_executor.generate_batch(context)
-            published_batch = (
-                await self._layer_publisher.publish_article_grammar_batch(
-                    job_id=claim.job_id,
-                    lease_token=claim.lease_token,
-                    outputs=execution.outputs,
-                    quality_json=_build_batch_quality_json(
-                        execution,
-                        unit_count=len(context.units),
-                    ),
-                )
-            )
-            event_id = await self._record_batch_usage_event(
-                context=context,
-                execution=execution,
-                published_batch=published_batch,
-                status=STATUS_SUCCEEDED,
-            )
-            await end_worker_span_success(
-                ai_usage_event_id=event_id,
-                usage_data=execution.usage_data,
-                model_route=execution.model_route,
-                model_name=execution.model_name,
-                model_provider=execution.model_provider,
-                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
-            )
-            return GrammarBatchJobProcessResult(
-                claim=claim,
-                context=context,
-                status="succeeded",
-                published_batch=published_batch,
-                usage_data=execution.usage_data,
-                prompt_version=execution.prompt_version,
-                model_route=execution.model_route,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name,
-            )
-        except FenceViolationError:
-            await end_worker_span_fence_violation()
-            await self._job_runtime.transition(
-                job_id=claim.job_id,
-                target_status="superseded",
-                lease_token=claim.lease_token,
-                rationale_code="publish_fence_failed",
-            )
-            await self._mark_run_status(
-                claim.run_id,
-                status="superseded",
-                failure_class="publish_guard",
-                failure_code="publish_fence_failed",
-                finished_at=datetime.now(UTC),
-            )
-            raise
         except GrammarExecutionError as exc:
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code=exc.failure_code,
+                error_message=str(exc),
+                prompt_version=exc.prompt_version,
+                model_route=exc.model_route,
+                model_profile=exc.model_profile,
+                model_provider=exc.model_provider,
+                model_name=exc.model_name,
+            )
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1464,26 +1550,11 @@ class GrammarBundleWorkerService:
                     failure_code=exc.failure_code,
                     finished_at=None,
                 )
-                await self._record_batch_failed_usage_event(
-                    context=context,
-                    error_code=exc.failure_code,
-                    error_message=str(exc),
-                    prompt_version=exc.prompt_version,
-                    model_route=exc.model_route,
-                    model_profile=exc.model_profile,
-                    model_provider=exc.model_provider,
-                    model_name=exc.model_name,
-                )
-                await end_worker_span_execution_error(
-                    failure_class=exc.failure_class,
-                    failure_code=exc.failure_code,
-                )
                 return GrammarBatchJobProcessResult(
                     claim=claim,
                     context=context,
                     status="retry_later",
                 )
-
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1499,20 +1570,6 @@ class GrammarBundleWorkerService:
                 failure_class=exc.failure_class,
                 failure_code=exc.failure_code,
                 finished_at=datetime.now(UTC),
-            )
-            await self._record_batch_failed_usage_event(
-                context=context,
-                error_code=exc.failure_code,
-                error_message=str(exc),
-                prompt_version=exc.prompt_version,
-                model_route=exc.model_route,
-                model_profile=exc.model_profile,
-                model_provider=exc.model_provider,
-                model_name=exc.model_name,
-            )
-            await end_worker_span_execution_error(
-                failure_class=exc.failure_class,
-                failure_code=exc.failure_code,
             )
             return GrammarBatchJobProcessResult(
                 claim=claim,
@@ -1544,6 +1601,243 @@ class GrammarBundleWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+
+        # --- model call → usage persist → ownership → publish ---
+        await heartbeat.start()
+        try:
+            try:
+                execution = await self._batch_executor.generate_batch(context)
+            except GrammarExecutionError as exc:
+                # Model failed BEFORE returning usage: pre-existing
+                # STATUS_FAILED error event, usage_data=None (never
+                # fabricated tokens).
+                await self._record_batch_failed_usage_event(
+                    context=context,
+                    error_code=exc.failure_code,
+                    error_message=str(exc),
+                    prompt_version=exc.prompt_version,
+                    model_route=exc.model_route,
+                    model_profile=exc.model_profile,
+                    model_provider=exc.model_provider,
+                    model_name=exc.model_name,
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                if heartbeat.lost:
+                    # R7-3b: ownership already invalid — NO writes to
+                    # reader_jobs / reader_runs from this attempt.
+                    return GrammarBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                        ownership_lost=True,
+                    )
+                if exc.retryable:
+                    available_at = datetime.now(UTC) + retry_delay
+                    await self._job_runtime.transition(
+                        job_id=claim.job_id,
+                        target_status="retry_later",
+                        lease_token=claim.lease_token,
+                        available_at=available_at,
+                        rationale_code=exc.rationale_code,
+                    )
+                    await self._mark_run_status(
+                        claim.run_id,
+                        status="failed_retryable",
+                        failure_class=exc.failure_class,
+                        failure_code=exc.failure_code,
+                        finished_at=None,
+                    )
+                    return GrammarBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="failed_terminal",
+                    lease_token=claim.lease_token,
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    failure_message=str(exc),
+                    rationale_code=exc.rationale_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="failed_terminal",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                return GrammarBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="failed_terminal",
+                )
+
+            # R7-3b: the model call really completed → persist its
+            # usage NOW (status=model_call_completed), idempotently by
+            # invocation key, BEFORE the ownership check and publish.
+            usage_event_id = (
+                await self._persist_batch_invocation_usage_cancel_safe(
+                    context=context,
+                    execution=execution,
+                    claim=claim,
+                )
+            )
+
+            # Ownership gate BEFORE publish (R7-3b): actively probe
+            # the lease — catches both loop-detected loss AND leases
+            # that expired since the last renewal (e.g. stalled or
+            # neutered renewals). On invalid ownership: finalize the
+            # usage row as ownership_lost and bail without publishing,
+            # with NO writes to reader_jobs / reader_runs (unfenced
+            # updates could clobber the new owner's state; the
+            # recovery / current owner decides subsequent state).
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LookupError,
+            ) as exc:
+                await self._finalize_batch_usage_outcome(
+                    usage_event_id,
+                    GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST,
+                    error_code="heartbeat_lost",
+                    error_message=str(exc),
+                )
+                await end_worker_span_execution_error(
+                    failure_class="lease",
+                    failure_code="heartbeat_lost",
+                )
+                return GrammarBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
+                    ownership_lost=True,
+                )
+
+            try:
+                published_batch = (
+                    await self._layer_publisher.publish_article_grammar_batch(
+                        job_id=claim.job_id,
+                        lease_token=claim.lease_token,
+                        outputs=execution.outputs,
+                        quality_json=_build_batch_quality_json(
+                            execution,
+                            unit_count=len(context.units),
+                        ),
+                    )
+                )
+            except asyncio.CancelledError:
+                # The invocation usage row exists; flip its outcome
+                # from a DETACHED task — awaiting here would re-raise
+                # CancelledError and strand the row at
+                # model_call_completed.
+                self._spawn_detached_usage_finalization(
+                    usage_event_id,
+                    GRAMMAR_USAGE_STATUS_PUBLICATION_INTERRUPTED,
+                    error_code="cancelled_during_publish",
+                )
+                raise
+            except FenceViolationError:
+                await self._finalize_batch_usage_outcome(
+                    usage_event_id,
+                    GRAMMAR_USAGE_STATUS_PUBLICATION_FAILED,
+                    error_code="publish_fence_failed",
+                    error_message="grammar batch publish fence failed",
+                )
+                await end_worker_span_fence_violation()
+                if not heartbeat.lost:
+                    await self._job_runtime.transition(
+                        job_id=claim.job_id,
+                        target_status="superseded",
+                        lease_token=claim.lease_token,
+                        rationale_code="publish_fence_failed",
+                    )
+                    await self._mark_run_status(
+                        claim.run_id,
+                        status="superseded",
+                        failure_class="publish_guard",
+                        failure_code="publish_fence_failed",
+                        finished_at=datetime.now(UTC),
+                    )
+                raise
+            except Exception as exc:
+                await self._finalize_batch_usage_outcome(
+                    usage_event_id,
+                    GRAMMAR_USAGE_STATUS_PUBLICATION_FAILED,
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                await end_worker_span_generic_exception(
+                    layer="grammar_bundle", exc=exc
+                )
+                if heartbeat.lost:
+                    return GrammarBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                        ownership_lost=True,
+                    )
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="failed_terminal",
+                    lease_token=claim.lease_token,
+                    failure_class="grammar_batch_worker",
+                    failure_code=type(exc).__name__,
+                    failure_message=str(exc),
+                    rationale_code="grammar_batch_worker_unexpected_error",
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="failed_terminal",
+                    failure_class="grammar_batch_worker",
+                    failure_code=type(exc).__name__,
+                    finished_at=datetime.now(UTC),
+                )
+                return GrammarBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="failed_terminal",
+                )
+
+            # Success: update THE SAME usage row with the terminal
+            # outcome (never a second event).
+            await self._finalize_batch_usage_outcome(
+                usage_event_id,
+                GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED,
+                published_batch=published_batch,
+            )
+            await end_worker_span_success(
+                ai_usage_event_id=usage_event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            )
+            return GrammarBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="succeeded",
+                published_batch=published_batch,
+                usage_data=execution.usage_data,
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+            )
+        finally:
+            # Cleanup on success, exception AND external cancellation:
+            # the renewal task never survives this method. Renewal
+            # failures stay visible via heartbeat.lost (logged in the
+            # loop); stop() itself does not raise.
+            await heartbeat.stop()
 
     async def _load_batch_job_context(
         self,
@@ -1731,45 +2025,211 @@ class GrammarBundleWorkerService:
             document_features=document_features,
         )
 
-    async def _record_batch_usage_event(
+    @staticmethod
+    def _batch_invocation_key(claim: ClaimResult) -> str:
+        """R7-3b: stable idempotency key for one real model invocation.
+
+        Carried in ``ai_usage_events.request_id`` within the reserved
+        ``reader_grammar_batch:`` namespace (DB backstop: migration
+        0022 unique partial index). A retried job attempt is claimed
+        with a NEW lease token → a new key → a genuinely new
+        invocation event. A retried PERSISTENCE of the same attempt
+        reuses this key and never produces a second row.
+        """
+        return f"reader_grammar_batch:{claim.job_id}:{claim.lease_token}"
+
+    async def _persist_batch_invocation_usage(
         self,
         *,
         context: GrammarBatchJobContext,
         execution: GrammarBatchExecutionResult,
-        published_batch: PublishedGrammarBatch,
-        status: str,
+        claim: ClaimResult,
     ) -> UUID | None:
-        return await record_ai_usage_event(
-            AIUsageEventCreate(
-                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
-                billing_mode=BILLING_MODE_INTERNAL_ONLY,
-                status=status,
-                user_id=context.user_id,
-                reading_record_id=context.reading_record_id,
-                reader_run_id=context.run_id,
-                reader_job_id=context.job_id,
-                workflow_name="reader_orchestration",
-                workflow_version=GRAMMAR_WORKFLOW_VERSION,
-                prompt_version=execution.prompt_version,
-                model_route=execution.model_route,
-                model_profile_id=execution.model_profile,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name,
-                planner_kind="llm_worker",
-                usage_data=execution.usage_data,
-                operation_fingerprint=context.operation_fingerprint,
-                metadata_json={
-                    "base_id": str(context.base_id),
-                    "unit_count": len(context.units),
-                    "source_language": context.source_language,
-                    "published_layer_ids": published_batch.layer_ids,
-                    "published_layer_types": published_batch.layer_types,
-                    "no_op": published_batch.no_op,
-                },
-            )
+        """R7-3b: persist the completed invocation's usage IMMEDIATELY
+        (before ownership check / publish), idempotently.
+
+        Writes one row with ``status=model_call_completed`` keyed by
+        the invocation key. ``usage_data`` is persisted exactly as
+        returned by the model (``None`` when the model returned none —
+        tokens are never fabricated). Briefly retries on DB failure;
+        ``None`` is returned only when persistence could not be
+        confirmed — callers MUST NOT treat ``None`` as "recorded" and
+        the invocation key keeps later retries from duplicating.
+        """
+        invocation_key = self._batch_invocation_key(claim)
+        event = AIUsageEventCreate(
+            usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
+            capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            billing_mode=BILLING_MODE_INTERNAL_ONLY,
+            status=GRAMMAR_USAGE_STATUS_MODEL_CALL_COMPLETED,
+            user_id=context.user_id,
+            reading_record_id=context.reading_record_id,
+            reader_run_id=context.run_id,
+            reader_job_id=context.job_id,
+            workflow_name="reader_orchestration",
+            workflow_version=GRAMMAR_WORKFLOW_VERSION,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile_id=execution.model_profile,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+            planner_kind="llm_worker",
+            usage_data=execution.usage_data,
+            operation_fingerprint=context.operation_fingerprint,
+            request_id=invocation_key,
+            metadata_json={
+                "base_id": str(context.base_id),
+                "unit_count": len(context.units),
+                "source_language": context.source_language,
+                "model_call_completed": True,
+                "invocation_key": invocation_key,
+                "attempt_lease_token": str(claim.lease_token),
+            },
         )
+        for attempt in range(3):
+            event_id = await record_model_invocation_usage_event(event)
+            if event_id is not None:
+                return event_id
+            await asyncio.sleep(0.05 * (attempt + 1))
+        logger.warning(
+            "grammar batch usage persistence not confirmed after "
+            "retries for job %s (invocation %s); publication proceeds "
+            "without an outcome update",
+            claim.job_id,
+            invocation_key,
+        )
+        return None
+
+
+    async def _persist_batch_invocation_usage_cancel_safe(
+        self,
+        *,
+        context: GrammarBatchJobContext,
+        execution: GrammarBatchExecutionResult,
+        claim: ClaimResult,
+    ) -> UUID | None:
+        """Keep a completed invocation's first usage write alive on cancellation."""
+        persistence_task = asyncio.create_task(
+            self._persist_batch_invocation_usage(
+                context=context,
+                execution=execution,
+                claim=claim,
+            ),
+            name=f"grammar-batch-usage-persist-{claim.job_id}",
+        )
+        try:
+            return await asyncio.shield(persistence_task)
+        except asyncio.CancelledError:
+            self._spawn_detached_usage_persistence_finalization(
+                persistence_task,
+                claim=claim,
+            )
+            raise
+
+    def _spawn_detached_usage_persistence_finalization(
+        self,
+        persistence_task: asyncio.Task[UUID | None],
+        *,
+        claim: ClaimResult,
+    ) -> None:
+        """Finish persistence and mark interruption after caller cancellation."""
+
+        async def _finish() -> None:
+            try:
+                event_id = await persistence_task
+                await self._finalize_batch_usage_outcome(
+                    event_id,
+                    GRAMMAR_USAGE_STATUS_PUBLICATION_INTERRUPTED,
+                    error_code="cancelled_during_usage_persistence",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "detached grammar batch usage persistence failed for job %s",
+                    claim.job_id,
+                )
+
+        task = asyncio.create_task(
+            _finish(),
+            name=f"grammar-batch-usage-persist-finalize-{claim.job_id}",
+        )
+        _DETACHED_USAGE_FINALIZATION_TASKS.add(task)
+        task.add_done_callback(_DETACHED_USAGE_FINALIZATION_TASKS.discard)
+
+    async def _finalize_batch_usage_outcome(
+        self,
+        event_id: UUID | None,
+        status: str,
+        *,
+        published_batch: PublishedGrammarBatch | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Update the same usage row, retrying transient outcome failures."""
+        if event_id is None:
+            logger.warning(
+                "grammar batch usage outcome %r not recorded: the "
+                "invocation usage persistence was never confirmed",
+                status,
+            )
+            return
+        metadata_patch: dict[str, Any] = {"publication_status": status}
+        if published_batch is not None:
+            metadata_patch["published_layer_ids"] = list(
+                published_batch.layer_ids
+            )
+            metadata_patch["published_layer_types"] = list(
+                published_batch.layer_types
+            )
+            metadata_patch["no_op"] = bool(published_batch.no_op)
+
+        for attempt in range(3):
+            updated = await update_ai_usage_event_outcome(
+                event_id,
+                status=status,
+                metadata_patch=metadata_patch,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            if updated:
+                return
+            if attempt < 2:
+                await asyncio.sleep(0.05 * (attempt + 1))
+
+        logger.warning(
+            "grammar_batch_usage_outcome_unconfirmed: event_id=%s status=%s",
+            event_id,
+            status,
+        )
+
+    def _spawn_detached_usage_finalization(
+        self,
+        event_id: UUID | None,
+        status: str,
+        *,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """R7-3b: cancel-safe outcome update. Runs the outcome update
+        as a DETACHED task so a cancellation during publish still
+        records ``publication_interrupted`` on the existing usage row
+        (awaiting inside the cancelled attempt would re-raise
+        CancelledError and strand the row)."""
+        if event_id is None:
+            return
+        task = asyncio.create_task(
+            self._finalize_batch_usage_outcome(
+                event_id,
+                status,
+                error_code=error_code,
+                error_message=error_message,
+            ),
+            name=f"grammar-batch-usage-finalize-{event_id}",
+        )
+        _DETACHED_USAGE_FINALIZATION_TASKS.add(task)
+        task.add_done_callback(_DETACHED_USAGE_FINALIZATION_TASKS.discard)
 
     async def _record_batch_failed_usage_event(
         self,
