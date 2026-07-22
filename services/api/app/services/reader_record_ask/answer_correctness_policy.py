@@ -218,14 +218,21 @@ class PolicyViolation:
 
 @dataclass(frozen=True, slots=True)
 class AnswerCorrectnessPolicy:
+    """Public surface: temporal allowset, explicit count, strict/complete flags.
+
+    Numeric allowset and question-type routing are private implementation
+    details consumed only by ``render_prompt_block`` / ``evaluate_draft``.
+    """
+
     temporal_allowset: frozenset[str]
-    numeric_allowset: frozenset[str]
     explicit_output: ExplicitOutputConstraint
     is_article_only_strict: bool
     baseline_is_complete: bool
-    is_publish_date_question: bool
-    is_absent_year_question: bool
-    is_exercise_question: bool
+    # Private implementation — not part of the stable public contract.
+    _numeric_allowset: frozenset[str]
+    _is_publish_date_question: bool
+    _is_absent_year_question: bool
+    _is_exercise_question: bool
 
     def render_prompt_block(self) -> str:
         instructions = [
@@ -233,7 +240,7 @@ class AnswerCorrectnessPolicy:
             "Do not add facts that the supplied article context does not support.",
         ]
         if self.baseline_is_complete and self.is_article_only_strict:
-            if self.is_publish_date_question:
+            if self._is_publish_date_question:
                 if self.temporal_allowset:
                     years = ", ".join(sorted(self.temporal_allowset))
                     instructions.append(
@@ -250,7 +257,7 @@ class AnswerCorrectnessPolicy:
                         "Say that the article does not provide a publication "
                         "date without naming any year."
                     )
-            elif self.is_absent_year_question:
+            elif self._is_absent_year_question:
                 instructions.append(
                     "The user asks for a year the article does not mention and "
                     "forbids guessing. Do not invent or name any year. State "
@@ -268,7 +275,7 @@ class AnswerCorrectnessPolicy:
                     "do not invent one."
                 )
 
-            if self.is_exercise_question:
+            if self._is_exercise_question:
                 instructions.append(
                     "Write the practice item in Chinese when the user asked in Chinese. "
                     "Do not use whole English sentences for the stem or explanation."
@@ -277,11 +284,11 @@ class AnswerCorrectnessPolicy:
                     "Do not invent statistics, counts, percentages, or measurements "
                     "that do not appear in the supplied article context."
                 )
-                if self.baseline_is_complete:
-                    instructions.append(
-                        "Baseline coverage is complete; answer from the baseline "
-                        "without calling read_range or search_current_article."
-                    )
+                # Prompt mitigation only — not a hard tool-call gate.
+                instructions.append(
+                    "Baseline coverage is complete; answer from the baseline "
+                    "without calling read_range or search_current_article."
+                )
 
         if (
             self.explicit_output.kind == "exercise_items"
@@ -315,10 +322,10 @@ class AnswerCorrectnessPolicy:
                     )
                 )
 
-            if self.is_exercise_question:
+            if self._is_exercise_question:
                 unsupported_nums = _extract_claim_numerics(
                     draft_answer_text
-                ).difference(self.numeric_allowset)
+                ).difference(self._numeric_allowset)
                 # Drop pure years already handled by temporal policy.
                 unsupported_nums = frozenset(
                     n
@@ -483,11 +490,11 @@ def build_answer_correctness_policy(
 
     return AnswerCorrectnessPolicy(
         temporal_allowset=frozenset(temporal_allowset),
-        numeric_allowset=frozenset(numeric_allowset),
         explicit_output=_extract_explicit_output(user_message),
         is_article_only_strict=is_strict,
         baseline_is_complete=baseline_is_complete,
-        is_publish_date_question=is_publish_date,
-        is_absent_year_question=is_absent_year,
-        is_exercise_question=is_exercise,
+        _numeric_allowset=frozenset(numeric_allowset),
+        _is_publish_date_question=is_publish_date,
+        _is_absent_year_question=is_absent_year,
+        _is_exercise_question=is_exercise,
     )

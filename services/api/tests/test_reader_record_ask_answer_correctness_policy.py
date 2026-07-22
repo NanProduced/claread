@@ -86,16 +86,21 @@ def test_answer_correctness_policy_is_frozen_slots_dataclass() -> None:
         field.name for field in dataclasses.fields(AnswerCorrectnessPolicy)
     }
     fields = {f.name for f in dataclasses.fields(AnswerCorrectnessPolicy)}
-    assert fields == {
+    # Stable public surface only. Leading-underscore fields are private
+    # implementation (numeric allowset / question-type routing).
+    public_fields = {name for name in fields if not name.startswith("_")}
+    assert public_fields == {
         "temporal_allowset",
-        "numeric_allowset",
         "explicit_output",
         "is_article_only_strict",
         "baseline_is_complete",
-        "is_publish_date_question",
-        "is_absent_year_question",
-        "is_exercise_question",
     }
+    assert {
+        "_numeric_allowset",
+        "_is_publish_date_question",
+        "_is_absent_year_question",
+        "_is_exercise_question",
+    }.issubset(fields)
 
 
 def test_builder_signature_keyword_only() -> None:
@@ -371,7 +376,6 @@ def test_publish_date_event_year_only_forbids_year_in_answer() -> None:
         model_visible_chunk_texts=("2024年4月，城南社区举办了首届春日阅读节。",),
         baseline_is_complete=True,
     )
-    assert policy.is_publish_date_question is True
     assert policy.is_article_only_strict is True
     assert policy.temporal_allowset == frozenset()
     assert (
@@ -441,7 +445,6 @@ def test_event_or_publish_form_still_allows_body_years() -> None:
         model_visible_chunk_texts=("The wildfires began in 2026.",),
         baseline_is_complete=True,
     )
-    assert policy.is_publish_date_question is False
     assert "2026" in policy.temporal_allowset
     assert policy.evaluate_draft(draft_answer_text="事件发生在2026年。") == ()
 
@@ -453,7 +456,6 @@ def test_absent_year_question_forbids_any_year_token() -> None:
         model_visible_chunk_texts=("文章讨论了2020年的气候事件。",),
         baseline_is_complete=True,
     )
-    assert policy.is_absent_year_question is True
     assert policy.temporal_allowset == frozenset()
     assert (
         policy.evaluate_draft(draft_answer_text="文章没有提到2025年。")[0].kind
@@ -473,13 +475,41 @@ def test_exercise_rejects_whole_sentence_english() -> None:
         model_visible_chunk_texts=("城南社区举办了阅读节，吸引了数百名居民。",),
         baseline_is_complete=True,
     )
-    assert policy.is_exercise_question is True
     draft = (
         "What is the main theme of the reading festival described in the article?\n"
         "参考答案：阅读节主题。"
     )
     violations = policy.evaluate_draft(draft_answer_text=draft)
     assert any(v.kind == "language_consistency_violation" for v in violations)
+
+
+def test_exercise_language_fail_open_for_chinese_with_proper_noun() -> None:
+    """Fail-open: Chinese stem with scattered English proper nouns is fine."""
+    policy = build_answer_correctness_policy(
+        user_message="基于这篇文章出一道小练习",
+        model_visible_chunk_texts=("BBC 报道了 Thunder Bay 附近的野火。",),
+        baseline_is_complete=True,
+    )
+    draft = (
+        "1. 文中提到的 BBC 报道地点是哪里？\n"
+        "参考答案：Thunder Bay 附近。"
+    )
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert not any(v.kind == "language_consistency_violation" for v in violations)
+
+
+def test_exercise_language_fail_open_when_baseline_partial() -> None:
+    """Fail-open: language guard only when baseline is complete."""
+    policy = build_answer_correctness_policy(
+        user_message="基于这篇文章出一道小练习",
+        model_visible_chunk_texts=("partial chunk",),
+        baseline_is_complete=False,
+    )
+    draft = (
+        "What is the main theme of the reading festival described in the article?"
+    )
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert not any(v.kind == "language_consistency_violation" for v in violations)
 
 
 def test_exercise_rejects_invented_numeric_not_in_article() -> None:
@@ -499,14 +529,37 @@ def test_exercise_allows_numeric_present_in_article() -> None:
         model_visible_chunk_texts=("阅读节吸引了800名居民，同比增长30%。",),
         baseline_is_complete=True,
     )
-    assert "800" in policy.numeric_allowset
-    assert "30%" in policy.numeric_allowset or "30" in policy.numeric_allowset
     draft = "1. 阅读节吸引了多少人？\n参考答案：800人。"
     violations = policy.evaluate_draft(draft_answer_text=draft)
     assert not any(v.kind == "unsupported_numeric" for v in violations)
 
 
-def test_exercise_prompt_discourages_tools_when_baseline_complete() -> None:
+def test_exercise_numeric_fail_open_for_list_markers_only() -> None:
+    """Fail-open: structural 1. / 2. markers are not numeric claims."""
+    policy = build_answer_correctness_policy(
+        user_message="帮我出一道练习题",
+        model_visible_chunk_texts=("阅读节吸引了数百名居民参加。",),
+        baseline_is_complete=True,
+    )
+    draft = "1. 阅读节的主要活动是什么？\n参考答案：社区共读。"
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert not any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_exercise_numeric_fail_open_when_baseline_partial() -> None:
+    """Fail-open: numeric guard only when baseline is complete."""
+    policy = build_answer_correctness_policy(
+        user_message="帮我出一道练习题",
+        model_visible_chunk_texts=("阅读节吸引了数百名居民参加。",),
+        baseline_is_complete=False,
+    )
+    draft = "1. 阅读节吸引了多少人？\n参考答案：4500人。"
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert not any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_exercise_prompt_mitigation_mentions_tools_when_baseline_complete() -> None:
+    """Prompt mitigation only — not a hard tool-call fix / gate."""
     policy = build_answer_correctness_policy(
         user_message="基于文章出一道选择题，只允许一题",
         model_visible_chunk_texts=("短文内容。",),

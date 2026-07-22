@@ -893,8 +893,10 @@ async def test_run_rejects_registry_bound_to_other_envelope() -> None:
 def test_agent_explicit_retry_policy() -> None:
     """New RR agent must pin tool/output retries (not pydantic-ai defaults)."""
     agent = create_reading_record_ask_agent(_text_model("x"))
+    # Current pydantic-ai exposes tool budget on _max_tool_retries and
+    # structured-output repair budget on _max_result_retries (ints).
     assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
-    assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
+    assert agent._max_result_retries == DEFAULT_OUTPUT_RETRIES == 2
 
 
 @pytest.mark.asyncio

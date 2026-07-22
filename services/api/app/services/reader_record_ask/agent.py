@@ -259,9 +259,9 @@ def _render_coverage_block(*, is_complete: bool) -> str:
     )
 
 
-# pydantic-ai 1.107.0 uses a per-category retry mapping. Keep the budgets
-# explicit so tool failures and structured-output repairs cannot drift with
-# framework defaults.
+# Keep tool vs structured-output repair budgets explicit so neither can
+# drift with framework defaults. Current pydantic-ai accepts separate
+# ``retries`` (tool loop) and ``output_retries`` kwargs — not a dict.
 DEFAULT_TOOL_RETRIES = 1
 DEFAULT_OUTPUT_RETRIES = 2
 
@@ -278,7 +278,8 @@ def create_reading_record_ask_agent(
         output_type=AgentAnswerDraft,
         name=name,
         instructions=_SYSTEM_INSTRUCTIONS,
-        retries={"tools": DEFAULT_TOOL_RETRIES, "output": DEFAULT_OUTPUT_RETRIES},
+        retries=DEFAULT_TOOL_RETRIES,
+        output_retries=DEFAULT_OUTPUT_RETRIES,
     )
 
     # Register the grounding output_validator via the decorator seam so
