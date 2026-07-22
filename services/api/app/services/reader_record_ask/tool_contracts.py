@@ -20,6 +20,7 @@ Tool outputs use a closed typed status set plus the unified shape:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -293,3 +294,117 @@ def assert_no_server_owned_fields(payload: dict[str, Any]) -> None:
             "tool input must not include server-owned scope fields: "
             + ", ".join(offenders)
         )
+
+
+# ---------------------------------------------------------------------------
+# Expand-evidence schemas (R4-A5-3; isolated — NOT wired to any runtime)
+# ---------------------------------------------------------------------------
+
+EXPANSION_CURSOR_PREFIX: str = "cur_"
+_EXPANSION_CURSOR_ID_PATTERN = re.compile(r"^cur_[0-9a-f]{32}$")
+_HANDLE_ID_SHAPE_PATTERN = re.compile(r"^evh_[0-9a-f]{32}$")
+
+
+def is_expansion_cursor_shape(token: str) -> bool:
+    """Return True when ``token`` matches the server-minted cursor shape."""
+    return isinstance(token, str) and bool(_EXPANSION_CURSOR_ID_PATTERN.match(token))
+
+
+def is_expand_pointer_shape(token: str) -> bool:
+    """Return True when ``token`` is a legal opaque expand pointer.
+
+    Legal shapes: an ``evh_<32 hex>`` evidence handle (initial selection
+    pointer) or a ``cur_<32 hex>`` server-minted continuation cursor.
+    """
+    return isinstance(token, str) and bool(
+        _HANDLE_ID_SHAPE_PATTERN.match(token)
+        or _EXPANSION_CURSOR_ID_PATTERN.match(token)
+    )
+
+
+ExpandEvidenceStatus = Literal["ok", "invalid_cursor", "stale_evidence"]
+
+
+class ExpandEvidenceToolView(BaseModel):
+    """Narrow model-visible tool-view for opaque selection expansion.
+
+    Deliberately **not** the legacy ``ReaderRecordAskToolResult`` shape:
+    ``payloads`` (free-form body stuffing) is absent by design. The logical
+    article text may appear exactly once, inside ``article_text_block``
+    (a renderer-minted ``<untrusted_article_text role="expand">`` block;
+    XML escaping preserved).
+
+    Field set is closed (``extra="forbid"``). No binding sidecar may exist
+    here: no turn_id, envelope_fingerprint, record_generation, base_id,
+    reading_record_id, scope_kind, offsets, locators, hashes, scores,
+    chunk ids, or user/record/base UUIDs.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: ExpandEvidenceStatus
+    summary: str = Field(min_length=1, max_length=400)
+    next_actions: tuple[str, ...] = ()
+    # Opaque server-minted evidence handle (citeable) — success only.
+    evidence_handle: EvidenceHandleRef | None = None
+    # Opaque server-minted continuation cursor — success with remainder only.
+    next_cursor: str | None = Field(
+        default=None, pattern=r"^cur_[0-9a-f]{32}$"
+    )
+    # Renderer-minted untrusted XML block — success only; single text copy.
+    article_text_block: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_status_field_coupling(self) -> ExpandEvidenceToolView:
+        if self.status == "ok":
+            if self.evidence_handle is None:
+                raise ValueError("ok expand tool-view requires evidence_handle")
+            if self.article_text_block is None:
+                raise ValueError(
+                    "ok expand tool-view requires article_text_block"
+                )
+        else:
+            # Safe error views: no handle, no cursor, no text, no actions.
+            if self.evidence_handle is not None:
+                raise ValueError(
+                    "error expand tool-view must not carry evidence_handle"
+                )
+            if self.next_cursor is not None:
+                raise ValueError(
+                    "error expand tool-view must not carry next_cursor"
+                )
+            if self.article_text_block is not None:
+                raise ValueError(
+                    "error expand tool-view must not carry article_text_block"
+                )
+            if self.next_actions:
+                raise ValueError(
+                    "error expand tool-view must not carry next_actions"
+                )
+        return self
+
+
+class ExpandEvidenceToolInput(BaseModel):
+    """Model-facing input for the future ``expand_evidence`` tool.
+
+    The model may supply exactly one opaque pointer. There is **no**
+    turn_id / locator / offset / fingerprint / generation field: the model
+    must never provide or influence the server-owned turn context.
+    ``extra="forbid"`` fail-closes on any such attempt (a future adapter
+    layer must drop model-supplied turn context before building the
+    server-owned expansion session; this schema is the boundary guard).
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    pointer: str = Field(min_length=1, max_length=64)
+
+    @field_validator("pointer")
+    @classmethod
+    def _validate_pointer_shape(cls, value: str) -> str:
+        if not is_expand_pointer_shape(value):
+            raise ValueError(
+                "pointer must be an opaque server-minted token matching "
+                "evh_<32 hex> or cur_<32 hex>"
+            )
+        return value

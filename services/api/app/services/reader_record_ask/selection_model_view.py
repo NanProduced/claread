@@ -11,8 +11,9 @@ Atomicity (assembler · registry · budget · prompt)
 5. post-condition checks (handle_ref, snippet equality);
 6. mint :class:`SelectionPromptCapability` branded for the prompt builder.
 
-Any failure **after charge and before successful return** runs a single
-compensation path:
+Any failure **after charge and before successful return** runs the single
+shared compensation path (:func:`evidence_transaction.rollback_charged_observation`,
+``failure_domain="selection_inject"``):
 
 - ``registry.discard_if_matches(handle_id, expected=this_observation)`` —
   removes **only** this call's observation when still present and equal;
@@ -61,6 +62,9 @@ from app.services.reader_record_ask.evidence import (
     mint_evidence_handle_id,
 )
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
+from app.services.reader_record_ask.evidence_transaction import (
+    rollback_charged_observation,
+)
 from app.services.reader_record_ask.model_view_budget import (
     RESERVE_SELECTION,
     ModelViewRenderer,
@@ -100,8 +104,9 @@ _REGISTRY_REQUIRED_ERROR = (
     "for non-empty selection (injected selection must be registry-backed)"
 )
 
-# Stable rollback / inject failure codes — never embed selection body.
-_ROLLBACK_FAILED_PREFIX = "selection_inject_rollback_failed code="
+# Stable inject failure code — never embed selection body. Rollback failure
+# codes now come from the shared evidence_transaction seam with
+# failure_domain="selection_inject" (identical code strings as before).
 _INJECT_FAILED_PREFIX = "selection_inject_failed code="
 
 
@@ -351,52 +356,21 @@ def _compensate_after_charge(
     """Roll back selection charge + this call's registry write (if any).
 
     Must be called only after a successful ``charge`` for this inject attempt.
-    Fail-closed: incomplete compensation raises a stable-code RuntimeError
-    that never embeds selection body text.
+    Delegates to the shared host-only transaction compensation
+    (:func:`evidence_transaction.rollback_charged_observation`, R4-A5-3) with
+    ``failure_domain="selection_inject"`` — same fail-closed semantics and
+    stable ``selection_inject_rollback_failed code=...`` codes as before,
+    shared with evidence expand so the two paths cannot drift. Error text
+    never embeds selection body.
     """
-    handle_id = observation.handle.handle_id
-    discard_outcome: str
-    try:
-        discard_outcome = registry.discard_if_matches(
-            handle_id=handle_id,
-            expected=observation,
-        )
-    except Exception:
-        # Attempt budget refund anyway; still report dual failure without
-        # chaining raw exception text that might carry probe payloads.
-        try:
-            budget._refund_chars("selection", charge_cost)
-        except Exception:
-            raise RuntimeError(
-                f"{_ROLLBACK_FAILED_PREFIX}registry_and_budget"
-            ) from None
-        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_discard") from None
-
-    if discard_outcome == "mismatch":
-        # Foreign entry under our handle — must not delete; still refund budget.
-        try:
-            budget._refund_chars("selection", charge_cost)
-        except Exception:
-            raise RuntimeError(
-                f"{_ROLLBACK_FAILED_PREFIX}registry_mismatch_and_budget"
-            ) from None
-        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_mismatch") from None
-
-    # discarded | absent: no residual for *this* observation under handle_id.
-    residual = registry.get(handle_id)
-    if residual is not None and residual == observation:
-        try:
-            budget._refund_chars("selection", charge_cost)
-        except Exception:
-            raise RuntimeError(
-                f"{_ROLLBACK_FAILED_PREFIX}registry_residual_and_budget"
-            ) from None
-        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_residual") from None
-
-    try:
-        budget._refund_chars("selection", charge_cost)
-    except Exception:
-        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}budget_refund") from None
+    rollback_charged_observation(
+        budget=budget,
+        account="selection",
+        charge_cost=charge_cost,
+        registry=registry,
+        observation=observation,
+        failure_domain="selection_inject",
+    )
 
 
 def assemble_selection_model_view(
