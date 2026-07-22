@@ -17,9 +17,22 @@
     "miniprogram:build": "pnpm --dir apps/miniprogram run build:weapp",
     "miniprogram:dev": "pnpm --dir apps/miniprogram run dev:weapp",
     "miniprogram:typecheck": "pnpm --dir apps/miniprogram run typecheck",
+    "reader:api": "cd services/api && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "reader:web": "pnpm --dir apps/web run dev",
+    "reader:worker:enhancement": "cd services/api && uv run reader-enhancement-worker",
+    "reader:worker:artifact": "cd services/api && uv run reader-artifact-pipeline-worker",
+    "reader:worker:rag": "cd services/api && uv run reader-article-rag-index-worker",
+    "reader:workers": "concurrently --kill-others-on-fail --names enhancement,artifact --prefix-colors green,yellow \"pnpm reader:worker:enhancement\" \"pnpm reader:worker:artifact\"",
+    "reader:workers:rag": "concurrently --kill-others-on-fail --names enhancement,artifact,rag --prefix-colors green,yellow,cyan \"pnpm reader:worker:enhancement\" \"pnpm reader:worker:artifact\" \"pnpm reader:worker:rag\"",
+    "reader:dev": "concurrently --kill-others-on-fail --names api,web,enhancement,artifact --prefix-colors blue,magenta,green,yellow \"pnpm reader:api\" \"pnpm reader:web\" \"pnpm reader:worker:enhancement\" \"pnpm reader:worker:artifact\"",
+    "reader:dev:rag": "concurrently --kill-others-on-fail --names api,web,enhancement,artifact,rag --prefix-colors blue,magenta,green,yellow,cyan \"pnpm reader:api\" \"pnpm reader:web\" \"pnpm reader:worker:enhancement\" \"pnpm reader:worker:artifact\" \"pnpm reader:worker:rag\"",
     "web:dev": "pnpm --dir apps/web run dev",
     "web:build": "pnpm --dir apps/web run build",
     "web:typecheck": "pnpm --dir apps/web run typecheck",
     "web:lint": "pnpm --dir apps/web run lint"
-  }
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
+  },
+  "packageManager": "pnpm@10.19.0"
 }

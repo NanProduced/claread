@@ -1,12 +1,12 @@
 # D5/D6 Real Local Chain Runbook
 
-本文记录 Reader enhancement 主链路的本地真实运行方式：
+本文记录 Reader orchestration 主链路的本地真实运行方式：
 
-`plain_text -> article_ready -> worker loop -> snapshot reload`
+`plain_text / artifact-backed input -> active base -> enhancement worker loop -> snapshot reload`
 
 范围约束：
 
-- 只使用现有 API、Web BFF 和 `reader-enhancement-worker` CLI entrypoint（底层复用 `scripts/run_reader_enhancement_worker.py`）
+- 只使用现有 API、Web BFF 和公开的 worker CLI entrypoint
 - 不新增 public worker-control endpoint
 - 不把 runner 挂到 Web submit 或 FastAPI lifespan
 - 不使用 smoke harness / fake executor 作为产品路径
@@ -18,13 +18,23 @@
 
 ## 0. 本地进程与页面边界
 
-新 Reading Record / agentic orchestration 的页面内验证至少需要三个进程同时运行：
+Reader orchestration 当前共有 3 个进程级 worker entrypoint。默认本地文件上传验证需要同时运行 API、Web 和 2 个必需 worker；Article RAG worker 按开关选启：
 
 | 进程 | 作用 | 常用命令 |
 | --- | --- | --- |
-| API | 接收 submit、写入 `reading_records` / `reader_jobs` / `reader_events`，提供 snapshot/events API | `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000` |
-| Web | 提供 `/app/read`、`/app/reader-plate`、`/app/reader-record/{recordId}` 页面和 BFF | `pnpm web:dev` 或 `pnpm --dir apps/web run dev` |
-| Reader enhancement worker | 消费 `reader_jobs`，发布 translation / vocabulary / grammar layers 和后续 reader events | `uv run reader-enhancement-worker` |
+| API | 接收 submit、写入 durable facts，提供 snapshot/events API | `pnpm reader:api` |
+| Web | 提供 `/app/read`、`/app/reader-plate`、`/app/reader-record/{recordId}` 页面和 BFF | `pnpm reader:web` |
+| Reader enhancement worker（默认必启） | 消费 active-base enhancement jobs，发布 translation / vocabulary / grammar layers | `pnpm reader:worker:enhancement` |
+| Artifact pipeline worker（文件上传必启） | 消费 `input_artifact_extraction` / `extracted_artifact_materialization`，建立 candidate 或 stable base | `pnpm reader:worker:artifact` |
+| Article RAG index worker（可选） | 在 `READER_ARTICLE_RAG_ENABLED=true` 时构建文章索引 | `pnpm reader:worker:rag` |
+
+从仓库根目录快速启动默认完整链路：
+
+```powershell
+pnpm reader:dev
+```
+
+`concurrently` 会给每行日志加 `api` / `web` / `enhancement` / `artifact` 前缀，并统一处理 Ctrl+C。只启动两个默认 worker 用 `pnpm reader:workers`；开启 RAG 时用 `pnpm reader:dev:rag` 或 `pnpm reader:workers:rag`。需要查看某一进程的纯净日志时，仍应在独立终端运行表中的单进程命令。
 
 页面边界：
 
@@ -32,7 +42,7 @@
 - `/app/reader-record/{recordId}` 是新 Reading Record 产品页，使用 snapshot + Workbench-backed read-only center surface。
 - `/app/reader/{recordId}` 是 legacy ReaderWorkbench，仍服务旧 scene / legacy record contract。
 
-`/app/read` 或 `/app/reader-plate` 提交成功后，后端会先创建 durable `article_ready` facts；Web 后续只通过 events polling 和 snapshot reload 观察增强层。Web 不会自己消费 `reader_jobs`。如果没有启动 reader enhancement worker，页面会停留在“批注生成中”，这表示队列无人消费，不等于文章结构解析失败。
+纯文本提交成功后，后端会创建 durable `article_ready` facts；artifact-backed input 则必须先由 artifact worker 完成提取和 materialization，才能建立 active base。Web 只通过 pipeline status、events polling 和 snapshot reload 观察结果，不会自己消费队列。缺少 artifact worker 时上传文件会停在预 base 阶段；缺少 enhancement worker 时已可读文章会停在“批注生成中”。
 
 ## 1. 关键 wiring
 
@@ -162,18 +172,31 @@ $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN = "<session_token>"
 
 ## 5. 启动 worker
 
-在 `services/api` 下：
+推荐在仓库根目录启动默认两个 worker，并保留带名称前缀的合并日志：
 
-单次扫描并退出：
+```powershell
+pnpm reader:workers
+```
+
+如果要隔离日志，可分别打开两个终端：
+
+```powershell
+pnpm reader:worker:enhancement
+pnpm reader:worker:artifact
+```
+
+在 `services/api` 下也可单次扫描并退出：
+
 
 ```powershell
 uv run reader-enhancement-worker --once
+uv run reader-artifact-pipeline-worker --once
 ```
 
-持续 loop：
+启用 RAG 后再启动第三个 worker：
 
 ```powershell
-uv run reader-enhancement-worker
+pnpm reader:worker:rag
 ```
 
 常用参数：
@@ -466,6 +489,7 @@ ORDER BY created_at ASC;
 | 现象 | 含义 | 下一步 |
 | --- | --- | --- |
 | `reading_records` 查不到 record | record id、数据库或环境变量不一致 | 确认 Web/API 指向同一个 `DATABASE_URL`，并确认使用的是新 Reading Record id |
+| OSS 已有文件，`input_artifact_extraction` 长时间为 `queued` 且 `attempt_count = 0`，record 没有 `active_base_id` | artifact worker 没有运行或没有消费队列；此时 snapshot 还不具备 active base | 运行 `pnpm reader:worker:artifact`，或用 `pnpm reader:workers` 启动默认两个 worker；页面可点击“重新检查” |
 | `readiness_state = article_ready`，`reader_events` 只有 `article_ready`，`reader_jobs` 有 `translate_unit` 或后续 jobs 停在 `queued`，`enhancement_layers` 为空 | 文章结构已经落库；worker 未运行或未消费队列 | 在 `services/api` 运行 `uv run reader-enhancement-worker --once` 验证一次，或运行 `uv run reader-enhancement-worker` 持续消费 |
 | jobs 处于 `claimed` 且 `lease_expires_at` 未过期 | worker 已 claim，可能正在真实 LLM 调用中 | 看 worker 终端日志；长文本可能需要等待 |
 | jobs 处于 `claimed` 但 `lease_expires_at` 已过期 | 之前的 worker 退出或卡死，lease 等待恢复 | 再运行 `uv run reader-enhancement-worker --once`，worker 会先做 stale lease recovery |
