@@ -88,9 +88,13 @@ def test_answer_correctness_policy_is_frozen_slots_dataclass() -> None:
     fields = {f.name for f in dataclasses.fields(AnswerCorrectnessPolicy)}
     assert fields == {
         "temporal_allowset",
+        "numeric_allowset",
         "explicit_output",
         "is_article_only_strict",
         "baseline_is_complete",
+        "is_publish_date_question",
+        "is_absent_year_question",
+        "is_exercise_question",
     }
 
 
@@ -355,43 +359,168 @@ def test_temporal_quadrant_partial_non_strict_fail_open() -> None:
     assert violations == ()
 
 
-def test_publish_date_question_empties_temporal_allowset_despite_event_years() -> None:
-    """Event years in body must not authorize publish-date year claims."""
+# ---------------------------------------------------------------------------
+# Publish-date temporal allowset (publication semantics only)
+# ---------------------------------------------------------------------------
+
+
+def test_publish_date_event_year_only_forbids_year_in_answer() -> None:
+    """Category 1: event/activity year only → must answer 未提供发布日期."""
     policy = build_answer_correctness_policy(
         user_message="这篇文章的发布日期是什么时候？",
-        model_visible_chunk_texts=("2024年4月，城南社区举办了阅读节。",),
+        model_visible_chunk_texts=("2024年4月，城南社区举办了首届春日阅读节。",),
         baseline_is_complete=True,
     )
+    assert policy.is_publish_date_question is True
     assert policy.is_article_only_strict is True
     assert policy.temporal_allowset == frozenset()
-    violations = policy.evaluate_draft(draft_answer_text="文章发布于2024年。")
-    assert len(violations) == 1
-    assert violations[0].kind == "temporal_claim_unsupported"
+    assert (
+        policy.evaluate_draft(draft_answer_text="文章发布于2024年。")[0].kind
+        == "temporal_claim_unsupported"
+    )
+    assert (
+        policy.evaluate_draft(draft_answer_text="文章未提供明确的发布日期。")
+        == ()
+    )
 
 
-def test_publish_date_question_allows_no_year_unavailable_phrasing() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="这篇文章的发布日期是什么时候",
-        model_visible_chunk_texts=("2024年4月，城南社区举办了阅读节。",),
-        baseline_is_complete=True,
+def test_publish_date_explicit_publication_allows_accurate_year() -> None:
+    """Category 2: explicit publication semantics → accurate year allowed."""
+    cases = (
+        "本文发表于2023年5月。",
+        "该文刊登于2021年。",
+        "报道发布于 2019 年 3 月 12 日。",
+        "The article was first published in 2022.",
+        "published on March 8, 2020 in print.",
     )
-    violations = policy.evaluate_draft(
-        draft_answer_text="文章未提供明确的发布日期。"
+    for chunk in cases:
+        policy = build_answer_correctness_policy(
+            user_message="这篇文章的发布日期是什么时候",
+            model_visible_chunk_texts=(chunk,),
+            baseline_is_complete=True,
+        )
+        assert policy.temporal_allowset, f"expected publication year in {chunk!r}"
+        year = next(iter(policy.temporal_allowset))
+        assert (
+            policy.evaluate_draft(draft_answer_text=f"文章发布于{year}年。")
+            == ()
+        ), chunk
+
+
+def test_publish_date_ambiguous_release_context_does_not_authorize() -> None:
+    """Category 3: non-publication / ambiguous 发布 senses must not authorize."""
+    ambiguous_chunks = (
+        "市政府发布了2024年经济发展报告，要求各地落实。",
+        "公司于2024年发布新品，销量创新高。",
+        "2024年新闻发布会在北京举行。",
+        "气象台发布了2023年寒潮预警。",
+        "The company released a product in 2021.",
     )
-    assert violations == ()
+    for chunk in ambiguous_chunks:
+        policy = build_answer_correctness_policy(
+            user_message="这篇文章的发布日期是什么时候？",
+            model_visible_chunk_texts=(chunk,),
+            baseline_is_complete=True,
+        )
+        assert policy.temporal_allowset == frozenset(), f"leaked year from {chunk!r}"
+        years = _extract_years_from_text(chunk)
+        if years:
+            year = next(iter(years))
+            violations = policy.evaluate_draft(
+                draft_answer_text=f"发布日期是{year}年。"
+            )
+            assert any(
+                v.kind == "temporal_claim_unsupported" for v in violations
+            ), chunk
 
 
 def test_event_or_publish_form_still_allows_body_years() -> None:
-    """Ambiguous 发生/发布 form keeps body years in the allowset."""
+    """Mixed 发生/发布 form is not pure publish-date; body years remain."""
     policy = build_answer_correctness_policy(
         user_message="文章是什么时候发生/发布的",
         model_visible_chunk_texts=("The wildfires began in 2026.",),
         baseline_is_complete=True,
     )
+    assert policy.is_publish_date_question is False
     assert "2026" in policy.temporal_allowset
-    assert (
-        policy.evaluate_draft(draft_answer_text="事件发生在2026年。") == ()
+    assert policy.evaluate_draft(draft_answer_text="事件发生在2026年。") == ()
+
+
+def test_absent_year_question_forbids_any_year_token() -> None:
+    """Absent-year / 不得猜测: body years must not authorize a named year."""
+    policy = build_answer_correctness_policy(
+        user_message="文章没有提到的年份是什么？不得猜测",
+        model_visible_chunk_texts=("文章讨论了2020年的气候事件。",),
+        baseline_is_complete=True,
     )
+    assert policy.is_absent_year_question is True
+    assert policy.temporal_allowset == frozenset()
+    assert (
+        policy.evaluate_draft(draft_answer_text="文章没有提到2025年。")[0].kind
+        == "temporal_claim_unsupported"
+    )
+    assert (
+        policy.evaluate_draft(
+            draft_answer_text="文章未提供该信息，不得猜测具体年份。"
+        )
+        == ()
+    )
+
+
+def test_exercise_rejects_whole_sentence_english() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="基于这篇文章出一道小练习",
+        model_visible_chunk_texts=("城南社区举办了阅读节，吸引了数百名居民。",),
+        baseline_is_complete=True,
+    )
+    assert policy.is_exercise_question is True
+    draft = (
+        "What is the main theme of the reading festival described in the article?\n"
+        "参考答案：阅读节主题。"
+    )
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert any(v.kind == "language_consistency_violation" for v in violations)
+
+
+def test_exercise_rejects_invented_numeric_not_in_article() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="帮我出一道练习题",
+        model_visible_chunk_texts=("阅读节吸引了数百名居民参加。",),
+        baseline_is_complete=True,
+    )
+    draft = "1. 阅读节吸引了多少人？\n参考答案：4500人，增长60%。"
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_exercise_allows_numeric_present_in_article() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="帮我出一道练习题",
+        model_visible_chunk_texts=("阅读节吸引了800名居民，同比增长30%。",),
+        baseline_is_complete=True,
+    )
+    assert "800" in policy.numeric_allowset
+    assert "30%" in policy.numeric_allowset or "30" in policy.numeric_allowset
+    draft = "1. 阅读节吸引了多少人？\n参考答案：800人。"
+    violations = policy.evaluate_draft(draft_answer_text=draft)
+    assert not any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_exercise_prompt_discourages_tools_when_baseline_complete() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="基于文章出一道选择题，只允许一题",
+        model_visible_chunk_texts=("短文内容。",),
+        baseline_is_complete=True,
+    )
+    rendered = policy.render_prompt_block()
+    assert "read_range" in rendered
+    assert "search_current_article" in rendered
+
+
+def _extract_years_from_text(text: str) -> set[str]:
+    import re
+
+    return set(re.findall(r"(?:1[5-9]\d{2}|20\d{2})", text))
 
 
 def test_temporal_supported_year_in_allowset_passes() -> None:

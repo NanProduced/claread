@@ -17,6 +17,8 @@ ExplicitOutputConfidence = Literal["high", "indeterminate"]
 PolicyViolationKind = Literal[
     "temporal_claim_unsupported",
     "explicit_count_mismatch",
+    "unsupported_numeric",
+    "language_consistency_violation",
 ]
 
 _RAW_STRICT_ARTICLE_QUESTION_FORMS = (
@@ -36,11 +38,23 @@ _RAW_STRICT_ARTICLE_QUESTION_FORMS = (
     "基于文章出一道选择题，只允许一题",
 )
 
-# Exact-normalized publish/release-date questions. For these, event years
-# visible in the article must NOT authorize a specific year in the answer —
-# a publication/release date is a distinct claim from an in-article event date.
+# Exact-normalized pure publish/release-date questions.
+# For these, only years with explicit publication semantics enter the
+# temporal allowset — ordinary event / activity years do not.
 _RAW_PUBLISH_DATE_QUESTION_FORMS = (
     "这篇文章的发布日期是什么时候",
+)
+
+# Exact-normalized "absent year / do not guess" questions: any year in
+# the answer is unsupported (the correct answer states absence).
+_RAW_ABSENT_YEAR_QUESTION_FORMS = (
+    "文章没有提到的年份是什么？不得猜测",
+)
+
+_RAW_EXERCISE_QUESTION_FORMS = (
+    "帮我出一道练习题",
+    "基于这篇文章出一道小练习",
+    "基于文章出一道选择题，只允许一题",
 )
 
 _TRAILING_QUESTION_PUNCTUATION_RE = re.compile(r"[。！？!?]+$")
@@ -66,6 +80,63 @@ _YEAR_RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Publication-semantic year extraction for pure publish-date questions.
+# Year must co-occur with an explicit publication/release collocation.
+# Deliberately excludes bare event years and weak "发布了/发布会" senses.
+_PUBLICATION_YEAR_PATTERNS = (
+    # 发表于2024 / 发布于 2024 年 / 刊登于2024年5月
+    re.compile(
+        rf"(?:发表于|刊登于|发布于|出版于|首发于|刊发于)\s*"
+        rf"(?:(?:1[5-9]\d{{2}}|20\d{{2}})\s*年\s*)?"
+        rf"(?:0?\d{{1,2}}\s*月\s*)?"
+        rf"(?:0?\d{{1,2}}\s*日\s*)?"
+        rf"({_YEAR})",
+    ),
+    re.compile(
+        rf"(?:发表于|刊登于|发布于|出版于|首发于|刊发于)\s*"
+        rf"({_YEAR})\s*年?",
+    ),
+    # 发布日期：2024 / 发表日期 2024年
+    re.compile(
+        rf"(?:发布日期|发表日期|出版日期|发布时间|发表时间|出版时间)"
+        rf"\s*[:：]?\s*({_YEAR})",
+    ),
+    # 2024年发布于 / 2024 年正式发表于
+    re.compile(
+        rf"({_YEAR})\s*年\s*(?:正式)?"
+        rf"(?:发表|刊登|出版|发布|首发|刊发)于",
+    ),
+    # 2024年发表 / 2024年出版 (not 发布了 / 发布会 — require 发表|刊登|出版
+    # or 发布于 already covered above; bare 发布 alone is too ambiguous)
+    re.compile(
+        rf"({_YEAR})\s*年\s*(?:正式)?(?:发表|刊登|出版|首发|刊发)"
+        rf"(?!会|预警|通知|声明|新闻)",
+    ),
+    # English: published on/in … 2024; first published 2024
+    re.compile(
+        rf"\b(?:first\s+)?published\s+(?:on|in)\s+"
+        rf"(?:[A-Za-z0-9,]+\s+){{0,5}}({_YEAR})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:first\s+)?published\s+({_YEAR})\b",
+        re.IGNORECASE,
+    ),
+    # released on/in as media release (paired with article/paper/story/report)
+    re.compile(
+        rf"\b(?:article|paper|story|report|piece)\s+"
+        rf"(?:was\s+)?released\s+(?:on|in)\s+"
+        rf"(?:[A-Za-z0-9,]+\s+){{0,5}}({_YEAR})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\breleased\s+(?:on|in)\s+"
+        rf"(?:[A-Za-z0-9,]+\s+){{0,5}}({_YEAR})\b"
+        rf"(?=[^.]{{0,40}}\b(?:article|paper|story|report|edition)\b)",
+        re.IGNORECASE,
+    ),
+)
+
 _INDETERMINATE_EXERCISE_PHRASES = ("几道题", "若干题", "一组题")
 _COUNTED_EXERCISE_PATTERNS = (
     (1, re.compile(r"一道(?:练习题|小练习|选择题|题)|(?<!第)一题|只允许一题|只要一题|1道题")),
@@ -83,10 +154,29 @@ _TOP_LEVEL_ITEM_PATTERNS = (
     re.compile(r"^第\d+题[.、:：)]?\s*\S"),
 )
 
+# Structural / non-claim numbers when scanning exercise drafts.
+_LIST_MARKER_RE = re.compile(r"(?m)^[ \t]*\d+[ \t]*[.、)](?!\d)")
+_ORDINAL_ITEM_RE = re.compile(r"第\s*\d+\s*题")
+_CN_DATE_COMPONENT_RE = re.compile(r"\d{1,2}\s*[月日]")
+_PERCENT_RE = re.compile(r"\d+(?:\.\d+)?%")
+_PLAIN_INT_RE = re.compile(r"\d+")
+
+_SENTENCE_SPLIT_RE = re.compile(r"[。！？.!?]+")
+_ENGLISH_RATIO_THRESHOLD = 0.7
+
 _TEMPORAL_RETRY_MESSAGE = (
     "The complete article context does not contain that date. Remove the "
     "unsupported date, or state that the article does not provide it "
     "without repeating a specific date."
+)
+_NUMERIC_RETRY_MESSAGE = (
+    "The answer introduces a number that is not present in the supplied "
+    "article context. Remove invented statistics or quantities, or ground "
+    "them only in numbers that appear in the article text."
+)
+_LANGUAGE_RETRY_MESSAGE = (
+    "The user asked in Chinese for a practice item. Write the exercise stem "
+    "and explanation in Chinese; do not use whole English sentences."
 )
 
 
@@ -102,6 +192,14 @@ STRICT_ARTICLE_QUESTION_FORMS = frozenset(
 
 PUBLISH_DATE_QUESTION_FORMS = frozenset(
     _normalize_question(value) for value in _RAW_PUBLISH_DATE_QUESTION_FORMS
+)
+
+ABSENT_YEAR_QUESTION_FORMS = frozenset(
+    _normalize_question(value) for value in _RAW_ABSENT_YEAR_QUESTION_FORMS
+)
+
+EXERCISE_QUESTION_FORMS = frozenset(
+    _normalize_question(value) for value in _RAW_EXERCISE_QUESTION_FORMS
 )
 
 
@@ -121,9 +219,13 @@ class PolicyViolation:
 @dataclass(frozen=True, slots=True)
 class AnswerCorrectnessPolicy:
     temporal_allowset: frozenset[str]
+    numeric_allowset: frozenset[str]
     explicit_output: ExplicitOutputConstraint
     is_article_only_strict: bool
     baseline_is_complete: bool
+    is_publish_date_question: bool
+    is_absent_year_question: bool
+    is_exercise_question: bool
 
     def render_prompt_block(self) -> str:
         instructions = [
@@ -131,7 +233,30 @@ class AnswerCorrectnessPolicy:
             "Do not add facts that the supplied article context does not support.",
         ]
         if self.baseline_is_complete and self.is_article_only_strict:
-            if self.temporal_allowset:
+            if self.is_publish_date_question:
+                if self.temporal_allowset:
+                    years = ", ".join(sorted(self.temporal_allowset))
+                    instructions.append(
+                        "The question asks for a publication/release date. "
+                        f"The article states these publication years: {years}. "
+                        "Do not use any other year. Event or activity dates "
+                        "are not publication dates."
+                    )
+                else:
+                    instructions.append(
+                        "The question asks for a publication/release date. "
+                        "The article does not state an explicit publication/"
+                        "release date (event or activity years do not count). "
+                        "Say that the article does not provide a publication "
+                        "date without naming any year."
+                    )
+            elif self.is_absent_year_question:
+                instructions.append(
+                    "The user asks for a year the article does not mention and "
+                    "forbids guessing. Do not invent or name any year. State "
+                    "that the requested year is not provided / must not be guessed."
+                )
+            elif self.temporal_allowset:
                 years = ", ".join(sorted(self.temporal_allowset))
                 instructions.append(
                     f"The complete article context contains these specific years: {years}. "
@@ -139,12 +264,25 @@ class AnswerCorrectnessPolicy:
                 )
             else:
                 instructions.append(
-                    "The complete article context provides no specific year or date "
-                    "that answers this question; do not invent one. "
-                    "If the question asks for a publication/release date, event dates "
-                    "in the article are not publication dates — say the article does "
-                    "not provide a publication date without naming a year."
+                    "The complete article context provides no specific year or date; "
+                    "do not invent one."
                 )
+
+            if self.is_exercise_question:
+                instructions.append(
+                    "Write the practice item in Chinese when the user asked in Chinese. "
+                    "Do not use whole English sentences for the stem or explanation."
+                )
+                instructions.append(
+                    "Do not invent statistics, counts, percentages, or measurements "
+                    "that do not appear in the supplied article context."
+                )
+                if self.baseline_is_complete:
+                    instructions.append(
+                        "Baseline coverage is complete; answer from the baseline "
+                        "without calling read_range or search_current_article."
+                    )
+
         if (
             self.explicit_output.kind == "exercise_items"
             and self.explicit_output.extraction_confidence == "high"
@@ -177,6 +315,31 @@ class AnswerCorrectnessPolicy:
                     )
                 )
 
+            if self.is_exercise_question:
+                unsupported_nums = _extract_claim_numerics(
+                    draft_answer_text
+                ).difference(self.numeric_allowset)
+                # Drop pure years already handled by temporal policy.
+                unsupported_nums = frozenset(
+                    n
+                    for n in unsupported_nums
+                    if not re.fullmatch(_YEAR, n)
+                )
+                if unsupported_nums:
+                    violations.append(
+                        PolicyViolation(
+                            kind="unsupported_numeric",
+                            detail=_NUMERIC_RETRY_MESSAGE,
+                        )
+                    )
+                if _has_whole_sentence_english(draft_answer_text):
+                    violations.append(
+                        PolicyViolation(
+                            kind="language_consistency_violation",
+                            detail=_LANGUAGE_RETRY_MESSAGE,
+                        )
+                    )
+
         constraint = self.explicit_output
         if (
             constraint.kind == "exercise_items"
@@ -206,6 +369,54 @@ def _extract_temporal_years(text: str) -> frozenset[str]:
     for pattern in _TEMPORAL_PATTERNS:
         years.update(match.group(1) for match in pattern.finditer(text))
     return frozenset(years)
+
+
+def _extract_publication_years(text: str) -> frozenset[str]:
+    """Years that co-occur with explicit publication/release semantics.
+
+    Ordinary event / activity years do not qualify. Weak senses such as
+    ``发布了``, ``发布会``, or bare ``2024年…举办`` are excluded by
+    requiring strong collocations (发表于 / 发布于 / published on / …).
+    """
+    years: set[str] = set()
+    for pattern in _PUBLICATION_YEAR_PATTERNS:
+        years.update(match.group(1) for match in pattern.finditer(text))
+    return frozenset(years)
+
+
+def _extract_claim_numerics(text: str) -> frozenset[str]:
+    """Bare numeric claim tokens (not list markers / ordinals / date parts)."""
+    masked = _LIST_MARKER_RE.sub(" ", text)
+    masked = _ORDINAL_ITEM_RE.sub(" ", masked)
+    masked = _YEAR_RANGE_RE.sub(" ", masked)
+    for pattern in _TEMPORAL_PATTERNS:
+        masked = pattern.sub(" ", masked)
+    masked = _CN_DATE_COMPONENT_RE.sub(" ", masked)
+    values: set[str] = set()
+    for match in _PERCENT_RE.finditer(masked):
+        values.add(match.group(0).replace(" ", ""))
+        masked = masked[: match.start()] + " " + masked[match.end() :]
+    for match in _PLAIN_INT_RE.finditer(masked):
+        values.add(match.group(0))
+    return frozenset(values)
+
+
+def _english_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    alpha = sum(1 for c in text if c.isascii() and c.isalpha())
+    total = sum(1 for c in text if not c.isspace())
+    return alpha / total if total else 0.0
+
+
+def _has_whole_sentence_english(text: str) -> bool:
+    for sentence in _SENTENCE_SPLIT_RE.split(text):
+        sentence = sentence.strip()
+        if len(sentence) < 12:
+            continue
+        if _english_ratio(sentence) > _ENGLISH_RATIO_THRESHOLD:
+            return True
+    return False
 
 
 def _extract_explicit_output(user_message: str) -> ExplicitOutputConstraint:
@@ -250,19 +461,33 @@ def build_answer_correctness_policy(
     normalized = _normalize_question(user_message)
     is_strict = normalized in STRICT_ARTICLE_QUESTION_FORMS
     is_publish_date = normalized in PUBLISH_DATE_QUESTION_FORMS
+    is_absent_year = normalized in ABSENT_YEAR_QUESTION_FORMS
+    is_exercise = normalized in EXERCISE_QUESTION_FORMS
 
     temporal_allowset: set[str] = set()
-    # Publish/release-date questions: in-article event years must not authorize
-    # a year token in the answer (event date ≠ publication date). Keep allowset
-    # empty so any specific year is a temporal_claim_unsupported violation when
-    # baseline is complete and the question is strict.
-    if not is_publish_date:
+    numeric_allowset: set[str] = set()
+
+    if is_absent_year:
+        # Any named year is a guess for this question form.
+        temporal_allowset = set()
+    elif is_publish_date:
+        # Only publication-semantic years — not event/activity years.
+        for chunk_text in model_visible_chunk_texts:
+            temporal_allowset.update(_extract_publication_years(chunk_text))
+    else:
         for chunk_text in model_visible_chunk_texts:
             temporal_allowset.update(_extract_temporal_years(chunk_text))
 
+    for chunk_text in model_visible_chunk_texts:
+        numeric_allowset.update(_extract_claim_numerics(chunk_text))
+
     return AnswerCorrectnessPolicy(
         temporal_allowset=frozenset(temporal_allowset),
+        numeric_allowset=frozenset(numeric_allowset),
         explicit_output=_extract_explicit_output(user_message),
         is_article_only_strict=is_strict,
         baseline_is_complete=baseline_is_complete,
+        is_publish_date_question=is_publish_date,
+        is_absent_year_question=is_absent_year,
+        is_exercise_question=is_exercise,
     )
