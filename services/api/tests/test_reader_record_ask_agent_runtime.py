@@ -1400,6 +1400,154 @@ async def test_policy_retry_then_success_via_real_seam(
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
+    """City-list geo-type mix-in triggers ModelRetry then a clean city list."""
+    import re
+
+    model_calls = 0
+
+    async def model_fn(messages, info: AgentInfo):
+        nonlocal model_calls
+        del info
+        model_calls += 1
+        prompt_text = "".join(
+            str(getattr(part, "content", "") or "")
+            for message in messages
+            for part in (getattr(message, "parts", []) or [])
+        )
+        handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
+        assert handle_match is not None
+        answer = (
+            "文章提到的城市有：多伦多、安大略省、纽约州。"
+            if model_calls == 1
+            else "文章提到的城市有：多伦多、芝加哥。"
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": answer,
+                            "cited_evidence_handles": [handle_match.group(0)],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id=f"city-attempt-{model_calls}",
+                )
+            ]
+        )
+
+    units = [
+        ReadingUnitView(
+            unit_id="u1",
+            order_index=0,
+            text="多伦多与芝加哥出现在正文中。",
+            text_hash="city0001",
+            base_start_utf16=0,
+            base_end_utf16=len("多伦多与芝加哥出现在正文中。"),
+        ),
+    ]
+    access = InMemoryDocumentAccess(
+        snapshot=build_document_scope(
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            units=units,
+            segments=(),
+            stable_document_id=_DOC,
+            base_content_sha256=_SHA,
+        )  # type: ignore[arg-type]
+    )
+    result = await run_reading_record_ask(
+        user_message="文章提到了哪些城市",
+        envelope=_envelope(),
+        document_access=access,
+        model=FunctionModel(model_fn),
+        article_rag=None,
+    )
+    assert model_calls == 2
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
+    assert "省" not in (result.agent_draft.answer_text if result.agent_draft else "")
+    assert "州" not in (result.agent_draft.answer_text if result.agent_draft else "")
+
+
+@pytest.mark.asyncio
+async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
+    """Invented numbers on a strict main-idea turn retry then succeed."""
+    import re
+
+    model_calls = 0
+
+    async def model_fn(messages, info: AgentInfo):
+        nonlocal model_calls
+        del info
+        model_calls += 1
+        prompt_text = "".join(
+            str(getattr(part, "content", "") or "")
+            for message in messages
+            for part in (getattr(message, "parts", []) or [])
+        )
+        handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
+        assert handle_match is not None
+        answer = (
+            "文章指出有 12500 人撤离。"
+            if model_calls == 1
+            else "文章讨论了野火风险，未给出具体伤亡数字。"
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": answer,
+                            "cited_evidence_handles": [handle_match.group(0)],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id=f"num-attempt-{model_calls}",
+                )
+            ]
+        )
+
+    units = [
+        ReadingUnitView(
+            unit_id="u1",
+            order_index=0,
+            text="文章讨论了野火风险，未给出具体伤亡数字。",
+            text_hash="num00001",
+            base_start_utf16=0,
+            base_end_utf16=len("文章讨论了野火风险，未给出具体伤亡数字。"),
+        ),
+    ]
+    access = InMemoryDocumentAccess(
+        snapshot=build_document_scope(
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            units=units,
+            segments=(),
+            stable_document_id=_DOC,
+            base_content_sha256=_SHA,
+        )  # type: ignore[arg-type]
+    )
+    result = await run_reading_record_ask(
+        user_message="这篇文章主要说了什么",
+        envelope=_envelope(),
+        document_access=access,
+        model=FunctionModel(model_fn),
+        article_rag=None,
+    )
+    assert model_calls == 2
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
+    assert "12500" not in (result.agent_draft.answer_text if result.agent_draft else "")
+
+
+@pytest.mark.asyncio
 async def test_policy_retry_budget_exhausted_via_real_seam() -> None:
     """R4-A4-1B: policy violation exhausts retries["output"] → finite failure.
 

@@ -100,6 +100,8 @@ def test_answer_correctness_policy_is_frozen_slots_dataclass() -> None:
         "_is_publish_date_question",
         "_is_absent_year_question",
         "_is_exercise_question",
+        "_is_city_list_question",
+        "_user_message_is_chinese",
     }.issubset(fields)
 
 
@@ -568,6 +570,126 @@ def test_exercise_prompt_mitigation_mentions_tools_when_baseline_complete() -> N
     rendered = policy.render_prompt_block()
     assert "read_range" in rendered
     assert "search_current_article" in rendered
+
+
+def test_strict_article_prompt_requires_article_only_and_no_external_pad() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章主要说了什么",
+        model_visible_chunk_texts=("短文只谈野火蔓延。",),
+        baseline_is_complete=True,
+    )
+    block = policy.render_prompt_block()
+    assert "文章未提供" in block or "does not provide" in block
+    assert "external" in block.lower() or "文章" in block
+
+
+def test_city_list_rejects_province_or_region_markers() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="文章提到了哪些城市？",
+        model_visible_chunk_texts=("文中出现了多伦多和安大略省的地名。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章提到的城市有：多伦多、安大略省、纽约州西部。"
+    )
+    assert any(v.kind == "geo_type_confusion" for v in violations)
+
+
+def test_city_list_allows_city_names_without_admin_markers() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="文章提到了哪些城市",
+        model_visible_chunk_texts=("多伦多与芝加哥出现在正文中。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章提到的城市有：多伦多、芝加哥。"
+    )
+    assert not any(v.kind == "geo_type_confusion" for v in violations)
+
+
+def test_city_list_fail_open_when_baseline_partial() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="文章提到了哪些城市",
+        model_visible_chunk_texts=("partial",),
+        baseline_is_complete=False,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="城市包括安大略省多处。"
+    )
+    assert not any(v.kind == "geo_type_confusion" for v in violations)
+
+
+def test_strict_main_idea_rejects_invented_numeric() -> None:
+    """Numeric invention guard applies to strict article Qs, not only exercises."""
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章主要说了什么",
+        model_visible_chunk_texts=("文章讨论了野火风险，未给出具体伤亡数字。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章指出有 12500 人撤离，占比 60%。"
+    )
+    assert any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_strict_main_idea_allows_numbers_from_article() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章主要说了什么",
+        model_visible_chunk_texts=("超过 800 处野火仍在燃烧。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章指出超过 800 处野火仍在燃烧。"
+    )
+    assert not any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_list_markers_fail_open_for_numeric_on_strict_forms() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="作者最想说明什么",
+        model_visible_chunk_texts=("作者强调准备的重要性。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="1. 准备物资\n2. 关注预警"
+    )
+    assert not any(v.kind == "unsupported_numeric" for v in violations)
+
+
+def test_publish_date_absent_phrase_without_year_is_fail_open() -> None:
+    """Clean 「未提供发布日期」 without a year must not thrash retries."""
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章的发布日期是什么时候",
+        model_visible_chunk_texts=("2024年4月社区举办了阅读节。",),
+        baseline_is_complete=True,
+    )
+    assert policy.temporal_allowset == frozenset()
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章未提供发布日期。"
+    )
+    assert violations == ()
+
+
+def test_policy_builder_does_not_accept_eval_metadata_kwargs() -> None:
+    """Production builder surface is turn-time only — no case gold labels."""
+    import inspect
+
+    params = set(inspect.signature(build_answer_correctness_policy).parameters)
+    forbidden = {
+        "atomic_facts",
+        "entity_catalog",
+        "allowed_numerics",
+        "allowed_temporal_claims",
+        "case_id",
+        "expected",
+        "dataset",
+    }
+    assert params.isdisjoint(forbidden)
+    assert params == {
+        "user_message",
+        "model_visible_chunk_texts",
+        "baseline_is_complete",
+    }
 
 
 def _extract_years_from_text(text: str) -> set[str]:

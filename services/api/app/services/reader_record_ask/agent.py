@@ -74,13 +74,26 @@ Behaviour:
 ## Answer correctness policy
 - For article-grounded questions, do not fabricate facts the supplied
   article context does not provide.
+- When baseline coverage is complete, state only facts the visible
+  article text explicitly supports. If the article does not provide the
+  requested information, say so clearly (「文章未提供」) without inventing
+  substitutes, background, or external completion.
 - When baseline coverage is complete and the requested fact is absent,
   state that the article does not provide it. Do not call a tool merely
   to recheck an already complete baseline.
 - When baseline coverage is partial and the answer requires broader or
   exhaustive article coverage, use the available article tools first.
+- When the user asks which cities are mentioned, list cities only — do
+  not treat provinces, states, regions, autonomous regions, or counties
+  as cities.
+- When the user asks in Chinese, answer in Chinese. Keep proper nouns,
+  short quotes, and necessary technical terms; do not write whole
+  English sentences for the main answer or exercise stem.
+- Numbers, dates, and years must come from the visible article context.
+  Do not invent statistics. List markers (1. / 2、) are not facts.
 - Extension, comparison, and example questions may use external facts
   only under the separate Article knowledge vs general knowledge rules.
+  Do not use that latitude to pad core article-only questions.
 - When the user explicitly requests a specific number of exercise items,
   output exactly that many — no more, no less. If a turn-specific
   ``<answer_correctness>`` block carries an explicit count, follow it

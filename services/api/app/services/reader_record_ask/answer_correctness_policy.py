@@ -19,6 +19,7 @@ PolicyViolationKind = Literal[
     "explicit_count_mismatch",
     "unsupported_numeric",
     "language_consistency_violation",
+    "geo_type_confusion",
 ]
 
 _RAW_STRICT_ARTICLE_QUESTION_FORMS = (
@@ -55,6 +56,11 @@ _RAW_EXERCISE_QUESTION_FORMS = (
     "帮我出一道练习题",
     "基于这篇文章出一道小练习",
     "基于文章出一道选择题，只允许一题",
+)
+
+# Exact-normalized city-list forms. Region/province labels are not cities.
+_RAW_CITY_LIST_QUESTION_FORMS = (
+    "文章提到了哪些城市",
 )
 
 _TRAILING_QUESTION_PUNCTUATION_RE = re.compile(r"[。！？!?]+$")
@@ -178,6 +184,49 @@ _LANGUAGE_RETRY_MESSAGE = (
     "The user asked in Chinese for a practice item. Write the exercise stem "
     "and explanation in Chinese; do not use whole English sentences."
 )
+_GEO_TYPE_RETRY_MESSAGE = (
+    "The user asked for cities only. Remove provinces, states, regions, "
+    "autonomous regions, or counties from the city list; list cities only."
+)
+_ARTICLE_ONLY_PROMPT = (
+    "Answer using only facts explicitly supported by the supplied article "
+    "context. Do not add external knowledge, inferred background, or "
+    "unmentioned details. If the article does not provide the requested "
+    "information, say clearly that the article does not provide it "
+    "(「文章未提供」) without inventing substitutes."
+)
+_CITY_LIST_PROMPT = (
+    "The user asked which cities are mentioned. List cities only — do not "
+    "treat provinces, states, regions, autonomous regions, counties, or "
+    "districts as cities."
+)
+_NUMERIC_PROMPT = (
+    "Do not invent statistics, counts, percentages, or measurements that "
+    "do not appear in the supplied article context. List markers "
+    "(1. / 2、) are not factual quantities."
+)
+_CHINESE_ANSWER_PROMPT = (
+    "The user asked in Chinese. Answer in Chinese. Keep proper nouns, "
+    "short quoted terms, and necessary technical abbreviations; do not "
+    "write whole English sentences."
+)
+
+# High-confidence non-city geo markers for city-list answers only.
+# Avoid bare 「区」 (too many false positives: 社区 / 区域).
+_CN_NON_CITY_GEO_RE = re.compile(
+    r"(?:省|自治区|地区|(?<![市县])州|县)"
+)
+_EN_NON_CITY_GEO_RE = re.compile(
+    r"\b(?:states?|provinces?|counties|county|regions?|districts?)\b",
+    re.IGNORECASE,
+)
+
+# Publish-date answers that already correctly refuse without naming a year.
+_PUBLISH_DATE_ABSENT_PHRASE_RE = re.compile(
+    r"(?:未提供|未提及|没有提供|没有提到|未说明|未给出|不提供)"
+    r".{0,12}(?:发布|发表|出版)?(?:日期|时间)?"
+    r"|(?:发布|发表|出版)(?:日期|时间).{0,12}(?:未提供|未提及|没有|未知|不明)"
+)
 
 
 def _normalize_question(value: str) -> str:
@@ -200,6 +249,10 @@ ABSENT_YEAR_QUESTION_FORMS = frozenset(
 
 EXERCISE_QUESTION_FORMS = frozenset(
     _normalize_question(value) for value in _RAW_EXERCISE_QUESTION_FORMS
+)
+
+CITY_LIST_QUESTION_FORMS = frozenset(
+    _normalize_question(value) for value in _RAW_CITY_LIST_QUESTION_FORMS
 )
 
 
@@ -233,6 +286,8 @@ class AnswerCorrectnessPolicy:
     _is_publish_date_question: bool
     _is_absent_year_question: bool
     _is_exercise_question: bool
+    _is_city_list_question: bool
+    _user_message_is_chinese: bool
 
     def render_prompt_block(self) -> str:
         instructions = [
@@ -240,6 +295,14 @@ class AnswerCorrectnessPolicy:
             "Do not add facts that the supplied article context does not support.",
         ]
         if self.baseline_is_complete and self.is_article_only_strict:
+            instructions.append(_ARTICLE_ONLY_PROMPT)
+            if self._user_message_is_chinese:
+                instructions.append(_CHINESE_ANSWER_PROMPT)
+            instructions.append(_NUMERIC_PROMPT)
+
+            if self._is_city_list_question:
+                instructions.append(_CITY_LIST_PROMPT)
+
             if self._is_publish_date_question:
                 if self.temporal_allowset:
                     years = ", ".join(sorted(self.temporal_allowset))
@@ -254,8 +317,9 @@ class AnswerCorrectnessPolicy:
                         "The question asks for a publication/release date. "
                         "The article does not state an explicit publication/"
                         "release date (event or activity years do not count). "
-                        "Say that the article does not provide a publication "
-                        "date without naming any year."
+                        "Reply briefly that the article does not provide a "
+                        "publication date (「文章未提供发布日期」) and do not "
+                        "name any year. Do not invent event dates as publish dates."
                     )
             elif self._is_absent_year_question:
                 instructions.append(
@@ -279,10 +343,6 @@ class AnswerCorrectnessPolicy:
                 instructions.append(
                     "Write the practice item in Chinese when the user asked in Chinese. "
                     "Do not use whole English sentences for the stem or explanation."
-                )
-                instructions.append(
-                    "Do not invent statistics, counts, percentages, or measurements "
-                    "that do not appear in the supplied article context."
                 )
                 # Prompt mitigation only — not a hard tool-call gate.
                 instructions.append(
@@ -311,22 +371,38 @@ class AnswerCorrectnessPolicy:
     ) -> tuple[PolicyViolation, ...]:
         violations: list[PolicyViolation] = []
         if self.baseline_is_complete and self.is_article_only_strict:
+            # Publish-date: if the draft already correctly refuses without a
+            # year token, do not thrash retries on residual heuristics.
+            publish_date_clean_absent = (
+                self._is_publish_date_question
+                and not _extract_temporal_years(draft_answer_text)
+                and bool(_PUBLISH_DATE_ABSENT_PHRASE_RE.search(draft_answer_text))
+            )
+
             unsupported = _extract_temporal_years(draft_answer_text).difference(
                 self.temporal_allowset
             )
-            if unsupported:
+            if unsupported and not publish_date_clean_absent:
+                detail = _TEMPORAL_RETRY_MESSAGE
+                if self._is_publish_date_question and not self.temporal_allowset:
+                    detail = (
+                        "Reply that the article does not provide a publication "
+                        "date without naming any year (「文章未提供发布日期」)."
+                    )
                 violations.append(
                     PolicyViolation(
                         kind="temporal_claim_unsupported",
-                        detail=_TEMPORAL_RETRY_MESSAGE,
+                        detail=detail,
                     )
                 )
 
-            if self._is_exercise_question:
+            # High-confidence numeric invention check for all strict
+            # article-only turns (not only exercises). List markers /
+            # ordinals / date parts are excluded by the extractor.
+            if not publish_date_clean_absent:
                 unsupported_nums = _extract_claim_numerics(
                     draft_answer_text
                 ).difference(self._numeric_allowset)
-                # Drop pure years already handled by temporal policy.
                 unsupported_nums = frozenset(
                     n
                     for n in unsupported_nums
@@ -339,13 +415,26 @@ class AnswerCorrectnessPolicy:
                             detail=_NUMERIC_RETRY_MESSAGE,
                         )
                     )
-                if _has_whole_sentence_english(draft_answer_text):
-                    violations.append(
-                        PolicyViolation(
-                            kind="language_consistency_violation",
-                            detail=_LANGUAGE_RETRY_MESSAGE,
-                        )
+
+            if self._is_city_list_question and _has_non_city_geo_label(
+                draft_answer_text
+            ):
+                violations.append(
+                    PolicyViolation(
+                        kind="geo_type_confusion",
+                        detail=_GEO_TYPE_RETRY_MESSAGE,
                     )
+                )
+
+            if self._is_exercise_question and _has_whole_sentence_english(
+                draft_answer_text
+            ):
+                violations.append(
+                    PolicyViolation(
+                        kind="language_consistency_violation",
+                        detail=_LANGUAGE_RETRY_MESSAGE,
+                    )
+                )
 
         constraint = self.explicit_output
         if (
@@ -426,6 +515,27 @@ def _has_whole_sentence_english(text: str) -> bool:
     return False
 
 
+def _has_non_city_geo_label(text: str) -> bool:
+    """High-confidence region/province/county markers (not bare 区)."""
+    if _CN_NON_CITY_GEO_RE.search(text):
+        return True
+    if _EN_NON_CITY_GEO_RE.search(text):
+        return True
+    return False
+
+
+def _user_message_is_chinese(user_message: str) -> bool:
+    """True when the question is primarily CJK (high-confidence)."""
+    if not user_message or not user_message.strip():
+        return False
+    cjk = sum(1 for c in user_message if "\u4e00" <= c <= "\u9fff")
+    letters = sum(1 for c in user_message if c.isalpha())
+    if cjk == 0:
+        return False
+    # Prefer Chinese when CJK dominates alphabetic content.
+    return cjk >= max(2, letters)
+
+
 def _extract_explicit_output(user_message: str) -> ExplicitOutputConstraint:
     has_indeterminate = any(phrase in user_message for phrase in _INDETERMINATE_EXERCISE_PHRASES)
     requested_counts = {
@@ -470,6 +580,7 @@ def build_answer_correctness_policy(
     is_publish_date = normalized in PUBLISH_DATE_QUESTION_FORMS
     is_absent_year = normalized in ABSENT_YEAR_QUESTION_FORMS
     is_exercise = normalized in EXERCISE_QUESTION_FORMS
+    is_city_list = normalized in CITY_LIST_QUESTION_FORMS
 
     temporal_allowset: set[str] = set()
     numeric_allowset: set[str] = set()
@@ -497,4 +608,6 @@ def build_answer_correctness_policy(
         _is_publish_date_question=is_publish_date,
         _is_absent_year_question=is_absent_year,
         _is_exercise_question=is_exercise,
+        _is_city_list_question=is_city_list,
+        _user_message_is_chinese=_user_message_is_chinese(user_message),
     )
