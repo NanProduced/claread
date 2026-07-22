@@ -21,6 +21,7 @@ Tool outputs use a closed typed status set plus the unified shape:
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -387,24 +388,57 @@ class ExpandEvidenceToolView(BaseModel):
 class ExpandEvidenceToolInput(BaseModel):
     """Model-facing input for the future ``expand_evidence`` tool.
 
-    The model may supply exactly one opaque pointer. There is **no**
-    turn_id / locator / offset / fingerprint / generation field: the model
-    must never provide or influence the server-owned turn context.
-    ``extra="forbid"`` fail-closes on any such attempt (a future adapter
-    layer must drop model-supplied turn context before building the
-    server-owned expansion session; this schema is the boundary guard).
+    Minimal model-visible surface: exactly one opaque ``pointer`` and
+    nothing else.
+
+    - ``extra="ignore"``: model-supplied ``turn_id`` / ``record_generation``
+      / ``base_id`` / ``envelope_fingerprint`` / any other server identity
+      key is **silently discarded** — server-owned turn context is never a
+      legal tool parameter and must never influence the real binding (a
+      future runtime adapter routes through :func:`normalize_expand_pointer`
+      and builds the server-owned session separately; nothing here becomes
+      a second path around the core).
+    - **No shape rejection here**: malformed / unknown / consumed pointer
+      judgement belongs to
+      :meth:`EvidenceExpansionSession.expand` safe states (metered
+      ``invalid_cursor`` / ``stale_evidence``), never a ValidationError
+      control-flow bypass, and never model-retry.
     """
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore")
 
-    pointer: str = Field(min_length=1, max_length=64)
+    pointer: str
 
-    @field_validator("pointer")
-    @classmethod
-    def _validate_pointer_shape(cls, value: str) -> str:
-        if not is_expand_pointer_shape(value):
-            raise ValueError(
-                "pointer must be an opaque server-minted token matching "
-                "evh_<32 hex> or cur_<32 hex>"
-            )
-        return value
+
+# Model-argument bound enforced by the normalization seam. Over-bound /
+# non-string pointers are mapped to "" so they always reach the session's
+# safe state machine (metered invalid_cursor) instead of raising.
+EXPAND_POINTER_MAX_LEN: int = 64
+
+
+def normalize_expand_pointer(raw_arguments: Mapping[str, Any] | str) -> str:
+    """Model-argument normalization seam (offline; no runtime wiring).
+
+    Extracts **only** the opaque pointer from raw model arguments and
+    routes it to :meth:`EvidenceExpansionSession.expand`:
+
+    - every other key (``turn_id``, ``record_generation``, ``base_id``,
+      ``reading_record_id``, ``envelope_fingerprint``, …) is discarded by
+      omission — model-supplied identity can never reach the server-owned
+      binding;
+    - **no shape rejection**: shape / unknown / consumed judgement is the
+      session's job (safe metered ``invalid_cursor`` / ``stale_evidence``);
+    - bounded: non-string or over-length pointers map to ``""``, which the
+      session answers with a metered ``invalid_cursor`` — never raises a
+      ValidationError, never model-retry.
+    """
+    if isinstance(raw_arguments, str):
+        pointer = raw_arguments
+    elif isinstance(raw_arguments, Mapping):
+        value = raw_arguments.get("pointer", "")
+        pointer = value if isinstance(value, str) else ""
+    else:
+        pointer = ""
+    if len(pointer) > EXPAND_POINTER_MAX_LEN:
+        return ""
+    return pointer

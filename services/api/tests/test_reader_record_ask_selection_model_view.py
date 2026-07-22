@@ -33,10 +33,13 @@ from app.services.reader_record_ask.selection_model_view import (
     SELECTION_CHUNK_ORDINAL,
     SELECTION_ROLE,
     SELECTION_SECTION_HEADER,
+    SelectionExpansionSeed,
     SelectionPromptCapability,
     assemble_selection_model_view,
     assert_selection_binary_equality,
+    canonical_selection_digest,
     fit_selection_prefix,
+    validate_selection_expansion_seed,
     validate_selection_prompt_capability,
 )
 from app.services.reader_record_ask.turn_capability_projection import (
@@ -851,3 +854,99 @@ def test_preflight_rejects_duplicate_handle_without_charge() -> None:
 
     assert budget.snapshot() == before
     assert len(registry) == 1
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-3R: assembler-minted expansion seed (server-only source integrity)
+# ---------------------------------------------------------------------------
+
+
+def test_injected_result_carries_branded_expansion_seed() -> None:
+    canonical = "seed body " * 400  # 4000 chars → prefix capped at 2000
+    budget = _budget()
+    registry = _registry()
+    result = assemble_selection_model_view(
+        canonical_selected_text=canonical,
+        envelope_fingerprint=_FINGERPRINT,
+        budget=budget,
+        registry=registry,
+    )
+    assert result.is_injected
+    seed = result.expansion_seed
+    assert seed is not None
+    validated = validate_selection_expansion_seed(seed)
+    assert validated is seed
+    # Full-source identity: length, continuation, handle, envelope, digest.
+    assert seed.full_char_count == len(canonical)
+    assert seed.continuation_start == result.continuation_start
+    assert seed.handle_id == result.selection.handle_id
+    assert seed.envelope_fingerprint == _FINGERPRINT
+    assert seed.canonical_digest == canonical_selection_digest(canonical)
+    # Strengthened binary equality helper accepts the canonical source.
+    assert_selection_binary_equality(
+        result, registry=registry, canonical_selected_text=canonical
+    )
+
+
+def test_absent_and_budget_denied_carry_no_seed() -> None:
+    absent = assemble_selection_model_view(
+        canonical_selected_text=None,
+        envelope_fingerprint=_FINGERPRINT,
+        budget=_budget(),
+        registry=None,
+    )
+    assert absent.status == "absent"
+    assert absent.expansion_seed is None
+
+    # Budget denial: fill the selection account so nothing fits.
+    budget = _budget()
+    renderer = _renderer()
+    budget.charge("selection", renderer.render_plain("f" * 2499))
+    denied = assemble_selection_model_view(
+        canonical_selected_text="x" * 3000,
+        envelope_fingerprint=_FINGERPRINT,
+        budget=budget,
+        registry=_registry(),
+    )
+    assert denied.status == "budget_denied"
+    assert denied.expansion_seed is None
+
+
+def test_hand_forged_expansion_seed_rejected() -> None:
+    canonical = "forge target " * 300
+    result = assemble_selection_model_view(
+        canonical_selected_text=canonical,
+        envelope_fingerprint=_FINGERPRINT,
+        budget=_budget(),
+        registry=_registry(),
+    )
+    real = result.expansion_seed
+    assert real is not None
+    forged = SelectionExpansionSeed(
+        handle_id=real.handle_id,
+        envelope_fingerprint=real.envelope_fingerprint,
+        full_char_count=real.full_char_count,
+        continuation_start=real.continuation_start,
+        canonical_digest=real.canonical_digest,
+    )
+    with pytest.raises(TypeError, match="assembler-minted"):
+        validate_selection_expansion_seed(forged)
+    with pytest.raises(TypeError, match="assembler-minted"):
+        validate_selection_expansion_seed("not-a-seed")
+
+
+def test_expansion_seed_digest_not_in_prompt_or_block() -> None:
+    canonical = "leak check " * 400
+    result = assemble_selection_model_view(
+        canonical_selected_text=canonical,
+        envelope_fingerprint=_FINGERPRINT,
+        budget=_budget(),
+        registry=_registry(),
+    )
+    assert result.expansion_seed is not None
+    digest = result.expansion_seed.canonical_digest
+    assert result.prompt_capability is not None
+    assert digest not in result.prompt_capability.section_text
+    assert result.rendered_untrusted_block is not None
+    assert digest not in result.rendered_untrusted_block.text
+    assert "canonical_digest" not in result.prompt_capability.section_text

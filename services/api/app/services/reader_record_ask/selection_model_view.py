@@ -51,6 +51,7 @@ Does **not** replace live :func:`register_initial_anchor_evidence` behaviour.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -93,6 +94,9 @@ SelectionModelViewStatus = Literal["absent", "injected", "budget_denied"]
 
 # Module-private brand for selection prompt capabilities (not a sandbox).
 _SELECTION_PROMPT_ORIGIN: object = object()
+
+# Module-private brand for assembler-minted expansion seeds (R4-A5-3R).
+_SELECTION_EXPANSION_SEED_ORIGIN: object = object()
 
 _SELECTION_PROMPT_TYPE_ERROR = (
     "selection prompt requires SelectionPromptCapability "
@@ -185,6 +189,92 @@ def validate_selection_prompt_capability(
 
 
 # ---------------------------------------------------------------------------
+# Expansion seed (R4-A5-3R; server-only full-source integrity)
+# ---------------------------------------------------------------------------
+
+
+def canonical_selection_digest(canonical_selected_text: str) -> str:
+    """SHA-256 hex digest of the full canonical selection (server-only).
+
+    Host-side helper shared by the assembler (minting) and the expansion
+    session (verification). The digest value must never enter projection,
+    prompt, tool-view, error messages, or registry sidecars.
+    """
+    if not isinstance(canonical_selected_text, str):
+        raise TypeError("canonical_selected_text must be str")
+    return hashlib.sha256(canonical_selected_text.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionExpansionSeed:
+    """Assembler-minted server-only provenance for selection expansion.
+
+    Proves **full canonical source identity** to the A5-3 expansion
+    session: full length, full-content digest, and handle/envelope
+    binding. Minted only by :func:`assemble_selection_model_view` when
+    the canonical selection is known — never reconstructed from the
+    (semantically unclear, possibly absent) locator ``text_hash``.
+
+    Strictly server-only: digest, full length, and full source never
+    enter projection, prompt capability, tool-view, error text, or any
+    registry model-visible sidecar. Hand construction yields an unusable
+    seed (origin unset; module-boundary brand only).
+    """
+
+    handle_id: str
+    envelope_fingerprint: str
+    full_char_count: int
+    continuation_start: int
+    canonical_digest: str
+    _origin: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+
+
+def _mint_selection_expansion_seed(
+    *,
+    canonical_selected_text: str,
+    handle_id: str,
+    envelope_fingerprint: str,
+    continuation_start: int,
+) -> SelectionExpansionSeed:
+    if not handle_id:
+        raise ValueError("handle_id must be non-empty")
+    seed = SelectionExpansionSeed(
+        handle_id=handle_id,
+        envelope_fingerprint=envelope_fingerprint,
+        full_char_count=len(canonical_selected_text),
+        continuation_start=continuation_start,
+        canonical_digest=canonical_selection_digest(canonical_selected_text),
+    )
+    object.__setattr__(seed, "_origin", _SELECTION_EXPANSION_SEED_ORIGIN)
+    return seed
+
+
+def validate_selection_expansion_seed(
+    seed: object,
+) -> SelectionExpansionSeed:
+    """Non-metering origin check for the expansion session.
+
+    Rejects hand-forged seeds and anything not minted by
+    :func:`assemble_selection_model_view`.
+    """
+    if not isinstance(seed, SelectionExpansionSeed):
+        raise TypeError(
+            "expansion requires an assembler-minted SelectionExpansionSeed"
+        )
+    if getattr(seed, "_origin", None) is not _SELECTION_EXPANSION_SEED_ORIGIN:
+        raise TypeError(
+            "expansion requires an assembler-minted SelectionExpansionSeed"
+        )
+    return seed
+
+
+# ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
 
@@ -202,6 +292,13 @@ class SelectionModelViewResult:
       ``model_chunk.text == registry[handle].snippet == visible_prefix``
 
     ``continuation_start`` is server-side only (A5-3); never model-visible.
+
+    ``expansion_seed`` (R4-A5-3R) is an assembler-minted server-only
+    :class:`SelectionExpansionSeed` present for ``status="injected"``
+    results: full canonical length + full-content digest + handle/envelope
+    binding. It lets the A5-3 expansion session verify the **entire**
+    canonical source (not just the visible prefix) and never enters any
+    model-visible surface.
     """
 
     status: SelectionModelViewStatus
@@ -213,6 +310,7 @@ class SelectionModelViewResult:
     rendered_untrusted_block: RenderedModelView | None = None
     handle_ref: EvidenceHandleRef | None = None
     prompt_capability: SelectionPromptCapability | None = None
+    expansion_seed: SelectionExpansionSeed | None = None
 
     @property
     def is_injected(self) -> bool:
@@ -512,6 +610,16 @@ def assemble_selection_model_view(
     expandable = full_len > len(visible_prefix)
     continuation_start = len(visible_prefix)
 
+    # Server-only full-source integrity seed for A5-3 expansion. Minted
+    # here — where the full canonical selection is known — never derived
+    # from locator text_hash. Never model-visible.
+    expansion_seed = _mint_selection_expansion_seed(
+        canonical_selected_text=canonical_selected_text,
+        handle_id=handle_id,
+        envelope_fingerprint=envelope_fingerprint,
+        continuation_start=continuation_start,
+    )
+
     return SelectionModelViewResult(
         status="injected",
         selection=SelectionCapabilityView(
@@ -528,6 +636,7 @@ def assemble_selection_model_view(
         rendered_untrusted_block=fitted_view,
         handle_ref=handle_ref,
         prompt_capability=prompt_capability,
+        expansion_seed=expansion_seed,
     )
 
 
@@ -535,8 +644,14 @@ def assert_selection_binary_equality(
     result: SelectionModelViewResult,
     *,
     registry: EvidenceRegistry,
+    canonical_selected_text: str | None = None,
 ) -> None:
-    """Raise ``AssertionError`` unless inject-path binary equality holds."""
+    """Raise ``AssertionError`` unless inject-path binary equality holds.
+
+    When ``canonical_selected_text`` is supplied, the assembler-minted
+    expansion seed must additionally match the full canonical source
+    (length + digest) — the R4-A5-3R source-integrity chain.
+    """
     if result.status != "injected":
         raise AssertionError(
             f"binary equality requires injected status, got {result.status}"
@@ -568,6 +683,30 @@ def assert_selection_binary_equality(
         raise AssertionError("registry snippet != model_chunk.text")
     validate_selection_prompt_capability(result.prompt_capability)
 
+    # R4-A5-3R: assembler-minted expansion seed integrity.
+    if result.expansion_seed is None:
+        raise AssertionError("injected result missing expansion_seed")
+    seed = validate_selection_expansion_seed(result.expansion_seed)
+    if seed.handle_id != result.selection.handle_id:
+        raise AssertionError("expansion seed handle_id mismatch")
+    if seed.envelope_fingerprint != registry.envelope_fingerprint:
+        raise AssertionError("expansion seed envelope_fingerprint mismatch")
+    if seed.full_char_count != result.full_char_count:
+        raise AssertionError("expansion seed full_char_count mismatch")
+    if seed.continuation_start != result.continuation_start:
+        raise AssertionError("expansion seed continuation_start mismatch")
+    if canonical_selected_text is not None:
+        if seed.full_char_count != len(canonical_selected_text):
+            raise AssertionError("expansion seed full_char_count != canonical len")
+        if seed.canonical_digest != canonical_selection_digest(
+            canonical_selected_text
+        ):
+            raise AssertionError("expansion seed digest != canonical digest")
+        if result.visible_prefix != canonical_selected_text[
+            : result.continuation_start
+        ]:
+            raise AssertionError("visible_prefix != canonical[:continuation_start]")
+
 
 __all__ = [
     "EVIDENCE_SNIPPET_HARD_CAP",
@@ -576,11 +715,14 @@ __all__ = [
     "SELECTION_ROLE",
     "SELECTION_SECTION_FOOTER",
     "SELECTION_SECTION_HEADER",
+    "SelectionExpansionSeed",
     "SelectionModelViewResult",
     "SelectionModelViewStatus",
     "SelectionPromptCapability",
     "assemble_selection_model_view",
     "assert_selection_binary_equality",
+    "canonical_selection_digest",
     "fit_selection_prefix",
+    "validate_selection_expansion_seed",
     "validate_selection_prompt_capability",
 ]

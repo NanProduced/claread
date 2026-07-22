@@ -16,6 +16,7 @@ Zero I/O: no DocumentAccess, RAG port, DB, runtime, real model.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -44,13 +45,14 @@ from app.services.reader_record_ask.model_view_budget import (
     ModelVisibleTurnBudget,
 )
 from app.services.reader_record_ask.selection_model_view import (
+    SelectionExpansionSeed,
     assemble_selection_model_view,
+    validate_selection_expansion_seed,
 )
 from app.services.reader_record_ask.tool_contracts import (
     ExpandEvidenceToolInput,
-    ExpandEvidenceToolView,
-    is_expand_pointer_shape,
     is_expansion_cursor_shape,
+    normalize_expand_pointer,
 )
 from app.services.reader_record_ask.turn_capability_projection import (
     build_turn_capability_projection,
@@ -248,28 +250,66 @@ class _MismatchDiscardRegistry(EvidenceRegistry):
         )
 
 
-class _MarkConsumedFailingLedger(ExpansionPointerLedger):
-    """Issues cursors normally but fails mark_consumed (commit probe).
+class _RecordingLedger(ExpansionPointerLedger):
+    """Ledger probe base: records newly issued tokens via the public seam."""
 
-    Records issued tokens via the public issue seam so tests can prove
-    revocation through public ``lookup`` — no private-dict inspection.
-    """
-
-    fail_message = "PROBE_EXPAND_CONSUME_FAIL_SECRET_8b4a"
-
-    def __init__(self, *, fail_consumes: bool = True) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.fail_consumes = fail_consumes
         self.issued_tokens: list[str] = []
 
-    def issue(self, *, token: str, binding: PointerBinding) -> None:  # type: ignore[override]
-        super().issue(token=token, binding=binding)
-        self.issued_tokens.append(token)
+    def issue(self, *, token, binding, marker):  # type: ignore[override]
+        receipt = super().issue(token=token, binding=binding, marker=marker)
+        if receipt.newly_issued:
+            self.issued_tokens.append(token)
+        return receipt
 
-    def mark_consumed(self, *, token: str):  # type: ignore[override]
+
+class _IssueThenRaiseLedger(_RecordingLedger):
+    """issue() writes via super() then raises (partial-write probe)."""
+
+    fail_message = "PROBE_EXPAND_ISSUE_AFTER_WRITE_SECRET_5f2a"
+
+    def __init__(self, *, fail_issues: bool = False) -> None:
+        super().__init__()
+        self.fail_issues = fail_issues
+
+    def issue(self, *, token, binding, marker):  # type: ignore[override]
+        receipt = super().issue(token=token, binding=binding, marker=marker)
+        if self.fail_issues and receipt.newly_issued:
+            raise RuntimeError(self.fail_message)
+        return receipt
+
+
+class _ConsumeThenRaiseLedger(_RecordingLedger):
+    """mark_consumed() writes via super() then raises (partial-write probe)."""
+
+    fail_message = "PROBE_EXPAND_CONSUME_AFTER_WRITE_SECRET_8b4a"
+
+    def __init__(self, *, fail_consumes: bool = False) -> None:
+        super().__init__()
+        self.fail_consumes = fail_consumes
+
+    def mark_consumed(self, *, token, marker):  # type: ignore[override]
+        record = super().mark_consumed(token=token, marker=marker)
         if self.fail_consumes:
             raise RuntimeError(self.fail_message)
-        return super().mark_consumed(token=token)
+        return record
+
+
+class _FullTransitionThenRaiseLedger(_RecordingLedger):
+    """transition_pointers() fully writes via super() then raises."""
+
+    fail_message = "PROBE_EXPAND_TRANSITION_AFTER_WRITE_SECRET_c7e3"
+
+    def __init__(self, *, fail_transitions: bool = False) -> None:
+        super().__init__()
+        self.fail_transitions = fail_transitions
+
+    def transition_pointers(self, **kwargs):  # type: ignore[override]
+        receipt = super().transition_pointers(**kwargs)
+        if self.fail_transitions:
+            raise RuntimeError(self.fail_message)
+        return receipt
 
 
 # ---------------------------------------------------------------------------
@@ -756,35 +796,124 @@ def test_register_wrong_handle_postcondition_rolls_back_fully() -> None:
     assert registry.get(_WriteThenWrongHandleRegistry.wrong_handle) is None
 
 
-def test_binding_commit_failure_rolls_back_cursor_registry_budget() -> None:
-    ledger = _MarkConsumedFailingLedger()
+def test_issue_write_then_raise_marker_rollback_full_restore() -> None:
+    """Regression 1: issue() writes via super() then raises → full restore."""
+    ledger = _IssueThenRaiseLedger()
     session, budget, registry = _session("c" * 4800, ledger=ledger)
     before = budget.snapshot()
     registry_len = len(registry)
     pointer = session.initial_pointer
+    ledger.fail_issues = True
 
     with pytest.raises(
         RuntimeError,
-        match=r"expand_evidence_rollback_failed code=consume_old_pointer",
+        match=r"expand_evidence_rollback_failed code=pointer_transition",
     ):
         session.expand(pointer=pointer)
 
-    # Budget fully refunded, registry back to selection-only.
+    # Budget + registry fully restored.
     assert budget.snapshot() == before
     assert len(registry) == registry_len
-    # New cursor revoked: every issued cursor is gone from the ledger
-    # (proven via public lookup).
-    issued_cursors = [
-        token for token in ledger.issued_tokens if token.startswith("cur_")
-    ]
-    assert issued_cursors, "probe should have observed one cursor issue"
-    for token in issued_cursors:
+    # New cursor does not linger (probe recorded the write; public lookup
+    # proves the marker rollback removed exactly this attempt's cursor).
+    new_cursors = [t for t in ledger.issued_tokens if t.startswith("cur_")]
+    assert new_cursors, "probe should have observed one cursor issue"
+    for token in new_cursors:
         assert ledger.lookup(token) is None
-    # Old pointer still unconsumed and usable after healing the ledger.
-    ledger.fail_consumes = False
+    # Old pointer still unconsumed and retryable once healed.
+    assert ledger.lookup(pointer) is not None
+    assert ledger.lookup(pointer).consumed is False
+    ledger.fail_issues = False
     retry = session.expand(pointer=pointer)
     assert retry.kind == "ok"
     assert retry.next_cursor is not None
+
+
+def test_mark_consumed_write_then_raise_restores_old_pointer() -> None:
+    """Regression 2: mark_consumed() writes via super() then raises.
+
+    Cursor issued + old pointer consumed both landed before the raise;
+    the marker rollback must restore the old pointer to unconsumed and
+    delete the cursor.
+    """
+    ledger = _ConsumeThenRaiseLedger()
+    session, budget, registry = _session("k" * 4800, ledger=ledger)
+    before = budget.snapshot()
+    registry_len = len(registry)
+    pointer = session.initial_pointer
+    ledger.fail_consumes = True
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"expand_evidence_rollback_failed code=pointer_transition",
+    ):
+        session.expand(pointer=pointer)
+
+    assert budget.snapshot() == before
+    assert len(registry) == registry_len
+    # Old pointer restored to unconsumed (marker-scoped restore).
+    record = ledger.lookup(pointer)
+    assert record is not None and record.consumed is False
+    # New cursor removed.
+    new_cursors = [t for t in ledger.issued_tokens if t.startswith("cur_")]
+    assert new_cursors
+    for token in new_cursors:
+        assert ledger.lookup(token) is None
+    # Retry succeeds after healing.
+    ledger.fail_consumes = False
+    retry = session.expand(pointer=pointer)
+    assert retry.kind == "ok"
+
+
+def test_full_transition_write_then_raise_rolls_back_only_this_attempt() -> None:
+    """Regression 3: full write (cursor + consume) then raise — the claim
+    rolls back only this attempt's state; foreign pointers are untouched.
+    """
+    ledger = _FullTransitionThenRaiseLedger()
+    turn_a = mint_turn_id()
+    session_a, _ba, _ra = _session("a" * 4800, turn_id=turn_a, ledger=ledger)
+    first = session_a.expand(pointer=session_a.initial_pointer)
+    cursor_a = first.next_cursor
+    assert cursor_a is not None and ledger.lookup(cursor_a) is not None
+
+    # Session B: different identity, shared ledger, armed probe.
+    session_b, budget_b, registry_b = _session(
+        "t" * 4800,
+        turn_id=mint_turn_id(),
+        fp=_FINGERPRINT_B,
+        base=_BASE_B,
+        record=_RECORD_B,
+        ledger=ledger,
+    )
+    before = budget_b.snapshot()
+    registry_len = len(registry_b)
+    issued_before = set(ledger.issued_tokens)
+    ledger.fail_transitions = True
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"expand_evidence_rollback_failed code=pointer_transition",
+    ):
+        session_b.expand(pointer=session_b.initial_pointer)
+
+    # B's budget + registry fully restored.
+    assert budget_b.snapshot() == before
+    assert len(registry_b) == registry_len
+    # B's old pointer restored to unconsumed.
+    record_b = ledger.lookup(session_b.initial_pointer)
+    assert record_b is not None and record_b.consumed is False
+    # B's freshly issued cursor removed (only tokens new to this attempt).
+    issued_by_attempt = set(ledger.issued_tokens) - issued_before
+    assert issued_by_attempt, "probe should have observed B's cursor issue"
+    for token in issued_by_attempt:
+        assert ledger.lookup(token) is None
+    # Foreign pointer (A's cursor) untouched regardless of binding values.
+    foreign = ledger.lookup(cursor_a)
+    assert foreign is not None and foreign.consumed is False
+    # B remains fully functional after healing.
+    ledger.fail_transitions = False
+    retry = session_b.expand(pointer=session_b.initial_pointer)
+    assert retry.kind == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -879,26 +1008,229 @@ def test_projection_body_free_and_tool_view_has_no_binding_sidecar() -> None:
     )
 
 
-def test_model_supplied_turn_context_is_rejected_at_boundary() -> None:
-    from pydantic import ValidationError
+def test_model_arguments_route_to_metered_safe_state_machine() -> None:
+    """Regression 5: malformed / empty / over-bound / non-str pointers all
+    flow through the normalization seam into expand() and produce a
+    metered invalid_cursor — never a ValidationError.
+    """
+    session, budget, _registry = _session("w" * 4100)
+    raw_cases: list[object] = [
+        {"pointer": "garbage!!"},
+        {"pointer": ""},
+        {"pointer": "p" * 500},  # over the bound
+        {"pointer": 123},  # non-str
+        {"pointer": None},
+        {},  # missing pointer
+        "cur_tooshort",  # raw str form
+    ]
+    before = budget.spent("expand")
+    for raw in raw_cases:
+        pointer = normalize_expand_pointer(raw)  # type: ignore[arg-type]
+        assert isinstance(pointer, str)
+        outcome = session.expand(pointer=pointer)
+        assert outcome.kind == "invalid_cursor", raw
+        assert outcome.model_visible is True
+        assert outcome.charge is not None  # metered, not unmetered JSON
+        assert outcome.rendered_tool_view is not None
+        parsed = json.loads(outcome.rendered_tool_view.text)
+        assert parsed["status"] == "invalid_cursor"
+        assert parsed["article_text_block"] is None
+    assert budget.spent("expand") > before
+    # The session is still healthy afterwards.
+    ok = session.expand(pointer=session.initial_pointer)
+    assert ok.kind == "ok"
 
-    # The expand tool input schema carries no turn/identity field at all.
-    valid = ExpandEvidenceToolInput(pointer="cur_" + "ab" * 16)
-    assert is_expand_pointer_shape(valid.pointer)
-    with pytest.raises(ValidationError):
-        ExpandEvidenceToolInput.model_validate(
-            {"pointer": "cur_" + "ab" * 16, "turn_id": "turn_" + "cd" * 16}
+
+def test_model_supplied_identity_cannot_move_binding() -> None:
+    """Regression 6: model-supplied turn_id / generation / base / record /
+    fingerprint are discarded by the seam and never influence binding.
+    """
+    ledger = ExpansionPointerLedger()
+    turn_a = mint_turn_id()
+    session_a, _ba, _ra = _session("a" * 4800, turn_id=turn_a, ledger=ledger)
+    first = session_a.expand(pointer=session_a.initial_pointer)
+    cursor_a = first.next_cursor
+    assert cursor_a is not None
+
+    session_b, _bb, _rb = _session(
+        "t" * 4800,
+        turn_id=mint_turn_id(),
+        fp=_FINGERPRINT_B,
+        base=_BASE_B,
+        record=_RECORD_B,
+        ledger=ledger,
+    )
+
+    # (1) Valid pointer + forged identity keys → normal success: identity
+    #     keys are dropped, binding comes only from server-owned context.
+    ok_args = {
+        "pointer": session_b.initial_pointer,
+        "turn_id": turn_a,
+        "record_generation": 999,
+        "base_id": str(_BASE_A),
+        "reading_record_id": str(_RECORD_A),
+        "envelope_fingerprint": _FINGERPRINT_A,
+    }
+    ok = session_b.expand(pointer=normalize_expand_pointer(ok_args))
+    assert ok.kind == "ok"
+
+    # (2) Cross-turn pointer + the CORRECT old turn_id → still stale:
+    #     a model-supplied matching turn_id cannot forge the binding.
+    stale_args = {
+        "pointer": cursor_a,
+        "turn_id": turn_a,
+        "envelope_fingerprint": _FINGERPRINT_A,
+        "base_id": str(_BASE_A),
+    }
+    stale = session_b.expand(pointer=normalize_expand_pointer(stale_args))
+    assert stale.kind == "stale_evidence"
+    assert stale.model_visible is True
+
+    # (3) Tool schema stays minimal: only ``pointer``; extras ignored.
+    assert set(ExpandEvidenceToolInput.model_fields.keys()) == {"pointer"}
+    parsed_input = ExpandEvidenceToolInput.model_validate(
+        {"pointer": "cur_" + "ab" * 16, "turn_id": "turn_" + "cd" * 16}
+    )
+    assert parsed_input.model_dump() == {"pointer": "cur_" + "ab" * 16}
+
+
+# ---------------------------------------------------------------------------
+# 8b. Full canonical source integrity (R4-A5-3R)
+# ---------------------------------------------------------------------------
+
+
+def test_forged_longer_canonical_same_prefix_rejected_zero_mutation() -> None:
+    """Regression 4a: real selection result + same prefix + forged longer
+    suffix → construction rejected with zero budget/registry/ledger mutation.
+    """
+    canonical = "x" * 4800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    ledger = ExpansionPointerLedger()
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    before = budget.snapshot()
+
+    forged = canonical + "FORGED_SUFFIX"
+    with pytest.raises(ValueError, match="full_char_count|digest"):
+        EvidenceExpansionSession(
+            canonical_selected_text=forged,
+            selection_result=sel,
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+            pointer_ledger=ledger,
         )
-    with pytest.raises(ValidationError):
-        ExpandEvidenceToolInput.model_validate(
-            {"pointer": "cur_" + "ab" * 16, "record_generation": 2}
+    assert budget.snapshot() == before
+    assert len(registry) == 1  # only the selection observation
+    assert len(ledger) == 0  # no orphan pointer record
+
+
+def test_forged_same_length_same_prefix_different_suffix_rejected() -> None:
+    """Regression 4b: same total length + same visible prefix + replaced
+    suffix → full-content digest mismatch, zero mutation.
+    """
+    canonical = "x" * 4800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    ledger = ExpansionPointerLedger()
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    before = budget.snapshot()
+
+    forged = canonical[:2000] + "y" * 2800
+    assert len(forged) == len(canonical)
+    assert forged[:2000] == sel.visible_prefix  # prefix check alone would pass
+    with pytest.raises(ValueError, match="digest mismatch"):
+        EvidenceExpansionSession(
+            canonical_selected_text=forged,
+            selection_result=sel,
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+            pointer_ledger=ledger,
         )
-    with pytest.raises(ValidationError):
-        ExpandEvidenceToolInput(pointer="not-a-pointer")
-    # The safe error summary leaks no identity either.
-    view = ExpandEvidenceToolView(status="stale_evidence", summary="s")
-    dumped = json.dumps(view.model_dump(mode="json"))
-    assert "turn_" not in dumped
+    assert budget.snapshot() == before
+    assert len(registry) == 1
+    assert len(ledger) == 0
+
+
+def test_hand_forged_or_missing_seed_rejected() -> None:
+    canonical = "x" * 4800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    real_seed = sel.expansion_seed
+    assert real_seed is not None
+    validate_selection_expansion_seed(real_seed)
+
+    # Hand-constructed seed with identical field values: no assembler brand.
+    forged_seed = SelectionExpansionSeed(
+        handle_id=real_seed.handle_id,
+        envelope_fingerprint=real_seed.envelope_fingerprint,
+        full_char_count=real_seed.full_char_count,
+        continuation_start=real_seed.continuation_start,
+        canonical_digest=real_seed.canonical_digest,
+    )
+    with pytest.raises(TypeError, match="assembler-minted"):
+        EvidenceExpansionSession(
+            canonical_selected_text=canonical,
+            selection_result=replace(sel, expansion_seed=forged_seed),
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+        )
+    with pytest.raises(TypeError, match="assembler-minted"):
+        EvidenceExpansionSession(
+            canonical_selected_text=canonical,
+            selection_result=replace(sel, expansion_seed=None),
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+        )
+
+
+def test_digest_and_seed_never_model_visible() -> None:
+    canonical = "x" * 2000 + "z" * 2800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    digest = sel.expansion_seed.canonical_digest
+    assert len(digest) == 64
+
+    session = EvidenceExpansionSession(
+        canonical_selected_text=canonical,
+        selection_result=sel,
+        envelope_identity=_identity(turn_id=mint_turn_id()),
+        registry=registry,
+        budget=budget,
+    )
+    ok = session.expand(pointer=session.initial_pointer)
+    assert ok.kind == "ok"
+    # Digest appears on no model-visible surface.
+    assert digest not in ok.rendered_tool_view.text
+    err = session.expand(pointer="bogus")
+    assert err.rendered_tool_view is not None
+    assert digest not in err.rendered_tool_view.text
+    # Not in the projection (nor its schema keys).
+    projection = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=None,
+        product_search_enabled=False,
+        baseline_injected=False,
+        selection_present=True,
+        selection_handle_id=session.initial_pointer,
+        selection_expandable=True,
+        selection_visible_char_count=2000,
+        selection_full_char_count=len(canonical),
+    )
+    projection_json = json.dumps(projection.to_model_dict())
+    assert digest not in projection_json
+    assert "canonical_digest" not in projection_json
+    assert "expansion_seed" not in projection_json
+    # Not in the prompt capability or registry sidecars.
+    assert digest not in sel.prompt_capability.section_text
+    for obs in registry.list_observations():
+        assert digest not in (obs.snippet or "")
+        assert digest not in json.dumps(obs.locator_summary or {})
 
 
 # ---------------------------------------------------------------------------
