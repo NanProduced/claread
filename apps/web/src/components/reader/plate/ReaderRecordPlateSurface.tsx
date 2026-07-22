@@ -6023,7 +6023,6 @@ export function ReaderRecordPlateSurface({
           plateDocument={plateDocument}
           askOpen={askSidecarOpen}
           layout="canvas"
-          onRequestSnapshotReload={onRequestSnapshotReload}
         />
       </aside>
       <AiWorkspacePanel

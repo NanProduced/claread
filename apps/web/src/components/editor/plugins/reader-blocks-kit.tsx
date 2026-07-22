@@ -40,6 +40,7 @@ import {
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
   READER_SENTENCE_ANALYSIS_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
+import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 
 export const READER_CALLOUT_GROUP_TYPE = "reader_callout_group" as const;
 
@@ -462,12 +463,14 @@ function ReaderParagraphComponent({
     <p
       {...attributes}
       className={`reader-record-plate-paragraph text-pretty text-ink ${attributes?.className ?? ""}`.trim()}
-      data-reader-record-node="paragraph"
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "paragraph",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
       data-reader-record-block-id={(element as unknown as ReaderParagraphElement).id}
-      data-anchor-segment-id={data?.anchorSegmentId}
       data-sentence-id={data?.sentenceId}
-      data-unit-id={data?.unitId}
-      data-reader-record-unit-start={data?.isUnitStart ? "true" : undefined}
     >
       {children}
     </p>
@@ -498,10 +501,12 @@ function ReaderBlockquoteComponent({
       className={`reader-record-plate-blockquote reader-record-plate-translation reader-record-plate-translation-lane reader-record-plate-translation-copy reader-font-sans border-l border-hairline/85 bg-transparent ${
         attributes?.className ?? ""
       }`.trim()}
-      data-reader-record-node="blockquote"
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "blockquote",
+        unitId: data?.unitId,
+      })}
       data-reader-record-translation-lane="true"
       data-reader-record-block-id={(element as unknown as ReaderBlockquoteElement).id}
-      data-unit-id={data?.unitId}
     >
       {children}
     </blockquote>
@@ -546,7 +551,7 @@ function ReaderCalloutGroupComponent({
       }`.trim()}
       role="group"
       aria-label={`语法解析 · ${calloutCount} 条`}
-      data-reader-record-node="callout-group"
+      {...readerRecordNavigableNodeAttrs({ nodeKind: "callout-group" })}
       data-reader-record-callout-group="grammar"
       data-reader-record-callout-group-count={calloutCount}
       data-reader-record-block-id={node.id}
@@ -709,12 +714,14 @@ function ReaderCalloutComponent({
       {...attributes}
       className={containerClass}
       role="note"
-      data-reader-record-node="callout"
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "callout",
+        unitId: data?.unitId,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
       data-reader-record-callout="true"
       data-callout-variant={variant}
       data-reader-record-block-id={node.id}
-      data-anchor-segment-id={data?.anchorSegmentId}
-      data-unit-id={data?.unitId}
       data-layer-id={data?.layerId}
       data-supplement-id={data?.supplementId}
       data-reader-record-grammar-item-id={grammarItemId}
@@ -874,13 +881,15 @@ function ReaderSentenceAnalysisComponent({
         attributes?.className ?? ""
       }`.trim()}
       role="note"
-      data-reader-record-node="sentence-analysis"
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "sentence-analysis",
+        unitId: data?.unitId,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
       data-reader-record-sentence-analysis-block="true"
       data-reader-record-sentence-analysis-element={READER_SENTENCE_ANALYSIS_TYPE}
       data-reader-record-sentence-analysis-label="长句拆析"
       data-reader-record-block-id={node.id}
-      data-anchor-segment-id={data?.anchorSegmentId}
-      data-unit-id={data?.unitId}
       data-layer-id={data?.layerId}
       data-analysis-id={data?.analysisId}
       data-reader-record-sentence-analysis-collapsed={expanded ? "false" : "true"}

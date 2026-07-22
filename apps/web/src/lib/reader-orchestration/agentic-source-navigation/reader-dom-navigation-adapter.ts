@@ -9,6 +9,15 @@
  * Find helpers stay private implementation details.
  */
 
+import {
+  READER_RECORD_ANCHOR_SEGMENT_ATTR,
+  READER_RECORD_ANCHOR_SEGMENT_SELECTOR,
+  READER_RECORD_NAVIGABLE_NODE_SELECTOR,
+  READER_RECORD_PLATE_DOCUMENT_SELECTOR,
+  READER_RECORD_UNIT_ID_ATTR,
+  READER_RECORD_UNIT_START_ATTR,
+} from "@/lib/reader-plate/reader-record-dom-contract";
+
 export type DomNavigationTargetMode = "anchor_segment" | "unit";
 
 export type DomNavigationCandidate = {
@@ -37,8 +46,6 @@ export type ReaderDomNavigationAdapter = {
   ): DomNavigationHit | null;
 };
 
-const PLATE_DOCUMENT_ROOT = ".reader-record-plate-document";
-
 /**
  * Find an anchor-segment element by exact attribute match inside the plate body.
  * Iterates `[data-anchor-segment-id]` nodes and compares attribute values —
@@ -48,9 +55,11 @@ function findAnchorSegmentInPlateDocument(
   root: ParentNode,
   targetId: string,
 ): HTMLElement | null {
-  const nodes = root.querySelectorAll<HTMLElement>("[data-anchor-segment-id]");
+  const nodes = root.querySelectorAll<HTMLElement>(
+    READER_RECORD_ANCHOR_SEGMENT_SELECTOR,
+  );
   for (const node of nodes) {
-    if (node.getAttribute("data-anchor-segment-id") === targetId) {
+    if (node.getAttribute(READER_RECORD_ANCHOR_SEGMENT_ATTR) === targetId) {
       return node;
     }
   }
@@ -60,27 +69,26 @@ function findAnchorSegmentInPlateDocument(
 /**
  * Find a unit scroll target inside the plate body.
  *
- * Semantics aligned with ReaderRecordNavigationRail (without importing it):
- * 1. paragraphs with `data-reader-record-node="paragraph"`
- * 2. `data-unit-id` exact attribute match
- * 3. prefer `data-reader-record-unit-start="true"`
- * 4. else first matching paragraph
+ * Source-agnostic — shared contract with ReaderRecordNavigationRail via
+ * reader-record-dom-contract: any navigable node (a paragraph today; a Markdown
+ * heading / source block later) carrying the unit id, preferring the unit-start
+ * node, else the first matching node.
  */
 function findUnitInPlateDocument(
   root: ParentNode,
   unitId: string,
 ): HTMLElement | null {
-  const paragraphs = root.querySelectorAll<HTMLElement>(
-    '[data-reader-record-node="paragraph"]',
+  const nodes = root.querySelectorAll<HTMLElement>(
+    READER_RECORD_NAVIGABLE_NODE_SELECTOR,
   );
   let fallback: HTMLElement | null = null;
-  for (const paragraph of paragraphs) {
-    if (paragraph.getAttribute("data-unit-id") !== unitId) continue;
-    if (paragraph.getAttribute("data-reader-record-unit-start") === "true") {
-      return paragraph;
+  for (const node of nodes) {
+    if (node.getAttribute(READER_RECORD_UNIT_ID_ATTR) !== unitId) continue;
+    if (node.getAttribute(READER_RECORD_UNIT_START_ATTR) === "true") {
+      return node;
     }
     if (fallback === null) {
-      fallback = paragraph;
+      fallback = node;
     }
   }
   return fallback;
@@ -133,7 +141,9 @@ export function createReaderDomNavigationAdapter(
       const doc = resolveDocumentRef(documentRef);
       if (!doc) return null;
 
-      const root = doc.querySelector<HTMLElement>(PLATE_DOCUMENT_ROOT);
+      const root = doc.querySelector<HTMLElement>(
+        READER_RECORD_PLATE_DOCUMENT_SELECTOR,
+      );
       if (!root) return null;
 
       for (const candidate of candidates) {

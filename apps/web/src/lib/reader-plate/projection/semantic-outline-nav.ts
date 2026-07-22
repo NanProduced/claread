@@ -4,6 +4,10 @@
  * Product gate (Phase 0 A) is stricter than T5.4b hasTrustedSemanticOutline:
  * ready|partial + non-empty nodes + source identity match + every start_unit_id
  * present in the deterministic unit universe.
+ *
+ * This module is the *semantic* source projection. The UI consumes the
+ * source-agnostic view model in `reader-outline-view.ts`, which wraps this
+ * projection (and the future Markdown source) behind a single contract.
  */
 
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
@@ -14,8 +18,6 @@ import {
   type ReaderSemanticOutlineProjectionDto,
 } from "@/lib/reader-plate/projection/semantic-outline";
 import { buildReaderRecordSourceIdentityKey } from "@/lib/reader-plate/projection/reader-record-navigation";
-
-export type ReaderOutlineSurface = "deterministic" | "semantic";
 
 export interface ReaderSemanticOutlineNavItem {
   nodeId: string;
@@ -215,34 +217,4 @@ function toNavItem(
     orderIndex: node.order_index,
     fallbackIndex,
   };
-}
-
-/**
- * Pick the most specific outline node covering `currentUnitId`.
- * Among covering nodes: max depth, then max orderIndex.
- */
-export function selectMostSpecificCoveringNode(
-  panelItems: ReaderSemanticOutlineNavItem[],
-  unitOrderById: Map<string, number>,
-  currentUnitId: string | null,
-): string | null {
-  if (currentUnitId === null) return null;
-  const currentOrder = unitOrderById.get(currentUnitId);
-  if (currentOrder === undefined) return null;
-
-  let best: ReaderSemanticOutlineNavItem | null = null;
-  for (const item of panelItems) {
-    const startO = unitOrderById.get(item.startUnitId);
-    const endO = unitOrderById.get(item.endUnitId);
-    if (startO === undefined || endO === undefined) continue;
-    if (currentOrder < startO || currentOrder > endO) continue;
-    if (
-      best === null ||
-      item.depth > best.depth ||
-      (item.depth === best.depth && item.orderIndex > best.orderIndex)
-    ) {
-      best = item;
-    }
-  }
-  return best?.nodeId ?? null;
 }

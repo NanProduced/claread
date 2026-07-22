@@ -4,32 +4,30 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 
 import { cn } from "@/lib/cn";
 import {
-  projectReaderRecordNavigation,
-  type ReaderRecordNavigationItem,
-  type ReaderRecordNavigationMode,
-} from "@/lib/reader-plate/projection/reader-record-navigation";
-import {
-  projectReaderSemanticOutlineNav,
+  buildOutlineScopeKey,
+  projectReaderOutlineView,
   selectMostSpecificCoveringNode,
-  type ReaderOutlineSurface,
-  type ReaderSemanticOutlineNavItem,
-} from "@/lib/reader-plate/projection/semantic-outline-nav";
+  type OutlineItem,
+} from "@/lib/reader-plate/projection/reader-outline-view";
 import type { ReaderRecordPlateDocument } from "@/lib/reader-plate/projection/reader-record-plate-document";
 import type { ReaderPlateSnapshotDto } from "@/types/api/reader-plate";
+import {
+  isReaderRecordNavigableNode,
+  READER_RECORD_ANCHOR_SEGMENT_ATTR as ANCHOR_SEGMENT_ATTR,
+  READER_RECORD_NAVIGABLE_NODE_SELECTOR as NAVIGABLE_NODE_SELECTOR,
+  READER_RECORD_PLATE_DOCUMENT_SELECTOR as PLATE_DOCUMENT_SELECTOR,
+  READER_RECORD_UNIT_ID_ATTR as UNIT_ID_ATTR,
+  READER_RECORD_UNIT_START_ATTR as UNIT_START_ATTR,
+} from "@/lib/reader-plate/reader-record-dom-contract";
 
 const TOPBAR_SAFE_HEIGHT = 56; // px, sticky topbar + small gap
 const SCROLL_LOCK_MS = 700;
 const ACTIVE_SAFE_OFFSET = 8;
 
-const PLATE_DOCUMENT_SELECTOR = ".reader-record-plate-document";
-
-/** Row ref map keys — never bare unitId/nodeId (collision when node_id === unitId). */
-function detRowRefKey(unitId: string): string {
-  return `deterministic:${unitId}`;
-}
-function semRowRefKey(nodeId: string): string {
-  return `semantic:${nodeId}`;
-}
+// The DOM navigation contract (attribute names, selectors, predicates) lives in
+// reader-record-dom-contract and is imported above — shared verbatim with the
+// Plate node renderer and the agentic navigation adapter. The rail reads nodes
+// through it and never branches on the node *value*.
 
 function getPlateDocumentRoot(): HTMLElement | null {
   if (typeof document === "undefined") return null;
@@ -52,14 +50,12 @@ function findUnitTarget(
   const body = plateRoot;
   if (!body) return null;
 
-  const paragraphs = body.querySelectorAll<HTMLElement>(
-    '[data-reader-record-node="paragraph"]',
-  );
+  const nodes = body.querySelectorAll<HTMLElement>(NAVIGABLE_NODE_SELECTOR);
 
   let fallback: HTMLElement | null = null;
-  for (const paragraph of paragraphs) {
-    if (paragraph.getAttribute("data-unit-id") !== unitId) continue;
-    if (paragraph.getAttribute("data-reader-record-unit-start") === "true") {
+  for (const paragraph of nodes) {
+    if (paragraph.getAttribute(UNIT_ID_ATTR) !== unitId) continue;
+    if (paragraph.getAttribute(UNIT_START_ATTR) === "true") {
       return paragraph;
     }
     if (fallback === null) {
@@ -71,38 +67,36 @@ function findUnitTarget(
 }
 
 /**
- * Prefer start_anchor_segment_id when it matches start_unit_id on the DOM;
- * otherwise unit-start paragraph.
+ * Prefer the item's start anchor segment when it matches the start unit on the
+ * DOM; otherwise the unit-start paragraph.
  */
 function findOutlineNodeTarget(
-  item: ReaderSemanticOutlineNavItem,
+  item: OutlineItem,
   plateRoot: HTMLElement | null = getPlateDocumentRoot(),
 ): HTMLElement | null {
   const body = plateRoot;
   if (!body) return null;
 
-  if (item.startAnchorSegmentId) {
-    const paragraphs = body.querySelectorAll<HTMLElement>(
-      '[data-reader-record-node="paragraph"]',
-    );
-    for (const paragraph of paragraphs) {
+  if (item.target.anchorSegmentId) {
+    const nodes = body.querySelectorAll<HTMLElement>(NAVIGABLE_NODE_SELECTOR);
+    for (const paragraph of nodes) {
       if (
-        paragraph.getAttribute("data-anchor-segment-id") ===
-          item.startAnchorSegmentId &&
-        paragraph.getAttribute("data-unit-id") === item.startUnitId
+        paragraph.getAttribute(ANCHOR_SEGMENT_ATTR) ===
+          item.target.anchorSegmentId &&
+        paragraph.getAttribute(UNIT_ID_ATTR) === item.target.unitId
       ) {
         return paragraph;
       }
     }
   }
 
-  return findUnitTarget(item.startUnitId, body);
+  return findUnitTarget(item.target.unitId, body);
 }
 
 /**
- * Cache entry is valid only when it is still a live paragraph for `unitId`
- * under the current plate document root. Detached or remounted nodes (common
- * after Plate setValue) must not drive scroll spy or click positioning.
+ * Cache entry is valid only when it is still a live paragraph for the item's
+ * start unit under the current plate document root. Detached or remounted nodes
+ * (common after Plate setValue) must not drive scroll spy or click positioning.
  */
 function isValidCachedUnitTarget(
   unitId: string,
@@ -111,8 +105,8 @@ function isValidCachedUnitTarget(
 ): boolean {
   if (!el.isConnected) return false;
   if (!plateRoot || !plateRoot.contains(el)) return false;
-  if (el.getAttribute("data-reader-record-node") !== "paragraph") return false;
-  if (el.getAttribute("data-unit-id") !== unitId) return false;
+  if (!isReaderRecordNavigableNode(el)) return false;
+  if (el.getAttribute(UNIT_ID_ATTR) !== unitId) return false;
   return true;
 }
 
@@ -124,35 +118,37 @@ function resolveValidatedUnitTarget(
   unitId: string,
   map: Map<string, HTMLElement>,
   plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+  namespace = "",
 ): HTMLElement | null {
-  const cached = map.get(unitId);
+  const cacheKey = `${namespace}|u:${unitId}`;
+  const cached = map.get(cacheKey);
   if (cached) {
     if (isValidCachedUnitTarget(unitId, cached, plateRoot)) {
       return cached;
     }
-    map.delete(unitId);
+    map.delete(cacheKey);
   }
 
   const resolved = findUnitTarget(unitId, plateRoot);
   if (resolved && isValidCachedUnitTarget(unitId, resolved, plateRoot)) {
-    map.set(unitId, resolved);
+    map.set(cacheKey, resolved);
     return resolved;
   }
   return null;
 }
 
 function isValidCachedOutlineTarget(
-  item: ReaderSemanticOutlineNavItem,
+  item: OutlineItem,
   el: HTMLElement,
   plateRoot: HTMLElement | null,
 ): boolean {
   if (!el.isConnected) return false;
   if (!plateRoot || !plateRoot.contains(el)) return false;
-  if (el.getAttribute("data-reader-record-node") !== "paragraph") return false;
-  if (el.getAttribute("data-unit-id") !== item.startUnitId) return false;
-  if (item.startAnchorSegmentId) {
+  if (!isReaderRecordNavigableNode(el)) return false;
+  if (el.getAttribute(UNIT_ID_ATTR) !== item.target.unitId) return false;
+  if (item.target.anchorSegmentId) {
     if (
-      el.getAttribute("data-anchor-segment-id") !== item.startAnchorSegmentId
+      el.getAttribute(ANCHOR_SEGMENT_ATTR) !== item.target.anchorSegmentId
     ) {
       return false;
     }
@@ -161,11 +157,12 @@ function isValidCachedOutlineTarget(
 }
 
 function resolveValidatedOutlineTarget(
-  item: ReaderSemanticOutlineNavItem,
+  item: OutlineItem,
   map: Map<string, HTMLElement>,
   plateRoot: HTMLElement | null = getPlateDocumentRoot(),
+  namespace = "",
 ): HTMLElement | null {
-  const cacheKey = `outline:${item.nodeId}`;
+  const cacheKey = `${namespace}|o:${item.key}`;
   const cached = map.get(cacheKey);
   if (cached) {
     if (isValidCachedOutlineTarget(item, cached, plateRoot)) {
@@ -183,66 +180,28 @@ function resolveValidatedOutlineTarget(
 }
 
 /**
- * Active unit for scroll spy.
- * - L0: last unit above safeTop, else first below, else first item.
- * - L1: only last heading above safeTop; lead zone (all headings below) → null.
- *   Body coverage keeps the previous heading active because body is not a candidate.
+ * Active outline item for scroll spy:
+ * - lead zone: every depth=1 root start is still below safeTop → null
+ * - else: unit under safeTop, then most specific covering item
  */
-function computeActiveUnitId(
-  items: ReaderRecordNavigationItem[],
-  targetMap: Map<string, HTMLElement>,
-  safeTop: number,
-  mode: ReaderRecordNavigationMode,
-): string | null {
-  const plateRoot = getPlateDocumentRoot();
-  let lastAbove: string | null = null;
-  let firstBelow: string | null = null;
-
-  for (const item of items) {
-    const target = resolveValidatedUnitTarget(
-      item.unitId,
-      targetMap,
-      plateRoot,
-    );
-    if (!target) continue;
-
-    const top = target.getBoundingClientRect().top;
-    if (top <= safeTop) {
-      lastAbove = item.unitId;
-    } else if (firstBelow === null) {
-      firstBelow = item.unitId;
-      break;
-    }
-  }
-
-  if (mode === "L1") {
-    return lastAbove;
-  }
-
-  return lastAbove ?? firstBelow ?? items[0]?.unitId ?? null;
-}
-
-/**
- * L2 active node:
- * - lead: every depth=1 root start is still below safeTop → null
- * - else: unit under safeTop, then most specific covering node
- */
-function computeActiveOutlineNodeId(
-  panelItems: ReaderSemanticOutlineNavItem[],
-  tickItems: ReaderSemanticOutlineNavItem[],
+function computeActiveOutlineItemId(
+  panelItems: OutlineItem[],
+  tickItems: OutlineItem[],
   orderedUnitIds: string[],
   unitOrderById: Map<string, number>,
   targetMap: Map<string, HTMLElement>,
   safeTop: number,
+  namespace = "",
 ): string | null {
   const plateRoot = getPlateDocumentRoot();
 
   let anyRootAbove = false;
   for (const root of tickItems) {
     const target = resolveValidatedUnitTarget(
-      root.startUnitId,
+      root.target.unitId,
       targetMap,
       plateRoot,
+      namespace,
     );
     if (!target) continue;
     if (target.getBoundingClientRect().top <= safeTop) {
@@ -256,7 +215,12 @@ function computeActiveOutlineNodeId(
 
   let currentUnitId: string | null = null;
   for (const unitId of orderedUnitIds) {
-    const target = resolveValidatedUnitTarget(unitId, targetMap, plateRoot);
+    const target = resolveValidatedUnitTarget(
+      unitId,
+      targetMap,
+      plateRoot,
+      namespace,
+    );
     if (!target) continue;
     if (target.getBoundingClientRect().top <= safeTop) {
       currentUnitId = unitId;
@@ -265,31 +229,15 @@ function computeActiveOutlineNodeId(
     }
   }
 
+  // A group parent has no independent landing point — never the active section.
   return selectMostSpecificCoveringNode(
-    panelItems,
+    panelItems.filter((item) => item.role === "section"),
     unitOrderById,
     currentUnitId,
   );
 }
 
-function buildNavigationTriggerLabel(
-  mode: ReaderRecordNavigationMode,
-  panelOpen: boolean,
-  activeIndex: number | null,
-): string {
-  if (mode === "L1") {
-    const action = panelOpen ? "关闭章节导航" : "打开章节导航";
-    if (activeIndex === null) {
-      return action;
-    }
-    return `${action}，当前第 ${activeIndex} 项`;
-  }
-
-  const action = panelOpen ? "关闭段落导航" : "打开段落导航";
-  return `${action}，当前第 ${activeIndex ?? 1} 段`;
-}
-
-function buildSemanticTriggerLabel(
+function buildOutlineTriggerLabel(
   panelOpen: boolean,
   activeIndex: number | null,
 ): string {
@@ -338,9 +286,7 @@ function getScrollContainer(): Window | HTMLElement | null {
     return null;
   }
 
-  const body = document.querySelector<HTMLElement>(
-    ".reader-record-plate-document",
-  );
+  const body = document.querySelector<HTMLElement>(PLATE_DOCUMENT_SELECTOR);
   if (!body) return window;
 
   let el: HTMLElement | null = body.parentElement;
@@ -355,19 +301,33 @@ function getScrollContainer(): Window | HTMLElement | null {
   return window;
 }
 
+function isDescendantOf(
+  items: OutlineItem[],
+  nodeId: string,
+  ancestorId: string,
+): boolean {
+  let current = items.find((n) => n.key === nodeId);
+  const seen = new Set<string>();
+  while (current?.parentKey) {
+    if (current.parentKey === ancestorId) return true;
+    if (seen.has(current.parentKey)) return false;
+    seen.add(current.parentKey);
+    current = items.find((n) => n.key === current!.parentKey);
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Visual ticks — purely decorative, aria-hidden.
 // ---------------------------------------------------------------------------
 
 interface VisualTicksProps {
-  surface: ReaderOutlineSurface;
   tickKeys: string[];
   activeKey: string | null;
   onTickMouseEnter: () => void;
 }
 
 function VisualTicks({
-  surface,
   tickKeys,
   activeKey,
   onTickMouseEnter,
@@ -380,12 +340,10 @@ function VisualTicks({
     >
       {tickKeys.map((key) => (
         <span
-          key={`${surface}:${key}`}
+          key={key}
           className="group relative flex min-h-[7px] w-10 flex-1 max-h-4 shrink items-center justify-end rounded-sm px-1"
           data-navigation-tick-key={key}
-          {...(surface === "deterministic"
-            ? { "data-navigation-unit-id": key }
-            : { "data-outline-node-id": key })}
+          data-outline-node-id={key}
           onMouseEnter={onTickMouseEnter}
         >
           <span
@@ -403,124 +361,48 @@ function VisualTicks({
 }
 
 // ---------------------------------------------------------------------------
-// Mode switch (not a menu)
-// ---------------------------------------------------------------------------
-
-interface OutlineModeSwitchProps {
-  surface: ReaderOutlineSurface;
-  onChange: (surface: ReaderOutlineSurface) => void;
-}
-
-function OutlineModeSwitch({ surface, onChange }: OutlineModeSwitchProps) {
-  return (
-    <div
-      role="group"
-      className="flex items-center gap-1 border-b border-hairline/40 px-2 py-1.5"
-      data-testid="reader-record-outline-mode-switch"
-      aria-label="导航方式"
-    >
-      <button
-        type="button"
-        data-testid="reader-record-outline-mode-deterministic"
-        aria-pressed={surface === "deterministic"}
-        className={cn(
-          "flex-1 rounded-md px-2 py-1 text-[10px] leading-snug transition-colors",
-          surface === "deterministic"
-            ? "bg-[var(--app-control-current)] font-medium text-ink"
-            : "text-ink/55 hover:bg-ink/[0.035] hover:text-ink",
-        )}
-        onClick={() => onChange("deterministic")}
-      >
-        定位
-      </button>
-      <button
-        type="button"
-        data-testid="reader-record-outline-mode-semantic"
-        aria-pressed={surface === "semantic"}
-        className={cn(
-          "flex-1 rounded-md px-2 py-1 text-[10px] leading-snug transition-colors",
-          surface === "semantic"
-            ? "bg-[var(--app-control-current)] font-medium text-ink"
-            : "text-ink/55 hover:bg-ink/[0.035] hover:text-ink",
-        )}
-        onClick={() => onChange("semantic")}
-      >
-        大纲
-      </button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Navigation panel
 // ---------------------------------------------------------------------------
 
 interface NavigationPanelProps {
   panelId: string;
-  surface: ReaderOutlineSurface;
-  hasL2: boolean;
   isPartial: boolean;
-  detMode: ReaderRecordNavigationMode;
-  detItems: ReaderRecordNavigationItem[];
-  semItems: ReaderSemanticOutlineNavItem[];
+  items: OutlineItem[];
   activeKey: string | null;
   focusedKey: string | null;
   panelOpen: boolean;
-  className?: string;
   getRowRef: (key: string) => HTMLButtonElement | null;
-  onDetItemClick: (unitId: string) => void;
-  onSemItemClick: (nodeId: string) => void;
-  onDetItemKeyDown: (
+  onItemClick: (key: string) => void;
+  onItemKeyDown: (
     event: React.KeyboardEvent<HTMLButtonElement>,
-    unitId: string,
+    key: string,
   ) => void;
-  onSemItemKeyDown: (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    nodeId: string,
-  ) => void;
-  onSurfaceChange: (surface: ReaderOutlineSurface) => void;
   onMouseEnter: () => void;
   onMouseLeave: (event: React.MouseEvent<HTMLElement>) => void;
   registerRowRef: (key: string, el: HTMLButtonElement | null) => void;
-  // T5.6c: per-row section-translation state + handler. Forwarded to
-  // SemanticPanelRow only (L0/L1 rows are unaffected).
-  sectionTranslationStates: Map<string, SectionTranslationRowState>;
-  onResolveSection: (item: ReaderSemanticOutlineNavItem) => void;
 }
 
 function NavigationPanel({
   panelId,
-  surface,
-  hasL2,
   isPartial,
-  detMode,
-  detItems,
-  semItems,
+  items,
   activeKey,
   focusedKey,
   panelOpen,
-  className,
   getRowRef,
-  onDetItemClick,
-  onSemItemClick,
-  onDetItemKeyDown,
-  onSemItemKeyDown,
-  onSurfaceChange,
+  onItemClick,
+  onItemKeyDown,
   onMouseEnter,
   onMouseLeave,
   registerRowRef,
-  sectionTranslationStates,
-  onResolveSection,
 }: NavigationPanelProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!panelOpen) return;
-    const toRefKey = (id: string) =>
-      surface === "semantic" ? semRowRefKey(id) : detRowRefKey(id);
     const row =
-      (focusedKey ? getRowRef(toRefKey(focusedKey)) : null) ??
-      (activeKey ? getRowRef(toRefKey(activeKey)) : null);
+      (focusedKey ? getRowRef(focusedKey) : null) ??
+      (activeKey ? getRowRef(activeKey) : null);
     const scrollArea = scrollAreaRef.current;
     if (
       row &&
@@ -530,22 +412,20 @@ function NavigationPanel({
     ) {
       row.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-  }, [panelOpen, activeKey, focusedKey, getRowRef, surface]);
+  }, [panelOpen, activeKey, focusedKey, getRowRef]);
 
   return (
     <div
       id={panelId}
       data-testid="reader-record-navigation-panel"
       data-reader-record-navigation-panel="true"
-      data-outline-surface={surface}
       className={cn(
         "reader-record-navigation-panel motion-reduce:transition-none",
         "transition-[transform,opacity,visibility] duration-200 ease-[var(--cl-ease-standard)]",
-        "absolute right-[calc(100%+8px)] top-1/2 z-10 max-h-[min(72vh,42rem)] origin-right -translate-y-1/2",
+        "absolute right-0 top-1/2 z-20 max-h-[min(72vh,42rem)] origin-right -translate-y-1/2",
         panelOpen
-          ? "visible translate-x-0 opacity-100"
-          : "invisible translate-x-2 scale-[0.98] opacity-0 pointer-events-none",
-        className,
+          ? "visible scale-100 opacity-100"
+          : "invisible scale-95 opacity-0 pointer-events-none",
       )}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -558,10 +438,7 @@ function NavigationPanel({
           "w-64",
         )}
       >
-        {hasL2 ? (
-          <OutlineModeSwitch surface={surface} onChange={onSurfaceChange} />
-        ) : null}
-        {surface === "semantic" && isPartial ? (
+        {isPartial ? (
           <div
             className="border-b border-hairline/30 px-2.5 py-1 text-[9px] leading-snug text-muted-foreground/80"
             data-testid="reader-record-outline-partial-hint"
@@ -573,48 +450,19 @@ function NavigationPanel({
           ref={scrollAreaRef}
           className="max-h-[min(72vh,42rem)] overflow-y-auto py-2"
         >
-          {surface === "deterministic" ? (
-            <ol className="flex flex-col">
-              {detItems.map((item) => (
-                <DeterministicPanelRow
-                  key={item.unitId}
-                  item={item}
-                  mode={detMode}
-                  active={item.unitId === activeKey}
-                  tabIndex={
-                    panelOpen && item.unitId === focusedKey ? 0 : -1
-                  }
-                  onClick={() => onDetItemClick(item.unitId)}
-                  onKeyDown={(event) => onDetItemKeyDown(event, item.unitId)}
-                  registerRef={(el) =>
-                    registerRowRef(detRowRefKey(item.unitId), el)
-                  }
-                />
-              ))}
-            </ol>
-          ) : (
-            <ol className="flex flex-col">
-              {semItems.map((item) => (
-                <SemanticPanelRow
-                  key={item.nodeId}
-                  item={item}
-                  active={item.nodeId === activeKey}
-                  tabIndex={
-                    panelOpen && item.nodeId === focusedKey ? 0 : -1
-                  }
-                  onClick={() => onSemItemClick(item.nodeId)}
-                  onKeyDown={(event) => onSemItemKeyDown(event, item.nodeId)}
-                  registerRef={(el) =>
-                    registerRowRef(semRowRefKey(item.nodeId), el)
-                  }
-                  sectionTranslationState={
-                    sectionTranslationStates.get(item.nodeId) ?? null
-                  }
-                  onResolve={() => onResolveSection(item)}
-                />
-              ))}
-            </ol>
-          )}
+          <ol className="flex flex-col">
+            {items.map((item) => (
+              <OutlineRow
+                key={item.key}
+                item={item}
+                active={item.key === activeKey}
+                tabIndex={panelOpen && item.key === focusedKey ? 0 : -1}
+                onClick={() => onItemClick(item.key)}
+                onKeyDown={(event) => onItemKeyDown(event, item.key)}
+                registerRef={(el) => registerRowRef(item.key, el)}
+              />
+            ))}
+          </ol>
         </div>
       </div>
     </div>
@@ -632,39 +480,6 @@ export interface ReaderRecordNavigationRailProps {
    * visibility and viewport pinning inside ReaderRecordPlateSurface.
    */
   layout?: "viewport" | "canvas";
-  /**
-   * T5.6c: invoked after a successful explicit-section translation command
-   * so the page can fetch a fresh snapshot and the body's translation layer
-   * refreshes naturally. Optional — when omitted the rail still submits the
-   * command but cannot refresh the body.
-   */
-  onRequestSnapshotReload?: () => void | Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// T5.6c — explicit-section translation per-row state
-//
-// Only one in-flight request per row. Succeeded → trigger snapshot reload
-// (body translation layer refreshes naturally) and clear row state. Other
-// outcomes (retry_later / already_covered_or_inflight / budget_exhausted /
-// rejected / superseded) surface as a concise inline accessible message
-// that stays until the user retries or the snapshot identity changes.
-// ---------------------------------------------------------------------------
-
-type SectionTranslationRowState =
-  | { kind: "loading" }
-  | { kind: "feedback"; outcome: string; message: string };
-
-const SECTION_TRANSLATION_FEEDBACK: Record<string, string> = {
-  retry_later: "稍后重试",
-  already_covered_or_inflight: "已在解析中",
-  budget_exhausted: "解析额度已用完",
-  rejected: "无法解析此段",
-  superseded: "已过期，请刷新",
-};
-
-function feedbackMessageForOutcome(outcome: string): string {
-  return SECTION_TRANSLATION_FEEDBACK[outcome] ?? "无法解析此段";
 }
 
 export function ReaderRecordNavigationRail({
@@ -673,150 +488,29 @@ export function ReaderRecordNavigationRail({
   askOpen = false,
   className,
   layout = "viewport",
-  onRequestSnapshotReload,
 }: ReaderRecordNavigationRailProps) {
   const panelDomId = useId();
   const panelId = `reader-record-nav-panel-${panelDomId.replace(/:/g, "")}`;
 
-  const detProjection = useMemo(
-    () => projectReaderRecordNavigation(snapshot, plateDocument),
+  // The single, source-agnostic outline the UI renders. When unavailable the
+  // rail renders nothing (no unit-list fallback, no placeholder).
+  const viewModel = useMemo(
+    () => projectReaderOutlineView(snapshot, plateDocument),
     [snapshot, plateDocument],
   );
-  const semProjection = useMemo(
-    () => projectReaderSemanticOutlineNav(snapshot, plateDocument),
-    [snapshot, plateDocument],
-  );
 
-  const { mode: detMode, items: detItems, sourceIdentityKey } = detProjection;
-  const hasL2 = semProjection.available;
-  const semItems = semProjection.panelItems;
-  const semTicks = semProjection.tickItems;
+  const available = viewModel.available;
+  const isPartial = viewModel.isPartial;
+  const items = viewModel.panelItems;
+  const ticks = viewModel.tickItems;
+  const orderedUnitIds = viewModel.orderedUnitIds;
+  const unitOrderById = viewModel.unitOrderById;
+  const outlineRevision = viewModel.identity.revision;
+  const sourceKind = viewModel.identity.sourceKind;
+  // Full isolation identity (incl. sourceKind) — see buildOutlineScopeKey.
+  const scopeKey = buildOutlineScopeKey(viewModel.identity);
 
-  // T5.6c: per-row section-translation state. Keyed by nodeId so each row
-  // tracks its own loading / feedback lifecycle. Cleared on snapshot identity
-  // or outline_revision change so stale feedback never persists across
-  // projections.
-  const [sectionTranslationStates, setSectionTranslationStates] = useState<
-    Map<string, SectionTranslationRowState>
-  >(() => new Map());
-  const sectionTranslationStatesRef = useRef(sectionTranslationStates);
-  useEffect(() => {
-    sectionTranslationStatesRef.current = sectionTranslationStates;
-  }, [sectionTranslationStates]);
-  const sectionTranslationInFlightRef = useRef<Set<string>>(new Set());
-
-  // Clear all row state when the snapshot identity or outline revision
-  // changes — the projection is now a different tree.
-  useEffect(() => {
-    setSectionTranslationStates(new Map());
-    sectionTranslationInFlightRef.current = new Set();
-  }, [sourceIdentityKey, semProjection.outlineRevision]);
-
-  const handleResolveSection = useCallback(
-    async (item: ReaderSemanticOutlineNavItem) => {
-      // Per-row re-entry guard: if a request is already in flight for this
-      // node, ignore the additional click. This complements the loading-state
-      // visual disabling and protects against double-submit race conditions.
-      if (sectionTranslationInFlightRef.current.has(item.nodeId)) {
-        return;
-      }
-      sectionTranslationInFlightRef.current.add(item.nodeId);
-      setSectionTranslationStates((prev) => {
-        const next = new Map(prev);
-        next.set(item.nodeId, { kind: "loading" });
-        return next;
-      });
-
-      const recordId = snapshot.record_id;
-      const payload = {
-        startUnitId: item.startUnitId,
-        endUnitId: item.endUnitId,
-        startAnchorSegmentId: item.startAnchorSegmentId,
-        endAnchorSegmentId: item.endAnchorSegmentId,
-        nodeId: item.nodeId,
-        outlineRevision: semProjection.outlineRevision,
-      };
-
-      try {
-        const response = await fetch(
-          `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/section-translation`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(payload),
-          },
-        );
-        const data = (await response.json().catch(() => null)) as
-          | {
-              ok: true;
-              outcome: string;
-              job_id: string | null;
-              detail: string | null;
-            }
-          | { ok: false; status?: number; code?: string; message?: string }
-          | null;
-
-        if (data && data.ok) {
-          if (data.outcome === "succeeded") {
-            // Clear row state; the snapshot reload will refresh the body's
-            // translation layer naturally.
-            setSectionTranslationStates((prev) => {
-              const next = new Map(prev);
-              next.delete(item.nodeId);
-              return next;
-            });
-            // Trigger the page's snapshot reload. Void-wrap so a rejected
-            // promise does not surface as an unhandled rejection; the user
-            // can retry the row.
-            void Promise.resolve(onRequestSnapshotReload?.()).catch(() => {
-              /* noop — reload failure is surfaced via the page's own error
-                 toast; the row stays clickable for retry. */
-            });
-          } else {
-            setSectionTranslationStates((prev) => {
-              const next = new Map(prev);
-              next.set(item.nodeId, {
-                kind: "feedback",
-                outcome: data.outcome,
-                message: feedbackMessageForOutcome(data.outcome),
-              });
-              return next;
-            });
-          }
-        } else {
-          // BFF error — surface a concise inline message. The BFF never
-          // leaks upstream exception messages; the generic fallback is safe.
-          setSectionTranslationStates((prev) => {
-            const next = new Map(prev);
-            next.set(item.nodeId, {
-              kind: "feedback",
-              outcome: "rejected",
-              message: "无法解析此段",
-            });
-            return next;
-          });
-        }
-      } catch {
-        setSectionTranslationStates((prev) => {
-          const next = new Map(prev);
-          next.set(item.nodeId, {
-            kind: "feedback",
-            outcome: "rejected",
-            message: "网络异常，请稍后重试",
-          });
-          return next;
-        });
-      } finally {
-        sectionTranslationInFlightRef.current.delete(item.nodeId);
-      }
-    },
-    [snapshot.record_id, semProjection.outlineRevision, onRequestSnapshotReload],
-  );
-
-  const [outlineSurface, setOutlineSurface] =
-    useState<ReaderOutlineSurface>("deterministic");
-  const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
 
@@ -827,37 +521,29 @@ export function ReaderRecordNavigationRail({
   const scrollLockTimerRef = useRef<number | null>(null);
   const lockedKeyRef = useRef<string | null>(null);
   const targetMapRef = useRef<Map<string, HTMLElement>>(new Map());
-  const sourceIdentityKeyRef = useRef(sourceIdentityKey);
-  const outlineRevisionRef = useRef(semProjection.outlineRevision);
-  const outlineSurfaceRef = useRef(outlineSurface);
+  const outlineScopeKeyRef = useRef(scopeKey);
+  const outlineRevisionRef = useRef(outlineRevision);
 
-  useEffect(() => {
-    outlineSurfaceRef.current = outlineSurface;
-  }, [outlineSurface]);
-
-  // No L2 → force deterministic surface.
-  useEffect(() => {
-    if (!hasL2 && outlineSurface === "semantic") {
-      setOutlineSurface("deterministic");
-      setActiveNodeId(null);
-    }
-  }, [hasL2, outlineSurface]);
-
-  // Invalidate cache when det items or semantic tree identity changes.
+  // The DOM target cache is scoped to the full outline identity (sourceKind +
+  // sourceIdentityKey): it is dropped whenever that identity or the rendered
+  // tree changes, so a semantic↔markdown switch can never reuse stale targets.
   useEffect(() => {
     targetMapRef.current = new Map();
-  }, [detItems, semProjection.outlineRevision, semItems.length]);
+  }, [items, outlineRevision, scopeKey]);
 
-  // Source identity reset: base_id:generation change clears all rail state.
+  // Full outline-identity reset: a change in sourceKind OR base_id:generation
+  // (e.g. semantic → Markdown that happen to share a base/generation) clears all
+  // rail state — active/focus/scroll-lock/target-cache — and closes the stale
+  // panel. Same-source revision updates are handled separately below and keep
+  // the panel open.
   useEffect(() => {
-    if (sourceIdentityKeyRef.current === sourceIdentityKey) {
+    if (outlineScopeKeyRef.current === scopeKey) {
       return;
     }
-    sourceIdentityKeyRef.current = sourceIdentityKey;
-    setOutlineSurface("deterministic");
-    setActiveUnitId(null);
-    setActiveNodeId(null);
+    outlineScopeKeyRef.current = scopeKey;
+    setActiveKey(null);
     setFocusedKey(null);
+    setPanelOpen(false);
     lockedKeyRef.current = null;
     if (scrollLockTimerRef.current !== null) {
       window.clearTimeout(scrollLockTimerRef.current);
@@ -870,30 +556,56 @@ export function ReaderRecordNavigationRail({
       closeTimerRef.current = null;
     }
     targetMapRef.current = new Map();
-  }, [sourceIdentityKey]);
+  }, [scopeKey]);
 
-  // Same-source outline_revision refresh: drop missing active/focus; keep panel.
+  // Same-source revision refresh: keep only still-navigable active/focus and the
+  // panel open. If a key that was a section became a group (or vanished), drop it
+  // from active/focus, release its scroll lock so scroll-spy resumes, and (while
+  // open) move focus to the first remaining section.
   useEffect(() => {
-    if (outlineRevisionRef.current === semProjection.outlineRevision) {
+    if (outlineRevisionRef.current === outlineRevision) {
       return;
     }
-    outlineRevisionRef.current = semProjection.outlineRevision;
-    if (!semProjection.available) {
-      setActiveNodeId(null);
-      if (outlineSurfaceRef.current === "semantic") {
-        setFocusedKey(null);
+    outlineRevisionRef.current = outlineRevision;
+
+    const sectionKeys = new Set(
+      items.filter((n) => n.role === "section").map((n) => n.key),
+    );
+    const firstSection =
+      items.find((n) => n.role === "section")?.key ?? null;
+
+    if (!available) {
+      setActiveKey(null);
+      setFocusedKey(null);
+      lockedKeyRef.current = null;
+      if (scrollLockTimerRef.current !== null) {
+        window.clearTimeout(scrollLockTimerRef.current);
+        scrollLockTimerRef.current = null;
       }
+      targetMapRef.current = new Map();
       return;
     }
-    const ids = new Set(semProjection.panelItems.map((n) => n.nodeId));
-    setActiveNodeId((prev) => (prev && ids.has(prev) ? prev : null));
+
+    setActiveKey((prev) => (prev && sectionKeys.has(prev) ? prev : null));
     setFocusedKey((prev) => {
-      if (outlineSurfaceRef.current !== "semantic") return prev;
-      if (prev && ids.has(prev)) return prev;
-      return null;
+      if (prev && sectionKeys.has(prev)) return prev;
+      // Missing or now a group: jump to the first section when open, else null
+      // (the panel-open effect assigns a section on the next open).
+      return panelOpen ? firstSection : null;
     });
+
+    // Release a scroll lock stuck on a key that is no longer a section so the
+    // scroll-spy can resume (it re-subscribes on `items` change regardless).
+    if (lockedKeyRef.current && !sectionKeys.has(lockedKeyRef.current)) {
+      lockedKeyRef.current = null;
+      if (scrollLockTimerRef.current !== null) {
+        window.clearTimeout(scrollLockTimerRef.current);
+        scrollLockTimerRef.current = null;
+      }
+    }
+
     targetMapRef.current = new Map();
-  }, [semProjection.outlineRevision, semProjection.available, semProjection.panelItems]);
+  }, [outlineRevision, available, items, panelOpen]);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
@@ -934,14 +646,12 @@ export function ReaderRecordNavigationRail({
     }, SCROLL_LOCK_MS);
   }, []);
 
-  // --- Scroll-based active (deterministic or semantic) -------------------
+  // --- Scroll-based active item -------------------------------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (outlineSurface === "deterministic" && detItems.length === 0) return;
-    if (outlineSurface === "semantic" && semItems.length === 0) return;
+    if (!available || items.length === 0) return;
 
-    const fenceSourceIdentityKey = sourceIdentityKey;
-    const fenceSurface = outlineSurface;
+    const fenceScopeKey = scopeKey;
     const scrollContainer = getScrollContainer() ?? window;
     let rafId: number | null = null;
     let pending = false;
@@ -951,35 +661,22 @@ export function ReaderRecordNavigationRail({
       pending = true;
       rafId = window.requestAnimationFrame(() => {
         pending = false;
-        if (sourceIdentityKeyRef.current !== fenceSourceIdentityKey) {
-          return;
-        }
-        if (outlineSurfaceRef.current !== fenceSurface) {
+        if (outlineScopeKeyRef.current !== fenceScopeKey) {
           return;
         }
         if (lockedKeyRef.current) return;
 
         const safeTop = TOPBAR_SAFE_HEIGHT + ACTIVE_SAFE_OFFSET;
-
-        if (fenceSurface === "semantic") {
-          const activeId = computeActiveOutlineNodeId(
-            semItems,
-            semTicks,
-            semProjection.orderedUnitIds,
-            semProjection.unitOrderById,
-            targetMapRef.current,
-            safeTop,
-          );
-          setActiveNodeId(activeId);
-        } else {
-          const activeId = computeActiveUnitId(
-            detItems,
-            targetMapRef.current,
-            safeTop,
-            detMode,
-          );
-          setActiveUnitId(activeId);
-        }
+        const next = computeActiveOutlineItemId(
+          items,
+          ticks,
+          orderedUnitIds,
+          unitOrderById,
+          targetMapRef.current,
+          safeTop,
+          scopeKey,
+        );
+        setActiveKey(next);
       });
     };
 
@@ -995,58 +692,40 @@ export function ReaderRecordNavigationRail({
       }
     };
   }, [
-    detItems,
-    detMode,
-    outlineSurface,
-    semItems,
-    semTicks,
-    semProjection.orderedUnitIds,
-    semProjection.unitOrderById,
-    sourceIdentityKey,
+    available,
+    items,
+    ticks,
+    orderedUnitIds,
+    unitOrderById,
+    scopeKey,
   ]);
 
-  // L0 only: default active to first unit.
-  useEffect(() => {
-    if (outlineSurface !== "deterministic") return;
-    if (detMode !== "L0") return;
-    if (detItems.length > 0 && activeUnitId === null) {
-      setActiveUnitId(detItems[0].unitId);
-    }
-  }, [outlineSurface, detMode, detItems, activeUnitId]);
-
-  // Initialize focused key when the panel opens.
+  // Initialize focused key when the panel opens; clear on close. Focus only ever
+  // lands on sections — groups are skipped entirely.
   useEffect(() => {
     if (panelOpen && focusedKey === null) {
-      if (outlineSurface === "semantic") {
-        setFocusedKey(activeNodeId ?? semItems[0]?.nodeId ?? null);
-      } else {
-        setFocusedKey(activeUnitId ?? detItems[0]?.unitId ?? null);
-      }
+      const firstSection =
+        items.find((item) => item.role === "section")?.key ?? null;
+      const activeSection =
+        activeKey !== null &&
+        items.some(
+          (item) => item.key === activeKey && item.role === "section",
+        )
+          ? activeKey
+          : null;
+      setFocusedKey(activeSection ?? firstSection);
     }
     if (!panelOpen) {
       setFocusedKey(null);
     }
-  }, [
-    panelOpen,
-    focusedKey,
-    outlineSurface,
-    activeNodeId,
-    activeUnitId,
-    semItems,
-    detItems,
-  ]);
+  }, [panelOpen, focusedKey, activeKey, items]);
 
   // Focus the row matching focusedKey when it changes (keyboard nav).
-  // Map key is surface-namespaced so node_id === unitId cannot collide.
   useEffect(() => {
     if (!panelOpen || focusedKey === null) return;
-    const mapKey =
-      outlineSurfaceRef.current === "semantic"
-        ? semRowRefKey(focusedKey)
-        : detRowRefKey(focusedKey);
-    const row = rowRefsRef.current.get(mapKey);
+    const row = rowRefsRef.current.get(focusedKey);
     row?.focus();
-  }, [focusedKey, panelOpen, outlineSurface]);
+  }, [focusedKey, panelOpen]);
 
   useEffect(() => {
     return () => {
@@ -1059,73 +738,64 @@ export function ReaderRecordNavigationRail({
     };
   }, []);
 
-  // --- Deterministic click (existing semantics: set active even if no DOM) --
-  const handleDetItemClick = useCallback(
-    (unitId: string) => {
-      const target = resolveValidatedUnitTarget(unitId, targetMapRef.current);
-      if (target) {
-        scrollElementIntoSafeView(target);
-      }
-      setActiveUnitId(unitId);
-      setFocusedKey(unitId);
-      lockActiveKey(unitId);
-    },
-    [lockActiveKey],
-  );
-
-  // --- Semantic click (Phase 0 C: no target → no active / lock / scroll) ---
-  const handleSemItemClick = useCallback(
-    (nodeId: string) => {
-      const item = semItems.find((n) => n.nodeId === nodeId);
+  // Click → resolve target and safe-scroll. Fail closed: no target means no
+  // scroll and no activation. No network request is made (the per-row
+  // "解析此段" action was removed; a row click only navigates).
+  const handleItemClick = useCallback(
+    (key: string) => {
+      const item = items.find((n) => n.key === key);
       if (!item) return;
       const target = resolveValidatedOutlineTarget(
         item,
         targetMapRef.current,
+        getPlateDocumentRoot(),
+        scopeKey,
       );
       if (!target) {
-        // Fail closed for activation; keep keyboard focus on current row.
         return;
       }
       scrollElementIntoSafeView(target);
-      setActiveNodeId(nodeId);
-      setFocusedKey(nodeId);
-      lockActiveKey(nodeId);
+      setActiveKey(key);
+      setFocusedKey(key);
+      lockActiveKey(key);
     },
-    [lockActiveKey, semItems],
+    [lockActiveKey, items, scopeKey],
   );
 
-  const handleDetItemKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>, unitId: string) => {
-      const currentIndex = detItems.findIndex((item) => item.unitId === unitId);
+  const handleItemKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>, key: string) => {
+      // Roving tabindex moves only across sections; groups are skipped.
+      const navigable = items.filter((item) => item.role === "section");
+      const currentIndex = navigable.findIndex((item) => item.key === key);
       if (currentIndex === -1) return;
 
       switch (event.key) {
         case "Enter":
         case " ": {
           event.preventDefault();
-          handleDetItemClick(unitId);
+          handleItemClick(key);
           break;
         }
         case "ArrowDown": {
           event.preventDefault();
-          const nextIndex = Math.min(detItems.length - 1, currentIndex + 1);
-          setFocusedKey(detItems[nextIndex].unitId);
+          const nextIndex = Math.min(navigable.length - 1, currentIndex + 1);
+          setFocusedKey(navigable[nextIndex]!.key);
           break;
         }
         case "ArrowUp": {
           event.preventDefault();
           const prevIndex = Math.max(0, currentIndex - 1);
-          setFocusedKey(detItems[prevIndex].unitId);
+          setFocusedKey(navigable[prevIndex]!.key);
           break;
         }
         case "Home": {
           event.preventDefault();
-          setFocusedKey(detItems[0].unitId);
+          setFocusedKey(navigable[0]!.key);
           break;
         }
         case "End": {
           event.preventDefault();
-          setFocusedKey(detItems[detItems.length - 1].unitId);
+          setFocusedKey(navigable[navigable.length - 1]!.key);
           break;
         }
         case "Escape": {
@@ -1136,66 +806,7 @@ export function ReaderRecordNavigationRail({
         }
       }
     },
-    [detItems, handleDetItemClick, closePanel],
-  );
-
-  const handleSemItemKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>, nodeId: string) => {
-      const currentIndex = semItems.findIndex((item) => item.nodeId === nodeId);
-      if (currentIndex === -1) return;
-
-      switch (event.key) {
-        case "Enter":
-        case " ": {
-          event.preventDefault();
-          handleSemItemClick(nodeId);
-          break;
-        }
-        case "ArrowDown": {
-          event.preventDefault();
-          const nextIndex = Math.min(semItems.length - 1, currentIndex + 1);
-          setFocusedKey(semItems[nextIndex].nodeId);
-          break;
-        }
-        case "ArrowUp": {
-          event.preventDefault();
-          const prevIndex = Math.max(0, currentIndex - 1);
-          setFocusedKey(semItems[prevIndex].nodeId);
-          break;
-        }
-        case "Home": {
-          event.preventDefault();
-          setFocusedKey(semItems[0].nodeId);
-          break;
-        }
-        case "End": {
-          event.preventDefault();
-          setFocusedKey(semItems[semItems.length - 1].nodeId);
-          break;
-        }
-        case "Escape": {
-          event.preventDefault();
-          closePanel();
-          triggerRef.current?.focus();
-          break;
-        }
-      }
-    },
-    [semItems, handleSemItemClick, closePanel],
-  );
-
-  const handleSurfaceChange = useCallback(
-    (next: ReaderOutlineSurface) => {
-      if (next === "semantic" && !hasL2) return;
-      setOutlineSurface(next);
-      setFocusedKey(null);
-      lockedKeyRef.current = null;
-      if (scrollLockTimerRef.current !== null) {
-        window.clearTimeout(scrollLockTimerRef.current);
-        scrollLockTimerRef.current = null;
-      }
-    },
-    [hasL2],
+    [items, handleItemClick, closePanel],
   );
 
   const handleTriggerKeyDown = useCallback(
@@ -1261,49 +872,49 @@ export function ReaderRecordNavigationRail({
     [],
   );
 
-  if (detItems.length === 0) {
+  // Hide rule: no usable outline → no rail, no ticks, no panel, no fallback.
+  // Placed after all hooks to respect the rules of hooks.
+  if (!available) {
     return null;
   }
 
   const isCanvas = layout === "canvas";
-  const effectiveSurface: ReaderOutlineSurface =
-    outlineSurface === "semantic" && hasL2 ? "semantic" : "deterministic";
 
-  const tickKeys =
-    effectiveSurface === "semantic"
-      ? semTicks.map((t) => t.nodeId)
-      : detItems.map((i) => i.unitId);
+  const tickKeys = ticks.map((t) => t.key);
 
-  const activeKey =
-    effectiveSurface === "semantic" ? activeNodeId : activeUnitId;
-
+  // "当前第 N 项" counts navigable sections only — groups are not numbered.
+  const sectionItems = items.filter((item) => item.role === "section");
   const activeItemIndex =
     activeKey === null
       ? -1
-      : effectiveSurface === "semantic"
-        ? semItems.findIndex((item) => item.nodeId === activeKey)
-        : detItems.findIndex((item) => item.unitId === activeKey);
+      : sectionItems.findIndex((item) => item.key === activeKey);
   const activeIndexForLabel =
     activeItemIndex >= 0 ? activeItemIndex + 1 : null;
 
-  const triggerLabel =
-    effectiveSurface === "semantic"
-      ? buildSemanticTriggerLabel(panelOpen, activeIndexForLabel)
-      : buildNavigationTriggerLabel(detMode, panelOpen, activeIndexForLabel);
+  const triggerLabel = buildOutlineTriggerLabel(
+    panelOpen,
+    activeIndexForLabel,
+  );
 
-  const navAriaLabel =
-    effectiveSurface === "semantic" ? "内容大纲" : "阅读定位";
+  // Highlight the root tick that is the active item or an ancestor of it.
+  const activeTickKey = activeKey
+    ? (ticks.find(
+        (t) =>
+          t.key === activeKey ||
+          items.some(
+            (n) =>
+              n.key === activeKey &&
+              (n.key === t.key || isDescendantOf(items, n.key, t.key)),
+          ),
+      )?.key ?? null)
+    : null;
 
   return (
     <nav
       ref={wrapperRef}
-      aria-label={navAriaLabel}
+      aria-label="内容大纲"
       data-testid="reader-record-navigation-rail"
-      data-navigation-mode={
-        effectiveSurface === "semantic" ? "L2" : detMode
-      }
-      data-outline-surface={effectiveSurface}
-      data-has-semantic-outline={hasL2 ? "true" : "false"}
+      data-outline-source={sourceKind}
       data-layout={layout}
       className={cn(
         "hidden md:flex",
@@ -1323,26 +934,17 @@ export function ReaderRecordNavigationRail({
     >
       <NavigationPanel
         panelId={panelId}
-        surface={effectiveSurface}
-        hasL2={hasL2}
-        isPartial={semProjection.isPartial}
-        detMode={detMode}
-        detItems={detItems}
-        semItems={semItems}
+        isPartial={isPartial}
+        items={items}
         activeKey={activeKey}
         focusedKey={focusedKey}
         panelOpen={panelOpen}
         getRowRef={getRowRef}
-        onDetItemClick={handleDetItemClick}
-        onSemItemClick={handleSemItemClick}
-        onDetItemKeyDown={handleDetItemKeyDown}
-        onSemItemKeyDown={handleSemItemKeyDown}
-        onSurfaceChange={handleSurfaceChange}
+        onItemClick={handleItemClick}
+        onItemKeyDown={handleItemKeyDown}
         onMouseEnter={keepOpenPanel}
         onMouseLeave={handleMouseLeave}
         registerRowRef={registerRowRef}
-        sectionTranslationStates={sectionTranslationStates}
-        onResolveSection={handleResolveSection}
       />
 
       <button
@@ -1358,25 +960,8 @@ export function ReaderRecordNavigationRail({
         onKeyDown={handleTriggerKeyDown}
       >
         <VisualTicks
-          surface={effectiveSurface}
           tickKeys={tickKeys}
-          activeKey={
-            effectiveSurface === "semantic"
-              ? // Highlight root tick when active is root or descendant of root.
-                activeNodeId
-                  ? (semTicks.find(
-                      (t) =>
-                        t.nodeId === activeNodeId ||
-                        semItems.some(
-                          (n) =>
-                            n.nodeId === activeNodeId &&
-                            (n.nodeId === t.nodeId ||
-                              isDescendantOf(semItems, n.nodeId, t.nodeId)),
-                        ),
-                    )?.nodeId ?? null)
-                  : null
-              : activeUnitId
-          }
+          activeKey={activeTickKey}
           onTickMouseEnter={handleTickMouseEnter}
         />
       </button>
@@ -1384,25 +969,8 @@ export function ReaderRecordNavigationRail({
   );
 }
 
-function isDescendantOf(
-  items: ReaderSemanticOutlineNavItem[],
-  nodeId: string,
-  ancestorId: string,
-): boolean {
-  let current = items.find((n) => n.nodeId === nodeId);
-  const seen = new Set<string>();
-  while (current?.parentNodeId) {
-    if (current.parentNodeId === ancestorId) return true;
-    if (seen.has(current.parentNodeId)) return false;
-    seen.add(current.parentNodeId);
-    current = items.find((n) => n.nodeId === current!.parentNodeId);
-  }
-  return false;
-}
-
-interface DeterministicPanelRowProps {
-  item: ReaderRecordNavigationItem;
-  mode: ReaderRecordNavigationMode;
+interface OutlineRowProps {
+  item: OutlineItem;
   active: boolean;
   tabIndex?: number;
   onClick: () => void;
@@ -1410,102 +978,62 @@ interface DeterministicPanelRowProps {
   registerRef: (el: HTMLButtonElement | null) => void;
 }
 
-function DeterministicPanelRow({
-  item,
-  mode,
-  active,
-  tabIndex = -1,
-  onClick,
-  onKeyDown,
-  registerRef,
-}: DeterministicPanelRowProps) {
-  const indexLabel =
-    mode === "L1"
-      ? `第 ${item.fallbackIndex + 1} 项`
-      : `第 ${item.fallbackIndex + 1} 段`;
-
-  return (
-    <li>
-      <button
-        ref={registerRef}
-        type="button"
-        aria-current={active ? "true" : undefined}
-        tabIndex={tabIndex}
-        onClick={onClick}
-        onKeyDown={onKeyDown}
-        className={cn(
-          "relative w-full px-2.5 py-1.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
-          "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-          active
-            ? "bg-[var(--app-control-current)] font-medium text-ink"
-            : "text-ink/60 hover:bg-ink/[0.035] hover:text-ink",
-        )}
-      >
-        <span className="block truncate text-[11px] leading-snug">
-          {item.label}
-        </span>
-        <span className="block text-[9px] leading-snug text-muted-foreground/75">
-          {indexLabel}
-        </span>
-      </button>
-    </li>
-  );
-}
-
-interface SemanticPanelRowProps {
-  item: ReaderSemanticOutlineNavItem;
-  active: boolean;
-  tabIndex?: number;
-  onClick: () => void;
-  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
-  registerRef: (el: HTMLButtonElement | null) => void;
-  // T5.6c: per-row section-translation state. null = idle.
-  sectionTranslationState: SectionTranslationRowState | null;
-  onResolve: () => void;
-}
-
-function SemanticPanelRow({
+function OutlineRow({
   item,
   active,
   tabIndex = -1,
   onClick,
   onKeyDown,
   registerRef,
-  sectionTranslationState,
-  onResolve,
-}: SemanticPanelRowProps) {
+}: OutlineRowProps) {
   const depth = Math.min(Math.max(item.depth, 1), 3);
   const levelLabel =
     depth === 1 ? "一级" : depth === 2 ? "二级" : "三级";
-  const isLoading = sectionTranslationState?.kind === "loading";
-  const feedback =
-    sectionTranslationState?.kind === "feedback"
-      ? sectionTranslationState
-      : null;
+  const indent = { paddingLeft: `${8 + (depth - 1) * 12}px` };
+
+  // A `group` is a meaningful parent topic with no independent landing point:
+  // rendered for hierarchy only — not a button, not focusable, excluded from the
+  // roving tab order, no click/scroll handler, no pointer affordance. It carries
+  // heading structure semantics (role="heading" + aria-level) at normal title
+  // contrast so it never reads as a disabled item.
+  if (item.role !== "section") {
+    return (
+      <li className="relative">
+        <div
+          role="heading"
+          aria-level={depth}
+          data-testid={`reader-record-outline-node-${item.key}`}
+          data-outline-node-id={item.key}
+          data-outline-depth={item.depth}
+          data-outline-role="group"
+          style={indent}
+          className="w-full cursor-default py-1.5 pr-2.5 text-left font-medium text-ink/70"
+        >
+          <span className="block truncate text-[11px] leading-snug">
+            {item.title}
+          </span>
+        </div>
+      </li>
+    );
+  }
 
   return (
     <li className="relative">
       <button
         ref={registerRef}
         type="button"
-        data-testid={`reader-record-outline-node-${item.nodeId}`}
-        data-outline-node-id={item.nodeId}
+        data-testid={`reader-record-outline-node-${item.key}`}
+        data-outline-node-id={item.key}
         data-outline-depth={item.depth}
+        data-outline-role="section"
         aria-label={`${levelLabel}，${item.title}`}
         aria-current={active ? "true" : undefined}
         tabIndex={tabIndex}
         onClick={onClick}
         onKeyDown={onKeyDown}
-        style={{ paddingLeft: `${8 + (depth - 1) * 12}px` }}
+        style={indent}
         className={cn(
-          "relative w-full py-1.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
-          // Reserve room on the right for the T5.6c action chip so the title
-          // truncates before it can underlap the chip. T5.6c-P2: the feedback
-          // state renders an inline feedback span (max-w 3.25rem) + "重试"
-          // button + gap + right inset 1.5 alongside the title; pr-[6rem]
-          // covers both idle (single chip) and feedback/retry (span + button)
-          // right-side states without clipping the title.
-          "pr-[6rem]",
+          "relative w-full py-1.5 pr-2.5 text-left transition-colors duration-150 ease-[var(--cl-ease-standard)]",
           "focus-visible:outline-none focus-visible:bg-ink/[0.035] focus-visible:ring-1 focus-visible:ring-lens-blue/30",
           active
             ? "bg-[var(--app-control-current)] font-medium text-ink"
@@ -1516,103 +1044,6 @@ function SemanticPanelRow({
           {item.title}
         </span>
       </button>
-      {/* T5.6c: "解析此段" action chip. The chip is its own accessible
-          command tab stop (tabIndex=0) so keyboard users can reach and
-          activate it independently of the parent row's roving tabindex.
-          The parent row's roving tabindex (0 only on the focused row,
-          -1 elsewhere) is preserved because the chip is a sibling button,
-          not a child of the row button — Tab moves between the row's
-          button and the chip without disturbing the row's tabindex.
-          stopPropagation on click/keydown prevents the parent row's
-          onClick (body scroll) and onKeyDown (ArrowDown/Escape roving)
-          from firing when the chip is the target.
-          T5.6c-P2: feedback state no longer replaces the action — it
-          renders alongside a "重试" button so the user can retry without
-          waiting for a snapshot refresh. The retry button keeps the same
-          testid (`reader-record-outline-resolve-{nodeId}`) so the
-          accessible action locator is stable across idle/feedback states.
-          already_covered_or_inflight intentionally still routes through
-          the same fetch path so the backend queued-recovery drain can be
-          re-triggered by the user. */}
-      {isLoading ? (
-        <span
-          data-testid={`reader-record-outline-resolve-loading-${item.nodeId}`}
-          aria-live="polite"
-          className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] leading-tight text-muted-foreground/85"
-        >
-          正在解析…
-        </span>
-      ) : feedback ? (
-        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
-          <span
-            data-testid={`reader-record-outline-resolve-feedback-${item.nodeId}`}
-            aria-live="polite"
-            className="max-w-[3.25rem] truncate text-[9px] leading-tight text-muted-foreground/85"
-          >
-            {feedback.message}
-          </span>
-          <button
-            type="button"
-            tabIndex={0}
-            data-testid={`reader-record-outline-resolve-${item.nodeId}`}
-            data-resolve-action="retry"
-            aria-label={`重试：${item.title}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onResolve();
-            }}
-            onKeyDown={(event) => {
-              // Allow Enter / Space to activate the retry button; stop
-              // propagation so the parent row's onKeyDown
-              // (ArrowDown/Escape roving) does not fire and the event
-              // does not bubble to the row's onClick path.
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                event.stopPropagation();
-                onResolve();
-              }
-            }}
-            className={cn(
-              "rounded-sm px-1.5 py-0.5 text-[9px] leading-tight",
-              "text-ink/55 hover:bg-ink/[0.06] hover:text-ink",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-              "transition-colors duration-100 ease-[var(--cl-ease-standard)]",
-            )}
-          >
-            重试
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          tabIndex={0}
-          data-testid={`reader-record-outline-resolve-${item.nodeId}`}
-          data-resolve-action="resolve"
-          aria-label={`解析此段：${item.title}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onResolve();
-          }}
-          onKeyDown={(event) => {
-            // Allow Enter / Space to activate the chip; stop propagation so
-            // the parent row's onKeyDown (ArrowDown/Escape roving) does not
-            // fire and the event does not bubble to the row's onClick path.
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              event.stopPropagation();
-              onResolve();
-            }
-          }}
-          className={cn(
-            "absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm px-1.5 py-0.5 text-[9px] leading-tight",
-            "text-ink/55 hover:bg-ink/[0.06] hover:text-ink",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-lens-blue/30",
-            "transition-colors duration-100 ease-[var(--cl-ease-standard)]",
-          )}
-        >
-          解析此段
-        </button>
-      )}
     </li>
   );
 }

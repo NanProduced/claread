@@ -5,8 +5,6 @@ import {
 } from "@/lib/reader-plate/projection/reader-record-navigation";
 import {
   projectReaderSemanticOutlineNav,
-  selectMostSpecificCoveringNode,
-  type ReaderSemanticOutlineNavItem,
 } from "@/lib/reader-plate/projection/semantic-outline-nav";
 import type { ReaderSemanticOutlineProjectionDto } from "@/lib/reader-plate/projection/semantic-outline";
 import {
@@ -466,49 +464,5 @@ describe("projectReaderSemanticOutlineNav (gate A)", () => {
     expect(proj.tickItems).toHaveLength(1);
     expect(proj.tickItems[0]?.depth).toBe(1);
     expect(proj.panelItems.length).toBe(30);
-  });
-});
-
-describe("selectMostSpecificCoveringNode", () => {
-  const items: ReaderSemanticOutlineNavItem[] = [
-    {
-      nodeId: "root",
-      parentNodeId: null,
-      depth: 1,
-      title: "R",
-      startUnitId: "u1",
-      endUnitId: "u4",
-      startAnchorSegmentId: null,
-      endAnchorSegmentId: null,
-      orderIndex: 1,
-      fallbackIndex: 0,
-    },
-    {
-      nodeId: "child",
-      parentNodeId: "root",
-      depth: 2,
-      title: "C",
-      startUnitId: "u2",
-      endUnitId: "u3",
-      startAnchorSegmentId: null,
-      endAnchorSegmentId: null,
-      orderIndex: 2,
-      fallbackIndex: 1,
-    },
-  ];
-  const order = new Map([
-    ["u1", 1],
-    ["u2", 2],
-    ["u3", 3],
-    ["u4", 4],
-  ]);
-
-  it("picks deepest covering node", () => {
-    expect(selectMostSpecificCoveringNode(items, order, "u2")).toBe("child");
-    expect(selectMostSpecificCoveringNode(items, order, "u1")).toBe("root");
-  });
-
-  it("null unit → null", () => {
-    expect(selectMostSpecificCoveringNode(items, order, null)).toBeNull();
   });
 });
