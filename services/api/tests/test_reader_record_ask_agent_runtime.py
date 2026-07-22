@@ -892,11 +892,24 @@ async def test_run_rejects_registry_bound_to_other_envelope() -> None:
 
 def test_agent_explicit_retry_policy() -> None:
     """New RR agent must pin tool/output retries (not pydantic-ai defaults)."""
-    agent = create_reading_record_ask_agent(_text_model("x"))
-    # Current pydantic-ai exposes tool budget on _max_tool_retries and
-    # structured-output repair budget on _max_result_retries (ints).
+    import warnings
+
+    from pydantic_ai.agent import PydanticAIDeprecationWarning
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", PydanticAIDeprecationWarning)
+        agent = create_reading_record_ask_agent(_text_model("x"))
+    deprecations = [
+        w for w in caught if issubclass(w.category, PydanticAIDeprecationWarning)
+    ]
+    assert deprecations == [], (
+        "create_reading_record_ask_agent must not emit "
+        f"PydanticAIDeprecationWarning; got {[str(w.message) for w in deprecations]}"
+    )
+    # Pydantic AI 1.107.0 per-category mapping exposes separate int budgets.
     assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
-    assert agent._max_result_retries == DEFAULT_OUTPUT_RETRIES == 2
+    assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
+    assert not hasattr(agent, "_max_result_retries")
 
 
 @pytest.mark.asyncio
