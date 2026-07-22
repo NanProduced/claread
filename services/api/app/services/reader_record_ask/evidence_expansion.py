@@ -689,7 +689,13 @@ class EvidenceExpansionSession:
         try:
             ledger.issue(token=handle_id, binding=binding, marker=marker)
         except Exception:
-            rollback_status = ledger.rollback_transition_by_marker(marker)
+            # A rollback that returns incomplete **or raises** is treated
+            # as unproven — never propagate raw ledger exception text —
+            # and fails closed with a stable initial-pointer code.
+            try:
+                rollback_status = ledger.rollback_transition_by_marker(marker)
+            except Exception:
+                rollback_status = "incomplete"
             if rollback_status == "rolled_back":
                 raise ValueError(
                     "selection expansion pointer initialization failed"
@@ -969,8 +975,16 @@ class EvidenceExpansionSession:
             )
         except Exception:
             # Marker rollback works even when the implementation wrote
-            # before raising; then shared registry+budget compensation.
-            rollback_status = self._ledger.rollback_transition_by_marker(marker)
+            # before raising. When the rollback itself returns incomplete
+            # **or raises**, the ledger is treated as unproven — raw
+            # ledger exception text is never propagated — and registry +
+            # budget compensation still runs (never skipped).
+            try:
+                rollback_status = self._ledger.rollback_transition_by_marker(
+                    marker
+                )
+            except Exception:
+                rollback_status = "incomplete"
             self._compensate_after_charge(
                 charge_cost=charge_cost,
                 observation=observation,

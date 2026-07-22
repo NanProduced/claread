@@ -312,6 +312,64 @@ class _FullTransitionThenRaiseLedger(_RecordingLedger):
         return receipt
 
 
+class _BrokenRollbackLedger(_RecordingLedger):
+    """R4-A5-3R2 probe: transition writes via super() then raises, and
+    rollback_transition_by_marker raises before or after super()."""
+
+    transition_fail_message = "PROBE_EXPAND_TRANSITION_WRITE_RAISE_SECRET_9d21"
+    rollback_fail_message = "PROBE_EXPAND_ROLLBACK_RAISE_SECRET_4a7f"
+
+    def __init__(
+        self,
+        *,
+        fail_transition: bool = False,
+        rollback_mode: str = "normal",  # normal | raise_before | raise_after
+    ) -> None:
+        super().__init__()
+        self.fail_transition = fail_transition
+        self.rollback_mode = rollback_mode
+
+    def transition_pointers(self, **kwargs):  # type: ignore[override]
+        receipt = super().transition_pointers(**kwargs)
+        if self.fail_transition:
+            raise RuntimeError(self.transition_fail_message)
+        return receipt
+
+    def rollback_transition_by_marker(self, marker):  # type: ignore[override]
+        if self.rollback_mode == "raise_before":
+            raise RuntimeError(self.rollback_fail_message)
+        status = super().rollback_transition_by_marker(marker)
+        if self.rollback_mode == "raise_after":
+            raise RuntimeError(self.rollback_fail_message)
+        return status
+
+
+class _IssueRaiseBrokenRollbackLedger(_RecordingLedger):
+    """R4-A5-3R2 probe: initial issue writes via super() then raises;
+    rollback optionally raises (construction-time protection)."""
+
+    issue_fail_message = "PROBE_EXPAND_INITIAL_ISSUE_SECRET_6c1e"
+    rollback_fail_message = "PROBE_EXPAND_INIT_ROLLBACK_SECRET_b3d8"
+
+    def __init__(
+        self, *, fail_issue: bool = False, fail_rollback: bool = False
+    ) -> None:
+        super().__init__()
+        self.fail_issue = fail_issue
+        self.fail_rollback = fail_rollback
+
+    def issue(self, *, token, binding, marker):  # type: ignore[override]
+        receipt = super().issue(token=token, binding=binding, marker=marker)
+        if self.fail_issue and receipt.newly_issued:
+            raise RuntimeError(self.issue_fail_message)
+        return receipt
+
+    def rollback_transition_by_marker(self, marker):  # type: ignore[override]
+        if self.fail_rollback:
+            raise RuntimeError(self.rollback_fail_message)
+        return super().rollback_transition_by_marker(marker)
+
+
 # ---------------------------------------------------------------------------
 # 1. Multiple normal expands: continuity, ordinals, last cursor, metering
 # ---------------------------------------------------------------------------
@@ -917,6 +975,135 @@ def test_full_transition_write_then_raise_rolls_back_only_this_attempt() -> None
 
 
 # ---------------------------------------------------------------------------
+# 6b. Rollback-failure fail-closed matrix (R4-A5-3R2)
+# ---------------------------------------------------------------------------
+
+
+def test_transition_write_then_raise_rollback_raise_before_compensates() -> None:
+    """Transition wrote then raised; rollback raises BEFORE doing anything.
+
+    Registry + budget must still be compensated; the raised error is the
+    stable ledger_transition code with no probe secret / pointer / body.
+    """
+    ledger = _BrokenRollbackLedger(
+        fail_transition=True, rollback_mode="raise_before"
+    )
+    session, budget, registry = _session("rb" * 2400, ledger=ledger)
+    before = budget.snapshot()
+    registry_len = len(registry)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session.expand(pointer=session.initial_pointer)
+
+    message = str(exc_info.value)
+    assert message == "expand_evidence_rollback_failed code=ledger_transition"
+    assert "PROBE_EXPAND_ROLLBACK_RAISE_SECRET" not in message
+    assert "PROBE_EXPAND_TRANSITION_WRITE_RAISE_SECRET" not in message
+    assert session.initial_pointer not in message
+    # Registry + budget compensated despite the ledger rollback raising.
+    assert budget.snapshot() == before
+    assert budget.spent("expand") == 0
+    assert len(registry) == registry_len
+
+
+def test_transition_write_then_raise_rollback_raise_after_fails_closed() -> None:
+    """Transition wrote then raised; rollback completes via super() then
+    raises. Compensation still runs; outcome stays fail-closed (unproven
+    ledger) even though the ledger state was actually restored.
+    """
+    ledger = _BrokenRollbackLedger(
+        fail_transition=True, rollback_mode="raise_after"
+    )
+    session, budget, registry = _session("rc" * 2400, ledger=ledger)
+    before = budget.snapshot()
+    registry_len = len(registry)
+    pointer = session.initial_pointer
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session.expand(pointer=pointer)
+
+    message = str(exc_info.value)
+    assert message == "expand_evidence_rollback_failed code=ledger_transition"
+    assert "PROBE_EXPAND_ROLLBACK_RAISE_SECRET" not in message
+    # Registry + budget compensated.
+    assert budget.snapshot() == before
+    assert len(registry) == registry_len
+    # super()'s rollback ran before the raise: state was restored — but
+    # the host outcome is still fail-closed because it cannot be proven.
+    record = ledger.lookup(pointer)
+    assert record is not None and record.consumed is False
+    new_cursors = [t for t in ledger.issued_tokens if t.startswith("cur_")]
+    assert new_cursors
+    for token in new_cursors:
+        assert ledger.lookup(token) is None
+
+
+def test_initial_issue_write_then_raise_rollback_raise_fails_closed() -> None:
+    """Construction: initial issue wrote then raised; rollback raises.
+
+    No raw exception leakage; stable initial-pointer code; zero mutation.
+    """
+    canonical = "x" * 4800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    before = budget.snapshot()
+    ledger = _IssueRaiseBrokenRollbackLedger(
+        fail_issue=True, fail_rollback=True
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        EvidenceExpansionSession(
+            canonical_selected_text=canonical,
+            selection_result=sel,
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+            pointer_ledger=ledger,
+        )
+
+    message = str(exc_info.value)
+    assert message == (
+        "expand_evidence_rollback_failed code=initial_pointer_issue"
+    )
+    assert "PROBE_EXPAND_INITIAL_ISSUE_SECRET" not in message
+    assert "PROBE_EXPAND_INIT_ROLLBACK_SECRET" not in message
+    assert "x" * 50 not in message
+    # Budget/registry untouched by the failed construction.
+    assert budget.snapshot() == before
+    assert len(registry) == 1
+    # Ledger stays fail-closed (unproven state may remain).
+
+
+def test_initial_issue_write_then_raise_clean_rollback_leaves_no_orphan() -> None:
+    """Construction: initial issue wrote then raised; rollback completes.
+
+    Stable ValueError, and the marker rollback removes the written record
+    (no orphan ledger entry).
+    """
+    canonical = "x" * 4800
+    budget = _budget()
+    registry = EvidenceRegistry(_FINGERPRINT_A)
+    sel = _inject_selection(canonical, budget=budget, registry=registry)
+    ledger = _IssueRaiseBrokenRollbackLedger(
+        fail_issue=True, fail_rollback=False
+    )
+
+    with pytest.raises(ValueError, match="pointer initialization failed"):
+        EvidenceExpansionSession(
+            canonical_selected_text=canonical,
+            selection_result=sel,
+            envelope_identity=_identity(turn_id=mint_turn_id()),
+            registry=registry,
+            budget=budget,
+            pointer_ledger=ledger,
+        )
+
+    # The written record was removed by the marker-scoped rollback.
+    assert len(ledger) == 0
+
+
+# ---------------------------------------------------------------------------
 # 7. Mismatch rollback: foreign preserved, budget refunded, stable code
 # ---------------------------------------------------------------------------
 
@@ -1092,6 +1279,85 @@ def test_model_supplied_identity_cannot_move_binding() -> None:
         {"pointer": "cur_" + "ab" * 16, "turn_id": "turn_" + "cd" * 16}
     )
     assert parsed_input.model_dump() == {"pointer": "cur_" + "ab" * 16}
+
+
+def test_schema_model_validate_never_raises_and_routes_to_session() -> None:
+    """R2: every hostile raw-argument shape passes model_validate without
+    ValidationError and reaches expand() as a metered invalid_cursor.
+    """
+    session, budget, _registry = _session("w" * 4100)
+    hostile_inputs: list[object] = [
+        {},  # missing pointer
+        {"pointer": ""},  # empty
+        {"pointer": 123},  # non-string
+        {"pointer": None},
+        {"pointer": ["cur_x"]},
+        {"pointer": "p" * 500},  # over the bound
+        {
+            "pointer": "garbage!!",
+            "turn_id": "turn_" + "cd" * 16,
+            "record_generation": 7,
+            "base_id": str(_BASE_A),
+            "reading_record_id": str(_RECORD_A),
+            "envelope_fingerprint": _FINGERPRINT_A,
+        },
+        "cur_tooshort",  # raw str form
+        42,  # raw non-mapping non-str
+        None,
+    ]
+    before = budget.spent("expand")
+    for raw in hostile_inputs:
+        parsed = ExpandEvidenceToolInput.model_validate(raw)
+        assert isinstance(parsed.pointer, str)
+        assert set(parsed.model_dump().keys()) == {"pointer"}
+        outcome = session.expand(pointer=parsed.pointer)
+        assert outcome.kind == "invalid_cursor", raw
+        assert outcome.model_visible is True
+        assert outcome.charge is not None  # metered, never unmetered JSON
+    assert budget.spent("expand") > before
+    # Identity extras dropped on a VALID pointer: success, binding unmoved.
+    ok_parsed = ExpandEvidenceToolInput.model_validate(
+        {
+            "pointer": session.initial_pointer,
+            "turn_id": "turn_" + "ee" * 16,
+            "record_generation": 42,
+        }
+    )
+    assert ok_parsed.pointer == session.initial_pointer
+    assert session.expand(pointer=ok_parsed.pointer).kind == "ok"
+
+
+def test_schema_stale_pointer_stays_stale_with_model_identity() -> None:
+    """R2: schema path for a known cross-turn pointer stays stale_evidence
+    even when the model appends that turn's identity keys.
+    """
+    ledger = ExpansionPointerLedger()
+    turn_a = mint_turn_id()
+    session_a, _ba, _ra = _session("a" * 4800, turn_id=turn_a, ledger=ledger)
+    first = session_a.expand(pointer=session_a.initial_pointer)
+    cursor_a = first.next_cursor
+    assert cursor_a is not None
+
+    session_b, _bb, _rb = _session(
+        "t" * 4800,
+        turn_id=mint_turn_id(),
+        fp=_FINGERPRINT_B,
+        base=_BASE_B,
+        record=_RECORD_B,
+        ledger=ledger,
+    )
+    parsed = ExpandEvidenceToolInput.model_validate(
+        {
+            "pointer": cursor_a,
+            "turn_id": turn_a,
+            "envelope_fingerprint": _FINGERPRINT_A,
+            "base_id": str(_BASE_A),
+        }
+    )
+    outcome = session_b.expand(pointer=parsed.pointer)
+    assert outcome.kind == "stale_evidence"
+    assert outcome.model_visible is True
+    assert outcome.charge is not None
 
 
 # ---------------------------------------------------------------------------

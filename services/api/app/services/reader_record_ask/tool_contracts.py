@@ -385,31 +385,6 @@ class ExpandEvidenceToolView(BaseModel):
         return self
 
 
-class ExpandEvidenceToolInput(BaseModel):
-    """Model-facing input for the future ``expand_evidence`` tool.
-
-    Minimal model-visible surface: exactly one opaque ``pointer`` and
-    nothing else.
-
-    - ``extra="ignore"``: model-supplied ``turn_id`` / ``record_generation``
-      / ``base_id`` / ``envelope_fingerprint`` / any other server identity
-      key is **silently discarded** — server-owned turn context is never a
-      legal tool parameter and must never influence the real binding (a
-      future runtime adapter routes through :func:`normalize_expand_pointer`
-      and builds the server-owned session separately; nothing here becomes
-      a second path around the core).
-    - **No shape rejection here**: malformed / unknown / consumed pointer
-      judgement belongs to
-      :meth:`EvidenceExpansionSession.expand` safe states (metered
-      ``invalid_cursor`` / ``stale_evidence``), never a ValidationError
-      control-flow bypass, and never model-retry.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    pointer: str
-
-
 # Model-argument bound enforced by the normalization seam. Over-bound /
 # non-string pointers are mapped to "" so they always reach the session's
 # safe state machine (metered invalid_cursor) instead of raising.
@@ -442,3 +417,35 @@ def normalize_expand_pointer(raw_arguments: Mapping[str, Any] | str) -> str:
     if len(pointer) > EXPAND_POINTER_MAX_LEN:
         return ""
     return pointer
+
+
+class ExpandEvidenceToolInput(BaseModel):
+    """Model-facing input for the future ``expand_evidence`` tool.
+
+    Minimal model-visible surface: exactly one opaque ``pointer`` and
+    nothing else.
+
+    The schema itself routes **every** raw argument shape through
+    :func:`normalize_expand_pointer` (``mode="before"`` validator), so
+    ``model_validate`` never raises a ValidationError on missing / empty
+    / non-string / over-length pointers, nor on mappings carrying
+    ``turn_id`` / ``record_generation`` / ``base_id`` /
+    ``reading_record_id`` / ``envelope_fingerprint`` extras — identity
+    keys are discarded by the seam and normalization failure yields
+    ``""``. The normalized pointer then reaches
+    :meth:`EvidenceExpansionSession.expand`, where malformed / unknown /
+    consumed resolve to metered ``invalid_cursor`` and a known binding
+    mismatch to metered ``stale_evidence``. This is the single
+    model-argument path into the core: no second route around
+    normalization, no model-retry control flow, and model-supplied
+    identity never influences the server-owned binding.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    pointer: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _route_through_normalization(cls, values: Any) -> dict[str, str]:
+        return {"pointer": normalize_expand_pointer(values)}
