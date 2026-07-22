@@ -11,15 +11,18 @@ The single enforcement seam is :class:`ModelViewRenderer` +
 :class:`ModelVisibleTurnBudget`. Provider encoders, tokenizers, and shadow
 ledgers must not decide whether article context may be injected.
 
-Public budget charges accept only :class:`RenderedModelView` produced by the
-renderer. Raw integer debit is private to this module.
+Public budget charges accept only :class:`RenderedModelView` instances minted
+by :class:`ModelViewRenderer` (renderer-origin brand). Hand-constructed views
+are rejected before any budget mutation. Raw integer debit is private to this
+module. This is a **module boundary** constraint, not a hostile in-process
+sandbox.
 
 JSON surfaces (``render_json`` / ``render_tool_view``) are type-level
 fail-closed: only JSON-native values and finite floats. Serialization errors
 are sanitized typed codes — never payload dumps, object repr, or raw
-exception text. Content safety of projections / ModelToolView remains the
-responsibility of their typed schemas (no field-name or semantic scanning
-here).
+exception text. Mapping/container traversal exceptions are converted the same
+way. Content safety of projections / ModelToolView remains the responsibility
+of their typed schemas (no field-name or semantic scanning here).
 
 A5-1 scope
 ----------
@@ -37,7 +40,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from xml.sax.saxutils import escape as _xml_escape
 
@@ -84,6 +87,14 @@ SerializationErrorCode = Literal[
     "not_object",
 ]
 
+# Module-private brand for renderer-minted views. Not exported in public API
+# surface docs; identity-checked only. Not a hostile-code sandbox.
+_RENDERER_ORIGIN: object = object()
+
+_CHARGE_REQUIRES_RENDERER_VIEW = (
+    "budget charge requires RenderedModelView from ModelViewRenderer"
+)
+
 
 # ---------------------------------------------------------------------------
 # Typed results / errors (never ModelRetry)
@@ -92,10 +103,25 @@ SerializationErrorCode = Literal[
 
 @dataclass(frozen=True, slots=True)
 class RenderedModelView:
-    """One host-owned rendered surface plus its serialized char cost."""
+    """One host-owned rendered surface plus its serialized char cost.
+
+    Public annotation type. Only instances minted via the private renderer
+    factory carry a valid origin brand and may be charged. Hand construction
+    yields an unchargeable view (module boundary, not a security sandbox).
+    """
 
     text: str
     char_cost: int
+    # init=False: public constructor cannot brand a view. Factory sets via
+    # object.__setattr__. Excluded from repr / equality / hash so the brand
+    # never leaks into diagnostics or model-visible comparisons.
+    _origin: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
 
     def __post_init__(self) -> None:
         if self.char_cost != len(self.text):
@@ -103,6 +129,15 @@ class RenderedModelView:
                 "char_cost must equal len(text); "
                 f"got char_cost={self.char_cost}, len={len(self.text)}"
             )
+
+
+def _mint_rendered_view(text: str) -> RenderedModelView:
+    """Private factory: only path that brands a chargeable RenderedModelView."""
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+    view = RenderedModelView(text=text, char_cost=len(text))
+    object.__setattr__(view, "_origin", _RENDERER_ORIGIN)
+    return view
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,8 +223,22 @@ def _to_json_native(value: object) -> Any:
     Allowed leaves: ``None``, ``bool``, ``int``, finite ``float``, ``str``.
     Allowed containers: ``list``, ``Mapping`` with ``str`` keys only.
     Rejects UUID, custom objects, bytes, tuples, sets, NaN/±Inf, non-str keys.
-    Error messages never include the rejected value.
+
+    Any ordinary ``Exception`` raised while reading containers (e.g. a
+    hostile ``Mapping.items()``) is converted to a sanitized
+    :class:`ModelViewSerializationError` with ``from None``. Existing
+    :class:`ModelViewSerializationError` instances propagate unchanged.
+    ``BaseException`` is not caught.
     """
+    try:
+        return _to_json_native_body(value)
+    except ModelViewSerializationError:
+        raise
+    except Exception:
+        raise ModelViewSerializationError("non_json_native") from None
+
+
+def _to_json_native_body(value: object) -> Any:
     if value is None:
         return None
     # bool is a subclass of int — check before int.
@@ -219,7 +268,12 @@ def _dump_canonical_json(payload: Mapping[str, Any]) -> str:
     """Canonical JSON dump; fail-closed (no str coercion default; NaN off)."""
     if not isinstance(payload, Mapping):
         raise ModelViewSerializationError("not_object")
-    native = _to_json_native(payload)
+    try:
+        native = _to_json_native(payload)
+    except ModelViewSerializationError:
+        raise
+    except Exception:
+        raise ModelViewSerializationError("non_json_native") from None
     # allow_nan=False is belt-and-suspenders after the finite-float walk.
     try:
         return json.dumps(
@@ -244,7 +298,7 @@ class ModelVisibleTurnBudget:
 
     Spill across accounts is forbidden. Each public charge is checked against
     the account reserve **and** the turn total cap, and must carry a
-    :class:`RenderedModelView` from :class:`ModelViewRenderer`.
+    renderer-minted :class:`RenderedModelView`.
     """
 
     __slots__ = ("_spent",)
@@ -298,10 +352,12 @@ class ModelVisibleTurnBudget:
     # -- private integer debit (not part of the public metering seam) --------
 
     def _cost_from_rendered(self, rendered: RenderedModelView) -> int:
+        """Validate type + renderer origin before any budget mutation."""
         if not isinstance(rendered, RenderedModelView):
-            raise TypeError(
-                "budget charge requires RenderedModelView from ModelViewRenderer"
-            )
+            raise TypeError(_CHARGE_REQUIRES_RENDERER_VIEW)
+        # Identity check only — brand token never appears in the message.
+        if getattr(rendered, "_origin", None) is not _RENDERER_ORIGIN:
+            raise TypeError(_CHARGE_REQUIRES_RENDERER_VIEW)
         if rendered.char_cost != len(rendered.text):
             raise ValueError("RenderedModelView char_cost must equal len(text)")
         if rendered.char_cost < 0:
@@ -370,8 +426,8 @@ class ModelVisibleTurnBudget:
 class ModelViewRenderer:
     """Deterministic host-owned serializer for model-visible Ask surfaces.
 
-    Every charged surface returns :class:`RenderedModelView` whose
-    ``char_cost`` equals ``len(text)``. Callers charge that object into
+    Every charged surface returns a renderer-minted :class:`RenderedModelView`
+    whose ``char_cost`` equals ``len(text)``. Callers charge that object into
     :class:`ModelVisibleTurnBudget`. No provider encoder or tokenizer is
     consulted.
     """
@@ -382,7 +438,7 @@ class ModelViewRenderer:
         """Render a trusted plain-text surface (system / question / headers)."""
         if not isinstance(text, str):
             raise TypeError("text must be str")
-        return RenderedModelView(text=text, char_cost=len(text))
+        return _mint_rendered_view(text)
 
     def render_json(self, payload: Mapping[str, Any]) -> RenderedModelView:
         """Canonical JSON for projections and tool model-views.
@@ -392,7 +448,7 @@ class ModelViewRenderer:
         :class:`ModelViewSerializationError` (sanitized code only).
         """
         text = _dump_canonical_json(payload)
-        return RenderedModelView(text=text, char_cost=len(text))
+        return _mint_rendered_view(text)
 
     def render_tool_view(self, model_view: Mapping[str, Any]) -> RenderedModelView:
         """Canonical JSON ModelToolView for expand / RAG tool returns.
@@ -433,7 +489,7 @@ class ModelViewRenderer:
         )
         close_tag = "</untrusted_article_text>"
         rendered = f"{open_tag}{escaped_text}{close_tag}"
-        return RenderedModelView(text=rendered, char_cost=len(rendered))
+        return _mint_rendered_view(rendered)
 
     def render_request_frame(self, parts: RequestFrameParts) -> RenderedModelView:
         """Compose the request_frame account content and measure its char cost.
@@ -476,7 +532,7 @@ class ModelViewRenderer:
         # System and turn frame are separate ModelRequest messages; cost is
         # the sum of their host-owned serialized lengths.
         combined = system + "\n" + turn_frame if system else turn_frame
-        return RenderedModelView(text=combined, char_cost=len(combined))
+        return _mint_rendered_view(combined)
 
     def charge_request_frame(
         self,
@@ -487,7 +543,7 @@ class ModelViewRenderer:
 
         The user question is never truncated to fit — oversized questions
         surface as :class:`ModelViewBudgetError`. Metering always flows
-        through the rendered :class:`RenderedModelView`.
+        through the renderer-minted :class:`RenderedModelView`.
         """
         rendered = self.render_request_frame(parts)
         ok = budget.charge("request_frame", rendered)

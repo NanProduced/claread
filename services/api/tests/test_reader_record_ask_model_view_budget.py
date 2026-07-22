@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Iterator, Mapping
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
@@ -34,6 +35,7 @@ from app.services.reader_record_ask.model_view_budget import (
     ModelViewRenderer,
     ModelViewSerializationError,
     ModelVisibleTurnBudget,
+    RenderedModelView,
     RequestFrameParts,
 )
 from app.services.reader_record_ask.turn_capability_projection import (
@@ -407,6 +409,121 @@ def test_no_default_str_in_json_dumps_path() -> None:
     # UUID still rejected (proves no silent str coercion).
     with pytest.raises(ModelViewSerializationError):
         ModelViewRenderer().render_json({"id": _USER})
+
+
+class _ExplodingMapping(Mapping[str, object]):
+    """Mapping whose items() raises with a probe string (sanitization target)."""
+
+    _PROBE = "PROBE_EXPLODING_ITEMS_SECRET_VALUE_9f3c"
+
+    def __init__(self) -> None:
+        self._data = {"ok_key": 1}
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def items(self):  # type: ignore[override]
+        raise RuntimeError(self._PROBE)
+
+
+def test_render_json_sanitizes_exploding_mapping_items() -> None:
+    """Hostile Mapping.items() must not leak RuntimeError / probe text."""
+    renderer = _renderer()
+    exploding = _ExplodingMapping()
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_json(exploding)
+    err = exc_info.value
+    assert isinstance(err, ModelViewSerializationError)
+    assert err.code == "non_json_native"
+    msg = str(err)
+    assert msg == "model_view_serialization_error code=non_json_native"
+    assert _ExplodingMapping._PROBE not in msg
+    assert "RuntimeError" not in msg
+    assert "PROBE_" not in msg
+    assert "Exploding" not in msg
+    # ``from None``: no explicit cause; context suppressed in traceback.
+    assert err.__cause__ is None
+    assert err.__suppress_context__ is True
+
+
+def test_render_json_rejects_non_string_key_sanitized() -> None:
+    renderer = _renderer()
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_json({1: "bad"})  # type: ignore[dict-item]
+    err = exc_info.value
+    assert err.code == "non_string_key"
+    assert str(err) == "model_view_serialization_error code=non_string_key"
+
+
+def test_hand_constructed_rendered_view_cannot_charge() -> None:
+    """Hand-built or forged RenderedModelView must fail before mutation."""
+    budget = ModelVisibleTurnBudget()
+    forged = RenderedModelView(text="hello", char_cost=5)
+    # Brand must not appear in public repr.
+    assert "_origin" not in repr(forged)
+    assert "RENDERER" not in repr(forged).upper()
+
+    with pytest.raises(TypeError) as can_exc:
+        budget.can_charge("selection", forged)
+    with pytest.raises(TypeError) as try_exc:
+        budget.try_charge("selection", forged)
+    with pytest.raises(TypeError) as charge_exc:
+        budget.charge("selection", forged)
+
+    for exc in (can_exc, try_exc, charge_exc):
+        assert str(exc.value) == (
+            "budget charge requires RenderedModelView from ModelViewRenderer"
+        )
+        # Brand token / private field name must not leak into the error.
+        assert "_origin" not in str(exc.value)
+        assert "RENDERER_ORIGIN" not in str(exc.value)
+
+    assert budget.total_spent() == 0
+    assert budget.spent("selection") == 0
+
+    # Forging a non-brand origin object still fails; budget unchanged.
+    object.__setattr__(forged, "_origin", object())
+    with pytest.raises(TypeError):
+        budget.charge("baseline", forged)
+    assert budget.total_spent() == 0
+
+
+def test_renderer_outputs_remain_chargeable_across_surfaces() -> None:
+    """plain / json / tool / untrusted / request-frame all mint chargeable views."""
+    renderer = _renderer()
+    budget = ModelVisibleTurnBudget()
+    surfaces = [
+        renderer.render_plain("plain-ok"),
+        renderer.render_json({"a": 1, "b": "x"}),
+        renderer.render_tool_view({"status": "ok", "n": 0}),
+        renderer.render_untrusted_article_text(
+            handle_id=_HANDLE,
+            ordinal=0,
+            role="selection",
+            text="a & b",
+        ),
+        renderer.render_request_frame(
+            RequestFrameParts(
+                system_instructions="S",
+                user_question="Q",
+                projection_json="{}",
+            )
+        ),
+    ]
+    total = 0
+    for view in surfaces:
+        assert "_origin" not in repr(view)
+        ok = budget.charge("baseline", view)
+        assert isinstance(ok, BudgetChargeOk)
+        total += view.char_cost
+    assert budget.spent("baseline") == total
+    assert budget.total_spent() == total
 
 
 # ---------------------------------------------------------------------------
