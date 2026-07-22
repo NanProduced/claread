@@ -178,6 +178,7 @@ def build_agent_user_prompt(
     model_context_chunks: Sequence[ModelContextChunk] = (),
     baseline_is_complete: bool = False,
     correctness_block: str | None = None,
+    selection_untrusted_block: str | None = None,
 ) -> str:
     """Compose the single user turn for the agent (no keyword routing).
 
@@ -194,6 +195,15 @@ def build_agent_user_prompt(
     single source of truth shared with :class:`BaselineContextAssembler`
     so the serialized budget computation can never drift from the actual
     prompt rendering.
+
+    ``selection_untrusted_block`` (R4-A5-2, optional) carries a
+    **pre-rendered** selection untrusted block from
+    :class:`~app.services.reader_record_ask.model_view_budget.ModelViewRenderer`
+    (``RenderedModelView.text``). When provided it is inserted once,
+    immediately before the baseline block. Callers must not re-format or
+    re-escape the selection body — the renderer output is the sole
+    model-visible selection surface. Omitted / ``None`` preserves the
+    legacy prompt layout (production still uses the legacy path until A5-7).
 
     ``baseline_is_complete`` toggles the coverage awareness block between
     ``complete`` (full article visible) and ``partial`` (subset only).
@@ -228,10 +238,20 @@ def build_agent_user_prompt(
         if correctness_block
         else ""
     )
+    # R4-A5-2: optional pre-rendered selection block (renderer output only).
+    # Inserted once before baseline so selection body never duplicates into
+    # projection / handles / coverage / correctness.
+    selection_section = ""
+    if selection_untrusted_block:
+        selection_section = (
+            "\n## Untrusted article context (selection)\n"
+            f"{selection_untrusted_block}\n"
+        )
     return (
         "## Current turn context (server projection; not tool arguments)\n"
         f"{agent_context_json}\n"
         f"{handles_block}\n"
+        f"{selection_section}"
         f"{baseline_block}\n"
         f"{coverage_block}"
         f"{correctness_section}"

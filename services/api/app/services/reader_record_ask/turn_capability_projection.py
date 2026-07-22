@@ -20,8 +20,9 @@ The projection deliberately excludes:
 - scores, content hashes, plan/content sha256;
 - record / base / user / document UUIDs and envelope fingerprint.
 
-A5-1 does **not** switch the live agent prompt onto this projection; runtime
-still uses ``envelope.to_agent_projection()`` until A5-2+.
+A5-2 selection model-view supplies ``SelectionCapabilityView`` metadata
+only; the live production runtime still uses
+``envelope.to_agent_projection()`` until A5-7 production wiring.
 """
 
 from __future__ import annotations
