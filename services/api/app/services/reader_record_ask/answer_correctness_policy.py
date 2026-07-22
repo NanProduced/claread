@@ -29,9 +29,18 @@ _RAW_STRICT_ARTICLE_QUESTION_FORMS = (
     "基于这篇文章出一道小练习",
     "文章提到了哪些城市",
     "文章是什么时候发生/发布的",
+    # Pure publish-date forms (event dates in the body are not publication dates).
+    "这篇文章的发布日期是什么时候",
     "只用一句话概括文章",
     "文章没有提到的年份是什么？不得猜测",
     "基于文章出一道选择题，只允许一题",
+)
+
+# Exact-normalized publish/release-date questions. For these, event years
+# visible in the article must NOT authorize a specific year in the answer —
+# a publication/release date is a distinct claim from an in-article event date.
+_RAW_PUBLISH_DATE_QUESTION_FORMS = (
+    "这篇文章的发布日期是什么时候",
 )
 
 _TRAILING_QUESTION_PUNCTUATION_RE = re.compile(r"[。！？!?]+$")
@@ -91,6 +100,10 @@ STRICT_ARTICLE_QUESTION_FORMS = frozenset(
     _normalize_question(value) for value in _RAW_STRICT_ARTICLE_QUESTION_FORMS
 )
 
+PUBLISH_DATE_QUESTION_FORMS = frozenset(
+    _normalize_question(value) for value in _RAW_PUBLISH_DATE_QUESTION_FORMS
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ExplicitOutputConstraint:
@@ -126,8 +139,11 @@ class AnswerCorrectnessPolicy:
                 )
             else:
                 instructions.append(
-                    "The complete article context provides no specific year or date; "
-                    "do not invent one."
+                    "The complete article context provides no specific year or date "
+                    "that answers this question; do not invent one. "
+                    "If the question asks for a publication/release date, event dates "
+                    "in the article are not publication dates — say the article does "
+                    "not provide a publication date without naming a year."
                 )
         if (
             self.explicit_output.kind == "exercise_items"
@@ -231,13 +247,22 @@ def build_answer_correctness_policy(
     model_visible_chunk_texts: tuple[str, ...],
     baseline_is_complete: bool,
 ) -> AnswerCorrectnessPolicy:
+    normalized = _normalize_question(user_message)
+    is_strict = normalized in STRICT_ARTICLE_QUESTION_FORMS
+    is_publish_date = normalized in PUBLISH_DATE_QUESTION_FORMS
+
     temporal_allowset: set[str] = set()
-    for chunk_text in model_visible_chunk_texts:
-        temporal_allowset.update(_extract_temporal_years(chunk_text))
+    # Publish/release-date questions: in-article event years must not authorize
+    # a year token in the answer (event date ≠ publication date). Keep allowset
+    # empty so any specific year is a temporal_claim_unsupported violation when
+    # baseline is complete and the question is strict.
+    if not is_publish_date:
+        for chunk_text in model_visible_chunk_texts:
+            temporal_allowset.update(_extract_temporal_years(chunk_text))
 
     return AnswerCorrectnessPolicy(
         temporal_allowset=frozenset(temporal_allowset),
         explicit_output=_extract_explicit_output(user_message),
-        is_article_only_strict=(_normalize_question(user_message) in STRICT_ARTICLE_QUESTION_FORMS),
+        is_article_only_strict=is_strict,
         baseline_is_complete=baseline_is_complete,
     )

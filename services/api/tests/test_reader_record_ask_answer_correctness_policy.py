@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from app.services.reader_record_ask.answer_correctness_policy import (
+    PUBLISH_DATE_QUESTION_FORMS,
     STRICT_ARTICLE_QUESTION_FORMS,
     AnswerCorrectnessPolicy,
     ExplicitOutputConstraint,
@@ -27,7 +28,7 @@ from app.services.reader_record_ask.answer_correctness_policy import (
 )
 
 # ---------------------------------------------------------------------------
-# Constants — must match §21.2 exactly
+# Constants — must match answer_correctness_policy strict forms
 # ---------------------------------------------------------------------------
 
 _RAW_STRICT_FORMS: tuple[str, ...] = (
@@ -40,6 +41,7 @@ _RAW_STRICT_FORMS: tuple[str, ...] = (
     "基于这篇文章出一道小练习",
     "文章提到了哪些城市",
     "文章是什么时候发生/发布的",
+    "这篇文章的发布日期是什么时候",
     "只用一句话概括文章",
     "文章没有提到的年份是什么？不得猜测",
     "基于文章出一道选择题，只允许一题",
@@ -114,10 +116,11 @@ def test_builder_signature_keyword_only() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_strict_forms_set_has_twelve_members() -> None:
-    """§21.2: STRICT_ARTICLE_QUESTION_FORMS has exactly 12 entries."""
+def test_strict_forms_set_has_thirteen_members() -> None:
+    """STRICT_ARTICLE_QUESTION_FORMS includes pure publish-date form (13)."""
     assert isinstance(STRICT_ARTICLE_QUESTION_FORMS, frozenset)
-    assert len(STRICT_ARTICLE_QUESTION_FORMS) == 12
+    assert len(STRICT_ARTICLE_QUESTION_FORMS) == 13
+    assert len(PUBLISH_DATE_QUESTION_FORMS) == 1
 
 
 @pytest.mark.parametrize("raw", _RAW_STRICT_FORMS)
@@ -350,6 +353,45 @@ def test_temporal_quadrant_partial_non_strict_fail_open() -> None:
     )
     violations = policy.evaluate_draft(draft_answer_text=_draft_with_year("2025"))
     assert violations == ()
+
+
+def test_publish_date_question_empties_temporal_allowset_despite_event_years() -> None:
+    """Event years in body must not authorize publish-date year claims."""
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章的发布日期是什么时候？",
+        model_visible_chunk_texts=("2024年4月，城南社区举办了阅读节。",),
+        baseline_is_complete=True,
+    )
+    assert policy.is_article_only_strict is True
+    assert policy.temporal_allowset == frozenset()
+    violations = policy.evaluate_draft(draft_answer_text="文章发布于2024年。")
+    assert len(violations) == 1
+    assert violations[0].kind == "temporal_claim_unsupported"
+
+
+def test_publish_date_question_allows_no_year_unavailable_phrasing() -> None:
+    policy = build_answer_correctness_policy(
+        user_message="这篇文章的发布日期是什么时候",
+        model_visible_chunk_texts=("2024年4月，城南社区举办了阅读节。",),
+        baseline_is_complete=True,
+    )
+    violations = policy.evaluate_draft(
+        draft_answer_text="文章未提供明确的发布日期。"
+    )
+    assert violations == ()
+
+
+def test_event_or_publish_form_still_allows_body_years() -> None:
+    """Ambiguous 发生/发布 form keeps body years in the allowset."""
+    policy = build_answer_correctness_policy(
+        user_message="文章是什么时候发生/发布的",
+        model_visible_chunk_texts=("The wildfires began in 2026.",),
+        baseline_is_complete=True,
+    )
+    assert "2026" in policy.temporal_allowset
+    assert (
+        policy.evaluate_draft(draft_answer_text="事件发生在2026年。") == ()
+    )
 
 
 def test_temporal_supported_year_in_allowset_passes() -> None:
