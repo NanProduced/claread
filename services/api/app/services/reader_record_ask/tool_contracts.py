@@ -449,3 +449,69 @@ class ExpandEvidenceToolInput(BaseModel):
     @classmethod
     def _route_through_normalization(cls, values: Any) -> dict[str, str]:
         return {"pointer": normalize_expand_pointer(values)}
+
+
+# ---------------------------------------------------------------------------
+# RAG search tool-view schema (R4-A5-5; isolated — NOT wired to any runtime)
+# ---------------------------------------------------------------------------
+
+RagSearchStatus = Literal[
+    "ok",
+    "empty",
+    "not_ready",
+    "not_indexed",
+    "indexing",
+    "unavailable",
+]
+
+
+class RagSearchToolView(BaseModel):
+    """Narrow model-visible tool-view for ``search_current_article``.
+
+    Deliberately **not** the legacy ``ReaderRecordAskToolResult`` shape:
+    no free-form ``payloads``. Article text appears only inside
+    ``article_text_blocks`` (renderer-minted
+    ``<untrusted_article_text role="rag">`` blocks, XML escaping
+    preserved; one block per cited hit). score / chunk_id / hashes /
+    UUIDs / substrate / provenance / raw locators are sidecar-only and
+    can never be expressed in this schema.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: RagSearchStatus
+    summary: str = Field(min_length=1, max_length=400)
+    next_actions: tuple[str, ...] = ()
+    # Opaque server-minted evidence handles (citeable) — ok only.
+    evidence_handles: tuple[EvidenceHandleRef, ...] = ()
+    # Renderer-minted untrusted XML blocks — ok only; one per handle.
+    article_text_blocks: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_status_field_coupling(self) -> RagSearchToolView:
+        if self.status == "ok":
+            if not self.evidence_handles:
+                raise ValueError("ok rag tool-view requires evidence_handles")
+            if not self.article_text_blocks:
+                raise ValueError(
+                    "ok rag tool-view requires article_text_blocks"
+                )
+            if len(self.evidence_handles) != len(self.article_text_blocks):
+                raise ValueError(
+                    "rag tool-view handles and blocks must align 1:1"
+                )
+        else:
+            # Fail-soft safe views: no handles, no blocks, no actions.
+            if self.evidence_handles:
+                raise ValueError(
+                    "non-ok rag tool-view must not carry evidence_handles"
+                )
+            if self.article_text_blocks:
+                raise ValueError(
+                    "non-ok rag tool-view must not carry article_text_blocks"
+                )
+            if self.next_actions:
+                raise ValueError(
+                    "non-ok rag tool-view must not carry next_actions"
+                )
+        return self

@@ -723,10 +723,14 @@ async def test_duplicate_check_runs_before_registry_resolution() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R4-A4-1B: AnswerCorrectnessPolicy composition tests (T1–T10)
+# R4-A4-1B / R4-A5-6: AnswerCorrectnessPolicy composition tests (T1–T10)
 #
-# These tests verify the grounding_validator now composes the policy check
-# after the existing grounding checks. The policy is injected via
+# R4-A5-6 migrated semantic heuristics (temporal / numeric / geo /
+# language / explicit-count text parsing) OUT of the ModelRetry path:
+# these tests now verify that semantic violations no longer retry while
+# remaining observable via the typed pure evaluator
+# (policy.evaluate_draft), and that structural / evidence-contract
+# retries are unchanged. The policy is injected via
 # ``ctx.deps.answer_correctness_policy`` (write-once by runtime).
 # ---------------------------------------------------------------------------
 
@@ -757,13 +761,10 @@ def _draft_with_year(year: str) -> AgentAnswerDraft:
 
 
 @pytest.mark.asyncio
-async def test_t1_policy_read_from_deps_by_validator() -> None:
-    """T1: The validator reads the policy from ``ctx.deps`` and uses the
-    model-visible chunk text it was constructed with. A policy built from
-    chunk text containing no years, combined with a draft mentioning 2025,
-    must trigger a temporal violation — proving the validator consumes the
-    injected policy rather than skipping it.
-    """
+async def test_t1_policy_semantic_violation_no_longer_retries() -> None:
+    """R4-A5-6 T1: semantic (temporal) violations no longer raise
+    ModelRetry — the draft passes, and the violation stays observable
+    via the typed non-retry evaluator (policy.evaluate_draft)."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     policy = _strict_policy(chunks=("no year in this chunk",))
@@ -773,16 +774,17 @@ async def test_t1_policy_read_from_deps_by_validator() -> None:
         answer_correctness_policy=policy,
     )
     draft = _draft_with_year("2025")
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    # The temporal retry message is the frozen constant from the policy module.
-    assert "unsupported date" in str(exc_info.value).lower()
+    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
+    assert len(violations) == 1
+    assert violations[0].kind == "temporal_claim_unsupported"
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
 
 
 @pytest.mark.asyncio
-async def test_t2_strict_complete_unsupported_year_triggers_retry() -> None:
-    """T2: short complete baseline + strict article question → unsupported
-    year in draft triggers ModelRetry (temporal_claim_unsupported)."""
+async def test_t2_strict_complete_unsupported_year_no_longer_retries() -> None:
+    """R4-A5-6 T2: short complete baseline + strict article question →
+    unsupported year is a typed evaluator violation, NOT a ModelRetry."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     policy = _strict_policy(
@@ -798,9 +800,8 @@ async def test_t2_strict_complete_unsupported_year_triggers_retry() -> None:
     violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
     assert len(violations) == 1
     assert violations[0].kind == "temporal_claim_unsupported"
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    assert exc_info.value.args[0] == violations[0].detail
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
 
 
 @pytest.mark.asyncio
@@ -826,8 +827,10 @@ async def test_t3_article_visible_year_passes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_policy_runs_after_valid_grounded_answer() -> None:
-    """A valid article_seed citation passes grounding before policy retry."""
+async def test_policy_semantic_violation_after_valid_grounded_answer() -> None:
+    """R4-A5-6: a valid article_seed citation passes grounding; a semantic
+    (temporal) violation in the answer no longer retries — the draft is
+    returned unchanged (no silent rewrite either)."""
     envelope = _envelope()
     registry = _registry_with_seed(
         fingerprint=envelope.envelope_fingerprint,
@@ -848,14 +851,10 @@ async def test_policy_runs_after_valid_grounded_answer() -> None:
         handles=[handle],
         response_kind="grounded_answer",
     )
-
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-
-    assert (
-        exc_info.value.args[0]
-        == policy.evaluate_draft(draft_answer_text=draft.answer_text)[0].detail
-    )
+    assert policy.evaluate_draft(draft_answer_text=draft.answer_text)
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+    assert result.answer_text == draft.answer_text  # not rewritten
 
 
 @pytest.mark.asyncio
@@ -903,9 +902,11 @@ async def test_t5_non_strict_question_fail_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_t6_one_exercise_request_multiple_items_triggers_retry() -> None:
-    """T6: user asks for exactly one exercise but the draft contains two
-    top-level items → ModelRetry (explicit_count_mismatch)."""
+async def test_t6_explicit_count_mismatch_no_longer_retries() -> None:
+    """R4-A5-6 T6: explicit exercise-count mismatch is a TEXT heuristic
+    (regex parse of the free answer text — AgentAnswerDraft carries no
+    typed exercise field), so it migrates out of ModelRetry to the typed
+    evaluator layer per design §5 ("count" there = handle count)."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     policy = _strict_policy(
@@ -926,17 +927,15 @@ async def test_t6_one_exercise_request_multiple_items_triggers_retry() -> None:
     )
     violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
     assert any(v.kind == "explicit_count_mismatch" for v in violations)
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    # The first violation is surfaced (sorted by kind).
-    assert exc_info.value.args[0] == violations[0].detail
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
 
 
 @pytest.mark.asyncio
 async def test_t7_policy_violation_detail_does_not_leak_sensitive_data() -> None:
-    """T7: the ModelRetry detail must not leak answer text, user question,
-    handle ids, identity, or exception text. It must be a short frozen
-    constant from the policy module."""
+    """R4-A5-6 T7: the typed evaluator detail (the observable non-retry
+    result) must not leak answer text, user question, handle ids,
+    identity, or exception text — short fixed policy constants only."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     sensitive_user_message = "这篇文章主要说了什么"
@@ -956,9 +955,11 @@ async def test_t7_policy_violation_detail_does_not_leak_sensitive_data() -> None
         answer_text=("文章报道了 2025 年的事件。evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
         response_kind="clarification",
     )
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    detail = exc_info.value.args[0]
+    result = await grounding_validator(ctx, draft)
+    assert result is draft  # no retry
+    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
+    assert violations
+    detail = violations[0].detail
     # Short and fixed.
     assert len(detail) < 300
     # Must not contain handle ids.
@@ -1019,11 +1020,10 @@ async def test_t9_policy_none_skips_policy_path_completely() -> None:
 
 
 @pytest.mark.asyncio
-async def test_t10_policy_evaluate_draft_called_once_per_validator_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """T10: the validator calls ``policy.evaluate_draft`` exactly once per
-    invocation — no rebuild, no drift, no double-evaluation."""
+async def test_t10_validator_does_not_evaluate_policy() -> None:
+    """R4-A5-6 T10: semantic evaluation has left the validator entirely —
+    ``policy.evaluate_draft`` is never called by the validator, even when
+    violations exist (zero output-retry consumption for semantic issues)."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     policy = _strict_policy(
@@ -1037,10 +1037,9 @@ async def test_t10_policy_evaluate_draft_called_once_per_validator_call(
         call_count["n"] += 1
         return original_evaluate(draft_answer_text=draft_answer_text)
 
-    # ``AnswerCorrectnessPolicy`` is a frozen dataclass; we cannot monkeypatch
-    # the bound method directly. Instead we wrap it in a small proxy that
-    # delegates evaluate_draft and exposes the same attribute set used by
-    # the validator.
+    # ``AnswerCorrectnessPolicy`` is a frozen dataclass; wrap it in a
+    # small proxy that delegates evaluate_draft and exposes the attribute
+    # set the validator could (but must not) use.
     class _CountingProxy:
         def __init__(self, inner: AnswerCorrectnessPolicy) -> None:
             self._inner = inner
@@ -1070,6 +1069,6 @@ async def test_t10_policy_evaluate_draft_called_once_per_validator_call(
         answer_correctness_policy=_CountingProxy(policy),  # type: ignore[arg-type]
     )
     draft = _draft_with_year("2025")
-    with pytest.raises(ModelRetry):
-        await grounding_validator(ctx, draft)
-    assert call_count["n"] == 1
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+    assert call_count["n"] == 0

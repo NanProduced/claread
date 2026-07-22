@@ -7,16 +7,21 @@ enforces ``response_kind`` semantics + handle existence + duplicate
 handle rejection + evidence count limit, and raises ``ModelRetry``
 (counted against ``retries["output"]``) on correctable failures.
 
-Responsibility scope (per design doc G.8/G.9):
+Responsibility scope (design §5 frozen boundary, R4-A5-6):
 
-- Validator does: response_kind semantics, handle existence in registry,
-  handle envelope_fingerprint match (correctable), duplicate handle
-  rejection (correctable — model can remove duplicates), evidence count
-  limit, baseline_available forbids unavailable.
-- Validator does NOT: scope identity, final generation fence, stable
-  document identity, citation/evidence public projection, typed terminal
-  mapping, silent handle de-duplication. Those are non-retryable
-  finalizer responsibilities.
+- Validator does (structural / evidence contracts only): response_kind
+  semantics, handle existence in registry, handle envelope_fingerprint
+  match (correctable), duplicate handle rejection (correctable — model
+  can remove duplicates), evidence count limit, baseline_available
+  forbids unavailable.
+- Validator does NOT: semantic answer-correctness heuristics (temporal /
+  publication-year, numeric allowset, geo province/state/region,
+  language ratio, explicit exercise-count text parsing — all migrated to
+  the prompt block + typed non-retry evaluator layer), scope identity,
+  final generation fence, stable document identity, citation/evidence
+  public projection, typed terminal mapping, silent handle
+  de-duplication. Those are non-retryable finalizer / evaluator
+  responsibilities.
 
 The validator never mutates ``draft`` and never silently truncates
 ``cited_evidence_handles`` — over-limit and duplicates are always a
@@ -169,18 +174,18 @@ async def _grounding_validator_final_body(
     else:  # unavailable
         _check_unavailable(draft, ctx.deps.baseline_available)
 
-    # R4-A4-1B: answer-correctness policy. Constructed once by runtime
-    # after baseline assembly and write-once assigned to deps. Only the
-    # first violation is surfaced (design §6.4) — it is enough to guide
-    # the model's retry and keeps the RetryPromptPart short. The detail
-    # detail uses a fixed safe template (the count violation interpolates
-    # only bounded integers); it never contains answer text, handles,
-    # identity, or exception text.
-    policy = ctx.deps.answer_correctness_policy
-    if policy is not None:
-        violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
-        if violations:
-            raise ModelRetry(violations[0].detail)
+    # R4-A5-6: semantic answer-correctness violations (temporal /
+    # publication-year, numeric allowset, geo province/state/region,
+    # language-ratio, explicit-count text heuristics) no longer raise
+    # ModelRetry here (design §5 frozen boundary). The policy's prompt
+    # block (AnswerCorrectnessPolicy.render_prompt_block) remains the
+    # ONLY model-facing surface for these constraints; typed evaluation
+    # stays observable via AnswerCorrectnessPolicy.evaluate_draft (pure,
+    # non-retry) for the prompt/evaluator layer. Semantic quality is
+    # never repaired by silently rewriting the answer. The validator
+    # keeps ONLY structural / evidence-contract retries: response_kind
+    # structure, handle mint shape / registry existence / fingerprint /
+    # duplicates / count cap, and unavailable ↔ baseline capability.
 
     return draft
 

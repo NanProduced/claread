@@ -1325,7 +1325,9 @@ def _year_access() -> InMemoryDocumentAccess:
 async def test_policy_retry_then_success_via_real_seam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A grounded draft retries on policy failure without rebuilding policy."""
+    """R4-A5-6: a semantic (temporal) violation is accepted WITHOUT
+    ModelRetry — the policy is still built once (prompt block), but the
+    draft passes on the first call and the answer is never rewritten."""
     import re
 
     from app.services.reader_record_ask import runtime as runtime_module
@@ -1355,16 +1357,15 @@ async def test_policy_retry_then_success_via_real_seam(
         )
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
-        answer_text = (
-            "文章报道了 2025 年的事件。" if model_calls == 1 else "文章报道了 2023 年的事件。"
-        )
+        # The turn-specific correctness block still reaches the model.
+        assert "<answer_correctness>" in prompt_text
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
                     args=json.dumps(
                         {
-                            "answer_text": answer_text,
+                            "answer_text": "文章报道了 2025 年的事件。",
                             "cited_evidence_handles": [handle_match.group(0)],
                             "response_kind": "grounded_answer",
                         }
@@ -1382,7 +1383,9 @@ async def test_policy_retry_then_success_via_real_seam(
         article_rag=None,
     )
 
-    assert model_calls == 2
+    # No semantic retry: exactly one model call.
+    assert model_calls == 1
+    # Policy still built exactly once (prompt-block surface).
     assert len(policy_build_calls) == 1
     build_call = policy_build_calls[0]
     assert build_call["user_message"] == "这篇文章主要说了什么"
@@ -1395,14 +1398,15 @@ async def test_policy_retry_then_success_via_real_seam(
     assert result.agent_draft is not None
     assert result.agent_draft.response_kind == "grounded_answer"
     assert result.agent_draft.cited_evidence_handles
-    assert "2023" in result.agent_draft.answer_text
-    assert "2025" not in result.agent_draft.answer_text
+    # Answer accepted as-is — no silent rewrite.
+    assert "2025" in result.agent_draft.answer_text
 
 
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
-    """City-list geo-type mix-in triggers ModelRetry then a clean city list."""
+    """R4-A5-6: city-list geo-type mix-in no longer triggers ModelRetry;
+    the draft is accepted as-is (geo quality belongs to prompt/evaluator,
+    never to silent rewriting)."""
     import re
 
     model_calls = 0
@@ -1418,11 +1422,7 @@ async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
         )
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
-        answer = (
-            "文章提到的城市有：多伦多、安大略省、纽约州。"
-            if model_calls == 1
-            else "文章提到的城市有：多伦多、芝加哥。"
-        )
+        answer = "文章提到的城市有：多伦多、安大略省、纽约州。"
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -1467,16 +1467,19 @@ async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
         model=FunctionModel(model_fn),
         article_rag=None,
     )
-    assert model_calls == 2
+    # No semantic retry: exactly one model call.
+    assert model_calls == 1
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert "省" not in (result.agent_draft.answer_text if result.agent_draft else "")
-    assert "州" not in (result.agent_draft.answer_text if result.agent_draft else "")
+    # Answer accepted unchanged — no silent geo repair.
+    answer_text = result.agent_draft.answer_text if result.agent_draft else ""
+    assert "安大略省" in answer_text
 
 
 @pytest.mark.asyncio
 async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
-    """Invented numbers on a strict main-idea turn retry then succeed."""
+    """R4-A5-6: invented numbers on a strict main-idea turn no longer
+    retry — accepted as-is; numeric quality moves to prompt/evaluator."""
     import re
 
     model_calls = 0
@@ -1492,11 +1495,7 @@ async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
         )
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
-        answer = (
-            "文章指出有 12500 人撤离。"
-            if model_calls == 1
-            else "文章讨论了野火风险，未给出具体伤亡数字。"
-        )
+        answer = "文章指出有 12500 人撤离。"
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -1541,39 +1540,30 @@ async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
         model=FunctionModel(model_fn),
         article_rag=None,
     )
-    assert model_calls == 2
+    # No semantic retry: exactly one model call; answer not rewritten.
+    assert model_calls == 1
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert "12500" not in (result.agent_draft.answer_text if result.agent_draft else "")
+    assert "12500" in (result.agent_draft.answer_text if result.agent_draft else "")
 
 
 @pytest.mark.asyncio
 async def test_policy_retry_budget_exhausted_via_real_seam() -> None:
-    """R4-A4-1B: policy violation exhausts retries["output"] → finite failure.
+    """R4-A5-6: persistent semantic violations no longer consume the
+    output-retry budget at all — the draft is accepted on the first call
+    (no UnexpectedModelBehavior, no retry loop; semantic quality is a
+    prompt/evaluator concern, not a validator retry).
 
-    Every model call returns a ``clarification`` draft (empty handles —
-    passes grounding) whose answer_text mentions ``2025 年``. The policy
-    raises ``ModelRetry`` on every call. After ``DEFAULT_OUTPUT_RETRIES``
-    repairs, the framework raises ``UnexpectedModelBehavior`` (not
-    ``UsageLimitExceeded``, not an infinite loop).
-
-    Assertions:
-      - ``UnexpectedModelBehavior`` is raised (stable exception category).
-      - Model call count is EXACTLY ``DEFAULT_OUTPUT_RETRIES + 1``
-        (initial attempt + N repairs).
-      - NOT ``UsageLimitExceeded`` — no usage_limits configured; the
-        budget is the output-validator retry budget.
-      - No infinite loop (hard ceiling check).
+    Every model call returns a structurally valid ``clarification`` draft
+    whose answer_text mentions ``2025 年`` (semantically invalid under the
+    strict policy). Post-migration the run must finish in exactly one
+    model call with an ``ok`` finalization.
     """
-    from pydantic_ai.exceptions import UsageLimitExceeded
-
     calls = {"n": 0}
 
     async def model_fn(messages, info: AgentInfo):
         del messages, info
         calls["n"] += 1
-        # Always structurally valid clarification (passes grounding) but
-        # always policy-invalid ('2025' never in baseline chunks).
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -1590,20 +1580,17 @@ async def test_policy_retry_budget_exhausted_via_real_seam() -> None:
             ]
         )
 
-    with pytest.raises(UnexpectedModelBehavior) as ei:
-        await run_reading_record_ask(
-            user_message="这篇文章主要说了什么",
-            envelope=_envelope(),
-            document_access=_year_access(),
-            model=FunctionModel(model_fn),
-            article_rag=None,
-        )
-    # Exact budget: initial attempt + DEFAULT_OUTPUT_RETRIES repairs.
-    assert calls["n"] == DEFAULT_OUTPUT_RETRIES + 1
-    # Hard ceiling against infinite retry.
-    assert calls["n"] <= DEFAULT_OUTPUT_RETRIES + 2
-    # Must NOT be a usage-limit failure.
-    assert not isinstance(ei.value, UsageLimitExceeded)
+    result = await run_reading_record_ask(
+        user_message="这篇文章主要说了什么",
+        envelope=_envelope(),
+        document_access=_year_access(),
+        model=FunctionModel(model_fn),
+        article_rag=None,
+    )
+    # Exactly one model call — no semantic retry loop.
+    assert calls["n"] == 1
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1820,9 +1807,9 @@ async def test_t9_first_model_request_contains_correctness_block() -> None:
     assert result.agent_draft.cited_evidence_handles
 
 
-# T10: policy is built exactly once; the correctness block is byte-identical
-#      across the initial request and the retry request (prompt contract
-#      does not drift).
+# T10: policy is built exactly once; the correctness block reaches the
+#      model request (R4-A5-6: semantic violations no longer retry, so the
+#      run completes in one model call with the block intact).
 @pytest.mark.asyncio
 async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
     monkeypatch: pytest.MonkeyPatch,
@@ -1865,16 +1852,13 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
 
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
-        answer_text = (
-            "文章报道了 2025 年的事件。" if model_calls == 1 else "文章报道了 2023 年的事件。"
-        )
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
                     args=json.dumps(
                         {
-                            "answer_text": answer_text,
+                            "answer_text": "文章报道了 2025 年的事件。",
                             "cited_evidence_handles": [handle_match.group(0)],
                             "response_kind": "grounded_answer",
                         }
@@ -1894,19 +1878,16 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
 
     # Policy built exactly once (write-once convention).
     assert len(policy_build_calls) == 1
-    # Model called twice (initial violation → retry success).
-    assert model_calls == 2
-    # Correctness block captured in both calls.
-    assert len(captured_blocks) == 2
-    # Blocks are byte-identical (prompt contract does not drift).
-    assert captured_blocks[0] == captured_blocks[1]
+    # R4-A5-6: no semantic retry — exactly one model call.
+    assert model_calls == 1
+    # Correctness block reached the model request.
+    assert len(captured_blocks) == 1
     # Block contains the rendered year allowset.
     assert "2023" in captured_blocks[0]
-    # Run succeeded on the second call.
+    # Run succeeded on the single call; answer not rewritten.
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert "2023" in result.agent_draft.answer_text
-    assert "2025" not in result.agent_draft.answer_text
+    assert "2025" in result.agent_draft.answer_text
 
 
 @pytest.mark.asyncio
