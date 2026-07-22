@@ -140,6 +140,19 @@ def _mint_rendered_view(text: str) -> RenderedModelView:
     return view
 
 
+def is_renderer_minted_view(view: object) -> bool:
+    """Return True when ``view`` is a renderer-branded :class:`RenderedModelView`.
+
+    Non-metering origin check for co-located Ask seams (selection prompt
+    capability, etc.). Does **not** charge budget.
+    """
+    return (
+        isinstance(view, RenderedModelView)
+        and getattr(view, "_origin", None) is _RENDERER_ORIGIN
+        and view.char_cost == len(view.text)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class BudgetChargeOk:
     """Successful charge against one budget account."""
@@ -363,6 +376,20 @@ class ModelVisibleTurnBudget:
         if rendered.char_cost < 0:
             raise ValueError("char_cost must be non-negative")
         return rendered.char_cost
+
+    def _refund_chars(self, account: BudgetAccountName, cost: int) -> None:
+        """Private rollback for failed multi-step host transactions.
+
+        Used only by co-located Ask seams (e.g. selection inject) when a
+        charge must be undone because a later registry step failed after
+        preflight. Not part of the public metering API.
+        """
+        if cost < 0:
+            raise ValueError("cost must be non-negative")
+        spent = self._spent[account]
+        if cost > spent:
+            raise ValueError("refund exceeds account spent")
+        self._spent[account] = spent - cost
 
     def _can_charge_chars(self, account: BudgetAccountName, cost: int) -> bool:
         if cost < 0:

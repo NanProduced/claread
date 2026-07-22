@@ -1,40 +1,51 @@
-"""Selection cost-fit + unique untrusted model-view block (R4-A5-2).
+"""Selection cost-fit + unique untrusted model-view block (R4-A5-2 / A5-2R).
 
-Impact chain
-------------
-canonical ``selected_text``
-  → cost-fit ``visible_prefix`` (serialized ``selection`` account)
-  → registry handle ``snippet`` (when registered)
-  → ``ModelContextChunk.text`` / renderer-minted untrusted block
-  → ``TurnCapabilityProjection.selection`` metadata only
-  → server-side ``continuation_start`` (A5-3 expand; not model-visible)
+Atomicity (assembler · registry · budget · prompt)
+--------------------------------------------------
+**Success (status=injected)** is one host transaction:
 
-Contract
---------
-On a normal inject success path:
+1. preflight registry fingerprint + build observation (no budget mutation);
+2. cost-fit search via ``can_charge`` only (no mutation);
+3. single ``charge("selection", fitted_view)`` of the renderer-minted block;
+4. single ``registry.register(observation)`` with the same handle/snippet;
+5. mint :class:`SelectionPromptCapability` branded for the prompt builder.
 
-    model_chunk.text
-      == registry[handle].snippet
-      == visible_prefix
+If step 4 fails after step 3, selection spend is refunded and no observation
+is left. If any step before charge fails, budget and registry are unchanged.
 
-Strict Python ``str`` equality. XML escape happens only when
-:class:`~app.services.reader_record_ask.model_view_budget.ModelViewRenderer`
-renders the untrusted block. That same :class:`RenderedModelView` is the
-sole prompt injection string — no second formatter.
+**Failure paths**
 
-Does **not** implement expand tool, cursor, cross-turn binding, map, RAG
-scrub, validator migration, or production runtime wiring (A5-3…A5-7).
+- ``absent``: no registry required; no budget / registry mutation.
+- ``budget_denied``: registry required for non-empty selection but unused;
+  fit search only ``can_charge``; no charge, no observation, no handle.
+- ``registry is None`` / fingerprint mismatch / observation build error:
+  raise before charge; no mutation.
+- register failure after charge: refund selection; no residual observation.
+
+**Prompt** accepts only assembler-minted :class:`SelectionPromptCapability`
+(not raw ``str``, not generic ``RenderedModelView`` / ``render_plain``).
+
+Cost ownership of selection section chrome
+------------------------------------------
+- Untrusted ``<untrusted_article_text role="selection">`` block →
+  **selection** account (charged once via renderer).
+- Fixed section header/footer chrome around that block → **request_frame**
+  fixed surface (constant strings; A5-7 request_frame metering must include
+  them). Never unowned model-visible characters.
+
+Does **not** implement expand/map/RAG/validator/production wiring (A5-3…7).
 Does **not** replace live :func:`register_initial_anchor_evidence` behaviour.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.reader_record_ask.baseline_context import ModelContextChunk
 from app.services.reader_record_ask.evidence import (
     EvidenceHandleRef,
+    ServerEvidenceObservation,
     build_server_evidence_observation,
     mint_evidence_handle_id,
 )
@@ -44,28 +55,133 @@ from app.services.reader_record_ask.model_view_budget import (
     ModelViewRenderer,
     ModelVisibleTurnBudget,
     RenderedModelView,
+    is_renderer_minted_view,
 )
 from app.services.reader_record_ask.turn_capability_projection import (
     SelectionCapabilityView,
 )
 
 # Registry / evidence DTO hard ceiling on snippet length (codepoints).
-# Cost-fit may return a shorter prefix; never inject past this cap.
 EVIDENCE_SNIPPET_HARD_CAP: int = 2000
 
-# Selection untrusted blocks always use ordinal 0 on the A5-2 model-view path.
 SELECTION_CHUNK_ORDINAL: int = 0
 SELECTION_ROLE: str = "selection"
 
+# Request-frame-owned fixed chrome around the selection untrusted block.
+# Included in SelectionPromptCapability.section_text so the prompt builder
+# never invents unowned model-visible characters. A5-7 request_frame charge
+# must account for these constants.
+SELECTION_SECTION_HEADER: str = "\n## Untrusted article context (selection)\n"
+SELECTION_SECTION_FOOTER: str = "\n"
+
 SelectionModelViewStatus = Literal["absent", "injected", "budget_denied"]
+
+# Module-private brand for selection prompt capabilities (not a sandbox).
+_SELECTION_PROMPT_ORIGIN: object = object()
+
+_SELECTION_PROMPT_TYPE_ERROR = (
+    "selection prompt requires SelectionPromptCapability "
+    "from assemble_selection_model_view"
+)
+
+_REGISTRY_REQUIRED_ERROR = (
+    "assemble_selection_model_view requires a non-None EvidenceRegistry "
+    "for non-empty selection (injected selection must be registry-backed)"
+)
+
+
+# ---------------------------------------------------------------------------
+# Selection-specific prompt capability (assembler-minted only)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SelectionPromptCapability:
+    """Assembler-minted selection injection capability for the prompt builder.
+
+    Not a generic :class:`RenderedModelView`. Hand construction yields an
+    unusable capability (origin unset). Module-boundary brand only.
+    """
+
+    # Full section inserted into the user prompt (request_frame chrome +
+    # selection untrusted block). Prompt builder uses this string as-is.
+    section_text: str
+    # Exact renderer-minted untrusted block body (no section chrome).
+    untrusted_block_text: str
+    handle_id: str
+    # char_cost of the untrusted block already charged to selection.
+    selection_block_char_cost: int
+    _origin: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+
+
+def _mint_selection_prompt_capability(
+    *,
+    fitted_view: RenderedModelView,
+    handle_id: str,
+) -> SelectionPromptCapability:
+    if not is_renderer_minted_view(fitted_view):
+        raise TypeError(
+            "selection prompt capability requires a renderer-minted untrusted block"
+        )
+    if not handle_id:
+        raise ValueError("handle_id must be non-empty")
+    # Guard: block must be the selection role surface (not render_plain).
+    if 'role="selection"' not in fitted_view.text:
+        raise TypeError(
+            "selection prompt capability requires a selection-role untrusted block"
+        )
+    section_text = (
+        SELECTION_SECTION_HEADER + fitted_view.text + SELECTION_SECTION_FOOTER
+    )
+    cap = SelectionPromptCapability(
+        section_text=section_text,
+        untrusted_block_text=fitted_view.text,
+        handle_id=handle_id,
+        selection_block_char_cost=fitted_view.char_cost,
+    )
+    object.__setattr__(cap, "_origin", _SELECTION_PROMPT_ORIGIN)
+    return cap
+
+
+def validate_selection_prompt_capability(
+    capability: object,
+) -> SelectionPromptCapability:
+    """Non-metering origin check for the prompt builder.
+
+    Rejects raw strings, generic RenderedModelView, hand-forged capabilities,
+    and anything not minted by :func:`assemble_selection_model_view`.
+    """
+    if not isinstance(capability, SelectionPromptCapability):
+        raise TypeError(_SELECTION_PROMPT_TYPE_ERROR)
+    if getattr(capability, "_origin", None) is not _SELECTION_PROMPT_ORIGIN:
+        raise TypeError(_SELECTION_PROMPT_TYPE_ERROR)
+    return capability
+
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class SelectionModelViewResult:
-    """Host-owned selection model-view assembly outcome (offline seam).
+    """Host-owned selection model-view assembly outcome.
 
-    ``continuation_start`` is **server-side only** — never placed on the
-    model-visible projection. A5-3 will bind expand tools to this index.
+    For ``status="injected"`` the following are guaranteed non-None and
+    registry-backed:
+
+    - ``handle_ref``, ``model_chunk``, ``rendered_untrusted_block``,
+      ``prompt_capability``
+    - binary equality:
+      ``model_chunk.text == registry[handle].snippet == visible_prefix``
+
+    ``continuation_start`` is server-side only (A5-3); never model-visible.
     """
 
     status: SelectionModelViewStatus
@@ -76,17 +192,16 @@ class SelectionModelViewResult:
     model_chunk: ModelContextChunk | None = None
     rendered_untrusted_block: RenderedModelView | None = None
     handle_ref: EvidenceHandleRef | None = None
+    prompt_capability: SelectionPromptCapability | None = None
 
     @property
     def is_injected(self) -> bool:
         return self.status == "injected"
 
-    @property
-    def prompt_block_text(self) -> str | None:
-        """Exact renderer output for :func:`build_agent_user_prompt`."""
-        if self.rendered_untrusted_block is None:
-            return None
-        return self.rendered_untrusted_block.text
+
+# ---------------------------------------------------------------------------
+# Pure fit (planning only — never produces citeable handles)
+# ---------------------------------------------------------------------------
 
 
 def fit_selection_prefix(
@@ -98,12 +213,11 @@ def fit_selection_prefix(
 ) -> tuple[str, RenderedModelView | None]:
     """Largest codepoint prefix that fits the selection account via renderer cost.
 
-    Uses binary search over prefix length in
-    ``[0, min(len(canonical), EVIDENCE_SNIPPET_HARD_CAP)]``.
+    Pure planning helper: only ``can_charge``; **no** budget mutation, **no**
+    registry write, **no** citeable handle minting for injection.
 
-    Search only calls :meth:`ModelVisibleTurnBudget.can_charge` on
-    renderer-minted views — **no** budget mutation. Returns
-    ``("", None)`` when even the empty-body tagged block cannot fit.
+    This is **not** a construct entry for model-visible / citeable selection.
+    Use :func:`assemble_selection_model_view` for inject/cite paths.
     """
     if not isinstance(canonical, str):
         raise TypeError("canonical must be str")
@@ -135,13 +249,90 @@ def fit_selection_prefix(
     return best_prefix, best_view
 
 
+# ---------------------------------------------------------------------------
+# Inject / citeable assembly (registry required for non-empty selection)
+# ---------------------------------------------------------------------------
+
+
+def _build_locator_summary(
+    *,
+    unit_id: str | None,
+    anchor_segment_id: str | None,
+    text_hash: str | None,
+    offset_unit: str | None,
+    start_offset: int | None,
+    end_offset: int | None,
+) -> dict[str, Any] | None:
+    if unit_id is None and anchor_segment_id is None:
+        return None
+    locator_summary: dict[str, Any] = {
+        "mode": "initial_anchor",
+        "untrusted": True,
+    }
+    if unit_id is not None:
+        locator_summary["unit_id"] = unit_id
+    if anchor_segment_id is not None:
+        locator_summary["anchor_segment_id"] = anchor_segment_id
+    if offset_unit is not None:
+        locator_summary["offset_unit"] = offset_unit
+    if start_offset is not None:
+        locator_summary["start_offset"] = start_offset
+    if end_offset is not None:
+        locator_summary["end_offset"] = end_offset
+    if text_hash is not None:
+        locator_summary["text_hash"] = text_hash
+    return locator_summary
+
+
+def _preflight_observation(
+    *,
+    registry: EvidenceRegistry,
+    envelope_fingerprint: str,
+    handle_id: str,
+    visible_prefix: str,
+    unit_id: str | None,
+    anchor_segment_id: str | None,
+    text_hash: str | None,
+    offset_unit: str | None,
+    start_offset: int | None,
+    end_offset: int | None,
+) -> ServerEvidenceObservation:
+    """Build + validate observation before any budget mutation."""
+    if registry.envelope_fingerprint != envelope_fingerprint:
+        raise ValueError(
+            "evidence registry fingerprint does not match envelope fingerprint"
+        )
+    if registry.get(handle_id) is not None:
+        raise ValueError(f"duplicate evidence handle_id: {handle_id}")
+
+    locator_summary = _build_locator_summary(
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        text_hash=text_hash,
+        offset_unit=offset_unit,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    )
+    # Pydantic validation happens here — before charge.
+    return build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=envelope_fingerprint,
+        source_tool="initial_anchor",
+        snippet=visible_prefix,
+        locator_summary=locator_summary,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        handle_id=handle_id,
+    )
+
+
 def assemble_selection_model_view(
     *,
     canonical_selected_text: str | None,
     envelope_fingerprint: str,
     budget: ModelVisibleTurnBudget,
-    renderer: ModelViewRenderer | None = None,
     registry: EvidenceRegistry | None = None,
+    renderer: ModelViewRenderer | None = None,
     unit_id: str | None = None,
     anchor_segment_id: str | None = None,
     text_hash: str | None = None,
@@ -149,30 +340,14 @@ def assemble_selection_model_view(
     start_offset: int | None = None,
     end_offset: int | None = None,
 ) -> SelectionModelViewResult:
-    """Assemble cost-fit selection model-view for the offline A5-2 seam.
+    """Assemble cost-fit, registry-backed selection model-view (inject seam).
 
-    Parameters
-    ----------
-    canonical_selected_text:
-        Envelope-validated selection body, or ``None`` when absent.
-    envelope_fingerprint:
-        Registry binding when ``registry`` is provided.
-    budget / renderer:
-        Host-owned metering seam. Search uses ``can_charge`` only; the
-        winning view is ``charge``d exactly once on inject success.
-    registry:
-        Optional. When provided and inject succeeds, registers
-        ``initial_anchor`` with ``snippet == visible_prefix`` and the
-        pre-minted handle id (binary equality).
-    unit_id / anchor_segment_id / text_hash / offsets:
-        Optional **server-side** locator material for the registry only.
-        Never enters the model chunk, rendered block, or projection.
+    For non-empty ``canonical_selected_text``, ``registry`` is **required**.
+    Injected results always carry a registered handle, a charged renderer
+    block, and an assembler-minted :class:`SelectionPromptCapability`.
 
-    Returns
-    -------
-    SelectionModelViewResult
-        ``absent`` when no selection; ``injected`` on success; 
-        ``budget_denied`` when no non-empty prefix fits (no mutation).
+    Pure planning without registry is not this function's job — use
+    :func:`fit_selection_prefix` (no handles / no injection).
     """
     active_renderer = renderer if renderer is not None else ModelViewRenderer()
 
@@ -188,7 +363,6 @@ def assemble_selection_model_view(
     if not isinstance(canonical_selected_text, str):
         raise TypeError("canonical_selected_text must be str or None")
     if not canonical_selected_text:
-        # Envelope contract normally forbids empty selected_text; treat as absent.
         return SelectionModelViewResult(
             status="absent",
             selection=SelectionCapabilityView(present=False),
@@ -197,10 +371,20 @@ def assemble_selection_model_view(
             continuation_start=0,
         )
 
+    # Fix 1: non-empty selection requires registry before any fit/charge.
+    if registry is None:
+        raise ValueError(_REGISTRY_REQUIRED_ERROR)
+
+    # Preflight fingerprint before any budget work (no mutation).
+    if registry.envelope_fingerprint != envelope_fingerprint:
+        raise ValueError(
+            "evidence registry fingerprint does not match envelope fingerprint"
+        )
+
     full_len = len(canonical_selected_text)
     handle_id = mint_evidence_handle_id()
 
-    # Cost-fit search: can_charge only — budget unchanged on denial paths.
+    # Cost-fit search: can_charge only.
     visible_prefix, fitted_view = fit_selection_prefix(
         canonical=canonical_selected_text,
         handle_id=handle_id,
@@ -223,60 +407,54 @@ def assemble_selection_model_view(
             continuation_start=0,
         )
 
-    # Final charge of the **same** renderer-minted view found by search.
-    budget.charge("selection", fitted_view)
+    # Preflight observation construction + duplicate handle check BEFORE charge.
+    observation = _preflight_observation(
+        registry=registry,
+        envelope_fingerprint=envelope_fingerprint,
+        handle_id=handle_id,
+        visible_prefix=visible_prefix,
+        unit_id=unit_id,
+        anchor_segment_id=anchor_segment_id,
+        text_hash=text_hash,
+        offset_unit=offset_unit,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    )
 
     model_chunk = ModelContextChunk(
         handle_id=handle_id,
         chunk_ordinal=SELECTION_CHUNK_ORDINAL,
         text=visible_prefix,
     )
+    if model_chunk.text != visible_prefix or observation.snippet != visible_prefix:
+        raise RuntimeError("selection model-view binary equality broken at preflight")
 
-    handle_ref: EvidenceHandleRef | None = None
-    if registry is not None:
-        if registry.envelope_fingerprint != envelope_fingerprint:
-            raise ValueError(
-                "evidence registry fingerprint does not match envelope fingerprint"
-            )
-        locator_summary: dict[str, Any] | None = None
-        if unit_id is not None or anchor_segment_id is not None:
-            locator_summary = {
-                "mode": "initial_anchor",
-                "untrusted": True,
-            }
-            if unit_id is not None:
-                locator_summary["unit_id"] = unit_id
-            if anchor_segment_id is not None:
-                locator_summary["anchor_segment_id"] = anchor_segment_id
-            if offset_unit is not None:
-                locator_summary["offset_unit"] = offset_unit
-            if start_offset is not None:
-                locator_summary["start_offset"] = start_offset
-            if end_offset is not None:
-                locator_summary["end_offset"] = end_offset
-            if text_hash is not None:
-                locator_summary["text_hash"] = text_hash
-
-        observation = build_server_evidence_observation(
-            kind="initial_anchor",
-            envelope_fingerprint=envelope_fingerprint,
-            source_tool="initial_anchor",
-            # Binary equality: snippet == model_chunk.text == visible_prefix
-            snippet=visible_prefix,
-            locator_summary=locator_summary,
-            unit_id=unit_id,
-            anchor_segment_id=anchor_segment_id,
-            handle_id=handle_id,
-        )
+    # Atomic commit: charge then register; refund charge if register fails.
+    charge_ok = budget.charge("selection", fitted_view)
+    try:
         handle_ref = registry.register(observation)
-        registered = registry.get(handle_id)
-        if registered is None or registered.snippet != model_chunk.text:
-            raise RuntimeError(
-                "selection model-view binary equality broken after registry register"
-            )
+    except Exception:
+        budget._refund_chars("selection", charge_ok.cost)
+        raise
 
-    if model_chunk.text != visible_prefix:
-        raise RuntimeError("selection model-view binary equality broken for chunk")
+    registered = registry.get(handle_id)
+    if (
+        registered is None
+        or registered.snippet != model_chunk.text
+        or handle_ref.handle_id != handle_id
+    ):
+        # Inconsistent post-state: attempt refund and remove is not available
+        # on registry; fail closed after refund if still charged.
+        if budget.spent("selection") >= charge_ok.cost:
+            budget._refund_chars("selection", charge_ok.cost)
+        raise RuntimeError(
+            "selection model-view binary equality broken after registry register"
+        )
+
+    prompt_capability = _mint_selection_prompt_capability(
+        fitted_view=fitted_view,
+        handle_id=handle_id,
+    )
 
     expandable = full_len > len(visible_prefix)
     continuation_start = len(visible_prefix)
@@ -296,44 +474,60 @@ def assemble_selection_model_view(
         model_chunk=model_chunk,
         rendered_untrusted_block=fitted_view,
         handle_ref=handle_ref,
+        prompt_capability=prompt_capability,
     )
 
 
 def assert_selection_binary_equality(
     result: SelectionModelViewResult,
     *,
-    registry: EvidenceRegistry | None = None,
+    registry: EvidenceRegistry,
 ) -> None:
     """Raise ``AssertionError`` unless inject-path binary equality holds."""
     if result.status != "injected":
-        raise AssertionError(f"binary equality requires injected status, got {result.status}")
+        raise AssertionError(
+            f"binary equality requires injected status, got {result.status}"
+        )
     if result.model_chunk is None:
         raise AssertionError("injected result missing model_chunk")
+    if result.handle_ref is None:
+        raise AssertionError("injected result missing handle_ref")
+    if result.prompt_capability is None:
+        raise AssertionError("injected result missing prompt_capability")
+    if result.rendered_untrusted_block is None:
+        raise AssertionError("injected result missing rendered_untrusted_block")
     if result.model_chunk.text != result.visible_prefix:
         raise AssertionError("model_chunk.text != visible_prefix")
     if result.selection.handle_id is None:
         raise AssertionError("injected result missing handle_id")
     if result.model_chunk.handle_id != result.selection.handle_id:
         raise AssertionError("chunk handle_id != selection metadata handle_id")
-    if registry is not None:
-        obs = registry.get(result.selection.handle_id)
-        if obs is None:
-            raise AssertionError("handle not in registry")
-        if obs.snippet != result.visible_prefix:
-            raise AssertionError("registry snippet != visible_prefix")
-        if obs.snippet != result.model_chunk.text:
-            raise AssertionError("registry snippet != model_chunk.text")
+    if result.handle_ref.handle_id != result.selection.handle_id:
+        raise AssertionError("handle_ref != selection handle_id")
+    if result.prompt_capability.handle_id != result.selection.handle_id:
+        raise AssertionError("prompt capability handle_id mismatch")
+    obs = registry.get(result.selection.handle_id)
+    if obs is None:
+        raise AssertionError("handle not in registry")
+    if obs.snippet != result.visible_prefix:
+        raise AssertionError("registry snippet != visible_prefix")
+    if obs.snippet != result.model_chunk.text:
+        raise AssertionError("registry snippet != model_chunk.text")
+    validate_selection_prompt_capability(result.prompt_capability)
 
 
-# Re-export reserve constant for tests / call-sites (single source).
 __all__ = [
     "EVIDENCE_SNIPPET_HARD_CAP",
     "RESERVE_SELECTION",
     "SELECTION_CHUNK_ORDINAL",
     "SELECTION_ROLE",
+    "SELECTION_SECTION_FOOTER",
+    "SELECTION_SECTION_HEADER",
     "SelectionModelViewResult",
     "SelectionModelViewStatus",
+    "SelectionPromptCapability",
     "assemble_selection_model_view",
     "assert_selection_binary_equality",
     "fit_selection_prefix",
+    "validate_selection_prompt_capability",
 ]

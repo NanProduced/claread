@@ -29,6 +29,10 @@ from app.services.reader_record_ask.grounding_validator import (
     grounding_validator,
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+from app.services.reader_record_ask.selection_model_view import (
+    SelectionPromptCapability,
+    validate_selection_prompt_capability,
+)
 from app.services.reader_record_ask.tool_contracts import (
     TOOL_READ_RANGE,
     TOOL_SEARCH_CURRENT_ARTICLE,
@@ -178,7 +182,7 @@ def build_agent_user_prompt(
     model_context_chunks: Sequence[ModelContextChunk] = (),
     baseline_is_complete: bool = False,
     correctness_block: str | None = None,
-    selection_untrusted_block: str | None = None,
+    selection_prompt: SelectionPromptCapability | None = None,
 ) -> str:
     """Compose the single user turn for the agent (no keyword routing).
 
@@ -196,14 +200,16 @@ def build_agent_user_prompt(
     so the serialized budget computation can never drift from the actual
     prompt rendering.
 
-    ``selection_untrusted_block`` (R4-A5-2, optional) carries a
-    **pre-rendered** selection untrusted block from
-    :class:`~app.services.reader_record_ask.model_view_budget.ModelViewRenderer`
-    (``RenderedModelView.text``). When provided it is inserted once,
-    immediately before the baseline block. Callers must not re-format or
-    re-escape the selection body — the renderer output is the sole
-    model-visible selection surface. Omitted / ``None`` preserves the
-    legacy prompt layout (production still uses the legacy path until A5-7).
+    ``selection_prompt`` (R4-A5-2R, optional) must be an assembler-minted
+    :class:`~app.services.reader_record_ask.selection_model_view.SelectionPromptCapability`
+    from :func:`~app.services.reader_record_ask.selection_model_view.assemble_selection_model_view`.
+    Raw strings, generic :class:`RenderedModelView` (including
+    ``render_plain``), and hand-forged capabilities are rejected. The
+    capability already includes request_frame-owned section chrome plus
+    the selection-account untrusted block; the prompt builder inserts
+    ``section_text`` once before baseline and does **not** re-charge.
+    Omitted / ``None`` preserves the legacy prompt layout (production
+    still uses the legacy path until A5-7).
 
     ``baseline_is_complete`` toggles the coverage awareness block between
     ``complete`` (full article visible) and ``partial`` (subset only).
@@ -238,15 +244,12 @@ def build_agent_user_prompt(
         if correctness_block
         else ""
     )
-    # R4-A5-2: optional pre-rendered selection block (renderer output only).
-    # Inserted once before baseline so selection body never duplicates into
-    # projection / handles / coverage / correctness.
+    # R4-A5-2R: selection section only from assembler-minted capability.
+    # Origin validated; no re-charge; no raw str / generic view path.
     selection_section = ""
-    if selection_untrusted_block:
-        selection_section = (
-            "\n## Untrusted article context (selection)\n"
-            f"{selection_untrusted_block}\n"
-        )
+    if selection_prompt is not None:
+        cap = validate_selection_prompt_capability(selection_prompt)
+        selection_section = cap.section_text
     return (
         "## Current turn context (server projection; not tool arguments)\n"
         f"{agent_context_json}\n"
