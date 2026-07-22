@@ -332,9 +332,16 @@ def aggregate_results(
                 if dim.dimension == "unsupported_temporal_claims" and not dim.passed:
                     unsupported_count += 1
                 elif dim.dimension == "exhaustive_completeness":
-                    recall = _parse_recall(dim.details)
-                    if recall is not None:
-                        recalls.append(recall)
+                    # R4-A4-3: passed runs always contribute recall=1.0
+                    # (including ``requires_exhaustive_entity_recall=False``
+                    # no-op passes). Failed runs keep the parsed recall
+                    # from evaluator details; if unparseable, use 0.0 so
+                    # failures still move the average.
+                    if dim.passed:
+                        recalls.append(1.0)
+                    else:
+                        parsed = _parse_recall(dim.details)
+                        recalls.append(0.0 if parsed is None else parsed)
                 elif (
                     dim.dimension == "instruction_following"
                     and dim.passed

@@ -281,14 +281,59 @@ def test_per_config_metrics() -> None:
     assert flash_cfg["avg_tokens"] == 1500.0  # (1000+2000)/2
     assert flash_cfg["total_requests"] == 6  # 2+4
     assert flash_cfg["unsupported_claim_count"] == 1
-    assert flash_cfg["completeness_recall_avg"] == 0.5
+    # R4-A4-3: passed run contributes 1.0; failed run keeps parsed 0.50
+    assert flash_cfg["completeness_recall_avg"] == 0.75
     assert flash_cfg["instruction_following_rate"] == 1.0
 
     pro_cfg = report.per_config["pro|thinking=True"]
     assert pro_cfg["total_runs"] == 1
     assert pro_cfg["pass_rate"] == 1.0
     assert pro_cfg["unsupported_claim_count"] == 0
-    assert pro_cfg["completeness_recall_avg"] == 0.0  # no failure → no recall parsed
+    # R4-A4-3: all-passed config averages completeness recall to 1.0
+    assert pro_cfg["completeness_recall_avg"] == 1.0
+
+
+def test_completeness_recall_avg_all_pass_config_is_one() -> None:
+    """R4-A4-3: when every exhaustive_completeness result passes, avg is 1.0.
+
+    Previously only failure details contributed ``recall=…``, so an
+    all-pass config silently reported ``completeness_recall_avg=0.0``.
+    """
+    cases_by_id = {
+        "c-all-pass": _make_case("c-all-pass", qcat="main_idea"),
+    }
+    results = [
+        _case_result(
+            case_id="c-all-pass",
+            run_id=f"run-{i}",
+            model="flash",
+            thinking=False,
+            latency=1.0,
+            tokens=100,
+            requests=1,
+            dimensions=[
+                _dim("answer_success", passed=True),
+                _dim(
+                    "exhaustive_completeness",
+                    passed=True,
+                    details=(
+                        "exhaustive_completeness: all expected entities present"
+                        if i % 2 == 0
+                        else (
+                            "exhaustive_completeness: recall not required "
+                            "(requires_exhaustive_entity_recall=False)"
+                        )
+                    ),
+                ),
+                _dim("instruction_following", passed=True),
+            ],
+        )
+        for i in range(3)
+    ]
+    report = aggregate_results(results, cases_by_id)
+    cfg = report.per_config["flash|thinking=False"]
+    assert cfg["total_runs"] == 3
+    assert cfg["completeness_recall_avg"] == 1.0
 
 
 def test_empty_input_produces_empty_report() -> None:

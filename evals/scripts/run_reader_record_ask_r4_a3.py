@@ -2062,12 +2062,11 @@ def aggregate(
         real_model_user_commands=real_model_user_commands,
         deterministic_tests_passed=True,
         deterministic_tests_summary=(
-            "evals/tests/test_reader_record_ask_*.py: 全通过 "
-            "(session/evaluation/phase_planner/budgeted_model/errors/utf16/"
-            "eval_*/dataset/aggregator/report); "
-            "services/api/tests/test_reader_record_ask_real_llm_eval.py: "
-            "4 passed, 3 skipped (default skip). "
-            "ruff All checks passed."
+            "aggregate 路径不调用 pytest；离线确定性套件以本轮开发/"
+            "CI 实际命令结果为准（session/evaluation/phase_planner/"
+            "budgeted_model/evaluators/dataset/aggregator/report 等）。"
+            " real-LLM harness 默认 gated skip，本摘要不声明精确 "
+            "passed/skipped 计数。"
         ),
         verdict=verdict,
         allow_r4_a4=allow_r4_a4,

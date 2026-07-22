@@ -429,6 +429,20 @@ def test_report_blocked_verdict_when_no_artifacts() -> None:
     assert "real model run was not executed; results are not fabricated" in report
 
 
+def test_report_section6_does_not_hardcode_pytest_counts() -> None:
+    """R4-A4-3: report must not claim exact passed/skipped pytest counts.
+
+    Aggregate path does not invoke pytest; inventing ``4 passed, 3 skipped``
+    is unauditable and was historically wrong when the suite grew.
+    """
+    report = generate_r4_a3_report(**_default_report_kwargs())
+    assert "4 passed" not in report
+    assert "3 skipped" not in report
+    assert "不得在此断言精确 passed/skipped 计数" in report or (
+        "不硬编码 passed/skipped 数量" in report
+    )
+
+
 # ---------------------------------------------------------------------------
 # Failure clusters rendering
 # ---------------------------------------------------------------------------

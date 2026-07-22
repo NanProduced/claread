@@ -261,12 +261,15 @@ def _render_test_results(
 ) -> str:
     """Section 6: 所有测试结果."""
     real_model_line = (
-        "- 真实模型 harness (services/api/tests/test_reader_record_ask_real_llm_eval.py): "
+        "- 真实模型 harness "
+        "(services/api/tests/test_reader_record_ask_real_llm_eval.py): "
         "**BLOCKED** — 环境门未开（无 `CLAREAD_ALLOW_REAL_LLM_TESTS` / "
-        "`CLAREAD_R4_A3_RUN` / `CLAREAD_REAL_LLM_MODEL` / DB / record_id），"
-        "默认 skip 行为正确：4 passed, 3 skipped。\n"
+        "`CLAREAD_R4_A3_RUN` / `CLAREAD_REAL_LLM_MODEL` / DB / record_id）。"
+        " 本报告生成路径未调用 pytest；默认 gate 为 skip real phase "
+        "tests，不得在此断言精确 passed/skipped 计数。\n"
         if real_model_blocked
-        else "- 真实模型 harness (services/api/tests/test_reader_record_ask_real_llm_eval.py): "
+        else "- 真实模型 harness "
+        "(services/api/tests/test_reader_record_ask_real_llm_eval.py): "
         "已运行（详见 §7、§9）。\n"
     )
     return (
@@ -274,7 +277,8 @@ def _render_test_results(
         f"- 确定性测试结果: {'PASSED' if deterministic_tests_passed else 'FAILED'}\n"
         f"- 摘要: {deterministic_tests_summary}\n"
         f"{real_model_line}"
-        "- `ruff check`: All checks passed (针对本轮新建/修改的 evals 文件)。\n"
+        "- 静态检查: 以本轮实际执行的 `ruff check` / 相关 pytest 命令为准；"
+        "本段不硬编码 passed/skipped 数量。\n"
     )
 
 
