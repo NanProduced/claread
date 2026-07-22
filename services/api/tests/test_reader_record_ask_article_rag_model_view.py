@@ -22,7 +22,10 @@ from app.services.reader_record_ask.article_rag_port import (
     ArticleRagHitView,
     ArticleRagSearchOutcome,
 )
-from app.services.reader_record_ask.evidence import ServerEvidenceObservation
+from app.services.reader_record_ask.evidence import (
+    EvidenceHandleRef,
+    ServerEvidenceObservation,
+)
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.model_view_budget import (
     RESERVE_RAG,
@@ -342,7 +345,7 @@ def test_register_write_then_raise_rolls_back_budget_and_registry() -> None:
     registry.fail_after_write = True
     with pytest.raises(
         RuntimeError,
-        match=r"rag_model_view_failed code=register",
+        match=r"rag_model_view_rollback_failed code=batch_complete",
     ):
         assemble_rag_model_view(
             outcome=_ok_outcome(_hit(text="段落一。"), _hit(text="段落二。")),
@@ -362,7 +365,7 @@ def test_register_postcondition_failure_rolls_back_fully() -> None:
     before = budget.snapshot()
     with pytest.raises(
         RuntimeError,
-        match=r"rag_model_view_failed code=register",
+        match=r"rag_model_view_rollback_failed code=batch_complete",
     ):
         assemble_rag_model_view(
             outcome=_ok_outcome(_hit()),
@@ -396,7 +399,7 @@ def test_rollback_mismatch_fails_closed_with_refund() -> None:
     before = budget.snapshot()
     with pytest.raises(
         RuntimeError,
-        match=r"rag_model_view_rollback_failed code=registry_mismatch",
+        match=r"rag_model_view_rollback_failed code=batch_partial",
     ):
         assemble_rag_model_view(
             outcome=_ok_outcome(_hit()),
@@ -407,6 +410,346 @@ def test_rollback_mismatch_fails_closed_with_refund() -> None:
     # Budget refunded despite the unproven registry; foreign entry kept.
     assert budget.snapshot() == before
     assert len(registry) == 1
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-5R P1-1: outcome-level identity fence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field, bad_value",
+    [
+        ("base_id", UUID("99999999-9999-9999-9999-999999999999")),
+        ("record_generation", 99),
+        ("stable_document_id", UUID("88888888-8888-8888-8888-888888888888")),
+    ],
+)
+def test_outcome_identity_fence_blocks_even_perfect_hits(
+    field: str, bad_value: object
+) -> None:
+    """Outcome-level base/generation/stable-document mismatch → fixed safe
+    unavailable view even though every hit matches the envelope."""
+    kwargs: dict[str, object] = {
+        "base_id": _BASE,
+        "record_generation": 1,
+        "stable_document_id": _DOC,
+        field: bad_value,
+    }
+    hit_text = "完全匹配 envelope 的 hit 正文。"
+    outcome = ArticleRagSearchOutcome(
+        status="ok",
+        summary="upstream summary",
+        hits=(_hit(text=hit_text),),
+        rag_substrate_id=_SUBSTRATE,
+        plan_content_sha256=_PLAN_HASH,
+        base_id=kwargs["base_id"],  # type: ignore[arg-type]
+        record_generation=kwargs["record_generation"],  # type: ignore[arg-type]
+        stable_document_id=kwargs["stable_document_id"],  # type: ignore[arg-type]
+    )
+    budget = ModelVisibleTurnBudget()
+    registry = EvidenceRegistry(_FINGERPRINT)
+    before = budget.snapshot()
+
+    result = assemble_rag_model_view(
+        outcome=outcome,
+        envelope_identity=_identity(),
+        registry=registry,
+        budget=budget,
+    )
+
+    assert result.kind == "unavailable"
+    assert result.model_visible is True
+    rendered = result.rendered_tool_view.text
+    parsed = json.loads(rendered)
+    assert parsed["status"] == "unavailable"
+    assert parsed["evidence_handles"] == []
+    assert parsed["article_text_blocks"] == []
+    # No hit processed or registered.
+    assert len(registry) == 0
+    assert result.evidence_handles == ()
+    # No leakage: hit body, identity values, hashes, substrate.
+    assert hit_text not in rendered
+    assert str(bad_value) not in rendered
+    assert str(_SUBSTRATE) not in rendered
+    assert _PLAN_HASH not in rendered
+    assert _CONTENT_HASH not in rendered
+    # Fixed internal detail code (sidecar only).
+    assert result.sidecar is not None
+    assert result.sidecar.detail_code == "outcome_identity_mismatch"
+    assert result.sidecar.hits == ()
+    # Metered safe view; nothing else charged.
+    assert budget.spent("rag") == before["rag"] + len(rendered)
+
+
+def test_outcome_identity_complete_match_ok_path_unchanged() -> None:
+    """Fully matching outcome identity: the ok path does not regress."""
+    budget = ModelVisibleTurnBudget()
+    registry = EvidenceRegistry(_FINGERPRINT)
+    result = assemble_rag_model_view(
+        outcome=_ok_outcome(_hit()),
+        envelope_identity=_identity(),
+        registry=registry,
+        budget=budget,
+    )
+    assert result.kind == "ok"
+    assert len(registry) == 1
+    assert len(result.evidence_handles) == 1
+
+
+def test_outcome_fence_safe_view_budget_denied_zero_mutation() -> None:
+    """Fence mismatch + not even the safe view fits → typed non-model-
+    visible budget_denied with zero mutation."""
+    renderer = ModelViewRenderer()
+    budget = ModelVisibleTurnBudget()
+    budget.charge("rag", renderer.render_plain("f" * (RESERVE_RAG - 1)))
+    registry = EvidenceRegistry(_FINGERPRINT)
+    before = budget.snapshot()
+    outcome = ArticleRagSearchOutcome(
+        status="ok",
+        summary="upstream summary",
+        hits=(_hit(),),
+        rag_substrate_id=_SUBSTRATE,
+        plan_content_sha256=_PLAN_HASH,
+        base_id=_BASE,
+        record_generation=1,
+        stable_document_id=UUID("88888888-8888-8888-8888-888888888888"),
+    )
+    result = assemble_rag_model_view(
+        outcome=outcome,
+        envelope_identity=_identity(),
+        registry=registry,
+        budget=budget,
+    )
+    assert result.kind == "budget_denied"
+    assert result.model_visible is False
+    assert result.rendered_tool_view is None
+    assert result.charge is None
+    assert budget.snapshot() == before
+    assert len(registry) == 0
+    assert result.sidecar is not None
+    assert result.sidecar.detail_code == "outcome_identity_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-5R P1-2: batch compensation completeness (no short-circuit)
+# ---------------------------------------------------------------------------
+
+_HIT_A_TEXT = "第一个段落的内容甲。"
+_HIT_B_TEXT = "第二个段落的内容乙。"
+
+
+class _RagTwoHitWrongHandleSecondRegistry(EvidenceRegistry):
+    """obs1 registers normally; obs2 writes then returns a wrong handle;
+    discarding obs1 reports mismatch (foreign simulation); obs2 discards
+    normally via super()."""
+
+    wrong_handle = "evh_" + ("ee" * 16)
+    mismatch_secret = "PROBE_RAG_DISCARD_MISMATCH_SECRET_3c8b"
+
+    def __init__(self, fp: str) -> None:
+        super().__init__(fp)
+        self.first_handle: str | None = None
+
+    def register(self, observation: ServerEvidenceObservation):  # type: ignore[override]
+        ref = super().register(observation)
+        if self.first_handle is None:
+            self.first_handle = observation.handle.handle_id
+            return ref
+        return EvidenceHandleRef(handle_id=self.wrong_handle)
+
+    def discard_if_matches(self, *, handle_id, expected):  # type: ignore[override]
+        if handle_id == self.first_handle:
+            return "mismatch"
+        return super().discard_if_matches(handle_id=handle_id, expected=expected)
+
+
+class _RagTwoHitDiscardRaiseFirstRegistry(_RagTwoHitWrongHandleSecondRegistry):
+    """As above, but discarding obs1 RAISES instead of returning mismatch."""
+
+    raise_secret = "PROBE_RAG_DISCARD_RAISE_SECRET_6d21"
+
+    def discard_if_matches(self, *, handle_id, expected):  # type: ignore[override]
+        if handle_id == self.first_handle:
+            raise RuntimeError(self.raise_secret)
+        return EvidenceRegistry.discard_if_matches(
+            self, handle_id=handle_id, expected=expected
+        )
+
+
+class _RagTwoHitSecondWriteThenRaiseRegistry(EvidenceRegistry):
+    """obs1 registers normally; obs2 writes via super() then raises."""
+
+    raise_secret = "PROBE_RAG_SECOND_WRITE_RAISE_SECRET_a5f2"
+
+    def __init__(self, fp: str) -> None:
+        super().__init__(fp)
+        self.calls = 0
+
+    def register(self, observation: ServerEvidenceObservation):  # type: ignore[override]
+        self.calls += 1
+        ref = super().register(observation)
+        if self.calls == 2:
+            raise RuntimeError(self.raise_secret)
+        return ref
+
+
+class _RefundFailingBudget(ModelVisibleTurnBudget):
+    """Budget whose host-only refund seam raises (refund-failure probe)."""
+
+    raise_secret = "PROBE_RAG_REFUND_RAISE_SECRET_9e14"
+
+    def _refund_chars(self, account, cost):  # type: ignore[override]
+        raise RuntimeError(self.raise_secret)
+
+
+def test_batch_first_mismatch_kept_second_still_cleaned_full_refund() -> None:
+    """Two hits: obs1 registers, obs2 postcondition fails; obs1 discard
+    reports mismatch → obs1 must NOT be deleted, but obs2 cleanup still
+    runs (no short-circuit); full refund; stable code; no leakage."""
+    registry = _RagTwoHitWrongHandleSecondRegistry(_FINGERPRINT)
+    budget = ModelVisibleTurnBudget()
+    before = budget.snapshot()
+    hit_a = _hit(text=_HIT_A_TEXT)
+    hit_b = _hit(text=_HIT_B_TEXT)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        assemble_rag_model_view(
+            outcome=_ok_outcome(hit_a, hit_b),
+            envelope_identity=_identity(),
+            registry=registry,
+            budget=budget,
+        )
+
+    message = str(exc_info.value)
+    assert message == "rag_model_view_rollback_failed code=batch_partial"
+    # Foreign-simulated first entry kept; second entry cleaned.
+    assert len(registry) == 1
+    kept = registry.list_observations()[0]
+    assert kept.handle.handle_id == registry.first_handle
+    assert kept.handle.handle_id != registry.wrong_handle
+    assert kept.snippet == _HIT_A_TEXT
+    assert all(obs.snippet != _HIT_B_TEXT for obs in registry.list_observations())
+    # Full refund exactly once.
+    assert budget.snapshot() == before
+    # No probe secret / body / handle / UUID / hash in the message.
+    for forbidden in (
+        registry.mismatch_secret,
+        _HIT_A_TEXT,
+        _HIT_B_TEXT,
+        kept.handle.handle_id,
+        registry.wrong_handle,
+        str(_RECORD),
+        str(_BASE),
+        str(_DOC),
+        str(_SUBSTRATE),
+        _CONTENT_HASH,
+        _PLAN_HASH,
+    ):
+        assert forbidden not in message
+
+
+def test_batch_first_discard_raise_still_cleans_second_and_refunds() -> None:
+    """obs1 discard RAISES: cleanup must continue to obs2 and still refund;
+    aggregate verdict stays fail-closed (batch_partial)."""
+    registry = _RagTwoHitDiscardRaiseFirstRegistry(_FINGERPRINT)
+    budget = ModelVisibleTurnBudget()
+    before = budget.snapshot()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        assemble_rag_model_view(
+            outcome=_ok_outcome(_hit(text=_HIT_A_TEXT), _hit(text=_HIT_B_TEXT)),
+            envelope_identity=_identity(),
+            registry=registry,
+            budget=budget,
+        )
+
+    message = str(exc_info.value)
+    assert message == "rag_model_view_rollback_failed code=batch_partial"
+    # obs1 kept (raise → unproven, never deleted); obs2 cleaned.
+    assert len(registry) == 1
+    assert registry.list_observations()[0].snippet == _HIT_A_TEXT
+    assert all(
+        obs.snippet != _HIT_B_TEXT for obs in registry.list_observations()
+    )
+    assert budget.snapshot() == before
+    assert _RagTwoHitDiscardRaiseFirstRegistry.raise_secret not in message
+    assert _HIT_A_TEXT not in message and _HIT_B_TEXT not in message
+
+
+def test_batch_second_register_write_then_raise_both_attempted_cleaned() -> None:
+    """obs2 register writes then raises: BOTH attempted observations enter
+    cleanup → provably clean → batch_complete; registry empty; refunded."""
+    registry = _RagTwoHitSecondWriteThenRaiseRegistry(_FINGERPRINT)
+    budget = ModelVisibleTurnBudget()
+    before = budget.snapshot()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        assemble_rag_model_view(
+            outcome=_ok_outcome(_hit(text=_HIT_A_TEXT), _hit(text=_HIT_B_TEXT)),
+            envelope_identity=_identity(),
+            registry=registry,
+            budget=budget,
+        )
+
+    message = str(exc_info.value)
+    assert message == "rag_model_view_rollback_failed code=batch_complete"
+    # No transaction residue: both attempted observations removed.
+    assert len(registry) == 0
+    assert budget.snapshot() == before
+    assert _RagTwoHitSecondWriteThenRaiseRegistry.raise_secret not in message
+    assert _HIT_A_TEXT not in message and _HIT_B_TEXT not in message
+
+
+def test_batch_refund_failure_stable_code_registry_clean() -> None:
+    """Single hit, register write-then-raise, refund seam raises:
+    registry cleanup still completes; aggregate code batch_refund;
+    no probe secret leakage."""
+    registry = _RagWriteThenRaiseRegistry(_FINGERPRINT)
+    registry.fail_after_write = True
+    budget = _RefundFailingBudget()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        assemble_rag_model_view(
+            outcome=_ok_outcome(_hit(text=_HIT_A_TEXT)),
+            envelope_identity=_identity(),
+            registry=registry,
+            budget=budget,
+        )
+
+    message = str(exc_info.value)
+    assert message == "rag_model_view_rollback_failed code=batch_refund"
+    # Registry cleanup happened despite the refund failure.
+    assert len(registry) == 0
+    assert _RefundFailingBudget.raise_secret not in message
+    assert _RagWriteThenRaiseRegistry.fail_message not in message
+    assert _HIT_A_TEXT not in message
+
+
+def test_batch_partial_and_refund_failure_stable_code() -> None:
+    """mismatch cleanup AND refund failure → batch_partial_and_refund."""
+    registry = _RagTwoHitWrongHandleSecondRegistry(_FINGERPRINT)
+    budget = _RefundFailingBudget()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        assemble_rag_model_view(
+            outcome=_ok_outcome(_hit(text=_HIT_A_TEXT), _hit(text=_HIT_B_TEXT)),
+            envelope_identity=_identity(),
+            registry=registry,
+            budget=budget,
+        )
+
+    message = str(exc_info.value)
+    assert (
+        message
+        == "rag_model_view_rollback_failed code=batch_partial_and_refund"
+    )
+    # obs2 cleaned even though refund will fail; obs1 kept (mismatch).
+    assert len(registry) == 1
+    assert registry.list_observations()[0].snippet == _HIT_A_TEXT
+    assert _RefundFailingBudget.raise_secret not in message
+    assert registry.mismatch_secret not in message
+    assert _HIT_A_TEXT not in message and _HIT_B_TEXT not in message
 
 
 # ---------------------------------------------------------------------------

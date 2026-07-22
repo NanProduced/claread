@@ -12,11 +12,16 @@ Contracts
   ``detail_code``) or a typed non-model-visible budget-denied terminal.
   RAG unavailability never fails the Ask turn and never raises
   model-retry control flow.
-- ok path: every hit is re-verified against the envelope identity
-  (record / base / generation / stable document / source scope) at the
-  assembler — mismatched hits are discarded with zero mutation. Each
-  eligible hit becomes one ``search_hit`` observation (existing registry
-  + ``ArticleRagCitationEvidence`` truth) and one renderer-minted
+- ok path: the outcome-level identity (stable document / base /
+  generation) is fenced against the envelope BEFORE any hit processing
+  or mutation — a mismatch yields the fixed safe unavailable view (or
+  typed budget-denied when even that cannot be charged) with zero
+  mutation and no identity/body leakage. Every hit is then re-verified
+  individually (record / base / generation / stable document / source
+  scope) — a matching outcome never makes individual hits trustworthy;
+  mismatched hits are discarded with zero mutation. Each eligible hit
+  becomes one ``search_hit`` observation (existing registry +
+  ``ArticleRagCitationEvidence`` truth) and one renderer-minted
   ``<untrusted_article_text role="rag">`` block; text appears exactly
   once per hit, inside its block.
 - score / chunk_id / hashes / UUIDs / UTF-16 ranges / substrate id /
@@ -27,11 +32,14 @@ Contracts
   the largest prefix of verified hits that fits ``RESERVE_RAG``; nothing
   fits → typed budget-denied host outcome with zero mutation (no
   registration, no charge).
-- The success transaction reuses the shared post-charge rollback
-  (:func:`evidence_transaction.rollback_charged_observation`,
+- The success transaction reuses the shared batch compensation
+  (:func:`evidence_transaction.rollback_charged_observations_batch`,
   ``failure_domain="rag_model_view"``) — no second transaction logic.
-  Register / postcondition / rollback failures fail closed with stable
-  codes; no body, repr, or raw exception text is surfaced.
+  Every attempted observation receives its conditional cleanup even if
+  earlier cleanups mismatch or raise (no short-circuit, no stranded
+  transaction observations, foreign entries never deleted); the charge
+  is refunded exactly once; one aggregate stable code is raised — no
+  body, repr, handle id, identity, or raw exception text is surfaced.
 
 No runtime / production stream / wiring / route / legacy prompt
 integration imports this module in R4-A5 (static reverse guards in the
@@ -60,7 +68,7 @@ from app.services.reader_record_ask.evidence import (
 )
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.evidence_transaction import (
-    rollback_charged_observation,
+    rollback_charged_observations_batch,
 )
 from app.services.reader_record_ask.model_view_budget import (
     BudgetChargeOk,
@@ -99,8 +107,9 @@ _RAG_SUMMARIES: dict[str, str] = {
 }
 
 # Stable failure codes — never embed body, repr, or raw exception text.
-_RAG_ROLLBACK_PREFIX = "rag_model_view_rollback_failed code="
-_RAG_COMMIT_FAILED_PREFIX = "rag_model_view_failed code="
+# Aggregate compensation verdicts come from the shared batch seam:
+# rag_model_view_rollback_failed code=batch_complete|batch_partial|
+# batch_refund|batch_partial_and_refund.
 
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -311,6 +320,27 @@ def assemble_rag_model_view(
             sidecar=sidecar,
         )
 
+    # ok: outcome-level identity fence — BEFORE any hit processing or
+    # budget/registry mutation. A matching outcome still does not make
+    # individual hits trustworthy (per-hit fence remains below).
+    if (
+        outcome.stable_document_id != envelope_identity.stable_document_id
+        or outcome.base_id != envelope_identity.base_id
+        or outcome.record_generation != envelope_identity.record_generation
+    ):
+        # Fixed safe view + fixed internal detail code; raw identity
+        # values never enter the model surface or error text.
+        sidecar = RagSearchSidecar(
+            status="unavailable",
+            detail_code="outcome_identity_mismatch",
+        )
+        return _safe_status_outcome(
+            active_renderer,
+            budget,
+            status="unavailable",
+            sidecar=sidecar,
+        )
+
     # ok: identity completeness — substrate + plan hash anchor citations.
     substrate_id = outcome.rag_substrate_id
     plan_hash = outcome.plan_content_sha256
@@ -484,28 +514,19 @@ def assemble_rag_model_view(
             ):
                 raise RuntimeError("postcondition")
     except Exception:
-        if registered:
-            # Shared per-observation rollback; the total charge is
-            # refunded exactly once (first observation carries the cost).
-            for obs_index, observation in enumerate(registered):
-                rollback_charged_observation(
-                    budget=budget,
-                    account="rag",
-                    charge_cost=charge_cost if obs_index == 0 else 0,
-                    registry=registry,
-                    observation=observation,
-                    failure_domain="rag_model_view",
-                )
-        else:
-            try:
-                budget._refund_chars("rag", charge_cost)
-            except Exception:
-                raise RuntimeError(
-                    f"{_RAG_ROLLBACK_PREFIX}budget_refund"
-                ) from None
-        raise RuntimeError(
-            f"{_RAG_COMMIT_FAILED_PREFIX}register"
-        ) from None
+        # Best-effort COMPLETE cleanup: every attempted observation gets
+        # its conditional discard (never short-circuits on mismatch /
+        # residual / raise; foreign entries untouched), then exactly one
+        # refund, then one aggregate stable verdict code (always raised).
+        rollback_charged_observations_batch(
+            budget=budget,
+            account="rag",
+            charge_cost=charge_cost,
+            registry=registry,
+            observations=registered,
+            failure_domain="rag_model_view",
+        )
+        raise  # unreachable: the batch seam always raises a stable code
 
     sidecar = RagSearchSidecar(
         status="ok",
