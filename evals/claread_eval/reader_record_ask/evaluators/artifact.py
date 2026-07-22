@@ -36,6 +36,8 @@ from pydantic import (
     model_validator,
 )
 
+from claread_eval.reader_record_ask.errors import SafeErrorCode
+
 #: Strict SHA-256 lowercase hex pattern (exactly 64 lowercase hex chars).
 #: Used to validate ``dataset_content_sha256``. Mirrors the same regex used
 #: by the manifest schema validator — artifact-side identity MUST be as
@@ -661,8 +663,13 @@ class RawArtifact(BaseModel):
 
     error: str | None = None
 
-    # P1-2: safe error code — allowlisted code from project_safe_error().
-    safe_error_code: str | None = None
+    # P1-2 / R4-A4-2R5R Task 4: safe error code — typed Literal from the
+    # single source of truth in :mod:`claread_eval.reader_record_ask.errors`.
+    # Pydantic rejects unknown values, empty strings, and type coercion
+    # (e.g. ``True`` → ``"true"``) at the artifact-load boundary. ``None``
+    # is allowed for backwards compat with pre-P1-2 artifacts and for
+    # success-path artifacts (no error).
+    safe_error_code: SafeErrorCode | None = None
 
     # P1-2: preflight status — set when harness aborts before any model call.
     # Values: "ok" / "db_unavailable" / "model_route_invalid" /
