@@ -12,6 +12,7 @@ against cross-turn / cross-generation registry reuse.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from app.services.reader_record_ask.evidence import (
     EvidenceHandleRef,
@@ -19,6 +20,9 @@ from app.services.reader_record_ask.evidence import (
 )
 
 _FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+# Result of :meth:`EvidenceRegistry.discard_if_matches` — narrow rollback seam.
+DiscardMatchResult = Literal["discarded", "absent", "mismatch"]
 
 
 class EvidenceRegistry:
@@ -55,6 +59,44 @@ class EvidenceRegistry:
             raise ValueError(f"duplicate evidence handle_id: {handle_id}")
         self._observations[handle_id] = observation
         return EvidenceHandleRef(handle_id=handle_id)
+
+    def discard_if_matches(
+        self,
+        *,
+        handle_id: str,
+        expected: ServerEvidenceObservation,
+    ) -> DiscardMatchResult:
+        """Conditionally discard one observation for transaction rollback.
+
+        Deletes **only** when ``handle_id`` currently maps to an observation
+        that equals ``expected`` (full frozen-model equality, including the
+        handle identity embedded in the observation).
+
+        Returns
+        -------
+        ``"discarded"``
+            Entry removed; it matched ``expected``.
+        ``"absent"``
+            No entry under ``handle_id`` (register never wrote, or already gone).
+        ``"mismatch"``
+            An entry exists but is **not** ``expected`` — left untouched so
+            pre-existing / foreign observations are never deleted.
+
+        This is a narrow host-side compensation API for co-located Ask seams
+        (selection inject). It is **not** a general public delete-by-handle
+        capability.
+        """
+        if expected.handle.handle_id != handle_id:
+            # Call-site must pass the observation's own handle — refuse broad
+            # "delete any handle if some other observation equals".
+            return "mismatch"
+        current = self._observations.get(handle_id)
+        if current is None:
+            return "absent"
+        if current != expected:
+            return "mismatch"
+        del self._observations[handle_id]
+        return "discarded"
 
     def get(self, handle_id: str) -> ServerEvidenceObservation | None:
         return self._observations.get(handle_id)

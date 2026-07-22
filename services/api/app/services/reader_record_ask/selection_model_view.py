@@ -8,10 +8,20 @@ Atomicity (assembler · registry · budget · prompt)
 2. cost-fit search via ``can_charge`` only (no mutation);
 3. single ``charge("selection", fitted_view)`` of the renderer-minted block;
 4. single ``registry.register(observation)`` with the same handle/snippet;
-5. mint :class:`SelectionPromptCapability` branded for the prompt builder.
+5. post-condition checks (handle_ref, snippet equality);
+6. mint :class:`SelectionPromptCapability` branded for the prompt builder.
 
-If step 4 fails after step 3, selection spend is refunded and no observation
-is left. If any step before charge fails, budget and registry are unchanged.
+Any failure **after charge and before successful return** runs a single
+compensation path:
+
+- ``registry.discard_if_matches(handle_id, expected=this_observation)`` —
+  removes **only** this call's observation when still present and equal;
+  never deletes pre-existing / foreign entries;
+- ``budget._refund_chars("selection", cost)`` — restore selection spend.
+
+If registry compensation itself cannot complete safely (``mismatch`` or
+unexpected error), fail closed with a stable rollback error code — do **not**
+silently claim a clean rollback. Error text never embeds selection body.
 
 **Failure paths**
 
@@ -20,7 +30,8 @@ is left. If any step before charge fails, budget and registry are unchanged.
   fit search only ``can_charge``; no charge, no observation, no handle.
 - ``registry is None`` / fingerprint mismatch / observation build error:
   raise before charge; no mutation.
-- register failure after charge: refund selection; no residual observation.
+- register write-then-raise / wrong handle_ref / postcondition / capability
+  mint failure after charge: full compensate (budget + this observation).
 
 **Prompt** accepts only assembler-minted :class:`SelectionPromptCapability`
 (not raw ``str``, not generic ``RenderedModelView`` / ``render_plain``).
@@ -88,6 +99,10 @@ _REGISTRY_REQUIRED_ERROR = (
     "assemble_selection_model_view requires a non-None EvidenceRegistry "
     "for non-empty selection (injected selection must be registry-backed)"
 )
+
+# Stable rollback / inject failure codes — never embed selection body.
+_ROLLBACK_FAILED_PREFIX = "selection_inject_rollback_failed code="
+_INJECT_FAILED_PREFIX = "selection_inject_failed code="
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +341,64 @@ def _preflight_observation(
     )
 
 
+def _compensate_after_charge(
+    *,
+    budget: ModelVisibleTurnBudget,
+    charge_cost: int,
+    registry: EvidenceRegistry,
+    observation: ServerEvidenceObservation,
+) -> None:
+    """Roll back selection charge + this call's registry write (if any).
+
+    Must be called only after a successful ``charge`` for this inject attempt.
+    Fail-closed: incomplete compensation raises a stable-code RuntimeError
+    that never embeds selection body text.
+    """
+    handle_id = observation.handle.handle_id
+    discard_outcome: str
+    try:
+        discard_outcome = registry.discard_if_matches(
+            handle_id=handle_id,
+            expected=observation,
+        )
+    except Exception:
+        # Attempt budget refund anyway; still report dual failure without
+        # chaining raw exception text that might carry probe payloads.
+        try:
+            budget._refund_chars("selection", charge_cost)
+        except Exception:
+            raise RuntimeError(
+                f"{_ROLLBACK_FAILED_PREFIX}registry_and_budget"
+            ) from None
+        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_discard") from None
+
+    if discard_outcome == "mismatch":
+        # Foreign entry under our handle — must not delete; still refund budget.
+        try:
+            budget._refund_chars("selection", charge_cost)
+        except Exception:
+            raise RuntimeError(
+                f"{_ROLLBACK_FAILED_PREFIX}registry_mismatch_and_budget"
+            ) from None
+        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_mismatch") from None
+
+    # discarded | absent: no residual for *this* observation under handle_id.
+    residual = registry.get(handle_id)
+    if residual is not None and residual == observation:
+        try:
+            budget._refund_chars("selection", charge_cost)
+        except Exception:
+            raise RuntimeError(
+                f"{_ROLLBACK_FAILED_PREFIX}registry_residual_and_budget"
+            ) from None
+        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}registry_residual") from None
+
+    try:
+        budget._refund_chars("selection", charge_cost)
+    except Exception:
+        raise RuntimeError(f"{_ROLLBACK_FAILED_PREFIX}budget_refund") from None
+
+
 def assemble_selection_model_view(
     *,
     canonical_selected_text: str | None,
@@ -429,32 +502,38 @@ def assemble_selection_model_view(
     if model_chunk.text != visible_prefix or observation.snippet != visible_prefix:
         raise RuntimeError("selection model-view binary equality broken at preflight")
 
-    # Atomic commit: charge then register; refund charge if register fails.
+    # Atomic commit: charge → register → postcondition → mint capability.
+    # Any failure after charge uses _compensate_after_charge (budget + this obs).
     charge_ok = budget.charge("selection", fitted_view)
+    charge_cost = charge_ok.cost
+    handle_ref: EvidenceHandleRef | None = None
     try:
         handle_ref = registry.register(observation)
-    except Exception:
-        budget._refund_chars("selection", charge_ok.cost)
-        raise
 
-    registered = registry.get(handle_id)
-    if (
-        registered is None
-        or registered.snippet != model_chunk.text
-        or handle_ref.handle_id != handle_id
-    ):
-        # Inconsistent post-state: attempt refund and remove is not available
-        # on registry; fail closed after refund if still charged.
-        if budget.spent("selection") >= charge_ok.cost:
-            budget._refund_chars("selection", charge_ok.cost)
-        raise RuntimeError(
-            "selection model-view binary equality broken after registry register"
+        registered = registry.get(handle_id)
+        if (
+            registered is None
+            or registered != observation
+            or registered.snippet != model_chunk.text
+            or handle_ref.handle_id != handle_id
+        ):
+            raise RuntimeError(f"{_INJECT_FAILED_PREFIX}postcondition")
+
+        prompt_capability = _mint_selection_prompt_capability(
+            fitted_view=fitted_view,
+            handle_id=handle_id,
         )
-
-    prompt_capability = _mint_selection_prompt_capability(
-        fitted_view=fitted_view,
-        handle_id=handle_id,
-    )
+    except Exception:
+        _compensate_after_charge(
+            budget=budget,
+            charge_cost=charge_cost,
+            registry=registry,
+            observation=observation,
+        )
+        # Re-raise original inject failure so callers see register/mint
+        # errors; compensation already restored budget + this observation.
+        # Rollback failures raise from _compensate_after_charge instead.
+        raise
 
     expandable = full_len > len(visible_prefix)
     continuation_start = len(visible_prefix)

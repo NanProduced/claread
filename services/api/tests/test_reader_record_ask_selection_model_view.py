@@ -16,6 +16,7 @@ from app.services.reader_record_ask.agent import build_agent_user_prompt
 from app.services.reader_record_ask.article_rag_port import FakeArticleRagSearchPort
 from app.services.reader_record_ask.baseline_context import ModelContextChunk
 from app.services.reader_record_ask.evidence import (
+    EvidenceHandleRef,
     ServerEvidenceObservation,
     build_server_evidence_observation,
 )
@@ -84,12 +85,38 @@ def _registry(fp: str = _FINGERPRINT) -> EvidenceRegistry:
 
 
 class _FailingRegisterRegistry(EvidenceRegistry):
-    """Registry that fails on register after preflight (atomicity probe)."""
+    """Registry that fails on register *before* write (atomicity probe)."""
 
     fail_message = "PROBE_REGISTER_FAIL_SECRET_9f3c"
 
     def register(self, observation: ServerEvidenceObservation):  # type: ignore[override]
         raise RuntimeError(self.fail_message)
+
+
+class _WriteThenRaiseRegistry(EvidenceRegistry):
+    """Writes via super().register then optionally raises (partial-commit probe)."""
+
+    fail_message = "PROBE_AFTER_WRITE_SECRET_7a1b"
+    fail_after_write: bool = False
+
+    def register(self, observation: ServerEvidenceObservation):  # type: ignore[override]
+        ref = super().register(observation)
+        if self.fail_after_write:
+            raise RuntimeError(self.fail_message)
+        return ref
+
+
+class _WriteThenWrongHandleRegistry(EvidenceRegistry):
+    """Writes observation then returns a different legal handle_id."""
+
+    wrong_handle = "evh_" + ("ff" * 16)
+    return_wrong_handle: bool = True
+
+    def register(self, observation: ServerEvidenceObservation):  # type: ignore[override]
+        ref = super().register(observation)
+        if self.return_wrong_handle:
+            return EvidenceHandleRef(handle_id=self.wrong_handle)
+        return ref
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +224,7 @@ def test_registry_fingerprint_mismatch_no_budget_or_registry_mutation() -> None:
     assert registry.list_observations() == ()
 
 
-def test_register_failure_refunds_budget_and_leaves_no_observation() -> None:
+def test_register_failure_before_write_refunds_budget_and_leaves_no_observation() -> None:
     budget = _budget()
     registry = _FailingRegisterRegistry(_FINGERPRINT)
     before_budget = budget.snapshot()
@@ -212,6 +239,123 @@ def test_register_failure_refunds_budget_and_leaves_no_observation() -> None:
     assert budget.spent("selection") == 0
     assert len(registry) == 0
     assert registry.list_observations() == ()
+
+
+def test_register_write_then_raise_rolls_back_budget_and_registry() -> None:
+    """Partial register (super().register then raise) must fully compensate."""
+    budget = _budget()
+    registry = _WriteThenRaiseRegistry(_FINGERPRINT)
+    # Pre-existing observation must survive compensation.
+    prior = build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=_FINGERPRINT,
+        source_tool="initial_anchor",
+        snippet="prior-keep",
+        handle_id="evh_" + ("aa" * 16),
+    )
+    registry.fail_after_write = False
+    registry.register(prior)
+    registry.fail_after_write = True
+    before_budget = budget.snapshot()
+    with pytest.raises(RuntimeError, match="PROBE_AFTER_WRITE"):
+        assemble_selection_model_view(
+            canonical_selected_text="inject body that must not linger",
+            envelope_fingerprint=_FINGERPRINT,
+            budget=budget,
+            registry=registry,
+        )
+    assert budget.snapshot() == before_budget
+    assert budget.spent("selection") == 0
+    # Only the prior observation remains — inject residual discarded.
+    assert len(registry) == 1
+    assert registry.get("evh_" + ("aa" * 16)) is not None
+    assert registry.get("evh_" + ("aa" * 16)).snippet == "prior-keep"  # type: ignore[union-attr]
+    for obs in registry.list_observations():
+        assert obs.snippet != "inject body that must not linger"
+        assert "inject body" not in (obs.snippet or "")
+
+
+def test_register_returns_wrong_handle_rolls_back_budget_and_registry() -> None:
+    budget = _budget()
+    registry = _WriteThenWrongHandleRegistry(_FINGERPRINT)
+    before_budget = budget.snapshot()
+    with pytest.raises(RuntimeError, match="postcondition"):
+        assemble_selection_model_view(
+            canonical_selected_text="wrong handle residual check",
+            envelope_fingerprint=_FINGERPRINT,
+            budget=budget,
+            registry=registry,
+        )
+    assert budget.snapshot() == before_budget
+    assert budget.spent("selection") == 0
+    assert len(registry) == 0
+    assert registry.list_observations() == ()
+    # Wrong handle must not have been written under the ff… id either.
+    assert registry.get(_WriteThenWrongHandleRegistry.wrong_handle) is None
+
+
+def test_capability_mint_failure_rolls_back_budget_and_registry() -> None:
+    budget = _budget()
+    registry = _registry()
+    before_budget = budget.snapshot()
+
+    import app.services.reader_record_ask.selection_model_view as mod
+
+    original_mint = mod._mint_selection_prompt_capability
+
+    def _boom(**kwargs: object) -> SelectionPromptCapability:
+        raise RuntimeError("PROBE_CAPABILITY_MINT_FAIL_SECRET")
+
+    try:
+        mod._mint_selection_prompt_capability = _boom  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="PROBE_CAPABILITY_MINT_FAIL"):
+            assemble_selection_model_view(
+                canonical_selected_text="mint will fail after register",
+                envelope_fingerprint=_FINGERPRINT,
+                budget=budget,
+                registry=registry,
+            )
+    finally:
+        mod._mint_selection_prompt_capability = original_mint  # type: ignore[assignment]
+
+    assert budget.snapshot() == before_budget
+    assert budget.spent("selection") == 0
+    assert len(registry) == 0
+    assert registry.list_observations() == ()
+
+
+def test_discard_if_matches_preserves_foreign_observation() -> None:
+    registry = _registry()
+    a = build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=_FINGERPRINT,
+        source_tool="initial_anchor",
+        snippet="keep-me",
+        handle_id="evh_" + ("11" * 16),
+    )
+    b = build_server_evidence_observation(
+        kind="initial_anchor",
+        envelope_fingerprint=_FINGERPRINT,
+        source_tool="initial_anchor",
+        snippet="other",
+        handle_id="evh_" + ("22" * 16),
+    )
+    registry.register(a)
+    registry.register(b)
+    # Wrong expected under a's handle → mismatch, no delete.
+    outcome = registry.discard_if_matches(handle_id=a.handle.handle_id, expected=b)
+    assert outcome == "mismatch"
+    assert len(registry) == 2
+    # Correct match discards only a.
+    assert (
+        registry.discard_if_matches(handle_id=a.handle.handle_id, expected=a)
+        == "discarded"
+    )
+    assert len(registry) == 1
+    assert registry.get(b.handle.handle_id) is not None
+    assert registry.discard_if_matches(handle_id=a.handle.handle_id, expected=a) == (
+        "absent"
+    )
 
 
 def test_success_charges_once_handle_ref_nonempty_binary_equality() -> None:
