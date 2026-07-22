@@ -157,7 +157,7 @@ const educationScene: ReaderMockVm = {
       clickable: true,
       lookupText: "miss out on",
       lookupKind: "phrase",
-      glossary: { zh: "错过，失去获得某事的机会", phraseType: "phrasal_verb" },
+      glossary: { zh: "错过，失去获得某事的机会", phraseType: "verb_expression" },
     },
     {
       id: "edu-im-secretary",
@@ -168,7 +168,7 @@ const educationScene: ReaderMockVm = {
       clickable: true,
       lookupText: "secretary of education",
       lookupKind: "phrase",
-      glossary: { zh: "教育部长", phraseType: "proper_noun" },
+      glossary: { zh: "教育部长", phraseType: "name_or_term" },
     },
     {
       id: "edu-im-urging",
@@ -201,7 +201,7 @@ const educationScene: ReaderMockVm = {
       clickable: true,
       lookupText: "academic achievement",
       lookupKind: "phrase",
-      glossary: { zh: "学业成就，学业表现", phraseType: "compound" },
+      glossary: { zh: "学业成就，学业表现", phraseType: "name_or_term" },
     },
     {
       id: "edu-im-not-only",

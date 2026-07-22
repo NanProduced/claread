@@ -551,7 +551,7 @@ async function loadTwoVocabMarksFixture(page: Page) {
         starts_here: true,
         ends_here: true,
         phrase: "shapes",
-        phrase_type: "collocation",
+        phrase_type: "fixed_collocation",
         gloss: "塑造",
         example: "Institutional memory shapes choices.",
       },

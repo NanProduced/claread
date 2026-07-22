@@ -144,7 +144,7 @@ function makeVocabularyMark(
     starts_here: true,
     ends_here: true,
     phrase: "memory",
-    phrase_type: "collocation",
+    phrase_type: "fixed_collocation",
     gloss: "记忆",
     example: "Institutional memory shapes choices.",
     ...overrides,

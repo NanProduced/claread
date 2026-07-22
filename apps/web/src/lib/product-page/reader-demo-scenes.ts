@@ -193,7 +193,7 @@ export const productDemoScenes: Record<ProductDemoSceneId, ReaderMockVm> = {
         clickable: true,
         lookupText: "turning an article into a short answer",
         lookupKind: "phrase",
-        glossary: { zh: "把文章压缩成一个简短答案", phraseType: "collocation" },
+        glossary: { zh: "把文章压缩成一个简短答案", phraseType: "fixed_collocation" },
       },
       {
         id: "daily-im-context-opens",
@@ -278,7 +278,7 @@ export const productDemoScenes: Record<ProductDemoSceneId, ReaderMockVm> = {
         clickable: true,
         lookupText: "tested information",
         lookupKind: "phrase",
-        glossary: { zh: "题目真正考查的信息点", phraseType: "compound" },
+        glossary: { zh: "题目真正考查的信息点", phraseType: "name_or_term" },
       },
       {
         id: "exam-cet-im-rewritten",
@@ -396,7 +396,7 @@ export const productDemoScenes: Record<ProductDemoSceneId, ReaderMockVm> = {
         clickable: true,
         lookupText: "paraphrased",
         lookupKind: "word",
-        glossary: { zh: "被改写", phraseType: "collocation" },
+        glossary: { zh: "被改写", phraseType: "fixed_collocation" },
       },
     ],
     [

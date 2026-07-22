@@ -258,7 +258,7 @@ function makeLayerParagraphNodeWithVocabularyMarks(
                 ? {
                     itemType: "phrase_gloss",
                     phrase: m.gloss,
-                    phraseType: "collocation",
+                    phraseType: "fixed_collocation",
                     gloss: m.gloss,
                   }
                 : {

@@ -59,7 +59,7 @@ function makeDocument(
     vocabulary: {
       itemType: "phrase_gloss",
       phrase: "memory",
-      phraseType: "collocation",
+      phraseType: "fixed_collocation",
       gloss: "记忆",
       example: null,
     },
@@ -323,7 +323,7 @@ describe("userEditorialAssetAnchorDraftForActiveAnchor", () => {
       vocabulary: {
         itemType: "phrase_gloss",
         phrase: "Those",
-        phraseType: "collocation",
+        phraseType: "fixed_collocation",
         gloss: "那些",
         example: null,
       },
