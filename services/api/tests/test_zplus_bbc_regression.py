@@ -174,8 +174,9 @@ class _StaticGrammarWindowExecutor:
                     }],
                     semantic_dedup_key=f"grammar:{anchor_id}",
                     pattern_key=f"pattern:{anchor_id}",
-                    quality_score=0.8,
+                    quality_score=4,
                     reading_blocker=False,
+                    dedup_hint=f"grammar:{anchor_id}",
                     # P2-1: populate content_* fields for contract output
                     grammar_point=f"grammar_point:{anchor_id}",
                     pattern=f"pattern:{anchor_id}",
@@ -205,8 +206,9 @@ class _StaticGrammarWindowExecutor:
                     }],
                     semantic_dedup_key=f"sentence:{anchor_id}",
                     pattern_key=None,
-                    quality_score=0.9,
+                    quality_score=5,
                     reading_blocker=False,
+                    dedup_hint=f"sentence:{anchor_id}",
                     # P2-1: populate content_* fields for contract output
                     label=f"main_clause:{anchor_id}",
                     analysis=f"Sentence analysis for {anchor_id}.",

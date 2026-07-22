@@ -121,18 +121,9 @@ content: |
 
   ## self-rating 字段（内部候选元数据，必填）
 
-  每个 candidate item 必须自带以下 5 个字段。这些字段是**内部候选元数据**，用于后端排序、去重与预算控制；**禁止**把评分、reason_code、confidence 或 dedup_hint 写进 `note` / `analysis` 正文。
+  每个 candidate item 必须自带以下 3 个字段。这些字段是**内部候选元数据**，用于后端排序、去重与预算控制；**禁止**把评分或 `dedup_hint` 写进 `note` / `analysis` 正文。
 
-  - `quality_score`：int，1–5，必填。候选在当前调用内的优先级（5 最高）。后端按此降序排序，决定预算截断后哪些候选被发布。per-unit / batch / window 三条路径都消费此字段。
-  - `reading_blocker`：bool，必填。该点是否阻碍理解句意。window 路径在同等 `quality_score` 下优先发布阻碍理解的候选。
-  - `reason_code`：必填，取值之一：
-    - `grammar_pattern`：局部形式/区分/用法点；
-    - `exam_relevant`：与常见考试区分点直接相关（仅在确有区分价值时使用，不要套用考试口号）；
-    - `meaning_blocker`：该点不解决会直接读错句意；
-    - `discourse_signal`：跨句衔接 / 指代 / 信息结构信号；
-    - `low_value`：候选本身可发布但教学价值较低。
-    禁止使用 `long_sentence` 等基于句长的值——句长不是选点依据。`reason_code` 是候选元数据，后端当前不基于它做过滤；诚实标注即可。
-  - `confidence`：float，0.0–1.0，必填。对此标注的置信度（含 grounding 与教学判断）。
-  - `dedup_hint`：非空英文 canonical key，必填，≤120 字符。该语法点的稳定英文短键（如 `though_concession`、`prep_which_relative`）。window 路径把它与 `grammar_point` / `label` 组合成 semantic dedup key，用于同窗口内去重。
-
-  字段缺失、越界或 `reason_code` 不在枚举内都是 schema 校验错误，整条 candidate 会被拒绝。
+  - `quality_score`：int，1–5，必填。候选在当前调用内的优先级（5 最高）。per-unit / batch / window 三条路径统一按此字段降序排序，决定预算截断后哪些候选被发布。
+  - `reading_blocker`：bool，必填。该点是否阻碍理解句意。三条路径在同等 `quality_score` 下都优先发布 `reading_blocker=true` 的候选。
+  - `dedup_hint`：非空英文 canonical key，必填，≤120 字符。该学习点的稳定英文短键（如 `though_concession`、`prep_which_relative`）。三条路径都把 `dedup_hint` 规范化后用作跨 `grammar_note` / `sentence_analysis` 的去重键——同一学习点默认只保留一个候选。
+  - `dedup_hint` 的去重作用域：去重只在**同一 `anchor_segment_id`** 上生效；不同 anchor 上出现同一学习点是允许的，不会被去重淘汰（全文重复控制由后端 budget / pattern / density 等 gates 负责，不在 prompt 职责内）。

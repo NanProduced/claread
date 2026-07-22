@@ -192,7 +192,9 @@ def _make_candidates(
                 spans=[{"unit_id": unit_id}],
                 semantic_dedup_key=f"grammar-dedup-{i}",
                 pattern_key=f"grammar-pattern-{i}",
-                quality_score=0.8 - i * 0.1,
+                quality_score=4 - i,  # int: 4, 3
+                reading_blocker=False,
+                dedup_hint=f"grammar-hint-{i}",
             )
         )
     candidates.append(
@@ -202,7 +204,9 @@ def _make_candidates(
             spans=[{"unit_id": target_unit_ids[0]}],
             semantic_dedup_key="sentence-dedup-0",
             pattern_key=None,
-            quality_score=0.9,
+            quality_score=5,  # int
+            reading_blocker=False,
+            dedup_hint="sentence-hint-0",
         )
     )
     return candidates

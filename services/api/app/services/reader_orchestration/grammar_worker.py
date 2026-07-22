@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol
 from uuid import UUID
 
 import asyncpg
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_ai import Agent
 
 from app.config.settings import Settings, get_settings
@@ -44,6 +44,13 @@ from app.services.ai_usage.execution_diagnostics import with_execution_correlati
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
+)
+from app.services.reader_orchestration.grammar_candidate_policy import (
+    DEDUP_HINT_DUPLICATE_REASON_CODE,
+    grammar_candidate_sort_key,
+    normalize_dedup_hint,
+    scoped_dedup_key,
+    validate_dedup_hint,
 )
 
 from .job_bootstrap import (
@@ -138,20 +145,8 @@ MAX_GRAMMAR_FIELD_LENGTH = 360
 MAX_GRAMMAR_CHUNKS_PER_ANALYSIS = 8
 MAX_GRAMMAR_DIAGNOSTIC_ITEMS = 8
 MAX_GRAMMAR_DEDUP_HINT_LENGTH = 120
-
-# Shared self-rating reason_code enum. The same Literal is reused by the
-# window path (``_WindowGrammarNoteCandidate`` / ``_WindowSentenceAnalysisCandidate``)
-# so per-unit / batch / window cannot drift on the allowed values.
-# ``low_value`` replaces the older ``long_sentence`` hint — sentence length
-# is not a valid selection reason.
-GrammarReasonCode = Literal[
-    "grammar_pattern",
-    "exam_relevant",
-    "meaning_blocker",
-    "discourse_signal",
-    "low_value",
-]
 MAX_GRAMMAR_DIAGNOSTIC_TEXT_LENGTH = 80
+
 
 # T8: variant-first strategy metadata keys read from reader_jobs.input_json.
 # Must match the keys written by _build_strategy_metadata in job_bootstrap.
@@ -232,20 +227,24 @@ class GrammarNoteCandidateItem(BaseModel):
             "前端会把 Markdown 反序列化为 Plate children 渲染。"
         ),
     )
-    # Phase 5 → P1-2: self-rating family (mirrors window path's
-    # _WindowGrammarNoteCandidate). All five fields are required and
-    # range-checked so the LLM cannot emit a bare candidate that
-    # degrades sorting to LLM-returned order. ``reason_code`` is
-    # constrained to the shared ``GrammarReasonCode`` Literal so
-    # per-unit / batch / window cannot drift on the allowed values.
-    # ``_split_batch_candidates_by_unit`` sorts grammar_notes by
-    # quality_score descending so higher-quality candidates win the
-    # per-unit budget.
+    # P1-2 self-rating contract: three required fields consumed by all
+    # three paths (per-unit / batch / window). ``quality_score`` drives
+    # the primary sort (desc), ``reading_blocker`` breaks ties by
+    # promoting blocker=true, and ``dedup_hint`` is the canonical
+    # cross-type dedup key (normalized before comparison). All three
+    # fields are required + range-checked so the LLM cannot emit a
+    # bare candidate that degrades sorting to LLM-returned order.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
-    reason_code: GrammarReasonCode
-    confidence: float = Field(ge=0.0, le=1.0)
     dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
+
+    @field_validator("dedup_hint")
+    @classmethod
+    def _validate_and_normalize_dedup_hint(cls, value: str) -> str:
+        # reader-grammar-candidate-selection: trim + normalize + 非空/≤120
+        # 校验在 schema boundary 完成，返回 normalized hint 供下游
+        # scoped_dedup_key 直接使用（idempotent）。
+        return validate_dedup_hint(value)
 
 
 class SentenceAnalysisChunkCandidate(BaseModel):
@@ -280,18 +279,22 @@ class SentenceAnalysisCandidateItem(BaseModel):
         min_length=1,
         max_length=MAX_GRAMMAR_CHUNKS_PER_ANALYSIS,
     )
-    # Phase 5 → P1-2: self-rating family (mirrors window path's
-    # _WindowSentenceAnalysisCandidate). All five fields are required and
-    # range-checked so the LLM cannot emit a bare candidate that degrades
-    # sorting to LLM-returned order. ``reason_code`` is constrained to the
-    # shared ``GrammarReasonCode`` Literal. ``_build_grammar_output_from_candidates``
-    # sorts sentence_analyses by quality_score descending so higher-quality
-    # candidates are published first.
+    # P1-2 self-rating contract: three required fields consumed by all
+    # three paths (per-unit / batch / window). See ``GrammarNoteCandidateItem``
+    # for the full rationale. ``quality_score`` / ``reading_blocker`` /
+    # ``dedup_hint`` must be consumed together — metadata-only validation
+    # is not allowed.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
-    reason_code: GrammarReasonCode
-    confidence: float = Field(ge=0.0, le=1.0)
     dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
+
+    @field_validator("dedup_hint")
+    @classmethod
+    def _validate_and_normalize_dedup_hint(cls, value: str) -> str:
+        # reader-grammar-candidate-selection: trim + normalize + 非空/≤120
+        # 校验在 schema boundary 完成，返回 normalized hint 供下游
+        # scoped_dedup_key 直接使用（idempotent）。
+        return validate_dedup_hint(value)
 
 
 class GrammarBundleCandidateOutput(BaseModel):
@@ -2584,143 +2587,263 @@ def _build_grammar_output_from_candidates(
     sentence_analyses: list[SentenceAnalysisItem] = []
     skipped_items: list[dict[str, Any]] = []
 
-    # Phase 5: sort grammar_note and sentence_analysis candidates by
-    # quality_score descending so higher-quality candidates are
-    # resolved/published first. Python's sorted is stable, so candidates
-    # with equal quality_score preserve their LLM-returned order. Both
-    # candidate item types now carry the self-rating family; legacy LLM
-    # output without these fields defaults quality_score=0.0 and falls
-    # back to LLM-returned order.
-    sorted_grammar_notes = sorted(
-        candidate_output.grammar_notes,
-        key=lambda item: item.quality_score,
-        reverse=True,
-    )
-    sorted_sentence_analyses = sorted(
-        candidate_output.sentence_analyses,
-        key=lambda item: item.quality_score,
-        reverse=True,
-    )
+    # P1-2 self-rating contract: merge grammar_notes + sentence_analyses
+    # into a single ordered stream using the unified sort key
+    # (quality_score desc → reading_blocker=true first → grammar_note on
+    # tie). reader-grammar-candidate-selection: scoped dedup uses
+    # (anchor_segment_id, normalized dedup_hint) tuple; same anchor +
+    # same hint is rejected (winner decided by sort order); different
+    # anchor + same hint is allowed (full-text repetition control is
+    # delegated to pattern/density/budget gates in window_selector).
+    # Losers emit a `dedup_hint_duplicate` diagnostic so the rejection
+    # is observable, never silent.
+    unified_candidates: list[
+        tuple[
+            tuple[int, int, int],
+            int,
+            str,
+            GrammarNoteCandidateItem | SentenceAnalysisCandidateItem,
+        ]
+    ] = []
+    for idx, item in enumerate(candidate_output.grammar_notes):
+        unified_candidates.append(
+            (
+                grammar_candidate_sort_key(
+                    item_type="grammar_note",
+                    quality_score=item.quality_score,
+                    reading_blocker=item.reading_blocker,
+                ),
+                idx,
+                "grammar_note",
+                item,
+            )
+        )
+    for idx, item in enumerate(candidate_output.sentence_analyses):
+        unified_candidates.append(
+            (
+                grammar_candidate_sort_key(
+                    item_type="sentence_analysis",
+                    quality_score=item.quality_score,
+                    reading_blocker=item.reading_blocker,
+                ),
+                idx,
+                "sentence_analysis",
+                item,
+            )
+        )
 
-    for item_index, item in enumerate(sorted_grammar_notes):
-        resolved_spans: list[ReaderTextRangeAnchor] = []
-        note_rejected = False
-        for span_index, span in enumerate(item.spans):
-            segment = segments_by_id.get(span.anchor_segment_id)
+    unified_candidates.sort(key=lambda triple: (triple[0], triple[1]))
+
+    # reader-grammar-candidate-selection: scoped dedup uses
+    # (anchor_segment_id, normalized_dedup_hint) tuple. Same anchor +
+    # same hint is rejected (winner decided by sort order); different
+    # anchor + same hint is allowed (full-text repetition control is
+    # delegated to pattern/density/budget gates in window_selector).
+    seen_scoped_keys: set[tuple[str, str]] = set()
+    # winner tracking: when a later candidate is rejected, record the
+    # winner's (item_type, anchor_segment_id, item_index) so the
+    # diagnostic payload can carry the full winner info.
+    winner_info: dict[tuple[str, str], tuple[str, str, int]] = {}
+    grammar_note_count = 0
+    sentence_analysis_count = 0
+
+    for _sort_key, original_idx, item_type, item in unified_candidates:
+        normalized_hint = normalize_dedup_hint(item.dedup_hint)
+        anchor_segment_id = (
+            item.spans[0].anchor_segment_id
+            if item_type == "grammar_note"
+            else item.anchor_segment_id
+        )
+        scoped_key = scoped_dedup_key(
+            anchor_segment_id=anchor_segment_id,
+            dedup_hint=item.dedup_hint,
+        )
+        if scoped_key in seen_scoped_keys:
+            # P1-2: scoped dedup loser. Emit a diagnostic so the
+            # rejection is observable; never silently drop.
+            selected_text = (
+                item.spans[0].selected_text
+                if item_type == "grammar_note"
+                else item.selected_text
+            )
+            winner_t, winner_anchor, winner_idx = winner_info[scoped_key]
+            skipped_items.append(
+                _build_skip_diagnostic(
+                    item_index=original_idx,
+                    item_type=item_type,
+                    anchor_segment_id=anchor_segment_id,
+                    selected_text=selected_text,
+                    reason_code=DEDUP_HINT_DUPLICATE_REASON_CODE,
+                )
+            )
+            # ``_build_skip_diagnostic`` does not know about scoped-dedup
+            # winner fields, so attach them here for auditability.
+            skipped_items[-1].update(
+                {
+                    "normalized_hint": normalized_hint,
+                    "winner_item_type": winner_t,
+                    "winner_anchor_segment_id": winner_anchor,
+                    "winner_item_index": winner_idx,
+                }
+            )
+            continue
+
+        if item_type == "grammar_note":
+            if grammar_note_count >= MAX_GRAMMAR_NOTE_ITEMS:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.spans[0].anchor_segment_id,
+                        selected_text=item.spans[0].selected_text,
+                        reason_code="per_unit_budget_exceeded",
+                    )
+                )
+                continue
+
+            resolved_spans: list[ReaderTextRangeAnchor] = []
+            note_rejected = False
+            for span_index, span in enumerate(item.spans):
+                segment = segments_by_id.get(span.anchor_segment_id)
+                if segment is not None and segment.segment_type == "fallback_window":
+                    skipped_items.append(
+                        _build_skip_diagnostic(
+                            item_index=original_idx,
+                            item_type=item_type,
+                            anchor_segment_id=span.anchor_segment_id,
+                            selected_text=span.selected_text,
+                            reason_code="boundary_low_fallback_window",
+                            span_index=span_index,
+                        )
+                    )
+                    note_rejected = True
+                    break
+                resolved_anchor, reason_code = _resolve_candidate_anchor(
+                    context=context,
+                    segments_by_id=segments_by_id,
+                    anchor_segment_id=span.anchor_segment_id,
+                    selected_text=span.selected_text,
+                )
+                if resolved_anchor is None:
+                    skipped_items.append(
+                        _build_skip_diagnostic(
+                            item_index=original_idx,
+                            item_type=item_type,
+                            anchor_segment_id=span.anchor_segment_id,
+                            selected_text=span.selected_text,
+                            reason_code=reason_code,
+                            span_index=span_index,
+                        )
+                    )
+                    note_rejected = True
+                    break
+                resolved_spans.append(resolved_anchor)
+
+            if note_rejected:
+                continue
+
+            try:
+                grammar_notes.append(
+                    GrammarNoteItem(
+                        spans=resolved_spans,
+                        grammar_point=item.grammar_point,
+                        pattern=item.pattern,
+                        note=item.note,
+                    )
+                )
+                seen_scoped_keys.add(scoped_key)
+                winner_info[scoped_key] = (
+                    item_type,
+                    anchor_segment_id,
+                    original_idx,
+                )
+                grammar_note_count += 1
+            except ValidationError:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.spans[0].anchor_segment_id,
+                        selected_text=item.spans[0].selected_text,
+                        reason_code="resolved_item_invalid",
+                    )
+                )
+        else:  # sentence_analysis
+            if sentence_analysis_count >= MAX_SENTENCE_ANALYSIS_ITEMS:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="per_unit_budget_exceeded",
+                    )
+                )
+                continue
+
+            segment = segments_by_id.get(item.anchor_segment_id)
             if segment is not None and segment.segment_type == "fallback_window":
                 skipped_items.append(
                     _build_skip_diagnostic(
-                        item_index=item_index,
-                        item_type=item.item_type,
-                        anchor_segment_id=span.anchor_segment_id,
-                        selected_text=span.selected_text,
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
                         reason_code="boundary_low_fallback_window",
-                        span_index=span_index,
                     )
                 )
-                note_rejected = True
-                break
+                continue
             resolved_anchor, reason_code = _resolve_candidate_anchor(
                 context=context,
                 segments_by_id=segments_by_id,
-                anchor_segment_id=span.anchor_segment_id,
-                selected_text=span.selected_text,
+                anchor_segment_id=item.anchor_segment_id,
+                selected_text=item.selected_text,
             )
             if resolved_anchor is None:
                 skipped_items.append(
                     _build_skip_diagnostic(
-                        item_index=item_index,
-                        item_type=item.item_type,
-                        anchor_segment_id=span.anchor_segment_id,
-                        selected_text=span.selected_text,
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
                         reason_code=reason_code,
-                        span_index=span_index,
                     )
                 )
-                note_rejected = True
-                break
-            resolved_spans.append(resolved_anchor)
+                continue
 
-        if note_rejected:
-            continue
-
-        try:
-            grammar_notes.append(
-                GrammarNoteItem(
-                    spans=resolved_spans,
-                    grammar_point=item.grammar_point,
-                    pattern=item.pattern,
-                    note=item.note,
+            try:
+                sentence_analyses.append(
+                    SentenceAnalysisItem(
+                        anchor=resolved_anchor,
+                        label=item.label,
+                        analysis=item.analysis,
+                        chunks=[
+                            SentenceAnalysisChunk(
+                                order=chunk_index + 1,
+                                label=chunk.label,
+                                text=chunk.text,
+                            )
+                            for chunk_index, chunk in enumerate(item.chunks)
+                        ],
+                    )
                 )
-            )
-        except ValidationError:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.spans[0].anchor_segment_id,
-                    selected_text=item.spans[0].selected_text,
-                    reason_code="resolved_item_invalid",
+                seen_scoped_keys.add(scoped_key)
+                winner_info[scoped_key] = (
+                    item_type,
+                    anchor_segment_id,
+                    original_idx,
                 )
-            )
-
-    for item_index, item in enumerate(sorted_sentence_analyses):
-        segment = segments_by_id.get(item.anchor_segment_id)
-        if segment is not None and segment.segment_type == "fallback_window":
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="boundary_low_fallback_window",
+                sentence_analysis_count += 1
+            except ValidationError:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="resolved_item_invalid",
+                    )
                 )
-            )
-            continue
-        resolved_anchor, reason_code = _resolve_candidate_anchor(
-            context=context,
-            segments_by_id=segments_by_id,
-            anchor_segment_id=item.anchor_segment_id,
-            selected_text=item.selected_text,
-        )
-        if resolved_anchor is None:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code=reason_code,
-                )
-            )
-            continue
-
-        try:
-            sentence_analyses.append(
-                SentenceAnalysisItem(
-                    anchor=resolved_anchor,
-                    label=item.label,
-                    analysis=item.analysis,
-                    chunks=[
-                        SentenceAnalysisChunk(
-                            order=chunk_index + 1,
-                            label=chunk.label,
-                            text=chunk.text,
-                        )
-                        for chunk_index, chunk in enumerate(item.chunks)
-                    ],
-                )
-            )
-        except ValidationError:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="resolved_item_invalid",
-                )
-            )
 
     trimmed_skipped_items = _trim_skipped_diagnostics(skipped_items)
     return GrammarBundleOutput(
@@ -3103,6 +3226,18 @@ def _split_batch_candidates_by_unit(
     whose ``anchor_segment_id`` is unknown or whose owning unit has
     reached its per-unit budget are skipped and recorded in diagnostics.
 
+    P1-2 self-rating contract: within each unit, grammar_notes +
+    sentence_analyses are merged into a single ordered stream using the
+    unified sort key (quality_score desc → reading_blocker=true first →
+    grammar_note on tie). reader-grammar-candidate-selection: scoped
+    dedup uses ``(anchor_segment_id, normalized_dedup_hint)`` tuple
+    scoped **per unit** — the same learning point in different units
+    (or on different anchors within a unit) is allowed to surface
+    independently, but within a unit the same anchor + same
+    dedup_hint across grammar_note / sentence_analysis keeps only one
+    candidate (winner decided by sort order); different anchor + same
+    hint is allowed. Losers emit a ``dedup_hint_duplicate`` diagnostic.
+
     Returns per-unit outputs (in unit reading order) + a diagnostics dict
     for the publish quality_json.
     """
@@ -3122,213 +3257,318 @@ def _split_batch_candidates_by_unit(
     }
     skipped_items: list[dict[str, Any]] = []
 
-    # Phase 5: sort grammar_note and sentence_analysis candidates by
-    # quality_score descending before per-unit budget truncation, so
-    # higher-quality candidates win the per-unit budget. Python's sorted
-    # is stable, so candidates with equal quality_score preserve their
-    # LLM-returned order. Both candidate item types now carry the
-    # self-rating family; legacy LLM output without these fields defaults
-    # quality_score=0.0 and falls back to LLM-returned order.
-    sorted_grammar_notes = sorted(
-        candidate_output.grammar_notes,
-        key=lambda item: item.quality_score,
-        reverse=True,
-    )
-    sorted_sentence_analyses = sorted(
-        candidate_output.sentence_analyses,
-        key=lambda item: item.quality_score,
-        reverse=True,
-    )
+    # P1-2: build a unified candidate stream tagged with original index
+    # + item_type, then sort by (sort_key, original_index). Each candidate
+    # is routed to its owning unit via anchor_segment_id. Per-unit dedup
+    # + per-type budget is enforced in stream order.
+    unified_candidates: list[
+        tuple[
+            tuple[int, int, int],
+            int,
+            str,
+            GrammarNoteCandidateItem | SentenceAnalysisCandidateItem,
+        ]
+    ] = []
+    for idx, item in enumerate(candidate_output.grammar_notes):
+        unified_candidates.append(
+            (
+                grammar_candidate_sort_key(
+                    item_type="grammar_note",
+                    quality_score=item.quality_score,
+                    reading_blocker=item.reading_blocker,
+                ),
+                idx,
+                "grammar_note",
+                item,
+            )
+        )
+    for idx, item in enumerate(candidate_output.sentence_analyses):
+        unified_candidates.append(
+            (
+                grammar_candidate_sort_key(
+                    item_type="sentence_analysis",
+                    quality_score=item.quality_score,
+                    reading_blocker=item.reading_blocker,
+                ),
+                idx,
+                "sentence_analysis",
+                item,
+            )
+        )
+    unified_candidates.sort(key=lambda triple: (triple[0], triple[1]))
 
-    for item_index, item in enumerate(sorted_grammar_notes):
-        first_span = item.spans[0] if item.spans else None
-        if first_span is None:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id="",
-                    selected_text="",
-                    reason_code="grammar_note_no_spans",
-                )
-            )
-            continue
-        mapping = units_by_segment.get(first_span.anchor_segment_id)
-        if mapping is None:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=first_span.anchor_segment_id,
-                    selected_text=first_span.selected_text,
-                    reason_code="anchor_segment_unknown",
-                )
-            )
-            continue
-        unit_context, _ = mapping
-        if len(unit_notes[unit_context.unit_id]) >= MAX_GRAMMAR_NOTE_ITEMS:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=first_span.anchor_segment_id,
-                    selected_text=first_span.selected_text,
-                    reason_code="per_unit_budget_exceeded",
-                )
-            )
-            continue
+    # Per-unit scoped dedup ledger. reader-grammar-candidate-selection:
+    # scoped dedup key is (anchor_segment_id, normalized_dedup_hint).
+    # Different units keep independent ledgers so the same learning point
+    # can surface in multiple units; within a unit, different anchors
+    # with the same hint are also allowed (only same anchor + same hint
+    # is rejected, winner decided by sort order). ``unit_winner_info``
+    # tracks the winning candidate so the diagnostic payload can carry
+    # the full winner info.
+    unit_seen_scoped_keys: dict[str, set[tuple[str, str]]] = {
+        u.unit_id: set() for u in context.units
+    }
+    unit_winner_info: dict[str, dict[tuple[str, str], tuple[str, str, int]]] = {
+        u.unit_id: {} for u in context.units
+    }
 
-        segments_by_id = {
-            s.anchor_segment_id: s for s in unit_context.anchor_segments
-        }
-        resolved_spans: list[ReaderTextRangeAnchor] = []
-        note_rejected = False
-        for span_index, span in enumerate(item.spans):
-            segment = segments_by_id.get(span.anchor_segment_id)
+    for _sort_key, original_idx, item_type, item in unified_candidates:
+        if item_type == "grammar_note":
+            first_span = item.spans[0] if item.spans else None
+            if first_span is None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id="",
+                        selected_text="",
+                        reason_code="grammar_note_no_spans",
+                    )
+                )
+                continue
+            mapping = units_by_segment.get(first_span.anchor_segment_id)
+            if mapping is None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=first_span.anchor_segment_id,
+                        selected_text=first_span.selected_text,
+                        reason_code="anchor_segment_unknown",
+                    )
+                )
+                continue
+            unit_context, _ = mapping
+
+            scoped_key = scoped_dedup_key(
+                anchor_segment_id=first_span.anchor_segment_id,
+                dedup_hint=item.dedup_hint,
+            )
+            if scoped_key in unit_seen_scoped_keys[unit_context.unit_id]:
+                winner_t, winner_anchor, winner_idx = unit_winner_info[
+                    unit_context.unit_id
+                ][scoped_key]
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=first_span.anchor_segment_id,
+                        selected_text=first_span.selected_text,
+                        reason_code=DEDUP_HINT_DUPLICATE_REASON_CODE,
+                    )
+                )
+                skipped_items[-1].update(
+                    {
+                        "normalized_hint": normalize_dedup_hint(item.dedup_hint),
+                        "winner_item_type": winner_t,
+                        "winner_anchor_segment_id": winner_anchor,
+                        "winner_item_index": winner_idx,
+                    }
+                )
+                continue
+
+            if len(unit_notes[unit_context.unit_id]) >= MAX_GRAMMAR_NOTE_ITEMS:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=first_span.anchor_segment_id,
+                        selected_text=first_span.selected_text,
+                        reason_code="per_unit_budget_exceeded",
+                    )
+                )
+                continue
+
+            segments_by_id = {
+                s.anchor_segment_id: s for s in unit_context.anchor_segments
+            }
+            resolved_spans: list[ReaderTextRangeAnchor] = []
+            note_rejected = False
+            for span_index, span in enumerate(item.spans):
+                segment = segments_by_id.get(span.anchor_segment_id)
+                if segment is not None and segment.segment_type == "fallback_window":
+                    skipped_items.append(
+                        _build_skip_diagnostic(
+                            item_index=original_idx,
+                            item_type=item_type,
+                            anchor_segment_id=span.anchor_segment_id,
+                            selected_text=span.selected_text,
+                            reason_code="boundary_low_fallback_window",
+                            span_index=span_index,
+                        )
+                    )
+                    note_rejected = True
+                    break
+                resolved_anchor, reason_code = _resolve_batch_candidate_anchor(
+                    batch_context=context,
+                    unit_context=unit_context,
+                    segments_by_id=segments_by_id,
+                    anchor_segment_id=span.anchor_segment_id,
+                    selected_text=span.selected_text,
+                )
+                if resolved_anchor is None:
+                    skipped_items.append(
+                        _build_skip_diagnostic(
+                            item_index=original_idx,
+                            item_type=item_type,
+                            anchor_segment_id=span.anchor_segment_id,
+                            selected_text=span.selected_text,
+                            reason_code=reason_code,
+                            span_index=span_index,
+                        )
+                    )
+                    note_rejected = True
+                    break
+                resolved_spans.append(resolved_anchor)
+
+            if note_rejected:
+                continue
+
+            try:
+                unit_notes[unit_context.unit_id].append(
+                    GrammarNoteItem(
+                        spans=resolved_spans,
+                        grammar_point=item.grammar_point,
+                        pattern=item.pattern,
+                        note=item.note,
+                    )
+                )
+                unit_seen_scoped_keys[unit_context.unit_id].add(scoped_key)
+                unit_winner_info[unit_context.unit_id][scoped_key] = (
+                    item_type,
+                    first_span.anchor_segment_id,
+                    original_idx,
+                )
+            except ValidationError:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=first_span.anchor_segment_id,
+                        selected_text=first_span.selected_text,
+                        reason_code="resolved_item_invalid",
+                    )
+                )
+        else:  # sentence_analysis
+            mapping = units_by_segment.get(item.anchor_segment_id)
+            if mapping is None:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="anchor_segment_unknown",
+                    )
+                )
+                continue
+            unit_context, _ = mapping
+
+            scoped_key = scoped_dedup_key(
+                anchor_segment_id=item.anchor_segment_id,
+                dedup_hint=item.dedup_hint,
+            )
+            if scoped_key in unit_seen_scoped_keys[unit_context.unit_id]:
+                winner_t, winner_anchor, winner_idx = unit_winner_info[
+                    unit_context.unit_id
+                ][scoped_key]
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code=DEDUP_HINT_DUPLICATE_REASON_CODE,
+                    )
+                )
+                skipped_items[-1].update(
+                    {
+                        "normalized_hint": normalize_dedup_hint(item.dedup_hint),
+                        "winner_item_type": winner_t,
+                        "winner_anchor_segment_id": winner_anchor,
+                        "winner_item_index": winner_idx,
+                    }
+                )
+                continue
+
+            if len(unit_analyses[unit_context.unit_id]) >= MAX_SENTENCE_ANALYSIS_ITEMS:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="per_unit_budget_exceeded",
+                    )
+                )
+                continue
+
+            segments_by_id = {
+                s.anchor_segment_id: s for s in unit_context.anchor_segments
+            }
+            segment = segments_by_id.get(item.anchor_segment_id)
             if segment is not None and segment.segment_type == "fallback_window":
                 skipped_items.append(
                     _build_skip_diagnostic(
-                        item_index=item_index,
-                        item_type=item.item_type,
-                        anchor_segment_id=span.anchor_segment_id,
-                        selected_text=span.selected_text,
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
                         reason_code="boundary_low_fallback_window",
-                        span_index=span_index,
                     )
                 )
-                note_rejected = True
-                break
+                continue
             resolved_anchor, reason_code = _resolve_batch_candidate_anchor(
                 batch_context=context,
                 unit_context=unit_context,
                 segments_by_id=segments_by_id,
-                anchor_segment_id=span.anchor_segment_id,
-                selected_text=span.selected_text,
+                anchor_segment_id=item.anchor_segment_id,
+                selected_text=item.selected_text,
             )
             if resolved_anchor is None:
                 skipped_items.append(
                     _build_skip_diagnostic(
-                        item_index=item_index,
-                        item_type=item.item_type,
-                        anchor_segment_id=span.anchor_segment_id,
-                        selected_text=span.selected_text,
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
                         reason_code=reason_code,
-                        span_index=span_index,
                     )
                 )
-                note_rejected = True
-                break
-            resolved_spans.append(resolved_anchor)
+                continue
 
-        if note_rejected:
-            continue
-
-        try:
-            unit_notes[unit_context.unit_id].append(
-                GrammarNoteItem(
-                    spans=resolved_spans,
-                    grammar_point=item.grammar_point,
-                    pattern=item.pattern,
-                    note=item.note,
+            try:
+                unit_analyses[unit_context.unit_id].append(
+                    SentenceAnalysisItem(
+                        anchor=resolved_anchor,
+                        label=item.label,
+                        analysis=item.analysis,
+                        chunks=[
+                            SentenceAnalysisChunk(
+                                order=chunk_index + 1,
+                                label=chunk.label,
+                                text=chunk.text,
+                            )
+                            for chunk_index, chunk in enumerate(item.chunks)
+                        ],
+                    )
                 )
-            )
-        except ValidationError:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=first_span.anchor_segment_id,
-                    selected_text=first_span.selected_text,
-                    reason_code="resolved_item_invalid",
+                unit_seen_scoped_keys[unit_context.unit_id].add(scoped_key)
+                unit_winner_info[unit_context.unit_id][scoped_key] = (
+                    item_type,
+                    item.anchor_segment_id,
+                    original_idx,
                 )
-            )
-
-    for item_index, item in enumerate(sorted_sentence_analyses):
-        mapping = units_by_segment.get(item.anchor_segment_id)
-        if mapping is None:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="anchor_segment_unknown",
+            except ValidationError:
+                skipped_items.append(
+                    _build_skip_diagnostic(
+                        item_index=original_idx,
+                        item_type=item_type,
+                        anchor_segment_id=item.anchor_segment_id,
+                        selected_text=item.selected_text,
+                        reason_code="resolved_item_invalid",
+                    )
                 )
-            )
-            continue
-        unit_context, _ = mapping
-        if len(unit_analyses[unit_context.unit_id]) >= MAX_SENTENCE_ANALYSIS_ITEMS:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="per_unit_budget_exceeded",
-                )
-            )
-            continue
-
-        segments_by_id = {
-            s.anchor_segment_id: s for s in unit_context.anchor_segments
-        }
-        segment = segments_by_id.get(item.anchor_segment_id)
-        if segment is not None and segment.segment_type == "fallback_window":
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="boundary_low_fallback_window",
-                )
-            )
-            continue
-        resolved_anchor, reason_code = _resolve_batch_candidate_anchor(
-            batch_context=context,
-            unit_context=unit_context,
-            segments_by_id=segments_by_id,
-            anchor_segment_id=item.anchor_segment_id,
-            selected_text=item.selected_text,
-        )
-        if resolved_anchor is None:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code=reason_code,
-                )
-            )
-            continue
-
-        try:
-            unit_analyses[unit_context.unit_id].append(
-                SentenceAnalysisItem(
-                    anchor=resolved_anchor,
-                    label=item.label,
-                    analysis=item.analysis,
-                    chunks=[
-                        SentenceAnalysisChunk(
-                            order=chunk_index + 1,
-                            label=chunk.label,
-                            text=chunk.text,
-                        )
-                        for chunk_index, chunk in enumerate(item.chunks)
-                    ],
-                )
-            )
-        except ValidationError:
-            skipped_items.append(
-                _build_skip_diagnostic(
-                    item_index=item_index,
-                    item_type=item.item_type,
-                    anchor_segment_id=item.anchor_segment_id,
-                    selected_text=item.selected_text,
-                    reason_code="resolved_item_invalid",
-                )
-            )
 
     outputs = [
         (

@@ -264,8 +264,9 @@ class _RealisticMockExecutor:
                     spans=[text_anchor.model_dump()],
                     semantic_dedup_key=dedup_key,
                     pattern_key=f"pattern:{anchor_id}",
-                    quality_score=0.8,
+                    quality_score=4,
                     reading_blocker=False,
+                    dedup_hint=dedup_key,
                     # P2-1: populate content_* fields for contract output
                     grammar_point=f"grammar_point:{anchor_id}",
                     pattern=f"pattern:{anchor_id}",
@@ -300,8 +301,9 @@ class _RealisticMockExecutor:
                     spans=[text_anchor.model_dump()],
                     semantic_dedup_key=dedup_key,
                     pattern_key=None,
-                    quality_score=0.9,
+                    quality_score=5,
                     reading_blocker=False,
+                    dedup_hint=dedup_key,
                     # P2-1: populate content_* fields for contract output
                     label=f"main_clause:{anchor_id}",
                     analysis=f"Sentence analysis for anchor {anchor_id}.",

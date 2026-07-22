@@ -36,6 +36,11 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisLayerOutput,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.grammar_candidate_policy import (
+    normalize_dedup_hint,
+    scoped_dedup_key,
+    validate_dedup_hint,
+)
 from app.services.reader_orchestration.grammar_layer_payload import (
     build_grammar_layer_published_payload,
 )
@@ -622,6 +627,54 @@ class GrammarWindowPublisher:
                 budget_total[item_type]["count"] = 0
             published_anchor_counts.setdefault(item_type, {})
             published_dedup_keys.setdefault(item_type, [])
+            # reader-grammar-candidate-selection: 严格 ledger canonical-content
+            # 校验。只接受当前 scoped key ``[anchor_segment_id,
+            # normalized_dedup_hint]`` 二元组形状。不做 normalization 修复、
+            # 旧格式转换或静默跳过；任何非法形状 fail-closed 抛 ValueError。
+            # 要求：
+            #   - entry 必须是长度为 2 的 list/tuple
+            #   - anchor_segment_id 必须是 trim 后非空字符串
+            #   - hint 必须通过 validate_dedup_hint（非空、≤120）
+            #   - 存储的 hint 必须已经等于 normalize_dedup_hint(hint) 结果
+            #     （即必须是已 normalized 的形式，不允许未 normalized 的 hint）
+            raw_keys = published_dedup_keys[item_type]
+            normalized_keys: list[tuple[str, str]] = []
+            for key in raw_keys:
+                if not isinstance(key, list | tuple) or len(key) != 2:
+                    raise ValueError(
+                        f"malformed published_dedup_keys entry for "
+                        f"{item_type}: expected [anchor_segment_id, "
+                        f"normalized_hint] 2-tuple of str, got "
+                        f"{type(key).__name__}={key!r}"
+                    )
+                anchor_raw, hint_raw = key[0], key[1]
+                if not isinstance(anchor_raw, str) or not anchor_raw.strip():
+                    raise ValueError(
+                        f"malformed published_dedup_keys entry for "
+                        f"{item_type}: anchor_segment_id must be a "
+                        f"non-empty string after trim, got "
+                        f"{type(anchor_raw).__name__}={anchor_raw!r}"
+                    )
+                if not isinstance(hint_raw, str):
+                    raise ValueError(
+                        f"malformed published_dedup_keys entry for "
+                        f"{item_type}: normalized_hint must be a string, "
+                        f"got {type(hint_raw).__name__}={hint_raw!r}"
+                    )
+                # validate_dedup_hint trims + normalizes + enforces
+                # non-empty / ≤120. Raises ValueError on illegal hint.
+                expected_normalized = validate_dedup_hint(hint_raw)
+                # Stored hint MUST already equal its normalized form;
+                # un-normalized hints are rejected (no silent fix-up).
+                if hint_raw != expected_normalized:
+                    raise ValueError(
+                        f"malformed published_dedup_keys entry for "
+                        f"{item_type}: stored hint must already be "
+                        f"normalized (expected {expected_normalized!r}, "
+                        f"got {hint_raw!r})"
+                    )
+                normalized_keys.append((anchor_raw, hint_raw))
+            published_dedup_keys[item_type] = normalized_keys
             published_pattern_keys.setdefault(item_type, [])
             density_by_record.setdefault(item_type, 0)
 
@@ -697,8 +750,12 @@ class GrammarWindowPublisher:
         published_anchor_counts: dict[str, dict[str, int]] = {
             k: dict(v) for k, v in ledger.published_anchor_counts_by_type.items()
         }
-        published_dedup_keys: dict[str, list[str]] = {
-            k: list(v) for k, v in ledger.published_dedup_keys_by_type.items()
+        published_dedup_keys: dict[str, list[tuple[str, str]]] = {
+            # reader-grammar-candidate-selection: ``tuple(item)`` 产生
+            # ``tuple[str, ...]``（变长），与 ``tuple[str, str]``（定长二元组）
+            # 注解不匹配。显式构造二元组修复类型错误。
+            k: [(item[0], item[1]) for item in v]
+            for k, v in ledger.published_dedup_keys_by_type.items()
         }
         published_pattern_keys: dict[str, list[str]] = {
             k: list(v) for k, v in ledger.published_pattern_keys_by_type.items()
@@ -721,9 +778,23 @@ class GrammarWindowPublisher:
                 published_anchor_counts[item_type].get(anchor_id, 0) + 1
             )
 
-            # published_dedup_keys_by_type[item_type].append(key)
+            # Scoped dedup: published_dedup_keys_by_type stores
+            # (anchor_segment_id, normalized_dedup_hint) tuples. The
+            # window_selector DUP gate scans all item_type buckets so the
+            # same (anchor, hint) pair across grammar_note / sentence_analysis
+            # is rejected as a duplicate learning point. Different anchor +
+            # same hint is allowed (scoped dedup).
+            #
+            # reader-grammar-candidate-selection: 删除空 hint 静默 skip。
+            # CandidateItem.__post_init__ 已强制 dedup_hint 非空且 normalized，
+            # scoped_dedup_key fail-closed，因此无需 ``if normalized_hint:``
+            # 守卫。留 skip 会掩盖上游违约。
+            scoped_key = scoped_dedup_key(
+                anchor_segment_id=candidate.anchor_segment_id,
+                dedup_hint=candidate.dedup_hint,
+            )
             published_dedup_keys.setdefault(item_type, [])
-            published_dedup_keys[item_type].append(candidate.semantic_dedup_key)
+            published_dedup_keys[item_type].append(scoped_key)
 
             # published_pattern_keys_by_type[item_type].append(key) if key
             if candidate.pattern_key:
@@ -768,8 +839,11 @@ class GrammarWindowPublisher:
         Does NOT store full LLM raw output — only counts, gates, reasons,
         and small metadata (window_id / window_index / strategy hash /
         budget snapshot). The selector already returns structured
-        ``RejectedCandidate(candidate, gate, reason)`` so no selector
-        accept/reject semantics are changed.
+        ``RejectedCandidate(candidate, gate, reason, reason_code,
+        dedup_metadata)`` (reader-grammar-candidate-selection: ``reason_code``
+        is an independent structured field separate from human-readable
+        ``reason``; ``dedup_metadata`` carries DUP winner diagnostics) so
+        no selector accept/reject semantics are changed.
 
         Schema:
           - ``window_meta``: window_id / window_index / plan_id /
@@ -781,8 +855,18 @@ class GrammarWindowPublisher:
           - ``raw_candidate_count_by_type``: grammar_note / sentence_analysis
           - ``accepted_count_by_type``: same shape
           - ``rejected_count_by_type``: same shape
-          - ``rejected_breakdown``: list of {item_type, gate, reason, count}
-            aggregated by (item_type, gate, reason); reason truncated
+          - ``rejected_breakdown``: list of entries aggregated by
+            (item_type, gate, reason); reason truncated. Each entry
+            contains ``item_type`` / ``gate`` / ``reason`` (truncated) /
+            ``count`` plus an independent ``reason_code``
+            (DUP gate = ``"dedup_hint_duplicate"``; other gates = ``None``).
+            DUP entries additionally carry structured winner metadata read
+            directly from ``dedup_metadata`` (never parsed from ``reason``):
+            ``normalized_hint`` / ``winner_item_type`` /
+            ``winner_anchor_segment_id`` / ``winner_item_index``
+            (current_window winner = real index, published_ledger winner =
+            ``None``) / ``winner_source`` (``"current_window"`` |
+            ``"published_ledger"``).
           - ``no_op_cause``: llm_empty / selector_rejected_all /
             publisher_no_accepted / unknown (failure path is set by
             pipeline_runner as execution_failed)
@@ -904,24 +988,54 @@ class GrammarWindowPublisher:
     ) -> list[dict[str, Any]]:
         """Aggregate rejected candidates by (item_type, gate, reason).
 
+        reader-grammar-candidate-selection: 直接聚合结构化
+        ``dedup_metadata`` 字段与独立 ``reason_code``，不从 ``reason``
+        字符串解析。DUP rejection 携带 ``reason_code =
+        "dedup_hint_duplicate"`` 以及 ``normalized_hint`` /
+        ``winner_item_type`` / ``winner_anchor_segment_id`` /
+        ``winner_item_index`` / ``winner_source``；其他 gate 的
+        ``reason_code`` 为 ``None``，上述 metadata 字段不输出。
+
         Returns a sorted list of dicts with ``item_type`` / ``gate`` /
-        ``reason`` (truncated) / ``count``. Sorted by count desc then
-        item_type / gate for stable output.
+        ``reason`` (truncated) / ``reason_code`` / ``count`` plus optional
+        DUP metadata. Sorted by count desc then item_type / gate for
+        stable output.
         """
-        buckets: dict[tuple[str, str, str], int] = {}
+        buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
         for r in rejected:
             reason = (r.reason or "")[:_DIAGNOSTICS_REASON_MAX_LEN]
             key = (r.candidate.item_type, r.gate.value, reason)
-            buckets[key] = buckets.get(key, 0) + 1
-        result = [
-            {
-                "item_type": key[0],
-                "gate": key[1],
-                "reason": key[2],
-                "count": count,
-            }
-            for key, count in buckets.items()
-        ]
+            if key not in buckets:
+                entry: dict[str, Any] = {
+                    "item_type": key[0],
+                    "gate": key[1],
+                    "reason": key[2],
+                    # reader-grammar-candidate-selection: 独立结构化
+                    # reason_code。DUP gate 为 "dedup_hint_duplicate"，
+                    # 其他 gate 为 None。publisher 直接读取此字段，
+                    # 不从 reason 解析。
+                    "reason_code": r.reason_code,
+                    "count": 0,
+                }
+                # reader-grammar-candidate-selection: 仅 DUP gate 携带
+                # dedup_metadata；其他 gate 保持 None。直接读取结构化字段。
+                if r.dedup_metadata is not None:
+                    entry["normalized_hint"] = r.dedup_metadata.normalized_hint
+                    entry["winner_item_type"] = (
+                        r.dedup_metadata.winner_item_type
+                    )
+                    entry["winner_anchor_segment_id"] = (
+                        r.dedup_metadata.winner_anchor_segment_id
+                    )
+                    entry["winner_item_index"] = (
+                        r.dedup_metadata.winner_item_index
+                    )
+                    entry["winner_source"] = (
+                        r.dedup_metadata.winner_source
+                    )
+                buckets[key] = entry
+            buckets[key]["count"] += 1
+        result = list(buckets.values())
         result.sort(key=lambda d: (-d["count"], d["item_type"], d["gate"]))
         return result
 
@@ -1207,8 +1321,11 @@ class GrammarWindowPublisher:
 
         output_json = output_model.model_dump(mode="json")
         # quality_json stores provenance (§8.3): plan_id / window_id /
-        # window_index / dedup_key / pattern_key / quality_score. These fields
-        # MUST NOT appear in output_json.
+        # window_index / dedup_key / pattern_key / quality_score /
+        # reading_blocker / dedup_hint. These fields MUST NOT appear in output_json.
+        # P1-2 self-rating contract: reading_blocker / dedup_hint are now part of
+        # the audit trail so downstream consumers can reconstruct the scoped dedup
+        # decision without re-running the selector.
         quality_json: dict[str, Any] = {
             "plan_id": str(plan_id),
             "window_id": str(window_id),
@@ -1216,11 +1333,15 @@ class GrammarWindowPublisher:
             "semantic_dedup_key": candidates[0].semantic_dedup_key,
             "pattern_key": candidates[0].pattern_key,
             "quality_score": candidates[0].quality_score,
+            "reading_blocker": candidates[0].reading_blocker,
+            "dedup_hint": normalize_dedup_hint(candidates[0].dedup_hint),
             "items": [
                 {
                     "semantic_dedup_key": c.semantic_dedup_key,
                     "pattern_key": c.pattern_key,
                     "quality_score": c.quality_score,
+                    "reading_blocker": c.reading_blocker,
+                    "dedup_hint": normalize_dedup_hint(c.dedup_hint),
                 }
                 for c in candidates
             ],

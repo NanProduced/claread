@@ -164,8 +164,9 @@ class _ObservabilityMockExecutor:
                 spans=[text_anchor.model_dump()],
                 semantic_dedup_key=dedup_key,
                 pattern_key=f"pattern:{anchor_id}",
-                quality_score=0.8,
+                quality_score=4,
                 reading_blocker=False,
+                dedup_hint=dedup_key,
                 grammar_point=f"grammar_point:{anchor_id}",
                 pattern=f"pattern:{anchor_id}",
                 note=f"Observability test note for {anchor_id}.",
@@ -762,8 +763,9 @@ async def test_zplus_publish_fence_span_value_error_records_publish_exception(
         spans=[],
         semantic_dedup_key="bare:1",
         pattern_key="bare:pattern:1",
-        quality_score=0.5,
+        quality_score=3,
         reading_blocker=False,
+        dedup_hint="bare:hint:1",
     )
 
     # The publisher must raise LookupError because plan_id doesn't exist.

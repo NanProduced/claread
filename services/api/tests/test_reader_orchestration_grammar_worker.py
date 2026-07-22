@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1752,6 +1753,11 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
     """P1-2: the shared grammar YAML must be the single authoritative
     source for the self-rating field contract. The window operational
     rules must NOT duplicate the field-by-field self-rating explanation.
+
+    The contract is exactly three required fields: ``quality_score`` /
+    ``reading_blocker`` / ``dedup_hint``. The legacy ``reason_code`` /
+    ``confidence`` / ``low_value`` concepts are removed and must not
+    appear in the prompt.
     """
     from app.services.analysis.prompting.prompt_loader import (
         load_agent_instructions,
@@ -1764,26 +1770,28 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
     shared = load_agent_instructions(
         grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
     )
-    # The shared YAML must explain all five self-rating fields.
+    # The shared YAML must explain all three required self-rating fields.
     assert "quality_score" in shared
     assert "reading_blocker" in shared
-    assert "reason_code" in shared
-    assert "confidence" in shared
     assert "dedup_hint" in shared
-    # The five allowed reason_code values must appear in the shared YAML.
-    for code in (
-        "grammar_pattern",
-        "exam_relevant",
-        "meaning_blocker",
-        "discourse_signal",
-        "low_value",
-    ):
-        assert code in shared, f"shared YAML missing reason_code {code!r}"
-    # The long_sentence ban must be stated in the shared YAML.
-    assert "long_sentence" in shared
     # The self-rating fields are internal metadata — the prompt must
     # forbid writing them into note / analysis prose.
     assert "内部候选元数据" in shared
+    # Legacy self-rating concepts must not appear anywhere in the prompt.
+    # ``low_value`` is fully removed; ``reason_code`` / ``confidence``
+    # are no longer part of the candidate schema. (Standalone uses of
+    # these substrings inside unrelated prose would still trip this
+    # assertion, which is the intent — the prompt should not reference
+    # them at all.)
+    for legacy in ("reason_code", "confidence", "low_value"):
+        assert legacy not in shared, (
+            f"shared YAML must not reference legacy self-rating concept {legacy!r}"
+        )
+    # The prompt must not describe "reject just this candidate" —
+    # under aggregated structured output a single schema error triggers
+    # repair / failure of the whole output.
+    assert "整条 candidate 会被拒绝" not in shared
+    assert "拒绝当前 candidate" not in shared
     # The window operational rules must NOT duplicate the field-by-field
     # self-rating explanation (single authoritative source).
     assert "quality_score (1-5)" not in _WINDOW_GRAMMAR_OPERATIONAL_RULES
@@ -1792,8 +1800,12 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
     # the embedded shared YAML.
     composed = get_window_grammar_system_prompt()
     assert "quality_score" in composed
-    assert "reason_code" in composed
+    assert "reading_blocker" in composed
     assert "dedup_hint" in composed
+    for legacy in ("reason_code", "confidence", "low_value"):
+        assert legacy not in composed, (
+            f"composed window prompt must not reference legacy concept {legacy!r}"
+        )
 
 
 # ---------------------------------------------------------------------------#
@@ -1803,22 +1815,22 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
 
 def _minimal_grammar_note_kwargs() -> dict:
     """Return the minimum kwargs required to construct a valid
-    GrammarNoteCandidateItem under the tightened P1-2 schema."""
+    GrammarNoteCandidateItem under the tightened P1-2 schema (3
+    self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     return {
         "spans": [GrammarCandidateSpan(anchor_segment_id="s1", selected_text="x")],
         "grammar_point": "p",
         "note": "n",
         "quality_score": 3,
         "reading_blocker": False,
-        "reason_code": "grammar_pattern",
-        "confidence": 0.5,
         "dedup_hint": "k",
     }
 
 
 def _minimal_sentence_analysis_kwargs() -> dict:
     """Return the minimum kwargs required to construct a valid
-    SentenceAnalysisCandidateItem under the tightened P1-2 schema."""
+    SentenceAnalysisCandidateItem under the tightened P1-2 schema (3
+    self-rating fields: quality_score / reading_blocker / dedup_hint)."""
     return {
         "anchor_segment_id": "s1",
         "selected_text": "x",
@@ -1827,23 +1839,19 @@ def _minimal_sentence_analysis_kwargs() -> dict:
         "chunks": [SentenceAnalysisChunkCandidate(label="c", text="x")],
         "quality_score": 3,
         "reading_blocker": False,
-        "reason_code": "grammar_pattern",
-        "confidence": 0.5,
         "dedup_hint": "k",
     }
 
 
 def test_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
     """P1-2: GrammarNoteCandidateItem must reject candidates that omit
-    any of the five self-rating fields."""
+    any of the three required self-rating fields."""
     from pydantic import ValidationError
 
     base = _minimal_grammar_note_kwargs()
     for field in (
         "quality_score",
         "reading_blocker",
-        "reason_code",
-        "confidence",
         "dedup_hint",
     ):
         incomplete = dict(base)
@@ -1857,15 +1865,13 @@ def test_grammar_note_candidate_rejects_missing_self_rating_fields() -> None:
 
 def test_sentence_analysis_candidate_rejects_missing_self_rating_fields() -> None:
     """P1-2: SentenceAnalysisCandidateItem must reject candidates that
-    omit any of the five self-rating fields."""
+    omit any of the three required self-rating fields."""
     from pydantic import ValidationError
 
     base = _minimal_sentence_analysis_kwargs()
     for field in (
         "quality_score",
         "reading_blocker",
-        "reason_code",
-        "confidence",
         "dedup_hint",
     ):
         incomplete = dict(base)
@@ -1898,60 +1904,50 @@ def test_sentence_analysis_candidate_rejects_out_of_range_quality_score() -> Non
             SentenceAnalysisCandidateItem(**{**base, "quality_score": bad})
 
 
-def test_grammar_note_candidate_rejects_out_of_range_confidence() -> None:
-    """P1-2: confidence must be float in [0.0, 1.0]."""
+def test_grammar_note_candidate_rejects_legacy_reason_code_field() -> None:
+    """P1-2: ``reason_code`` was removed from the self-rating contract.
+    The candidate schema uses ``ConfigDict(extra="forbid")`` so any
+    payload that still carries ``reason_code`` must be rejected at the
+    schema boundary — the LLM cannot smuggle the legacy field back in."""
     from pydantic import ValidationError
 
     base = _minimal_grammar_note_kwargs()
-    for bad in (-0.1, 1.1, 2.0):
+    for legacy in ("grammar_pattern", "meaning_blocker", "long_sentence"):
         with pytest.raises(ValidationError):
-            GrammarNoteCandidateItem(**{**base, "confidence": bad})
+            GrammarNoteCandidateItem(**{**base, "reason_code": legacy})
 
 
-def test_sentence_analysis_candidate_rejects_out_of_range_confidence() -> None:
-    """P1-2: confidence must be float in [0.0, 1.0]."""
+def test_sentence_analysis_candidate_rejects_legacy_reason_code_field() -> None:
+    """P1-2: ``reason_code`` was removed from SentenceAnalysisCandidateItem
+    too. ``extra="forbid"`` rejects any legacy payload."""
     from pydantic import ValidationError
 
     base = _minimal_sentence_analysis_kwargs()
-    for bad in (-0.1, 1.1, 2.0):
+    for legacy in ("grammar_pattern", "meaning_blocker", "long_sentence"):
         with pytest.raises(ValidationError):
-            SentenceAnalysisCandidateItem(**{**base, "confidence": bad})
+            SentenceAnalysisCandidateItem(**{**base, "reason_code": legacy})
 
 
-def test_grammar_note_candidate_rejects_invalid_reason_code() -> None:
-    """P1-2: reason_code must be one of the 5 allowed Literal values.
-    ``long_sentence`` and arbitrary strings are rejected at the schema
-    boundary, not via natural-language prompt enforcement."""
+def test_grammar_note_candidate_rejects_legacy_confidence_field() -> None:
+    """P1-2: ``confidence`` was removed from the self-rating contract.
+    ``extra="forbid"`` rejects any payload that still carries it."""
     from pydantic import ValidationError
 
     base = _minimal_grammar_note_kwargs()
-    for bad in ("long_sentence", "unknown", "", "GRAMMAR_PATTERN"):
+    for legacy in (0.0, 0.5, 1.0, -0.1, 1.1):
         with pytest.raises(ValidationError):
-            GrammarNoteCandidateItem(**{**base, "reason_code": bad})
+            GrammarNoteCandidateItem(**{**base, "confidence": legacy})
 
 
-def test_sentence_analysis_candidate_rejects_invalid_reason_code() -> None:
-    """P1-2: reason_code must be one of the 5 allowed Literal values."""
+def test_sentence_analysis_candidate_rejects_legacy_confidence_field() -> None:
+    """P1-2: ``confidence`` was removed from SentenceAnalysisCandidateItem
+    too. ``extra="forbid"`` rejects any legacy payload."""
     from pydantic import ValidationError
 
     base = _minimal_sentence_analysis_kwargs()
-    for bad in ("long_sentence", "unknown", "", "MEANING_BLOCKER"):
+    for legacy in (0.0, 0.5, 1.0, -0.1, 1.1):
         with pytest.raises(ValidationError):
-            SentenceAnalysisCandidateItem(**{**base, "reason_code": bad})
-
-
-def test_grammar_note_candidate_accepts_all_five_reason_codes() -> None:
-    """P1-2: all five reason_code values must be accepted."""
-    base = _minimal_grammar_note_kwargs()
-    for code in (
-        "grammar_pattern",
-        "exam_relevant",
-        "meaning_blocker",
-        "discourse_signal",
-        "low_value",
-    ):
-        item = GrammarNoteCandidateItem(**{**base, "reason_code": code})
-        assert item.reason_code == code
+            SentenceAnalysisCandidateItem(**{**base, "confidence": legacy})
 
 
 def test_grammar_note_candidate_rejects_empty_dedup_hint() -> None:
@@ -1985,6 +1981,27 @@ def test_grammar_note_candidate_rejects_overlong_dedup_hint() -> None:
         GrammarNoteCandidateItem(
             **{**base, "dedup_hint": "x" * (MAX_GRAMMAR_DEDUP_HINT_LENGTH + 1)}
         )
+
+
+def test_grammar_note_candidate_saves_normalized_dedup_hint() -> None:
+    """reader-grammar-candidate-selection: GrammarNoteCandidateItem must run
+    ``dedup_hint`` through ``validate_dedup_hint`` and persist the normalized
+    (trimmed, whitespace-collapsed, lowercased) value — not the raw input."""
+    base = _minimal_grammar_note_kwargs()
+    raw_hint = "  Though   Concession  "
+    item = GrammarNoteCandidateItem(**{**base, "dedup_hint": raw_hint})
+    assert item.dedup_hint == "though concession"
+
+
+def test_sentence_analysis_candidate_saves_normalized_dedup_hint() -> None:
+    """reader-grammar-candidate-selection: SentenceAnalysisCandidateItem must
+    run ``dedup_hint`` through ``validate_dedup_hint`` and persist the
+    normalized (trimmed, whitespace-collapsed, lowercased) value — not the
+    raw input."""
+    base = _minimal_sentence_analysis_kwargs()
+    raw_hint = "  Foo\tBAR\n baz  "
+    item = SentenceAnalysisCandidateItem(**{**base, "dedup_hint": raw_hint})
+    assert item.dedup_hint == "foo bar baz"
 
 
 # ---------------------------------------------------------------------------#
@@ -2782,8 +2799,8 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
     # 3 candidates on the same anchor with different quality_score.
     # Input order is deliberately low → high to prove sort, not pass-through.
     # P1-2: quality_score is now int 1-5 (required), and the full self-rating
-    # family (reading_blocker / reason_code / confidence / dedup_hint) is
-    # required so the LLM cannot emit bare candidates that degrade sorting.
+    # family (reading_blocker / dedup_hint) is required so the LLM cannot
+    # emit bare candidates that degrade sorting.
     candidates = [
         SentenceAnalysisCandidateItem(
             anchor_segment_id="s1",
@@ -2795,8 +2812,6 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             ],
             quality_score=2,
             reading_blocker=False,
-            reason_code="grammar_pattern",
-            confidence=0.3,
             dedup_hint="low-analysis",
         ),
         SentenceAnalysisCandidateItem(
@@ -2809,8 +2824,6 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             ],
             quality_score=5,
             reading_blocker=True,
-            reason_code="meaning_blocker",
-            confidence=0.9,
             dedup_hint="high-analysis",
         ),
         SentenceAnalysisCandidateItem(
@@ -2823,8 +2836,6 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
             ],
             quality_score=3,
             reading_blocker=False,
-            reason_code="discourse_signal",
-            confidence=0.6,
             dedup_hint="mid-analysis",
         ),
     ]
@@ -2850,16 +2861,13 @@ def test_per_unit_sentence_analysis_candidates_sorted_by_quality_score() -> None
 
 def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None:
     """P1-2: GrammarNoteCandidateItem and SentenceAnalysisCandidateItem must
-    carry the same self-rating family, and all five fields must be REQUIRED
+    carry the same self-rating family, and all three fields must be REQUIRED
     (no permissive defaults) so the LLM cannot emit bare candidates that
     degrade sorting to LLM-returned order.
 
-    Previously these fields had wide defaults (quality_score=0.0,
-    reading_blocker=False, reason_code="grammar_pattern", confidence=0.0,
-    dedup_hint=""), so the model could omit every field and the sort key
-    collapsed to a constant. DB inspection of bc8afd86 / 6f9e6fdf showed
-    reason_code=NULL and quality_score absent on all published
-    grammar_notes, confirming the fields were not wired through.
+    The contract is exactly three fields: ``quality_score`` /
+    ``reading_blocker`` / ``dedup_hint``. Legacy ``reason_code`` /
+    ``confidence`` are removed and must not appear in ``model_fields``.
     """
     from app.services.reader_orchestration.grammar_worker import (
         SentenceAnalysisCandidateItem as _SAItem,
@@ -2868,19 +2876,17 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
     expected_fields = (
         "quality_score",
         "reading_blocker",
-        "reason_code",
-        "confidence",
         "dedup_hint",
     )
     for field_name in expected_fields:
         assert field_name in GrammarNoteCandidateItem.model_fields, (
-            f"GrammarNoteCandidateItem missing Phase 5 field {field_name!r}"
+            f"GrammarNoteCandidateItem missing self-rating field {field_name!r}"
         )
         assert field_name in _SAItem.model_fields, (
-            f"SentenceAnalysisCandidateItem missing Phase 5 field {field_name!r}"
+            f"SentenceAnalysisCandidateItem missing self-rating field {field_name!r}"
         )
 
-    # P1-2: all five self-rating fields must be required (is_required=True)
+    # P1-2: all three self-rating fields must be required (is_required=True)
     # so the schema rejects candidates that omit them. Pydantic marks a
     # field as required when it has no default and no default_factory.
     for field_name in expected_fields:
@@ -2891,6 +2897,15 @@ def test_grammar_note_candidate_item_carries_phase5_self_rating_fields() -> None
                 f"(no default) so the LLM cannot omit self-rating fields; "
                 f"got is_required=False"
             )
+
+    # P1-2: legacy fields must not be in model_fields at all.
+    for legacy in ("reason_code", "confidence"):
+        assert legacy not in GrammarNoteCandidateItem.model_fields, (
+            f"GrammarNoteCandidateItem must not carry legacy field {legacy!r}"
+        )
+        assert legacy not in _SAItem.model_fields, (
+            f"SentenceAnalysisCandidateItem must not carry legacy field {legacy!r}"
+        )
 
 
 
@@ -2933,8 +2948,6 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             note="low quality note",
             quality_score=2,
             reading_blocker=False,
-            reason_code="low_value",
-            confidence=0.2,
             dedup_hint="low-note",
         ),
         GrammarNoteCandidateItem(
@@ -2948,8 +2961,6 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             note="high quality note",
             quality_score=5,
             reading_blocker=True,
-            reason_code="meaning_blocker",
-            confidence=0.95,
             dedup_hint="high-note",
         ),
         GrammarNoteCandidateItem(
@@ -2963,8 +2974,6 @@ def test_per_unit_grammar_notes_sorted_by_quality_score() -> None:
             note="mid quality note",
             quality_score=3,
             reading_blocker=False,
-            reason_code="grammar_pattern",
-            confidence=0.5,
             dedup_hint="mid-note",
         ),
     ]
@@ -3031,8 +3040,6 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             note=f"low quality note {i}",
             quality_score=1,
             reading_blocker=False,
-            reason_code="low_value",
-            confidence=0.1,
             dedup_hint=f"low-{i}",
         )
         for i in range(low_quality_count)
@@ -3050,8 +3057,6 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             note="high quality note A",
             quality_score=5,
             reading_blocker=True,
-            reason_code="meaning_blocker",
-            confidence=0.9,
             dedup_hint="high-a",
         )
     )
@@ -3067,8 +3072,6 @@ def test_batch_split_sorts_grammar_notes_by_quality_score_before_budget() -> Non
             note="high quality note B",
             quality_score=4,
             reading_blocker=False,
-            reason_code="grammar_pattern",
-            confidence=0.8,
             dedup_hint="high-b",
         )
     )
@@ -3128,8 +3131,6 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
             ],
             quality_score=1,
             reading_blocker=False,
-            reason_code="low_value",
-            confidence=0.1,
             dedup_hint=f"low-{i}",
         )
         for i in range(low_quality_count)
@@ -3145,8 +3146,6 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
             ],
             quality_score=5,
             reading_blocker=True,
-            reason_code="meaning_blocker",
-            confidence=0.95,
             dedup_hint="high-analysis",
         )
     )
@@ -3165,6 +3164,742 @@ def test_batch_split_sorts_sentence_analyses_by_quality_score_before_budget() ->
     # The highest-quality candidate must survive and be first.
     assert unit_output.sentence_analyses[0].analysis == "high quality analysis"
     assert diagnostics["skipped_item_count"] >= 1
+
+
+# ---------------------------------------------------------------------------#
+# P1-2: per-unit / batch cross-type dedup + reading_blocker tie-break
+# ---------------------------------------------------------------------------#
+
+
+def test_per_unit_path_breaks_tie_via_reading_blocker() -> None:
+    """P1-2: per-unit path sort key is
+    ``(-quality_score, reading_blocker=true first, grammar_note on tie)``.
+    Two same-quality candidates: the one with ``reading_blocker=True``
+    must be published first, regardless of input order.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    candidates = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="non-blocker",
+            note="non blocker note",
+            quality_score=4,
+            reading_blocker=False,
+            dedup_hint="non-blocker-hint",
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="blocker",
+            note="blocker note",
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="blocker-hint",
+        ),
+    ]
+    candidate_output = GrammarBundleCandidateOutput(grammar_notes=candidates)
+
+    output, _diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(output.grammar_notes) == 2
+    assert output.grammar_notes[0].note == "blocker note"
+    assert output.grammar_notes[1].note == "non blocker note"
+
+
+def test_batch_path_breaks_tie_via_reading_blocker() -> None:
+    """P1-2: batch path uses the same sort key as per-unit. Two
+    same-quality candidates: the one with ``reading_blocker=True``
+    wins the first slot in the published unit output."""
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    candidates = [
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="non-blocker",
+            analysis="non blocker analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=4,
+            reading_blocker=False,
+            dedup_hint="non-blocker-hint",
+        ),
+        SentenceAnalysisCandidateItem(
+            anchor_segment_id="s1",
+            selected_text=source_text,
+            label="blocker",
+            analysis="blocker analysis",
+            chunks=[
+                SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+            ],
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="blocker-hint",
+        ),
+    ]
+    candidate_output = GrammarBatchCandidateOutput(
+        sentence_analyses=candidates
+    )
+
+    outputs, _diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    assert len(unit_output.sentence_analyses) == 2
+    assert unit_output.sentence_analyses[0].analysis == "blocker analysis"
+    assert unit_output.sentence_analyses[1].analysis == "non blocker analysis"
+
+
+def test_per_unit_path_cross_type_dedup_keeps_grammar_note_on_tie() -> None:
+    """P1-2: when a grammar_note and a sentence_analysis share the same
+    normalized ``dedup_hint`` AND the same (quality_score, reading_blocker)
+    tuple, the grammar_note wins (sentence_analysis is expected to clear
+    a higher bar). The loser must be dropped with a
+    ``dedup_hint_duplicate`` diagnostic — never silently discarded.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    shared_hint = "inversion_after_negative"
+    note = GrammarNoteCandidateItem(
+        spans=[
+            GrammarCandidateSpan(
+                anchor_segment_id="s1", selected_text="Not only"
+            )
+        ],
+        grammar_point="inversion",
+        note="inversion note",
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint=shared_hint,
+    )
+    # Same dedup_hint with different casing/whitespace → must still dedup
+    # against the normalized form. Same score + blocker to force the
+    # grammar_note tie-breaker.
+    analysis = SentenceAnalysisCandidateItem(
+        anchor_segment_id="s1",
+        selected_text=source_text,
+        label="inversion analysis",
+        analysis="inversion analysis body",
+        chunks=[
+            SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+        ],
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint="  Inversion_After_Negative  ",
+    )
+    # Put sentence_analysis FIRST in input order to prove the tie-breaker
+    # is not just pass-through.
+    candidate_output = GrammarBundleCandidateOutput(
+        grammar_notes=[note],
+        sentence_analyses=[analysis],
+    )
+
+    output, diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # grammar_note survives; sentence_analysis is dropped via dedup.
+    assert len(output.grammar_notes) == 1
+    assert output.grammar_notes[0].note == "inversion note"
+    assert len(output.sentence_analyses) == 0
+    # The dropped sentence_analysis must produce a diagnostic with the
+    # cross-type dedup reason code.
+    skipped = diagnostics["skipped_items"]
+    cross_type_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert len(cross_type_skips) == 1, (
+        f"expected one dedup_hint_duplicate diagnostic, got {skipped!r}"
+    )
+    assert cross_type_skips[0]["item_type"] == "sentence_analysis"
+
+
+def test_per_unit_path_same_type_dedup_emits_diagnostic() -> None:
+    """P1-2: two grammar_notes on the same anchor with the same
+    ``dedup_hint`` (after normalization) — the lower-quality one must be
+    dropped with a ``dedup_hint_duplicate`` diagnostic, even
+    though both are grammar_note type (cross-type dedup covers
+    same-type collisions too)."""
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    candidates = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="low",
+            note="low quality dup",
+            quality_score=2,
+            reading_blocker=False,
+            dedup_hint="shared-cue",
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="high",
+            note="high quality dup",
+            quality_score=5,
+            reading_blocker=True,
+            dedup_hint="Shared-Cue",  # case-insensitive dedup
+        ),
+    ]
+    candidate_output = GrammarBundleCandidateOutput(grammar_notes=candidates)
+
+    output, diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # Only the higher-quality candidate survives.
+    assert len(output.grammar_notes) == 1
+    assert output.grammar_notes[0].note == "high quality dup"
+    skipped = diagnostics["skipped_items"]
+    cross_type_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert len(cross_type_skips) == 1
+    assert cross_type_skips[0]["item_type"] == "grammar_note"
+
+
+def test_batch_path_cross_type_dedup_emits_diagnostic() -> None:
+    """P1-2: batch path must apply the same cross-type dedup contract
+    per unit. Two candidates with the same normalized ``dedup_hint``
+    across grammar_note + sentence_analysis — the lower-priority one
+    (sentence_analysis, given the tie-breaker) is dropped with a
+    ``dedup_hint_duplicate`` diagnostic."""
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    shared_hint = "fronted_negation"
+    note = GrammarNoteCandidateItem(
+        spans=[
+            GrammarCandidateSpan(
+                anchor_segment_id="s1", selected_text="Not only"
+            )
+        ],
+        grammar_point="fronted negation",
+        note="fronted negation note",
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint=shared_hint,
+    )
+    analysis = SentenceAnalysisCandidateItem(
+        anchor_segment_id="s1",
+        selected_text=source_text,
+        label="fronted negation analysis",
+        analysis="fronted negation analysis body",
+        chunks=[
+            SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+        ],
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint=shared_hint,
+    )
+    candidate_output = GrammarBatchCandidateOutput(
+        grammar_notes=[note],
+        sentence_analyses=[analysis],
+    )
+
+    outputs, diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    assert len(unit_output.grammar_notes) == 1
+    assert len(unit_output.sentence_analyses) == 0
+    skipped = diagnostics["skipped_items"]
+    cross_type_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert len(cross_type_skips) == 1
+    assert cross_type_skips[0]["item_type"] == "sentence_analysis"
+
+
+def _build_multi_anchor_context(
+    *,
+    reading_goal: str,
+    reading_variant: str,
+    source_text: str,
+    anchor_segment_ids: tuple[str, ...],
+) -> GrammarJobContext:
+    """Build a ``GrammarJobContext`` with multiple anchor segments.
+
+    Each anchor segment covers the full ``source_text`` (degenerate but
+    valid for testing scoped dedup behavior where the only varying
+    field is ``anchor_segment_id``). Production code partitions the
+    source text into non-overlapping segments; tests only need the
+    anchor IDs to differ so ``scoped_dedup_key`` differs.
+    """
+    base_context = _build_context_for_variant(
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
+        source_text=source_text,
+    )
+    base_segment = base_context.anchor_segments[0]
+    anchor_segments = tuple(
+        GrammarAnchorSegmentContext(
+            anchor_segment_id=anchor_id,
+            sentence_id=anchor_id,
+            segment_type="sentence",
+            unit_start_utf16=0,
+            unit_end_utf16=base_segment.unit_end_utf16,
+            text_hash=base_segment.text_hash,
+            text=base_segment.text,
+        )
+        for anchor_id in anchor_segment_ids
+    )
+    return dataclasses.replace(base_context, anchor_segments=anchor_segments)
+
+
+def _build_multi_anchor_batch_context(
+    *,
+    reading_goal: str,
+    reading_variant: str,
+    source_text: str,
+    anchor_segment_ids: tuple[str, ...],
+) -> GrammarBatchJobContext:
+    """Build a ``GrammarBatchJobContext`` whose single unit has multiple
+    anchor segments (mirrors ``_build_multi_anchor_context`` for the
+    batch path).
+    """
+    base_context = _build_batch_context_for_variant(
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
+        source_text=source_text,
+    )
+    base_unit = base_context.units[0]
+    base_segment = base_unit.anchor_segments[0]
+    anchor_segments = tuple(
+        GrammarAnchorSegmentContext(
+            anchor_segment_id=anchor_id,
+            sentence_id=anchor_id,
+            segment_type="sentence",
+            unit_start_utf16=0,
+            unit_end_utf16=base_segment.unit_end_utf16,
+            text_hash=base_segment.text_hash,
+            text=base_segment.text,
+        )
+        for anchor_id in anchor_segment_ids
+    )
+    new_unit = dataclasses.replace(base_unit, anchor_segments=anchor_segments)
+    return dataclasses.replace(base_context, units=(new_unit,))
+
+
+def test_per_unit_path_different_anchor_same_hint_not_deduped() -> None:
+    """reader-grammar-candidate-selection: scoped dedup key is
+    ``(anchor_segment_id, normalized_dedup_hint)``. Two grammar_note
+    candidates on DIFFERENT anchors with the SAME ``dedup_hint`` must
+    both be accepted — full-text repetition control is delegated to
+    pattern/density/budget gates in ``window_selector``, not to the
+    scoped dedup gate.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_multi_anchor_context(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+        anchor_segment_ids=("s1", "s2"),
+    )
+
+    candidates = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="point-a",
+            note="note a",
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="shared-cue",
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s2", selected_text="revise"
+                )
+            ],
+            grammar_point="point-b",
+            note="note b",
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="shared-cue",
+        ),
+    ]
+    candidate_output = GrammarBundleCandidateOutput(grammar_notes=candidates)
+
+    output, diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # Both candidates survive: scoped dedup key differs by anchor.
+    assert len(output.grammar_notes) == 2
+    notes = {item.note for item in output.grammar_notes}
+    assert notes == {"note a", "note b"}
+    # No dedup rejections.
+    skipped = diagnostics["skipped_items"]
+    dedup_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert dedup_skips == [], (
+        f"expected no dedup skips for different-anchor same-hint, "
+        f"got {dedup_skips!r}"
+    )
+
+
+def test_batch_path_different_anchor_same_hint_not_deduped() -> None:
+    """reader-grammar-candidate-selection: batch path scoped dedup also
+    uses ``(anchor_segment_id, normalized_dedup_hint)``. Two
+    grammar_note candidates on different anchors within the same unit
+    with the same ``dedup_hint`` must both be accepted.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_multi_anchor_batch_context(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+        anchor_segment_ids=("s1", "s2"),
+    )
+
+    candidates = [
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s1", selected_text="revise"
+                )
+            ],
+            grammar_point="point-a",
+            note="note a",
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="shared-cue",
+        ),
+        GrammarNoteCandidateItem(
+            spans=[
+                GrammarCandidateSpan(
+                    anchor_segment_id="s2", selected_text="revise"
+                )
+            ],
+            grammar_point="point-b",
+            note="note b",
+            quality_score=4,
+            reading_blocker=True,
+            dedup_hint="shared-cue",
+        ),
+    ]
+    candidate_output = GrammarBatchCandidateOutput(grammar_notes=candidates)
+
+    outputs, diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    # Both candidates survive: scoped dedup key differs by anchor.
+    assert len(unit_output.grammar_notes) == 2
+    notes = {item.note for item in unit_output.grammar_notes}
+    assert notes == {"note a", "note b"}
+    skipped = diagnostics["skipped_items"]
+    dedup_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert dedup_skips == [], (
+        f"expected no dedup skips for different-anchor same-hint, "
+        f"got {dedup_skips!r}"
+    )
+
+
+def test_per_unit_path_dedup_diagnostic_contains_normalized_hint_and_winner_info() -> None:
+    """reader-grammar-candidate-selection: when a candidate is rejected
+    by scoped dedup, the diagnostic payload MUST contain
+    ``normalized_hint``, ``winner_item_type``,
+    ``winner_anchor_segment_id``, and ``winner_item_index`` so the
+    rejection is fully auditable.
+    """
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    shared_hint = "inversion_after_negative"
+    note = GrammarNoteCandidateItem(
+        spans=[
+            GrammarCandidateSpan(
+                anchor_segment_id="s1", selected_text="Not only"
+            )
+        ],
+        grammar_point="inversion",
+        note="inversion note",
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint=shared_hint,
+    )
+    # Same anchor + same dedup_hint (case-insensitive) + same score +
+    # same blocker → grammar_note wins the tie-breaker. The
+    # sentence_analysis is the dedup loser and must carry full winner
+    # info in its diagnostic.
+    analysis = SentenceAnalysisCandidateItem(
+        anchor_segment_id="s1",
+        selected_text=source_text,
+        label="inversion analysis",
+        analysis="inversion analysis body",
+        chunks=[
+            SentenceAnalysisChunkCandidate(label="clause", text=source_text)
+        ],
+        quality_score=4,
+        reading_blocker=True,
+        dedup_hint="  Inversion_After_Negative  ",
+    )
+    candidate_output = GrammarBundleCandidateOutput(
+        grammar_notes=[note],
+        sentence_analyses=[analysis],
+    )
+
+    output, diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=candidate_output,
+    )
+
+    # grammar_note survives; sentence_analysis is dropped via dedup.
+    assert len(output.grammar_notes) == 1
+    assert output.grammar_notes[0].note == "inversion note"
+    assert len(output.sentence_analyses) == 0
+
+    skipped = diagnostics["skipped_items"]
+    dedup_skips = [
+        s for s in skipped if s["reason_code"] == "dedup_hint_duplicate"
+    ]
+    assert len(dedup_skips) == 1
+    diag = dedup_skips[0]
+    # Required fields per spec.
+    assert diag["item_type"] == "sentence_analysis"
+    assert diag["normalized_hint"] == "inversion_after_negative"
+    assert diag["winner_item_type"] == "grammar_note"
+    assert diag["winner_anchor_segment_id"] == "s1"
+    # winner_item_index is the original index of the winning grammar_note
+    # in the candidate_output.grammar_notes list (idx=0).
+    assert diag["winner_item_index"] == 0
+
+
+def test_three_paths_produce_identical_sort_order() -> None:
+    """reader-grammar-candidate-selection: per-unit / batch / window
+    three paths MUST use the same ``grammar_candidate_sort_key`` so the
+    same candidate set produces the same sort order across all three
+    paths. per-unit / batch sort via ``grammar_candidate_sort_key``
+    directly; window sorts inside ``select_candidates``.
+    """
+    from app.services.reader_orchestration.grammar_candidate_policy import (
+        grammar_candidate_sort_key,
+    )
+    from app.services.reader_orchestration.window_selector import (
+        CandidateItem,
+        SelectorLedger,
+        select_candidates,
+    )
+
+    # 4 candidates: 2 grammar_notes + 2 sentence_analyses, all on
+    # different anchors with different dedup_hints so DUP / ANCHOR_CAP
+    # do not reject any. Varying quality_score / reading_blocker so
+    # the sort key produces a deterministic non-trivial interleaved
+    # order across item_type.
+    spec = [
+        # (item_type, anchor_segment_id, quality_score, reading_blocker, dedup_hint)
+        ("grammar_note", "s1", 5, True, "hint-a"),
+        ("grammar_note", "s2", 3, False, "hint-b"),
+        ("sentence_analysis", "s3", 4, True, "hint-c"),
+        ("sentence_analysis", "s4", 2, False, "hint-d"),
+    ]
+    # Expected sort order (by grammar_candidate_sort_key asc):
+    #   s1: (-5, 0, 0)  grammar_note, score=5, blocker=true
+    #   s3: (-4, 0, 1)  sentence_analysis, score=4, blocker=true
+    #   s2: (-3, 1, 0)  grammar_note, score=3, blocker=false
+    #   s4: (-2, 1, 1)  sentence_analysis, score=2, blocker=false
+    expected_anchor_order = ["s1", "s3", "s2", "s4"]
+
+    # --- per-unit / batch sort: both call grammar_candidate_sort_key ---
+    per_unit_sorted = sorted(
+        spec,
+        key=lambda s: grammar_candidate_sort_key(
+            item_type=s[0],
+            quality_score=s[2],
+            reading_blocker=s[3],
+        ),
+    )
+    per_unit_anchor_order = [s[1] for s in per_unit_sorted]
+    assert per_unit_anchor_order == expected_anchor_order
+
+    batch_sorted = sorted(
+        spec,
+        key=lambda s: grammar_candidate_sort_key(
+            item_type=s[0],
+            quality_score=s[2],
+            reading_blocker=s[3],
+        ),
+    )
+    batch_anchor_order = [s[1] for s in batch_sorted]
+    assert batch_anchor_order == expected_anchor_order
+
+    # --- window path: build CandidateItem objects and call select_candidates ---
+    window_candidates = [
+        CandidateItem(
+            item_type=s[0],
+            anchor_segment_id=s[1],
+            spans=[{"anchor_segment_id": s[1], "selected_text": "x"}],
+            semantic_dedup_key=f"sd-{s[1]}",
+            pattern_key=None,
+            quality_score=s[2],
+            reading_blocker=s[3],
+            dedup_hint=s[4],
+        )
+        for s in spec
+    ]
+    # Generous ledger so no gate rejects: total_anchors=0 skips
+    # ANCHOR_RATIO; base_text_length_utf16 large so RECORD_DENSITY
+    # stays below cap; budget_total defaults (18 / 5) >> 4 candidates.
+    ledger = SelectorLedger(base_text_length_utf16=10000)
+    result = select_candidates(
+        window_candidates,
+        ledger=ledger,
+        window_budget={"grammar_note": 18, "sentence_analysis": 5},
+    )
+    # All 4 should be accepted (no DUP, no ANCHOR_CAP, density OK).
+    assert len(result.accepted) == 4, (
+        f"expected 4 accepted, got {len(result.accepted)}; "
+        f"rejected: {[(r.gate.value, r.reason) for r in result.rejected]}"
+    )
+    window_anchor_order = [c.anchor_segment_id for c in result.accepted]
+    assert window_anchor_order == expected_anchor_order
+
+    # Cross-path consistency: all three produce the same anchor order.
+    assert per_unit_anchor_order == batch_anchor_order == window_anchor_order
+
+
+def test_per_unit_path_empty_candidate_output_is_valid() -> None:
+    """P1-2: an empty candidate output is a legitimate result (the
+    prompt allows the LLM to return no candidates when no point has
+    teaching value). The per-unit path must not raise; it must return
+    an empty ``GrammarBundleOutput`` and a zero-skip diagnostic block."""
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    output, diagnostics = _build_grammar_output_from_candidates(
+        context=context,
+        candidate_output=GrammarBundleCandidateOutput(),
+    )
+
+    assert len(output.grammar_notes) == 0
+    assert len(output.sentence_analyses) == 0
+    assert diagnostics["skipped_item_count"] == 0
+    assert diagnostics["skipped_items"] == []
+
+
+def test_batch_path_empty_candidate_output_is_valid() -> None:
+    """P1-2: batch path must also accept an empty candidate output
+    without raising. Returns one (empty) unit output and zero skips."""
+    source_text = (
+        "Not only did the team revise the plan, "
+        "but they also clarified the timeline."
+    )
+    context = _build_batch_context_for_variant(
+        reading_goal="daily_reading",
+        reading_variant="intermediate_reading",
+        source_text=source_text,
+    )
+
+    outputs, diagnostics = _split_batch_candidates_by_unit(
+        context=context,
+        candidate_output=GrammarBatchCandidateOutput(),
+    )
+
+    assert len(outputs) == 1
+    _unit_id, unit_output = outputs[0]
+    assert len(unit_output.grammar_notes) == 0
+    assert len(unit_output.sentence_analyses) == 0
+    assert diagnostics["skipped_item_count"] == 0
+    assert diagnostics["skipped_items"] == []
 
 
 # ---------------------------------------------------------------------------#

@@ -24,7 +24,7 @@ from typing import Any, Literal, Protocol
 from uuid import UUID
 
 import asyncpg
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_ai import Agent
 
 from app.config.settings import Settings, get_settings
@@ -39,12 +39,14 @@ from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
 from app.schemas.reader_orchestration import (
-    GrammarBundleOutput,
     ReaderTextRangeAnchor,
 )
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
+)
+from app.services.reader_orchestration.grammar_candidate_policy import (
+    validate_dedup_hint,
 )
 from app.services.reader_orchestration.grammar_worker import (
     FAKE_GRAMMAR_MODEL_NAME,
@@ -53,7 +55,6 @@ from app.services.reader_orchestration.grammar_worker import (
     FAKE_GRAMMAR_PROMPT_VERSION,
     GRAMMAR_PROMPT_AGENT_NAME,
     MAX_GRAMMAR_DEDUP_HINT_LENGTH,
-    GrammarReasonCode,
 )
 from app.services.reader_orchestration.job_runtime import (
     ClaimResult,
@@ -317,11 +318,19 @@ class _WindowGrammarNoteCandidate(BaseModel):
             "反序列化为 Plate children 渲染。"
         ),
     )
+    # P1-2 self-rating: three required fields consumed by window selector.
+    # See grammar_worker.GrammarNoteCandidateItem for the contract.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
-    reason_code: GrammarReasonCode
-    confidence: float = Field(ge=0.0, le=1.0)
     dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
+
+    @field_validator("dedup_hint")
+    @classmethod
+    def _validate_and_normalize_dedup_hint(cls, value: str) -> str:
+        # reader-grammar-candidate-selection: trim + normalize + 非空/≤120
+        # 校验在 schema boundary 完成，返回 normalized hint 供下游
+        # scoped_dedup_key 直接使用（idempotent）。
+        return validate_dedup_hint(value)
 
 
 class _WindowSentenceChunk(BaseModel):
@@ -354,11 +363,19 @@ class _WindowSentenceAnalysisCandidate(BaseModel):
         ),
     )
     chunks: list[_WindowSentenceChunk] = Field(min_length=1, max_length=8)
+    # P1-2 self-rating: three required fields consumed by window selector.
+    # See grammar_worker.SentenceAnalysisCandidateItem for the contract.
     quality_score: int = Field(ge=1, le=5)
     reading_blocker: bool
-    reason_code: GrammarReasonCode
-    confidence: float = Field(ge=0.0, le=1.0)
     dedup_hint: str = Field(min_length=1, max_length=MAX_GRAMMAR_DEDUP_HINT_LENGTH)
+
+    @field_validator("dedup_hint")
+    @classmethod
+    def _validate_and_normalize_dedup_hint(cls, value: str) -> str:
+        # reader-grammar-candidate-selection: trim + normalize + 非空/≤120
+        # 校验在 schema boundary 完成，返回 normalized hint 供下游
+        # scoped_dedup_key 直接使用（idempotent）。
+        return validate_dedup_hint(value)
 
 
 class _WindowGrammarCandidateOutput(BaseModel):
@@ -460,8 +477,8 @@ class PydanticAIGrammarWindowExecutor:
       - 单次 LLM 调用覆盖 window 内所有 unit（BBC: 37 → 3-5 calls）
       - target / context anchor 分离（context 仅作理解，不可标注）
       - window budget 约束（grammar_note + sentence_analysis 上限）
-      - self-rating 字段（quality_score / reading_blocker / reason_code /
-        confidence / dedup_hint）由 LLM 直接产出
+      - self-rating 字段（quality_score / reading_blocker / dedup_hint）由
+        LLM 直接产出，三条路径统一消费
       - 失败必须 raise（不吞掉），触发 reader_jobs → retry_later/failed_terminal
 
     context dict 结构（由 ``GrammarWindowWorkerService._load_window_context``
@@ -823,8 +840,9 @@ class PydanticAIGrammarWindowExecutor:
                     spans=spans,
                     semantic_dedup_key=dedup_key,
                     pattern_key=note.pattern,
-                    quality_score=float(note.quality_score),
+                    quality_score=int(note.quality_score),
                     reading_blocker=note.reading_blocker,
+                    dedup_hint=note.dedup_hint,
                     grammar_point=note.grammar_point,
                     pattern=note.pattern,
                     note=note.note,
@@ -860,8 +878,9 @@ class PydanticAIGrammarWindowExecutor:
                     spans=[grounded.model_dump()],
                     semantic_dedup_key=dedup_key,
                     pattern_key=None,
-                    quality_score=float(analysis.quality_score),
+                    quality_score=int(analysis.quality_score),
                     reading_blocker=analysis.reading_blocker,
+                    dedup_hint=analysis.dedup_hint,
                     label=analysis.label,
                     analysis=analysis.analysis,
                     chunks=chunks,
@@ -915,61 +934,6 @@ class PydanticAIGrammarWindowExecutor:
             )
         except Exception:
             return None
-
-    @staticmethod
-    def _convert_output(
-        output: GrammarBundleOutput,
-    ) -> list[CandidateItem]:
-        """将 GrammarBundleOutput 转换为 list[CandidateItem]。
-
-        - grammar_note: anchor_segment_id 取第一个 span；spans 直接
-          model_dump；semantic_dedup_key 从 grammar_point + note 计算。
-        - sentence_analysis: anchor_segment_id 取 anchor；spans 为
-          [anchor.model_dump()]；semantic_dedup_key 从 label + analysis 计算。
-        - quality_score / reading_blocker 使用默认值（LLM 不产出这些字段）。
-        """
-        candidates: list[CandidateItem] = []
-        for note in output.grammar_notes:
-            if not note.spans:
-                continue
-            anchor_segment_id = note.spans[0].anchor_segment_id
-            dedup_key = PydanticAIGrammarWindowExecutor._compute_dedup_key(
-                note.grammar_point, note.note
-            )
-            candidates.append(
-                CandidateItem(
-                    item_type="grammar_note",
-                    anchor_segment_id=anchor_segment_id,
-                    spans=[span.model_dump() for span in note.spans],
-                    semantic_dedup_key=dedup_key,
-                    pattern_key=note.pattern,
-                    quality_score=0.0,
-                    reading_blocker=False,
-                    grammar_point=note.grammar_point,
-                    pattern=note.pattern,
-                    note=note.note,
-                )
-            )
-        for analysis in output.sentence_analyses:
-            anchor_segment_id = analysis.anchor.anchor_segment_id
-            dedup_key = PydanticAIGrammarWindowExecutor._compute_dedup_key(
-                analysis.label, analysis.analysis
-            )
-            candidates.append(
-                CandidateItem(
-                    item_type="sentence_analysis",
-                    anchor_segment_id=anchor_segment_id,
-                    spans=[analysis.anchor.model_dump()],
-                    semantic_dedup_key=dedup_key,
-                    pattern_key=None,
-                    quality_score=0.0,
-                    reading_blocker=False,
-                    label=analysis.label,
-                    analysis=analysis.analysis,
-                    chunks=[chunk.model_dump() for chunk in analysis.chunks],
-                )
-            )
-        return candidates
 
     @staticmethod
     def _compute_dedup_key(*parts: str) -> str:

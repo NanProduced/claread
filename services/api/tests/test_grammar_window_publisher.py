@@ -11,6 +11,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -23,12 +24,22 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
+from app.services.reader_orchestration.grammar_candidate_policy import (
+    DEDUP_HINT_DUPLICATE_REASON_CODE,
+    DEDUP_WINNER_SOURCE_CURRENT_WINDOW,
+)
 from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
     PublishedWindowResult,
     WindowCandidateContent,
 )
-from app.services.reader_orchestration.window_selector import CandidateItem
+from app.services.reader_orchestration.window_selector import (
+    CandidateItem,
+    DedupRejectionMetadata,
+    RejectedCandidate,
+    SelectionGate,
+    SelectorLedger,
+)
 from app.services.reader_orchestration.zplus_bootstrap import ZPlusBootstrapService
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -191,7 +202,9 @@ def _make_candidates(
                 spans=[{"unit_id": unit_id}],
                 semantic_dedup_key=f"grammar-dedup-{i}",
                 pattern_key=f"grammar-pattern-{i}",
-                quality_score=0.8 - i * 0.1,
+                quality_score=4 - i,  # int: 4, 3
+                reading_blocker=False,
+                dedup_hint=f"grammar-hint-{i}",
             )
         )
     # Create sentence_analysis candidate for first unit
@@ -202,7 +215,9 @@ def _make_candidates(
             spans=[{"unit_id": target_unit_ids[0]}],
             semantic_dedup_key="sentence-dedup-0",
             pattern_key=None,
-            quality_score=0.9,
+            quality_score=5,  # int
+            reading_blocker=False,
+            dedup_hint="sentence-hint-0",
         )
     )
     return candidates
@@ -865,6 +880,20 @@ async def test_publisher_quality_json_stores_provenance_not_in_output_json(
     assert "quality_score" in quality
     # Per-item provenance array
     assert "items" in quality and len(quality["items"]) >= 1
+    # P1-2 self-rating contract: reading_blocker / dedup_hint are now part
+    # of the audit trail in quality_json.
+    assert "reading_blocker" in quality
+    assert "dedup_hint" in quality
+    assert isinstance(quality["reading_blocker"], bool)
+    assert isinstance(quality["dedup_hint"], str)
+    assert quality["dedup_hint"]  # non-empty
+    # Per-item reading_blocker / dedup_hint
+    for item in quality["items"]:
+        assert "reading_blocker" in item
+        assert "dedup_hint" in item
+        assert isinstance(item["reading_blocker"], bool)
+        assert isinstance(item["dedup_hint"], str)
+        assert item["dedup_hint"]  # non-empty
 
     # Provenance absent from output_json
     for field in (
@@ -873,10 +902,84 @@ async def test_publisher_quality_json_stores_provenance_not_in_output_json(
         "semantic_dedup_key",
         "pattern_key",
         "quality_score",
+        "reading_blocker",
+        "dedup_hint",
     ):
         assert field not in output, (
             f"provenance field {field!r} must not appear in output_json"
         )
+
+
+async def test_publisher_ledger_has_no_empty_dedup_keys(
+    test_db_pool_with_window_and_candidates: tuple[
+        asyncpg.Pool,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+        list[CandidateItem],
+        list[WindowCandidateContent],
+        UUID,
+        UUID,
+    ],
+) -> None:
+    """P1-2 self-rating contract: published_dedup_keys_by_type JSONB must
+    only contain non-empty [anchor, hint] 2-tuples after publish.
+
+    The scoped dedup key is (anchor_segment_id, normalized_dedup_hint).
+    Both elements MUST be non-empty. The publisher's fail-safe skips empty
+    dedup_hint, and anchors always come from candidate.anchor_segment_id
+    which is required to be non-empty by the INVALID_ANCHOR gate.
+    """
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        candidates,
+        candidate_contents,
+        _base_id,
+        _record_id,
+    ) = test_db_pool_with_window_and_candidates
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        candidate_contents=candidate_contents,
+    )
+    assert result.accepted_count > 0
+
+    async with pool.acquire() as conn:
+        plan = await conn.fetchrow(
+            "SELECT published_dedup_keys_by_type "
+            "FROM layer_analysis_plans WHERE id = $1",
+            plan_id,
+        )
+    raw_keys = plan["published_dedup_keys_by_type"]
+    if isinstance(raw_keys, str):
+        raw_keys = json.loads(raw_keys)
+    assert raw_keys, "expected non-empty published_dedup_keys_by_type after publish"
+    for item_type, keys in raw_keys.items():
+        assert isinstance(keys, list), (
+            f"published_dedup_keys_by_type[{item_type!r}] must be a list, "
+            f"got {type(keys).__name__}"
+        )
+        for key in keys:
+            # New format: [anchor, hint] tuple (json array)
+            assert isinstance(key, (list, tuple)) and len(key) == 2, (
+                f"published_dedup_key must be a 2-tuple, got {key!r}"
+            )
+            anchor, hint = key
+            assert anchor, (
+                f"published_dedup_key anchor must be non-empty, got {key!r}"
+            )
+            assert hint, (
+                f"published_dedup_key hint must be non-empty, got {key!r}"
+            )
 
 
 async def test_publisher_emits_layer_published_event(
@@ -1038,7 +1141,9 @@ def _make_invalid_anchor_candidates(
             spans=[{"unit_id": target_unit_ids[0]}],
             semantic_dedup_key="grammar-invalid-1",
             pattern_key="pattern-invalid-1",
-            quality_score=0.8,
+            quality_score=4,
+            reading_blocker=False,
+            dedup_hint="grammar-invalid-hint-1",
         ),
         CandidateItem(
             item_type="sentence_analysis",
@@ -1046,7 +1151,9 @@ def _make_invalid_anchor_candidates(
             spans=[{"unit_id": target_unit_ids[0]}],
             semantic_dedup_key="sentence-invalid-1",
             pattern_key=None,
-            quality_score=0.7,
+            quality_score=3,
+            reading_blocker=False,
+            dedup_hint="sentence-invalid-hint-1",
         ),
     ]
 
@@ -1607,3 +1714,313 @@ async def test_diagnostics_rejected_reason_base_len_not_zero(
         assert f"base_len={content_len}" in reason, (
             f"rejected reason must contain base_len={content_len}; got: {reason}"
         )
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: publisher ledger contract
+# ---------------------------------------------------------------------------
+
+
+def test_update_ledger_never_writes_empty_dedup_key() -> None:
+    """reader-grammar-candidate-selection: ``_update_ledger`` must always
+    write a scoped dedup key ``(anchor_segment_id, normalized_hint)`` for
+    each accepted candidate. The old implementation silently skipped
+    empty hints; the new contract relies on
+    ``CandidateItem.__post_init__`` to enforce non-empty normalized hints
+    and ``scoped_dedup_key`` fail-closed, so no skip guard is needed.
+    """
+    publisher = GrammarWindowPublisher(pool=None)
+    ledger = SelectorLedger()
+    candidate = CandidateItem(
+        item_type="grammar_note",
+        anchor_segment_id="anchor-1",
+        spans=[{"unit_id": "u1"}],
+        semantic_dedup_key="k1",
+        pattern_key=None,
+        quality_score=3,
+        reading_blocker=False,
+        dedup_hint="  Though   Concession  ",
+    )
+    result = publisher._update_ledger(ledger, [candidate])
+    keys = result["published_dedup_keys_by_type"]["grammar_note"]
+    assert len(keys) == 1
+    anchor, hint = keys[0]
+    assert anchor == "anchor-1"
+    assert hint == "though concession"
+    assert hint, "publisher must never write an empty dedup hint"
+
+
+async def test_load_ledger_fails_closed_on_legacy_string_dedup_key() -> None:
+    """reader-grammar-candidate-selection: ``_load_ledger_from_plan`` must
+    reject legacy string dedup keys (old shape: bare string). The old
+    implementation converted string → ("", hint) and silently skipped
+    unknown shapes; the new contract is fail-closed — malformed entries
+    raise ValueError, no alias / backfill / data migration.
+    """
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = {
+        "budget_used": None,
+        "budget_total": None,
+        "published_anchor_counts_by_type": None,
+        "published_dedup_keys_by_type": {
+            "grammar_note": ["though_concession"],
+            "sentence_analysis": [],
+        },
+        "published_pattern_keys_by_type": None,
+        "density_by_record": None,
+    }
+    with pytest.raises(ValueError, match="malformed published_dedup_keys"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_fails_closed_on_unknown_dedup_key_shape() -> None:
+    """reader-grammar-candidate-selection: ``_load_ledger_from_plan`` must
+    reject unknown dedup key shapes (e.g. integer). Fail-closed, no
+    silent skip.
+    """
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = {
+        "budget_used": None,
+        "budget_total": None,
+        "published_anchor_counts_by_type": None,
+        "published_dedup_keys_by_type": {
+            "grammar_note": [123],
+            "sentence_analysis": [],
+        },
+        "published_pattern_keys_by_type": None,
+        "density_by_record": None,
+    }
+    with pytest.raises(ValueError, match="malformed published_dedup_keys"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_fails_closed_on_wrong_length_tuple() -> None:
+    """reader-grammar-candidate-selection: ``_load_ledger_from_plan`` must
+    reject tuples of wrong length (not a 2-tuple). Fail-closed.
+    """
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = {
+        "budget_used": None,
+        "budget_total": None,
+        "published_anchor_counts_by_type": None,
+        "published_dedup_keys_by_type": {
+            "grammar_note": [["anchor-1", "hint-1", "extra"]],
+            "sentence_analysis": [],
+        },
+        "published_pattern_keys_by_type": None,
+        "density_by_record": None,
+    }
+    with pytest.raises(ValueError, match="malformed published_dedup_keys"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: structured reason_code in breakdown
+# ---------------------------------------------------------------------------
+
+
+def _make_rejected(
+    *,
+    item_type: str,
+    gate: SelectionGate,
+    reason: str,
+    reason_code: str | None,
+    dedup_metadata: DedupRejectionMetadata | None = None,
+) -> RejectedCandidate:
+    """Build a RejectedCandidate for ``_aggregate_rejected`` unit tests."""
+    candidate = CandidateItem(
+        item_type=item_type,
+        anchor_segment_id="a1",
+        spans=[{"unit_id": "u1"}],
+        semantic_dedup_key="k1",
+        pattern_key=None,
+        quality_score=3,
+        reading_blocker=False,
+        dedup_hint="though concession",
+    )
+    return RejectedCandidate(
+        candidate=candidate,
+        gate=gate,
+        reason=reason,
+        reason_code=reason_code,
+        dedup_metadata=dedup_metadata,
+    )
+
+
+def test_aggregate_rejected_outputs_reason_code_for_dup() -> None:
+    """reader-grammar-candidate-selection: ``_aggregate_rejected`` MUST
+    output independent ``reason_code`` field in each breakdown entry.
+    DUP rejection MUST carry ``reason_code = "dedup_hint_duplicate"``;
+    non-DUP rejection MUST carry ``reason_code = None``."""
+    publisher = GrammarWindowPublisher(pool=None)
+    dup_rejection = _make_rejected(
+        item_type="grammar_note",
+        gate=SelectionGate.DUP,
+        reason="a1/though concession already accepted in current window",
+        reason_code=DEDUP_HINT_DUPLICATE_REASON_CODE,
+        dedup_metadata=DedupRejectionMetadata(
+            normalized_hint="though concession",
+            winner_item_type="grammar_note",
+            winner_anchor_segment_id="a1",
+            winner_item_index=0,
+            winner_source=DEDUP_WINNER_SOURCE_CURRENT_WINDOW,
+        ),
+    )
+    density_rejection = _make_rejected(
+        item_type="grammar_note",
+        gate=SelectionGate.RECORD_DENSITY,
+        reason="record grammar_note density 3.0000 >= cap 3.0 (base_len=450)",
+        reason_code=None,
+    )
+    breakdown = publisher._aggregate_rejected([dup_rejection, density_rejection])
+    assert len(breakdown) == 2
+    dup_entry = next(e for e in breakdown if e["gate"] == "DUP")
+    density_entry = next(e for e in breakdown if e["gate"] == "RECORD_DENSITY")
+    # DUP MUST carry the structured reason_code
+    assert dup_entry["reason_code"] == "dedup_hint_duplicate"
+    # Non-DUP MUST carry None
+    assert density_entry["reason_code"] is None
+    # reason must NOT contain the code (human-readable only)
+    assert "dedup_hint_duplicate" not in dup_entry["reason"]
+
+
+def test_aggregate_rejected_invalid_anchor_has_null_reason_code() -> None:
+    """reader-grammar-candidate-selection: INVALID_ANCHOR (pre-filter in
+    ``select_candidates``) constructs ``RejectedCandidate`` without
+    ``reason_code``; the breakdown MUST output ``reason_code: None``."""
+    publisher = GrammarWindowPublisher(pool=None)
+    rejection = _make_rejected(
+        item_type="grammar_note",
+        gate=SelectionGate.INVALID_ANCHOR,
+        reason="anchor_segment_id bogus not in target_anchor_ids",
+        reason_code=None,
+    )
+    breakdown = publisher._aggregate_rejected([rejection])
+    assert len(breakdown) == 1
+    assert breakdown[0]["reason_code"] is None
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: strict ledger canonical-content
+# ---------------------------------------------------------------------------
+
+
+def _make_plan_row(dedup_keys: dict[str, list[Any]]) -> dict[str, Any]:
+    """Build a minimal plan_row for ``_load_ledger_from_plan`` tests."""
+    return {
+        "budget_used": None,
+        "budget_total": None,
+        "published_anchor_counts_by_type": None,
+        "published_dedup_keys_by_type": dedup_keys,
+        "published_pattern_keys_by_type": None,
+        "density_by_record": None,
+    }
+
+
+async def test_load_ledger_rejects_empty_anchor() -> None:
+    """Strict ledger: empty anchor_segment_id MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["", "though concession"]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="anchor_segment_id must be a non-empty"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_whitespace_only_anchor() -> None:
+    """Strict ledger: whitespace-only anchor MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["   ", "though concession"]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="anchor_segment_id must be a non-empty"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_empty_hint() -> None:
+    """Strict ledger: empty hint MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["a1", ""]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="dedup_hint must be non-empty"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_whitespace_hint() -> None:
+    """Strict ledger: whitespace-only hint MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["a1", "   \t  "]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="dedup_hint must be non-empty"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_unnormalized_hint() -> None:
+    """Strict ledger: hint that is not already normalized MUST fail-closed.
+
+    ``"  Though   Concession  "`` normalizes to ``"though concession"``;
+    since the stored value differs, it MUST be rejected (no silent fix-up).
+    """
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {
+            "grammar_note": [["a1", "  Though   Concession  "]],
+            "sentence_analysis": [],
+        }
+    )
+    with pytest.raises(ValueError, match="stored hint must already be normalized"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_non_string_hint() -> None:
+    """Strict ledger: non-string hint (integer) MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["a1", 123]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="normalized_hint must be a string"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_non_string_anchor() -> None:
+    """Strict ledger: non-string anchor (integer) MUST fail-closed."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {"grammar_note": [[123, "though concession"]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="anchor_segment_id must be a non-empty"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_rejects_overlong_hint() -> None:
+    """Strict ledger: hint > MAX_DEDUP_HINT_LENGTH MUST fail-closed."""
+    from app.services.reader_orchestration.grammar_candidate_policy import (
+        MAX_DEDUP_HINT_LENGTH,
+    )
+
+    publisher = GrammarWindowPublisher(pool=None)
+    overlong = "a" * (MAX_DEDUP_HINT_LENGTH + 1)
+    plan_row = _make_plan_row(
+        {"grammar_note": [["a1", overlong]], "sentence_analysis": []}
+    )
+    with pytest.raises(ValueError, match="exceeds"):
+        await publisher._load_ledger_from_plan(None, plan_row, None)
+
+
+async def test_load_ledger_accepts_valid_canonical_scoped_key() -> None:
+    """Strict ledger: a valid ``[anchor, normalized_hint]`` 2-tuple loads
+    successfully and is stored as a tuple."""
+    publisher = GrammarWindowPublisher(pool=None)
+    plan_row = _make_plan_row(
+        {
+            "grammar_note": [["anchor-1", "though concession"]],
+            "sentence_analysis": [["anchor-2", "nominal subject"]],
+        }
+    )
+    ledger = await publisher._load_ledger_from_plan(None, plan_row, None)
+    gn_keys = ledger.published_dedup_keys_by_type["grammar_note"]
+    sa_keys = ledger.published_dedup_keys_by_type["sentence_analysis"]
+    assert gn_keys == [("anchor-1", "though concession")]
+    assert sa_keys == [("anchor-2", "nominal subject")]

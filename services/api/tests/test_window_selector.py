@@ -19,8 +19,9 @@ def make_candidate(
     semantic_dedup_key: str = "key1",
     pattern_key: str | None = "pattern1",
     spans: list[dict] | None = None,
-    quality_score: float = 0.5,
+    quality_score: int = 3,
     reading_blocker: bool = False,
+    dedup_hint: str = "hint1",
 ) -> CandidateItem:
     if spans is None:
         spans = [{"unit_id": "u1"}]
@@ -32,19 +33,22 @@ def make_candidate(
         pattern_key=pattern_key,
         quality_score=quality_score,
         reading_blocker=reading_blocker,
+        dedup_hint=dedup_hint,
     )
 
 
 def test_gate_dup_rejects_existing_semantic_dedup_key():
-    """gate 1: semantic_dedup_key 已在 ledger"""
+    """gate 1: scoped dedup key (anchor, hint) 已在 ledger"""
     ledger = SelectorLedger(
         published_dedup_keys_by_type={
-            "grammar_note": ["grammar_note:though_concession:adverbial_clause"],
+            "grammar_note": [("a1", "though_concession:adverbial_clause")],
             "sentence_analysis": [],
         },
     )
     candidate = make_candidate(
+        anchor_segment_id="a1",
         semantic_dedup_key="grammar_note:though_concession:adverbial_clause",
+        dedup_hint="though_concession:adverbial_clause",
     )
     result = select_candidates([candidate], ledger=ledger, window_budget={"grammar_note": 2})
     assert len(result.rejected) == 1
@@ -199,37 +203,42 @@ def test_typed_counters_isolate_grammar_from_sentence():
 def test_sort_by_quality_score_descending():
     """高 quality_score 优先"""
     candidates = [
-        make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=0.3),
-        make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=0.9),
-        make_candidate(anchor_segment_id="a3", semantic_dedup_key="k3", quality_score=0.6),
+        make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=1),
+        make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=5),
+        make_candidate(anchor_segment_id="a3", semantic_dedup_key="k3", quality_score=3),
     ]
     result = select_candidates(candidates, ledger=SelectorLedger(), window_budget={"grammar_note": 3})
     # 应接受全部 3 个，按 quality_score 降序
     assert len(result.accepted) == 3
-    assert result.accepted[0].anchor_segment_id == "a2"  # 0.9
-    assert result.accepted[1].anchor_segment_id == "a3"  # 0.6
-    assert result.accepted[2].anchor_segment_id == "a1"  # 0.3
+    assert result.accepted[0].anchor_segment_id == "a2"  # 5
+    assert result.accepted[1].anchor_segment_id == "a3"  # 3
+    assert result.accepted[2].anchor_segment_id == "a1"  # 1
 
 
 def test_reading_blocker_prioritized():
     """reading_blocker=True 优先"""
     candidates = [
-        make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=0.5, reading_blocker=False),
-        make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=0.5, reading_blocker=True),
+        make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=3, reading_blocker=False),
+        make_candidate(anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=3, reading_blocker=True),
     ]
     result = select_candidates(candidates, ledger=SelectorLedger(), window_budget={"grammar_note": 2})
     assert result.accepted[0].anchor_segment_id == "a2"  # blocker 优先
 
 
 def test_sentence_analysis_prioritized_over_grammar_note():
-    """同 quality 时 sentence_analysis > grammar_note"""
+    """同 quality 时 grammar_note > sentence_analysis（grammar_note 优先）。
+
+    reader-grammar-candidate-selection spec: 排序顺序 MUST 为
+    grammar_note 优先于 sentence_analysis（sentence_analysis 应有更高准入门槛）。
+    旧测试名保留向后兼容，但断言已对齐 spec。
+    """
     candidates = [
-        make_candidate(item_type="grammar_note", anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=0.5),
-        make_candidate(item_type="sentence_analysis", anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=0.5),
+        make_candidate(item_type="grammar_note", anchor_segment_id="a1", semantic_dedup_key="k1", quality_score=3, dedup_hint="hint_g"),
+        make_candidate(item_type="sentence_analysis", anchor_segment_id="a2", semantic_dedup_key="k2", quality_score=3, dedup_hint="hint_s"),
     ]
     result = select_candidates(candidates, ledger=SelectorLedger(),
                                 window_budget={"grammar_note": 2, "sentence_analysis": 2})
-    assert result.accepted[0].item_type == "sentence_analysis"
+    assert result.accepted[0].item_type == "grammar_note"
 
 
 def test_empty_candidates_returns_empty_result():
@@ -252,14 +261,24 @@ def test_constants():
 
 
 def test_selector_rejects_duplicate_semantic_key_within_same_window():
-    """P1-5: 同 window 内两个 candidate 共用 semantic_dedup_key，第二个必须被 DUP 拒绝。
+    """reader-grammar-candidate-selection: 同 window 内两个 candidate 共享
+    (anchor_segment_id, dedup_hint)，第二个必须被 DUP 拒绝。
 
-    旧实现只读 ledger，未累计 window 内已接受的 dedup key，所以会同时接受两个
-    重复 key 的 candidate。修复后 window_round 累计 dedup key 到 DUP gate。
+    旧实现（cross-type single-field dedup）按 normalized hint 单字段扫描，
+    不同 anchor 同 hint 也会被淘汰——本测试在新合同下要求两个 candidate
+    共享 anchor_segment_id 才会触发 DUP。
     """
     ledger = SelectorLedger()  # ledger 中无任何 dedup key
-    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="shared_key")
-    c2 = make_candidate(anchor_segment_id="a2", semantic_dedup_key="shared_key")
+    c1 = make_candidate(
+        anchor_segment_id="a1",
+        semantic_dedup_key="shared_key",
+        dedup_hint="hint1",
+    )
+    c2 = make_candidate(
+        anchor_segment_id="a1",  # same anchor + same hint → DUP
+        semantic_dedup_key="shared_key2",  # different semantic_dedup_key
+        dedup_hint="hint1",
+    )
     result = select_candidates(
         [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
     )
@@ -267,7 +286,7 @@ def test_selector_rejects_duplicate_semantic_key_within_same_window():
     assert result.accepted[0].anchor_segment_id == "a1"
     assert len(result.rejected) == 1
     assert result.rejected[0].gate == SelectionGate.DUP
-    assert result.rejected[0].candidate.anchor_segment_id == "a2"
+    assert result.rejected[0].candidate.anchor_segment_id == "a1"
 
 
 def test_selector_rejects_second_item_for_same_anchor_within_same_window():
@@ -276,10 +295,18 @@ def test_selector_rejects_second_item_for_same_anchor_within_same_window():
 
     旧实现只读 ledger.published_anchor_counts，未累计 window 内已接受的同 anchor
     item，所以会接受两个同 anchor 的 item。修复后 window_round 累计 anchor count。
+
+    reader-grammar-candidate-selection: 两个 candidate 必须使用不同的
+    ``dedup_hint``，否则会被 DUP gate（同 anchor 同 hint）优先淘汰而非
+    ANCHOR_CAP。
     """
     ledger = SelectorLedger()  # ledger 中 anchor_counts 为空
-    c1 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k1")
-    c2 = make_candidate(anchor_segment_id="a1", semantic_dedup_key="k2")
+    c1 = make_candidate(
+        anchor_segment_id="a1", semantic_dedup_key="k1", dedup_hint="hint1"
+    )
+    c2 = make_candidate(
+        anchor_segment_id="a1", semantic_dedup_key="k2", dedup_hint="hint2"
+    )
     result = select_candidates(
         [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
     )
@@ -556,36 +583,419 @@ def test_sentence_analysis_default_density_cap_is_2_0():
 
 def test_grammar_note_and_sentence_analysis_can_coexist_on_same_anchor():
     """Phase 5 design choice: backend does not perform cross-type
-    deduplication between grammar_note and sentence_analysis. They compete
-    at the prompt layer (shared teaching contract declares same-point
-    competition as a generation responsibility, not a backend gate).
+    deduplication between grammar_note and sentence_analysis on the same
+    anchor *as long as their dedup_hints differ*. They compete at the
+    prompt layer (shared teaching contract declares same-point competition
+    as a generation responsibility, not a backend gate).
 
     Gates 1 (DUP) and 3 (ANCHOR_CAP) are per-item-type, so a grammar_note
-    and a sentence_analysis marking the same anchor with the same
-    semantic_dedup_key are both accepted. Cross-type dedup is the LLM's
-    job (prompt-level), not the selector's.
+    and a sentence_analysis marking the same anchor with *different*
+    dedup_hints are both accepted. Cross-type dedup on the *same* dedup_hint
+    is the selector's job (scoped dedup key contract); cross-type dedup on
+    *different* dedup_hints is the LLM's job (prompt-level).
     """
     ledger = SelectorLedger(total_anchors=10)
     grammar_candidate = make_candidate(
         item_type="grammar_note",
         anchor_segment_id="a1",
         semantic_dedup_key="shared_point",
-        quality_score=0.5,
+        quality_score=3,
+        dedup_hint="grammar_point_x",
     )
     sentence_candidate = make_candidate(
         item_type="sentence_analysis",
         anchor_segment_id="a1",
         semantic_dedup_key="shared_point",  # same key, different item_type
-        quality_score=0.5,
+        quality_score=3,
+        dedup_hint="sentence_point_y",  # different dedup_hint → no DUP
     )
     result = select_candidates(
         [grammar_candidate, sentence_candidate],
         ledger=ledger,
         window_budget={"grammar_note": 2, "sentence_analysis": 2},
     )
-    # Both accepted — no cross-type dedup at the selector layer
+    # Both accepted — no cross-type dedup at the selector layer (different hints)
     assert len(result.accepted) == 2
     assert {c.item_type for c in result.accepted} == {
         "grammar_note",
         "sentence_analysis",
     }
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: scoped dedup key (anchor, hint)
+# ---------------------------------------------------------------------------
+
+
+def test_gate_dup_allows_different_anchor_same_hint():
+    """不同 anchor + 同 dedup_hint：DUP gate MUST NOT 淘汰任一候选。
+
+    旧实现按 normalized hint 单字段跨 item_type 桶扫描，会把不同 anchor 上
+    同一学习点也当作重复淘汰。新合同把 dedup 身份收窄为 (anchor, hint) 元组，
+    全文重复控制交给 PATTERN_DENSE / ANCHOR_CAP / RECORD_DENSITY / RECORD_BUDGET。
+    """
+    ledger = SelectorLedger()  # ledger 中无任何 dedup key
+    c1 = make_candidate(
+        anchor_segment_id="a1",
+        semantic_dedup_key="k1",
+        dedup_hint="same_hint",
+    )
+    c2 = make_candidate(
+        anchor_segment_id="a2",  # different anchor, same hint
+        semantic_dedup_key="k2",
+        dedup_hint="same_hint",
+    )
+    result = select_candidates(
+        [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    # 两个都应被接受 — 不同 anchor 同 hint 不触发 DUP
+    assert len(result.accepted) == 2
+    assert len(result.rejected) == 0
+    accepted_anchors = {c.anchor_segment_id for c in result.accepted}
+    assert accepted_anchors == {"a1", "a2"}
+
+
+def test_gate_dup_rejects_same_anchor_same_hint_cross_type():
+    """同 anchor + 同 dedup_hint + 跨 item_type：DUP gate MUST 淘汰后到达的候选。
+
+    winner 由 sort order 决定（quality_score desc → reading_blocker true first
+    → grammar_note 优先）。本测试给 grammar_note 更高分数，使其胜出；
+    sentence_analysis 被淘汰。
+    """
+    ledger = SelectorLedger(total_anchors=10)
+    grammar_candidate = make_candidate(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k_g",
+        quality_score=5,
+        reading_blocker=False,
+        dedup_hint="same_hint",
+    )
+    sentence_candidate = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a1",  # same anchor
+        semantic_dedup_key="k_s",
+        quality_score=3,
+        reading_blocker=False,
+        dedup_hint="same_hint",  # same hint, different item_type
+    )
+    result = select_candidates(
+        [grammar_candidate, sentence_candidate],
+        ledger=ledger,
+        window_budget={"grammar_note": 2, "sentence_analysis": 2},
+    )
+    # 只接受一个 — grammar_note 胜出（更高分）
+    assert len(result.accepted) == 1
+    assert result.accepted[0].item_type == "grammar_note"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.DUP
+    assert result.rejected[0].candidate.item_type == "sentence_analysis"
+
+
+def test_gate_dup_rejects_same_anchor_same_hint_same_type():
+    """同 anchor + 同 dedup_hint + 同 item_type：DUP gate MUST 淘汰第二个。
+
+    两个 candidate 同 anchor 同 hint 同 item_type，但 semantic_dedup_key
+    不同（避免被当作完全相同的候选）。第二个被 DUP 淘汰（DUP 在 ANCHOR_CAP
+    之前检查）。
+    """
+    ledger = SelectorLedger()
+    c1 = make_candidate(
+        anchor_segment_id="a1",
+        semantic_dedup_key="k1",
+        quality_score=5,
+        dedup_hint="same_hint",
+    )
+    c2 = make_candidate(
+        anchor_segment_id="a1",  # same anchor
+        semantic_dedup_key="k2",  # different semantic_dedup_key
+        quality_score=3,
+        dedup_hint="same_hint",  # same hint, same item_type
+    )
+    result = select_candidates(
+        [c1, c2], ledger=ledger, window_budget={"grammar_note": 5}
+    )
+    # 只接受一个 — c1 胜出（更高分）
+    assert len(result.accepted) == 1
+    assert result.accepted[0].semantic_dedup_key == "k1"
+    assert len(result.rejected) == 1
+    # DUP 在 ANCHOR_CAP 之前检查，所以应该是 DUP
+    assert result.rejected[0].gate == SelectionGate.DUP
+    assert result.rejected[0].candidate.semantic_dedup_key == "k2"
+
+
+def test_gate_dup_emits_dedup_hint_duplicate_reason_code():
+    """DUP gate 淘汰时 MUST 在独立 ``reason_code`` 字段设置
+    ``dedup_hint_duplicate``。
+
+    reader-grammar-candidate-selection: ``reason_code`` 为独立结构化字段，
+    不再由 ``reason`` 字符串承担。``reason`` 仅保留人类可读详情。
+    """
+    ledger = SelectorLedger(total_anchors=10)
+    grammar_candidate = make_candidate(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k_g",
+        quality_score=5,
+        dedup_hint="same_hint",
+    )
+    sentence_candidate = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k_s",
+        quality_score=3,
+        dedup_hint="same_hint",
+    )
+    result = select_candidates(
+        [grammar_candidate, sentence_candidate],
+        ledger=ledger,
+        window_budget={"grammar_note": 2, "sentence_analysis": 2},
+    )
+    assert len(result.rejected) == 1
+    assert result.rejected[0].gate == SelectionGate.DUP
+    assert result.rejected[0].reason_code == "dedup_hint_duplicate"
+    # reason 仍是人类可读详情，不再承担 code 合同
+    assert "dedup_hint_duplicate" not in result.rejected[0].reason
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: CandidateItem.__post_init__ validation
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_item_rejects_bool_quality_score():
+    """``bool`` is a subclass of ``int`` but must be rejected as quality_score."""
+    with pytest.raises(TypeError, match="quality_score"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=True,  # bool, not int
+            reading_blocker=False,
+            dedup_hint="hint1",
+        )
+
+
+def test_candidate_item_rejects_float_quality_score():
+    """``float`` must be rejected as quality_score."""
+    with pytest.raises(TypeError, match="quality_score"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=3.0,  # float, not int
+            reading_blocker=False,
+            dedup_hint="hint1",
+        )
+
+
+def test_candidate_item_rejects_out_of_range_quality_score():
+    """quality_score must be in 1..5."""
+    with pytest.raises(ValueError, match="quality_score"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=6,
+            reading_blocker=False,
+            dedup_hint="hint1",
+        )
+
+
+def test_candidate_item_rejects_non_bool_reading_blocker():
+    """``reading_blocker`` must be exact ``bool``, not ``int``."""
+    with pytest.raises(TypeError, match="reading_blocker"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=3,
+            reading_blocker=1,  # int, not bool
+            dedup_hint="hint1",
+        )
+
+
+def test_candidate_item_rejects_empty_dedup_hint():
+    """``dedup_hint`` must be non-empty after trim/normalize."""
+    with pytest.raises(ValueError, match="dedup_hint"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=3,
+            reading_blocker=False,
+            dedup_hint="",
+        )
+
+
+def test_candidate_item_rejects_whitespace_only_dedup_hint():
+    """``dedup_hint`` whitespace-only must fail after trim/normalize."""
+    with pytest.raises(ValueError, match="dedup_hint"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=3,
+            reading_blocker=False,
+            dedup_hint="   \t\n  ",
+        )
+
+
+def test_candidate_item_rejects_overlong_dedup_hint():
+    """``dedup_hint`` > 120 chars after normalization must fail."""
+    from app.services.reader_orchestration.grammar_candidate_policy import (
+        MAX_DEDUP_HINT_LENGTH,
+    )
+
+    with pytest.raises(ValueError, match="dedup_hint"):
+        CandidateItem(
+            item_type="grammar_note",
+            anchor_segment_id="a1",
+            spans=[{"unit_id": "u1"}],
+            semantic_dedup_key="k1",
+            pattern_key="p1",
+            quality_score=3,
+            reading_blocker=False,
+            dedup_hint="x" * (MAX_DEDUP_HINT_LENGTH + 1),
+        )
+
+
+def test_candidate_item_saves_normalized_dedup_hint():
+    """``__post_init__`` writes back the normalized hint (trim + lowercase + collapse)."""
+    candidate = CandidateItem(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        spans=[{"unit_id": "u1"}],
+        semantic_dedup_key="k1",
+        pattern_key="p1",
+        quality_score=3,
+        reading_blocker=False,
+        dedup_hint="  Foo   BAR  ",
+    )
+    assert candidate.dedup_hint == "foo bar"
+
+
+# ---------------------------------------------------------------------------
+# reader-grammar-candidate-selection: DUP diagnostic structured metadata
+# ---------------------------------------------------------------------------
+
+
+def test_dup_current_window_carries_complete_winner_metadata():
+    """同 window DUP rejection 携带完整 winner metadata。
+
+    winner_source=current_window, winner_item_index 为 winner 在
+    sorted_candidates 中的真实 index, winner_item_type / winner_anchor_segment_id
+    与 winner 一致。
+    """
+    from app.services.reader_orchestration.grammar_candidate_policy import (
+        DEDUP_WINNER_SOURCE_CURRENT_WINDOW,
+    )
+
+    ledger = SelectorLedger(total_anchors=10)
+    # grammar_note quality=5 wins over sentence_analysis quality=3
+    # (same anchor + same hint → DUP). Both share anchor "a1" + hint "same".
+    grammar = make_candidate(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k_g",
+        quality_score=5,
+        dedup_hint="same",
+    )
+    sentence = make_candidate(
+        item_type="sentence_analysis",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k_s",
+        quality_score=3,
+        dedup_hint="same",
+    )
+    result = select_candidates(
+        [grammar, sentence],
+        ledger=ledger,
+        window_budget={"grammar_note": 2, "sentence_analysis": 2},
+    )
+    assert len(result.rejected) == 1
+    rejected = result.rejected[0]
+    assert rejected.gate == SelectionGate.DUP
+    assert rejected.dedup_metadata is not None
+    md = rejected.dedup_metadata
+    assert md.normalized_hint == "same"
+    assert md.winner_item_type == "grammar_note"
+    assert md.winner_anchor_segment_id == "a1"
+    assert md.winner_item_index == 0  # grammar is first in sorted order
+    assert md.winner_source == DEDUP_WINNER_SOURCE_CURRENT_WINDOW
+
+
+def test_dup_published_ledger_carries_null_index_metadata():
+    """published ledger DUP rejection: winner_item_index=null, winner_source=published_ledger.
+
+    ledger winner 的 index 为 null，不得伪造。
+    """
+    from app.services.reader_orchestration.grammar_candidate_policy import (
+        DEDUP_WINNER_SOURCE_PUBLISHED_LEDGER,
+    )
+
+    ledger = SelectorLedger(
+        published_dedup_keys_by_type={
+            "grammar_note": [("a1", "already_published")],
+            "sentence_analysis": [],
+        },
+        total_anchors=10,
+    )
+    candidate = make_candidate(
+        item_type="grammar_note",
+        anchor_segment_id="a1",
+        semantic_dedup_key="k1",
+        dedup_hint="already_published",
+    )
+    result = select_candidates(
+        [candidate], ledger=ledger, window_budget={"grammar_note": 2}
+    )
+    assert len(result.rejected) == 1
+    rejected = result.rejected[0]
+    assert rejected.gate == SelectionGate.DUP
+    assert rejected.dedup_metadata is not None
+    md = rejected.dedup_metadata
+    assert md.normalized_hint == "already_published"
+    assert md.winner_item_type == "grammar_note"
+    assert md.winner_anchor_segment_id == "a1"
+    assert md.winner_item_index is None  # ledger winner index must not be fabricated
+    assert md.winner_source == DEDUP_WINNER_SOURCE_PUBLISHED_LEDGER
+
+
+def test_non_dup_rejection_has_no_dedup_metadata():
+    """Non-DUP gate rejections do not carry dedup_metadata and have
+    ``reason_code is None``."""
+    ledger = SelectorLedger(total_anchors=10)
+    candidate = make_candidate(
+        anchor_segment_id="a1",
+        dedup_hint="hint1",
+        semantic_dedup_key="k1",
+        pattern_key="p1",
+    )
+    # Fill pattern_key count to 3 in ledger to trigger PATTERN_DENSE
+    ledger = SelectorLedger(
+        published_pattern_keys_by_type={
+            "grammar_note": ["p1", "p1", "p1"],
+            "sentence_analysis": [],
+        },
+        total_anchors=10,
+    )
+    result = select_candidates(
+        [candidate], ledger=ledger, window_budget={"grammar_note": 2}
+    )
+    assert len(result.rejected) == 1
+    assert result.rejected[0].dedup_metadata is None
+    # reader-grammar-candidate-selection: 非 DUP gate 的 reason_code 为 None
+    assert result.rejected[0].reason_code is None
