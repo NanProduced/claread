@@ -1,0 +1,540 @@
+"""R4-A5-1 unit tests: ModelVisibleTurnBudget + ModelViewRenderer + projection.
+
+Scope: foundation modules only. No agent loop, no real LLM, no RAG I/O.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from uuid import UUID
+from xml.sax.saxutils import escape as xml_escape
+
+import pytest
+
+from app.services.reader_record_ask.article_rag_port import FakeArticleRagSearchPort
+from app.services.reader_record_ask.context_envelope import (
+    EnvelopeInitialAnchor,
+    VerifiedEnvelopeInput,
+    build_context_envelope,
+)
+from app.services.reader_record_ask.model_view_budget import (
+    ACCOUNT_RESERVES,
+    MODEL_VISIBLE_TURN_PAYLOAD_CAP,
+    RESERVE_BASELINE,
+    RESERVE_EXPAND,
+    RESERVE_MAP,
+    RESERVE_RAG,
+    RESERVE_REQUEST_FRAME,
+    RESERVE_SELECTION,
+    BudgetChargeDenied,
+    BudgetChargeOk,
+    ModelViewBudgetError,
+    ModelViewRenderer,
+    ModelVisibleTurnBudget,
+    RequestFrameParts,
+)
+from app.services.reader_record_ask.turn_capability_projection import (
+    build_turn_capability_projection,
+    resolve_can_search_article,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+_USER = UUID("11111111-1111-1111-1111-111111111111")
+_RECORD = UUID("22222222-2222-2222-2222-222222222222")
+_BASE = UUID("33333333-3333-3333-3333-333333333333")
+_DOC = UUID("44444444-4444-4444-4444-444444444444")
+_BASE_SHA = "b" * 64
+_HANDLE = "evh_" + ("ab" * 16)
+
+_FORBIDDEN_SUBSTRINGS = (
+    "selected_text",
+    "selection_preview",
+    "snippet",
+    "unit_id",
+    "anchor_segment_id",
+    "segment_id",
+    "score",
+    "chunk_id",
+    "text_hash",
+    "content_sha256",
+    "reading_record_id",
+    "base_id",
+    "stable_document_id",
+    "user_id",
+    "envelope_fingerprint",
+    "article_rag_ready",
+    "initial_selection_locator",
+)
+
+
+# ---------------------------------------------------------------------------
+# Budget: six accounts + hard caps
+# ---------------------------------------------------------------------------
+
+
+def test_six_account_reserves_sum_to_cap() -> None:
+    assert sum(ACCOUNT_RESERVES.values()) == MODEL_VISIBLE_TURN_PAYLOAD_CAP
+    assert MODEL_VISIBLE_TURN_PAYLOAD_CAP == 24_000
+    assert ACCOUNT_RESERVES == {
+        "request_frame": RESERVE_REQUEST_FRAME,
+        "selection": RESERVE_SELECTION,
+        "baseline": RESERVE_BASELINE,
+        "map": RESERVE_MAP,
+        "expand": RESERVE_EXPAND,
+        "rag": RESERVE_RAG,
+    }
+    assert RESERVE_REQUEST_FRAME == 4_000
+    assert RESERVE_SELECTION == 2_500
+    assert RESERVE_BASELINE == 9_000
+    assert RESERVE_MAP == 1_500
+    assert RESERVE_EXPAND == 4_000
+    assert RESERVE_RAG == 3_000
+
+
+def test_per_account_hard_cap_denies_without_mutating() -> None:
+    budget = ModelVisibleTurnBudget()
+    # Fill selection almost to reserve, then overshoot.
+    ok = budget.try_charge("selection", RESERVE_SELECTION)
+    assert isinstance(ok, BudgetChargeOk)
+    assert budget.spent("selection") == RESERVE_SELECTION
+
+    denied = budget.try_charge("selection", 1)
+    assert isinstance(denied, BudgetChargeDenied)
+    assert denied.reason == "account_exhausted"
+    assert budget.spent("selection") == RESERVE_SELECTION  # unchanged
+
+
+def test_total_cap_denies_even_when_account_has_room() -> None:
+    budget = ModelVisibleTurnBudget()
+    # Spend every account to its reserve except leave 1 char on request_frame.
+    for account, reserve in ACCOUNT_RESERVES.items():
+        if account == "request_frame":
+            budget.charge(account, reserve - 1)
+        else:
+            budget.charge(account, reserve)
+    assert budget.total_remaining() == 1
+    # request_frame still has 1 char room, but charging 2 would exceed total.
+    denied = budget.try_charge("request_frame", 2)
+    assert isinstance(denied, BudgetChargeDenied)
+    assert denied.reason in ("account_exhausted", "total_exhausted")
+
+
+def test_charge_raises_typed_budget_error_not_model_retry() -> None:
+    budget = ModelVisibleTurnBudget()
+    budget.charge("map", RESERVE_MAP)
+    with pytest.raises(ModelViewBudgetError) as exc_info:
+        budget.charge("map", 1)
+    denial = exc_info.value.denial
+    assert denial.account == "map"
+    assert denial.reason == "account_exhausted"
+    # Guard: no pydantic_ai / ModelRetry import on the budget enforcement path.
+    import app.services.reader_record_ask.model_view_budget as mod
+
+    assert not hasattr(mod, "ModelRetry")
+    source = open(mod.__file__, encoding="utf-8").read()
+    assert "from pydantic_ai" not in source
+    assert "import pydantic_ai" not in source
+    assert "exceptions.ModelRetry" not in source
+
+
+# ---------------------------------------------------------------------------
+# request_frame includes user question; never truncates it
+# ---------------------------------------------------------------------------
+
+
+def test_user_question_is_counted_in_request_frame_cost() -> None:
+    renderer = ModelViewRenderer()
+    base_parts = RequestFrameParts(
+        system_instructions="SYS",
+        user_question="",
+        projection_json='{"can_search_article":false}',
+        handles_block="",
+        coverage_block="",
+        correctness_block="",
+    )
+    base = renderer.render_request_frame(base_parts)
+
+    long_q = "Q" * 200
+    with_q = renderer.render_request_frame(
+        RequestFrameParts(
+            system_instructions="SYS",
+            user_question=long_q,
+            projection_json='{"can_search_article":false}',
+        )
+    )
+    # Question appears fully and contributes its length to the cost.
+    assert long_q in with_q.text
+    assert with_q.char_cost == len(with_q.text)
+    assert with_q.char_cost - base.char_cost == len(long_q)
+
+
+def test_oversized_user_question_denies_without_truncation() -> None:
+    renderer = ModelViewRenderer()
+    budget = ModelVisibleTurnBudget()
+    # Force request_frame over reserve via a huge question.
+    huge_q = "用户问题" * (RESERVE_REQUEST_FRAME)  # multi-byte chars, full cost
+    parts = RequestFrameParts(
+        system_instructions="S",
+        user_question=huge_q,
+        projection_json="{}",
+    )
+    rendered = renderer.render_request_frame(parts)
+    assert huge_q in rendered.text  # never truncated at render time
+    assert rendered.char_cost > RESERVE_REQUEST_FRAME
+
+    denied = budget.try_charge("request_frame", rendered.char_cost)
+    assert isinstance(denied, BudgetChargeDenied)
+    assert budget.spent("request_frame") == 0
+
+
+def test_charge_request_frame_helper_raises_typed_error() -> None:
+    renderer = ModelViewRenderer()
+    budget = ModelVisibleTurnBudget()
+    huge_q = "x" * (RESERVE_REQUEST_FRAME + 500)
+    with pytest.raises(ModelViewBudgetError) as exc_info:
+        renderer.charge_request_frame(
+            budget,
+            RequestFrameParts(
+                system_instructions="sys",
+                user_question=huge_q,
+                projection_json="{}",
+            ),
+        )
+    assert exc_info.value.denial.account == "request_frame"
+    assert budget.spent("request_frame") == 0
+
+
+# ---------------------------------------------------------------------------
+# Renderer determinism + XML serialized-cost basics
+# ---------------------------------------------------------------------------
+
+
+def test_renderer_deterministic_for_same_inputs() -> None:
+    renderer = ModelViewRenderer()
+    payload = {"b": 2, "a": 1, "nested": {"z": True, "m": "中文"}}
+    a = renderer.render_json(payload)
+    b = renderer.render_json(payload)
+    assert a.text == b.text
+    assert a.char_cost == b.char_cost
+    # Sorted keys / compact separators.
+    assert a.text == json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+    block_a = renderer.render_untrusted_article_text(
+        handle_id=_HANDLE, ordinal=0, role="selection", text="a & b < c"
+    )
+    block_b = renderer.render_untrusted_article_text(
+        handle_id=_HANDLE, ordinal=0, role="selection", text="a & b < c"
+    )
+    assert block_a.text == block_b.text
+    assert block_a.char_cost == block_b.char_cost
+
+
+def test_serialized_cost_ampersand_and_angle_brackets() -> None:
+    renderer = ModelViewRenderer()
+    raw = 'a & b <c> "quote"'
+    rendered = renderer.render_untrusted_article_text(
+        handle_id=_HANDLE,
+        ordinal=0,
+        role="selection",
+        text=raw,
+    )
+    # Content must be XML-escaped inside the block.
+    assert "&amp;" in rendered.text
+    assert "&lt;" in rendered.text
+    assert "&gt;" in rendered.text
+    assert "a & b" not in rendered.text  # raw ampersand must not leak unescaped
+    # Cost is full serialized length, not raw text length.
+    assert rendered.char_cost == len(rendered.text)
+    assert rendered.char_cost > len(raw)
+    # Recompute escape cost independently.
+    expected_body = xml_escape(raw)
+    assert expected_body in rendered.text
+    assert f'handle="{_HANDLE}"' in rendered.text
+    assert 'role="selection"' in rendered.text
+    assert 'ordinal="0"' in rendered.text
+
+
+def test_tool_view_cost_is_canonical_json_not_xml() -> None:
+    renderer = ModelViewRenderer()
+    view = {"status": "ok", "summary": "found & more", "handles": [_HANDLE]}
+    rendered = renderer.render_tool_view(view)
+    assert rendered.text.startswith("{")
+    assert "<untrusted" not in rendered.text
+    assert rendered.char_cost == len(
+        json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
+# ---------------------------------------------------------------------------
+# TurnCapabilityProjection: port-derived can_search
+# ---------------------------------------------------------------------------
+
+
+def test_port_none_can_search_false_and_zero_port_calls() -> None:
+    # Use a real fake only to prove we do not call it when port is None.
+    spy = FakeArticleRagSearchPort()
+    assert spy.call_count == 0
+
+    projection = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=_DOC,
+        product_search_enabled=True,
+        baseline_injected=True,
+    )
+    assert projection.can_search_article is False
+    assert spy.call_count == 0  # never touched
+
+    # Even with a live port instance available but not passed, decision is False.
+    assert (
+        resolve_can_search_article(
+            article_rag_port=None,
+            stable_document_id=_DOC,
+            product_search_enabled=True,
+        )
+        is False
+    )
+    assert spy.call_count == 0
+
+
+def test_fake_port_with_identity_and_product_flag_true_zero_io() -> None:
+    port = FakeArticleRagSearchPort()
+    projection = build_turn_capability_projection(
+        article_rag_port=port,
+        stable_document_id=_DOC,
+        product_search_enabled=True,
+        baseline_injected=True,
+        baseline_complete=True,
+    )
+    assert projection.can_search_article is True
+    assert port.call_count == 0  # resolve must not call search_current_article
+
+
+def test_missing_identity_or_product_flag_disables_search() -> None:
+    port = FakeArticleRagSearchPort()
+    assert (
+        resolve_can_search_article(
+            article_rag_port=port,
+            stable_document_id=None,
+            product_search_enabled=True,
+        )
+        is False
+    )
+    assert (
+        resolve_can_search_article(
+            article_rag_port=port,
+            stable_document_id=_DOC,
+            product_search_enabled=False,
+        )
+        is False
+    )
+    assert port.call_count == 0
+
+
+def test_envelope_article_rag_ready_does_not_affect_projection() -> None:
+    """Old envelope flag must not be read or copied into can_search_article."""
+    # Envelope claims ready=True but we pass port=None → still false.
+    envelope_ready = build_context_envelope(
+        VerifiedEnvelopeInput(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            base_content_sha256=_BASE_SHA,
+            product_state="readable_enhancing",
+            readiness_state="article_ready",
+            article_rag_ready=True,
+            can_search_current_article=True,
+        )
+    )
+    assert envelope_ready.capabilities.article_rag_ready is True
+
+    projection = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=envelope_ready.stable_document_id,
+        product_search_enabled=True,
+        baseline_injected=True,
+    )
+    assert projection.can_search_article is False
+
+    # Envelope claims ready=False but we pass a real port → true.
+    envelope_not_ready = build_context_envelope(
+        VerifiedEnvelopeInput(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            base_content_sha256=_BASE_SHA,
+            product_state="readable_enhancing",
+            readiness_state="article_ready",
+            article_rag_ready=False,
+            can_search_current_article=False,
+        )
+    )
+    assert envelope_not_ready.capabilities.article_rag_ready is False
+    port = FakeArticleRagSearchPort()
+    projection2 = build_turn_capability_projection(
+        article_rag_port=port,
+        stable_document_id=envelope_not_ready.stable_document_id,
+        product_search_enabled=True,
+        baseline_injected=True,
+    )
+    assert projection2.can_search_article is True
+    assert port.call_count == 0
+
+    # Implementation must not import or read envelope capability flags.
+    import app.services.reader_record_ask.turn_capability_projection as proj_mod
+
+    assert not hasattr(proj_mod, "ReadingRecordAskContextEnvelope")
+    assert not hasattr(proj_mod, "EnvelopeCapabilityState")
+    source = open(proj_mod.__file__, encoding="utf-8").read()
+    assert "from app.services.reader_record_ask.context_envelope" not in source
+    assert "import context_envelope" not in source
+
+
+def test_projection_has_no_body_uuid_hash_score_or_raw_locator() -> None:
+    port = FakeArticleRagSearchPort()
+    # Selection present with metadata only — still no body text fields.
+    projection = build_turn_capability_projection(
+        article_rag_port=port,
+        stable_document_id=_DOC,
+        product_search_enabled=True,
+        baseline_injected=True,
+        baseline_complete=False,
+        has_visible_range=True,
+        selection_present=True,
+        selection_handle_id=_HANDLE,
+        selection_expandable=True,
+        selection_visible_char_count=12,
+        selection_full_char_count=4000,
+        article_map_present=True,
+        article_map_entry_count=3,
+        article_map_truncated=True,
+        turn_id="turn_deadbeef",
+    )
+    payload = projection.to_model_dict()
+    blob = json.dumps(payload, ensure_ascii=False)
+
+    for forbidden in _FORBIDDEN_SUBSTRINGS:
+        assert forbidden not in blob, f"forbidden key leaked: {forbidden}"
+
+    # UUIDs of record/base/user/doc must not appear.
+    for uuid_val in (_USER, _RECORD, _BASE, _DOC):
+        assert str(uuid_val) not in blob
+
+    # No 64-char hex hashes.
+    assert re.search(r"[0-9a-f]{64}", blob) is None
+
+    # Selection metadata present without body / locator.
+    assert payload["selection"]["present"] is True
+    assert payload["selection"]["handle_id"] == _HANDLE
+    assert "selected_text" not in payload["selection"]
+    assert "unit_id" not in payload["selection"]
+
+    # Map metadata only.
+    assert payload["article_map"] == {
+        "present": True,
+        "entry_count": 3,
+        "truncated": True,
+    }
+
+    # turn_id is server-minted opaque string, not a UUID of record identity.
+    assert payload["turn_id"] == "turn_deadbeef"
+    assert payload["can_search_article"] is True
+
+
+def test_projection_turn_id_minted_when_omitted() -> None:
+    p1 = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=None,
+        product_search_enabled=False,
+        baseline_injected=False,
+    )
+    p2 = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=None,
+        product_search_enabled=False,
+        baseline_injected=False,
+    )
+    assert p1.turn_id.startswith("turn_")
+    assert p2.turn_id.startswith("turn_")
+    assert p1.turn_id != p2.turn_id
+
+
+def test_projection_json_via_renderer_is_deterministic() -> None:
+    renderer = ModelViewRenderer()
+    projection = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=None,
+        product_search_enabled=False,
+        baseline_injected=True,
+        turn_id="turn_fixed",
+    )
+    a = renderer.render_json(projection.to_model_dict())
+    b = renderer.render_json(projection.to_model_dict())
+    assert a.text == b.text
+    assert a.char_cost == b.char_cost
+
+
+def test_request_frame_with_projection_charges_request_frame_only() -> None:
+    renderer = ModelViewRenderer()
+    budget = ModelVisibleTurnBudget()
+    projection = build_turn_capability_projection(
+        article_rag_port=None,
+        stable_document_id=None,
+        product_search_enabled=False,
+        baseline_injected=True,
+        turn_id="turn_fixed",
+    )
+    parts = RequestFrameParts(
+        system_instructions="You are Claread.",
+        user_question="文章主旨是什么？",
+        projection_json=renderer.render_json(projection.to_model_dict()).text,
+        handles_block="## handles\nevh_test\n",
+        coverage_block="## Baseline coverage\nStatus: complete.\n",
+        correctness_block="<answer_correctness/>",
+    )
+    rendered, ok = renderer.charge_request_frame(budget, parts)
+    assert isinstance(ok, BudgetChargeOk)
+    assert ok.account == "request_frame"
+    assert budget.spent("request_frame") == rendered.char_cost
+    assert budget.spent("selection") == 0
+    assert budget.spent("baseline") == 0
+    assert "文章主旨是什么？" in rendered.text
+    assert "turn_fixed" in rendered.text
+
+
+def test_old_envelope_projection_still_has_preview_unchanged_by_a5_1() -> None:
+    """A5-1 must not switch runtime selection preview; old path intact."""
+    envelope = build_context_envelope(
+        VerifiedEnvelopeInput(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            base_id=_BASE,
+            record_generation=1,
+            stable_document_id=_DOC,
+            base_content_sha256=_BASE_SHA,
+            product_state="readable_enhancing",
+            readiness_state="article_ready",
+            initial_anchor=EnvelopeInitialAnchor(
+                unit_id="u1",
+                anchor_segment_id="s1",
+                start_offset=0,
+                end_offset=5,
+                selected_text="hello",
+                text_hash="a1b2c3d4",
+            ),
+            article_rag_ready=False,
+        )
+    )
+    old = envelope.to_agent_projection()
+    assert old.selection_preview == "hello"
+    assert old.initial_selection_locator is not None
+    assert old.initial_selection_locator.unit_id == "u1"
