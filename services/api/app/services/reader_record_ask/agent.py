@@ -17,6 +17,10 @@ from typing import Any
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
 
+from app.services.reader_record_ask.article_map_model_view import (
+    ArticleMapPromptCapability,
+    validate_article_map_prompt_capability,
+)
 from app.services.reader_record_ask.baseline_context import (
     ModelContextChunk,
     render_baseline_block,
@@ -183,6 +187,7 @@ def build_agent_user_prompt(
     baseline_is_complete: bool = False,
     correctness_block: str | None = None,
     selection_prompt: SelectionPromptCapability | None = None,
+    map_prompt: ArticleMapPromptCapability | None = None,
 ) -> str:
     """Compose the single user turn for the agent (no keyword routing).
 
@@ -227,6 +232,18 @@ def build_agent_user_prompt(
     constraint, and explicit exercise count enter the user prompt. Pass
     ``None`` (or omit) when no policy is available; the prompt then
     carries no ``<answer_correctness>`` marker.
+
+    ``map_prompt`` (R4-A5-4, optional) must be an assembler-minted
+    :class:`~app.services.reader_record_ask.article_map_model_view.ArticleMapPromptCapability`
+    from :func:`~app.services.reader_record_ask.article_map_model_view.assemble_article_map`.
+    Raw strings, generic :class:`RenderedModelView`, and hand-forged
+    capabilities are rejected. The capability carries the
+    request_frame-owned section chrome plus the map-account
+    ``<untrusted_article_map>`` block (labels are untrusted article-derived
+    text, XML-escaped; map cursors are opaque navigation pointers, never
+    evidence handles). Inserted once after the baseline block. Omitted /
+    ``None`` preserves the legacy prompt layout (production still uses the
+    legacy path until A5-7).
     """
     handles_block = render_handles_block(available_evidence_handle_ids)
     baseline_block = render_baseline_block(model_context_chunks)
@@ -250,12 +267,19 @@ def build_agent_user_prompt(
     if selection_prompt is not None:
         cap = validate_selection_prompt_capability(selection_prompt)
         selection_section = cap.section_text
+    # R4-A5-4: map section only from assembler-minted capability; placed
+    # after baseline, before coverage. Origin validated; no raw str path.
+    map_section = ""
+    if map_prompt is not None:
+        map_cap = validate_article_map_prompt_capability(map_prompt)
+        map_section = map_cap.section_text
     return (
         "## Current turn context (server projection; not tool arguments)\n"
         f"{agent_context_json}\n"
         f"{handles_block}\n"
         f"{selection_section}"
         f"{baseline_block}\n"
+        f"{map_section}"
         f"{coverage_block}"
         f"{correctness_section}"
         "## User question\n"

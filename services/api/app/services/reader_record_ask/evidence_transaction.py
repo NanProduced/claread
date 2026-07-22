@@ -39,6 +39,8 @@ RAG / DB wiring.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from app.services.reader_record_ask.evidence import ServerEvidenceObservation
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.model_view_budget import (
@@ -46,7 +48,10 @@ from app.services.reader_record_ask.model_view_budget import (
     ModelVisibleTurnBudget,
 )
 
-__all__ = ["rollback_charged_observation"]
+__all__ = [
+    "compensate_ledger_transition_and_observation",
+    "rollback_charged_observation",
+]
 
 
 def rollback_charged_observation(
@@ -116,3 +121,70 @@ def rollback_charged_observation(
         budget._refund_chars(account, charge_cost)
     except Exception:
         raise RuntimeError(f"{prefix}budget_refund") from None
+
+
+class LedgerTransitionRollbackLike(Protocol):
+    """Structural seam: marker-scoped pointer transition rollback.
+
+    Implemented by ``ExpansionPointerLedger``; typed here as a Protocol so
+    this module never imports the expansion module (no cycle).
+    """
+
+    def rollback_transition_by_marker(self, marker: str) -> str: ...
+
+
+def compensate_ledger_transition_and_observation(
+    *,
+    budget: ModelVisibleTurnBudget,
+    account: BudgetAccountName,
+    charge_cost: int,
+    registry: EvidenceRegistry,
+    observation: ServerEvidenceObservation,
+    ledger: LedgerTransitionRollbackLike,
+    marker: str,
+    failure_domain: str,
+) -> None:
+    """Shared compensation after a failed ledger-transition commit.
+
+    Used by selection-scope and map-scope expanders alike so the
+    transition-failure semantics cannot drift between seams:
+
+    1. marker-scoped ledger rollback — a rollback that returns incomplete
+       **or raises** is treated as unproven (raw exception text is never
+       propagated);
+    2. shared charged-observation rollback (conditional registry discard +
+       budget refund).
+
+    Returns normally **only** when the ledger rollback is proven complete
+    and registry+budget compensation succeeded — callers then raise their
+    own stable transition-failure code. Raises
+    ``{failure_domain}_rollback_failed code=ledger_transition`` when the
+    ledger cannot be proven clean but registry+budget were compensated, or
+    ``code=ledger_transition_and_registry`` when both are unproven.
+    Never embeds body, repr, pointer, identity, or raw exception text.
+    """
+    try:
+        rollback_status = ledger.rollback_transition_by_marker(marker)
+    except Exception:
+        rollback_status = "incomplete"
+    ledger_complete = rollback_status == "rolled_back"
+    try:
+        rollback_charged_observation(
+            budget=budget,
+            account=account,
+            charge_cost=charge_cost,
+            registry=registry,
+            observation=observation,
+            failure_domain=failure_domain,
+        )
+    except RuntimeError:
+        if not ledger_complete:
+            raise RuntimeError(
+                f"{failure_domain}_rollback_failed "
+                "code=ledger_transition_and_registry"
+            ) from None
+        raise
+    if not ledger_complete:
+        raise RuntimeError(
+            f"{failure_domain}_rollback_failed code=ledger_transition"
+        ) from None

@@ -701,7 +701,7 @@ def test_cross_turn_and_identity_mismatches_are_stale_evidence() -> None:
     assert own.kind == "ok"
 
 
-def test_binding_model_expresses_scope_kind_and_rejects_non_selection() -> None:
+def test_binding_model_expresses_scope_kind_and_rejects_unknown_scopes() -> None:
     binding = PointerBinding(
         turn_id=mint_turn_id(),
         envelope_fingerprint=_FINGERPRINT_A,
@@ -711,7 +711,16 @@ def test_binding_model_expresses_scope_kind_and_rejects_non_selection() -> None:
         scope_kind="selection",
     )
     assert binding.scope_kind == "selection"
-    # A5-3 must not pre-implement map scope: non-selection is fail-closed.
+    # Map scope is legal (R4-A5-4); unknown scopes fail closed.
+    map_binding = PointerBinding(
+        turn_id=mint_turn_id(),
+        envelope_fingerprint=_FINGERPRINT_A,
+        record_generation=1,
+        base_id=_BASE_A,
+        reading_record_id=_RECORD_A,
+        scope_kind="map",
+    )
+    assert map_binding.scope_kind == "map"
     with pytest.raises(ValueError, match="scope_kind"):
         PointerBinding(
             turn_id=mint_turn_id(),
@@ -719,7 +728,7 @@ def test_binding_model_expresses_scope_kind_and_rejects_non_selection() -> None:
             record_generation=1,
             base_id=_BASE_A,
             reading_record_id=_RECORD_A,
-            scope_kind="map",  # type: ignore[arg-type]
+            scope_kind="baseline",  # type: ignore[arg-type]
         )
 
 

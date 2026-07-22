@@ -107,6 +107,7 @@ from app.services.reader_record_ask.evidence import (
 )
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.evidence_transaction import (
+    compensate_ledger_transition_and_observation,
     rollback_charged_observation,
 )
 from app.services.reader_record_ask.model_view_budget import (
@@ -130,7 +131,9 @@ from app.services.reader_record_ask.tool_contracts import (
 
 EXPAND_ROLE: str = "expand"
 
-ExpandScopeKind = Literal["selection"]
+# A5-3: selection-scope expansion. A5-4: map-scope expansion (map cursors
+# expand entry window text — entries themselves are never evidence).
+ExpandScopeKind = Literal["selection", "map"]
 
 ExpansionOutcomeKind = Literal[
     "ok",
@@ -179,6 +182,15 @@ _CURSOR_PLACEHOLDER = f"{EXPANSION_CURSOR_PREFIX}{'0' * 32}"
 def _mint_cursor_id() -> str:
     """Server-only opaque continuation cursor mint."""
     return f"{EXPANSION_CURSOR_PREFIX}{secrets.token_hex(16)}"
+
+
+def mint_expansion_cursor_id() -> str:
+    """Server-only opaque expansion cursor mint (``cur_<32 hex>``).
+
+    Shared by selection-scope (R4-A5-3) and map-scope (R4-A5-4)
+    expanders. Cursors are continuation pointers, never evidence handles.
+    """
+    return _mint_cursor_id()
 
 
 def mint_transition_marker() -> str:
@@ -231,9 +243,9 @@ class PointerBinding:
             raise TypeError("base_id must be a UUID")
         if not isinstance(self.reading_record_id, UUID):
             raise TypeError("reading_record_id must be a UUID")
-        if self.scope_kind != "selection":
-            # A5-3 supports selection scope only; map paths land in A5-4.
-            raise ValueError("scope_kind must be 'selection' in R4-A5-3")
+        if self.scope_kind not in ("selection", "map"):
+            # A5-3/A5-4 support selection + map scopes only.
+            raise ValueError("scope_kind must be 'selection' or 'map'")
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +554,140 @@ class ExpansionOutcome:
 
 
 # ---------------------------------------------------------------------------
+# Shared expand tool-view rendering / fit / metering (selection + map scope)
+# ---------------------------------------------------------------------------
+
+
+def render_expand_success_view(
+    *,
+    renderer: ModelViewRenderer,
+    segment: str,
+    handle_id: str,
+    ordinal: int,
+    cursor: str | None,
+    summary_more: str,
+    summary_done: str,
+) -> RenderedModelView:
+    """Full expand tool-view for one segment (single untrusted text block).
+
+    Shared by selection-scope (R4-A5-3) and map-scope (R4-A5-4) expanders
+    so the model-visible success shape cannot drift between scopes. The
+    logical segment text appears exactly once, inside the renderer-minted
+    ``role="expand"`` untrusted block. ``cursor`` may be the fixed-length
+    placeholder during fit search.
+    """
+    untrusted = renderer.render_untrusted_article_text(
+        handle_id=handle_id,
+        ordinal=ordinal,
+        role=EXPAND_ROLE,
+        text=segment,
+    )
+    view = ExpandEvidenceToolView(
+        status="ok",
+        summary=(summary_more if cursor is not None else summary_done),
+        next_actions=("expand_evidence",) if cursor is not None else (),
+        evidence_handle={"handle_id": handle_id},
+        next_cursor=cursor,
+        article_text_block=untrusted.text,
+    )
+    return renderer.render_tool_view(view.model_dump(mode="json"))
+
+
+def metered_expand_error_outcome(
+    *,
+    renderer: ModelViewRenderer,
+    budget: ModelVisibleTurnBudget,
+    status: Literal["invalid_cursor", "stale_evidence"],
+    summary: str,
+) -> ExpansionOutcome:
+    """Render + charge a minimal safe expand error tool-view.
+
+    Shared by both expander scopes. If even the minimal error view cannot
+    be charged, falls back to a typed non-model-visible budget-exhausted
+    outcome with zero mutation.
+    """
+    view = ExpandEvidenceToolView(status=status, summary=summary)
+    rendered = renderer.render_tool_view(view.model_dump(mode="json"))
+    if not budget.can_charge("expand", rendered):
+        return ExpansionOutcome(kind="budget_exhausted", model_visible=False)
+    try:
+        ok = budget.charge("expand", rendered)
+    except ModelViewBudgetError:
+        return ExpansionOutcome(kind="budget_exhausted", model_visible=False)
+    return ExpansionOutcome(
+        kind=status,
+        model_visible=True,
+        rendered_tool_view=rendered,
+        charge=ok,
+    )
+
+
+def fit_expand_segment(
+    *,
+    renderer: ModelViewRenderer,
+    budget: ModelVisibleTurnBudget,
+    canonical: str,
+    next_pos: int,
+    ordinal: int,
+    handle_id: str,
+    summary_more: str,
+    summary_done: str,
+) -> tuple[str, RenderedModelView, int, bool] | None:
+    """Largest codepoint segment whose *complete* tool-view fits expand.
+
+    Shared fit primitive for selection-scope and map-scope expansion.
+    Evaluates real candidate views: the terminal candidate (all remaining
+    text, ``next_cursor=null``) is checked separately from the with-cursor
+    region because the JSON shape — and therefore the serialized cost —
+    differs. Never assumes a fixed ``[:2000]`` fits. Returns
+    ``(segment, candidate_view, end, has_more)`` or None.
+    """
+    total = len(canonical)
+    remaining = canonical[next_pos:]
+    hard_max = min(len(remaining), EVIDENCE_SNIPPET_HARD_CAP)
+
+    # Terminal candidate: everything remaining, cursor null (only when the
+    # remaining text is within the snippet hard cap).
+    if len(remaining) <= EVIDENCE_SNIPPET_HARD_CAP:
+        terminal_view = render_expand_success_view(
+            renderer=renderer,
+            segment=remaining,
+            handle_id=handle_id,
+            ordinal=ordinal,
+            cursor=None,
+            summary_more=summary_more,
+            summary_done=summary_done,
+        )
+        if budget.can_charge("expand", terminal_view):
+            return remaining, terminal_view, total, False
+        hi = hard_max - 1
+    else:
+        hi = hard_max
+
+    lo = 1
+    best: tuple[str, RenderedModelView, int, bool] | None = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        segment = remaining[:mid]
+        end = next_pos + mid  # strictly < total in this region
+        view = render_expand_success_view(
+            renderer=renderer,
+            segment=segment,
+            handle_id=handle_id,
+            ordinal=ordinal,
+            cursor=_CURSOR_PLACEHOLDER,
+            summary_more=summary_more,
+            summary_done=summary_done,
+        )
+        if budget.can_charge("expand", view):
+            best = (segment, view, end, True)
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+# ---------------------------------------------------------------------------
 # Expansion session (the deep module)
 # ---------------------------------------------------------------------------
 
@@ -745,58 +891,26 @@ class EvidenceExpansionSession:
         segment: str,
         cursor: str | None,
     ) -> RenderedModelView:
-        """Full expand tool-view: fixed fields + one untrusted text block.
-
-        The logical segment text appears exactly once, inside the
-        renderer-minted ``role="expand"`` untrusted block. ``cursor`` may
-        be the fixed-length placeholder during fit search.
-        """
-        untrusted = self._renderer.render_untrusted_article_text(
+        """Delegate to the shared expand success-view renderer."""
+        return render_expand_success_view(
+            renderer=self._renderer,
+            segment=segment,
             handle_id=handle_id,
             ordinal=self._segment_ordinal,
-            role=EXPAND_ROLE,
-            text=segment,
+            cursor=cursor,
+            summary_more=_EXPAND_SUMMARY_MORE,
+            summary_done=_EXPAND_SUMMARY_DONE,
         )
-        view = ExpandEvidenceToolView(
-            status="ok",
-            summary=(
-                _EXPAND_SUMMARY_MORE if cursor is not None else _EXPAND_SUMMARY_DONE
-            ),
-            next_actions=("expand_evidence",) if cursor is not None else (),
-            evidence_handle={"handle_id": handle_id},
-            next_cursor=cursor,
-            article_text_block=untrusted.text,
-        )
-        return self._renderer.render_tool_view(view.model_dump(mode="json"))
 
     def _error_outcome(
         self, status: Literal["invalid_cursor", "stale_evidence"]
     ) -> ExpansionOutcome:
-        """Render + charge a minimal safe error tool-view (no body/identity).
-
-        If even the minimal error view cannot be charged, fall back to a
-        typed non-model-visible budget-exhausted outcome with zero mutation.
-        """
-        view = ExpandEvidenceToolView(
+        """Delegate to the shared metered expand error outcome."""
+        return metered_expand_error_outcome(
+            renderer=self._renderer,
+            budget=self._budget,
             status=status,
             summary=_ERROR_SUMMARIES[status],
-        )
-        rendered = self._renderer.render_tool_view(view.model_dump(mode="json"))
-        if not self._budget.can_charge("expand", rendered):
-            return ExpansionOutcome(
-                kind="budget_exhausted", model_visible=False
-            )
-        try:
-            ok = self._budget.charge("expand", rendered)
-        except ModelViewBudgetError:
-            return ExpansionOutcome(
-                kind="budget_exhausted", model_visible=False
-            )
-        return ExpansionOutcome(
-            kind=status,
-            model_visible=True,
-            rendered_tool_view=rendered,
-            charge=ok,
         )
 
     # -- fit (planning only; can_charge, never mutates) ----------------------
@@ -804,45 +918,17 @@ class EvidenceExpansionSession:
     def _fit_segment(
         self, *, handle_id: str
     ) -> tuple[str, RenderedModelView, int, bool] | None:
-        """Largest codepoint segment whose *complete* tool-view fits expand.
-
-        Evaluates real candidate views: the terminal candidate (all
-        remaining text, ``next_cursor=null``) is checked separately from
-        the with-cursor region because the JSON shape — and therefore the
-        serialized cost — differs. Never assumes a fixed ``[:2000]`` fits.
-        Returns ``(segment, candidate_view, end, has_more)`` or None.
-        """
-        total = len(self._canonical)
-        remaining = self._canonical[self._next_pos :]
-        hard_max = min(len(remaining), EVIDENCE_SNIPPET_HARD_CAP)
-
-        # Terminal candidate: everything remaining, cursor null (only when
-        # the remaining text is within the snippet hard cap).
-        if len(remaining) <= EVIDENCE_SNIPPET_HARD_CAP:
-            terminal_view = self._render_success_view(
-                handle_id=handle_id, segment=remaining, cursor=None
-            )
-            if self._budget.can_charge("expand", terminal_view):
-                return remaining, terminal_view, total, False
-            hi = hard_max - 1
-        else:
-            hi = hard_max
-
-        lo = 1
-        best: tuple[str, RenderedModelView, int, bool] | None = None
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            segment = remaining[:mid]
-            end = self._next_pos + mid  # strictly < total in this region
-            view = self._render_success_view(
-                handle_id=handle_id, segment=segment, cursor=_CURSOR_PLACEHOLDER
-            )
-            if self._budget.can_charge("expand", view):
-                best = (segment, view, end, True)
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return best
+        """Delegate to the shared expand segment fit primitive."""
+        return fit_expand_segment(
+            renderer=self._renderer,
+            budget=self._budget,
+            canonical=self._canonical,
+            next_pos=self._next_pos,
+            ordinal=self._segment_ordinal,
+            handle_id=handle_id,
+            summary_more=_EXPAND_SUMMARY_MORE,
+            summary_done=_EXPAND_SUMMARY_DONE,
+        )
 
     # -- compensation --------------------------------------------------------
 
@@ -851,33 +937,28 @@ class EvidenceExpansionSession:
         *,
         charge_cost: int,
         observation: ServerEvidenceObservation,
-        ledger_complete: bool,
+        marker: str,
     ) -> None:
-        """Shared registry+budget rollback plus ledger completeness verdict.
+        """Shared ledger-transition + registry/budget compensation.
 
-        ``ledger_complete=False`` means the marker-scoped ledger rollback
-        could not be proven complete. Incomplete compensation fails closed
-        with stable ``expand_evidence_rollback_failed code=...`` messages.
+        Delegates to
+        :func:`evidence_transaction.compensate_ledger_transition_and_observation`
+        (``failure_domain="expand_evidence"``) — the same primitive the
+        map-scope expander uses, so transition-failure semantics cannot
+        drift between seams. Returns only when the ledger rollback is
+        proven complete and registry+budget were compensated; otherwise
+        raises stable ``expand_evidence_rollback_failed code=...``.
         """
-        try:
-            rollback_charged_observation(
-                budget=self._budget,
-                account="expand",
-                charge_cost=charge_cost,
-                registry=self._registry,
-                observation=observation,
-                failure_domain="expand_evidence",
-            )
-        except RuntimeError:
-            if not ledger_complete:
-                raise RuntimeError(
-                    f"{_EXPAND_ROLLBACK_PREFIX}ledger_transition_and_registry"
-                ) from None
-            raise
-        if not ledger_complete:
-            raise RuntimeError(
-                f"{_EXPAND_ROLLBACK_PREFIX}ledger_transition"
-            ) from None
+        compensate_ledger_transition_and_observation(
+            budget=self._budget,
+            account="expand",
+            charge_cost=charge_cost,
+            registry=self._registry,
+            observation=observation,
+            ledger=self._ledger,
+            marker=marker,
+            failure_domain="expand_evidence",
+        )
 
     # -- public entry ---------------------------------------------------------
 
@@ -974,21 +1055,12 @@ class EvidenceExpansionSession:
                 marker=marker,
             )
         except Exception:
-            # Marker rollback works even when the implementation wrote
-            # before raising. When the rollback itself returns incomplete
-            # **or raises**, the ledger is treated as unproven — raw
-            # ledger exception text is never propagated — and registry +
-            # budget compensation still runs (never skipped).
-            try:
-                rollback_status = self._ledger.rollback_transition_by_marker(
-                    marker
-                )
-            except Exception:
-                rollback_status = "incomplete"
+            # Shared marker-scoped ledger + registry/budget compensation
+            # (guards a raising rollback; never skips compensation).
             self._compensate_after_charge(
                 charge_cost=charge_cost,
                 observation=observation,
-                ledger_complete=rollback_status == "rolled_back",
+                marker=marker,
             )
             raise RuntimeError(
                 f"{_EXPAND_ROLLBACK_PREFIX}pointer_transition"
@@ -1029,5 +1101,9 @@ __all__ = [
     "PointerRecord",
     "PointerTransitionReceipt",
     "TransitionRollbackStatus",
+    "fit_expand_segment",
+    "metered_expand_error_outcome",
+    "mint_expansion_cursor_id",
     "mint_transition_marker",
+    "render_expand_success_view",
 ]

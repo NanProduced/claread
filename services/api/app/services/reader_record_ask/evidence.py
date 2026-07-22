@@ -50,17 +50,20 @@ EvidenceSourceTool = Literal[
 # Server-side evidence provenance. Strict superset of
 # :data:`EvidenceSourceTool` adding ``baseline_context`` (the full-article
 # baseline seed origin produced by the baseline context assembler, never an
-# agent-callable tool) and ``selection_expand`` (the host-owned opaque
-# selection expansion seam, R4-A5-3 — also never an agent-callable tool
-# name; the model only supplies an opaque pointer to the expand tool).
-# Server evidence handles / minting / legal-map use this strict five-value
-# type.
+# agent-callable tool), ``selection_expand`` (the host-owned opaque
+# selection expansion seam, R4-A5-3) and ``map_expand`` (the host-owned
+# article-map cursor expansion seam, R4-A5-4 — map entries themselves are
+# never evidence; only text produced by expanding a map cursor is). None
+# of the expansion origins is an agent-callable tool name; the model only
+# supplies opaque pointers. Server evidence handles / minting / legal-map
+# use this strict six-value type.
 EvidenceOrigin = Literal[
     "initial_anchor",
     "read_range",
     "search_current_article",
     "baseline_context",
     "selection_expand",
+    "map_expand",
 ]
 
 # Legal (kind, source) pairs.  Rejects inconsistent combinations such as
@@ -70,13 +73,14 @@ LEGAL_EVIDENCE_KIND_SOURCE: dict[EvidenceKind, frozenset[EvidenceOrigin]] = {
     "read_range": frozenset({"read_range"}),
     "search_hit": frozenset({"search_current_article"}),
     # Generic observation may be produced by any first-wave source or by
-    # the host-owned selection expansion seam (R4-A5-3).
+    # the host-owned expansion seams (R4-A5-3 selection, R4-A5-4 map).
     "observation": frozenset(
         {
             "initial_anchor",
             "read_range",
             "search_current_article",
             "selection_expand",
+            "map_expand",
         }
     ),
     # article_seed is exclusively produced by the baseline context assembler.

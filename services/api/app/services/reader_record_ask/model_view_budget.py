@@ -39,7 +39,8 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from xml.sax.saxutils import escape as _xml_escape
@@ -90,6 +91,9 @@ SerializationErrorCode = Literal[
 # Module-private brand for renderer-minted views. Not exported in public API
 # surface docs; identity-checked only. Not a hostile-code sandbox.
 _RENDERER_ORIGIN: object = object()
+
+# Map-entry cursor shape (R4-A5-4): server-minted opaque continuation token.
+_MAP_CURSOR_PATTERN = re.compile(r"^cur_[0-9a-f]{32}$")
 
 _CHARGE_REQUIRES_RENDERER_VIEW = (
     "budget charge requires RenderedModelView from ModelViewRenderer"
@@ -484,6 +488,60 @@ class ModelViewRenderer:
         XML wrapping.
         """
         return self.render_json(model_view)
+
+    def render_untrusted_article_map(
+        self,
+        *,
+        entries: Sequence[Mapping[str, str]],
+    ) -> RenderedModelView:
+        """Render the untrusted article-map block (R4-A5-4, design §18.2).
+
+        Each entry carries exactly ``cursor`` (``cur_<32 hex>``), ``kind``
+        (``heading`` | ``window`` | ``ordinal``) and ``label``
+        (article-derived **untrusted** text). Labels and attribute values
+        are XML-escaped so hostile label text cannot escape the data
+        region. No entry field may carry identity, locator, offset, or
+        provenance — the caller's typed schema enforces that; this method
+        enforces the closed key set and shape. Serialized cost includes
+        every tag and attribute (the single metering source for the map
+        account).
+        """
+        lines: list[str] = ["<untrusted_article_map>"]
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise TypeError("map entry must be a Mapping")
+            if set(entry.keys()) != {"cursor", "kind", "label"}:
+                raise ValueError(
+                    "map entry must carry exactly cursor/kind/label"
+                )
+            cursor = entry["cursor"]
+            kind = entry["kind"]
+            label = entry["label"]
+            if not isinstance(cursor, str) or not _MAP_CURSOR_PATTERN.match(
+                cursor
+            ):
+                raise ValueError(
+                    "map entry cursor must match cur_<32 hex chars>"
+                )
+            if not isinstance(kind, str) or kind not in (
+                "heading",
+                "window",
+                "ordinal",
+            ):
+                raise ValueError(
+                    "map entry kind must be heading|window|ordinal"
+                )
+            if not isinstance(label, str):
+                raise TypeError("map entry label must be str")
+            escaped_label = _xml_escape(label)
+            escaped_cursor = _xml_escape(cursor, {'"': "&quot;"})
+            escaped_kind = _xml_escape(kind, {'"': "&quot;"})
+            lines.append(
+                f'<entry cursor="{escaped_cursor}" kind="{escaped_kind}">'
+                f"{escaped_label}</entry>"
+            )
+        lines.append("</untrusted_article_map>")
+        return _mint_rendered_view("\n".join(lines))
 
     def render_untrusted_article_text(
         self,
