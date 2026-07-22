@@ -10,8 +10,11 @@ Verifies:
   3. ``_ground_and_convert_candidates`` correctly grounds LLM output to
      ``CandidateItem`` with UTF-16 offsets + text_hash + self-rating.
   4. ``generate`` raises ``GrammarWindowExecutionError`` on LLM failure.
-  5. ``_convert_output`` backward-compat static method still works.
-  6. Empty target_anchors returns empty list without LLM call.
+  5. Empty target_anchors returns empty list without LLM call.
+
+P1-2: the legacy ``_convert_output`` static method was removed (dead code
+after the LLM candidate schema took over). Tests that exercised it are
+removed; the remaining tests cover the live ``generate`` path.
 """
 
 from __future__ import annotations
@@ -22,13 +25,6 @@ from uuid import UUID
 
 import pytest
 
-from app.schemas.reader_orchestration import (
-    GrammarBundleOutput,
-    GrammarNoteItem,
-    ReaderTextRangeAnchor,
-    SentenceAnalysisChunk,
-    SentenceAnalysisItem,
-)
 from app.services.reader_orchestration.grammar_window_worker import (
     GrammarWindowExecutionError,
     PydanticAIGrammarWindowExecutor,
@@ -40,141 +36,10 @@ from app.services.reader_orchestration.grammar_window_worker import (
 )
 
 
-def _make_anchor(
-    *,
-    anchor_segment_id: str = "anchor-1",
-    unit_id: str = "unit-1",
-    selected_text: str = "team",
-    start_offset: int = 0,
-) -> ReaderTextRangeAnchor:
-    from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
-
-    end_offset = start_offset + utf16_code_unit_length(selected_text)
-    return ReaderTextRangeAnchor(
-        base_id="base-1",
-        unit_id=unit_id,
-        anchor_segment_id=anchor_segment_id,
-        sentence_id=anchor_segment_id,
-        segment_type="sentence",
-        start_offset=start_offset,
-        end_offset=end_offset,
-        selected_text=selected_text,
-        text_hash=compute_text_range_hash(selected_text),
-    )
-
-
-def _make_grammar_note(
-    *,
-    anchor_segment_id: str = "anchor-1",
-    grammar_point: str = "subject-verb agreement",
-    pattern: str | None = "SVO",
-    note: str = "The team revised the plan.",
-    selected_text: str = "team",
-) -> GrammarNoteItem:
-    return GrammarNoteItem(
-        spans=[_make_anchor(
-            anchor_segment_id=anchor_segment_id,
-            selected_text=selected_text,
-        )],
-        grammar_point=grammar_point,
-        pattern=pattern,
-        note=note,
-    )
-
-
-def _make_sentence_analysis(
-    *,
-    anchor_segment_id: str = "anchor-1",
-    label: str = "main clause",
-    analysis: str = "Simple SVO clause.",
-    selected_text: str = "The team revised the plan.",
-) -> SentenceAnalysisItem:
-    return SentenceAnalysisItem(
-        anchor=_make_anchor(
-            anchor_segment_id=anchor_segment_id,
-            selected_text=selected_text,
-        ),
-        label=label,
-        analysis=analysis,
-        chunks=[
-            SentenceAnalysisChunk(order=1, label="clause", text=selected_text),
-        ],
-    )
-
-
 def test_executor_can_be_constructed() -> None:
     """PydanticAIGrammarWindowExecutor 可被构造（无 executor 参数）。"""
     executor = PydanticAIGrammarWindowExecutor()
     assert executor is not None
-
-
-def test_convert_output_maps_grammar_notes() -> None:
-    """_convert_output 将 GrammarNoteItem 映射为 grammar_note CandidateItem。"""
-    note = _make_grammar_note(
-        anchor_segment_id="anchor-1",
-        grammar_point="subject-verb agreement",
-        pattern="SVO",
-        note="The team revised the plan.",
-    )
-    output = GrammarBundleOutput(grammar_notes=[note], sentence_analyses=[])
-
-    candidates = PydanticAIGrammarWindowExecutor._convert_output(output)
-
-    assert len(candidates) == 1
-    candidate = candidates[0]
-    assert candidate.item_type == "grammar_note"
-    assert candidate.anchor_segment_id == "anchor-1"
-    assert len(candidate.spans) == 1
-    assert candidate.spans[0]["anchor_segment_id"] == "anchor-1"
-    assert candidate.pattern_key == "SVO"
-    assert candidate.quality_score == 0.0
-    assert candidate.reading_blocker is False
-    # semantic_dedup_key 是 sha1(grammar_point|note) 的前 16 字符
-    assert len(candidate.semantic_dedup_key) == 16
-
-
-def test_convert_output_maps_sentence_analyses() -> None:
-    """_convert_output 将 SentenceAnalysisItem 映射为 sentence_analysis CandidateItem。"""
-    analysis = _make_sentence_analysis(
-        anchor_segment_id="anchor-2",
-        label="main clause",
-        analysis="Simple SVO clause.",
-    )
-    output = GrammarBundleOutput(
-        grammar_notes=[],
-        sentence_analyses=[analysis],
-    )
-
-    candidates = PydanticAIGrammarWindowExecutor._convert_output(output)
-
-    assert len(candidates) == 1
-    candidate = candidates[0]
-    assert candidate.item_type == "sentence_analysis"
-    assert candidate.anchor_segment_id == "anchor-2"
-    assert len(candidate.spans) == 1
-    assert candidate.spans[0]["anchor_segment_id"] == "anchor-2"
-    assert candidate.pattern_key is None
-    assert candidate.quality_score == 0.0
-    assert candidate.reading_blocker is False
-    assert len(candidate.semantic_dedup_key) == 16
-
-
-def test_convert_output_dedup_key_is_deterministic() -> None:
-    """相同 grammar_point + note 产生相同 semantic_dedup_key。"""
-    note1 = _make_grammar_note(grammar_point="gp", note="n1")
-    note2 = _make_grammar_note(grammar_point="gp", note="n1")
-    output = GrammarBundleOutput(grammar_notes=[note1, note2], sentence_analyses=[])
-
-    candidates = PydanticAIGrammarWindowExecutor._convert_output(output)
-    assert len(candidates) == 2
-    assert candidates[0].semantic_dedup_key == candidates[1].semantic_dedup_key
-
-
-def test_convert_output_empty_input() -> None:
-    """空 GrammarBundleOutput 产生空 candidate 列表。"""
-    output = GrammarBundleOutput()
-    candidates = PydanticAIGrammarWindowExecutor._convert_output(output)
-    assert candidates == []
 
 
 @pytest.mark.anyio
@@ -194,6 +59,10 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
     使用 mock _run_agent 避免触达 real LLM。window context 包含 2 个
     target anchor 属于同一 unit，LLM 输出 1 grammar_note + 1 sentence_analysis。
     _run_agent 应只被调用一次（window-scoped single call）。
+
+    P1-2: candidates carry the 3-field self-rating contract
+    (``quality_score`` / ``reading_blocker`` / ``dedup_hint``). The legacy
+    ``reason_code`` / ``confidence`` fields are gone.
     """
     # 准备 fake LLM output
     fake_output = _WindowGrammarCandidateOutput(
@@ -211,8 +80,6 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
                 note="The team revised the plan.",
                 quality_score=4,
                 reading_blocker=False,
-                reason_code="grammar_pattern",
-                confidence=0.9,
                 dedup_hint="subject_verb_agreement",
             ),
         ],
@@ -231,8 +98,6 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
                 ],
                 quality_score=5,
                 reading_blocker=False,
-                reason_code="discourse_signal",
-                confidence=0.95,
                 dedup_hint="main_clause_svo",
             ),
         ],
@@ -315,6 +180,8 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
         assert len(grammar_note.spans) == 1
         assert grammar_note.spans[0]["anchor_segment_id"] == "anchor-1"
         assert grammar_note.spans[0]["selected_text"] == "team"
+        # P1-2: dedup_hint is propagated so the window selector can dedup.
+        assert grammar_note.dedup_hint == "subject_verb_agreement"
         # 验证 sentence_analysis self-rating
         sent_analysis = next(c for c in result.candidates if c.item_type == "sentence_analysis")
         assert sent_analysis.quality_score == 5.0
@@ -322,6 +189,7 @@ async def test_generate_makes_single_window_scoped_llm_call() -> None:
         assert sent_analysis.analysis == "简单 SVO 句型。"
         assert len(sent_analysis.chunks) == 1
         assert sent_analysis.chunks[0]["order"] == 1
+        assert sent_analysis.dedup_hint == "main_clause_svo"
 
 
 @pytest.mark.anyio
