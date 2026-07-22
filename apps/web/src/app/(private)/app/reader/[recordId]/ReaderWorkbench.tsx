@@ -3853,14 +3853,14 @@ export function ReaderWorkbench({
                         readerCommandControl,
                         "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         readerSettings.mode === "intensive"
-                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          ? "text-action-primary after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-action-primary"
                           : "text-ink hover:text-ink-soft",
                       )}
                     >
                       <BookOpen
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          readerSettings.mode === "intensive" ? "text-vocab-amber" : "text-muted-foreground"
+                          readerSettings.mode === "intensive" ? "text-action-primary" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />
@@ -3878,14 +3878,14 @@ export function ReaderWorkbench({
                         readerCommandControl,
                         "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         readerSettings.mode === "immersive"
-                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          ? "text-action-primary after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-action-primary"
                           : "text-ink hover:text-ink-soft",
                       )}
                     >
                       <Eye
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          readerSettings.mode === "immersive" ? "text-vocab-amber" : "text-muted-foreground"
+                          readerSettings.mode === "immersive" ? "text-action-primary" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />
@@ -3906,14 +3906,14 @@ export function ReaderWorkbench({
                         readerCommandControl,
                         "relative flex flex-1 justify-center rounded-none px-3.5 py-2.5 text-left sm:py-3.5 md:px-5",
                         settingsPanelOpen
-                          ? "text-vocab-amber after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-vocab-amber"
+                          ? "text-action-primary after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-action-primary"
                           : "text-ink hover:text-ink-soft",
                       )}
                     >
                       <SlidersHorizontal
                         aria-hidden="true"
                         className={`h-[18px] w-[18px] shrink-0 transition-transform ${
-                          settingsPanelOpen ? "text-vocab-amber" : "text-muted-foreground"
+                          settingsPanelOpen ? "text-action-primary" : "text-muted-foreground"
                         }`}
                         strokeWidth={1.5}
                       />

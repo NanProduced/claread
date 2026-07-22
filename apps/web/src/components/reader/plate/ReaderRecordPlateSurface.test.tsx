@@ -151,9 +151,9 @@ afterEach(() => {
   } catch {
     // Ignore jsdom localStorage variants that do not expose the full Storage API.
   }
-  cleanup();
   themePreferenceCurrent = "system";
   themePreferenceSetter.mockClear();
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -3574,7 +3574,10 @@ describe("ReaderRecordPlateSurface", () => {
     expect(menu.textContent).toContain("阅读体验");
     expect(menu.querySelector('[data-reader-record-more-mode="intensive"]')).not.toBeNull();
     expect(menu.querySelector('[data-reader-record-more-mode="immersive"]')).not.toBeNull();
-    expect(menu.querySelector('[data-reader-record-more-theme="paper"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-theme="system"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-theme="light"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-theme="dark"]')).not.toBeNull();
+    expect(menu.querySelector('[data-reader-record-more-theme="paper"]')).toBeNull();
     expect(menu.querySelector('[data-reader-record-more-font-scale="md"]')).not.toBeNull();
     expect(menu.querySelector('[data-reader-record-more-font-family="sans"]')).not.toBeNull();
     expect(menu.querySelector('[data-reader-record-more-action="copy-link"]')).not.toBeNull();
@@ -3641,8 +3644,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     await user.click(menu.querySelector('[data-reader-record-more-theme="dark"]')!);
     await waitFor(() => {
-      // Reader 切换主题只通过 AppearanceProvider 的 setThemePreference 写全局偏好，
-      // 不再直接读写旧 Reader 主题存储键。
+      // Reader 切换主题只通过 AppearanceProvider 的 setThemePreference 写全局偏好。
       expect(themePreferenceSetter).toHaveBeenCalledWith("dark");
       expect(themePreferenceCurrent).toBe("dark");
     });
