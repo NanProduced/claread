@@ -1754,11 +1754,60 @@ def test_production_rag_factory_returns_none_when_article_rag_is_disabled() -> N
 
     settings = SimpleNamespace(reader_article_rag_enabled=False)
 
-    assert build_production_article_rag_port(settings) is None
+    with patch(
+        "app.services.reader_orchestration.article_rag_embedding_provider."
+        "build_default_article_rag_embedding_provider",
+    ) as build_embedding:
+        with patch(
+            "app.services.reader_orchestration.article_rag_vector_search."
+            "build_default_article_rag_vector_searcher",
+        ) as build_searcher:
+            with patch(
+                "app.services.reader_orchestration.article_rag_retrieval_service."
+                "ArticleRagRetrievalService",
+            ) as build_retrieval:
+                assert build_production_article_rag_port(settings) is None
+
+    build_embedding.assert_not_called()
+    build_searcher.assert_not_called()
+    build_retrieval.assert_not_called()
 
 
-def test_production_rag_factory_builds_retrieval_backed_port_when_enabled() -> None:
-    """Feature-on wires the independent Ask port to Article RAG retrieval."""
+def test_production_rag_factory_returns_none_when_providers_incomplete() -> None:
+    """Enabled but Unconfigured* providers must not open a retrieval port."""
+    from app.services.reader_orchestration.article_rag_index_worker import (
+        UnconfiguredArticleRagEmbeddingProvider,
+    )
+    from app.services.reader_orchestration.article_rag_vector_search import (
+        UnconfiguredArticleRagVectorSearcher,
+    )
+    from app.services.reader_record_ask.production_wiring import (
+        build_production_article_rag_port,
+    )
+
+    settings = SimpleNamespace(reader_article_rag_enabled=True)
+
+    with patch(
+        "app.services.reader_orchestration.article_rag_embedding_provider."
+        "build_default_article_rag_embedding_provider",
+        return_value=UnconfiguredArticleRagEmbeddingProvider(),
+    ):
+        with patch(
+            "app.services.reader_orchestration.article_rag_vector_search."
+            "build_default_article_rag_vector_searcher",
+            return_value=UnconfiguredArticleRagVectorSearcher(),
+        ):
+            with patch(
+                "app.services.reader_orchestration.article_rag_retrieval_service."
+                "ArticleRagRetrievalService",
+            ) as build_retrieval:
+                assert build_production_article_rag_port(settings) is None
+
+    build_retrieval.assert_not_called()
+
+
+def test_production_rag_factory_builds_retrieval_backed_port_when_ready() -> None:
+    """Feature-on + complete providers wires the independent Ask port."""
     from app.services.reader_record_ask.article_rag_adapter import (
         RetrievalBackedArticleRagPort,
     )
@@ -1768,6 +1817,7 @@ def test_production_rag_factory_builds_retrieval_backed_port_when_enabled() -> N
 
     settings = SimpleNamespace(reader_article_rag_enabled=True)
     pool = object()
+    # Non-Unconfigured stand-ins: any object that is not the Unconfigured* types.
     embedding = object()
     searcher = object()
     retrieval = MagicMock()

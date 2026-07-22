@@ -297,3 +297,50 @@ def test_hit_from_retrieval_never_hashes_text() -> None:
         envelope_stable_document_id=_DOC,
     )
     assert view is None
+
+
+def test_hit_from_retrieval_rejects_metadata_only_content_sha256() -> None:
+    """Free-form metadata_json content_sha256 is not plan-backed identity."""
+    hit = _FakeHit(
+        chunk_id="c1",
+        text="eligible text",
+        citation=_citation(),
+        metadata_json={
+            "source_scope": "main_reading_text",
+            "block_type": "paragraph",
+            "content_sha256": _CHUNK_HASH,
+        },
+        content_sha256=None,
+    )
+    view = _hit_from_retrieval(
+        hit,
+        envelope_record_id=_RECORD,
+        envelope_base_id=_BASE,
+        envelope_generation=1,
+        envelope_stable_document_id=_DOC,
+    )
+    assert view is None
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_metadata_only_content_sha256_as_empty() -> None:
+    hit = _good_hit(content_sha256=None)
+    hit.metadata_json = {
+        "source_scope": "main_reading_text",
+        "block_type": "paragraph",
+        "content_sha256": _CHUNK_HASH,
+    }
+    retrieval = _FakeRetrieval(result=_FakeResult(hits=(hit,)))
+    port = RetrievalBackedArticleRagPort(retrieval=retrieval)
+    outcome = await port.search_current_article(
+        user_id=_USER,
+        reading_record_id=_RECORD,
+        base_id=_BASE,
+        record_generation=1,
+        stable_document_id=_DOC,
+        query="q",
+        limit=5,
+    )
+    assert outcome.status == "empty"
+    assert outcome.hits == ()
+    assert retrieval.call_count == 1

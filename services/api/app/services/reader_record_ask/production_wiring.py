@@ -100,17 +100,73 @@ def resolve_agentic_model(
         return None
 
 
+def article_rag_query_ready(
+    settings: Settings | None = None,
+    *,
+    embedding_provider: Any | None = None,
+    vector_searcher: Any | None = None,
+) -> bool:
+    """Return True only when Ask may open Article RAG I/O.
+
+    Requires the feature flag **and** both embedding + vector providers to
+    resolve to real (non-Unconfigured) implementations.  When False, the
+    production port factory must return ``None`` so ``search_current_article``
+    never touches Postgres plan loading, embedding, or vector search.
+
+    Optional ``embedding_provider`` / ``vector_searcher`` inject already-built
+    instances (tests); otherwise the same factories used by production are
+    called.  This function never opens a DB connection or network socket by
+    itself — factories only construct local objects / read settings.
+    """
+    cfg = settings or get_settings()
+    if not bool(getattr(cfg, "reader_article_rag_enabled", False)):
+        return False
+
+    try:
+        from app.services.reader_orchestration.article_rag_embedding_provider import (
+            build_default_article_rag_embedding_provider,
+        )
+        from app.services.reader_orchestration.article_rag_index_worker import (
+            UnconfiguredArticleRagEmbeddingProvider,
+        )
+        from app.services.reader_orchestration.article_rag_vector_search import (
+            UnconfiguredArticleRagVectorSearcher,
+            build_default_article_rag_vector_searcher,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Article RAG readiness import failed: %s", type(exc).__name__)
+        return False
+
+    embedding = (
+        embedding_provider
+        if embedding_provider is not None
+        else build_default_article_rag_embedding_provider(cfg)
+    )
+    searcher = (
+        vector_searcher
+        if vector_searcher is not None
+        else build_default_article_rag_vector_searcher(cfg)
+    )
+    if isinstance(embedding, UnconfiguredArticleRagEmbeddingProvider):
+        return False
+    if isinstance(searcher, UnconfiguredArticleRagVectorSearcher):
+        return False
+    return True
+
+
 def build_production_article_rag_port(
     settings: Settings | None = None,
     *,
     pool: Any | None = None,
 ) -> ArticleRagSearchPort | None:
-    """Construct RetrievalBackedArticleRagPort when Article RAG is enabled.
+    """Construct RetrievalBackedArticleRagPort only when query path is ready.
 
-    Returns ``None`` when feature is disabled so tools return typed
-    unavailable without I/O.  When enabled, still builds the port even if
-    providers are Unconfigured* — retrieval then fails closed with typed
-    statuses (not_indexed / unavailable).
+    Returns ``None`` when:
+      * feature flag is off, or
+      * embedding / vector providers are incomplete (Unconfigured*),
+
+    so Ask tools return typed ``unavailable`` with **zero** RAG I/O
+    (no plan load, no embedding call, no vector search).
     """
     cfg = settings or get_settings()
     if not bool(getattr(cfg, "reader_article_rag_enabled", False)):
@@ -120,19 +176,37 @@ def build_production_article_rag_port(
         from app.services.reader_orchestration.article_rag_embedding_provider import (
             build_default_article_rag_embedding_provider,
         )
+        from app.services.reader_orchestration.article_rag_index_worker import (
+            UnconfiguredArticleRagEmbeddingProvider,
+        )
         from app.services.reader_orchestration.article_rag_retrieval_service import (
             ArticleRagRetrievalService,
         )
         from app.services.reader_orchestration.article_rag_vector_search import (
+            UnconfiguredArticleRagVectorSearcher,
             build_default_article_rag_vector_searcher,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Article RAG import failed: %s", type(exc).__name__)
         return None
 
-    db_pool = pool or db_connection.DB_POOL
     embedding = build_default_article_rag_embedding_provider(cfg)
     searcher = build_default_article_rag_vector_searcher(cfg)
+    if not article_rag_query_ready(
+        cfg,
+        embedding_provider=embedding,
+        vector_searcher=searcher,
+    ):
+        logger.debug(
+            "Article RAG enabled but providers incomplete "
+            "(embedding_unconfigured=%s, vector_unconfigured=%s); "
+            "Ask port omitted for zero I/O",
+            isinstance(embedding, UnconfiguredArticleRagEmbeddingProvider),
+            isinstance(searcher, UnconfiguredArticleRagVectorSearcher),
+        )
+        return None
+
+    db_pool = pool or db_connection.DB_POOL
     retrieval = ArticleRagRetrievalService(
         pool=db_pool,
         embedding_provider=embedding,

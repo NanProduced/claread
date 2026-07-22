@@ -51,14 +51,15 @@ class _LifecycleStatusProbe(Protocol):
 
 
 def _plan_backed_content_sha256(hit: Any) -> str | None:
-    """Return plan-backed content hash only — never derive from text."""
+    """Return typed plan-backed content hash only.
+
+    Accepts only the hit's first-class ``content_sha256`` field (64 hex).
+    Never derives from chunk text, free-form metadata, or client payload —
+    those are not plan-backed identity.
+    """
     direct = getattr(hit, "content_sha256", None)
     if isinstance(direct, str) and _CONTENT_SHA256_RE.match(direct):
         return direct
-    metadata = dict(getattr(hit, "metadata_json", None) or {})
-    meta = metadata.get("content_sha256")
-    if isinstance(meta, str) and _CONTENT_SHA256_RE.match(meta):
-        return meta
     return None
 
 
