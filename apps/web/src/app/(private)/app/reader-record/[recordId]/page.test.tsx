@@ -1015,6 +1015,25 @@ describe("ReadingRecordPage static contract", () => {
 });
 
 describe("ReadingRecordPage direct load", () => {
+  it("renders a retryable not-ready state while the artifact has no active base", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      status: 409,
+      code: "record_not_ready",
+      message: "文档仍在解析，请稍后重试。",
+    }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderReadingRecordPage("rec_not_ready_1");
+
+    expect(await screen.findByText("文档仍在解析")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新检查" })).toBeTruthy();
+    expect(screen.queryByText("reader snapshot requires an active base")).toBeNull();
+  });
+
   it("renders the progressive status strip as screen-reader-only so it never occludes the body", async () => {
     const snapshot = makeSnapshot(
       "rec_progressive_quiet_1",

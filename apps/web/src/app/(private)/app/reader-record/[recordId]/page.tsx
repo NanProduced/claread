@@ -39,6 +39,7 @@ const READER_POLLING_TOAST_ID = "reader-record-polling-interrupted";
 type SnapshotState =
   | { kind: "loading"; recordId: string }
   | { kind: "loaded"; recordId: string; snapshot: ReaderPlateSnapshotDto }
+  | { kind: "not-ready"; recordId: string; message: string }
   | { kind: "error"; recordId: string; message: string };
 
 type SnapshotResponse =
@@ -47,7 +48,7 @@ type SnapshotResponse =
 
 type SnapshotLoadResult =
   | { ok: true; snapshot: ReaderPlateSnapshotDto }
-  | { ok: false; message: string };
+  | { ok: false; code: string; message: string };
 
 type ReadingRecordRouteParams = { recordId: string };
 type ReadingRecordRouteParamsInput =
@@ -75,6 +76,7 @@ async function loadSnapshotForRecord(
   if (!response.ok || !payload.ok) {
     return {
       ok: false,
+      code: payload.ok === false ? payload.code : "upstream_error",
       message: payload.ok === false ? payload.message : fallbackMessage,
     };
   }
@@ -223,6 +225,7 @@ export default function ReadingRecordPage({
     kind: "loading",
     recordId,
   });
+  const [initialLoadAttempt, setInitialLoadAttempt] = useState(0);
   const [isReloading, setIsReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [activeReloadReason, setActiveReloadReason] = useState<string | null>(null);
@@ -441,7 +444,7 @@ export default function ReadingRecordPage({
 
         if (!result.ok) {
           setSnapshotState({
-            kind: "error",
+            kind: result.code === "record_not_ready" ? "not-ready" : "error",
             recordId,
             message: result.message,
           });
@@ -476,7 +479,7 @@ export default function ReadingRecordPage({
     return () => {
       cancelled = true;
     };
-  }, [recordId, publishProgressiveUi, tryAcceptSnapshot]);
+  }, [initialLoadAttempt, recordId, publishProgressiveUi, tryAcceptSnapshot]);
 
   const polling = useReaderPlatePolling({
     recordId,
@@ -559,6 +562,20 @@ export default function ReadingRecordPage({
           <section className="rounded-note border border-danger/30 bg-danger/5 p-6 shadow-surface-quiet">
             <p className="text-sm font-medium text-danger">加载失败</p>
             <p className="mt-2 text-sm text-danger/90">{snapshotState.message}</p>
+          </section>
+        ) : null}
+
+        {snapshotState.kind === "not-ready" ? (
+          <section className="rounded-note border border-hairline bg-surface p-6 shadow-surface-quiet">
+            <p className="text-sm font-medium text-ink">文档仍在解析</p>
+            <p className="mt-2 text-sm text-muted-foreground">{snapshotState.message}</p>
+            <button
+              type="button"
+              className="mt-4 rounded-md border border-hairline px-3 py-2 text-sm font-medium text-ink hover:bg-muted/50"
+              onClick={() => setInitialLoadAttempt((attempt) => attempt + 1)}
+            >
+              重新检查
+            </button>
           </section>
         ) : null}
 
