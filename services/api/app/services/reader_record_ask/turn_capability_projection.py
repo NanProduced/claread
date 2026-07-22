@@ -27,8 +27,9 @@ still uses ``envelope.to_agent_projection()`` until A5-2+.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID
 
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort

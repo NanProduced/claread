@@ -1,4 +1,4 @@
-"""Host-owned model-visible turn budget and renderer (R4-A5-1 foundation).
+"""Host-owned model-visible turn budget and renderer (R4-A5-1 / A5-1R).
 
 Authority (design TMP §18.1)
 ----------------------------
@@ -10,6 +10,16 @@ claim.
 The single enforcement seam is :class:`ModelViewRenderer` +
 :class:`ModelVisibleTurnBudget`. Provider encoders, tokenizers, and shadow
 ledgers must not decide whether article context may be injected.
+
+Public budget charges accept only :class:`RenderedModelView` produced by the
+renderer. Raw integer debit is private to this module.
+
+JSON surfaces (``render_json`` / ``render_tool_view``) are type-level
+fail-closed: only JSON-native values and finite floats. Serialization errors
+are sanitized typed codes — never payload dumps, object repr, or raw
+exception text. Content safety of projections / ModelToolView remains the
+responsibility of their typed schemas (no field-name or semantic scanning
+here).
 
 A5-1 scope
 ----------
@@ -25,8 +35,10 @@ Foundation modules + unit tests only. Does **not**:
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 from xml.sax.saxutils import escape as _xml_escape
 
 # ---------------------------------------------------------------------------
@@ -63,6 +75,14 @@ ACCOUNT_RESERVES: dict[BudgetAccountName, int] = {
 assert sum(ACCOUNT_RESERVES.values()) == MODEL_VISIBLE_TURN_PAYLOAD_CAP
 
 BudgetDenyReason = Literal["account_exhausted", "total_exhausted"]
+
+# Sanitized serialization failure codes (no payload / type name / value).
+SerializationErrorCode = Literal[
+    "non_json_native",
+    "non_finite_float",
+    "non_string_key",
+    "not_object",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +148,19 @@ class ModelViewBudgetError(Exception):
         )
 
 
+class ModelViewSerializationError(Exception):
+    """Fail-closed JSON serialization error with a sanitized typed code.
+
+    Messages contain only the stable ``code`` string. They must never embed
+    payload fragments, object reprs, type names of rejected values, or the
+    original exception text.
+    """
+
+    def __init__(self, code: SerializationErrorCode) -> None:
+        self.code: SerializationErrorCode = code
+        super().__init__(f"model_view_serialization_error code={code}")
+
+
 @dataclass(frozen=True, slots=True)
 class RequestFrameParts:
     """Breakdown of the request_frame account (system + turn frame).
@@ -145,6 +178,63 @@ class RequestFrameParts:
 
 
 # ---------------------------------------------------------------------------
+# JSON-native fail-closed walk (no str-coercion default; NaN disallowed)
+# ---------------------------------------------------------------------------
+
+
+def _to_json_native(value: object) -> Any:
+    """Return a plain JSON-native structure or raise ModelViewSerializationError.
+
+    Allowed leaves: ``None``, ``bool``, ``int``, finite ``float``, ``str``.
+    Allowed containers: ``list``, ``Mapping`` with ``str`` keys only.
+    Rejects UUID, custom objects, bytes, tuples, sets, NaN/±Inf, non-str keys.
+    Error messages never include the rejected value.
+    """
+    if value is None:
+        return None
+    # bool is a subclass of int — check before int.
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ModelViewSerializationError("non_finite_float")
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return [_to_json_native(item) for item in value]
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ModelViewSerializationError("non_string_key")
+            out[key] = _to_json_native(item)
+        return out
+    raise ModelViewSerializationError("non_json_native")
+
+
+def _dump_canonical_json(payload: Mapping[str, Any]) -> str:
+    """Canonical JSON dump; fail-closed (no str coercion default; NaN off)."""
+    if not isinstance(payload, Mapping):
+        raise ModelViewSerializationError("not_object")
+    native = _to_json_native(payload)
+    # allow_nan=False is belt-and-suspenders after the finite-float walk.
+    try:
+        return json.dumps(
+            native,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        # Sanitized — never chain or embed the raw exception text.
+        raise ModelViewSerializationError("non_json_native") from None
+
+
+# ---------------------------------------------------------------------------
 # Budget ledger
 # ---------------------------------------------------------------------------
 
@@ -152,8 +242,9 @@ class RequestFrameParts:
 class ModelVisibleTurnBudget:
     """Six-account char budget for one Ask turn's model-visible payload.
 
-    Spill across accounts is forbidden. Each charge is checked against the
-    account reserve **and** the turn total cap.
+    Spill across accounts is forbidden. Each public charge is checked against
+    the account reserve **and** the turn total cap, and must carry a
+    :class:`RenderedModelView` from :class:`ModelViewRenderer`.
     """
 
     __slots__ = ("_spent",)
@@ -182,7 +273,42 @@ class ModelVisibleTurnBudget:
         """Diagnostic copy of spent-by-account (not model-visible)."""
         return dict(self._spent)
 
-    def can_charge(self, account: BudgetAccountName, cost: int) -> bool:
+    def can_charge(
+        self, account: BudgetAccountName, rendered: RenderedModelView
+    ) -> bool:
+        cost = self._cost_from_rendered(rendered)
+        return self._can_charge_chars(account, cost)
+
+    def try_charge(
+        self, account: BudgetAccountName, rendered: RenderedModelView
+    ) -> BudgetChargeOk | BudgetChargeDenied:
+        """Attempt a charge; never mutates on denial."""
+        cost = self._cost_from_rendered(rendered)
+        return self._try_charge_chars(account, cost)
+
+    def charge(
+        self, account: BudgetAccountName, rendered: RenderedModelView
+    ) -> BudgetChargeOk:
+        """Charge or raise :class:`ModelViewBudgetError` (typed, not ModelRetry)."""
+        result = self.try_charge(account, rendered)
+        if isinstance(result, BudgetChargeDenied):
+            raise ModelViewBudgetError(result)
+        return result
+
+    # -- private integer debit (not part of the public metering seam) --------
+
+    def _cost_from_rendered(self, rendered: RenderedModelView) -> int:
+        if not isinstance(rendered, RenderedModelView):
+            raise TypeError(
+                "budget charge requires RenderedModelView from ModelViewRenderer"
+            )
+        if rendered.char_cost != len(rendered.text):
+            raise ValueError("RenderedModelView char_cost must equal len(text)")
+        if rendered.char_cost < 0:
+            raise ValueError("char_cost must be non-negative")
+        return rendered.char_cost
+
+    def _can_charge_chars(self, account: BudgetAccountName, cost: int) -> bool:
         if cost < 0:
             raise ValueError("cost must be non-negative")
         if self._spent[account] + cost > ACCOUNT_RESERVES[account]:
@@ -191,10 +317,10 @@ class ModelVisibleTurnBudget:
             return False
         return True
 
-    def try_charge(
+    def _try_charge_chars(
         self, account: BudgetAccountName, cost: int
     ) -> BudgetChargeOk | BudgetChargeDenied:
-        """Attempt a charge; never mutates on denial."""
+        """Private raw-char charge. Public callers must use RenderedModelView."""
         if cost < 0:
             raise ValueError("cost must be non-negative")
         spent_account = self._spent[account]
@@ -235,13 +361,6 @@ class ModelVisibleTurnBudget:
             remaining_total=MODEL_VISIBLE_TURN_PAYLOAD_CAP - self.total_spent(),
         )
 
-    def charge(self, account: BudgetAccountName, cost: int) -> BudgetChargeOk:
-        """Charge or raise :class:`ModelViewBudgetError` (typed, not ModelRetry)."""
-        result = self.try_charge(account, cost)
-        if isinstance(result, BudgetChargeDenied):
-            raise ModelViewBudgetError(result)
-        return result
-
 
 # ---------------------------------------------------------------------------
 # Host-owned renderer (unique metering entry)
@@ -252,7 +371,7 @@ class ModelViewRenderer:
     """Deterministic host-owned serializer for model-visible Ask surfaces.
 
     Every charged surface returns :class:`RenderedModelView` whose
-    ``char_cost`` equals ``len(text)``. Callers charge that cost into
+    ``char_cost`` equals ``len(text)``. Callers charge that object into
     :class:`ModelVisibleTurnBudget`. No provider encoder or tokenizer is
     consulted.
     """
@@ -268,16 +387,11 @@ class ModelViewRenderer:
     def render_json(self, payload: Mapping[str, Any]) -> RenderedModelView:
         """Canonical JSON for projections and tool model-views.
 
-        Sorted keys, compact separators, ``ensure_ascii=False`` so non-ASCII
-        content has a stable, re-computable char cost.
+        Sorted keys, compact separators, ``ensure_ascii=False``. Rejects
+        non-JSON-native values and non-finite floats with
+        :class:`ModelViewSerializationError` (sanitized code only).
         """
-        text = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        )
+        text = _dump_canonical_json(payload)
         return RenderedModelView(text=text, char_cost=len(text))
 
     def render_tool_view(self, model_view: Mapping[str, Any]) -> RenderedModelView:
@@ -372,8 +486,9 @@ class ModelViewRenderer:
         """Render request_frame and charge it; raise on exhaustion.
 
         The user question is never truncated to fit — oversized questions
-        surface as :class:`ModelViewBudgetError`.
+        surface as :class:`ModelViewBudgetError`. Metering always flows
+        through the rendered :class:`RenderedModelView`.
         """
         rendered = self.render_request_frame(parts)
-        ok = budget.charge("request_frame", rendered.char_cost)
+        ok = budget.charge("request_frame", rendered)
         return rendered, ok

@@ -1,4 +1,4 @@
-"""R4-A5-1 unit tests: ModelVisibleTurnBudget + ModelViewRenderer + projection.
+"""R4-A5-1 / A5-1R unit tests: ModelVisibleTurnBudget + ModelViewRenderer.
 
 Scope: foundation modules only. No agent loop, no real LLM, no RAG I/O.
 """
@@ -6,6 +6,7 @@ Scope: foundation modules only. No agent loop, no real LLM, no RAG I/O.
 from __future__ import annotations
 
 import json
+import math
 import re
 from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
@@ -31,6 +32,7 @@ from app.services.reader_record_ask.model_view_budget import (
     BudgetChargeOk,
     ModelViewBudgetError,
     ModelViewRenderer,
+    ModelViewSerializationError,
     ModelVisibleTurnBudget,
     RequestFrameParts,
 )
@@ -71,6 +73,15 @@ _FORBIDDEN_SUBSTRINGS = (
 )
 
 
+def _renderer() -> ModelViewRenderer:
+    return ModelViewRenderer()
+
+
+def _chars(n: int) -> object:
+    """Render exactly n chars via the public metering entry."""
+    return _renderer().render_plain("x" * n)
+
+
 # ---------------------------------------------------------------------------
 # Budget: six accounts + hard caps
 # ---------------------------------------------------------------------------
@@ -97,15 +108,30 @@ def test_six_account_reserves_sum_to_cap() -> None:
 
 def test_per_account_hard_cap_denies_without_mutating() -> None:
     budget = ModelVisibleTurnBudget()
-    # Fill selection almost to reserve, then overshoot.
-    ok = budget.try_charge("selection", RESERVE_SELECTION)
+    ok = budget.try_charge("selection", _chars(RESERVE_SELECTION))
     assert isinstance(ok, BudgetChargeOk)
     assert budget.spent("selection") == RESERVE_SELECTION
 
-    denied = budget.try_charge("selection", 1)
+    denied = budget.try_charge("selection", _chars(1))
     assert isinstance(denied, BudgetChargeDenied)
     assert denied.reason == "account_exhausted"
     assert budget.spent("selection") == RESERVE_SELECTION  # unchanged
+
+
+def test_each_account_denies_without_mutation() -> None:
+    renderer = _renderer()
+    for account, reserve in ACCOUNT_RESERVES.items():
+        budget = ModelVisibleTurnBudget()
+        filled = renderer.render_plain("y" * reserve)
+        ok = budget.try_charge(account, filled)
+        assert isinstance(ok, BudgetChargeOk)
+        assert budget.spent(account) == reserve
+        denied = budget.try_charge(account, renderer.render_plain("z"))
+        assert isinstance(denied, BudgetChargeDenied)
+        assert denied.reason == "account_exhausted"
+        assert denied.account == account
+        assert budget.spent(account) == reserve
+        assert budget.total_spent() == reserve
 
 
 def test_total_cap_denies_even_when_account_has_room() -> None:
@@ -113,21 +139,22 @@ def test_total_cap_denies_even_when_account_has_room() -> None:
     # Spend every account to its reserve except leave 1 char on request_frame.
     for account, reserve in ACCOUNT_RESERVES.items():
         if account == "request_frame":
-            budget.charge(account, reserve - 1)
+            budget.charge(account, _chars(reserve - 1))
         else:
-            budget.charge(account, reserve)
+            budget.charge(account, _chars(reserve))
     assert budget.total_remaining() == 1
     # request_frame still has 1 char room, but charging 2 would exceed total.
-    denied = budget.try_charge("request_frame", 2)
+    denied = budget.try_charge("request_frame", _chars(2))
     assert isinstance(denied, BudgetChargeDenied)
     assert denied.reason in ("account_exhausted", "total_exhausted")
+    assert budget.total_remaining() == 1  # no mutation
 
 
 def test_charge_raises_typed_budget_error_not_model_retry() -> None:
     budget = ModelVisibleTurnBudget()
-    budget.charge("map", RESERVE_MAP)
+    budget.charge("map", _chars(RESERVE_MAP))
     with pytest.raises(ModelViewBudgetError) as exc_info:
-        budget.charge("map", 1)
+        budget.charge("map", _chars(1))
     denial = exc_info.value.denial
     assert denial.account == "map"
     assert denial.reason == "account_exhausted"
@@ -141,13 +168,33 @@ def test_charge_raises_typed_budget_error_not_model_retry() -> None:
     assert "exceptions.ModelRetry" not in source
 
 
+def test_public_charge_rejects_bare_int() -> None:
+    budget = ModelVisibleTurnBudget()
+    with pytest.raises(TypeError) as exc_info:
+        budget.charge("map", 10)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert msg == (
+        "budget charge requires RenderedModelView from ModelViewRenderer"
+    )
+
+    with pytest.raises(TypeError):
+        budget.try_charge("baseline", RESERVE_BASELINE)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        budget.can_charge("selection", 1)  # type: ignore[arg-type]
+    assert budget.total_spent() == 0
+
+    # Private raw-char path exists but is not the public seam.
+    assert hasattr(budget, "_try_charge_chars")
+    assert callable(budget._try_charge_chars)
+
+
 # ---------------------------------------------------------------------------
 # request_frame includes user question; never truncates it
 # ---------------------------------------------------------------------------
 
 
 def test_user_question_is_counted_in_request_frame_cost() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     base_parts = RequestFrameParts(
         system_instructions="SYS",
         user_question="",
@@ -173,7 +220,7 @@ def test_user_question_is_counted_in_request_frame_cost() -> None:
 
 
 def test_oversized_user_question_denies_without_truncation() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     budget = ModelVisibleTurnBudget()
     # Force request_frame over reserve via a huge question.
     huge_q = "用户问题" * (RESERVE_REQUEST_FRAME)  # multi-byte chars, full cost
@@ -186,13 +233,13 @@ def test_oversized_user_question_denies_without_truncation() -> None:
     assert huge_q in rendered.text  # never truncated at render time
     assert rendered.char_cost > RESERVE_REQUEST_FRAME
 
-    denied = budget.try_charge("request_frame", rendered.char_cost)
+    denied = budget.try_charge("request_frame", rendered)
     assert isinstance(denied, BudgetChargeDenied)
     assert budget.spent("request_frame") == 0
 
 
 def test_charge_request_frame_helper_raises_typed_error() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     budget = ModelVisibleTurnBudget()
     huge_q = "x" * (RESERVE_REQUEST_FRAME + 500)
     with pytest.raises(ModelViewBudgetError) as exc_info:
@@ -214,7 +261,7 @@ def test_charge_request_frame_helper_raises_typed_error() -> None:
 
 
 def test_renderer_deterministic_for_same_inputs() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     payload = {"b": 2, "a": 1, "nested": {"z": True, "m": "中文"}}
     a = renderer.render_json(payload)
     b = renderer.render_json(payload)
@@ -236,7 +283,7 @@ def test_renderer_deterministic_for_same_inputs() -> None:
 
 
 def test_serialized_cost_ampersand_and_angle_brackets() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     raw = 'a & b <c> "quote"'
     rendered = renderer.render_untrusted_article_text(
         handle_id=_HANDLE,
@@ -261,7 +308,7 @@ def test_serialized_cost_ampersand_and_angle_brackets() -> None:
 
 
 def test_tool_view_cost_is_canonical_json_not_xml() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     view = {"status": "ok", "summary": "found & more", "handles": [_HANDLE]}
     rendered = renderer.render_tool_view(view)
     assert rendered.text.startswith("{")
@@ -269,6 +316,97 @@ def test_tool_view_cost_is_canonical_json_not_xml() -> None:
     assert rendered.char_cost == len(
         json.dumps(view, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     )
+
+
+# ---------------------------------------------------------------------------
+# A5-1R: fail-closed JSON + sanitized errors
+# ---------------------------------------------------------------------------
+
+
+class _CustomObj:
+    def __repr__(self) -> str:
+        return "LEAKED_CUSTOM_REPR_SECRET_VALUE"
+
+
+def test_render_json_rejects_uuid_without_leaking_value() -> None:
+    renderer = _renderer()
+    secret = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_json({"id": secret})
+    err = exc_info.value
+    assert err.code == "non_json_native"
+    msg = str(err)
+    assert msg == "model_view_serialization_error code=non_json_native"
+    assert str(secret) not in msg
+    assert "aaaaaaaa" not in msg
+    assert "UUID" not in msg
+
+
+def test_render_json_rejects_custom_object_without_leaking_repr() -> None:
+    renderer = _renderer()
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_json({"obj": _CustomObj()})
+    err = exc_info.value
+    assert err.code == "non_json_native"
+    msg = str(err)
+    assert "LEAKED_CUSTOM_REPR_SECRET_VALUE" not in msg
+    assert "CustomObj" not in msg
+    assert msg == "model_view_serialization_error code=non_json_native"
+
+
+@pytest.mark.parametrize(
+    "bad_float",
+    [float("nan"), float("inf"), float("-inf")],
+)
+def test_render_json_rejects_non_finite_float_without_leaking(bad_float: float) -> None:
+    renderer = _renderer()
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_json({"n": bad_float})
+    err = exc_info.value
+    assert err.code == "non_finite_float"
+    msg = str(err)
+    assert msg == "model_view_serialization_error code=non_finite_float"
+    assert "nan" not in msg.lower()
+    assert "inf" not in msg.lower()
+    # math.isnan/isinf would confirm input, but error must stay sanitized.
+    assert math.isfinite(0.0)
+
+
+def test_render_tool_view_same_fail_closed_path() -> None:
+    renderer = _renderer()
+    with pytest.raises(ModelViewSerializationError) as exc_info:
+        renderer.render_tool_view({"hit_id": _DOC})
+    assert exc_info.value.code == "non_json_native"
+    assert str(_DOC) not in str(exc_info.value)
+
+
+def test_json_native_payload_stable_sort_and_metering() -> None:
+    renderer = _renderer()
+    payload = {
+        "z": [1, True, None, 1.5, "中文"],
+        "a": {"m": False, "b": 0},
+    }
+    expected = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    rendered = renderer.render_json(payload)
+    assert rendered.text == expected
+    assert rendered.char_cost == len(expected)
+    # tool_view shares the path.
+    tool = renderer.render_tool_view(payload)
+    assert tool.text == expected
+    assert tool.char_cost == rendered.char_cost
+
+
+def test_no_default_str_in_json_dumps_path() -> None:
+    import app.services.reader_record_ask.model_view_budget as mod
+
+    source = open(mod.__file__, encoding="utf-8").read()
+    # Guard the dumps call site — no custom default callable.
+    assert re.search(r"json\.dumps\([^)]*default\s*=", source) is None
+    # UUID still rejected (proves no silent str coercion).
+    with pytest.raises(ModelViewSerializationError):
+        ModelViewRenderer().render_json({"id": _USER})
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +558,9 @@ def test_projection_has_no_body_uuid_hash_score_or_raw_locator() -> None:
         turn_id="turn_deadbeef",
     )
     payload = projection.to_model_dict()
-    blob = json.dumps(payload, ensure_ascii=False)
+    # Meter via renderer (JSON-native path) — no regression on sensitive fields.
+    rendered = _renderer().render_json(payload)
+    blob = rendered.text
 
     for forbidden in _FORBIDDEN_SUBSTRINGS:
         assert forbidden not in blob, f"forbidden key leaked: {forbidden}"
@@ -469,7 +609,7 @@ def test_projection_turn_id_minted_when_omitted() -> None:
 
 
 def test_projection_json_via_renderer_is_deterministic() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     projection = build_turn_capability_projection(
         article_rag_port=None,
         stable_document_id=None,
@@ -484,7 +624,7 @@ def test_projection_json_via_renderer_is_deterministic() -> None:
 
 
 def test_request_frame_with_projection_charges_request_frame_only() -> None:
-    renderer = ModelViewRenderer()
+    renderer = _renderer()
     budget = ModelVisibleTurnBudget()
     projection = build_turn_capability_projection(
         article_rag_port=None,
