@@ -27,6 +27,7 @@ export const nextAllowlistPrefixes = [
   "/daily",
   "/share",
   "/app",
+  "/e2e-plate-spike",
 ] as const;
 export const intentAllowlist = ["save"] as const;
 

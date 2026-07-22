@@ -22,8 +22,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 
-const ENABLED_PORT = 3100;
-const DISABLED_PORT = 3101;
+const ENABLED_PORT = 3200;
+const DISABLED_PORT = 3201;
 const HOST = "127.0.0.1";
 const ENABLED_URL = `http://${HOST}:${ENABLED_PORT}`;
 const DISABLED_URL = `http://${HOST}:${DISABLED_PORT}`;
@@ -85,10 +85,12 @@ function startServer(
 ): ChildProcess {
   console.log(`[${label}] Starting: ${command} ${args.join(" ")}`);
   const executable = process.platform === "win32" ? `${command}.cmd` : command;
+  // Node 20.12+/25 enforces .cmd spawn security (CVE-2024-27980): spawning
+  // .cmd/.bat without shell:true throws EINVAL. Use shell:true on win32.
   const child = spawn(executable, args, {
     cwd: process.cwd(),
     env,
-    shell: false,
+    shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
 

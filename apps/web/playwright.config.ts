@@ -27,7 +27,7 @@ export default defineConfig({
   timeout: 60_000,
   globalSetup: "./tests/e2e/gate-disabled-server-setup.ts",
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: "http://127.0.0.1:3200",
     trace: "on-first-retry",
   },
   projects: [
@@ -35,7 +35,7 @@ export default defineConfig({
       name: "chromium-spike-enabled",
       use: {
         ...devices["Desktop Chrome"],
-        baseURL: "http://127.0.0.1:3100",
+        baseURL: "http://127.0.0.1:3200",
       },
       testIgnore: /gate-disabled/,
     },
@@ -43,7 +43,7 @@ export default defineConfig({
       name: "chromium-spike-disabled",
       use: {
         ...devices["Desktop Chrome"],
-        baseURL: "http://127.0.0.1:3101",
+        baseURL: "http://127.0.0.1:3201",
       },
       testMatch: /gate-disabled/,
     },

@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
-    "dev:spike-test": "next dev --hostname 127.0.0.1 --port 3100",
-    "dev:gate-test": "next dev --hostname 127.0.0.1 --port 3101",
+    "dev:spike-test": "next dev --hostname 127.0.0.1 --port 3200",
+    "dev:gate-test": "next dev --hostname 127.0.0.1 --port 3201",
     "dev:turbopack": "next dev --hostname 127.0.0.1 --port 3000",
     "build": "next build",
     "start": "next start",
