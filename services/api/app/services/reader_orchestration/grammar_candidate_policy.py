@@ -14,7 +14,7 @@
   - ``scoped_dedup_key(...)``：``(anchor_segment_id, normalized_dedup_hint)``
     元组，作为 DUP gate 的去重身份；对非法 hint fail-closed
 
-设计来源：``specs/reader-grammar-candidate-selection/spec.md``
+生产代码与对应测试共同构成当前合同；不依赖仓库外的过程性 spec。
 """
 
 from __future__ import annotations
