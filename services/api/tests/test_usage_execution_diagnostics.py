@@ -1676,6 +1676,14 @@ async def test_real_grammar_unit_worker_shares_execution_id() -> None:
             )
 
     worker = GrammarBundleWorkerService(pool=MagicMock(), executor=_FakeGrammar())
+    # R7-3b: the worker now probes the lease (verify_ownership) before
+    # publishing; stub the runtime heartbeat so this correlation-focused
+    # test does not need a transactional fake pool.
+    worker._job_runtime = MagicMock()  # type: ignore[method-assign]
+    worker._job_runtime.heartbeat = AsyncMock(
+        return_value=datetime.now(UTC) + timedelta(seconds=120)
+    )
+    worker._job_runtime.transition = AsyncMock()
     worker._load_job_context = AsyncMock(return_value=_grammar_context(claim))  # type: ignore[method-assign]
     worker._layer_publisher.publish_unit_grammar_bundle = AsyncMock(  # type: ignore[method-assign]
         return_value=_published_grammar(claim)
@@ -1724,6 +1732,14 @@ async def test_real_grammar_batch_worker_shares_execution_id() -> None:
             )
 
     worker = GrammarBundleWorkerService(pool=MagicMock(), batch_executor=_FakeBatch())
+    # R7-3b: the worker now probes the lease (verify_ownership) before
+    # publishing; stub the runtime heartbeat so this correlation-focused
+    # test does not need a transactional fake pool.
+    worker._job_runtime = MagicMock()  # type: ignore[method-assign]
+    worker._job_runtime.heartbeat = AsyncMock(
+        return_value=datetime.now(UTC) + timedelta(seconds=120)
+    )
+    worker._job_runtime.transition = AsyncMock()
     batch_ctx = MagicMock()
     batch_ctx.job_id = claim.job_id
     batch_ctx.run_id = claim.run_id
@@ -1747,6 +1763,19 @@ async def test_real_grammar_batch_worker_shares_execution_id() -> None:
     )
     event_id = uuid4()
     fake_pool = _fake_pool_returning(event_id)
+    # R7-3b: invocation usage persistence is idempotent by invocation
+    # key — it first SELECTs an existing row by request_id. Emulate
+    # "no existing row" for that lookup and return event_id for the
+    # INSERT ... RETURNING id so the real INSERT (with correlation
+    # metadata) still happens exactly once.
+    _batch_conn = fake_pool.acquire.return_value.__aenter__.return_value
+
+    async def _fetchval_by_sql(sql, *args):
+        if "SELECT id FROM ai_usage_events" in sql:
+            return None
+        return event_id
+
+    _batch_conn.fetchval = AsyncMock(side_effect=_fetchval_by_sql)
     recorder = MagicMock()
     recorder.end_span = AsyncMock()
     set_default_recorder(recorder)
