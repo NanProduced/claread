@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.schemas.reader_documents import StableDocumentBlock
@@ -15,9 +15,10 @@ from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
 from app.services.reader_orchestration.markdown_source_parser import (
-    PARSER_NAME as _PARSER_NAME,
-    PARSER_VERSION as _PARSER_VERSION,
-    PROFILE as _PARSER_PROFILE,
+    PARSER_NAME,
+    PARSER_VERSION,
+    PROFILE,
+    MarkdownParseResult,
     MarkdownSourceParser,
 )
 
@@ -29,9 +30,9 @@ from app.services.reader_orchestration.markdown_source_parser import (
 NORMALIZER_VERSION = "d6_i3b_structured_source_v1"
 
 _PARSER_IDENTITY: dict[str, str] = {
-    "parser_name": _PARSER_NAME,
-    "parser_version": _PARSER_VERSION,
-    "profile": _PARSER_PROFILE,
+    "parser_name": PARSER_NAME,
+    "parser_version": PARSER_VERSION,
+    "profile": PROFILE,
 }
 
 _MARKDOWN_PARSER = MarkdownSourceParser()
@@ -100,11 +101,29 @@ class InputDocumentNormalizer:
             )
 
         source_text = _normalize_source_text(request.text)
+        used_markdown_parser = False
         if request.source_type in _PLAIN_TEXT_SOURCE_TYPES:
-            drafts = _normalize_plain_text_blocks(source_text)
-            title = None
+            # 方案 C (upgrade routing): parse first, then check for
+            # Markdown-specific structure (any block type other than
+            # ``paragraph``). Paragraphs alone do not trigger the
+            # upgrade because the plain text path already handles them;
+            # only headings / lists / blockquotes / tables / code blocks
+            # / thematic breaks require the typed-block markdown path.
+            probe_result = _MARKDOWN_PARSER.parse(source_text)
+            has_markdown_structure = any(
+                block.block_type != "paragraph" for block in probe_result.blocks
+            )
+            if has_markdown_structure:
+                drafts, title = _normalize_markdown_blocks(
+                    source_text, parse_result=probe_result
+                )
+                used_markdown_parser = True
+            else:
+                drafts = _normalize_plain_text_blocks(source_text)
+                title = None
         else:
             drafts, title = _normalize_markdown_blocks(source_text)
+            used_markdown_parser = True
 
         blocks = [
             _draft_to_block(
@@ -112,6 +131,7 @@ class InputDocumentNormalizer:
                 block_index=index,
                 source_type=request.source_type,
                 filename=request.filename,
+                used_markdown_parser=used_markdown_parser,
             )
             for index, draft in enumerate(drafts)
         ]
@@ -175,8 +195,14 @@ def _normalize_plain_text_blocks(source_text: str) -> list[_BlockDraft]:
 
 def _normalize_markdown_blocks(
     source_text: str,
+    *,
+    parse_result: MarkdownParseResult | None = None,
 ) -> tuple[list[_BlockDraft], str | None]:
-    result = _MARKDOWN_PARSER.parse(source_text)
+    result = (
+        parse_result
+        if parse_result is not None
+        else _MARKDOWN_PARSER.parse(source_text)
+    )
     title: str | None = None
     drafts: list[_BlockDraft] = []
 
@@ -226,6 +252,7 @@ def _draft_to_block(
     block_index: int,
     source_type: InputAdapterSourceType,
     filename: str | None,
+    used_markdown_parser: bool,
 ) -> StableDocumentBlock:
     source_refs_json: dict[str, Any] = {
         "source_type": source_type,
@@ -243,7 +270,7 @@ def _draft_to_block(
     quality_json: dict[str, Any] = {
         "normalizer_version": NORMALIZER_VERSION,
     }
-    if source_type == "markdown_file":
+    if used_markdown_parser:
         quality_json.update(_PARSER_IDENTITY)
 
     return StableDocumentBlock(

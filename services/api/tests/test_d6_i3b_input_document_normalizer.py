@@ -374,3 +374,88 @@ def test_normalizer_class_and_helper_return_same_result() -> None:
     assert [block.model_dump() for block in direct.blocks] == [
         block.model_dump() for block in helper.blocks
     ]
+
+
+def test_pasted_text_with_markdown_heading_upgrades_to_markdown_path() -> None:
+    # pasted_text that contains Markdown-specific structure (heading)
+    # must upgrade to the markdown parser path: blocks carry heading
+    # block types and quality_json records the parser identity.
+    normalized = _normalize(
+        source_type="pasted_text",
+        text=(
+            "### Weekly Review\n\n"
+            f"{_english_paragraph(multiplier=2)}"
+        ),
+    )
+
+    heading_block = next(
+        block for block in normalized.blocks if block.block_type == "heading"
+    )
+    assert heading_block.text_content == "Weekly Review"
+    assert heading_block.payload_json == {"level": 3}
+    for block in normalized.blocks:
+        assert block.quality_json["parser_name"]
+        assert block.quality_json["parser_version"]
+        assert block.quality_json["profile"]
+    assert normalized.title == "Weekly Review"
+
+
+def test_pasted_text_plain_text_stays_on_plain_text_path() -> None:
+    # pasted_text without Markdown-specific structure (just plain
+    # paragraphs) stays on the plain text path: quality_json does NOT
+    # carry the markdown parser identity.
+    normalized = _normalize(
+        source_type="pasted_text",
+        text=f"{_english_paragraph(multiplier=2)}",
+    )
+
+    assert [block.block_type for block in normalized.blocks] == ["paragraph", "paragraph"]
+    for block in normalized.blocks:
+        assert "parser_name" not in block.quality_json
+        assert "parser_version" not in block.quality_json
+        assert "profile" not in block.quality_json
+
+
+def test_txt_file_with_markdown_structure_upgrades_to_markdown_path() -> None:
+    # txt_file with Markdown structure (heading + list) upgrades to
+    # the markdown parser path even though source_type is txt_file.
+    normalized = _normalize(
+        source_type="txt_file",
+        filename="notes.txt",
+        text=(
+            "# Reading Notes\n\n"
+            f"{_english_paragraph()}\n\n"
+            "- Readers compare evidence before revising a public plan in writing.\n"
+            "- Editors highlight tradeoffs so the article still teaches grammar clearly.\n"
+        ),
+    )
+
+    heading_block = next(
+        block for block in normalized.blocks if block.block_type == "heading"
+    )
+    assert heading_block.text_content == "Reading Notes"
+    list_items = [
+        block for block in normalized.blocks if block.block_type == "list_item"
+    ]
+    assert len(list_items) == 2
+    for block in normalized.blocks:
+        assert block.quality_json["parser_name"]
+        assert block.quality_json["parser_version"]
+        assert block.quality_json["profile"]
+
+
+def test_pasted_text_markdown_upgraded_preserves_source_type() -> None:
+    # When pasted_text upgrades to the markdown path, source_refs_json
+    # must keep the original source_type ("pasted_text"); only the
+    # parser identity in quality_json reflects the upgraded path.
+    normalized = _normalize(
+        source_type="pasted_text",
+        text=(
+            "### Weekly Review\n\n"
+            f"{_english_paragraph(multiplier=2)}"
+        ),
+    )
+
+    for block in normalized.blocks:
+        assert block.source_refs_json["source_type"] == "pasted_text"
+        assert block.quality_json["parser_name"]
