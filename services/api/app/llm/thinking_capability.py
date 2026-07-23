@@ -150,19 +150,62 @@ def _thinking_flag_from_settings(settings: RunModelSettings | None) -> bool:
     return settings.thinking_enabled()
 
 
+# Direct DeepSeek V4 official effort values.
+_DEEPSEEK_DIRECT_EFFORT_NATIVE: frozenset[str] = frozenset({"high", "max"})
+# Deterministic aliases → native values (never pass through raw aliases).
+_DEEPSEEK_DIRECT_EFFORT_ALIASES: dict[str, str] = {
+    "low": "high",
+    "medium": "high",
+    "xhigh": "max",
+}
+
+
+class ThinkingEffortConfigError(ValueError):
+    """Stable configuration error for unsupported Direct DeepSeek effort."""
+
+    def __init__(self, raw: str) -> None:
+        self.raw = raw
+        super().__init__(
+            "deepseek_direct_reasoning_effort_unsupported "
+            f"value={raw!r} allowed=high|max aliases=low|medium|xhigh"
+        )
+
+
+def normalize_deepseek_direct_effort(raw: str | None) -> str | None:
+    """Map effort for Direct DeepSeek V4 or raise a stable config error.
+
+    - ``high`` / ``max``: pass through
+    - ``low`` / ``medium`` → ``high``; ``xhigh`` → ``max``
+    - any other non-empty string: :class:`ThinkingEffortConfigError`
+    - ``None`` / empty: no effort field
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ThinkingEffortConfigError(repr(raw))
+    value = raw.strip().lower()
+    if not value:
+        return None
+    if value in _DEEPSEEK_DIRECT_EFFORT_NATIVE:
+        return value
+    if value in _DEEPSEEK_DIRECT_EFFORT_ALIASES:
+        return _DEEPSEEK_DIRECT_EFFORT_ALIASES[value]
+    raise ThinkingEffortConfigError(raw)
+
+
 def _read_reasoning_effort(settings: RunModelSettings | None) -> str | None:
     if settings is None or not settings.extra_body:
         return None
     body = settings.extra_body
-    # Direct DeepSeek may place effort on thinking dict or as sibling.
-    thinking = body.get("thinking")
-    if isinstance(thinking, dict):
-        effort = thinking.get("reasoning_effort") or thinking.get("effort")
-        if isinstance(effort, str) and effort.strip():
-            return effort.strip()
+    # Prefer top-level reasoning_effort; accept nested for migration.
     effort = body.get("reasoning_effort")
     if isinstance(effort, str) and effort.strip():
         return effort.strip()
+    thinking = body.get("thinking")
+    if isinstance(thinking, dict):
+        nested = thinking.get("reasoning_effort") or thinking.get("effort")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
     return None
 
 
@@ -207,11 +250,13 @@ def resolve_thinking_capability(
     enabled = _thinking_flag_from_settings(model_settings)
 
     if dialect == "deepseek_direct":
+        raw_effort = _read_reasoning_effort(model_settings) if enabled else None
+        effort = normalize_deepseek_direct_effort(raw_effort) if enabled else None
         return ThinkingProviderCapability(
             dialect=dialect,
             thinking_enabled=enabled,
             enable_payload_kind="thinking_type_enabled",
-            reasoning_effort=_read_reasoning_effort(model_settings) if enabled else None,
+            reasoning_effort=effort,
             thinking_budget=None,
             streaming_only=False,
             reasoning_field="reasoning_content",
@@ -295,11 +340,20 @@ def apply_thinking_to_model_settings(
 
     if capability.thinking_enabled:
         if capability.enable_payload_kind == "thinking_type_enabled":
-            thinking_obj: dict[str, object] = {"type": "enabled"}
-            if capability.reasoning_effort:
-                thinking_obj["reasoning_effort"] = capability.reasoning_effort
-            body["thinking"] = thinking_obj
+            # Direct DeepSeek V4: thinking is only {type: enabled}.
+            # reasoning_effort is a **sibling** top-level extra_body key.
+            body["thinking"] = {"type": "enabled"}
             body.pop("enable_thinking", None)
+            # Strip any nested effort left over from older configs.
+            if isinstance(body.get("thinking"), dict):
+                nested = body["thinking"]
+                if isinstance(nested, dict):
+                    nested.pop("reasoning_effort", None)
+                    nested.pop("effort", None)
+            if capability.reasoning_effort:
+                body["reasoning_effort"] = capability.reasoning_effort
+            else:
+                body.pop("reasoning_effort", None)
         elif capability.enable_payload_kind == "enable_thinking_bool":
             body["enable_thinking"] = True
             if capability.thinking_budget is not None:
@@ -313,7 +367,8 @@ def apply_thinking_to_model_settings(
             body.setdefault("enable_thinking", False)
         elif capability.enable_payload_kind == "thinking_type_enabled":
             # Leave absence as default (non-thinking) unless already set.
-            pass
+            body.pop("thinking", None)
+            body.pop("reasoning_effort", None)
 
     update: dict[str, Any] = {"extra_body": body if body else None}
     if capability.strip_sampling_params:
@@ -347,8 +402,10 @@ def thinking_kwargs_for_dashscope(
 __all__ = [
     "EnablePayloadKind",
     "ThinkingDialect",
+    "ThinkingEffortConfigError",
     "ThinkingProviderCapability",
     "apply_thinking_to_model_settings",
+    "normalize_deepseek_direct_effort",
     "resolve_thinking_capability",
     "resolve_thinking_capability_from_config",
     "resolve_thinking_dialect",

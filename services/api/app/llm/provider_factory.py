@@ -108,7 +108,10 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
     Priority:
       1. Explicit ``openai_profile`` on the resolved config (provider + model merge).
       2. ``provider_options.profile`` hint mapped to a built-in profile builder.
-      3. None — the OpenAIChatModel will use its own defaults.
+      3. Dialect-safe default for recognisable DeepSeek openai_compatible
+         routes (Direct + DashScope OpenAI-compat) even when no profile hint
+         is present — ensures reasoning_content parse/send-back.
+      4. None — the OpenAIChatModel will use its own defaults.
     """
     profile = _profile_from_config(model_config)
     if profile is not None:
@@ -118,6 +121,21 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
     builder = _PROFILE_HINT_BUILDERS.get(profile_hint)
     if builder is not None:
         return builder(model_config.model_name)
+
+    # Safe default without profile hint (A5-8A1R).
+    from app.llm.deepseek_direct import deepseek_v4_openai_profile
+    from app.llm.thinking_capability import resolve_thinking_dialect
+
+    dialect = resolve_thinking_dialect(
+        adapter=model_config.adapter,
+        provider=model_config.provider,
+        model_name=model_config.model_name,
+        base_url=model_config.base_url,
+        provider_options=model_config.provider_options,
+        openai_profile=model_config.openai_profile,
+    )
+    if dialect in ("deepseek_direct", "dashscope_deepseek"):
+        return deepseek_v4_openai_profile()
 
     return None
 
@@ -136,6 +154,7 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
     # Dialect-aware thinking normalizer: DeepSeek direct thinking strips
     # sampling knobs; enable payload is shaped per dialect. Does not mutate
     # the caller's ResolvedModelConfig / secrets store.
+    from app.llm.deepseek_direct import DirectDeepSeekChatModel
     from app.llm.thinking_capability import (
         apply_thinking_to_model_settings,
         resolve_thinking_capability_from_config,
@@ -145,16 +164,26 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
     normalized_settings = apply_thinking_to_model_settings(
         model_config.model_settings, capability
     )
+    settings_payload = (
+        normalized_settings.to_pydantic_ai()
+        if normalized_settings is not None
+        else None
+    )
+
+    if capability.dialect == "deepseek_direct":
+        return DirectDeepSeekChatModel(
+            model_config.model_name,
+            provider=provider,
+            profile=profile,
+            settings=settings_payload,
+            thinking_enabled=capability.thinking_enabled,
+        )
 
     return OpenAIChatModel(
         model_config.model_name,
         provider=provider,
         profile=profile,
-        settings=(
-            normalized_settings.to_pydantic_ai()
-            if normalized_settings is not None
-            else None
-        ),
+        settings=settings_payload,
     )
 
 

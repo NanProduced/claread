@@ -80,8 +80,10 @@ def test_deepseek_direct_enable_and_strip_sampling():
     assert normalized.top_p is None
     assert normalized.presence_penalty is None
     assert normalized.extra_body is not None
-    assert normalized.extra_body["thinking"]["type"] == "enabled"
-    assert normalized.extra_body["thinking"]["reasoning_effort"] == "high"
+    # Direct DeepSeek V4: thinking is only {type: enabled}; effort is top-level.
+    assert normalized.extra_body["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in normalized.extra_body["thinking"]
+    assert normalized.extra_body["reasoning_effort"] == "high"
 
 
 def test_dashscope_qwen_enable_thinking_budget():

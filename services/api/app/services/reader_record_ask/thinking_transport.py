@@ -1,10 +1,18 @@
-"""R4 Ask thinking transport spine (R4-A5-8A1).
+"""R4 Ask thinking transport spine (R4-A5-8A1 / A5-8A1R).
 
 Internal-only: captures provider reasoning for a bounded in-memory observer
 and emits **safe** analysis-phase runtime events. Never writes reasoning
 text, length, hash, or provider payloads into SSE/DTO/DB/logs.
 
 Does **not** import legacy ``reader_ask`` agent_runner.
+
+Multi-turn completeness (A5-8A1R)
+--------------------------------
+Reasoning collection is deduplicated **per streamed part index lifecycle**,
+not with a single global ``saw_reasoning`` flag. After tool results, the
+lifecycle set is cleared so a second-round ThinkingPart delivered only via
+``PartEnd`` is still observed. ``AnalysisStarted`` / ``AnalysisFinished``
+still fire at most once per agent run.
 """
 
 from __future__ import annotations
@@ -14,7 +22,7 @@ from typing import Any, Protocol
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    AgentStreamEvent,
+    FunctionToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -90,27 +98,6 @@ class StreamedAgentOutcome:
     phase_events: tuple[RuntimeEvent, ...] = ()
 
 
-def _extract_thinking_delta(event: AgentStreamEvent) -> str | None:
-    """Return reasoning text from a stream event, or None.
-
-    Handles PartStart (ThinkingPart snapshot), PartDelta (ThinkingPartDelta),
-    and PartEnd (final ThinkingPart snapshot — only if we missed start/delta).
-    """
-    if isinstance(event, PartStartEvent):
-        part = event.part
-        if isinstance(part, ThinkingPart) and part.content:
-            return str(part.content)
-        return None
-    if isinstance(event, PartDeltaEvent):
-        delta = event.delta
-        if isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-            return str(delta.content_delta)
-        return None
-    # PartEnd is intentionally not re-appended when start/delta already
-    # delivered content; callers track whether any reasoning was seen.
-    return None
-
-
 def _model_supports_request_stream(model: Any) -> bool:
     """Return True when the model can serve streamed requests.
 
@@ -153,6 +140,41 @@ def _notify_observer_from_messages(
     thinking_observer.on_analysis_finished()
 
 
+@dataclass
+class ThinkingPartLifecycle:
+    """Per-index lifecycle for one model response stream (A5-8A1R).
+
+    Indices restart after tool results; clear via :meth:`reset_stream`.
+    Only non-empty content marks an index as streamed so PartEnd-only
+    rounds still deliver full content.
+    """
+
+    streamed_indices: set[int] = field(default_factory=set)
+
+    def reset_stream(self) -> None:
+        self.streamed_indices.clear()
+
+    def on_start(self, index: int, content: str | None) -> str | None:
+        if content:
+            self.streamed_indices.add(index)
+            return content
+        return None
+
+    def on_delta(self, index: int, content_delta: str | None) -> str | None:
+        if content_delta:
+            self.streamed_indices.add(index)
+            return content_delta
+        return None
+
+    def on_end(self, index: int, full_content: str | None) -> str | None:
+        if index in self.streamed_indices:
+            return None
+        if full_content:
+            self.streamed_indices.add(index)
+            return full_content
+        return None
+
+
 async def run_agent_with_thinking_transport(
     *,
     agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft],
@@ -163,10 +185,10 @@ async def run_agent_with_thinking_transport(
 ) -> StreamedAgentOutcome:
     """Run the agent capturing thinking privately when streaming is available.
 
-    Prefer ``run_stream_events`` (PartStart/PartDelta ThinkingPart). When the
-    model cannot stream (e.g. FunctionModel without ``stream_function``),
-    fall back to ``agent.run`` and optionally snapshot ThinkingPart from
-    the completed message history into the observer.
+    Prefer ``run_stream_events`` (PartStart/PartDelta/PartEnd ThinkingPart).
+    When the model cannot stream (e.g. FunctionModel without
+    ``stream_function``), fall back to ``agent.run`` and optionally
+    snapshot ThinkingPart from the completed message history.
 
     Emits only safe ``AnalysisStartedEvent`` / ``AnalysisFinishedEvent`` —
     never raw reasoning on the event sink. Tool calling, validators, and
@@ -174,8 +196,8 @@ async def run_agent_with_thinking_transport(
     """
     phase_events: list[RuntimeEvent] = []
     analysis_started = False
-    saw_reasoning = False
     final_output: Any = None
+    lifecycle = ThinkingPartLifecycle()
 
     def _ensure_started() -> None:
         nonlocal analysis_started
@@ -197,6 +219,13 @@ async def run_agent_with_thinking_transport(
         if thinking_observer is not None:
             thinking_observer.on_analysis_finished()
 
+    def _emit_reasoning(text: str | None) -> None:
+        if not text:
+            return
+        _ensure_started()
+        if thinking_observer is not None:
+            thinking_observer.on_reasoning_delta(text)
+
     active_model = model if model is not None else getattr(agent, "model", None)
     if not _model_supports_request_stream(active_model):
         result = await agent.run(prompt, deps=deps)
@@ -217,25 +246,46 @@ async def run_agent_with_thinking_transport(
                     final_output = getattr(result, "output", result)
                 continue
 
-            delta = _extract_thinking_delta(event)
-            if delta is not None:
-                _ensure_started()
-                saw_reasoning = True
-                if thinking_observer is not None:
-                    thinking_observer.on_reasoning_delta(delta)
+            # New model response stream after tools: reset part-index lifecycle.
+            if isinstance(event, FunctionToolResultEvent):
+                lifecycle.reset_stream()
+                continue
+            if type_name == "BuiltinToolResultEvent":
+                lifecycle.reset_stream()
                 continue
 
-            # Snapshot fallback: PartEnd with full ThinkingPart if no prior delta.
+            if isinstance(event, PartStartEvent) and isinstance(
+                event.part, ThinkingPart
+            ):
+                piece = lifecycle.on_start(
+                    event.index,
+                    str(event.part.content) if event.part.content else None,
+                )
+                _emit_reasoning(piece)
+                continue
+
+            if isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, ThinkingPartDelta
+            ):
+                piece = lifecycle.on_delta(
+                    event.index,
+                    (
+                        str(event.delta.content_delta)
+                        if event.delta.content_delta
+                        else None
+                    ),
+                )
+                _emit_reasoning(piece)
+                continue
+
             if isinstance(event, PartEndEvent) and isinstance(
                 event.part, ThinkingPart
             ):
-                if not saw_reasoning and event.part.content:
-                    _ensure_started()
-                    saw_reasoning = True
-                    if thinking_observer is not None:
-                        thinking_observer.on_reasoning_delta(
-                            str(event.part.content)
-                        )
+                piece = lifecycle.on_end(
+                    event.index,
+                    str(event.part.content) if event.part.content else None,
+                )
+                _emit_reasoning(piece)
                 continue
 
         if analysis_started:
@@ -262,5 +312,6 @@ __all__ = [
     "BoundedThinkingObserver",
     "StreamedAgentOutcome",
     "ThinkingObserver",
+    "ThinkingPartLifecycle",
     "run_agent_with_thinking_transport",
 ]
