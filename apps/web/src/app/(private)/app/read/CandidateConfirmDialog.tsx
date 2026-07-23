@@ -32,10 +32,18 @@ interface CandidateConfirmDialogProps {
    * OPTIONAL structured source blocks (M2 Structured Source Contract). When
    * provided and non-empty, the dialog renders the structured block tree via
    * `StructuredSourceRenderer` instead of the plain-text `previewText`
-   * fallback. The BFF does NOT yet transparently pass `blocks_json` through
-   * `READ_CANDIDATE_DOCUMENT_ALLOWED_TOP_KEYS`; this prop is fed from fixture
-   * JSON during M2 and from real candidate-document blocks once the BFF
-   * whitelist is widened (G1+).
+   * fallback.
+   *
+   * Security design (frozen): the candidate-document BFF route deliberately
+   * does NOT pass `blocks_json` through
+   * `READ_CANDIDATE_DOCUMENT_ALLOWED_TOP_KEYS`. This prevents leaking
+   * `quality_json` / `source_refs_json` / parser diagnostics to the candidate
+   * preview surface. Structured source rendering is activated at the
+   * stable-document stage (after the candidate is confirmed and the record is
+   * promoted), NOT at the candidate stage. This prop is therefore fed from
+   * fixture JSON during M2 component tests only; the reading page wires real
+   * stable-document blocks through a separate adapter (see
+   * `adaptStableBlocksToStructuredSource`).
    */
   structuredBlocks?: ReaderStructuredSourceBlock[];
   /**

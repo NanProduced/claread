@@ -22,6 +22,7 @@ import {
 } from "@/components/reader/AiWorkspacePanel";
 import { useAppShellLayout } from "@/components/layout/app-shell";
 import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
+import { ReaderStableSourcePreview } from "@/components/reader/plate/ReaderStableSourcePreview";
 import {
   readerAskPresentationCssVars,
   useReaderAskPresentation,
@@ -6024,6 +6025,23 @@ export function ReaderRecordPlateSurface({
           askOpen={askSidecarOpen}
           layout="canvas"
         />
+      </aside>
+      {/*
+        M2 Structured Source preview: renders StructuredSourceRenderer from
+        real stable-document blocks. Isolated from snapshot/unit/anchor
+        projection, the outline rail, the AI workspace, and the dictionary
+        rail. Renders nothing on loading/error/empty — the existing plate
+        document remains as the fallback. Does NOT re-parse raw Markdown.
+        The slot is visually hidden until structured blocks are available;
+        ReaderStableSourcePreview returns null for loading/error/empty so the
+        aside stays empty and non-disruptive in those cases.
+      */}
+      <aside
+        className="reader-record-source-preview-slot"
+        aria-label="结构化源文预览"
+        data-reader-record-source-preview-slot="true"
+      >
+        <ReaderStableSourcePreview recordId={snapshot.record_id} />
       </aside>
       <AiWorkspacePanel
           open={askOpen}
