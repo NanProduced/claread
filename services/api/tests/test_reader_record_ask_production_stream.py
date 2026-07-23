@@ -48,10 +48,19 @@ from app.services.reader_record_ask.production_stream import (
     stream_agentic_thread_message,
 )
 from app.services.reader_record_ask.runtime import ReadingRecordAskRunResult
+from app.services.reader_record_ask.runtime_events import (
+    AnalysisFinishedEvent,
+    AnalysisStartedEvent,
+    RunStartedEvent,
+)
 from app.services.reader_record_ask.sse import (
+    EVENT_AGENTIC_PROGRESS,
+    EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_INTERRUPTED,
+    EVENT_REASONING_COMPLETED,
+    EVENT_REASONING_STARTED,
     encode_sse,
 )
 
@@ -359,7 +368,10 @@ async def test_flag_on_does_not_call_legacy_stream() -> None:
                                                 )
 
                                                 chunks = []
-                                                async for c in svc.stream_reading_record_ask_thread_message(
+                                                stream = (
+                                                    svc.stream_reading_record_ask_thread_message
+                                                )
+                                                async for c in stream(
                                                     user_id=_USER,
                                                     reading_record_id=str(_RECORD),
                                                     thread_id=_THREAD,
@@ -1321,6 +1333,8 @@ def test_completed_dto_accepts_legacy_missing_and_explicit_null_scope() -> None:
 
 
 def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
+    from pydantic import ValidationError
+
     base = {
         "execution_version": EXECUTION_VERSION_AGENTIC_V1,
         "final_status": "ok",
@@ -1331,11 +1345,11 @@ def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
         "envelope_fingerprint": "f" * 64,
         "evidence": [],
     }
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
             {**base, "evidence_scope": {"reading_record_id": "r"}}
         )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
             {
                 **base,
@@ -1347,7 +1361,7 @@ def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
                 },
             }
         )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
             {
                 **base,
@@ -1359,7 +1373,7 @@ def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
                 },
             }
         )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
             {
                 **base,
@@ -1847,3 +1861,130 @@ def test_production_rag_factory_builds_retrieval_backed_port_when_ready() -> Non
         embedding_provider=embedding,
         vector_searcher=searcher,
     )
+
+
+# ---------------------------------------------------------------------------
+# R4-A6-T2: reasoning lifecycle SSE events (phase-only "thinking…" signal)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reasoning_lifecycle_events_on_successful_run() -> None:
+    """Successful run emits reasoning.started/completed — no reasoning.delta."""
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(
+            RunStartedEvent(
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+                has_initial_selection=True,
+            )
+        )
+        sink(AnalysisStartedEvent())
+        sink(AnalysisFinishedEvent())
+        return ReadingRecordAskRunResult(
+            final_text="done",
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text="done",
+                resolved_evidence=(),
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    assert names.count(EVENT_REASONING_STARTED) == 1
+    assert names.count(EVENT_REASONING_COMPLETED) == 1
+    # No reasoning content channel exists on the agentic path.
+    assert "reasoning.delta" not in names
+
+    run_started_at = names.index(EVENT_AGENTIC_RUN_STARTED)
+    started_at = names.index(EVENT_REASONING_STARTED)
+    completed_at = names.index(EVENT_REASONING_COMPLETED)
+    message_completed_at = names.index(EVENT_MESSAGE_COMPLETED)
+
+    # reasoning.started: after agentic.run_started, before the analysis
+    # agentic.progress it introduces.
+    assert run_started_at < started_at
+    assert names[started_at + 1] == EVENT_AGENTIC_PROGRESS
+    # reasoning.completed: after the analysis agentic.progress ("分析完成"),
+    # before message.completed.
+    assert names[completed_at - 1] == EVENT_AGENTIC_PROGRESS
+    assert started_at < completed_at < message_completed_at
+
+    # Payloads are phase signals only: message_id correlation and nothing
+    # else — never reasoning text/length/hash.
+    message_id = next(
+        data for name, data in events if name == "message.started"
+    )["message_id"]
+    for name, data in events:
+        if name in (EVENT_REASONING_STARTED, EVENT_REASONING_COMPLETED):
+            assert data == {"message_id": message_id}
+        # No event on the agentic path may carry reasoning content fields.
+        assert "delta" not in data
+        assert "reasoning_md" not in data
+        assert "thinking" not in data
+
+
+@pytest.mark.asyncio
+async def test_reasoning_started_without_completed_when_run_fails() -> None:
+    """Failed run: AnalysisFinishedEvent never fires → no reasoning.completed.
+
+    Mirrors thinking_transport behavior: the finished phase signal is only
+    emitted on normal analysis completion, so an interrupted run leaves the
+    lifecycle half-open and the client falls back to message.interrupted.
+    """
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        raise RuntimeError("boom")
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    assert names.count(EVENT_REASONING_STARTED) == 1
+    assert EVENT_REASONING_COMPLETED not in names
+    assert "reasoning.delta" not in names
+    # Interrupted terminal, never message.completed.
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
+    assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED

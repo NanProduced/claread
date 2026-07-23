@@ -74,6 +74,8 @@ from app.services.reader_record_ask.sse import (
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_INTERRUPTED,
     EVENT_MESSAGE_STARTED,
+    EVENT_REASONING_COMPLETED,
+    EVENT_REASONING_STARTED,
     EVENT_THREAD_READY,
     encode_sse,
 )
@@ -792,24 +794,38 @@ async def stream_agentic_thread_message(
                 break
             if not isinstance(
                 item,
-                (
-                    RunStartedEvent,
-                    AnalysisStartedEvent,
-                    AnalysisFinishedEvent,
-                    ToolCallEvent,
-                    ToolResultEvent,
-                    ComposingAnswerEvent,
-                    ValidatingEvidenceEvent,
-                    FinalAnswerEvent,
-                    RunFinishedEvent,
-                ),
+                RunStartedEvent
+                | AnalysisStartedEvent
+                | AnalysisFinishedEvent
+                | ToolCallEvent
+                | ToolResultEvent
+                | ComposingAnswerEvent
+                | ValidatingEvidenceEvent
+                | FinalAnswerEvent
+                | RunFinishedEvent,
             ):
                 # Only project known runtime events; never dump raw objects.
                 continue
+            if isinstance(item, AnalysisStartedEvent):
+                # R4-A6: reasoning lifecycle signal for the frontend
+                # "thinking…" indicator — after agentic.run_started and
+                # before this event's agentic.progress. Phase only: never
+                # carries reasoning text/length/hash.
+                yield encode_sse(
+                    EVENT_REASONING_STARTED,
+                    {"message_id": assistant_msg["id"]},
+                )
             for progress in projector.project(item):
                 yield encode_sse(
                     EVENT_AGENTIC_PROGRESS,
                     progress.model_dump(mode="json"),
+                )
+            if isinstance(item, AnalysisFinishedEvent):
+                # R4-A6: reasoning lifecycle signal — after the analysis
+                # progress and before message.completed. Phase only.
+                yield encode_sse(
+                    EVENT_REASONING_COMPLETED,
+                    {"message_id": assistant_msg["id"]},
                 )
 
         # Drain any late events that arrived with/after DONE.
@@ -822,22 +838,32 @@ async def stream_agentic_thread_message(
                 continue
             if isinstance(
                 item,
-                (
-                    RunStartedEvent,
-                    AnalysisStartedEvent,
-                    AnalysisFinishedEvent,
-                    ToolCallEvent,
-                    ToolResultEvent,
-                    ComposingAnswerEvent,
-                    ValidatingEvidenceEvent,
-                    FinalAnswerEvent,
-                    RunFinishedEvent,
-                ),
+                RunStartedEvent
+                | AnalysisStartedEvent
+                | AnalysisFinishedEvent
+                | ToolCallEvent
+                | ToolResultEvent
+                | ComposingAnswerEvent
+                | ValidatingEvidenceEvent
+                | FinalAnswerEvent
+                | RunFinishedEvent,
             ):
+                if isinstance(item, AnalysisStartedEvent):
+                    # R4-A6: reasoning lifecycle signal (late drain path).
+                    yield encode_sse(
+                        EVENT_REASONING_STARTED,
+                        {"message_id": assistant_msg["id"]},
+                    )
                 for progress in projector.project(item):
                     yield encode_sse(
                         EVENT_AGENTIC_PROGRESS,
                         progress.model_dump(mode="json"),
+                    )
+                if isinstance(item, AnalysisFinishedEvent):
+                    # R4-A6: reasoning lifecycle signal (late drain path).
+                    yield encode_sse(
+                        EVENT_REASONING_COMPLETED,
+                        {"message_id": assistant_msg["id"]},
                     )
 
         try:
