@@ -788,6 +788,19 @@ class ArticleRagIndexPlanService:
 
             # Text must come from text_content (not Markdown / Plate).
             if block.text_content is None or len(block.text_content) == 0:
+                # list wrapper 是结构性容器：default_route=main_reading、
+                # rag_eligible=True，但 text_content=None —— 叙事文本在
+                # list_item 子节点。跳过 wrapper 而非抛错，与
+                # document_freeze_plan L228-244 的跳过逻辑对称：freeze
+                # plan 构建 canonical text 时跳过 list wrapper，RAG plan
+                # builder 构建 chunks 时也应跳过。list_item 子节点仍会
+                # 正常进入 chunk candidate 流程。
+                #
+                # 其他 main_reading 无文本 block（如被显式 policy 提升的
+                # table_cell / code_block）仍 fail-closed，避免掩盖 schema
+                # 不一致 —— 与 freeze plan L245-249 对称。
+                if block.block_type == "list":
+                    continue
                 raise ArticleRagIndexPlanError(
                     f"Block {block.block_id} (type={block.block_type}) is "
                     f"RAG-eligible but has no text_content."

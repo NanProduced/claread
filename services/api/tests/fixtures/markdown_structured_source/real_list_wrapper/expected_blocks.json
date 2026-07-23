@@ -1,0 +1,105 @@
+{
+  "fixture_name": "real_list_wrapper",
+  "description": "Realistic article with heading, paragraph, unordered list wrapper + items, ordered list wrapper + items, and closing paragraph. Focused on list wrapper (text_content=null) + list_item child structure for RAG eligibility regression.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "heading",
+      "text_content": "Real List Wrapper Article",
+      "payload_json": {"level": 1},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "paragraph",
+      "text_content": "This article opens with a short paragraph before the first list.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 1,
+      "source_range": {"line_start": 3, "line_end": 3}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "list",
+      "text_content": null,
+      "payload_json": {"ordered": false, "depth": 0},
+      "parent_block_id": null,
+      "order_index": 2,
+      "source_range": {"line_start": 5, "line_end": 8}
+    },
+    {
+      "block_id": "b4",
+      "block_type": "list_item",
+      "text_content": "First unordered item",
+      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "parent_block_id": "b3",
+      "order_index": 3,
+      "source_range": {"line_start": 5, "line_end": 5}
+    },
+    {
+      "block_id": "b5",
+      "block_type": "list_item",
+      "text_content": "Second unordered item",
+      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "parent_block_id": "b3",
+      "order_index": 4,
+      "source_range": {"line_start": 6, "line_end": 6}
+    },
+    {
+      "block_id": "b6",
+      "block_type": "list_item",
+      "text_content": "Third unordered item",
+      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "parent_block_id": "b3",
+      "order_index": 5,
+      "source_range": {"line_start": 7, "line_end": 8}
+    },
+    {
+      "block_id": "b7",
+      "block_type": "list",
+      "text_content": null,
+      "payload_json": {"ordered": true, "depth": 0},
+      "parent_block_id": null,
+      "order_index": 6,
+      "source_range": {"line_start": 9, "line_end": 12}
+    },
+    {
+      "block_id": "b8",
+      "block_type": "list_item",
+      "text_content": "First ordered item",
+      "payload_json": {"ordered": true, "marker": "1.", "ordinal": 1, "depth": 0},
+      "parent_block_id": "b7",
+      "order_index": 7,
+      "source_range": {"line_start": 9, "line_end": 9}
+    },
+    {
+      "block_id": "b9",
+      "block_type": "list_item",
+      "text_content": "Second ordered item",
+      "payload_json": {"ordered": true, "marker": "2.", "ordinal": 2, "depth": 0},
+      "parent_block_id": "b7",
+      "order_index": 8,
+      "source_range": {"line_start": 10, "line_end": 10}
+    },
+    {
+      "block_id": "b10",
+      "block_type": "list_item",
+      "text_content": "Third ordered item",
+      "payload_json": {"ordered": true, "marker": "3.", "ordinal": 3, "depth": 0},
+      "parent_block_id": "b7",
+      "order_index": 9,
+      "source_range": {"line_start": 11, "line_end": 12}
+    },
+    {
+      "block_id": "b11",
+      "block_type": "paragraph",
+      "text_content": "Closing paragraph that follows the lists.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 10,
+      "source_range": {"line_start": 13, "line_end": 13}
+    }
+  ]
+}

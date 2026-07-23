@@ -1,6 +1,6 @@
 # Structured Source Contract — G0 Frozen
 
-**Status**: G0 frozen artifact. Frozen on 2026-07-22. Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
+**Status**: G0 frozen artifact. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility regression). Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
 
 **Scope**: This contract governs the structured Markdown source pipeline output — the parser adapter (`markdown_source_parser.py`) and the downstream freeze/candidate/RAG consumers. It does NOT modify the read path for legacy frozen documents or snapshot-only records (Clause 6).
 
@@ -203,14 +203,14 @@ Diagnostics are structured; free-text-only diagnostics are forbidden.
 
 ## Fixture Compliance
 
-The 10 G0 fixtures under `tests/fixtures/markdown_structured_source/` are the executable acceptance criteria for this contract. Each fixture declares:
+The 11 G0 fixtures under `tests/fixtures/markdown_structured_source/` are the executable acceptance criteria for this contract. Each fixture declares:
 
 - `input.md` — raw Markdown input.
 - `expected_blocks.json` — expected block tree (block_id, block_type, text_content, payload_json, parent_block_id, order_index, source_range).
 - `expected_policy.json` — expected per-block policy (default_route, rag_eligible, allowed_source_scope).
 - `expected_diagnostics.json` — expected warnings, unsupported, outcome.
 
-**G0 gate**: Fixtures may be marked `xfail`/`skip` against the current regex normalizer (which cannot produce table/code/footnote blocks). The G1 gate (M1 completion) requires all 10 fixtures to pass against the new parser adapter.
+**G0 gate**: Fixtures may be marked `xfail`/`skip` against the current regex normalizer (which cannot produce table/code/footnote blocks). The G1 gate (M1 completion) requires all 11 fixtures to pass against the new parser adapter.
 
 **Fixture inventory**:
 
@@ -219,6 +219,7 @@ The 10 G0 fixtures under `tests/fixtures/markdown_structured_source/` are the ex
 | `simple_paragraph` | Baseline single paragraph | `stable_document_ready` |
 | `r14_complex` | Full complex article (heading/list/table/code/blockquote/emphasis/link) | `stable_document_ready` |
 | `nested_list` | 3-level nested ordered+unordered list | `stable_document_ready` |
+| `real_list_wrapper` | Realistic article with heading + unordered list wrapper + ordered list wrapper + closing paragraph; focused on list wrapper (text_content=null) + list_item child structure for RAG eligibility regression | `stable_document_ready` |
 | `gfm_table` | Standard GFM table with alignment | `stable_document_ready` |
 | `code_mermaid` | ```mermaid and ```python code blocks | `stable_document_ready` |
 | `raw_html` | Raw HTML block + inline HTML | `candidate_document_required` |

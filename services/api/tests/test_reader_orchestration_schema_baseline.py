@@ -39,6 +39,12 @@ BASELINE_SQL = (
     REPO_ROOT / "infra" / "migrations" / "0013_user_annotation_color_palette.sql"
 ).read_text(encoding="utf-8") + "\n" + (
     REPO_ROOT / "infra" / "migrations" / "0014_reader_runtime_spans.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    # 0023 把 list / thematic_break 加入 stable_document_blocks 的 block_type
+    # 允许列表和 text_content 豁免列表。M1 Structured Source Contract 已把
+    # 这两个类型加入 StableDocumentBlockType 枚举，但 0004 的 DB constraint
+    # 未同步。测试 baseline 需要包含 0023 才能构造 list wrapper block。
+    REPO_ROOT / "infra" / "migrations" / "0023_stable_document_blocks_text_constraint_extend.sql"
 ).read_text(encoding="utf-8")
 
 

@@ -1829,3 +1829,250 @@ async def test_single_path_block_plan_golden(
     finally:
         await admin_conn.execute(f'DROP SCHEMA "{schema_b}" CASCADE')
         await admin_conn.close()
+
+
+# ===================================================================
+# M3 prerequisite: list wrapper eligibility (structural wrapper skip)
+# ===================================================================
+
+
+async def test_list_wrapper_with_empty_text_does_not_raise(
+    index_env: asyncpg.Pool,
+) -> None:
+    """M3 前置 — list wrapper block (text_content=None、default_route=
+    main_reading、rag_eligible=True) 必须在 chunk 构建阶段被跳过，
+    而非抛出 ArticleRagIndexPlanError。
+
+    list wrapper 是结构性容器：叙事文本在 list_item 子节点。这与
+    document_freeze_plan L228-244 的跳过逻辑对称——freeze plan 在
+    构建 canonical text 时跳过 list wrapper，RAG plan builder 在
+    构建 chunks 时也应跳过。
+
+    本测试构造 parser 真实产出的 list wrapper + list_item 子节点组合
+    （parent_block_id 指向 wrapper），验证：
+      * build_index_plan() 不抛错
+      * list wrapper 不产生 chunk
+      * list_item 子节点正常产生 chunk 且 canonical range 有效
+    """
+    item1_text = "First list item text."
+    item2_text = "Second list item text."
+    base_text, offsets = _build_base_text_and_offsets(item1_text, item2_text)
+    await _seed_full_environment(index_env, base_text=base_text)
+
+    # list wrapper block — 模拟 parser 产出：
+    # block_type="list"、text_content=None、main_reading + rag_eligible、
+    # 无 canonical offsets（freeze plan 跳过它，不分配 canonical text）。
+    await _seed_block(
+        index_env,
+        block_id="list-wrapper-1",
+        parent_block_id=None,
+        order_index=0,
+        block_type="list",
+        text_content=None,
+        canonical_text_start_utf16=None,
+        canonical_text_end_utf16=None,
+        interpretation_policy=_main_reading_policy(),
+    )
+    # list_item child 1 — parent 指向 wrapper。
+    await _seed_block(
+        index_env,
+        block_id="list-item-1",
+        parent_block_id="list-wrapper-1",
+        order_index=1,
+        block_type="list_item",
+        text_content=item1_text,
+        canonical_text_start_utf16=offsets[0][0],
+        canonical_text_end_utf16=offsets[0][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+    # list_item child 2 — parent 指向 wrapper。
+    await _seed_block(
+        index_env,
+        block_id="list-item-2",
+        parent_block_id="list-wrapper-1",
+        order_index=2,
+        block_type="list_item",
+        text_content=item2_text,
+        canonical_text_start_utf16=offsets[1][0],
+        canonical_text_end_utf16=offsets[1][1],
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # list wrapper 不产生 chunk；list_item 子节点正常产生 chunk。
+    assert len(plan.chunks) == 2
+    assert [c.citation.block_ids[0] for c in plan.chunks] == [
+        "list-item-1",
+        "list-item-2",
+    ]
+    # list_item chunk 携带有效的 canonical range（指向 base text）。
+    assert plan.chunks[0].citation.canonical_text_start_utf16 == offsets[0][0]
+    assert plan.chunks[0].citation.canonical_text_end_utf16 == offsets[0][1]
+    assert plan.chunks[1].citation.canonical_text_start_utf16 == offsets[1][0]
+    assert plan.chunks[1].citation.canonical_text_end_utf16 == offsets[1][1]
+
+
+async def test_non_list_main_reading_empty_text_still_fails_closed(
+    index_env: asyncpg.Pool,
+) -> None:
+    """M3 前置 — list wrapper 跳过不得掩盖其他 main_reading 无文本 block
+    的 schema 不一致。非 list 类型的 main_reading block 在 text_content
+    为空时仍必须 fail-closed，与 freeze plan L245-249 的对称行为一致。
+
+    使用 table_cell（DB CHECK 允许 text_content=NULL）+ 显式 main_reading
+    policy 来构造非 list 的 main_reading 无文本 block 场景。table_cell
+    不是 list，因此不会被 list wrapper skip 逻辑跳过。"""
+    para_text = "Indexable paragraph."
+    await _seed_full_environment(index_env, base_text=para_text)
+
+    await _seed_block(
+        index_env,
+        block_id="paragraph-1",
+        order_index=0,
+        block_type="paragraph",
+        text_content=para_text,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=utf16_code_unit_length(para_text),
+        interpretation_policy=_main_reading_policy(),
+    )
+    # table_cell with empty text + main_reading policy — 不是 list，
+    # 因此不会被 list wrapper skip 跳过，仍必须 fail closed。
+    await _seed_block(
+        index_env,
+        block_id="table-cell-empty",
+        order_index=1,
+        block_type="table_cell",
+        text_content=None,
+        interpretation_policy=_main_reading_policy(),
+    )
+
+    service = _build_service(index_env)
+    with pytest.raises(ArticleRagIndexPlanError, match="no text_content"):
+        await service.build_index_plan(
+            record_id=_RECORD_ID,
+            user_id=_USER_ID,
+        )
+
+
+async def test_real_list_wrapper_fixture_builds_plan_without_raising(
+    index_env: asyncpg.Pool,
+) -> None:
+    """M3 前置 — 用 real_list_wrapper G0 fixture 的 parser 真实产出
+    驱动 build_index_plan()，补齐 G1 盲区：之前 RAG 测试只用 isolated
+    list_item，未覆盖 parser 真实生成的 list wrapper + list_item 子节点
+    组合。
+
+    本测试解析 fixture input.md，把 parser 产出的 blocks 种入测试 DB
+    （list wrapper: text_content=None、无 canonical offsets；list_item:
+    有 text_content、有 canonical offsets），然后调用 build_index_plan()。
+
+    断言要点：
+      * build_index_plan() 不抛错（list wrapper 被 eligibility skip 跳过）
+      * list wrapper 不产生 chunk
+      * list_item 子节点正常产生 chunk 且 canonical range 有效
+      * heading 和 paragraph 也正常产生 chunk
+    """
+    from pathlib import Path
+
+    from app.schemas.reader_documents import default_interpretation_policy_for
+    from app.services.reader_orchestration.markdown_source_parser import (
+        MarkdownSourceParser,
+    )
+
+    fixture_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "markdown_structured_source"
+        / "real_list_wrapper"
+        / "input.md"
+    )
+    input_md = fixture_path.read_text(encoding="utf-8")
+    parse_result = MarkdownSourceParser().parse(input_md)
+    parsed_blocks = list(parse_result.blocks)
+
+    # 构造 base_text：按 freeze plan 规则，跳过 list wrapper（text_content
+    # 为 None），把有 text_content 的 block 用 "\n\n" 拼接。这与
+    # document_freeze_plan._build_canonical_text 对 list wrapper 的跳过
+    # 行为对称。
+    separator = "\n\n"
+    text_bearing_blocks = [
+        b for b in parsed_blocks if b.text_content is not None
+    ]
+    base_text = separator.join(b.text_content or "" for b in text_bearing_blocks)
+
+    # 计算 base_text 中每个 text-bearing block 的 canonical UTF-16 offsets。
+    # list wrapper 不分配 canonical offsets（与 freeze plan 行为一致）。
+    from app.contracts.annotation import utf16_code_unit_length as _utf16_len
+
+    sep_utf16_len = _utf16_len(separator)
+    canonical_offsets: dict[str, tuple[int, int]] = {}
+    cursor = 0
+    for b in text_bearing_blocks:
+        text_utf16_len = _utf16_len(b.text_content or "")
+        canonical_offsets[b.block_id] = (cursor, cursor + text_utf16_len)
+        cursor += text_utf16_len + sep_utf16_len
+
+    await _seed_full_environment(index_env, base_text=base_text)
+
+    # 把 parser 产出的 blocks 种入 DB。list wrapper 的 text_content=None、
+    # canonical_offsets=None；其他 block 用计算的 canonical offsets。
+    for block in parsed_blocks:
+        offsets = canonical_offsets.get(block.block_id)
+        start = offsets[0] if offsets else None
+        end = offsets[1] if offsets else None
+        policy = default_interpretation_policy_for(block.block_type)
+        await _seed_block(
+            index_env,
+            block_id=block.block_id,
+            parent_block_id=block.parent_block_id,
+            order_index=block.order_index,
+            block_type=block.block_type,
+            text_content=block.text_content,
+            canonical_text_start_utf16=start,
+            canonical_text_end_utf16=end,
+            interpretation_policy={
+                "default_route": policy.default_route,
+                "rag_eligible": policy.rag_eligible,
+                "allowed_source_scope": list(policy.allowed_source_scope),
+            },
+        )
+
+    service = _build_service(index_env)
+    plan = await service.build_index_plan(
+        record_id=_RECORD_ID,
+        user_id=_USER_ID,
+    )
+
+    # list wrapper 不产生 chunk；heading + 2 paragraph + 6 list_item = 9 chunks。
+    chunk_block_ids = [c.citation.block_ids[0] for c in plan.chunks]
+    assert "b3" not in chunk_block_ids, (
+        "list wrapper b3 (unordered) must not produce a chunk"
+    )
+    assert "b7" not in chunk_block_ids, (
+        "list wrapper b7 (ordered) must not produce a chunk"
+    )
+    # heading(b1) + paragraph(b2) + 3 list_item(b4,b5,b6) +
+    # 3 list_item(b8,b9,b10) + paragraph(b11) = 9 chunks
+    assert len(plan.chunks) == 9, (
+        f"expected 9 chunks (heading + paragraph + 6 list_items + paragraph), "
+        f"got {len(plan.chunks)}: {chunk_block_ids}"
+    )
+    expected_chunk_ids = ["b1", "b2", "b4", "b5", "b6", "b8", "b9", "b10", "b11"]
+    assert chunk_block_ids == expected_chunk_ids, (
+        f"chunk block_ids mismatch: actual={chunk_block_ids}, "
+        f"expected={expected_chunk_ids}"
+    )
+
+    # 每个 chunk 必须有有效的 canonical range（指向 base_text）。
+    for chunk in plan.chunks:
+        assert chunk.citation.canonical_text_start_utf16 is not None
+        assert chunk.citation.canonical_text_end_utf16 is not None
+        assert (
+            chunk.citation.canonical_text_end_utf16
+            > chunk.citation.canonical_text_start_utf16
+        )

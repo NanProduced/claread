@@ -6,7 +6,7 @@ Contract. It loads each G0 fixture under
 adapter ``MarkdownSourceParser`` produces the expected blocks, policy,
 and diagnostics.
 
-M1 state (2026-07-23): all 10 G0 fixtures PASS under the production
+M1 state (2026-07-23): all 11 G0 fixtures PASS under the production
 adapter. The legacy regex normalizer and the candidate-service regex
 draft path have been replaced by this adapter (single parse result).
 
@@ -41,7 +41,9 @@ _FIXTURES_ROOT = (
     / "markdown_structured_source"
 )
 
-# All 10 G0 fixtures PASS under the M1 production adapter.
+# All 11 G0 fixtures PASS under the M1 production adapter.
+# real_list_wrapper added in M3 prerequisite: focused list wrapper +
+# list_item regression for Article RAG eligibility.
 _PASSING_FIXTURES = (
     "code_mermaid",
     "footnote",
@@ -49,6 +51,7 @@ _PASSING_FIXTURES = (
     "nested_list",
     "r14_complex",
     "raw_html",
+    "real_list_wrapper",
     "reject_empty",
     "simple_paragraph",
     "unclosed_fence",
@@ -190,7 +193,7 @@ def _assert_identity(result: MarkdownParseResult) -> None:
 # ---------------------------------------------------------------------------
 # Fixture-driven parametrized tests
 #
-# All 10 G0 fixtures run as plain assertions under the M1 production
+# All 11 G0 fixtures run as plain assertions under the M1 production
 # adapter. The xfail parametrization helper is retained but empty; if a
 # future regression introduces a RED fixture, re-add it to
 # ``_XFAIL_FIXTURES`` with a reason.
@@ -408,12 +411,12 @@ def test_clause2_missing_source_range_emits_warning_and_routes_to_candidate(
 
 
 # ---------------------------------------------------------------------------
-# Explicit assertion: all 10 fixtures must exist on disk
+# Explicit assertion: all 11 fixtures must exist on disk
 # ---------------------------------------------------------------------------
 
 
 def test_all_g0_fixtures_exist_on_disk() -> None:
-    """All 10 G0 fixtures must be present with all four files."""
+    """All 11 G0 fixtures must be present with all four files."""
     expected_names = {
         "code_mermaid",
         "footnote",
@@ -421,6 +424,7 @@ def test_all_g0_fixtures_exist_on_disk() -> None:
         "nested_list",
         "r14_complex",
         "raw_html",
+        "real_list_wrapper",
         "reject_empty",
         "simple_paragraph",
         "unclosed_fence",
@@ -446,3 +450,81 @@ def test_all_g0_fixtures_exist_on_disk() -> None:
             assert (fixture_dir / filename).exists(), (
                 f"{name}/{filename} missing"
             )
+
+
+# ---------------------------------------------------------------------------
+# M3 prerequisite: real list wrapper regression
+#
+# The G1 blind spot was that existing G0 fixtures + RAG tests only verified
+# isolated list_item blocks. The real_list_wrapper fixture covers parser-
+# emitted list wrapper (text_content=None) + list_item child combination
+# in a realistic article context, which is what the Article RAG index
+# plan builder actually receives.
+# ---------------------------------------------------------------------------
+
+
+def test_real_list_wrapper_parser_emits_wrapper_with_null_text() -> None:
+    """M3 前置 — parser 对 real_list_wrapper fixture 必须产出 list wrapper
+    block（text_content=None）+ list_item 子节点（parent_block_id 指向
+    wrapper）。这是 G1 盲区的核心覆盖：之前 G0 fixture 测试只验证
+    isolated list_item，未显式断言 wrapper 的 text_content=None 和
+    parent_block_id 指向关系。
+
+    断言要点：
+      * 两个 list wrapper block（无序 + 有序），text_content 均为 None
+      * list_item 子节点的 parent_block_id 指向对应 wrapper
+      * heading 在最前、paragraph 在最后
+    """
+    input_md, expected_blocks, _, _ = _load_fixture("real_list_wrapper")
+    result = _parse(input_md)
+    blocks = list(result.blocks)
+
+    # 11 blocks: heading + paragraph + list(ul) + 3 list_item +
+    # list(ol) + 3 list_item + paragraph
+    assert len(blocks) == 11
+
+    # 第一个 block 是 heading
+    assert blocks[0].block_type == "heading"
+    assert blocks[0].text_content == "Real List Wrapper Article"
+
+    # 找到两个 list wrapper block
+    list_wrappers = [b for b in blocks if b.block_type == "list"]
+    assert len(list_wrappers) == 2, (
+        f"expected 2 list wrappers (unordered + ordered), "
+        f"got {len(list_wrappers)}"
+    )
+
+    # list wrapper 的 text_content 必须是 None（结构性容器，叙事在子节点）
+    for wrapper in list_wrappers:
+        assert wrapper.text_content is None, (
+            f"list wrapper {wrapper.block_id} must have text_content=None, "
+            f"got {wrapper.text_content!r}"
+        )
+        assert wrapper.parent_block_id is None, (
+            f"top-level list wrapper {wrapper.block_id} must have "
+            f"parent_block_id=None"
+        )
+
+    # 无序 list wrapper
+    ul_wrapper = list_wrappers[0]
+    assert ul_wrapper.payload_json.get("ordered") is False
+    # 有序 list wrapper
+    ol_wrapper = list_wrappers[1]
+    assert ol_wrapper.payload_json.get("ordered") is True
+
+    # list_item 子节点的 parent_block_id 必须指向对应 wrapper
+    ul_items = [b for b in blocks if b.parent_block_id == ul_wrapper.block_id]
+    ol_items = [b for b in blocks if b.parent_block_id == ol_wrapper.block_id]
+    assert len(ul_items) == 3, (
+        f"expected 3 unordered list_items, got {len(ul_items)}"
+    )
+    assert len(ol_items) == 3, (
+        f"expected 3 ordered list_items, got {len(ol_items)}"
+    )
+    for item in ul_items + ol_items:
+        assert item.block_type == "list_item"
+        assert item.text_content is not None and len(item.text_content) > 0
+
+    # 最后一个 block 是 paragraph
+    assert blocks[-1].block_type == "paragraph"
+    assert blocks[-1].text_content == "Closing paragraph that follows the lists."
