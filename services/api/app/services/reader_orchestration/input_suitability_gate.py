@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.schemas.reader_input_adapter import (
     InputAdapterSourceType,
+    InputSuitabilityOutcome,
     InputSuitabilityRequest,
     InputSuitabilityResult,
-    InputSuitabilityOutcome,
     SourceLossFlag,
 )
 from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownParseResult,
     MarkdownSourceParser,
 )
 
@@ -35,21 +36,26 @@ _LINK_ONLY_LINE_PATTERN = re.compile(
     r"^\s*(?:[-*+]|\d+[.)])?\s*(?:https?://\S+|www\.\S+|\[[^\]]+\]\([^)]+\))\s*$",
     re.IGNORECASE,
 )
-_CODE_LINE_PATTERN = re.compile(
-    r"^\s*(?:"
-    r"#include\b|import\b|from\b.+\bimport\b|def\b|class\b|const\b|let\b|var\b|"
-    r"function\b|if\s*\(|for\s*\(|while\s*\(|return\b|try\b|except\b|"
-    r"SELECT\b|UPDATE\b|INSERT\b|DELETE\b|CREATE\b|ALTER\b|WITH\b|"
-    r"<\?php|public\b|private\b|protected\b"
-    r")",
-    re.IGNORECASE,
-)
-_CODE_FENCE_PATTERN = re.compile(r"^\s*```|^\s*~~~", re.MULTILINE)
+# Strong out-of-spec code signals. The Markdown parser is the single
+# source of truth for block structure, but a shebang or editor modeline
+# is a hard cue that the input is a script even when the parser sees
+# the raw lines as a paragraph. These patterns are intentionally narrow
+# so legal citations like ``(2019);`` cannot match.
+_SHEBANG_PATTERN = re.compile(r"^#!\s*/")
+_MODELINE_PATTERN = re.compile(r"#\s*vim:\s*set|#\s*-\*-\s*coding|//\s*-\*-")
 _INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$[^$\n]+\$(?!\$)")
 _BLOCK_MATH_PATTERN = re.compile(r"\$\$[\s\S]+?\$\$|\\\(|\\\[")
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _SUSPICIOUS_OCR_CHAR_PATTERN = re.compile(r"[�¦§¤]|[|]{2,}|[_]{3,}|[\\/]{3,}")
 _HYPHENATED_LINE_BREAK_PATTERN = re.compile(r"[A-Za-z]-\n[A-Za-z]")
+
+# Block types that count as Markdown prose structure for code-dominance
+# detection. ``paragraph`` is included because the parser emits it for
+# free-form narrative text; a code-only input fenced inside ``` has no
+# paragraph blocks outside the fence.
+_PROSE_BLOCK_TYPES = frozenset(
+    {"heading", "paragraph", "list", "list_item", "blockquote", "table", "thematic_break"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +69,21 @@ class _TextMetrics:
     code_line_ratio: float
     short_line_ratio: float
     suspicious_ocr_char_ratio: float
+
+
+@dataclass(frozen=True, slots=True)
+class _CodeStructureMetrics:
+    """Parser-derived signals for code-dominance detection.
+
+    Replaces the legacy hardcoded regex heuristics (``_CODE_LINE_PATTERN``,
+    ``_looks_like_code_line``, ``_fenced_code_line_ratio``) with parser
+    token signals that cannot misclassify legal citations like
+    ``(2019);`` as code lines.
+    """
+
+    code_line_ratio: float
+    prose_structure_count: int
+    has_shebang_or_modeline: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +132,18 @@ class InputSuitabilityGate:
                 preview=preview,
             )
 
+        # Parse once and share the result across code-structure metrics,
+        # markdown complexity detection, and downstream consumers to avoid
+        # redundant parser invocations.
+        parse_result = _MARKDOWN_PARSER.parse(normalized_text)
+        code_metrics = _compute_code_structure_metrics(normalized_text, parse_result)
         metrics = _measure_text(normalized_text)
+        metrics = replace(metrics, code_line_ratio=code_metrics.code_line_ratio)
         markdown = _detect_markdown_complexity(
             normalized_text,
             source_type=request.source_type,
             filename=request.filename,
+            parse_result=parse_result,
         )
         ocr = _detect_ocr_signals(
             normalized_text,
@@ -127,7 +155,15 @@ class InputSuitabilityGate:
         reject_reasons: list[str] = []
         candidate_reasons: list[str] = []
 
-        if metrics.english_word_count < _MIN_ENGLISH_WORDS:
+        # code_dominant is computed early because prose-specific quality
+        # checks (too_short_for_learning, non_english_or_mixed_language)
+        # do not apply to code-dominant input. Such input is routed to
+        # candidate review instead of being rejected for low English
+        # prose volume or ratio, since those metrics measure prose
+        # suitability, not code suitability.
+        is_code_dominant = _is_code_dominant(code_metrics)
+
+        if not is_code_dominant and metrics.english_word_count < _MIN_ENGLISH_WORDS:
             _add_flag(flags, "too_short_for_learning")
             reject_reasons.append(
                 f"English content is too short for learning ({metrics.english_word_count} words)."
@@ -139,7 +175,7 @@ class InputSuitabilityGate:
                 f"Input is too long to process as a single low-impact stable document ({metrics.word_count} words)."
             )
 
-        if metrics.english_word_ratio < _MIN_ENGLISH_WORD_RATIO:
+        if not is_code_dominant and metrics.english_word_ratio < _MIN_ENGLISH_WORD_RATIO:
             _add_flag(flags, "non_english_or_mixed_language")
             reject_reasons.append(
                 f"English word ratio is too low ({metrics.english_word_ratio:.2f})."
@@ -149,9 +185,11 @@ class InputSuitabilityGate:
             _add_flag(flags, "link_list_dominant")
             reject_reasons.append("Input is dominated by links or URL-only lines.")
 
-        if _is_code_dominant(normalized_text, metrics):
+        if is_code_dominant:
             _add_flag(flags, "code_dominant")
-            reject_reasons.append("Input is dominated by code-like structure.")
+            candidate_reasons.append(
+                "输入疑似纯代码文本，缺少 Markdown 散文结构（标题/段落/列表），请在确认后继续。"
+            )
 
         if markdown.has_table:
             _add_flag(flags, "markdown_complex_structure")
@@ -304,9 +342,6 @@ def _measure_text(text: str) -> _TextMetrics:
     link_only_lines = [
         line for line in nonempty_lines if _LINK_ONLY_LINE_PATTERN.match(line)
     ]
-    code_lines = [
-        line for line in nonempty_lines if _looks_like_code_line(line)
-    ]
     suspicious_chars = _SUSPICIOUS_OCR_CHAR_PATTERN.findall(text)
 
     word_count = len(tokens)
@@ -325,9 +360,10 @@ def _measure_text(text: str) -> _TextMetrics:
         link_only_line_ratio=(
             len(link_only_lines) / nonempty_line_count if nonempty_line_count else 0.0
         ),
-        code_line_ratio=(
-            len(code_lines) / nonempty_line_count if nonempty_line_count else 0.0
-        ),
+        # code_line_ratio is populated from parser signals in evaluate()
+        # via _CodeStructureMetrics + dataclasses.replace; the placeholder
+        # is 0.0 so _measure_text can run before the parser is invoked.
+        code_line_ratio=0.0,
         short_line_ratio=(
             sum(1 for count in line_word_counts if 0 < count <= 4) / nonempty_line_count
             if nonempty_line_count
@@ -346,6 +382,7 @@ def _detect_markdown_complexity(
     *,
     source_type: InputAdapterSourceType,
     filename: str | None,
+    parse_result: MarkdownParseResult,
 ) -> _MarkdownComplexity:
     is_markdown_source = source_type == "markdown_file" or (
         filename is not None
@@ -356,7 +393,6 @@ def _detect_markdown_complexity(
     # (tables, footnotes, raw HTML, unclosed fences); image and math are
     # inline features the parser flattens without flagging, so they stay
     # on lightweight regex probes.
-    parse_result = _MARKDOWN_PARSER.parse(text)
     block_types = {block.block_type for block in parse_result.blocks}
     warning_codes = {warning.code for warning in parse_result.warnings}
 
@@ -495,71 +531,78 @@ def _is_link_list_dominant(text: str, metrics: _TextMetrics) -> bool:
     )
 
 
-def _is_code_dominant(text: str, metrics: _TextMetrics) -> bool:
-    fenced_code_line_ratio = _fenced_code_line_ratio(text)
-    dominant_code_ratio = max(metrics.code_line_ratio, fenced_code_line_ratio)
+def _compute_code_structure_metrics(
+    text: str,
+    parse_result: MarkdownParseResult,
+) -> _CodeStructureMetrics:
+    """Derive code-dominance signals from parser tokens.
 
-    # A fenced block is only a rejection signal when code occupies a
-    # substantial share of the document. Small illustrative snippets
-    # inside an otherwise prose-heavy article should not be rejected as
-    # code-dominant.
-    if _CODE_FENCE_PATTERN.search(text):
-        return bool(
-            metrics.nonempty_line_count > 0
-            and (
-                dominant_code_ratio >= 0.55
-                or (
-                    dominant_code_ratio >= 0.35
-                    and metrics.english_word_ratio < 0.85
-                )
+    Replaces the legacy hardcoded regex heuristics. The parser is the
+    single source of truth for block structure, so legal citations like
+    ``(2019);`` are correctly classified as prose (paragraph blocks)
+    rather than code lines.
+
+    - ``code_line_ratio``: sum of ``code_block`` source_range line spans
+      divided by total nonempty lines (capped at 1.0).
+    - ``prose_structure_count``: count of prose block types
+      (heading/paragraph/list/list_item/blockquote/table/thematic_break).
+    - ``has_shebang_or_modeline``: shebang on the first nonempty line or
+      an editor modeline anywhere in the text.
+    """
+    nonempty_lines = [line for line in text.splitlines() if line.strip()]
+    total_nonempty = len(nonempty_lines)
+
+    code_line_span = 0
+    prose_structure_count = 0
+    for block in parse_result.blocks:
+        if block.block_type == "code_block":
+            code_line_span += (
+                block.source_range.line_end - block.source_range.line_start + 1
             )
-        )
-    return bool(
-        metrics.nonempty_line_count > 0
-        and (
-            metrics.code_line_ratio >= 0.35
-            or (
-                metrics.code_line_ratio >= 0.25
-                and metrics.english_word_ratio < 0.85
-            )
-        )
+        if block.block_type in _PROSE_BLOCK_TYPES:
+            prose_structure_count += 1
+
+    code_line_ratio = (
+        min(code_line_span / total_nonempty, 1.0) if total_nonempty > 0 else 0.0
+    )
+
+    has_shebang_or_modeline = False
+    if nonempty_lines and _SHEBANG_PATTERN.match(nonempty_lines[0]):
+        has_shebang_or_modeline = True
+    if not has_shebang_or_modeline:
+        for line in nonempty_lines:
+            if _MODELINE_PATTERN.search(line):
+                has_shebang_or_modeline = True
+                break
+
+    return _CodeStructureMetrics(
+        code_line_ratio=code_line_ratio,
+        prose_structure_count=prose_structure_count,
+        has_shebang_or_modeline=has_shebang_or_modeline,
     )
 
 
-def _fenced_code_line_ratio(text: str) -> float:
-    nonempty_lines = [line for line in text.splitlines() if line.strip()]
-    if not nonempty_lines:
-        return 0.0
+def _is_code_dominant(code_metrics: _CodeStructureMetrics) -> bool:
+    """Determine if the input is code-dominant using parser token signals.
 
-    fenced_line_count = 0
-    in_fence = False
-    fence_marker: str | None = None
+    Three independent triggers:
+    1. Shebang or editor modeline — strong out-of-spec signal that the
+       input is a script, even when the parser sees raw code as a paragraph.
+    2. No prose structure (heading/paragraph/list/...) and code occupies
+       at least half the nonempty lines — a pure code blob.
+    3. Code occupies >= 80% of lines and prose structure is minimal (<= 1
+       block) — heavily code-saturated input with trivial prose wrapper.
 
-    for line in nonempty_lines:
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if in_fence and marker == fence_marker:
-                in_fence = False
-                fence_marker = None
-            else:
-                in_fence = True
-                fence_marker = marker
-            continue
-        if in_fence:
-            fenced_line_count += 1
-
-    return fenced_line_count / len(nonempty_lines)
-
-
-def _looks_like_code_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    if _CODE_LINE_PATTERN.search(stripped):
+    Multiple headings (prose_structure_count > 1) protect legitimate
+    Markdown articles that contain large code samples from being flagged.
+    """
+    if code_metrics.has_shebang_or_modeline:
         return True
-    punctuation_hits = sum(stripped.count(char) for char in "{}();=<>" if char in stripped)
-    return punctuation_hits >= 3 and not _URL_PATTERN.search(stripped)
+    if code_metrics.prose_structure_count == 0 and code_metrics.code_line_ratio >= 0.5:
+        return True
+    if code_metrics.code_line_ratio >= 0.8 and code_metrics.prose_structure_count <= 1:
+        return True
+    return False
 
 
 def _compute_natural_language_score(

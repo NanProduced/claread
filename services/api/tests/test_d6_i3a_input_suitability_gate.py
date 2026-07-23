@@ -86,8 +86,14 @@ def test_mostly_non_english_text_is_rejected() -> None:
     assert "non_english_or_mixed_language" in result.flags
 
 
-def test_code_heavy_input_is_rejected() -> None:
+def test_code_heavy_input_requires_candidate_document() -> None:
+    # Pure Python code wrapped in a fenced block, no Markdown prose
+    # structure (no heading / paragraph / list outside the fence).
+    # The parser sees only code_block tokens, so prose_structure_count
+    # is 0 and code_line_ratio is high → code_dominant triggers, but
+    # per the downgrade policy the outcome is candidate (not rejected).
     text = """
+```python
 def build_report(data):
     summary = []
     for item in data:
@@ -104,11 +110,106 @@ from pathlib import Path
 
 def save_output(payload):
     Path("report.json").write_text(json.dumps(payload))
+```
 """.strip()
     result = _evaluate(text=text)
 
-    assert result.outcome == "input_rejected_or_action_required"
+    assert result.outcome == "candidate_document_required"
     assert "code_dominant" in result.flags
+
+
+def test_legal_document_with_year_semicolon_not_code_dominant() -> None:
+    # Regression: the legacy hardcoded regex misclassified legal
+    # citations like "(2019);" as code lines because the punctuation
+    # count hit the heuristic threshold. The parser-based signal
+    # treats the input as paragraphs (prose), so code_dominant must
+    # not fire.
+    text = """
+In re Smith v. Thompson (2019); the court held that the statute applied retroactively to all pending claims.
+Jackson v. City Council (2020); see also the dissenting opinion in Reyes (2018) for a parallel reading.
+The defendant appealed the lower court ruling twice (2021); however, the jury returned a unanimous verdict.
+Brown v. Board of Education (1954); the landmark ruling established a new framework for judicial review.
+These cases illustrate how courts interpret statutory language over time and balance precedent with new facts.
+""".strip()
+    result = _evaluate(text=text)
+
+    assert "code_dominant" not in result.flags
+    assert result.outcome == "stable_document_ready"
+
+
+def test_shebang_first_line_triggers_code_dominant() -> None:
+    # Even when the parser sees raw code (no fence) as a paragraph,
+    # the shebang line is a strong out-of-spec signal that the input
+    # is a script, not prose.
+    text = """
+#!/usr/bin/env python
+import sys
+import json
+from pathlib import Path
+
+def main():
+    data = json.loads(sys.stdin.read())
+    Path("out.json").write_text(json.dumps(data))
+    return 0
+""".strip()
+    result = _evaluate(text=text)
+
+    assert "code_dominant" in result.flags
+    assert result.outcome == "candidate_document_required"
+
+
+def test_markdown_article_80_pct_code_with_multiple_headings_not_code_dominant() -> None:
+    # 80% of the lines are inside a fenced code block, but the
+    # multiple headings keep prose_structure_count > 1, so the
+    # code-line-ratio-only trigger must not fire.
+    text = """
+# Engineering Notes
+
+## Section One
+
+```python
+def process_reading_records(records):
+    filtered = [r for r in records if r.active]
+    summary = sum(r.word_count for r in filtered)
+    return summary
+
+def validate_record(record):
+    if not record.title:
+        return False
+    if not record.blocks:
+        return False
+    return True
+
+def transform_record(record, schema):
+    new_blocks = []
+    for block in record.blocks:
+        new_blocks.append(schema.apply(block))
+    return new_blocks
+```
+""".strip()
+    result = _evaluate(
+        source_type="markdown_file",
+        filename="engineering.md",
+        text=text,
+    )
+
+    assert "code_dominant" not in result.flags
+
+
+def test_raw_code_with_modeline_triggers_code_dominant() -> None:
+    # Raw code (no fence, parsed as a single paragraph) but the
+    # `# -*- coding: ... -*-` modeline is a strong signal that the
+    # input is source code.
+    text = """
+# -*- coding: utf-8 -*-
+def main():
+    print("hello world")
+    return 0
+""".strip()
+    result = _evaluate(text=text)
+
+    assert "code_dominant" in result.flags
+    assert result.outcome == "candidate_document_required"
 
 
 def test_link_list_input_is_rejected() -> None:
