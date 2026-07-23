@@ -26,6 +26,9 @@ from app.services.reader_record_ask.baseline_context import (
     render_baseline_block,
     render_handles_block,
 )
+from app.services.reader_record_ask.baseline_model_view import (
+    BaselinePromptCapability,
+)
 from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 from app.services.reader_record_ask.grounding_validator import (
     CORE_GROUNDED_QUESTION_HINTS,
@@ -43,6 +46,10 @@ from app.services.reader_record_ask.tool_contracts import (
     ReadRangeLocator,
     ReadRangeToolInput,
     SearchCurrentArticleToolInput,
+)
+from app.services.reader_record_ask.turn_prompt import (
+    TurnFramePromptCapability,
+    build_production_agent_user_prompt,
 )
 
 _SYSTEM_INSTRUCTIONS_TEMPLATE = """\
@@ -180,95 +187,79 @@ _SYSTEM_INSTRUCTIONS = _build_system_instructions()
 
 def build_agent_user_prompt(
     *,
-    user_message: str,
-    agent_context_json: str,
+    user_message: str | None = None,
+    agent_context_json: str | None = None,
     available_evidence_handle_ids: Sequence[str] = (),
     model_context_chunks: Sequence[ModelContextChunk] = (),
     baseline_is_complete: bool = False,
     correctness_block: str | None = None,
     selection_prompt: SelectionPromptCapability | None = None,
     map_prompt: ArticleMapPromptCapability | None = None,
+    baseline_prompt: BaselinePromptCapability | None = None,
+    turn_frame: TurnFramePromptCapability | None = None,
 ) -> str:
     """Compose the single user turn for the agent (no keyword routing).
 
-    ``model_context_chunks`` carries the baseline article text as
-    untrusted, XML-escaped ``<untrusted_article_text>`` blocks. Each chunk
-    exposes only an opaque ``handle_id``, an ordinal, and raw text — no
-    unit/anchor/stable/base/generation/fingerprint identity. The chunk text
-    is escaped at render time via :func:`format_chunk_for_prompt` so a
-    malicious ``</untrusted_article_text>`` sequence inside the article
-    cannot close the data region.
+    Production mode (R4-A5-7)
+    -------------------------
+    Pass branded ``turn_frame`` plus optional ``selection_prompt`` /
+    ``baseline_prompt`` / ``map_prompt``. Production mode is **mutually
+    exclusive** with legacy raw ``model_context_chunks`` / raw section
+    strings / ``agent_context_json`` assembly. The user question is never
+    stripped, truncated, or rewritten in production mode — the exact
+    ``turn_frame.user_prompt`` is returned.
 
-    The handles block and baseline block are rendered via
-    :func:`render_handles_block` and :func:`render_baseline_block` — the
-    single source of truth shared with :class:`BaselineContextAssembler`
-    so the serialized budget computation can never drift from the actual
-    prompt rendering.
-
-    ``selection_prompt`` (R4-A5-2R, optional) must be an assembler-minted
-    :class:`~app.services.reader_record_ask.selection_model_view.SelectionPromptCapability`
-    from :func:`~app.services.reader_record_ask.selection_model_view.assemble_selection_model_view`.
-    Raw strings, generic :class:`RenderedModelView` (including
-    ``render_plain``), and hand-forged capabilities are rejected. The
-    capability already includes request_frame-owned section chrome plus
-    the selection-account untrusted block; the prompt builder inserts
-    ``section_text`` once before baseline and does **not** re-charge.
-    Omitted / ``None`` preserves the legacy prompt layout (production
-    still uses the legacy path until A5-7).
-
-    ``baseline_is_complete`` toggles the coverage awareness block between
-    ``complete`` (full article visible) and ``partial`` (subset only).
-    The block is the ONLY place coverage state is communicated to the
-    model; it carries no identity fields (record id / base id / generation
-    / fingerprint / hash). Coverage is a fact the agent uses to decide
-    whether to expand context via tools — it is NOT a routing signal.
-
-    ``correctness_block`` carries the turn-specific answer-correctness
-    rules rendered by
-    :meth:`AnswerCorrectnessPolicy.render_prompt_block`. When provided,
-    it is placed immediately after the coverage block and before the
-    user question so the model sees the rules that apply to this turn.
-    The block is the ONLY place turn-specific year allowset, completeness
-    constraint, and explicit exercise count enter the user prompt. Pass
-    ``None`` (or omit) when no policy is available; the prompt then
-    carries no ``<answer_correctness>`` marker.
-
-    ``map_prompt`` (R4-A5-4, optional) must be an assembler-minted
-    :class:`~app.services.reader_record_ask.article_map_model_view.ArticleMapPromptCapability`
-    from :func:`~app.services.reader_record_ask.article_map_model_view.assemble_article_map`.
-    Raw strings, generic :class:`RenderedModelView`, and hand-forged
-    capabilities are rejected. The capability carries the
-    request_frame-owned section chrome plus the map-account
-    ``<untrusted_article_map>`` block (labels are untrusted article-derived
-    text, XML-escaped; map cursors are opaque navigation pointers, never
-    evidence handles). Inserted once after the baseline block. Omitted /
-    ``None`` preserves the legacy prompt layout (production still uses the
-    legacy path until A5-7).
+    Legacy mode (offline / pre-A5-7 tests)
+    --------------------------------------
+    Omitting ``turn_frame`` preserves the legacy layout that still calls
+    :func:`render_baseline_block` / :func:`format_chunk_for_prompt`. The
+    live production runtime must not use this branch (static reverse
+    guards in A5-7 wiring tests).
     """
+    if turn_frame is not None:
+        # Production mode: exclusive with legacy raw chunk assembly.
+        if model_context_chunks:
+            raise ValueError(
+                "production turn_frame mode forbids raw model_context_chunks"
+            )
+        if agent_context_json is not None:
+            raise ValueError(
+                "production turn_frame mode forbids raw agent_context_json "
+                "(projection is already inside the turn frame)"
+            )
+        if user_message is not None:
+            # Optional consistency check only — never rewrite.
+            pass
+        return build_production_agent_user_prompt(
+            turn_frame=turn_frame,
+            selection_prompt=selection_prompt,
+            baseline_prompt=baseline_prompt,
+            map_prompt=map_prompt,
+        )
+
+    # ---- legacy mode (mutually exclusive with turn_frame) ----
+    if baseline_prompt is not None:
+        raise ValueError(
+            "baseline_prompt requires production turn_frame mode"
+        )
+    if user_message is None or agent_context_json is None:
+        raise ValueError(
+            "legacy build_agent_user_prompt requires user_message and "
+            "agent_context_json"
+        )
+
     handles_block = render_handles_block(available_evidence_handle_ids)
     baseline_block = render_baseline_block(model_context_chunks)
     coverage_block = _render_coverage_block(is_complete=baseline_is_complete)
-    # R4-A4-1C: turn-specific correctness rules from the policy. Placed
-    # after coverage and before the user question so the model sees the
-    # rules that govern this turn. ``correctness_block`` is the rendered
-    # output of ``AnswerCorrectnessPolicy.render_prompt_block()`` and is
-    # the ONLY place turn-specific year allowset / completeness constraint
-    # / explicit exercise count enter the user prompt. ``None`` means no
-    # policy (e.g., fail-closed path); no ``<answer_correctness>`` marker
-    # is emitted in that case.
     correctness_section = (
         f"\n## Answer correctness (turn-specific rules)\n{correctness_block}\n"
         if correctness_block
         else ""
     )
-    # R4-A5-2R: selection section only from assembler-minted capability.
-    # Origin validated; no re-charge; no raw str / generic view path.
     selection_section = ""
     if selection_prompt is not None:
         cap = validate_selection_prompt_capability(selection_prompt)
         selection_section = cap.section_text
-    # R4-A5-4: map section only from assembler-minted capability; placed
-    # after baseline, before coverage. Origin validated; no raw str path.
     map_section = ""
     if map_prompt is not None:
         map_cap = validate_article_map_prompt_capability(map_prompt)
