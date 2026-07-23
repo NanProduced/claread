@@ -1,4 +1,4 @@
-"""Process-scoped ExpansionPointerLedger owner (R4-A5-7).
+"""Process-scoped ExpansionPointerLedger owner (R4-A5-7 / A5-7R2).
 
 Production default obtains one shared :class:`ExpansionPointerLedger`
 instance for the process so a new turn can **recognize** pointers minted
@@ -14,10 +14,12 @@ Retention / capacity boundary (explicit, non-persistent)
   knowledge — expired/unknown pointers safely degrade to
   ``invalid_cursor`` (never falsely claimed as cross-process stale).
 - **Capacity**: soft cap ``DEFAULT_LEDGER_CAPACITY`` on distinct pointer
-  tokens. When exceeded, the oldest half of tokens is dropped. After
-  eviction, a previously known pointer may surface as
-  ``invalid_cursor`` rather than ``stale_evidence``; that is an accepted
-  degradation, not a cross-process guarantee.
+  tokens. The capacity queue stores ``token → expected_issue_marker``
+  (the marker remembered at issuance). Eviction calls
+  :meth:`ExpansionPointerLedger.discard_token_for_capacity` with that
+  pair: only matching issue markers delete ledger state; a **mismatch**
+  (foreign marker now owns the token) drops the local queue entry only
+  and never deletes the current ledger record.
 
 Tests may inject a shared fake/real ledger via
 :func:`run_reading_record_ask` / coordinator constructor arguments and
@@ -38,12 +40,12 @@ DEFAULT_LEDGER_CAPACITY: int = 4096
 
 _lock = threading.RLock()
 _process_ledger: ExpansionPointerLedger | None = None
-# Insertion-ordered token index for capacity eviction (token -> None).
-_token_order: OrderedDict[str, None] = OrderedDict()
+# Insertion-ordered capacity queue: token → expected_issue_marker.
+_token_order: OrderedDict[str, str] = OrderedDict()
 
 
 class CapacityAwarePointerLedger(ExpansionPointerLedger):
-    """Ledger that records token order for process-owner capacity eviction.
+    """Ledger that records token+marker for process-owner capacity eviction.
 
     Public behavior matches :class:`ExpansionPointerLedger`; capacity is
     enforced by the owner after mutations, not inside expand paths.
@@ -51,25 +53,28 @@ class CapacityAwarePointerLedger(ExpansionPointerLedger):
 
     def issue(self, **kwargs):  # type: ignore[no-untyped-def]
         receipt = super().issue(**kwargs)
-        token = kwargs.get("token")
-        if isinstance(token, str):
-            _remember_token(token)
+        # Only track *this* write. Idempotent re-issue of a pre-existing
+        # same-binding token does not own capacity (newly_issued=False).
+        if receipt.newly_issued and isinstance(receipt.token, str):
+            _remember_token(receipt.token, receipt.marker)
         return receipt
 
     def transition_pointers(self, **kwargs):  # type: ignore[no-untyped-def]
         receipt = super().transition_pointers(**kwargs)
         issued = receipt.issued_token
-        if isinstance(issued, str):
-            _remember_token(issued)
+        marker = kwargs.get("marker")
+        if isinstance(issued, str) and isinstance(marker, str):
+            _remember_token(issued, marker)
         return receipt
 
 
-def _remember_token(token: str) -> None:
+def _remember_token(token: str, issue_marker: str) -> None:
     with _lock:
         if token in _token_order:
             _token_order.move_to_end(token)
+            _token_order[token] = issue_marker
         else:
-            _token_order[token] = None
+            _token_order[token] = issue_marker
         _enforce_capacity_unlocked()
 
 
@@ -84,9 +89,11 @@ def _enforce_capacity_unlocked() -> None:
         for _ in range(drop_n):
             if not _token_order:
                 break
-            old, _ = _token_order.popitem(last=False)
-            # Public retention seam only — never touch private _records.
-            _process_ledger.discard_token_for_capacity(old)
+            old_token, expected_marker = _token_order.popitem(last=False)
+            # Marker-gated public seam: mismatch forgets queue only.
+            _process_ledger.discard_token_for_capacity(
+                old_token, expected_marker
+            )
 
 
 def get_process_pointer_ledger() -> ExpansionPointerLedger:

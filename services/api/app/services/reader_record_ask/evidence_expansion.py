@@ -144,6 +144,9 @@ ExpansionOutcomeKind = Literal[
 
 TransitionRollbackStatus = Literal["rolled_back", "incomplete"]
 
+# Capacity / retention forget verdict (public seam; not transaction rollback).
+CapacityDiscardResult = Literal["discarded", "absent", "mismatch"]
+
 # Fixed model-visible summaries (no counts/offsets/identity — safe phrases).
 _EXPAND_SUMMARY_MORE = (
     "Selection segment expanded. More selected text remains; call "
@@ -504,30 +507,38 @@ class ExpansionPointerLedger:
 
         return "rolled_back" if complete else "incomplete"
 
-    def discard_token_for_capacity(self, token: str) -> bool:
-        """Retention / capacity forget for one known pointer token.
+    def discard_token_for_capacity(
+        self,
+        token: str,
+        expected_issue_marker: str,
+    ) -> CapacityDiscardResult:
+        """Retention / capacity forget gated by expected issue marker.
 
         Public seam used by the process-scoped ledger owner when soft
-        capacity is exceeded. Deletes the token **only when present**;
-        never inspects or rewrites foreign transaction claims by marker.
+        capacity is exceeded. Deletes the token **only when** the current
+        record's ``issue_marker`` equals ``expected_issue_marker`` — the
+        marker the capacity queue remembered at issuance time.
+
+        - ``discarded``: token present under the expected marker; removed.
+        - ``absent``: token unknown; no mutation.
+        - ``mismatch``: token present under a **different** issue marker
+          (foreign owner); **never** deleted. Caller must drop its local
+          capacity queue entry only.
 
         This is **not** a host-transaction rollback. Transaction undo must
-        use :meth:`rollback_transition_by_marker` so only marker-proven
-        writes are reversed. Capacity drop may cause a later expand of a
-        previously known pointer to surface as ``invalid_cursor`` (accepted
+        use :meth:`rollback_transition_by_marker`. Capacity drop of a
+        discarded token may later surface as ``invalid_cursor`` (accepted
         retention degradation — not a cross-process stale guarantee).
-
-        Returns
-        -------
-        True
-            Token was present and removed.
-        False
-            Token was already unknown (no mutation).
         """
-        if token not in self._records:
-            return False
+        if not isinstance(expected_issue_marker, str) or not expected_issue_marker:
+            raise ValueError("expected_issue_marker must be a non-empty str")
+        current = self._records.get(token)
+        if current is None:
+            return "absent"
+        if current.issue_marker != expected_issue_marker:
+            return "mismatch"
         del self._records[token]
-        return True
+        return "discarded"
 
     def __len__(self) -> int:
         return len(self._records)
@@ -1114,6 +1125,7 @@ class EvidenceExpansionSession:
 
 
 __all__ = [
+    "CapacityDiscardResult",
     "EXPAND_ROLE",
     "ExpandScopeKind",
     "ExpansionEnvelopeIdentity",
@@ -1132,7 +1144,3 @@ __all__ = [
     "mint_transition_marker",
     "render_expand_success_view",
 ]
-
-
-# discard_token_for_capacity is a method on ExpansionPointerLedger (public
-# capacity seam; not a free function).

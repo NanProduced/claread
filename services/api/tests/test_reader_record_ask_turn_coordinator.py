@@ -351,6 +351,79 @@ def test_coordinator_never_touches_private_ledger_records():
     assert "rollback_transition_by_marker" in src
 
 
+def test_capacity_discard_mismatch_preserves_foreign_marker_record():
+    """Same token under foreign issue_marker: capacity forget does not delete."""
+    from app.services.reader_record_ask.evidence_expansion import (
+        PointerBinding,
+        mint_expansion_cursor_id,
+        mint_transition_marker,
+    )
+    from app.services.reader_record_ask.pointer_ledger_owner import (
+        CapacityAwarePointerLedger,
+        _token_order,
+        get_process_pointer_ledger,
+        reset_process_pointer_ledger_for_tests,
+    )
+    from app.services.reader_record_ask.turn_capability_projection import (
+        mint_turn_id,
+    )
+
+    reset_process_pointer_ledger_for_tests()
+    try:
+        ledger = get_process_pointer_ledger()
+        assert isinstance(ledger, CapacityAwarePointerLedger)
+        binding = PointerBinding(
+            turn_id=mint_turn_id(),
+            envelope_fingerprint=_envelope().envelope_fingerprint,
+            record_generation=1,
+            base_id=_BASE,
+            reading_record_id=_RECORD,
+            scope_kind="map",
+        )
+        token = mint_expansion_cursor_id()
+        our_marker = mint_transition_marker()
+        foreign_marker = mint_transition_marker()
+        assert our_marker != foreign_marker
+        # Our issuance is capacity-tracked.
+        ledger.issue(token=token, binding=binding, marker=our_marker)
+        assert ledger.lookup(token) is not None
+        assert _token_order.get(token) == our_marker
+        # Foreign owner replaces issue_marker (same token). Test-only
+        # mutation to simulate capacity-queue staleness after rebind.
+        from app.services.reader_record_ask.evidence_expansion import PointerRecord
+
+        current = ledger._records[token]  # noqa: SLF001 — test probe only
+        ledger._records[token] = PointerRecord(  # noqa: SLF001
+            binding=current.binding,
+            consumed=False,
+            issue_marker=foreign_marker,
+            consume_marker=None,
+        )
+        # Capacity forget with *our* remembered marker must not delete.
+        verdict = ledger.discard_token_for_capacity(token, our_marker)
+        assert verdict == "mismatch"
+        still = ledger.lookup(token)
+        assert still is not None
+        assert still.issue_marker == foreign_marker
+        # Matching marker still discards when we own it.
+        token2 = mint_expansion_cursor_id()
+        m2 = mint_transition_marker()
+        ledger.issue(token=token2, binding=binding, marker=m2)
+        assert ledger.discard_token_for_capacity(token2, m2) == "discarded"
+        assert ledger.lookup(token2) is None
+        assert ledger.discard_token_for_capacity(token2, m2) == "absent"
+        # Owner-queue eviction path: stale expected marker → mismatch,
+        # queue entry forgotten by caller, foreign ledger record retained.
+        _token_order[token] = our_marker
+        expected = _token_order.pop(token)
+        assert expected == our_marker
+        assert ledger.discard_token_for_capacity(token, expected) == "mismatch"
+        assert ledger.lookup(token) is not None
+        assert ledger.lookup(token).issue_marker == foreign_marker
+    finally:
+        reset_process_pointer_ledger_for_tests()
+
+
 @pytest.mark.asyncio
 async def test_outer_rollback_preserves_foreign_marker_on_same_token():
     """request-frame fail after map issue: foreign issue_marker on same token survives.
