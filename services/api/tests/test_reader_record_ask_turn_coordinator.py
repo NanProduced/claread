@@ -351,6 +351,191 @@ def test_coordinator_never_touches_private_ledger_records():
     assert "rollback_transition_by_marker" in src
 
 
+def test_transition_under_capacity_one_does_not_evict_consume_target(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """capacity=1: C→N transition must not fail at mark_consumed(C).
+
+    Nested issue() during transition must not capacity-evict C before it
+    is consumed. After success, N is known and usable.
+    """
+    from app.services.reader_record_ask import pointer_ledger_owner as owner_mod
+    from app.services.reader_record_ask.evidence_expansion import (
+        PointerBinding,
+        mint_expansion_cursor_id,
+        mint_transition_marker,
+    )
+    from app.services.reader_record_ask.pointer_ledger_owner import (
+        CapacityAwarePointerLedger,
+        _token_order,
+        get_process_pointer_ledger,
+        reset_process_pointer_ledger_for_tests,
+    )
+    from app.services.reader_record_ask.turn_capability_projection import (
+        mint_turn_id,
+    )
+
+    reset_process_pointer_ledger_for_tests()
+    monkeypatch.setattr(owner_mod, "DEFAULT_LEDGER_CAPACITY", 1)
+    try:
+        ledger = get_process_pointer_ledger()
+        assert isinstance(ledger, CapacityAwarePointerLedger)
+        binding = PointerBinding(
+            turn_id=mint_turn_id(),
+            envelope_fingerprint=_envelope().envelope_fingerprint,
+            record_generation=1,
+            base_id=_BASE,
+            reading_record_id=_RECORD,
+            scope_kind="selection",
+        )
+        c = mint_expansion_cursor_id()
+        n = mint_expansion_cursor_id()
+        m_c = mint_transition_marker()
+        m_t = mint_transition_marker()
+        ledger.issue(token=c, binding=binding, marker=m_c)
+        assert ledger.lookup(c) is not None
+        assert _token_order.get(c) == m_c
+        # Pre-R3 bug: nested issue(N) would capacity-evict C, then
+        # mark_consumed(C) raised. Must succeed.
+        receipt = ledger.transition_pointers(
+            consume_token=c,
+            issue_token=n,
+            binding=binding,
+            marker=m_t,
+        )
+        assert receipt.issued_token == n
+        assert receipt.consumed_token == c
+        # N is known and unconsumed. C was consumed during transition;
+        # post-success capacity registration of N may then drop C from
+        # the ledger (capacity=1) — that is after mark_consumed succeeded.
+        rec_n = ledger.lookup(n)
+        assert rec_n is not None and rec_n.consumed is False
+        rec_c = ledger.lookup(c)
+        if rec_c is not None:
+            assert rec_c.consumed is True
+        # N registered in capacity queue only after full success.
+        assert _token_order.get(n) == m_t
+        # N remains usable as a future consume target.
+        m_t2 = mint_transition_marker()
+        n2 = mint_expansion_cursor_id()
+        receipt2 = ledger.transition_pointers(
+            consume_token=n,
+            issue_token=n2,
+            binding=binding,
+            marker=m_t2,
+        )
+        assert receipt2.issued_token == n2
+    finally:
+        reset_process_pointer_ledger_for_tests()
+
+
+def test_failed_transition_leaves_no_capacity_queue_entry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Failed transition must not leave a capacity-queue item for N."""
+    from app.services.reader_record_ask import pointer_ledger_owner as owner_mod
+    from app.services.reader_record_ask.evidence_expansion import (
+        PointerBinding,
+        mint_expansion_cursor_id,
+        mint_transition_marker,
+    )
+    from app.services.reader_record_ask.pointer_ledger_owner import (
+        CapacityAwarePointerLedger,
+        _token_order,
+        get_process_pointer_ledger,
+        reset_process_pointer_ledger_for_tests,
+    )
+    from app.services.reader_record_ask.turn_capability_projection import (
+        mint_turn_id,
+    )
+
+    reset_process_pointer_ledger_for_tests()
+    monkeypatch.setattr(owner_mod, "DEFAULT_LEDGER_CAPACITY", 8)
+    try:
+        ledger = get_process_pointer_ledger()
+        assert isinstance(ledger, CapacityAwarePointerLedger)
+        binding = PointerBinding(
+            turn_id=mint_turn_id(),
+            envelope_fingerprint=_envelope().envelope_fingerprint,
+            record_generation=1,
+            base_id=_BASE,
+            reading_record_id=_RECORD,
+            scope_kind="map",
+        )
+        # Preflight fail (unknown consume target): N never queued.
+        n = mint_expansion_cursor_id()
+        m = mint_transition_marker()
+        with pytest.raises(ValueError, match="not known"):
+            ledger.transition_pointers(
+                consume_token=mint_expansion_cursor_id(),
+                issue_token=n,
+                binding=binding,
+                marker=m,
+            )
+        assert n not in _token_order
+        assert ledger.lookup(n) is None
+
+        # Write-then-fail after nested issue: suppress means N never queued
+        # even though base may have written N under the marker claim.
+        c = mint_expansion_cursor_id()
+        m_c = mint_transition_marker()
+        ledger.issue(token=c, binding=binding, marker=m_c)
+        assert _token_order.get(c) == m_c
+        n2 = mint_expansion_cursor_id()
+        m2 = mint_transition_marker()
+
+        def boom(*, token: str, marker: str):  # type: ignore[no-untyped-def]
+            raise RuntimeError("PROBE_MARK_CONSUMED_FAIL")
+
+        monkeypatch.setattr(ledger, "mark_consumed", boom)
+        with pytest.raises(RuntimeError, match="PROBE_MARK_CONSUMED_FAIL"):
+            ledger.transition_pointers(
+                consume_token=c,
+                issue_token=n2,
+                binding=binding,
+                marker=m2,
+            )
+        assert n2 not in _token_order
+        # C remains capacity-tracked from its direct issue().
+        assert _token_order.get(c) == m_c
+    finally:
+        reset_process_pointer_ledger_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_selection_expand_succeeds_under_capacity_one(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Real selection expand under capacity=1 returns a metered tool view."""
+    from app.services.reader_record_ask import pointer_ledger_owner as owner_mod
+    from app.services.reader_record_ask.pointer_ledger_owner import (
+        CapacityAwarePointerLedger,
+        get_process_pointer_ledger,
+        reset_process_pointer_ledger_for_tests,
+    )
+
+    reset_process_pointer_ledger_for_tests()
+    monkeypatch.setattr(owner_mod, "DEFAULT_LEDGER_CAPACITY", 1)
+    try:
+        ledger = get_process_pointer_ledger()
+        assert isinstance(ledger, CapacityAwarePointerLedger)
+        # Expandable selection so expand does C(handle)→N(cursor) transition.
+        selection = "expandable selection body with enough codepoints. " * 80
+        coord = _coordinator(selection=selection, ledger=ledger)
+        assembly = await coord.assemble_turn()
+        assert assembly.selection_result.selection.expandable is True
+        ptr = assembly.selection_result.selection.handle_id
+        assert ptr
+        metered = coord.expand_evidence(ptr)
+        assert metered.host_budget_abort is False
+        assert metered.status == "ok"
+        assert metered.text
+        payload = json.loads(metered.text)
+        assert payload["status"] == "ok"
+    finally:
+        reset_process_pointer_ledger_for_tests()
+
+
 def test_capacity_discard_mismatch_preserves_foreign_marker_record():
     """Same token under foreign issue_marker: capacity forget does not delete."""
     from app.services.reader_record_ask.evidence_expansion import (

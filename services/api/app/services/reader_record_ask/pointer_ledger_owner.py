@@ -1,4 +1,4 @@
-"""Process-scoped ExpansionPointerLedger owner (R4-A5-7 / A5-7R2).
+"""Process-scoped ExpansionPointerLedger owner (R4-A5-7 / A5-7R2 / R3).
 
 Production default obtains one shared :class:`ExpansionPointerLedger`
 instance for the process so a new turn can **recognize** pointers minted
@@ -20,6 +20,15 @@ Retention / capacity boundary (explicit, non-persistent)
   pair: only matching issue markers delete ledger state; a **mismatch**
   (foreign marker now owns the token) drops the local queue entry only
   and never deletes the current ledger record.
+
+Transition capacity timing (A5-7R3)
+-----------------------------------
+:meth:`CapacityAwarePointerLedger.transition_pointers` **suppresses**
+capacity registration and eviction for the whole base-class transition
+(issue-new + consume-old). Only after a successful return does it
+register the newly issued cursor once. A failed transition therefore
+leaves no capacity-queue entry for the provisional cursor. Direct
+:meth:`issue` still registers immediately (unchanged).
 
 Tests may inject a shared fake/real ledger via
 :func:`run_reading_record_ask` / coordinator constructor arguments and
@@ -47,22 +56,52 @@ _token_order: OrderedDict[str, str] = OrderedDict()
 class CapacityAwarePointerLedger(ExpansionPointerLedger):
     """Ledger that records token+marker for process-owner capacity eviction.
 
-    Public behavior matches :class:`ExpansionPointerLedger`; capacity is
-    enforced by the owner after mutations, not inside expand paths.
+    Public behavior matches :class:`ExpansionPointerLedger` except that
+    capacity tracking is deferred across
+    :meth:`transition_pointers` (see module docstring).
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # When True, issue() must not touch the capacity queue (set for the
+        # duration of transition_pointers so mid-transition issue cannot
+        # capacity-evict the pointer about to be mark_consumed).
+        self._suppress_capacity_tracking: bool = False
 
     def issue(self, **kwargs):  # type: ignore[no-untyped-def]
         receipt = super().issue(**kwargs)
-        # Only track *this* write. Idempotent re-issue of a pre-existing
-        # same-binding token does not own capacity (newly_issued=False).
-        if receipt.newly_issued and isinstance(receipt.token, str):
+        # Only track *this* write when not mid-transition. Idempotent
+        # re-issue of a pre-existing same-binding token does not own
+        # capacity (newly_issued=False).
+        if (
+            not self._suppress_capacity_tracking
+            and receipt.newly_issued
+            and isinstance(receipt.token, str)
+        ):
             _remember_token(receipt.token, receipt.marker)
         return receipt
 
     def transition_pointers(self, **kwargs):  # type: ignore[no-untyped-def]
-        receipt = super().transition_pointers(**kwargs)
+        """Run base transition with capacity tracking fully suppressed.
+
+        Base ``transition_pointers`` may call ``self.issue`` then
+        ``mark_consumed``. Registering capacity on that nested issue can
+        capacity-evict the consume target before ``mark_consumed`` runs.
+        Suppress for the whole call; on success only, register the new
+        cursor once. On exception, leave no capacity-queue residue for
+        the provisional issue (it was never remembered).
+        """
+        previous = self._suppress_capacity_tracking
+        self._suppress_capacity_tracking = True
+        try:
+            receipt = super().transition_pointers(**kwargs)
+        finally:
+            self._suppress_capacity_tracking = previous
+        # Reached only when the base transition returned successfully —
+        # failed transitions never registered capacity for the provisional
+        # issue (suppressed), so marker rollback leaves no queue residue.
         issued = receipt.issued_token
-        marker = kwargs.get("marker")
+        marker = receipt.marker
         if isinstance(issued, str) and isinstance(marker, str):
             _remember_token(issued, marker)
         return receipt
