@@ -170,6 +170,12 @@ import {
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
 } from "./ask/sse";
+import {
+  formatAgenticTerminalMessage,
+  formatStreamErrorMessage,
+  interruptedBubbleMessage,
+  toUserFacingErrorMessage,
+} from "./ask/ask-error-messages";
 
 type ErrorEnvelope = {
   message?: string;
@@ -178,7 +184,10 @@ type ErrorEnvelope = {
   payload?: unknown;
 };
 
-const IS_DEV = process.env.NODE_ENV !== "production";
+/** Reads NODE_ENV lazily so tests can toggle dev behavior via stubEnv. */
+function isDevMode(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
 const SHOW_ASK_DEBUG_DISCLOSURES = process.env.NEXT_PUBLIC_ASK_CLAREAD_DEBUG === "true";
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
 const workspaceRelatedRecordItemClassName = cn(
@@ -533,22 +542,10 @@ function toSelectedModelSummary(
 }
 
 function formatStreamError(event: ReaderAskStreamEnvelopeDto) {
-  const userMessage =
-    typeof (event.data as { user_message?: unknown }).user_message === "string"
-      ? String((event.data as { user_message?: string }).user_message)
-      : null;
-  const code =
-    typeof (event.data as { code?: unknown }).code === "string"
-      ? String((event.data as { code?: string }).code)
-      : null;
-  const detail =
-    typeof (event.data as { detail?: unknown }).detail === "string"
-      ? String((event.data as { detail?: string }).detail)
-      : "Ask Claread 暂时不可用。";
-  if (userMessage) {
-    return userMessage;
-  }
-  return IS_DEV && code ? `${code}: ${detail}` : detail;
+  return formatStreamErrorMessage(
+    event.data as { user_message?: unknown; code?: unknown; detail?: unknown },
+    { dev: isDevMode() },
+  );
 }
 
 function parseJsonPayload<T>(rawText: string): T | string | null {
@@ -576,6 +573,11 @@ function extractNestedDetail(value: unknown): string | null {
 }
 
 function extractErrorMessage(payload: unknown, fallback: string) {
+  // Production never surfaces raw backend detail / HTTP bodies — only the
+  // caller-provided fixed fallback. DEV keeps the raw envelope for debugging.
+  if (!isDevMode()) {
+    return fallback;
+  }
   if (typeof payload === "string" && payload.trim()) {
     return payload.trim();
   }
@@ -584,7 +586,7 @@ function extractErrorMessage(payload: unknown, fallback: string) {
     const directDetail = envelope.detail || envelope.message || extractNestedDetail(envelope.payload);
     const code = envelope.code;
     if (directDetail) {
-      return IS_DEV && code ? `${code}: ${directDetail}` : directDetail;
+      return code ? `${code}: ${directDetail}` : directDetail;
     }
   }
   return fallback;
@@ -731,21 +733,7 @@ function createStreamingCommit(updateMessage: MessageUpdater) {
 function formatAgenticTerminalError(
   payload: ReaderAskAgenticTerminalPayloadDto,
 ): string {
-  const reason =
-    typeof payload.terminal_reason === "string" && payload.terminal_reason.trim()
-      ? payload.terminal_reason.trim()
-      : null;
-  switch (payload.final_status) {
-    case "context_stale":
-      return "阅读上下文已更新，请重试提问。";
-    case "invalid_citations":
-      return "回答引用校验失败，请重试提问。";
-    case "cancelled":
-      return "本次回答已取消。";
-    case "failed":
-    default:
-      return IS_DEV && reason ? reason : "Ask Claread 暂时不可用。";
-  }
+  return formatAgenticTerminalMessage(payload, { dev: isDevMode() });
 }
 
 function agenticTerminalMessageStatus(
@@ -857,6 +845,9 @@ export function createSseMessageHandler(
           id: payload.message_id || message.id,
           thread_id: payload.thread_id || message.thread_id,
           status: nextStatus,
+          // R4-A6-T3: keep the typed terminal status so the interrupted
+          // bubble can refine its copy (context_stale / cancelled / …).
+          final_status: payload.final_status,
           // Never write answer_text / content_md from non-ok terminals.
           content_md: message.content_md,
           reasoning_status:
@@ -3177,7 +3168,7 @@ function MessageBubble({
                         ) : null}
                         {message.status === "interrupted" ? (
                           <SystemMessage variant="warning">
-                            输出中断，可重新生成。
+                            {interruptedBubbleMessage(message.final_status)}
                           </SystemMessage>
                         ) : null}
                       </div>
@@ -3906,7 +3897,7 @@ export function AiWorkspacePanel({
       await loadThread(preferredThreadId, nextThreads);
       return preferredThreadId;
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Ask Claread 初始化失败。");
+      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 初始化失败。"));
       return null;
     } finally {
       setLoading(false);
@@ -3982,7 +3973,7 @@ export function AiWorkspacePanel({
       setSupplementNoticeMessageId(null);
       onClearAttachments();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "重置会话失败。");
+      setErrorMessage(toUserFacingErrorMessage(error, "重置会话失败。"));
     } finally {
       setLoading(false);
     }
@@ -4051,7 +4042,7 @@ export function AiWorkspacePanel({
         onActionExecuted?.(payload.result);
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "动作确认失败。");
+      setErrorMessage(toUserFacingErrorMessage(error, "动作确认失败。"));
     } finally {
       setPendingActionId(null);
     }
@@ -4093,7 +4084,7 @@ export function AiWorkspacePanel({
       setSupplementNoticeMessageId(targetMessageId);
       await onSupplementDeleted?.(supplementId);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "删除补充失败。");
+      setErrorMessage(toUserFacingErrorMessage(error, "删除补充失败。"));
     } finally {
       setPendingSupplementDeleteId(null);
     }
@@ -4329,7 +4320,7 @@ export function AiWorkspacePanel({
       );
       onClearAttachments();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
+      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
       setMessages((current) =>
         current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
       );
@@ -4441,7 +4432,7 @@ export function AiWorkspacePanel({
         controller.signal,
       );
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Ask Claread 暂时不可用。");
+      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
       setMessages((current) =>
         current.map((message) =>
           message.id === messageId

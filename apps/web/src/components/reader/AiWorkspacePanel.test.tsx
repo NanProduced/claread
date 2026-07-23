@@ -5065,3 +5065,220 @@ describe("AiWorkspacePanel agentic source navigation UI", () => {
     expect(onNavigate).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// R4-A6-T3: terminal_reason classification + raw error containment.
+//
+// terminal_reason must be consumed in production (fixed Chinese copy), raw
+// error strings (Failed to fetch / UnexpectedModelBehavior / backend detail)
+// must never reach the banner or the interrupted bubble, AbortError must not
+// surface as an error, and the interrupted bubble refines by final_status.
+// ---------------------------------------------------------------------------
+
+describe("AiWorkspacePanel – terminal error classification", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "temp-assistant-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[], initialId = "temp-assistant-1") {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler(initialId, updateMessage, undefined, onError);
+    return { getMessages: () => updatedMessages, handler, onError };
+  }
+
+  function agenticTerminal(overrides: Record<string, unknown> = {}) {
+    return {
+      execution_version: "reader_record_ask_agentic_v1",
+      final_status: "failed",
+      message_id: "msg-failed-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-1",
+      envelope_fingerprint: "fp",
+      terminal_reason: null,
+      rejected_handles: [],
+      ...overrides,
+    };
+  }
+
+  const REASON_CASES: Array<[string, string]> = [
+    ["agent_run_failed", "回答生成失败，请稍后重试。"],
+    ["agent_output_invalid", "回答格式校验失败，请重试提问。"],
+    ["budget_exhausted", "本轮处理额度已用完，请稍后重试。"],
+    ["document_unavailable", "当前文档暂不可用，请稍后重试。"],
+    ["baseline_unavailable", "阅读上下文暂不可用，请稍后重试。"],
+    ["evidence_scope_invariant_violation", "回答依据校验异常，请重试提问。"],
+  ];
+
+  it.each(REASON_CASES)(
+    "consumes terminal_reason %s as fixed Chinese copy (not the generic fallback)",
+    (reason, expected) => {
+      const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+      handler({ event: "agentic.terminal", data: agenticTerminal({ terminal_reason: reason }) });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(expected);
+      expect(onError.mock.calls[0][0]).not.toBe("Ask Claread 暂时不可用。");
+      expect(onError.mock.calls[0][0]).not.toBe(reason);
+    },
+  );
+
+  it("unknown terminal_reason: production shows the fallback, DEV shows raw", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const prod = setupHandler([makeStreamingAssistant()]);
+    prod.handler({
+      event: "agentic.terminal",
+      data: agenticTerminal({ terminal_reason: "some_new_reason" }),
+    });
+    expect(prod.onError).toHaveBeenCalledWith("Ask Claread 暂时不可用。");
+
+    vi.stubEnv("NODE_ENV", "test");
+    const dev = setupHandler([makeStreamingAssistant()]);
+    dev.handler({
+      event: "agentic.terminal",
+      data: agenticTerminal({ terminal_reason: "some_new_reason" }),
+    });
+    expect(dev.onError).toHaveBeenCalledWith("some_new_reason");
+  });
+
+  it("stream error with a known code maps to fixed copy without leaking detail", () => {
+    const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "error",
+      data: {
+        code: "SSE_PARSE_ERROR",
+        detail: 'Failed to parse SSE data for event "message.delta": oops',
+      },
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith("数据解析异常，请重试。");
+  });
+
+  it("stream error with raw backend detail never leaks it (prod and DEV)", () => {
+    for (const env of ["production", "test"] as const) {
+      vi.stubEnv("NODE_ENV", env);
+      const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+      handler({
+        event: "error",
+        data: { code: "HTTP_500", detail: "UnexpectedModelBehavior: structured output invalid" },
+      });
+      expect(onError).toHaveBeenCalledTimes(1);
+      const shown = String(onError.mock.calls[0][0]);
+      expect(shown).not.toContain("UnexpectedModelBehavior");
+      expect(shown).not.toContain("structured output invalid");
+    }
+  });
+
+  it("applyAgenticTerminal stores final_status on the message for bubble refinement", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.terminal",
+      data: agenticTerminal({ final_status: "context_stale", terminal_reason: "generation mismatch" }),
+    });
+    const message = getMessages()[0];
+    expect(message.status).toBe("interrupted");
+    expect(message.final_status).toBe("context_stale");
+    expect(message.content_md).toBe("");
+  });
+});
+
+describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("network failure surfaces the fixed network message, never the raw error", async () => {
+    vi.mocked(global.fetch).mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    renderPanel();
+    expect(await screen.findByText("网络连接失败，请检查网络后重试。")).not.toBeNull();
+    expect(screen.queryByText("Failed to fetch")).toBeNull();
+  });
+
+  it("refines the interrupted bubble by final_status=context_stale", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "interrupted",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "context_stale",
+        content_md: "partial answer",
+      }),
+    ]);
+    renderPanel();
+    expect(await screen.findByText("上下文已更新，回答已中断。")).not.toBeNull();
+    expect(screen.queryByText("输出中断，可重新生成。")).toBeNull();
+  });
+
+  it("refines the interrupted bubble by final_status=cancelled", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "interrupted",
+        execution_version: "reader_record_ask_agentic_v1",
+        final_status: "cancelled",
+        content_md: "",
+      }),
+    ]);
+    renderPanel();
+    expect(await screen.findByText("本次回答已取消。")).not.toBeNull();
+  });
+
+  it("keeps the generic interrupted note when final_status is absent", async () => {
+    mockThreadMessages([
+      createAssistantMessage({
+        status: "interrupted",
+        content_md: "partial answer",
+      }),
+    ]);
+    renderPanel();
+    expect(await screen.findByText("输出中断，可重新生成。")).not.toBeNull();
+  });
+});

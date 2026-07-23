@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SystemMessage } from "@/components/ui/system-message";
+import { userFacingErrorMessage } from "../ask/ask-error-messages";
 
 type AskComposerProps = {
   onSubmit: (value: string) => void | Promise<void>;
@@ -140,14 +141,6 @@ function AskComposerSurface({
       </PromptInputFooter>
     </PromptInput>
   );
-}
-
-function userFacingErrorMessage(errorMessage: string): string {
-  const normalizedMessage = errorMessage.trim();
-  if (!normalizedMessage || /\b(?:internal|unexpected) server error\b/i.test(normalizedMessage)) {
-    return "这次回答没有完成。请稍后重试，或换一种问法。";
-  }
-  return normalizedMessage;
 }
 
 export function AskComposer({
