@@ -1,0 +1,356 @@
+"""Provider-thinking capability contract (R4-A5-8A1).
+
+Narrow, dialect-aware configuration for low-cost Ask routes that may enable
+chain-of-thought / reasoning transport. Does **not** merge DeepSeek direct,
+DashScope DeepSeek, and DashScope Qwen into a single ``thinking=true``
+branch — each dialect has its own enable payload and continuation rules.
+
+Privacy: this module only describes *how* to talk to providers. It never
+logs or persists raw reasoning content.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from app.llm.types import (
+    ModelAdapter,
+    OpenAIProfileConfig,
+    ResolvedModelConfig,
+    RunModelSettings,
+)
+
+ThinkingDialect = Literal[
+    "deepseek_direct",
+    "dashscope_deepseek",
+    "dashscope_qwen",
+    "none",
+]
+
+# How thinking is enabled on the wire for this dialect.
+EnablePayloadKind = Literal[
+    "thinking_type_enabled",  # DeepSeek direct: extra_body.thinking.type=enabled
+    "enable_thinking_bool",  # DashScope: enable_thinking=true
+    "none",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ThinkingProviderCapability:
+    """Resolved thinking transport contract for one model build.
+
+    Fields are host-only control plane facts — never model-visible text.
+    """
+
+    dialect: ThinkingDialect
+    thinking_enabled: bool
+    enable_payload_kind: EnablePayloadKind
+    # DeepSeek direct optional effort string (e.g. low/medium/high) when set.
+    reasoning_effort: str | None
+    # DashScope thinking_budget (token-ish budget) when set.
+    thinking_budget: int | None
+    # Whether the route is documented as streaming-only for thinking.
+    streaming_only: bool
+    # Provider field that carries raw reasoning (never user-facing).
+    reasoning_field: str
+    # Whether assistant history must echo ThinkingPart as reasoning_field
+    # on tool-call turns (DeepSeek / DashScope DeepSeek requirement).
+    tool_round_must_return_thinking: bool
+    # DeepSeek direct thinking mode: omit meaningless sampling knobs.
+    strip_sampling_params: bool
+
+    @property
+    def preserve_reasoning_on_history(self) -> bool:
+        """Whether message conversion must write reasoning_content back."""
+        return (
+            self.thinking_enabled
+            and self.tool_round_must_return_thinking
+            and self.dialect != "none"
+        )
+
+
+def _provider_looks_like_deepseek(
+    *,
+    provider: str,
+    model_name: str,
+    base_url: str,
+    profile_hint: str,
+    openai_profile: OpenAIProfileConfig | None,
+) -> bool:
+    blob = f"{provider} {model_name} {base_url} {profile_hint}".lower()
+    if "deepseek" in blob:
+        return True
+    if profile_hint == "deepseek_v4":
+        return True
+    if openai_profile is not None:
+        if openai_profile.openai_chat_thinking_field == "reasoning_content":
+            # Ambiguous alone — need deepseek signal elsewhere.
+            pass
+    return False
+
+
+def _provider_looks_like_qwen(*, provider: str, model_name: str) -> bool:
+    blob = f"{provider} {model_name}".lower()
+    return "qwen" in blob
+
+
+def _base_url_looks_like_dashscope(base_url: str) -> bool:
+    u = (base_url or "").lower()
+    return "dashscope" in u or "aliyuncs.com" in u
+
+
+def resolve_thinking_dialect(
+    *,
+    adapter: ModelAdapter,
+    provider: str,
+    model_name: str,
+    base_url: str = "",
+    provider_options: dict[str, object] | None = None,
+    openai_profile: OpenAIProfileConfig | None = None,
+) -> ThinkingDialect:
+    """Classify the thinking dialect from transport + identity facts.
+
+    Priority is adapter-first, then provider/model identity — never a
+    bare ``model_name`` branch that would collapse dialects.
+    """
+    options = provider_options or {}
+    profile_hint = str(options.get("profile", "") or "")
+    is_deepseek = _provider_looks_like_deepseek(
+        provider=provider,
+        model_name=model_name,
+        base_url=base_url,
+        profile_hint=profile_hint,
+        openai_profile=openai_profile,
+    )
+    is_qwen = _provider_looks_like_qwen(provider=provider, model_name=model_name)
+
+    if adapter == "dashscope_native":
+        if is_deepseek:
+            return "dashscope_deepseek"
+        if is_qwen:
+            return "dashscope_qwen"
+        # Native DashScope unknown family: treat as Qwen-like for thinking
+        # enable (enable_thinking bool) when thinking is requested.
+        return "dashscope_qwen"
+
+    if adapter == "openai_compatible":
+        if is_deepseek and _base_url_looks_like_dashscope(base_url):
+            return "dashscope_deepseek"
+        if is_deepseek:
+            return "deepseek_direct"
+        return "none"
+
+    return "none"
+
+
+def _thinking_flag_from_settings(settings: RunModelSettings | None) -> bool:
+    if settings is None:
+        return False
+    return settings.thinking_enabled()
+
+
+def _read_reasoning_effort(settings: RunModelSettings | None) -> str | None:
+    if settings is None or not settings.extra_body:
+        return None
+    body = settings.extra_body
+    # Direct DeepSeek may place effort on thinking dict or as sibling.
+    thinking = body.get("thinking")
+    if isinstance(thinking, dict):
+        effort = thinking.get("reasoning_effort") or thinking.get("effort")
+        if isinstance(effort, str) and effort.strip():
+            return effort.strip()
+    effort = body.get("reasoning_effort")
+    if isinstance(effort, str) and effort.strip():
+        return effort.strip()
+    return None
+
+
+def _read_thinking_budget(settings: RunModelSettings | None) -> int | None:
+    if settings is None or not settings.extra_body:
+        return None
+    raw = settings.extra_body.get("thinking_budget")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if isinstance(raw, float) and raw > 0:
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            value = int(raw)
+        except ValueError:
+            return None
+        return value if value > 0 else None
+    return None
+
+
+def resolve_thinking_capability(
+    *,
+    adapter: ModelAdapter,
+    provider: str,
+    model_name: str,
+    base_url: str = "",
+    provider_options: dict[str, object] | None = None,
+    model_settings: RunModelSettings | None = None,
+    openai_profile: OpenAIProfileConfig | None = None,
+) -> ThinkingProviderCapability:
+    """Build the dialect-specific thinking capability for one model config."""
+    dialect = resolve_thinking_dialect(
+        adapter=adapter,
+        provider=provider,
+        model_name=model_name,
+        base_url=base_url,
+        provider_options=provider_options,
+        openai_profile=openai_profile,
+    )
+    enabled = _thinking_flag_from_settings(model_settings)
+
+    if dialect == "deepseek_direct":
+        return ThinkingProviderCapability(
+            dialect=dialect,
+            thinking_enabled=enabled,
+            enable_payload_kind="thinking_type_enabled",
+            reasoning_effort=_read_reasoning_effort(model_settings) if enabled else None,
+            thinking_budget=None,
+            streaming_only=False,
+            reasoning_field="reasoning_content",
+            tool_round_must_return_thinking=True,
+            strip_sampling_params=enabled,
+        )
+    if dialect == "dashscope_deepseek":
+        return ThinkingProviderCapability(
+            dialect=dialect,
+            thinking_enabled=enabled,
+            enable_payload_kind="enable_thinking_bool",
+            reasoning_effort=_read_reasoning_effort(model_settings) if enabled else None,
+            thinking_budget=_read_thinking_budget(model_settings) if enabled else None,
+            streaming_only=True,
+            reasoning_field="reasoning_content",
+            tool_round_must_return_thinking=True,
+            strip_sampling_params=False,
+        )
+    if dialect == "dashscope_qwen":
+        return ThinkingProviderCapability(
+            dialect=dialect,
+            thinking_enabled=enabled,
+            enable_payload_kind="enable_thinking_bool",
+            reasoning_effort=None,
+            thinking_budget=_read_thinking_budget(model_settings) if enabled else None,
+            streaming_only=True,
+            reasoning_field="reasoning_content",
+            # Qwen DashScope: preserve only when thinking is enabled so
+            # non-thinking turns stay lean.
+            tool_round_must_return_thinking=enabled,
+            strip_sampling_params=False,
+        )
+    return ThinkingProviderCapability(
+        dialect="none",
+        thinking_enabled=False,
+        enable_payload_kind="none",
+        reasoning_effort=None,
+        thinking_budget=None,
+        streaming_only=False,
+        reasoning_field="reasoning_content",
+        tool_round_must_return_thinking=False,
+        strip_sampling_params=False,
+    )
+
+
+def resolve_thinking_capability_from_config(
+    model_config: ResolvedModelConfig,
+) -> ThinkingProviderCapability:
+    """Convenience wrapper over :class:`ResolvedModelConfig`."""
+    return resolve_thinking_capability(
+        adapter=model_config.adapter,
+        provider=model_config.provider,
+        model_name=model_config.model_name,
+        base_url=model_config.base_url,
+        provider_options=model_config.provider_options,
+        model_settings=model_config.model_settings,
+        openai_profile=model_config.openai_profile,
+    )
+
+
+def apply_thinking_to_model_settings(
+    settings: RunModelSettings | None,
+    capability: ThinkingProviderCapability,
+) -> RunModelSettings | None:
+    """Normalize model settings for the dialect's thinking enable payload.
+
+    - Ensures the correct enable shape is present when thinking is on.
+    - For DeepSeek direct thinking, strips temperature / top_p / penalties
+      that the vendor documents as ignored or harmful.
+    - Does not invent secrets or mutate global profiles.
+    """
+    if capability.dialect == "none":
+        return settings
+
+    base = (
+        settings.model_copy(deep=True)
+        if settings is not None
+        else RunModelSettings()
+    )
+    body: dict[str, object] = dict(base.extra_body or {})
+
+    if capability.thinking_enabled:
+        if capability.enable_payload_kind == "thinking_type_enabled":
+            thinking_obj: dict[str, object] = {"type": "enabled"}
+            if capability.reasoning_effort:
+                thinking_obj["reasoning_effort"] = capability.reasoning_effort
+            body["thinking"] = thinking_obj
+            body.pop("enable_thinking", None)
+        elif capability.enable_payload_kind == "enable_thinking_bool":
+            body["enable_thinking"] = True
+            if capability.thinking_budget is not None:
+                body["thinking_budget"] = capability.thinking_budget
+            if capability.reasoning_effort is not None:
+                # Some DashScope DeepSeek docs accept effort alongside enable.
+                body.setdefault("reasoning_effort", capability.reasoning_effort)
+    else:
+        # Explicit off when dialect supports thinking — avoid accidental on.
+        if capability.enable_payload_kind == "enable_thinking_bool":
+            body.setdefault("enable_thinking", False)
+        elif capability.enable_payload_kind == "thinking_type_enabled":
+            # Leave absence as default (non-thinking) unless already set.
+            pass
+
+    update: dict[str, Any] = {"extra_body": body if body else None}
+    if capability.strip_sampling_params:
+        update.update(
+            {
+                "temperature": None,
+                "top_p": None,
+                "presence_penalty": None,
+                "frequency_penalty": None,
+            }
+        )
+    return base.model_copy(update=update, deep=True)
+
+
+def thinking_kwargs_for_dashscope(
+    capability: ThinkingProviderCapability,
+) -> dict[str, Any]:
+    """Extra DashScope SDK kwargs derived from capability (no secrets)."""
+    if not capability.thinking_enabled:
+        return {"enable_thinking": False} if capability.dialect.startswith(
+            "dashscope"
+        ) else {}
+    out: dict[str, Any] = {}
+    if capability.enable_payload_kind == "enable_thinking_bool":
+        out["enable_thinking"] = True
+        if capability.thinking_budget is not None:
+            out["thinking_budget"] = capability.thinking_budget
+    return out
+
+
+__all__ = [
+    "EnablePayloadKind",
+    "ThinkingDialect",
+    "ThinkingProviderCapability",
+    "apply_thinking_to_model_settings",
+    "resolve_thinking_capability",
+    "resolve_thinking_capability_from_config",
+    "resolve_thinking_dialect",
+    "thinking_kwargs_for_dashscope",
+]

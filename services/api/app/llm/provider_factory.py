@@ -133,13 +133,26 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
 
     profile = _resolve_openai_profile(model_config)
 
+    # Dialect-aware thinking normalizer: DeepSeek direct thinking strips
+    # sampling knobs; enable payload is shaped per dialect. Does not mutate
+    # the caller's ResolvedModelConfig / secrets store.
+    from app.llm.thinking_capability import (
+        apply_thinking_to_model_settings,
+        resolve_thinking_capability_from_config,
+    )
+
+    capability = resolve_thinking_capability_from_config(model_config)
+    normalized_settings = apply_thinking_to_model_settings(
+        model_config.model_settings, capability
+    )
+
     return OpenAIChatModel(
         model_config.model_name,
         provider=provider,
         profile=profile,
         settings=(
-            model_config.model_settings.to_pydantic_ai()
-            if model_config.model_settings
+            normalized_settings.to_pydantic_ai()
+            if normalized_settings is not None
             else None
         ),
     )
@@ -168,19 +181,34 @@ def _build_dashscope_native_model(
     if not model_config.model_name or not model_config.api_key:
         return None
 
-    settings = (
-        model_config.model_settings.to_pydantic_ai()
-        if model_config.model_settings
-        else None
+    from app.llm.thinking_capability import (
+        apply_thinking_to_model_settings,
+        resolve_thinking_capability_from_config,
     )
+
+    capability = resolve_thinking_capability_from_config(model_config)
+    normalized = apply_thinking_to_model_settings(
+        model_config.model_settings, capability
+    )
+    # Capability flag for history preserve (tests may also override via
+    # provider_options.preserve_reasoning_content).
+    provider_options = dict(model_config.provider_options)
+    if capability.preserve_reasoning_on_history:
+        provider_options.setdefault("preserve_reasoning_content", True)
+    else:
+        provider_options.setdefault("preserve_reasoning_content", False)
+
+    settings = normalized.to_pydantic_ai() if normalized is not None else None
 
     async def _request(messages, agent_info):
         return await request_dashscope_chat(
             model=model_config.model_name,
             messages=list(messages),
             api_key=model_config.api_key,
-            model_settings=agent_info.model_settings,
-            provider_options=model_config.provider_options,
+            model_settings=agent_info.model_settings or (
+                normalized.model_dump(exclude_none=True) if normalized else None
+            ),
+            provider_options=provider_options,
             function_tools=agent_info.function_tools,
             output_tools=agent_info.output_tools,
             allow_text_output=agent_info.allow_text_output,
@@ -192,8 +220,10 @@ def _build_dashscope_native_model(
             model=model_config.model_name,
             messages=list(messages),
             api_key=model_config.api_key,
-            model_settings=agent_info.model_settings,
-            provider_options=model_config.provider_options,
+            model_settings=agent_info.model_settings or (
+                normalized.model_dump(exclude_none=True) if normalized else None
+            ),
+            provider_options=provider_options,
             function_tools=agent_info.function_tools,
             output_tools=agent_info.output_tools,
             allow_text_output=agent_info.allow_text_output,

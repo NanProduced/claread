@@ -473,3 +473,144 @@ async def test_stream_skips_chunks_without_choices() -> None:
             )
         ]
     assert yielded == []
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-8A1: ThinkingPart continuation on tool rounds
+# ---------------------------------------------------------------------------
+
+_SENTINEL_REASONING = "SENTINEL_REASONING_PRIVATE_9f3c_NEVER_SSE"
+
+
+def test_convert_messages_preserves_thinking_with_tool_calls_when_enabled() -> None:
+    """ThinkingPart + ToolCallPart land on the same assistant message."""
+    from pydantic_ai.messages import ModelResponse
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content=_SENTINEL_REASONING),
+                ToolCallPart(
+                    tool_name="echo",
+                    args='{"x":1}',
+                    tool_call_id="tc1",
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="echo",
+                    content="ok",
+                    tool_call_id="tc1",
+                )
+            ]
+        ),
+    ]
+    preserved = _convert_messages(history, preserve_reasoning_content=True)
+    # system absent; user; assistant(+reasoning+tools); tool
+    assistant = preserved[1]
+    assert assistant["role"] == "assistant"
+    assert assistant.get("reasoning_content") == _SENTINEL_REASONING
+    assert assistant.get("tool_calls")
+    assert assistant["tool_calls"][0]["function"]["name"] == "echo"
+    # Tool return follows as a separate message.
+    assert preserved[2]["role"] == "tool"
+
+    dropped = _convert_messages(history, preserve_reasoning_content=False)
+    assistant2 = dropped[1]
+    assert assistant2.get("reasoning_content") in (None, "")
+    # Must not leak sentinel when preserve is off.
+    assert _SENTINEL_REASONING not in str(dropped)
+
+
+@pytest.mark.asyncio
+async def test_second_request_includes_reasoning_when_capability_enabled() -> None:
+    """request_dashscope_chat second turn receives reasoning_content in messages."""
+    from pydantic_ai.messages import ModelResponse
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_call(**kwargs):
+        captured["messages"] = kwargs.get("messages")
+        # Minimal ok response with text only.
+        return _mock_chunk(content="done", usage={"input_tokens": 1, "output_tokens": 1})
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content=_SENTINEL_REASONING),
+                ToolCallPart(
+                    tool_name="echo",
+                    args="{}",
+                    tool_call_id="t1",
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="echo", content="tool-ok", tool_call_id="t1")
+            ]
+        ),
+    ]
+
+    with patch("app.llm.dashscope_stream.AioGeneration") as mock_gen:
+        mock_gen.call = AsyncMock(side_effect=_fake_call)
+        await request_dashscope_chat(
+            model="deepseek-v4-flash",
+            messages=history,
+            api_key="k",
+            model_settings=RunModelSettings(
+                extra_body={"enable_thinking": True}
+            ),
+            provider_options={"preserve_reasoning_content": True},
+        )
+
+    msgs = captured["messages"]
+    assert msgs is not None
+    # Find assistant with tool_calls
+    assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
+    assert assistant_msgs
+    assert assistant_msgs[0].get("reasoning_content") == _SENTINEL_REASONING
+    assert assistant_msgs[0].get("tool_calls")
+
+
+@pytest.mark.asyncio
+async def test_second_request_omits_reasoning_when_capability_disabled() -> None:
+    from pydantic_ai.messages import ModelResponse
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_call(**kwargs):
+        captured["messages"] = kwargs.get("messages")
+        return _mock_chunk(content="done")
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="q")]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content=_SENTINEL_REASONING),
+                ToolCallPart(tool_name="echo", args="{}", tool_call_id="t1"),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="echo", content="ok", tool_call_id="t1")
+            ]
+        ),
+    ]
+    with patch("app.llm.dashscope_stream.AioGeneration") as mock_gen:
+        mock_gen.call = AsyncMock(side_effect=_fake_call)
+        await request_dashscope_chat(
+            model="qwen-flash",
+            messages=history,
+            api_key="k",
+            model_settings=RunModelSettings(
+                extra_body={"enable_thinking": False}
+            ),
+            provider_options={"preserve_reasoning_content": False},
+        )
+    blob = str(captured.get("messages"))
+    assert _SENTINEL_REASONING not in blob

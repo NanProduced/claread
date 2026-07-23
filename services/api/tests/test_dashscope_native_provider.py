@@ -170,7 +170,10 @@ async def test_dashscope_native_agent_forwards_instructions_and_prompted_output_
                 SimpleNamespace(
                     message={
                         "role": "assistant",
-                        "content": '{"answer_text":"ok","cited_evidence_handles":[]}',
+                        "content": (
+                            '{"answer_text":"ok","cited_evidence_handles":[],'
+                            '"response_kind":"grounded_answer"}'
+                        ),
                     }
                 )
             ]

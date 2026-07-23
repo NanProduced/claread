@@ -1,0 +1,154 @@
+"""R4-A5-8A1: provider-thinking capability contract (offline)."""
+
+from __future__ import annotations
+
+from app.llm.thinking_capability import (
+    apply_thinking_to_model_settings,
+    resolve_thinking_capability,
+    resolve_thinking_dialect,
+)
+from app.llm.types import RunModelSettings
+
+
+def test_dialect_deepseek_direct_vs_dashscope_deepseek():
+    assert (
+        resolve_thinking_dialect(
+            adapter="openai_compatible",
+            provider="deepseek",
+            model_name="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+            provider_options={"profile": "deepseek_v4"},
+        )
+        == "deepseek_direct"
+    )
+    assert (
+        resolve_thinking_dialect(
+            adapter="dashscope_native",
+            provider="dashscope",
+            model_name="deepseek-v4-flash",
+            base_url="",
+            provider_options={},
+        )
+        == "dashscope_deepseek"
+    )
+    assert (
+        resolve_thinking_dialect(
+            adapter="openai_compatible",
+            provider="dashscope-deepseek",
+            model_name="deepseek-v4-flash",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            provider_options={"profile": "deepseek_v4"},
+        )
+        == "dashscope_deepseek"
+    )
+    assert (
+        resolve_thinking_dialect(
+            adapter="dashscope_native",
+            provider="dashscope",
+            model_name="qwen-flash",
+            base_url="",
+            provider_options={},
+        )
+        == "dashscope_qwen"
+    )
+
+
+def test_deepseek_direct_enable_and_strip_sampling():
+    settings = RunModelSettings(
+        temperature=0.7,
+        top_p=0.9,
+        presence_penalty=0.1,
+        extra_body={"thinking": {"type": "enabled", "reasoning_effort": "high"}},
+    )
+    cap = resolve_thinking_capability(
+        adapter="openai_compatible",
+        provider="deepseek",
+        model_name="deepseek-v4-pro",
+        base_url="https://api.deepseek.com",
+        provider_options={"profile": "deepseek_v4"},
+        model_settings=settings,
+    )
+    assert cap.dialect == "deepseek_direct"
+    assert cap.thinking_enabled is True
+    assert cap.enable_payload_kind == "thinking_type_enabled"
+    assert cap.reasoning_effort == "high"
+    assert cap.strip_sampling_params is True
+    assert cap.tool_round_must_return_thinking is True
+    normalized = apply_thinking_to_model_settings(settings, cap)
+    assert normalized is not None
+    assert normalized.temperature is None
+    assert normalized.top_p is None
+    assert normalized.presence_penalty is None
+    assert normalized.extra_body is not None
+    assert normalized.extra_body["thinking"]["type"] == "enabled"
+    assert normalized.extra_body["thinking"]["reasoning_effort"] == "high"
+
+
+def test_dashscope_qwen_enable_thinking_budget():
+    settings = RunModelSettings(
+        extra_body={"enable_thinking": True, "thinking_budget": 2048}
+    )
+    cap = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="qwen3-flash",
+        model_settings=settings,
+    )
+    assert cap.dialect == "dashscope_qwen"
+    assert cap.thinking_enabled is True
+    assert cap.enable_payload_kind == "enable_thinking_bool"
+    assert cap.thinking_budget == 2048
+    assert cap.streaming_only is True
+    assert cap.preserve_reasoning_on_history is True
+    normalized = apply_thinking_to_model_settings(settings, cap)
+    assert normalized is not None
+    assert normalized.extra_body["enable_thinking"] is True
+    assert normalized.extra_body["thinking_budget"] == 2048
+
+
+def test_dashscope_deepseek_tool_round_preserve():
+    settings = RunModelSettings(extra_body={"enable_thinking": True})
+    cap = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="deepseek-v4-flash",
+        model_settings=settings,
+    )
+    assert cap.dialect == "dashscope_deepseek"
+    assert cap.tool_round_must_return_thinking is True
+    assert cap.preserve_reasoning_on_history is True
+
+
+def test_non_thinking_qwen_does_not_preserve():
+    settings = RunModelSettings(extra_body={"enable_thinking": False})
+    cap = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="qwen-flash",
+        model_settings=settings,
+    )
+    assert cap.thinking_enabled is False
+    assert cap.preserve_reasoning_on_history is False
+
+
+def test_dialects_not_collapsed_to_generic_true():
+    """Different dialects keep distinct enable payload kinds."""
+    s = RunModelSettings(extra_body={"enable_thinking": True})
+    ds = resolve_thinking_capability(
+        adapter="openai_compatible",
+        provider="deepseek",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        provider_options={"profile": "deepseek_v4"},
+        model_settings=RunModelSettings(
+            extra_body={"thinking": {"type": "enabled"}}
+        ),
+    )
+    dq = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="qwen-flash",
+        model_settings=s,
+    )
+    assert ds.enable_payload_kind != dq.enable_payload_kind
+    assert ds.dialect != dq.dialect

@@ -50,9 +50,20 @@ _TOOL_VENDOR_PART_ID_OFFSET = 1
 
 
 def _convert_messages(
-    messages: list[ModelMessage], *, instructions: str | None = None
+    messages: list[ModelMessage],
+    *,
+    instructions: str | None = None,
+    preserve_reasoning_content: bool = False,
 ) -> list[Message]:
-    """Translate pydantic-ai messages into DashScope ``Message`` objects."""
+    """Translate pydantic-ai messages into DashScope ``Message`` objects.
+
+    When ``preserve_reasoning_content`` is True (capability-gated), each
+    assistant ``ModelResponse`` writes ``ThinkingPart`` content into the
+    same assistant message's ``reasoning_content`` field alongside any
+    ``tool_calls`` / text. This is required for thinking+tool rounds on
+    DashScope DeepSeek (and optionally Qwen when thinking is enabled).
+    When False, ThinkingPart is dropped from history (default lean path).
+    """
     out: list[Message] = []
     if instructions and instructions.strip():
         out.append(Message(role="system", content=instructions.strip()))
@@ -78,9 +89,13 @@ def _convert_messages(
                     out.append(Message(role="user", content=part.model_response()))
         elif isinstance(msg, ModelResponse):
             text_chunks: list[str] = []
+            reasoning_chunks: list[str] = []
             tool_calls: list[dict[str, Any]] = []
             for part in msg.parts:
-                if isinstance(part, TextPart):
+                if isinstance(part, ThinkingPart):
+                    if preserve_reasoning_content and part.content:
+                        reasoning_chunks.append(str(part.content))
+                elif isinstance(part, TextPart):
                     text_chunks.append(part.content)
                 elif isinstance(part, ToolCallPart):
                     tool_calls.append(
@@ -94,6 +109,9 @@ def _convert_messages(
                         }
                     )
             entry = Message(role="assistant", content="".join(text_chunks))
+            if reasoning_chunks:
+                # Same assistant message as tool_calls — never a separate turn.
+                entry["reasoning_content"] = "".join(reasoning_chunks)
             if tool_calls:
                 entry["tool_calls"] = tool_calls
             out.append(entry)
@@ -134,6 +152,32 @@ def _dashscope_tools(
     return tools
 
 
+def _preserve_reasoning_from_settings(
+    model_settings: RunModelSettings | dict[str, Any] | None,
+    provider_options: dict[str, object],
+) -> bool:
+    """Capability-gated history preserve: only when thinking is enabled.
+
+    Uses settings.extra_body thinking flags (same as
+    :meth:`RunModelSettings.thinking_enabled`) plus optional explicit
+    ``provider_options.preserve_reasoning_content`` override for tests.
+    """
+    explicit = provider_options.get("preserve_reasoning_content")
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(model_settings, RunModelSettings):
+        return model_settings.thinking_enabled()
+    if isinstance(model_settings, dict):
+        body = model_settings.get("extra_body")
+        if isinstance(body, dict):
+            if body.get("enable_thinking") is True:
+                return True
+            thinking = body.get("thinking")
+            if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                return True
+    return False
+
+
 def _request_kwargs(
     *,
     model_settings: RunModelSettings | dict[str, Any] | None,
@@ -164,6 +208,9 @@ def _request_kwargs(
         for key, value in extra_body.items():
             if key in kwargs:
                 continue
+            # Host-only / non-SDK keys must not leak into the wire call.
+            if str(key) in {"preserve_reasoning_content"}:
+                continue
             kwargs[str(key)] = value
 
     tools = _dashscope_tools(function_tools, output_tools)
@@ -175,6 +222,8 @@ def _request_kwargs(
 
     for key, value in provider_options.items():
         if str(key) in _INTERNAL_PROVIDER_OPTION_KEYS:
+            continue
+        if str(key) == "preserve_reasoning_content":
             continue
         kwargs.setdefault(str(key), value)
     return kwargs
@@ -299,7 +348,12 @@ async def request_dashscope_chat(
     allow_text_output: bool = True,
 ) -> ModelResponse:
     """Return a non-streamed ``ModelResponse`` for ``FunctionModel.function``."""
-    ds_messages = _convert_messages(messages, instructions=instructions)
+    preserve = _preserve_reasoning_from_settings(model_settings, provider_options)
+    ds_messages = _convert_messages(
+        messages,
+        instructions=instructions,
+        preserve_reasoning_content=preserve,
+    )
     kwargs = _request_kwargs(
         model_settings=model_settings,
         provider_options=provider_options,
@@ -352,7 +406,12 @@ async def stream_dashscope_chat(
     instructions: str | None = None,
 ) -> AsyncIterator[str | dict[int, DeltaThinkingPart] | dict[int, DeltaToolCall]]:
     """Yield FunctionModel-compatible parts from a DashScope native stream."""
-    ds_messages = _convert_messages(messages, instructions=instructions)
+    preserve = _preserve_reasoning_from_settings(model_settings, provider_options)
+    ds_messages = _convert_messages(
+        messages,
+        instructions=instructions,
+        preserve_reasoning_content=preserve,
+    )
     kwargs = _request_kwargs(
         model_settings=model_settings,
         provider_options=provider_options,
@@ -441,4 +500,10 @@ async def stream_dashscope_chat(
             )
 
 
-__all__ = ["stream_dashscope_chat", "request_dashscope_chat", "DashScopeAPIResponse"]
+__all__ = [
+    "stream_dashscope_chat",
+    "request_dashscope_chat",
+    "DashScopeAPIResponse",
+    "_convert_messages",
+    "_preserve_reasoning_from_settings",
+]
