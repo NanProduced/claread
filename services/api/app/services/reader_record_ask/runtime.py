@@ -62,6 +62,10 @@ from app.services.reader_record_ask.runtime_events import (
     RuntimeEventSink,
     ValidatingEvidenceEvent,
 )
+from app.services.reader_record_ask.thinking_transport import (
+    ThinkingObserver,
+    run_agent_with_thinking_transport,
+)
 from app.services.reader_record_ask.turn_coordinator import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
     HostBudgetExhausted,
@@ -105,14 +109,19 @@ async def run_reading_record_ask(
     event_sink: RuntimeEventSink | None = None,
     observation: RuntimeObservation | None = None,
     pointer_ledger: ExpansionPointerLedger | None = None,
+    thinking_observer: ThinkingObserver | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
-    Production path (R4-A5-7):
+    Production path (R4-A5-7 / A5-8A1):
     - :class:`TurnCoordinator` owns assembly, expand, and RAG model-views;
     - tools are expand_evidence + search_current_article only;
     - ``pointer_ledger`` is injectable; production default is the
-      process-scoped owner from :func:`get_process_pointer_ledger`.
+      process-scoped owner from :func:`get_process_pointer_ledger`;
+    - agent runs via the stream path so ThinkingPart start/delta/snapshot
+      can be captured by an optional in-memory ``thinking_observer``
+      (default ``None``: zero collection). Safe analysis phase events may
+      be emitted; raw reasoning never enters SSE/DTO/DB.
 
     ``event_sink`` / ``observation`` semantics match the prior runtime.
     """
@@ -227,10 +236,16 @@ async def run_reading_record_ask(
     agent = create_reading_record_ask_agent(model)
     if observation is not None:
         observation.execution_stage = "agent_run"
-    result = await agent.run(prompt, deps=deps)
+    streamed = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt=prompt,
+        deps=deps,
+        thinking_observer=thinking_observer,
+        model=model,
+    )
     if observation is not None:
         observation.execution_stage = "agent_run_completed"
-    draft = result.output
+    draft = streamed.output
     if not isinstance(draft, AgentAnswerDraft):
         draft = AgentAnswerDraft(
             answer_text=str(draft),
@@ -276,6 +291,6 @@ async def run_reading_record_ask(
         ),
         agent_draft=draft,
         finalized=finalized,
-        agent_output=result.output,
+        agent_output=draft,
         baseline_context=baseline,
     )

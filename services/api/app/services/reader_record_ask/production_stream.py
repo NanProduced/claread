@@ -56,6 +56,8 @@ from app.services.reader_record_ask.runtime import (
     run_reading_record_ask,
 )
 from app.services.reader_record_ask.runtime_events import (
+    AnalysisFinishedEvent,
+    AnalysisStartedEvent,
     ComposingAnswerEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
@@ -373,6 +375,32 @@ class _ProgressProjector:
             started = self.ensure_agent_started()
             if started is not None:
                 out.append(started)
+            return out
+
+        if isinstance(event, AnalysisStartedEvent):
+            # Safe phase only: generic activity, no reasoning text/length.
+            started = self.ensure_agent_started()
+            if started is not None:
+                out.append(started)
+            out.append(
+                self._next(
+                    phase="agent_running",
+                    activity="started",
+                    summary="开始分析",
+                    status="running",
+                )
+            )
+            return out
+
+        if isinstance(event, AnalysisFinishedEvent):
+            out.append(
+                self._next(
+                    phase="agent_running",
+                    activity="completed",
+                    summary="分析完成",
+                    status="ok",
+                )
+            )
             return out
 
         if isinstance(event, ToolCallEvent):
@@ -766,6 +794,8 @@ async def stream_agentic_thread_message(
                 item,
                 (
                     RunStartedEvent,
+                    AnalysisStartedEvent,
+                    AnalysisFinishedEvent,
                     ToolCallEvent,
                     ToolResultEvent,
                     ComposingAnswerEvent,
@@ -794,6 +824,8 @@ async def stream_agentic_thread_message(
                 item,
                 (
                     RunStartedEvent,
+                    AnalysisStartedEvent,
+                    AnalysisFinishedEvent,
                     ToolCallEvent,
                     ToolResultEvent,
                     ComposingAnswerEvent,

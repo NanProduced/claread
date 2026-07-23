@@ -51,6 +51,29 @@ class FinalAnswerEvent(BaseModel):
     text: str
 
 
+class AnalysisStartedEvent(BaseModel):
+    """Safe phase signal: model analysis / thinking has begun.
+
+    Never carries reasoning text, length, hash, or provider payloads.
+    Production stream projects a generic agent_running activity only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["analysis_started"] = "analysis_started"
+
+
+class AnalysisFinishedEvent(BaseModel):
+    """Safe phase signal: model analysis / thinking phase completed.
+
+    Never carries reasoning text, length, hash, or provider payloads.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["analysis_finished"] = "analysis_finished"
+
+
 class ComposingAnswerEvent(BaseModel):
     """Internal signal: agent output received, about to compose/finalize."""
 
@@ -80,6 +103,8 @@ RuntimeEvent = (
     RunStartedEvent
     | ToolCallEvent
     | ToolResultEvent
+    | AnalysisStartedEvent
+    | AnalysisFinishedEvent
     | ComposingAnswerEvent
     | ValidatingEvidenceEvent
     | FinalAnswerEvent
