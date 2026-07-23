@@ -58,6 +58,7 @@ from app.services.reader_record_ask.runtime import (
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
+    AnswerDeltaEvent,
     ComposingAnswerEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
@@ -72,6 +73,7 @@ from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
+    EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
     EVENT_MESSAGE_STARTED,
     EVENT_REASONING_COMPLETED,
@@ -797,6 +799,7 @@ async def stream_agentic_thread_message(
                 RunStartedEvent
                 | AnalysisStartedEvent
                 | AnalysisFinishedEvent
+                | AnswerDeltaEvent
                 | ToolCallEvent
                 | ToolResultEvent
                 | ComposingAnswerEvent
@@ -815,6 +818,12 @@ async def stream_agentic_thread_message(
                     EVENT_REASONING_STARTED,
                     {"message_id": assistant_msg["id"]},
                 )
+            if isinstance(item, AnswerDeltaEvent):
+                # R4-A6: token-level answer_text increment — user-visible
+                # answer content, never reasoning. Maps 1:1 to
+                # message.delta; never projected as agentic progress.
+                yield encode_sse(EVENT_MESSAGE_DELTA, {"delta": item.delta})
+                continue
             for progress in projector.project(item):
                 yield encode_sse(
                     EVENT_AGENTIC_PROGRESS,
@@ -841,6 +850,7 @@ async def stream_agentic_thread_message(
                 RunStartedEvent
                 | AnalysisStartedEvent
                 | AnalysisFinishedEvent
+                | AnswerDeltaEvent
                 | ToolCallEvent
                 | ToolResultEvent
                 | ComposingAnswerEvent
@@ -854,6 +864,12 @@ async def stream_agentic_thread_message(
                         EVENT_REASONING_STARTED,
                         {"message_id": assistant_msg["id"]},
                     )
+                if isinstance(item, AnswerDeltaEvent):
+                    # R4-A6: token-level answer_text increment (drain path).
+                    yield encode_sse(
+                        EVENT_MESSAGE_DELTA, {"delta": item.delta}
+                    )
+                    continue
                 for progress in projector.project(item):
                     yield encode_sse(
                         EVENT_AGENTIC_PROGRESS,

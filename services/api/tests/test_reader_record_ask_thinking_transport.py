@@ -31,6 +31,7 @@ from app.services.reader_record_ask.runtime import run_reading_record_ask
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
+    AnswerDeltaEvent,
 )
 from app.services.reader_record_ask.thinking_transport import (
     BoundedThinkingObserver,
@@ -902,3 +903,178 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
     assert isinstance(outcome.output, AgentAnswerDraft)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
+
+
+# ---------------------------------------------------------------------------
+# R4-A6: answer_text token-level streaming via pydantic-core partial parse.
+#
+# FunctionModel string yields map to one TextPart streamed as
+# PartStartEvent(TextPart) + PartDeltaEvent(TextPartDelta)* +
+# PartEndEvent(TextPart). The transport feeds only TextPart content into
+# _AnswerTextStreamer (never ThinkingPart content) and emits
+# AnswerDeltaEvent carrying answer_text prefix increments only.
+# ---------------------------------------------------------------------------
+
+_ANSWER_JSON_CHUNKS: tuple[str, ...] = (
+    '{"',
+    'answer_text": "Hel',
+    'lo world",',
+    '"cited_evidence_handles": [],',
+    '"response_kind": "grounded_answer"}',
+)
+
+
+def _transport_deps():
+    from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
+    from app.services.reader_record_ask.fence import StaticGenerationFence
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+
+    envelope = _envelope()
+    return ReaderRecordAskDeps(
+        envelope=envelope,
+        document_access=_access(),
+        fence=StaticGenerationFence(live_generation=envelope.record_generation),
+        evidence_registry=EvidenceRegistry(
+            envelope_fingerprint=envelope.envelope_fingerprint
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_answer_text_chunks_stream_as_answer_delta_events():
+    """Chunked TextPart JSON → AnswerDeltaEvent prefixes concat to answer."""
+    from pydantic_ai import Agent
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        for chunk in _ANSWER_JSON_CHUNKS:
+            yield chunk
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraft,
+    )
+    deps = _transport_deps()
+
+    outcome = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="question",
+        deps=deps,
+    )
+
+    deltas = [e for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    # '{"' and the post-answer_text keys never resolve to new answer prefix;
+    # exactly two increments: when "Hel" resolves, then "lo world".
+    assert [e.delta for e in deltas] == ["Hel", "lo world"]
+    assert "".join(e.delta for e in deltas) == "Hello world"
+    # Structured output still completes from the same streamed text.
+    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert outcome.output.answer_text == "Hello world"
+    # phase_events mirror the sink emissions.
+    phase_deltas = [
+        e for e in outcome.phase_events if isinstance(e, AnswerDeltaEvent)
+    ]
+    assert [e.delta for e in phase_deltas] == ["Hel", "lo world"]
+
+
+@pytest.mark.asyncio
+async def test_answer_delta_isolated_from_thinking_transport(caplog):
+    """ThinkingPart never feeds answer deltas; TextPart never feeds observer."""
+    from pydantic_ai import Agent
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        yield {0: DeltaThinkingPart(content=_SENTINEL)}
+        for chunk in _ANSWER_JSON_CHUNKS:
+            yield chunk
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=ModelProfile(supports_thinking=True),
+    )
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraft,
+    )
+    deps = _transport_deps()
+    observer = BoundedThinkingObserver(char_cap=2000)
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = await run_agent_with_thinking_transport(
+            agent=agent,
+            prompt="question",
+            deps=deps,
+            thinking_observer=observer,
+        )
+
+    deltas = [e for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    assert "".join(e.delta for e in deltas) == "Hello world"
+    # Reasoning sentinel never enters any AnswerDeltaEvent.
+    for event in deltas:
+        assert _SENTINEL not in event.delta
+    # Answer text never enters the reasoning observer.
+    assert observer.text == _SENTINEL
+    assert "Hello" not in observer.text
+    assert "world" not in observer.text
+    # Analysis phase events still fire once each from the ThinkingPart.
+    started = [e for e in deps.events if isinstance(e, AnalysisStartedEvent)]
+    finished = [e for e in deps.events if isinstance(e, AnalysisFinishedEvent)]
+    assert len(started) == 1 and len(finished) == 1
+    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert outcome.output.answer_text == "Hello world"
+    assert _SENTINEL not in caplog.text
+
+
+def test_answer_text_streamer_partial_parse_and_monotonic_emission():
+    """Unit: trailing-strings partial parse; _emitted_len never regresses."""
+    from app.services.reader_record_ask.thinking_transport import (
+        _AnswerTextStreamer,
+    )
+
+    streamer = _AnswerTextStreamer()
+    emitted_lens: list[int] = []
+
+    def track(text: str) -> str | None:
+        out = streamer.feed(text)
+        emitted_lens.append(streamer._emitted_len)
+        return out
+
+    # Structure before answer_text is resolvable → no delta (partial dict
+    # parses as {} / empty prefix; nothing emitted).
+    assert track('{"') is None
+    assert track("answer_text") is None
+    assert track('": "') is None
+    # First resolvable prefix emits; subsequent chunks emit increments.
+    assert track("Hel") == "Hel"
+    assert track('lo world",') == "lo world"
+    # Completed keys after answer_text add no answer prefix.
+    assert track('"cited_evidence_handles": [],') is None
+    assert track('"response_kind": "grounded_answer"}') is None
+
+    # _emitted_len monotonically non-decreasing — never rolls back.
+    assert emitted_lens == sorted(emitted_lens)
+    assert emitted_lens[-1] == len("Hello world")
+    # Already-emitted prefix is never re-emitted.
+    assert track('{"answer_text": "Hello world"}') is None
+
+    # reset() starts a fresh buffer (new model response after tool boundary).
+    streamer.reset()
+    assert streamer._emitted_len == 0
+    assert streamer.feed('{"answer_text": "x"') == "x"
+
+    # Non-JSON prose never parses → no deltas, no exception.
+    prose = _AnswerTextStreamer()
+    assert prose.feed("I will now search the article for ") is None
+    assert prose.feed("more prose without JSON") is None
+    assert prose._emitted_len == 0

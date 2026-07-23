@@ -51,6 +51,7 @@ from app.services.reader_record_ask.runtime import ReadingRecordAskRunResult
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
+    AnswerDeltaEvent,
     RunStartedEvent,
 )
 from app.services.reader_record_ask.sse import (
@@ -58,6 +59,7 @@ from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
+    EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
     EVENT_REASONING_COMPLETED,
     EVENT_REASONING_STARTED,
@@ -1983,6 +1985,125 @@ async def test_reasoning_started_without_completed_when_run_fails() -> None:
     assert EVENT_REASONING_COMPLETED not in names
     assert "reasoning.delta" not in names
     # Interrupted terminal, never message.completed.
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
+    assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
+
+
+# ---------------------------------------------------------------------------
+# R4-A6: message.delta token-level answer_text streaming
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_message_delta_streams_answer_text_on_success() -> None:
+    """AnswerDeltaEvents map 1:1 to message.delta SSE, ordered inside the
+    reasoning lifecycle and completed by message.completed."""
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(
+            RunStartedEvent(
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+                has_initial_selection=True,
+            )
+        )
+        sink(AnalysisStartedEvent())
+        sink(AnswerDeltaEvent(delta="Hello"))
+        sink(AnswerDeltaEvent(delta=" world"))
+        sink(AnalysisFinishedEvent())
+        return ReadingRecordAskRunResult(
+            final_text="Hello world",
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text="Hello world",
+                resolved_evidence=(),
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    # Exactly two message.delta events carrying the raw increments.
+    deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
+    assert deltas == [{"delta": "Hello"}, {"delta": " world"}]
+
+    # Final completed DTO carries the full answer.
+    completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
+    assert completed["answer_text"] == "Hello world"
+
+    # Order: reasoning.started → first delta → last delta →
+    # reasoning.completed → message.completed.
+    reasoning_started_at = names.index(EVENT_REASONING_STARTED)
+    first_delta_at = names.index(EVENT_MESSAGE_DELTA)
+    last_delta_at = len(names) - 1 - names[::-1].index(EVENT_MESSAGE_DELTA)
+    reasoning_completed_at = names.index(EVENT_REASONING_COMPLETED)
+    message_completed_at = names.index(EVENT_MESSAGE_COMPLETED)
+    assert reasoning_started_at < first_delta_at
+    assert first_delta_at < last_delta_at
+    assert last_delta_at < reasoning_completed_at
+    assert reasoning_completed_at < message_completed_at
+
+    # Privacy: no reasoning channel, no reasoning fields in delta payloads.
+    assert "reasoning.delta" not in names
+    for data in deltas:
+        assert "reasoning_md" not in data
+        assert "thinking" not in data
+
+
+@pytest.mark.asyncio
+async def test_message_delta_partial_then_failure_no_completed() -> None:
+    """Deltas already streamed when the run fails are kept; the turn
+    terminates interrupted without message.completed."""
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        sink(AnswerDeltaEvent(delta="partial"))
+        raise RuntimeError("boom")
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
+    assert deltas == [{"delta": "partial"}]
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
     assert EVENT_MESSAGE_INTERRUPTED in names

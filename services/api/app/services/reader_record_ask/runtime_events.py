@@ -74,6 +74,20 @@ class AnalysisFinishedEvent(BaseModel):
     type: Literal["analysis_finished"] = "analysis_finished"
 
 
+class AnswerDeltaEvent(BaseModel):
+    """Safe streaming delta: answer_text prefix increment only (R4-A6).
+
+    Carries user-visible answer text increments — never reasoning text,
+    length, hash, or provider payloads. Production stream maps it 1:1 to
+    ``message.delta`` SSE and never projects it as agentic progress.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["answer_delta"] = "answer_delta"
+    delta: str
+
+
 class ComposingAnswerEvent(BaseModel):
     """Internal signal: agent output received, about to compose/finalize."""
 
@@ -105,6 +119,7 @@ RuntimeEvent = (
     | ToolResultEvent
     | AnalysisStartedEvent
     | AnalysisFinishedEvent
+    | AnswerDeltaEvent
     | ComposingAnswerEvent
     | ValidatingEvidenceEvent
     | FinalAnswerEvent

@@ -31,15 +31,19 @@ from typing import Any, Protocol
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_core import from_json
 
 from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
+    AnswerDeltaEvent,
     RuntimeEvent,
 )
 
@@ -193,6 +197,48 @@ class ThinkingPartLifecycle:
         return None
 
 
+class _AnswerTextStreamer:
+    """Partial-JSON answer_text prefix streamer (R4-A6).
+
+    Accumulates streamed structured-output JSON text and extracts the
+    resolved ``answer_text`` prefix via ``pydantic_core.from_json`` with
+    ``allow_partial="trailing-strings"`` — no bespoke incremental JSON
+    state machine, no regex. Emits only newly resolved prefix increments;
+    ``_emitted_len`` is monotonically non-decreasing within one buffer.
+    Fed exclusively from ``TextPart`` content: reasoning text and
+    tool payloads never enter the buffer.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._emitted_len = 0
+
+    def reset(self) -> None:
+        """Drop the buffer at a model-response boundary (tool result)."""
+        self._buffer = ""
+        self._emitted_len = 0
+
+    def feed(self, text: str) -> str | None:
+        """Append a streamed chunk; return new answer_text prefix or None."""
+        if not text:
+            return None
+        self._buffer += text
+        try:
+            parsed = from_json(self._buffer, allow_partial="trailing-strings")
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        answer = parsed.get("answer_text")
+        if not isinstance(answer, str):
+            return None
+        if len(answer) <= self._emitted_len:
+            return None
+        delta = answer[self._emitted_len :]
+        self._emitted_len = len(answer)
+        return delta
+
+
 async def run_agent_with_thinking_transport(
     *,
     agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft],
@@ -208,14 +254,18 @@ async def run_agent_with_thinking_transport(
     ``stream_function``), fall back to ``agent.run`` and optionally
     snapshot ThinkingPart from the completed message history.
 
-    Emits only safe ``AnalysisStartedEvent`` / ``AnalysisFinishedEvent`` —
-    never raw reasoning on the event sink. Tool calling, validators, and
-    structured output use the same agent configuration as ``run()``.
+    Emits only safe ``AnalysisStartedEvent`` / ``AnalysisFinishedEvent``
+    plus token-level ``AnswerDeltaEvent`` answer_text increments (R4-A6,
+    streamed TextPart content only) — never raw reasoning on the event
+    sink. Tool calling, validators, and structured output use the same
+    agent configuration as ``run()``.
     """
     phase_events: list[RuntimeEvent] = []
     analysis_started = False
     final_output: Any = None
     lifecycle = ThinkingPartLifecycle()
+    answer_streamer = _AnswerTextStreamer()
+    answer_streamed_indices: set[int] = set()
 
     def _ensure_started() -> None:
         nonlocal analysis_started
@@ -243,6 +293,15 @@ async def run_agent_with_thinking_transport(
         _ensure_started()
         if thinking_observer is not None:
             thinking_observer.on_reasoning_delta(text)
+
+    def _emit_answer_delta(delta: str | None) -> None:
+        # Answer text is user-visible output — safe on the event sink.
+        # Never derived from ThinkingPart content (isolated feed path).
+        if not delta:
+            return
+        event = AnswerDeltaEvent(delta=delta)
+        phase_events.append(event)
+        deps.emit_event(event)
 
     active_model = model if model is not None else getattr(agent, "model", None)
     if not _model_supports_request_stream(active_model):
@@ -272,6 +331,11 @@ async def run_agent_with_thinking_transport(
             # BuiltinToolResultEvent — all via the stable event_kind Literal.
             if event_kind in _TOOL_RESULT_EVENT_KINDS:
                 lifecycle.reset_stream()
+                # R4-A6: a new model response stream follows the boundary —
+                # drop any intermediate text so the final answer JSON parses
+                # from a clean buffer (indices restart as well).
+                answer_streamer.reset()
+                answer_streamed_indices.clear()
                 continue
 
             if event_kind == "part_start" and isinstance(
@@ -306,6 +370,46 @@ async def run_agent_with_thinking_transport(
                     str(event.part.content) if event.part.content else None,
                 )
                 _emit_reasoning(piece)
+                continue
+
+            # R4-A6: answer_text token-level streaming. TextPart carries
+            # streamed structured-output JSON; feed content into the partial
+            # parser and emit AnswerDeltaEvent prefix increments. Fully
+            # isolated from the ThinkingPart path above: no observer calls,
+            # no AnalysisStarted synthesis, no shared content.
+            if event_kind == "part_start" and isinstance(event.part, TextPart):
+                content = (
+                    str(event.part.content) if event.part.content else None
+                )
+                if content:
+                    answer_streamed_indices.add(event.index)
+                    _emit_answer_delta(answer_streamer.feed(content))
+                continue
+
+            if event_kind == "part_delta" and isinstance(
+                event.delta, TextPartDelta
+            ):
+                piece = (
+                    str(event.delta.content_delta)
+                    if event.delta.content_delta
+                    else None
+                )
+                if piece:
+                    answer_streamed_indices.add(event.index)
+                    _emit_answer_delta(answer_streamer.feed(piece))
+                continue
+
+            if event_kind == "part_end" and isinstance(event.part, TextPart):
+                # PartEnd-only delivery: full content without prior
+                # start/delta for this index.
+                if (
+                    event.index not in answer_streamed_indices
+                    and event.part.content
+                ):
+                    answer_streamed_indices.add(event.index)
+                    _emit_answer_delta(
+                        answer_streamer.feed(str(event.part.content))
+                    )
                 continue
 
         if analysis_started:
