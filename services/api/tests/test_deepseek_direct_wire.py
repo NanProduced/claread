@@ -674,50 +674,82 @@ def test_profile_conflict_qwen_not_affected() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _SharedCaptureTransport(httpx.AsyncBaseTransport):
-    """Single transport serving multiple concurrent requests.
+class _BarrierCaptureTransport(httpx.AsyncBaseTransport):
+    """Transport with a barrier proving two first requests are concurrent.
 
-    Records every request body in order. Always returns a tool-call
-    response so the wire payload captures the ``tool_choice`` omission
-    rule on the first request of each run.
+    The first two requests each register their arrival, then both wait
+    on a shared ``asyncio.Event`` that is only set when **both** have
+    arrived. This proves the two first requests are genuinely in-flight
+    at the same time — not serialized.
+
+    After the barrier releases, first-pair requests return a tool-call
+    response; any subsequent requests return a plain text response.
     """
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
+        self.first_prompts: list[str] = []  # prompts from barrier-pair
         self._lock = asyncio.Lock()
+        self._arrivals = 0
+        self._barrier = asyncio.Event()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         body = request.content.decode("utf-8") if request.content else ""
         payload = json.loads(body) if body else {}
         async with self._lock:
             self.requests.append(payload)
+            self._arrivals += 1
+            if self._arrivals <= 2:
+                # Record the user prompt from the first two requests.
+                msgs = payload.get("messages", [])
+                if msgs:
+                    last = msgs[-1]
+                    content = last.get("content", "")
+                    if isinstance(content, str):
+                        self.first_prompts.append(content)
+            if self._arrivals >= 2:
+                self._barrier.set()
+        # Barrier: first two requests block until both have arrived.
+        if self._arrivals <= 2:
+            await self._barrier.wait()
+            return httpx.Response(
+                200,
+                json=_chat_completion_response(
+                    content="",
+                    reasoning=_SENTINEL,
+                    tool_calls=[
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": "echo", "arguments": "{}"},
+                        }
+                    ],
+                ),
+                request=request,
+            )
+        # Subsequent requests (after tool return) get a plain response.
         return httpx.Response(
             200,
-            json=_chat_completion_response(
-                content="",
-                reasoning=_SENTINEL,
-                tool_calls=[
-                    {
-                        "id": "c1",
-                        "type": "function",
-                        "function": {"name": "echo", "arguments": "{}"},
-                    }
-                ],
-            ),
+            json=_chat_completion_response(content="pong", tool_calls=None),
             request=request,
         )
 
 
 @pytest.mark.asyncio
-async def test_single_model_instance_concurrent_two_agents_no_state_pollution() -> None:
-    """One model instance, two agents, concurrent runs — both omit tool_choice.
+async def test_concurrent_same_instance_barrier_proves_both_first_requests_inflight() -> None:
+    """R4-A5-8A1R3R Obj1: barrier proves two first requests are concurrent.
 
-    Validates the reentrancy contract at the instance level: the
-    ``_get_tool_choice`` override is stateless, so two concurrent runs
-    on the *same* model instance each independently omit ``tool_choice``.
-    No per-request mutation of shared instance state.
+    Two independent Agents with **different prompts** share one
+    ``DirectDeepSeekChatModel`` instance and one transport. The barrier
+    in ``_BarrierCaptureTransport`` blocks each first request until
+    **both** have arrived — proving they are genuinely in-flight at the
+    same time on the same model instance.
+
+    Both first requests must carry explicit ``thinking: {type: enabled}``
+    and omit ``tool_choice`` — the stateless ``_get_tool_choice``
+    override does not leak per-request state across concurrent calls.
     """
-    transport = _SharedCaptureTransport()
+    transport = _BarrierCaptureTransport()
     model = _build_direct_model(
         thinking_mode="enabled", effort="high", transport=transport
     )
@@ -728,20 +760,179 @@ async def test_single_model_instance_concurrent_two_agents_no_state_pollution() 
     agent_a = Agent(model, tools=[echo], output_type=str)
     agent_b = Agent(model, tools=[echo], output_type=str)
 
-    async def _run(agent: Agent[Any, Any]) -> None:
-        try:
-            await agent.run("call echo please")
-        except Exception:
-            pass  # tool loop may fail after first request; wire captured
+    async def _run(agent: Agent[Any, Any], prompt: str) -> str:
+        result = await agent.run(prompt)
+        return result.output
 
-    await asyncio.gather(_run(agent_a), _run(agent_b))
+    results = await asyncio.gather(
+        _run(agent_a, "call echo from agent A"),
+        _run(agent_b, "call echo from agent B"),
+    )
+
+    # Both agents produced output.
+    assert all(r == "pong" for r in results), f"unexpected outputs: {results}"
+
+    # The barrier-pair prompts prove two DIFFERENT first requests arrived.
+    assert len(transport.first_prompts) == 2, (
+        f"expected 2 barrier-pair prompts, got {len(transport.first_prompts)}"
+    )
+    assert transport.first_prompts[0] != transport.first_prompts[1], (
+        "the two first requests must have different prompts — "
+        "they are from independent agents"
+    )
+
+    # The first two requests (barrier pair) must have thinking enabled
+    # and no tool_choice.
+    for i in range(2):
+        req = transport.requests[i]
+        assert req.get("thinking") == {"type": "enabled"}, (
+            f"barrier-pair request {i} must carry explicit thinking enabled"
+        )
+        assert "tool_choice" not in req, (
+            f"barrier-pair request {i} must omit tool_choice — "
+            "stateless _get_tool_choice must not leak across concurrent calls"
+        )
+
+
+class _BlockingThenSucceedingTransport(httpx.AsyncBaseTransport):
+    """First request blocks indefinitely; subsequent requests succeed.
+
+    The first request blocks on an ``asyncio.Future`` that is never
+    resolved by the transport — only external cancellation can break
+    the ``await``. This proves real cancellation propagates through
+    the OpenAI SDK / pydantic-ai stack.
+
+    An ``arrival`` event signals that the first request has reached the
+    transport, so the test can cancel the task at the right moment.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self._call = 0
+        self.arrived = asyncio.Event()
+        self._block = asyncio.Future()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self._call += 1
+        body = request.content.decode("utf-8") if request.content else ""
+        payload = json.loads(body) if body else {}
+        self.requests.append(payload)
+        if self._call == 1:
+            self.arrived.set()
+            # Block until cancelled — the Future is never resolved by us.
+            await self._block
+        if self._call == 2:
+            # Second request: emit a tool call to exercise the tool-result
+            # boundary on the same model instance after cancellation.
+            return httpx.Response(
+                200,
+                json=_chat_completion_response(
+                    content="",
+                    reasoning=_SENTINEL,
+                    tool_calls=[
+                        {
+                            "id": "c1",
+                            "type": "function",
+                            "function": {"name": "echo", "arguments": "{}"},
+                        }
+                    ],
+                ),
+                request=request,
+            )
+        # Third+ request: tool has returned "pong", emit final text without
+        # tool_calls so the agent run terminates with a concrete output.
+        return httpx.Response(
+            200,
+            json=_chat_completion_response(content="pong", reasoning=_SENTINEL),
+            request=request,
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_cancellation_recovery_same_instance_correct_payload() -> None:
+    """R4-A5-8A1R3R Obj2: real cancellation then recovery on same instance.
+
+    1. Transport blocks the first in-flight request on a Future.
+    2. Cancel the agent run task → ``CancelledError`` must propagate.
+    3. A subsequent tool request on the **same model instance** must
+       send the correct wire payload (thinking enabled, no tool_choice).
+    4. Non-expected exceptions must NOT be swallowed.
+    """
+    transport = _BlockingThenSucceedingTransport()
+    model = _build_direct_model(
+        thinking_mode="enabled", effort="high", transport=transport
+    )
+
+    async def echo(ctx: Any) -> str:
+        return "pong"
+
+    agent = Agent(model, tools=[echo], output_type=str)
+
+    # 1. Start the agent run in a background task.
+    task = asyncio.create_task(agent.run("first call that will block"))
+
+    # 2. Wait until the transport confirms the first request is in-flight.
+    await asyncio.wait_for(transport.arrived.wait(), timeout=5.0)
+
+    # 3. Cancel the task — must raise CancelledError.
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The first request was captured before blocking.
+    assert len(transport.requests) == 1
+    assert transport.requests[0].get("thinking") == {"type": "enabled"}
+    assert "tool_choice" not in transport.requests[0]
+
+    # 4. Subsequent request on the SAME model instance must send correct wire
+    #    and complete successfully — no state pollution from cancellation.
+    result = await agent.run("second call after cancellation")
+    assert result.output == "pong"
 
     assert len(transport.requests) >= 2
-    for req in transport.requests:
-        assert req.get("thinking") == {"type": "enabled"}
-        assert "tool_choice" not in req, (
-            "concurrent same-instance run must omit tool_choice on every request"
-        )
+    # The second request must carry correct thinking and omit tool_choice.
+    second_req = transport.requests[1]
+    assert second_req.get("thinking") == {"type": "enabled"}, (
+        "second request after cancellation must carry thinking enabled — "
+        "no state pollution from cancelled task"
+    )
+    assert "tool_choice" not in second_req, (
+        "second request after cancellation must omit tool_choice — "
+        "no state pollution from cancelled task"
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_cancellation_exception_not_swallowed() -> None:
+    """R4-A5-8A1R3R Obj2: non-CancelledError exceptions must propagate.
+
+    A ``RuntimeError`` raised by the transport must NOT be swallowed
+    by cancellation handling or any generic ``except`` in the model
+    stack. This guards against a regression where ``except BaseException``
+    or broad ``except Exception`` in the OpenAI SDK / pydantic-ai
+    accidentally absorbs non-cancellation failures.
+    """
+    transport = _RuntimeErrorTransport()
+    model = _build_direct_model(
+        thinking_mode="enabled", effort="high", transport=transport
+    )
+
+    async def echo(ctx: Any) -> str:
+        return "pong"
+
+    agent = Agent(model, tools=[echo], output_type=str)
+
+    # The RuntimeError is wrapped by pydantic-ai as ModelAPIError — but
+    # it must NOT be silently swallowed.
+    with pytest.raises(ModelAPIError):
+        await agent.run("call that raises RuntimeError")
+
+
+class _RuntimeErrorTransport(httpx.AsyncBaseTransport):
+    """Transport that raises a non-CancelledError exception."""
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("unexpected non-cancellation failure")
 
 
 class _FailingThenSucceedingTransport(httpx.AsyncBaseTransport):
@@ -770,8 +961,8 @@ class _FailingThenSucceedingTransport(httpx.AsyncBaseTransport):
 
 
 @pytest.mark.asyncio
-async def test_cancel_or_exception_recovery_same_instance_no_state_pollution() -> None:
-    """First request fails; second request on same instance succeeds correctly.
+async def test_exception_recovery_same_instance_no_state_pollution() -> None:
+    """R4-A5-8A1R3R: exception recovery — second request emits correct wire.
 
     The model instance must not retain any per-request state from the
     failed request that would corrupt the wire payload of the next
@@ -793,10 +984,8 @@ async def test_cancel_or_exception_recovery_same_instance_no_state_pollution() -
         await agent.run("first call that will fail")
 
     # Second run on the same model instance must succeed and emit correct wire.
-    try:
-        await agent.run("second call that should succeed")
-    except Exception:
-        pass  # tool loop may still fail; we only need the wire payload
+    result = await agent.run("second call that should succeed")
+    assert result.output == "recovered"
 
     assert len(transport.requests) == 2
     # The failed request still emitted correct wire (the error happened

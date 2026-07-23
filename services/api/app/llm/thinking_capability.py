@@ -99,26 +99,41 @@ class ThinkingProviderCapability:
         )
 
     @property
-    def effective_wire_mode(self) -> DirectDeepSeekThinkingMode:
-        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3).
+    def effective_wire_mode(self) -> DirectDeepSeekThinkingMode | None:
+        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3R).
 
         Absent configuration is normalized to ``enabled`` so the wire
         payload always carries an explicit thinking field. Only an explicit
         ``disabled`` yields a disabled wire state.
+
+        Returns ``None`` when ``dialect != "deepseek_direct"`` — the
+        Direct DeepSeek thinking.type wire protocol does not apply to
+        DashScope Qwen, DashScope DeepSeek, or ``none`` dialects. Callers
+        must not interpret a ``None`` return as "enabled" or "disabled";
+        the wire format for those dialects is controlled by
+        ``enable_thinking`` / ``thinking_budget`` instead.
         """
+        if self.dialect != "deepseek_direct":
+            return None
         if self.direct_thinking_mode == "absent":
             return "enabled"
         return self.direct_thinking_mode
 
     @property
-    def direct_thinking_enabled_on_wire(self) -> bool:
+    def direct_thinking_enabled_on_wire(self) -> bool | None:
         """True when the effective Direct DeepSeek wire thinking is enabled.
 
         R3: absent is normalized to enabled, so this is True for both
         ``absent`` and ``enabled`` configured modes. Only ``disabled``
         returns False.
+
+        Returns ``None`` when ``dialect != "deepseek_direct"`` — see
+        :attr:`effective_wire_mode` for rationale.
         """
-        return self.effective_wire_mode == "enabled"
+        wire = self.effective_wire_mode
+        if wire is None:
+            return None
+        return wire == "enabled"
 
 
 def _provider_looks_like_deepseek(

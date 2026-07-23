@@ -685,3 +685,220 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
     assert isinstance(outcome.output, AgentAnswerDraft)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-8A1R3R Obj3: PartEnd-only delivery proof.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
+    """Obj3: Round 2 thinking delivered ONLY via PartEndEvent after a
+    tool-return boundary. Proves the production ThinkingPartLifecycle
+    correctly delivers a second-round ThinkingPart whose content reaches
+    the transport as PartEndEvent only — no PartStart or PartDelta
+    carried the actual round-2 content.
+    """
+    from collections.abc import AsyncGenerator, AsyncIterator
+    from contextlib import asynccontextmanager
+    from dataclasses import dataclass, field
+    from datetime import UTC, datetime
+    from typing import Any
+
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponseStreamEvent
+    from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+    from pydantic_ai.profiles import ModelProfile
+
+    from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
+    from app.services.reader_record_ask.fence import StaticGenerationFence
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    _FINAL_ANSWER = json.dumps(
+        {
+            "answer_text": "final answer after tool return",
+            "cited_evidence_handles": [],
+            "response_kind": "clarification",
+        }
+    )
+
+    @dataclass
+    class _PartEndOnlyStreamedResponse(StreamedResponse):
+        """Custom StreamedResponse proving PartEnd-only delivery."""
+
+        _round_number: int
+        _model_name: str = "part-end-only-test-model"
+        _timestamp: datetime = field(
+            default_factory=lambda: datetime.now(UTC)
+        )
+
+        async def _get_event_iterator(
+            self,
+        ) -> AsyncIterator[ModelResponseStreamEvent]:
+            pm = self._parts_manager
+            if self._round_number == 1:
+                # Round 1: thinking + tool call.
+                yield pm.handle_part(
+                    vendor_part_id=0,
+                    part=ThinkingPart(content=_SENTINEL),
+                )
+                yield pm.handle_part(
+                    vendor_part_id=1,
+                    part=ToolCallPart(
+                        tool_name="helper_tool",
+                        args=json.dumps({"query": "x"}),
+                        tool_call_id="tc1",
+                    ),
+                )
+            else:
+                # Round 2: PartEnd-only thinking delivery.
+                yield pm.handle_part(
+                    vendor_part_id=0,
+                    part=ThinkingPart(content=""),
+                )
+                # Silently update _parts[0] to ThinkingPart(_ROUND2).
+                # Discard the PartDeltaEvent so the stream never sees it.
+                for _ in pm.handle_thinking_delta(
+                    vendor_part_id=0,
+                    content=_ROUND2,
+                ):
+                    pass
+                yield pm.handle_part(
+                    vendor_part_id=1,
+                    part=TextPart(content=_FINAL_ANSWER),
+                )
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return self._model_name
+
+        @property
+        def provider_name(self) -> str | None:
+            return None
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> datetime:
+            return self._timestamp
+
+    class _PartEndOnlyModel(Model):
+        """Custom Model returning _PartEndOnlyStreamedResponse instances."""
+
+        def __init__(self) -> None:
+            super().__init__(profile=ModelProfile(supports_thinking=True))
+            self._round = 0
+
+        @property
+        def model_name(self) -> str:
+            return "part-end-only-test-model"
+
+        @property
+        def system(self) -> str:
+            return "test"
+
+        @property
+        def provider(self) -> None:
+            return None
+
+        async def request(
+            self,
+            messages: list[Any],
+            model_settings: Any,
+            model_request_parameters: ModelRequestParameters,
+        ) -> Any:
+            raise NotImplementedError(
+                "Only streaming is supported by this test model."
+            )
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[Any],
+            model_settings: Any,
+            model_request_parameters: ModelRequestParameters,
+            run_context: Any | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            _model_settings, params = self.prepare_request(
+                model_settings, model_request_parameters
+            )
+            self._round += 1
+            yield _PartEndOnlyStreamedResponse(
+                model_request_parameters=params,
+                _round_number=self._round,
+            )
+
+    model = _PartEndOnlyModel()
+
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraft,
+        output_retries=2,
+    )
+
+    @agent.tool
+    async def helper_tool(ctx, query: str) -> str:
+        return "tool result"
+
+    envelope = _envelope()
+    deps = ReaderRecordAskDeps(
+        envelope=envelope,
+        document_access=_access(),
+        fence=StaticGenerationFence(live_generation=envelope.record_generation),
+        evidence_registry=EvidenceRegistry(
+            envelope_fingerprint=envelope.envelope_fingerprint
+        ),
+    )
+
+    observer = BoundedThinkingObserver(char_cap=2000)
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = await run_agent_with_thinking_transport(
+            agent=agent,
+            prompt="use helper_tool",
+            deps=deps,
+            thinking_observer=observer,
+            model=model,
+        )
+
+    # Both sentinels present exactly once.
+    text = observer.text
+    assert _SENTINEL in text
+    assert _ROUND2 in text
+    assert text.count(_SENTINEL) == 1
+    assert text.count(_ROUND2) == 1
+
+    # Observer started/finished exactly once each.
+    assert observer.started is True
+    assert observer.finished is True
+
+    # AnalysisStarted/AnalysisFinished events fire once each.
+    started = [e for e in deps.events if isinstance(e, AnalysisStartedEvent)]
+    finished = [e for e in deps.events if isinstance(e, AnalysisFinishedEvent)]
+    assert len(started) == 1
+    assert len(finished) == 1
+
+    # Sentinel never leaks into RuntimeEvent payloads.
+    for event in deps.events:
+        dumped = (
+            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
+        )
+        assert _SENTINEL not in json.dumps(dumped)
+        assert _ROUND2 not in json.dumps(dumped)
+
+    # Sentinel never leaks into logs.
+    assert _SENTINEL not in caplog.text
+    assert _ROUND2 not in caplog.text
+
+    # Sentinel never leaks into the final answer.
+    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert _SENTINEL not in (outcome.output.answer_text or "")
+    assert _ROUND2 not in (outcome.output.answer_text or "")

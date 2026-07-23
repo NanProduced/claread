@@ -329,3 +329,82 @@ def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
     assert modes_seen == {"absent", "enabled", "disabled"}
     # Effective wire modes: absent collapses to enabled; disabled stays.
     assert wire_modes_seen == {"enabled", "disabled"}
+
+
+def test_p2_effective_wire_mode_none_for_dashscope_qwen():
+    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    for DashScope Qwen — the Direct DeepSeek thinking.type wire protocol
+    does not apply. Qwen uses enable_thinking / thinking_budget instead.
+
+    R4-A5-8A1R3R: guards against a regression where these properties
+    return misleading "enabled" / True for non-deepseek_direct dialects.
+    """
+    settings = RunModelSettings(
+        extra_body={"enable_thinking": True, "thinking_budget": 2048}
+    )
+    cap = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="qwen3-flash",
+        model_settings=settings,
+    )
+    assert cap.dialect == "dashscope_qwen"
+    assert cap.direct_thinking_mode == "absent"  # default, not configured
+    assert cap.effective_wire_mode is None
+    assert cap.direct_thinking_enabled_on_wire is None
+
+
+def test_p2_effective_wire_mode_none_for_dashscope_deepseek():
+    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    for DashScope-routed DeepSeek — the Direct wire protocol does not
+    apply. DashScope DeepSeek uses enable_thinking instead.
+    """
+    settings = RunModelSettings(extra_body={"enable_thinking": True})
+    cap = resolve_thinking_capability(
+        adapter="dashscope_native",
+        provider="dashscope",
+        model_name="deepseek-v4-flash",
+        model_settings=settings,
+    )
+    assert cap.dialect == "dashscope_deepseek"
+    assert cap.direct_thinking_mode == "absent"
+    assert cap.effective_wire_mode is None
+    assert cap.direct_thinking_enabled_on_wire is None
+
+
+def test_p2_effective_wire_mode_none_for_dialect_none():
+    """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
+    for dialect=none — no thinking wire protocol applies at all.
+    """
+    settings = RunModelSettings()
+    cap = resolve_thinking_capability(
+        adapter="openai_compatible",
+        provider="openai",
+        model_name="gpt-4o",
+        base_url="https://api.openai.com",
+        model_settings=settings,
+    )
+    assert cap.dialect == "none"
+    assert cap.direct_thinking_mode == "absent"
+    assert cap.effective_wire_mode is None
+    assert cap.direct_thinking_enabled_on_wire is None
+
+
+def test_p2_effective_wire_mode_still_works_for_deepseek_direct():
+    """P2 cross-check: deepseek_direct dialect still returns meaningful
+    wire mode values (not None) after the None-for-other-dialects change.
+    """
+    settings = RunModelSettings(
+        extra_body={"thinking": {"type": "enabled"}}
+    )
+    cap = resolve_thinking_capability(
+        adapter="openai_compatible",
+        provider="deepseek",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        model_settings=settings,
+    )
+    assert cap.dialect == "deepseek_direct"
+    assert cap.direct_thinking_mode == "enabled"
+    assert cap.effective_wire_mode == "enabled"
+    assert cap.direct_thinking_enabled_on_wire is True
