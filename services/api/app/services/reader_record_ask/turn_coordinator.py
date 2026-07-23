@@ -18,7 +18,23 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Avoid a circular import at module load time:
+    #   map_source_material_provider
+    #    → source_evidence_descriptor
+    #    → reader_record_ask.article_map_model_view
+    #    → reader_record_ask.__init__ (package init)
+    #    → reader_record_ask.runtime
+    #    → reader_record_ask.turn_coordinator (this module)
+    #    → map_source_material_provider  ← cycle
+    # ``from __future__ import annotations`` makes all annotations strings,
+    # so the imports are only needed for static type checking, not runtime.
+    from app.services.reader_orchestration.map_source_material_provider import (
+        MapSourceMaterial,
+        MapSourceMaterialProvider,
+    )
 
 from app.services.reader_record_ask.answer_correctness_policy import (
     AnswerCorrectnessPolicy,
@@ -96,6 +112,11 @@ DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS = 1
 
 # Max map entry sources from document units (content policy; map budget fits).
 _MAX_MAP_ENTRY_SOURCES = 32
+
+# §5.4.2 descriptor source hard cap (rag_ask_only block candidates).
+# Provider already caps at 8 per the frozen contract; this is a defensive
+# cap that enforces the invariant if the contract is ever violated.
+_MAX_DESCRIPTOR_MAP_ENTRY_SOURCES = 8
 
 
 class HostBudgetExhausted(Exception):
@@ -175,10 +196,9 @@ class TurnCoordinator:
         pointer_ledger: ExpansionPointerLedger | None = None,
         budget: ModelVisibleTurnBudget | None = None,
         renderer: ModelViewRenderer | None = None,
-        max_search_current_article_calls: int = (
-            DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS
-        ),
+        max_search_current_article_calls: int = (DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS),
         product_search_enabled: bool = True,
+        map_source_material_provider: MapSourceMaterialProvider | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
@@ -191,30 +211,26 @@ class TurnCoordinator:
             live_generation=envelope.record_generation
         )
         if evidence_registry is not None:
-            if (
-                evidence_registry.envelope_fingerprint
-                != envelope.envelope_fingerprint
-            ):
+            if evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
                 raise ValueError(
-                    "evidence_registry envelope_fingerprint does not match "
-                    "the turn envelope"
+                    "evidence_registry envelope_fingerprint does not match the turn envelope"
                 )
             self.registry = evidence_registry
         else:
             self.registry = EvidenceRegistry(envelope.envelope_fingerprint)
         # Never default to a fresh ExpansionPointerLedger() — production
         # and multi-turn tests must share recognition via an explicit owner.
-        self.ledger = (
-            pointer_ledger
-            if pointer_ledger is not None
-            else get_process_pointer_ledger()
-        )
+        self.ledger = pointer_ledger if pointer_ledger is not None else get_process_pointer_ledger()
         self.budget = budget if budget is not None else ModelVisibleTurnBudget()
-        self.renderer = (
-            renderer if renderer is not None else ModelViewRenderer()
-        )
+        self.renderer = renderer if renderer is not None else ModelViewRenderer()
         self.max_search_current_article_calls = max_search_current_article_calls
         self.product_search_enabled = product_search_enabled
+        # M3 C2: server-only map-source material provider (§3.4 preflight).
+        # None = no provider configured → coordinator falls back to the
+        # existing unit-window map (C2 skeleton; production wiring is a
+        # separate task). When set, load() runs in preflight before the
+        # outer transaction.
+        self._map_source_material_provider = map_source_material_provider
 
         self.turn_id: str = mint_turn_id()
         self.search_current_article_calls: int = 0
@@ -249,18 +265,23 @@ class TurnCoordinator:
 
         # Snapshot budget spends (must stay zero before commit).
         if self.budget.total_spent() != 0:
-            raise RuntimeError(
-                "turn coordinator requires a fresh budget before assemble"
-            )
+            raise RuntimeError("turn coordinator requires a fresh budget before assemble")
         if len(self.registry) != 0:
-            raise RuntimeError(
-                "turn coordinator requires an empty registry before assemble"
-            )
+            raise RuntimeError("turn coordinator requires an empty registry before assemble")
+
+        # ---- M3 C2: map-source material preflight (§3.4 — before outer txn).
+        # Pure I/O + planning: loads server-owned heading + descriptor
+        # candidates. Fence failure (§5.1 6(b)) returns a material with
+        # material_fence_ok=False; _map_sources_from_scope then falls back
+        # to the unit-window map. No cursor / ledger / budget mutation
+        # here — those happen inside _commit_assembly's single
+        # assemble_article_map() call.
+        material = await self._load_map_source_material()
 
         # ---- outer commit (selection → baseline → map → request_frame) ----
         receipt = _OuterTxnReceipt()
         try:
-            assembly = self._commit_assembly(scope=scope, receipt=receipt)
+            assembly = self._commit_assembly(scope=scope, material=material, receipt=receipt)
         except ModelViewBudgetError as exc:
             self._rollback_outer(receipt)
             raise HostBudgetExhausted(
@@ -347,6 +368,7 @@ class TurnCoordinator:
         self,
         *,
         scope: DocumentScopeSnapshot,
+        material: MapSourceMaterial | None,
         receipt: _OuterTxnReceipt,
     ) -> TurnAssembly:
         envelope = self.envelope
@@ -354,9 +376,7 @@ class TurnCoordinator:
 
         # 1) Selection inject (may be absent / budget_denied / injected).
         selected_text = (
-            envelope.initial_anchor.selected_text
-            if envelope.initial_anchor is not None
-            else None
+            envelope.initial_anchor.selected_text if envelope.initial_anchor is not None else None
         )
         selection_kwargs: dict[str, Any] = {}
         if envelope.initial_anchor is not None:
@@ -409,7 +429,13 @@ class TurnCoordinator:
             )
 
         # 3) Map assemble (optional; budget_denied → absent-like, no raise).
-        map_sources = self._map_sources_from_scope(scope)
+        # M3 C2: material (heading + descriptor candidates) is merged into
+        # the SAME assemble_article_map() call — shared fit → charge →
+        # issue cursor → rollback transaction (§5.3 19). Descriptor sources
+        # are candidates (§3.5.1.3 / §5.1 25): cost-fit may silently drop
+        # them; dropped candidates produce no cursor / stale_evidence /
+        # invalid_cursor.
+        map_sources = self._map_sources_from_scope(scope, material=material)
         identity = ExpansionEnvelopeIdentity(
             turn_id=self.turn_id,
             envelope_fingerprint=fp,
@@ -434,19 +460,14 @@ class TurnCoordinator:
         # 4) Projection (turn_id server-minted; same value everywhere).
         sel_view = selection.selection
         map_present = map_result.is_ok and map_result.entry_count > 0
-        can_expand = bool(
-            (selection.status == "injected" and sel_view.expandable)
-            or map_present
-        )
+        can_expand = bool((selection.status == "injected" and sel_view.expandable) or map_present)
         # budget_denied selection: can_read_range=False, has_visible_range=False
         if selection.status == "budget_denied":
             can_read_range = False
             has_visible_range = False
         else:
             can_read_range = can_expand
-            has_visible_range = bool(
-                sel_view.present and sel_view.visible_char_count > 0
-            )
+            has_visible_range = bool(sel_view.present and sel_view.visible_char_count > 0)
 
         projection = build_turn_capability_projection(
             article_rag_port=self.article_rag,
@@ -476,9 +497,7 @@ class TurnCoordinator:
         # 5) Correctness policy from baseline chunk texts.
         policy = build_answer_correctness_policy(
             user_message=self.user_message,
-            model_visible_chunk_texts=tuple(
-                c.text for c in baseline.model_context_chunks
-            ),
+            model_visible_chunk_texts=tuple(c.text for c in baseline.model_context_chunks),
             baseline_is_complete=baseline.is_complete,
         )
         correctness_block = policy.render_prompt_block()
@@ -492,13 +511,9 @@ class TurnCoordinator:
 
         # 7) Request-frame charge (full question; fail closed on excess).
         selection_prompt: SelectionPromptCapability | None = (
-            selection.prompt_capability
-            if selection.status == "injected"
-            else None
+            selection.prompt_capability if selection.status == "injected" else None
         )
-        baseline_prompt: BaselinePromptCapability | None = (
-            baseline.prompt_capability
-        )
+        baseline_prompt: BaselinePromptCapability | None = baseline.prompt_capability
         map_prompt: ArticleMapPromptCapability | None = (
             map_result.prompt_capability if map_result.is_ok else None
         )
@@ -525,11 +540,7 @@ class TurnCoordinator:
         receipt.request_frame_charge = turn_frame.request_frame_charge_cost
 
         # 8) Selection expansion session (only when expandable injected).
-        if (
-            selection.status == "injected"
-            and selection.selection.expandable
-            and selected_text
-        ):
+        if selection.status == "injected" and selection.selection.expandable and selected_text:
             self._selection_session = EvidenceExpansionSession(
                 canonical_selected_text=selected_text,
                 selection_result=selection,
@@ -606,10 +617,7 @@ class TurnCoordinator:
                     unproven.append("map_refund")
 
         # 3) Baseline.
-        if (
-            receipt.baseline_result is not None
-            and receipt.baseline_result.status == "injected"
-        ):
+        if receipt.baseline_result is not None and receipt.baseline_result.status == "injected":
             try:
                 rollback_baseline_inject(
                     budget=self.budget,
@@ -640,9 +648,7 @@ class TurnCoordinator:
 
         if unproven:
             # Prefer the first unproven domain; never embed markers/tokens.
-            raise RuntimeError(
-                f"turn_assembly_rollback_failed code={unproven[0]}"
-            ) from None
+            raise RuntimeError(f"turn_assembly_rollback_failed code={unproven[0]}") from None
 
     async def _load_document_scope(self) -> DocumentScopeSnapshot | None:
         try:
@@ -659,19 +665,96 @@ class TurnCoordinator:
             return None
         return scope
 
+    async def _load_map_source_material(self) -> MapSourceMaterial | None:
+        """§3.4 preflight — load map-source material before outer transaction.
+
+        Returns ``None`` when no provider is configured (C2 skeleton —
+        production wiring is a separate task; coordinator falls back to
+        the unit-window map). When the provider is configured, returns
+        its :class:`MapSourceMaterial` — which may carry
+        ``material_fence_ok=False`` (§5.1 6(b)); the caller
+        (``_map_sources_from_scope``) handles the fallback.
+
+        ``include_rag_ask_only`` is fixed to ``False`` in M3 stage C
+        (B3 heading baseline + wiring skeleton only; opt-in is a later
+        stage). Heading enrichments are populated regardless of opt-in
+        per §3.5.2 B3 heading-enabled baseline.
+
+        No cursor / ledger / budget mutation here — pure preflight I/O.
+        """
+        if self._map_source_material_provider is None:
+            return None
+        return await self._map_source_material_provider.load(
+            envelope=self.envelope,
+            turn_id=self.turn_id,
+            include_rag_ask_only=False,
+        )
+
     @staticmethod
     def _map_sources_from_scope(
         scope: DocumentScopeSnapshot,
+        *,
+        material: MapSourceMaterial | None = None,
     ) -> list[ArticleMapEntrySource]:
+        """Build map entry sources from document scope + map-source material.
+
+        M3 C2 — implements §5.4.1 (deterministic merge order), §5.4.2
+        (hard caps: 32 body + 8 descriptor = 40 max), §5.4.3 (overflow
+        drop, no cross-kind substitution), §5.2 13 (heading only onto
+        same unit source — no standalone heading entry), §5.1 6(b)
+        (material fence failure → unit-window fallback).
+
+        Order (§5.4.1 sort key):
+        1. Body unit sources (rank=0) — sorted by ``order_index``,
+           heading injected from ``material.heading_enrichments`` when
+           ``unit_id`` matches. Capped at 32 (§5.4.2).
+        2. Descriptor sources (rank=1) — appended after body sources.
+           Provider already sorts + caps at 8 (frozen contract); a
+           defensive ``[:8]`` cap enforces the invariant.
+
+        The combined list feeds a SINGLE ``assemble_article_map()``
+        call in ``_commit_assembly`` — shared transaction (§5.3 19).
+        """
+        # §5.1 6(b): material None (no provider) or fence failure →
+        # unit-window fallback (no heading, no descriptor). This is the
+        # pre-C2 behavior, preserving the B3-heading-enabled-baseline-
+        # before fallback shape per §5.1 6(b).
+        if material is None or not material.material_fence_ok:
+            units = sorted(scope.units, key=lambda u: u.order_index)
+            sources: list[ArticleMapEntrySource] = []
+            for unit in units:
+                if not unit.text:
+                    continue
+                sources.append(ArticleMapEntrySource(window_text=unit.text))
+                if len(sources) >= _MAX_MAP_ENTRY_SOURCES:
+                    break
+            return sources
+
+        # §5.2 13: heading only onto same unit source (no standalone
+        # entry). Provider side already dedups — one heading per unit_id.
+        heading_by_unit_id: dict[str, str] = {
+            enrichment.unit_id: enrichment.heading for enrichment in material.heading_enrichments
+        }
+
+        # §5.4.1 rank=0 (body) + §5.4.2 quota 32 + §5.4.3 overflow drop
+        # (drop highest order_index units; no descriptor substitution).
         units = sorted(scope.units, key=lambda u: u.order_index)
-        sources: list[ArticleMapEntrySource] = []
+        body_sources: list[ArticleMapEntrySource] = []
         for unit in units:
             if not unit.text:
                 continue
-            sources.append(ArticleMapEntrySource(window_text=unit.text))
-            if len(sources) >= _MAX_MAP_ENTRY_SOURCES:
+            heading = heading_by_unit_id.get(unit.unit_id)
+            body_sources.append(ArticleMapEntrySource(heading=heading, window_text=unit.text))
+            if len(body_sources) >= _MAX_MAP_ENTRY_SOURCES:
                 break
-        return sources
+
+        # §5.4.1 rank=1 (descriptor) — provider already sorts by §5.4.1
+        # key and caps at 8 (§5.4.2 frozen contract). Defensive cap
+        # enforces the invariant if the contract is ever violated.
+        descriptor_sources = list(material.descriptor_sources[:_MAX_DESCRIPTOR_MAP_ENTRY_SOURCES])
+
+        # §5.4.1: body (rank=0) before descriptor (rank=1).
+        return body_sources + descriptor_sources
 
     # ------------------------------------------------------------------
     # Public: tools
@@ -684,11 +767,7 @@ class TurnCoordinator:
             pointer = ""
 
         outcome = None
-        record = (
-            self.ledger.lookup(pointer)
-            if is_expand_pointer_shape(pointer)
-            else None
-        )
+        record = self.ledger.lookup(pointer) if is_expand_pointer_shape(pointer) else None
         if record is not None and record.binding.scope_kind == "map":
             if self._map_expander is not None:
                 outcome = self._map_expander.expand(pointer=pointer)
@@ -721,8 +800,7 @@ class TurnCoordinator:
                 budget=self.budget,
                 status="invalid_cursor",
                 summary=(
-                    "Unknown, malformed, or already-used expansion "
-                    "pointer. No text was added."
+                    "Unknown, malformed, or already-used expansion pointer. No text was added."
                 ),
             )
 
@@ -766,9 +844,7 @@ class TurnCoordinator:
         # Pre-generation fence.
         fence_result = await self._run_fence()
         if not fence_result.ok:
-            return await self._rag_safe_unavailable(
-                started=started, detail="fence_pre"
-            )
+            return await self._rag_safe_unavailable(started=started, detail="fence_pre")
 
         # Port None / missing stable document → no I/O.
         if self.article_rag is None or self.envelope.stable_document_id is None:
@@ -835,9 +911,7 @@ class TurnCoordinator:
             duration_ms=duration_ms,
         )
 
-    async def _rag_safe_unavailable(
-        self, *, started: float, detail: str
-    ) -> MeteredToolReturn:
+    async def _rag_safe_unavailable(self, *, started: float, detail: str) -> MeteredToolReturn:
         from app.services.reader_record_ask.article_rag_port import (
             ArticleRagSearchOutcome,
         )
@@ -853,17 +927,13 @@ class TurnCoordinator:
                 status="unavailable",
                 summary="Article search is unavailable for this article.",
             )
-            rendered = self.renderer.render_tool_view(
-                rag_view.model_dump(mode="json")
-            )
+            rendered = self.renderer.render_tool_view(rag_view.model_dump(mode="json"))
             if not self.budget.can_charge("rag", rendered):
                 return MeteredToolReturn(
                     text="",
                     status="budget_exhausted",
                     summary="",
-                    duration_ms=max(
-                        0, int((time.perf_counter() - started) * 1000)
-                    ),
+                    duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
                     host_budget_abort=True,
                 )
             self.budget.charge("rag", rendered)
@@ -871,9 +941,7 @@ class TurnCoordinator:
                 text=rendered.text,
                 status="unavailable",
                 summary=rag_view.summary,
-                duration_ms=max(
-                    0, int((time.perf_counter() - started) * 1000)
-                ),
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
             )
 
         outcome = ArticleRagSearchOutcome(
