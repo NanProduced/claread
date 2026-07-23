@@ -1,0 +1,6 @@
+{
+  "fixture_name": "reject_empty",
+  "block_policies": [
+    {"block_id": "b1", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["code_block"]}
+  ]
+}

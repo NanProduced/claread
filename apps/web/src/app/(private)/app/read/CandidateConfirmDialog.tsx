@@ -12,7 +12,13 @@ import {
   DialogTitle,
 } from "@/components/primitives/dialog";
 import { clearPendingCandidate, type PendingCandidate } from "./pending-candidate";
-import type { ReaderCandidateDocumentOutlineItem, ReaderCandidateDocumentRiskItem } from "@/types/api/reader-plate";
+import type {
+  ReaderCandidateDocumentOutlineItem,
+  ReaderCandidateDocumentRiskItem,
+  ReaderStructuredSourceBlock,
+  ReaderStructuredSourceDiagnostic,
+} from "@/types/api/reader-plate";
+import { StructuredSourceRenderer } from "@/lib/reader-plate/projection/structured-source-renderer";
 
 interface CandidateConfirmDialogProps {
   candidate: PendingCandidate | null;
@@ -22,6 +28,23 @@ interface CandidateConfirmDialogProps {
   onRestart: (candidate: PendingCandidate) => void;
   onRefresh?: () => void;
   mode?: "submit" | "resume";
+  /**
+   * OPTIONAL structured source blocks (M2 Structured Source Contract). When
+   * provided and non-empty, the dialog renders the structured block tree via
+   * `StructuredSourceRenderer` instead of the plain-text `previewText`
+   * fallback. The BFF does NOT yet transparently pass `blocks_json` through
+   * `READ_CANDIDATE_DOCUMENT_ALLOWED_TOP_KEYS`; this prop is fed from fixture
+   * JSON during M2 and from real candidate-document blocks once the BFF
+   * whitelist is widened (G1+).
+   */
+  structuredBlocks?: ReaderStructuredSourceBlock[];
+  /**
+   * OPTIONAL structured source diagnostic (warnings / unsupported / outcome).
+   * Surfaced alongside the structured block tree when `structuredBlocks` is
+   * present. When `outcome` is `input_rejected_or_action_required`, the dialog
+   * shows a reject notice.
+   */
+  structuredDiagnostic?: ReaderStructuredSourceDiagnostic;
 }
 
 type ConfirmState =
@@ -98,12 +121,17 @@ export function CandidateConfirmDialog({
   onRestart,
   onRefresh,
   mode,
+  structuredBlocks,
+  structuredDiagnostic,
 }: CandidateConfirmDialogProps) {
   const effectiveMode = mode ?? "submit";
   const isResume = effectiveMode === "resume";
   const [confirmState, setConfirmState] = useState<ConfirmState>({ kind: "idle" });
   const previewText = useMemo(() => getPreviewText(candidate), [candidate]);
   const previewPresentation = useMemo(() => getPreviewPresentation(candidate), [candidate]);
+  const hasStructuredBlocks = Array.isArray(structuredBlocks) && structuredBlocks.length > 0;
+  const structuredOutcome = structuredDiagnostic?.outcome;
+  const isStructuredRejected = structuredOutcome === "input_rejected_or_action_required";
 
   useEffect(() => {
     if (!open) {
@@ -219,9 +247,28 @@ export function CandidateConfirmDialog({
             </div>
             <div
               data-testid="candidate-confirm-preview"
-              className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-5 font-reading text-[1.02rem] leading-[1.9] text-ink/88 sm:text-[1.08rem]"
+              className={
+                hasStructuredBlocks
+                  ? "min-h-0 flex-1 overflow-y-auto px-5 py-5 font-sans text-[0.92rem] leading-6 text-ink/88"
+                  : "min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-5 font-reading text-[1.02rem] leading-[1.9] text-ink/88 sm:text-[1.08rem]"
+              }
             >
-              {previewText ? (
+              {hasStructuredBlocks ? (
+                <div data-testid="candidate-confirm-structured-preview">
+                  {isStructuredRejected ? (
+                    <p
+                      data-testid="candidate-confirm-structured-rejected"
+                      className="mb-3 rounded-[8px] border border-red-300/60 bg-red-50/60 px-3 py-2 text-[0.82rem] font-medium text-red-700"
+                    >
+                      这段内容暂时无法直接进入透读，请按下方提示处理后再提交。
+                    </p>
+                  ) : null}
+                  <StructuredSourceRenderer
+                    blocks={structuredBlocks ?? []}
+                    diagnostic={structuredDiagnostic}
+                  />
+                </div>
+              ) : previewText ? (
                 previewText
               ) : (
                 <span className="font-sans text-[0.86rem] text-muted-foreground">

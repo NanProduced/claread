@@ -37,6 +37,11 @@ dependencies = [
     "dashscope>=1.25.23,<2.0.0",
     # 阿里云云通信号码认证服务 Dypnsapi（手机号短信验证码）
     "alibabacloud-dypnsapi20170525>=1.2.2,<3.0.0",
+    # Structured Source parser (M1): CommonMark + GFM table/strikethrough/footnote.
+    # Promoted from dev to main dependency so the production normalizer /
+    # candidate / gate can import markdown_source_parser without a dev extra.
+    "markdown-it-py>=3.0.0,<4.0.0",
+    "mdit-py-plugins>=0.4.0,<1.0.0",
 ]
 
 # D6-I3Q: OSS-backed artifact IO (AliyunOssObjectReader / AliyunOssPresigner).

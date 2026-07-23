@@ -119,9 +119,14 @@ def test_unordered_list_items_share_list_id_and_ordinals() -> None:
     list_blocks = [block for block in normalized.blocks if block.block_type == "list_item"]
 
     assert len(list_blocks) == 3
-    assert {block.payload_json["list_id"] for block in list_blocks} == {"l1"}
+    # Parser uses parent_block_id to express list grouping (no list_id in
+    # payload_json). All list_items share the same parent_block_id (the
+    # list wrapper block).
+    assert len({block.parent_block_id for block in list_blocks}) == 1
+    assert all(block.parent_block_id is not None for block in list_blocks)
     assert [block.payload_json["ordered"] for block in list_blocks] == [False, False, False]
-    assert [block.payload_json["ordinal"] for block in list_blocks] == [1, 2, 3]
+    # Unordered lists do not carry ordinals (ordinal=None).
+    assert [block.payload_json["ordinal"] for block in list_blocks] == [None, None, None]
 
 
 def test_ordered_list_items_share_list_id_and_ordinals() -> None:
@@ -140,7 +145,11 @@ def test_ordered_list_items_share_list_id_and_ordinals() -> None:
     list_blocks = [block for block in normalized.blocks if block.block_type == "list_item"]
 
     assert len(list_blocks) == 3
-    assert {block.payload_json["list_id"] for block in list_blocks} == {"l1"}
+    # Parser uses parent_block_id to express list grouping (no list_id in
+    # payload_json). All list_items share the same parent_block_id (the
+    # list wrapper block).
+    assert len({block.parent_block_id for block in list_blocks}) == 1
+    assert all(block.parent_block_id is not None for block in list_blocks)
     assert [block.payload_json["ordered"] for block in list_blocks] == [True, True, True]
     assert [block.payload_json["ordinal"] for block in list_blocks] == [1, 2, 3]
 
@@ -160,8 +169,9 @@ def test_blockquote_text_strips_quote_markers() -> None:
     quote_blocks = [block for block in normalized.blocks if block.block_type == "blockquote"]
 
     assert len(quote_blocks) == 1
+    # Parser joins softbreak/hardbreak with "\n" (not a space).
     assert quote_blocks[0].text_content == (
-        "The quoted passage keeps its sentence content while losing the markdown marker. "
+        "The quoted passage keeps its sentence content while losing the markdown marker.\n"
         "The second quote line should merge into the same readable block."
     )
 
@@ -187,8 +197,10 @@ The article continues in plain English after the short example.
     code_block = next(block for block in normalized.blocks if block.block_type == "code_block")
 
     assert code_block.text_content == "def add(a, b):\n    return a + b"
+    # Parser uses language (stripped info string), fenced, closed.
     assert code_block.payload_json["language"] == "python"
-    assert code_block.payload_json["info_string"] == "python"
+    assert code_block.payload_json["fenced"] is True
+    assert code_block.payload_json["closed"] is True
     assert code_block.interpretation_policy.default_route == "rag_ask_only"
 
 
@@ -205,10 +217,13 @@ def test_divider_becomes_unknown_metadata_only_block() -> None:
 """.strip(),
     )
 
-    divider_block = next(block for block in normalized.blocks if block.block_type == "unknown")
+    # Parser emits thematic_break (structural, metadata_only) for hr.
+    divider_block = next(
+        block for block in normalized.blocks if block.block_type == "thematic_break"
+    )
 
     assert divider_block.text_content is None
-    assert divider_block.payload_json == {"kind": "divider", "marker": "---"}
+    assert divider_block.payload_json == {}
     assert divider_block.interpretation_policy.default_route == "metadata_only"
 
 
@@ -232,8 +247,10 @@ Readers cite **important evidence**, add *context*, reference `key terms`, and k
     assert inline_block.text_content == (
         "Readers cite important evidence, add context, reference key terms, and keep the source note readable for learners."
     )
-    assert inline_block.source_refs_json["links"] == [
-        {"label": "the source note", "url": "https://example.com/note"}
+    # Parser puts links in payload_json (not source_refs_json) per the
+    # Structured Source Contract, with {text, href} format.
+    assert inline_block.payload_json["links"] == [
+        {"text": "the source note", "href": "https://example.com/note"}
     ]
 
 
@@ -326,8 +343,10 @@ def test_block_ids_and_order_indexes_are_deterministic() -> None:
     first = _normalize(source_type="markdown_file", filename="review.md", text=text)
     second = _normalize(source_type="markdown_file", filename="review.md", text=text)
 
-    assert [block.block_id for block in first.blocks] == ["b1", "b2", "b3", "b4"]
-    assert [block.order_index for block in first.blocks] == [0, 1, 2, 3]
+    # Parser inserts a list wrapper block before list_items, so the
+    # block count is 5: heading, paragraph, list, list_item, list_item.
+    assert [block.block_id for block in first.blocks] == ["b1", "b2", "b3", "b4", "b5"]
+    assert [block.order_index for block in first.blocks] == [0, 1, 2, 3, 4]
     assert [block.model_dump() for block in first.blocks] == [
         block.model_dump() for block in second.blocks
     ]

@@ -11,6 +11,11 @@ from app.schemas.reader_input_adapter import (
     InputSuitabilityOutcome,
     SourceLossFlag,
 )
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownSourceParser,
+)
+
+_MARKDOWN_PARSER = MarkdownSourceParser()
 
 _MIN_ENGLISH_WORDS = 50
 _MAX_WORDS_BEFORE_ENVELOPE = 8000
@@ -40,20 +45,9 @@ _CODE_LINE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CODE_FENCE_PATTERN = re.compile(r"^\s*```|^\s*~~~", re.MULTILINE)
-_CODE_FENCE_LINE_PATTERN = re.compile(r"^\s*([`~]{3,})([^\n]*)$")
-_HTML_PATTERN = re.compile(r"<[A-Za-z][^>]*>")
 _INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$[^$\n]+\$(?!\$)")
 _BLOCK_MATH_PATTERN = re.compile(r"\$\$[\s\S]+?\$\$|\\\(|\\\[")
-_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(
-    r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*$",
-    re.MULTILINE,
-)
-_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\([^)]+\)")
-_MARKDOWN_FOOTNOTE_PATTERN = re.compile(r"\[\^[^\]]+\]|^\[\^[^\]]+\]:", re.MULTILINE)
-_MARKDOWN_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+\S", re.MULTILINE)
-_MARKDOWN_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S", re.MULTILINE)
-_MARKDOWN_BLOCKQUOTE_PATTERN = re.compile(r"^\s*>\s+\S", re.MULTILINE)
 _SUSPICIOUS_OCR_CHAR_PATTERN = re.compile(r"[�¦§¤]|[|]{2,}|[_]{3,}|[\\/]{3,}")
 _HYPHENATED_LINE_BREAK_PATTERN = re.compile(r"[A-Za-z]-\n[A-Za-z]")
 
@@ -357,16 +351,31 @@ def _detect_markdown_complexity(
         filename is not None
         and filename.lower().endswith((".md", ".markdown"))
     )
-    has_table = _has_markdown_table(text)
+    # Derive structural flags from the parser adapter instead of raw-text
+    # regex. The parser is the single source of truth for block structure
+    # (tables, footnotes, raw HTML, unclosed fences); image and math are
+    # inline features the parser flattens without flagging, so they stay
+    # on lightweight regex probes.
+    parse_result = _MARKDOWN_PARSER.parse(text)
+    block_types = {block.block_type for block in parse_result.blocks}
+    warning_codes = {warning.code for warning in parse_result.warnings}
+
+    has_table = "table" in block_types
     has_image = bool(_MARKDOWN_IMAGE_PATTERN.search(text))
-    has_footnote = bool(_MARKDOWN_FOOTNOTE_PATTERN.search(text))
-    has_raw_html = bool(_HTML_PATTERN.search(text))
-    has_math = bool(_INLINE_MATH_PATTERN.search(text) or _BLOCK_MATH_PATTERN.search(text))
-    has_unclosed_fence = _has_unclosed_markdown_fence(text)
+    has_footnote = (
+        "footnote_reference" in warning_codes
+        or "footnote" in block_types
+    )
+    has_raw_html = (
+        "raw_html_block" in warning_codes
+        or "inline_html" in warning_codes
+    )
+    has_math = bool(
+        _INLINE_MATH_PATTERN.search(text) or _BLOCK_MATH_PATTERN.search(text)
+    )
+    has_unclosed_fence = "has_unclosed_fence" in warning_codes
     has_simple_markdown = is_markdown_source and bool(
-        _MARKDOWN_HEADING_PATTERN.search(text)
-        or _MARKDOWN_LIST_PATTERN.search(text)
-        or _MARKDOWN_BLOCKQUOTE_PATTERN.search(text)
+        block_types & {"heading", "list", "list_item", "blockquote"}
     )
     has_complex_structure = any(
         (has_table, has_image, has_footnote, has_raw_html, has_math, has_unclosed_fence)
@@ -381,56 +390,6 @@ def _detect_markdown_complexity(
         has_unclosed_fence=has_unclosed_fence,
         has_simple_markdown=has_simple_markdown,
     )
-
-
-def _has_markdown_table(text: str) -> bool:
-    lines = text.splitlines()
-    for index, line in enumerate(lines[:-1]):
-        if not _MARKDOWN_TABLE_ROW_PATTERN.match(line):
-            continue
-        separator = lines[index + 1]
-        if not _is_markdown_table_separator(separator):
-            continue
-        if line.count("|") >= 2:
-            return True
-    return False
-
-
-def _is_markdown_table_separator(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped or "|" not in stripped or "-" not in stripped:
-        return False
-    if not all(char in {"|", ":", "-", " "} for char in stripped):
-        return False
-    return bool(re.search(r"-{3,}", stripped))
-
-
-def _has_unclosed_markdown_fence(text: str) -> bool:
-    in_fence = False
-    fence_char: str | None = None
-    fence_length = 0
-
-    for line in text.splitlines():
-        match = _CODE_FENCE_LINE_PATTERN.match(line)
-        if match is None:
-            continue
-
-        marker = match.group(1)
-        marker_char = marker[0]
-        marker_length = len(marker)
-
-        if in_fence:
-            if marker_char == fence_char and marker_length >= fence_length:
-                in_fence = False
-                fence_char = None
-                fence_length = 0
-            continue
-
-        in_fence = True
-        fence_char = marker_char
-        fence_length = marker_length
-
-    return in_fence
 
 
 def _detect_ocr_signals(

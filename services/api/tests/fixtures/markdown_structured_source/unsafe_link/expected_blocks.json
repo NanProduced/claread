@@ -1,0 +1,45 @@
+{
+  "fixture_name": "unsafe_link",
+  "description": "Unsafe protocol links (javascript/data/vbscript) stripped; safe https/mailto links preserved.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "heading",
+      "text_content": "Unsafe Links",
+      "payload_json": {"level": 1},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "paragraph",
+      "text_content": "A javascript link and a data link and a vbscript link.",
+      "payload_json": {
+        "links": [],
+        "stripped_links": [
+          {"text": "javascript link", "href": "javascript:alert(1)", "reason": "unsafe_protocol"},
+          {"text": "data link", "href": "data:text/html,<script>alert(1)</script>", "reason": "unsafe_protocol"},
+          {"text": "vbscript link", "href": "vbscript:msgbox(1)", "reason": "unsafe_protocol"}
+        ]
+      },
+      "parent_block_id": null,
+      "order_index": 1,
+      "source_range": {"line_start": 3, "line_end": 3}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "paragraph",
+      "text_content": "A safe https link and mailto.",
+      "payload_json": {
+        "links": [
+          {"text": "https link", "href": "https://example.com"},
+          {"text": "mailto", "href": "mailto:test@example.com"}
+        ]
+      },
+      "parent_block_id": null,
+      "order_index": 2,
+      "source_range": {"line_start": 5, "line_end": 5}
+    }
+  ]
+}

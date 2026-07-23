@@ -1,0 +1,51 @@
+{
+  "fixture_name": "code_mermaid",
+  "description": "Fenced code blocks including a mermaid diagram block (static, not executed).",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "heading",
+      "text_content": "Diagram",
+      "payload_json": {"level": 1},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "paragraph",
+      "text_content": "Some intro text.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 1,
+      "source_range": {"line_start": 3, "line_end": 3}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "code_block",
+      "text_content": "graph TD\n    A --> B\n    B --> C",
+      "payload_json": {"language": "mermaid", "fenced": true, "closed": true},
+      "parent_block_id": null,
+      "order_index": 2,
+      "source_range": {"line_start": 5, "line_end": 9}
+    },
+    {
+      "block_id": "b4",
+      "block_type": "code_block",
+      "text_content": "x = 1",
+      "payload_json": {"language": "python", "fenced": true, "closed": true},
+      "parent_block_id": null,
+      "order_index": 3,
+      "source_range": {"line_start": 11, "line_end": 13}
+    },
+    {
+      "block_id": "b5",
+      "block_type": "paragraph",
+      "text_content": "Final paragraph.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 4,
+      "source_range": {"line_start": 15, "line_end": 15}
+    }
+  ]
+}

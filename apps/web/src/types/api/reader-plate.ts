@@ -1268,6 +1268,156 @@ export interface ReaderStableDocumentResponseDto {
 }
 
 // ---------------------------------------------------------------------------
+// Structured Source rendering contract (G0 frozen)
+//
+// Mirrors the parser-output contract in
+// `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md`.
+//
+// This is the wire shape emitted by the structured Markdown source parser
+// adapter (markdown_it_py / v1 / commonmark_gfm_v1). It is distinct from the
+// frozen `ReaderStableDocumentBlockDto` above: the BFF DTO carries
+// `payload` + `canonical_text_*_utf16` (post-freeze citation truth), while
+// the Structured Source contract carries `payload_json` + `source_range`
+// (parser diagnostic + identity envelope) and is the input to the
+// `structured-source-renderer` projection.
+//
+// The existing `ReaderStableDocumentBlockDto.block_type: string` is
+// intentionally NOT narrowed — legacy frozen documents and the
+// stable-document-resolver continue to read the wide string. The literal
+// union below is the renderer's view of the G0 closed block-type set.
+//
+// Reference: docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-22.md §4 / §5 M2
+// ---------------------------------------------------------------------------
+
+export type ReaderStructuredSourceBlockType =
+  | "heading"
+  | "paragraph"
+  | "blockquote"
+  | "thematic_break"
+  | "list"
+  | "list_item"
+  | "code_block"
+  | "table"
+  | "table_row"
+  | "table_cell"
+  | "footnote";
+
+export interface ReaderStructuredSourceRange {
+  /** 1-based start line in normalized source. */
+  line_start: number;
+  /** 1-based end line (inclusive). */
+  line_end: number;
+  /**
+   * UTF-16 code unit offset against the canonical text. `null` in the first
+   * phase (M1 fills when canonical text layer integration lands).
+   */
+  utf16_start?: number | null;
+  utf16_end?: number | null;
+}
+
+export interface ReaderStructuredSourceLink {
+  text: string;
+  /** Safe href (http / https / mailto only — protocol whitelist enforced by parser). */
+  href: string;
+}
+
+export interface ReaderStructuredSourceStrippedLink {
+  text: string;
+  /** Original href that was stripped (e.g. `javascript:...`). For diagnostics only. */
+  href: string;
+  reason: string;
+}
+
+export interface ReaderStructuredSourceInlineMark {
+  /** Inline mark kind (emphasis / strong / strikethrough / inline_code / link). */
+  kind:
+    | "emphasis"
+    | "strong"
+    | "strikethrough"
+    | "inline_code"
+    | "link";
+  /** Plain-text fragment covered by this mark. */
+  text: string;
+  /** Safe href for `kind === "link"` (whitelist-filtered). */
+  href?: string;
+}
+
+export interface ReaderStructuredSourceWarning {
+  code:
+    | "raw_html_block"
+    | "inline_html"
+    | "has_unclosed_fence"
+    | "unsafe_link_protocol"
+    | "footnote_reference"
+    | "strikethrough_extension"
+    | "mermaid_static_only"
+    | "code_dominant"
+    | "missing_source_range";
+  message: string;
+  blocks_freeze: boolean;
+}
+
+export interface ReaderStructuredSourceUnsupported {
+  code:
+    | "raw_html"
+    | "unsafe_link_sanitization"
+    | "footnote_full_semantics";
+  message: string;
+}
+
+export type ReaderStructuredSourceOutcome =
+  | "stable_document_ready"
+  | "candidate_document_required"
+  | "input_rejected_or_action_required";
+
+export interface ReaderStructuredSourceDiagnostic {
+  fixture_name?: string;
+  warnings: ReaderStructuredSourceWarning[];
+  unsupported: ReaderStructuredSourceUnsupported[];
+  outcome: ReaderStructuredSourceOutcome;
+}
+
+/**
+ * Structured Source block — parser-output shape (G0 fixture contract).
+ *
+ * `payload_json` carries per-block metadata:
+ *   - heading: `{ "level": 1|2|3|4|5|6 }`
+ *   - list: `{ "ordered": bool, "depth": int }`
+ *   - list_item: `{ "ordered": bool, "marker": str, "ordinal": int|null, "depth": int }`
+ *   - table: `{ "alignments": ("default"|"left"|"center"|"right")[], "column_count"?: int }`
+ *   - table_row: `{ "is_header": bool, "row_index": int }`
+ *   - table_cell: `{ "column_index": int, "alignment": "default"|"left"|"center"|"right", "is_header": bool }`
+ *   - code_block: `{ "language"?: str, "fenced"?: bool, "closed"?: bool }`
+ *   - paragraph (with links): `{ "links"?: Link[], "stripped_links"?: StrippedLink[] }`
+ *   - paragraph (raw html extraction): `{ "extracted_from"?: "html_block"|"html_inline" }`
+ *   - footnote: `{ "footnote_id": str }`
+ *
+ * `inline_marks` is OPTIONAL in the first-phase fixture contract — when
+ * absent the renderer falls back to rendering `text_content` verbatim. The
+ * G0 frozen fixtures do not emit `inline_marks`; this field is reserved for
+ * a future parser-version bump that preserves inline span boundaries
+ * without re-parsing raw Markdown on the client.
+ */
+export interface ReaderStructuredSourceBlock {
+  block_id: string;
+  parent_block_id: string | null;
+  order_index: number;
+  block_type: ReaderStructuredSourceBlockType;
+  text_content: string | null;
+  payload_json: Record<string, unknown>;
+  source_range: ReaderStructuredSourceRange;
+  inline_marks?: ReaderStructuredSourceInlineMark[];
+}
+
+export interface ReaderStructuredSourceEnvelope {
+  parser_name: string;
+  parser_version: string;
+  profile: string;
+  blocks: ReaderStructuredSourceBlock[];
+  diagnostic: ReaderStructuredSourceDiagnostic;
+}
+
+// ---------------------------------------------------------------------------
 // Article RAG Index lifecycle — status / ensure
 //
 // Mirrors `ReaderArticleRagIndex*` in

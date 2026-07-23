@@ -1,0 +1,15 @@
+{
+  "fixture_name": "reject_empty",
+  "description": "Code-dominant content with no narrative blocks — single code block, should route to reject/action-required.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "code_block",
+      "text_content": "def foo():\n    pass\n\nclass Bar:\n    def baz(self):\n        return 42\n\nif __name__ == \"__main__\":\n    foo()",
+      "payload_json": {"language": "python", "fenced": true, "closed": true},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 11}
+    }
+  ]
+}

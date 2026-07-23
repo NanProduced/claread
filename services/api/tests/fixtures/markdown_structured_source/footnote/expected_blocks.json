@@ -1,0 +1,33 @@
+{
+  "fixture_name": "footnote",
+  "description": "Footnote definition and reference — first phase routes to candidate with warning.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "heading",
+      "text_content": "Document",
+      "payload_json": {"level": 1},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "paragraph",
+      "text_content": "This has a footnote reference.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 1,
+      "source_range": {"line_start": 3, "line_end": 3}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "footnote",
+      "text_content": "This is the footnote definition.",
+      "payload_json": {"footnote_id": "1"},
+      "parent_block_id": null,
+      "order_index": 2,
+      "source_range": {"line_start": 5, "line_end": 5}
+    }
+  ]
+}

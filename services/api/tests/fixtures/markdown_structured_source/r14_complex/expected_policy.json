@@ -1,0 +1,26 @@
+{
+  "fixture_name": "r14_complex",
+  "block_policies": [
+    {"block_id": "b1", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["heading"]},
+    {"block_id": "b2", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["heading"]},
+    {"block_id": "b3", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b4", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["heading"]},
+    {"block_id": "b5", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b6", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b7", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b8", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b9", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b10", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b11", "default_route": "metadata_only", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b12", "default_route": "metadata_only", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b13", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b14", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b15", "default_route": "metadata_only", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b16", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b17", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b18", "default_route": "rag_ask_only", "rag_eligible": true, "allowed_source_scope": ["code_block"]},
+    {"block_id": "b19", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b20", "default_route": "metadata_only", "rag_eligible": false, "allowed_source_scope": ["published_layer"]},
+    {"block_id": "b21", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]}
+  ]
+}

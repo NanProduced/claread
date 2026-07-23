@@ -4,7 +4,7 @@ import { ArrowRight, BookOpen, Check, ChevronDown, FileCheck2, FileText, FileUp,
 import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { cn } from "@/lib/cn";
@@ -39,6 +39,7 @@ import {
 } from "./pending-candidate";
 import { CandidateConfirmDialog } from "./CandidateConfirmDialog";
 import {
+  detectMarkdownMarkers,
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
 } from "./submit-mode";
@@ -856,6 +857,10 @@ export function AnalyzeSubmitForm({
     state.kind === "artifact-polling";
   const isSubmitting: boolean = isWaiting;
   const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
+  const hasMarkdownMarkers = useMemo(
+    () => !attachedSource && text.trim().length > 0 && detectMarkdownMarkers(text),
+    [attachedSource, text],
+  );
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -1680,6 +1685,16 @@ export function AnalyzeSubmitForm({
                   {!attachedSource && text.length > 0 ? (
                     <span className="self-center font-sans text-[0.72rem] font-medium text-subtle">
                       {text.trim().length.toLocaleString("en-US")} chars
+                    </span>
+                  ) : null}
+
+                  {hasMarkdownMarkers ? (
+                    <span
+                      data-testid="read-source-markdown-hint"
+                      className="self-center rounded-[6px] border border-lens-blue/24 bg-lens-blue-soft/50 px-2 py-1 font-sans text-[0.7rem] font-medium text-lens-blue"
+                      title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
+                    >
+                      将作为 Markdown 解析
                     </span>
                   ) : null}
 

@@ -1,0 +1,8 @@
+{
+  "fixture_name": "code_mermaid",
+  "warnings": [
+    {"code": "mermaid_static_only", "message": "Mermaid code block is stored as static text; diagram is not rendered or executed.", "blocks_freeze": false}
+  ],
+  "unsupported": [],
+  "outcome": "stable_document_ready"
+}

@@ -44,6 +44,7 @@ StableReadingDocumentStatus = Literal["active", "superseded"]
 StableDocumentBlockType = Literal[
     "paragraph",
     "heading",
+    "list",
     "list_item",
     "blockquote",
     "table",
@@ -54,6 +55,7 @@ StableDocumentBlockType = Literal[
     "image_ocr",
     "caption",
     "code_block",
+    "thematic_break",
     "unknown",
 ]
 
@@ -81,7 +83,7 @@ StableDocumentInterpretationRoute = Literal[
 # images / code). For these, text_content may be NULL even though they
 # still participate in the document.
 _STRUCTURAL_BLOCK_TYPES = frozenset(
-    {"table", "table_row", "table_cell", "image", "code_block", "unknown"}
+    {"list", "table", "table_row", "table_cell", "image", "code_block", "thematic_break", "unknown"}
 )
 
 
@@ -96,6 +98,15 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] = {
     # Narrative blocks -> main reading, scope = main_reading_text.
     "paragraph": dict(
+        allowed_source_scope=["main_reading_text"],
+        default_route="main_reading",
+        rag_eligible=True,
+    ),
+    "list": dict(
+        # List wrapper block (text_content is null); its child list_item
+        # blocks carry the narrative text. The wrapper itself routes
+        # through main_reading so the list structure participates in the
+        # document tree, but RAG indexing targets the list_item children.
         allowed_source_scope=["main_reading_text"],
         default_route="main_reading",
         rag_eligible=True,
@@ -164,6 +175,14 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
         allowed_source_scope=["code_block"],
         default_route="rag_ask_only",
         rag_eligible=True,
+    ),
+    "thematic_break": dict(
+        # Thematic break (hr) is a structural separator with no text
+        # content; routes to metadata_only so it does not enter the
+        # main grammar pass or RAG.
+        allowed_source_scope=["published_layer"],
+        default_route="metadata_only",
+        rag_eligible=False,
     ),
     "unknown": dict(
         # Conservative default: do not feed the main chain, do not

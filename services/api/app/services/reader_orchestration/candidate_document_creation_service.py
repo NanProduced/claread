@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -25,7 +24,9 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
-from app.services.reader_orchestration.inline_markdown import strip_inline_markdown
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownSourceParser,
+)
 from app.services.reader_orchestration.repository import (
     CandidateWriteLockError,
     ReaderOrchestrationRepository,
@@ -41,15 +42,7 @@ from app.services.reader_orchestration.stable_ready_input_application_service im
 _CANDIDATE_CREATION_VERSION = "candidate_creation_v1"
 _READY_STATUS: CandidateReadingDocumentStatus = "ready"
 
-_HEADING_PATTERN = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*$")
-_CODE_FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
-_ORDERED_LIST_PATTERN = re.compile(r"^(?P<indent>\s*)(?P<marker>\d+[.)])\s+(.+?)\s*$")
-_UNORDERED_LIST_PATTERN = re.compile(r"^(?P<indent>\s*)(?P<marker>[-+*])\s+(.+?)\s*$")
-_BLOCKQUOTE_PATTERN = re.compile(r"^\s*>\s?")
-_TABLE_SEPARATOR_PATTERN = re.compile(
-    r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$"
-)
-_DIVIDER_PATTERN = re.compile(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$")
+_MARKDOWN_PARSER = MarkdownSourceParser()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,15 +71,7 @@ class _BlockDraft:
     line_start: int
     line_end: int
     links: list[dict[str, str]] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class _ActiveList:
-    list_id: str
-    ordered: bool
-    depth: int
-    indent_width: int
-    next_ordinal: int = 1
+    parent_block_id: str | None = None
 
 
 class CandidateDocumentCreationService:
@@ -529,7 +514,8 @@ def _build_candidate_blocks(
         drafts = _build_plain_candidate_drafts(normalized_text)
     blocks = [
         StableDocumentBlock(
-            block_id=f"{draft.block_type}-{index:04d}",
+            block_id=f"b{index + 1}",
+            parent_block_id=draft.parent_block_id,
             order_index=index,
             block_type=draft.block_type,
             text_content=draft.text_content,
@@ -597,281 +583,26 @@ def _build_plain_candidate_drafts(source_text: str) -> list[_BlockDraft]:
 def _build_markdown_candidate_drafts(
     source_text: str,
 ) -> tuple[list[_BlockDraft], str | None]:
-    lines = source_text.split("\n")
-    drafts: list[_BlockDraft] = []
+    result = _MARKDOWN_PARSER.parse(source_text)
     title: str | None = None
-    list_counter = 0
-    active_list: _ActiveList | None = None
-    index = 0
+    drafts: list[_BlockDraft] = []
 
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-        if not stripped:
-            active_list = None
-            index += 1
-            continue
+    for block in result.blocks:
+        if title is None and block.block_type == "heading":
+            title = block.text_content
 
-        heading_match = _HEADING_PATTERN.match(line)
-        if heading_match:
-            active_list = None
-            heading_raw = heading_match.group(2).strip()
-            heading_text, heading_links = strip_inline_markdown(heading_raw)
-            drafts.append(
-                _BlockDraft(
-                    block_type="heading",
-                    text_content=heading_text or stripped,
-                    payload_json={"level": len(heading_match.group(1))},
-                    line_start=index + 1,
-                    line_end=index + 1,
-                    links=heading_links,
-                )
-            )
-            if title is None and heading_text:
-                title = heading_text
-            index += 1
-            continue
-
-        fence_match = _CODE_FENCE_PATTERN.match(line)
-        if fence_match:
-            active_list = None
-            block, index = _consume_fenced_code_block(lines, index, fence_match)
-            drafts.append(block)
-            continue
-
-        if _looks_like_markdown_table_start(lines, index):
-            active_list = None
-            start = index
-            index += 2
-            while index < len(lines) and lines[index].strip() and "|" in lines[index]:
-                index += 1
-            raw = "\n".join(lines[start:index]).strip()
-            drafts.append(
-                _BlockDraft(
-                    block_type="table",
-                    text_content=raw,
-                    payload_json={
-                        "candidate_placeholder": True,
-                        "format": "markdown_table",
-                        "row_count": index - start,
-                    },
-                    line_start=start + 1,
-                    line_end=max(start + 1, index),
-                )
-            )
-            continue
-
-        if _DIVIDER_PATTERN.match(line):
-            active_list = None
-            drafts.append(
-                _BlockDraft(
-                    block_type="unknown",
-                    text_content=stripped,
-                    payload_json={
-                        "candidate_placeholder": True,
-                        "kind": "markdown_divider",
-                    },
-                    line_start=index + 1,
-                    line_end=index + 1,
-                )
-            )
-            index += 1
-            continue
-
-        if _BLOCKQUOTE_PATTERN.match(line):
-            active_list = None
-            start = index
-            quote_lines: list[str] = []
-            while index < len(lines):
-                current = lines[index]
-                if not current.strip() or not _BLOCKQUOTE_PATTERN.match(current):
-                    break
-                quote_lines.append(_BLOCKQUOTE_PATTERN.sub("", current, count=1).strip())
-                index += 1
-            quote_joined = (
-                "\n".join(part for part in quote_lines if part).strip()
-                or "\n".join(lines[start:index]).strip()
-            )
-            bq_text, bq_links = strip_inline_markdown(quote_joined)
-            drafts.append(
-                _BlockDraft(
-                    block_type="blockquote",
-                    text_content=bq_text,
-                    payload_json={},
-                    line_start=start + 1,
-                    line_end=max(start + 1, index),
-                    links=bq_links,
-                )
-            )
-            continue
-
-        list_match = _match_list_item(line)
-        if list_match is not None:
-            block, index, active_list, list_counter = _consume_list_item(
-                lines=lines,
-                index=index,
-                match=list_match,
-                active_list=active_list,
-                list_counter=list_counter,
-            )
-            drafts.append(block)
-            continue
-
-        active_list = None
-        start = index
-        paragraph_lines: list[str] = []
-        while index < len(lines):
-            current = lines[index]
-            if not current.strip():
-                break
-            if index != start and (
-                _HEADING_PATTERN.match(current)
-                or _CODE_FENCE_PATTERN.match(current)
-                or _looks_like_markdown_table_start(lines, index)
-                or _DIVIDER_PATTERN.match(current)
-                or _BLOCKQUOTE_PATTERN.match(current)
-                or _is_list_item_line(current)
-            ):
-                break
-            paragraph_lines.append(current)
-            index += 1
-        raw = "\n".join(paragraph_lines).strip()
-        paragraph_text, paragraph_links = strip_inline_markdown(raw)
         drafts.append(
             _BlockDraft(
-                block_type="paragraph",
-                text_content=paragraph_text,
-                payload_json={},
-                line_start=start + 1,
-                line_end=max(start + 1, index),
-                links=paragraph_links,
+                block_type=block.block_type,
+                text_content=block.text_content,
+                payload_json=dict(block.payload_json),
+                line_start=block.source_range.line_start,
+                line_end=block.source_range.line_end,
+                parent_block_id=block.parent_block_id,
             )
         )
 
     return drafts or _build_plain_candidate_drafts(source_text), title
-
-
-def _consume_fenced_code_block(
-    lines: list[str],
-    index: int,
-    opening_match: re.Match[str],
-) -> tuple[_BlockDraft, int]:
-    opening_fence = opening_match.group(1)
-    info_string = opening_match.group(2).strip()
-    language = info_string.split()[0] if info_string else None
-    opening_char = opening_fence[0]
-    required_length = len(opening_fence)
-    start_line = index + 1
-    code_lines: list[str] = []
-    index += 1
-
-    while index < len(lines):
-        line = lines[index]
-        closing_match = _CODE_FENCE_PATTERN.match(line)
-        if (
-            closing_match
-            and closing_match.group(1)[0] == opening_char
-            and len(closing_match.group(1)) >= required_length
-        ):
-            return (
-                _BlockDraft(
-                    block_type="code_block",
-                    text_content="\n".join(code_lines),
-                    payload_json={
-                        "candidate_placeholder": True,
-                        "language": language,
-                        "info_string": info_string,
-                        "closed": True,
-                        "raw_fence_marker": opening_fence,
-                    },
-                    line_start=start_line,
-                    line_end=index + 1,
-                ),
-                index + 1,
-            )
-        code_lines.append(line)
-        index += 1
-
-    return (
-        _BlockDraft(
-            block_type="code_block",
-            text_content="\n".join(code_lines),
-            payload_json={
-                "candidate_placeholder": True,
-                "language": language,
-                "info_string": info_string,
-                "closed": False,
-                "raw_fence_marker": opening_fence,
-            },
-            line_start=start_line,
-            line_end=len(lines),
-        ),
-        len(lines),
-    )
-
-
-def _consume_list_item(
-    *,
-    lines: list[str],
-    index: int,
-    match: re.Match[str],
-    active_list: _ActiveList | None,
-    list_counter: int,
-) -> tuple[_BlockDraft, int, _ActiveList, int]:
-    ordered = match.re is _ORDERED_LIST_PATTERN
-    indent_width = _leading_indent_width(match.group("indent"))
-    depth = indent_width // 2
-    marker = match.group("marker")
-    start_line = index + 1
-    content_lines = [match.group(3)]
-    index += 1
-    end_line = start_line
-
-    while index < len(lines):
-        next_line = lines[index]
-        if not next_line.strip():
-            break
-        if _starts_markdown_block(next_line):
-            break
-        next_indent = _leading_indent_width(next_line)
-        if next_indent <= indent_width:
-            break
-        content_lines.append(next_line.strip())
-        end_line = index + 1
-        index += 1
-
-    if (
-        active_list is None
-        or active_list.ordered != ordered
-        or active_list.depth != depth
-        or active_list.indent_width != indent_width
-    ):
-        list_counter += 1
-        active_list = _ActiveList(
-            list_id=f"l{list_counter}",
-            ordered=ordered,
-            depth=depth,
-            indent_width=indent_width,
-        )
-
-    joined = _join_soft_lines(content_lines)
-    text, list_links = strip_inline_markdown(joined)
-    block = _BlockDraft(
-        block_type="list_item",
-        text_content=text,
-        payload_json={
-            "list_id": active_list.list_id,
-            "ordered": ordered,
-            "ordinal": active_list.next_ordinal,
-            "depth": depth,
-            "marker": marker,
-        },
-        line_start=start_line,
-        line_end=end_line,
-        links=list_links,
-    )
-    active_list.next_ordinal += 1
-    return block, index, active_list, list_counter
 
 
 def _block_source_refs_json(
@@ -908,54 +639,6 @@ def _title_from_source_metadata(source_metadata: dict[str, Any]) -> str | None:
 
 def _normalize_source_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def _looks_like_markdown_table_start(lines: list[str], index: int) -> bool:
-    if index + 1 >= len(lines):
-        return False
-    current = lines[index].strip()
-    next_line = lines[index + 1].strip()
-    return "|" in current and bool(_TABLE_SEPARATOR_PATTERN.match(next_line))
-
-
-def _match_list_item(line: str) -> re.Match[str] | None:
-    ordered_match = _ORDERED_LIST_PATTERN.match(line)
-    if ordered_match is not None:
-        return ordered_match
-    return _UNORDERED_LIST_PATTERN.match(line)
-
-
-def _starts_markdown_block(line: str) -> bool:
-    return bool(
-        _HEADING_PATTERN.match(line)
-        or _CODE_FENCE_PATTERN.match(line)
-        or _BLOCKQUOTE_PATTERN.match(line)
-        or _DIVIDER_PATTERN.match(line)
-        or _match_list_item(line)
-    )
-
-
-def _join_soft_lines(lines: list[str]) -> str:
-    return re.sub(r"[ \t]+", " ", " ".join(line.strip() for line in lines)).strip()
-
-
-def _leading_indent_width(value: str) -> int:
-    if not value:
-        return 0
-    indent_match = re.match(r"^\s*", value)
-    if indent_match is None:
-        return 0
-    return len(indent_match.group(0).expandtabs(4))
-
-
-def _is_list_item_line(line: str) -> bool:
-    return _match_list_item(line) is not None
-
-
-def _strip_list_marker(line: str) -> str:
-    stripped = _ORDERED_LIST_PATTERN.sub("", line, count=1)
-    stripped = _UNORDERED_LIST_PATTERN.sub("", stripped, count=1)
-    return stripped.strip() or line.strip()
 
 
 def text_or_placeholder(text: str) -> str:

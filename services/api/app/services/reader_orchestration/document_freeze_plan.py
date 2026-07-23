@@ -38,12 +38,21 @@ and the per-block-type defaults materialized by
     * UTF-16 offsets are computed in JavaScript UTF-16 code units via
       ``app.contracts.annotation.utf16_code_unit_length``, NOT Python
       ``len``. This matters for emoji and surrogate pairs.
-    * If a main_reading block has empty ``text_content`` (possible for
-      promoted structural blocks such as ``table_cell`` / ``code_block``
-      whose ``text_content`` may be ``None``), the plan fails closed
-      with ``StableDocumentFreezePlanError``. A ``main_reading`` route
-      with no text would produce an inconsistent block (main_reading
-      policy but ``None`` canonical offsets).
+    * The ``list`` wrapper block is the one structural exception: its
+      ``default_route == "main_reading"`` (so the list structure
+      participates in the document tree) but ``text_content`` is
+      ``None`` because the narrative text lives in the child
+      ``list_item`` blocks. The plan skips ``list`` wrapper blocks
+      when deriving canonical text — they carry no canonical offsets
+      and never raise — while ``list_item`` children still contribute
+      their ``text_content`` to canonical text normally.
+    * For other ``main_reading`` blocks with empty ``text_content``
+      (possible for promoted structural blocks such as ``table_cell``
+      / ``code_block`` whose ``text_content`` may be ``None``), the
+      plan fails closed with ``StableDocumentFreezePlanError``. A
+      ``main_reading`` route with no text would produce an
+      inconsistent block (main_reading policy but ``None`` canonical
+      offsets).
     * If no main-reading text is produced, the plan fails closed with
       ``StableDocumentFreezePlanError``.
     * ``content_sha256`` is computed via
@@ -216,13 +225,23 @@ def build_stable_document_freeze_plan(
 
         text = _block_canonical_text(block)
         if not text:
-            # A main_reading block with empty text_content. The D6-I1
-            # validator only requires text_content for non-structural
-            # types, so a promoted table_cell / code_block / image_ocr
-            # / footnote with text_content=None can reach here. Fail
-            # closed: a main_reading route with no text would produce
-            # an inconsistent frozen block (main_reading policy but
-            # None canonical offsets).
+            # The ``list`` wrapper block is the one structural exception:
+            # its ``default_route`` defaults to ``"main_reading"`` (so the
+            # list structure participates in the document tree) but
+            # ``text_content`` is ``None`` because the narrative text
+            # lives in the child ``list_item`` blocks. Skip it rather
+            # than raising — ``list_item`` children still contribute
+            # their ``text_content`` to canonical text normally.
+            #
+            # For other ``main_reading`` blocks with empty
+            # ``text_content`` (possible for promoted structural blocks
+            # such as ``table_cell`` / ``code_block`` whose
+            # ``text_content`` may be ``None``), the plan fails closed
+            # with ``StableDocumentFreezePlanError``. A ``main_reading``
+            # route with no text would produce an inconsistent block
+            # (main_reading policy but ``None`` canonical offsets).
+            if block.block_type == "list":
+                continue
             raise StableDocumentFreezePlanError(
                 f"block_id={block.block_id!r} "
                 f"(block_type={block.block_type!r}) is routed to "

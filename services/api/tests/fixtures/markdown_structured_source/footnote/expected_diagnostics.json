@@ -1,0 +1,10 @@
+{
+  "fixture_name": "footnote",
+  "warnings": [
+    {"code": "footnote_reference", "message": "Footnote reference encountered; footnote plugin not enabled in first phase.", "blocks_freeze": false}
+  ],
+  "unsupported": [
+    {"code": "footnote_full_semantics", "message": "Footnote definition is captured as a block but full footnote semantics (multi-ref, backref) are not supported in first phase."}
+  ],
+  "outcome": "candidate_document_required"
+}

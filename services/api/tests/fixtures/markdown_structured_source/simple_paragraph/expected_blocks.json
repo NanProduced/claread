@@ -1,0 +1,15 @@
+{
+  "fixture_name": "simple_paragraph",
+  "description": "Baseline single-paragraph fixture — the simplest stable-document-ready input.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "paragraph",
+      "text_content": "This is a simple paragraph for baseline testing.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    }
+  ]
+}
