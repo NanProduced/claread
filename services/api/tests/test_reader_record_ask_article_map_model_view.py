@@ -514,22 +514,15 @@ def test_map_source_has_no_io_or_model_retry() -> None:
     assert "sqlalchemy" not in source.lower()
 
 
-def test_map_module_not_wired_into_runtime_this_round() -> None:
-    import app.services.reader_record_ask.production_stream as stream_mod
-    import app.services.reader_record_ask.production_wiring as wiring_mod
+def test_map_module_wired_only_via_turn_coordinator() -> None:
+    """R4-A5-7: article map assembly is owned by TurnCoordinator."""
     import app.services.reader_record_ask.runtime as runtime_mod
-    import app.services.reader_record_ask.runtime_deps as deps_mod
-    import app.services.reader_record_ask.service as service_mod
+    import app.services.reader_record_ask.turn_coordinator as coord_mod
 
-    for wired in (
-        runtime_mod,
-        deps_mod,
-        stream_mod,
-        wiring_mod,
-        service_mod,
-    ):
-        source = open(wired.__file__, encoding="utf-8").read()
-        assert "article_map_model_view" not in source
+    runtime_src = open(runtime_mod.__file__, encoding="utf-8").read()
+    coord_src = open(coord_mod.__file__, encoding="utf-8").read()
+    assert "assemble_article_map" not in runtime_src
+    assert "assemble_article_map" in coord_src
 
 
 def test_agent_prompt_builder_mentions_map_only_via_capability() -> None:

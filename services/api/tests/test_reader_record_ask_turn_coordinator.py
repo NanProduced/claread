@@ -10,21 +10,10 @@ from uuid import UUID
 from xml.sax.saxutils import escape as xml_escape
 
 import pytest
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.services.reader_record_ask.agent import (
     _SYSTEM_INSTRUCTIONS,
     build_agent_user_prompt,
-    create_reading_record_ask_agent,
-    registered_tool_names,
 )
 from app.services.reader_record_ask.article_rag_port import (
     ArticleRagSearchOutcome,
@@ -36,7 +25,6 @@ from app.services.reader_record_ask.baseline_model_view import (
     validate_baseline_prompt_capability,
 )
 from app.services.reader_record_ask.context_envelope import (
-    ENVELOPE_VERSION,
     EnvelopeInitialAnchor,
     VerifiedEnvelopeInput,
     build_context_envelope,
@@ -46,10 +34,12 @@ from app.services.reader_record_ask.document_access import (
     ReadingUnitView,
     build_document_scope,
 )
+from app.services.reader_record_ask.evidence_expansion import (
+    ExpansionPointerLedger,
+)
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.model_view_budget import (
     RESERVE_REQUEST_FRAME,
-    ModelViewBudgetError,
     ModelViewRenderer,
     ModelVisibleTurnBudget,
 )
@@ -58,7 +48,6 @@ from app.services.reader_record_ask.pointer_ledger_owner import (
     reset_process_pointer_ledger_for_tests,
 )
 from app.services.reader_record_ask.selection_model_view import (
-    SELECTION_SECTION_HEADER,
     assemble_selection_model_view,
 )
 from app.services.reader_record_ask.turn_coordinator import (
@@ -67,10 +56,6 @@ from app.services.reader_record_ask.turn_coordinator import (
 )
 from app.services.reader_record_ask.turn_prompt import (
     account_partition_equals_first_surface,
-    mint_turn_frame_prompt_capability,
-)
-from app.services.reader_record_ask.evidence_expansion import (
-    ExpansionPointerLedger,
 )
 
 _USER = UUID("11111111-1111-1111-1111-111111111111")
@@ -398,7 +383,6 @@ async def test_rag_port_none_zero_io_and_safe_view():
 
 @pytest.mark.asyncio
 async def test_rag_ok_and_six_statuses():
-    env = _envelope()
     for status in (
         "empty",
         "not_ready",
@@ -472,7 +456,6 @@ async def test_function_model_expand_returns_exact_rendered_string():
     payload = json.loads(metered.text)
     assert payload["status"] == "ok"
     assert "article_text_block" in payload
-    assert metered.text == json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) or True
     # Round-trip: re-parse equals itself.
     assert json.loads(metered.text)["status"] == "ok"
 

@@ -30,7 +30,6 @@ non-empty — that join is part of the request_frame charge).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from app.services.reader_record_ask.article_map_model_view import (
     ArticleMapPromptCapability,

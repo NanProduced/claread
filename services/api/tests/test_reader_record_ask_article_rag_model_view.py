@@ -772,26 +772,21 @@ def test_rag_assembler_source_has_no_io_or_model_retry() -> None:
     assert "search_current_article(" not in source
 
 
-def test_rag_assembler_not_wired_into_runtime_this_round() -> None:
+def test_rag_assembler_wired_only_via_turn_coordinator() -> None:
+    """R4-A5-7: assemble_rag_model_view is owned by TurnCoordinator."""
     import app.services.reader_record_ask.agent as agent_mod
-    import app.services.reader_record_ask.production_stream as stream_mod
-    import app.services.reader_record_ask.production_wiring as wiring_mod
     import app.services.reader_record_ask.runtime as runtime_mod
-    import app.services.reader_record_ask.runtime_deps as deps_mod
-    import app.services.reader_record_ask.service as service_mod
-    import app.services.reader_record_ask.sse as sse_mod
+    import app.services.reader_record_ask.turn_coordinator as coord_mod
 
-    for wired in (
-        runtime_mod,
-        deps_mod,
-        stream_mod,
-        wiring_mod,
-        service_mod,
-        sse_mod,
-        agent_mod,
-    ):
-        source = open(wired.__file__, encoding="utf-8").read()
-        assert "article_rag_model_view" not in source
+    agent_src = open(agent_mod.__file__, encoding="utf-8").read()
+    runtime_src = open(runtime_mod.__file__, encoding="utf-8").read()
+    coord_src = open(coord_mod.__file__, encoding="utf-8").read()
+    assert "assemble_rag_model_view" not in agent_src
+    assert "assemble_rag_model_view" not in runtime_src
+    assert "assemble_rag_model_view" in coord_src
+    # Agent must not call the legacy search executor.
+    assert "execute_search_current_article" not in agent_src
+    assert "search_current_article_executor" not in agent_src
 
 
 def test_legacy_prompt_integration_not_used() -> None:

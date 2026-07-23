@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.reader_record_ask.answer_correctness_policy import (

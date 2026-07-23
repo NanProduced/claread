@@ -37,8 +37,14 @@ TOOL_READ_RANGE: Literal["read_range"] = "read_range"
 TOOL_SEARCH_CURRENT_ARTICLE: Literal["search_current_article"] = (
     "search_current_article"
 )
+TOOL_EXPAND_EVIDENCE: Literal["expand_evidence"] = "expand_evidence"
 
+# Production agent tools (R4-A5-7): expand_evidence + search_current_article.
+# ``read_range`` remains as a legacy contract name for offline schemas only.
 ReaderRecordAskReadToolName = Literal["read_range", "search_current_article"]
+ReaderRecordAskProductionToolName = Literal[
+    "expand_evidence", "search_current_article"
+]
 
 # Offsets on read locators are always unit-/segment-local UTF-16 code units.
 READ_RANGE_OFFSET_UNIT: Literal["utf16"] = "utf16"

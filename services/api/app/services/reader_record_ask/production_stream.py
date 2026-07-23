@@ -40,7 +40,11 @@ from app.services.reader_record_ask.envelope_builder import (
     build_envelope_from_facts,
     document_access_from_facts,
 )
+from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
 from app.services.reader_record_ask.finalizer import FinalizedAskResult
+from app.services.reader_record_ask.pointer_ledger_owner import (
+    get_process_pointer_ledger,
+)
 from app.services.reader_record_ask.production_wiring import (
     build_production_article_rag_port,
     load_active_stable_document_id,
@@ -72,9 +76,11 @@ from app.services.reader_record_ask.sse import (
     encode_sse,
 )
 from app.services.reader_record_ask.tool_contracts import (
+    TOOL_EXPAND_EVIDENCE,
     TOOL_READ_RANGE,
     TOOL_SEARCH_CURRENT_ARTICLE,
 )
+from app.services.reader_record_ask.turn_coordinator import HostBudgetExhausted
 
 RunFn = Callable[..., Any]
 
@@ -84,6 +90,9 @@ logger = logging.getLogger(__name__)
 # internals (exception text, schema bodies, raw responses, thinking).
 TERMINAL_REASON_AGENT_OUTPUT_INVALID = "agent_output_invalid"
 TERMINAL_REASON_AGENT_RUN_FAILED = "agent_run_failed"
+# Host-only model-view budget terminal (R4-A5-7). Typed reason only —
+# never embed budget denial text, account dumps, or body.
+TERMINAL_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 
 # Baseline / document unavailable terminal reasons. Mapped from internal
 # FinalizeStatus="unavailable" produced when baseline assembly fails or
@@ -98,6 +107,8 @@ TERMINAL_REASON_BASELINE_UNAVAILABLE = "baseline_unavailable"
 # (success or failure). Not a RuntimeEvent.
 _AGENT_DONE = object()
 
+# Public tools that may project named progress. expand_evidence is
+# deliberately **not** public — it maps to generic agent_running only.
 _PUBLIC_TOOL_NAMES: frozenset[str] = frozenset(
     {TOOL_READ_RANGE, TOOL_SEARCH_CURRENT_ARTICLE}
 )
@@ -111,10 +122,15 @@ _TOOL_RESULT_ACTIVITY: dict[str, ProgressActivity] = {
     "disabled": "unavailable",
     "budget_exhausted": "failed",
     "invalid": "failed",
+    "invalid_cursor": "unavailable",
+    "stale_evidence": "unavailable",
     "failed": "failed",
     "error": "failed",
     "stale": "failed",
     "context_stale": "failed",
+    "empty": "completed",
+    "not_indexed": "unavailable",
+    "indexing": "unavailable",
 }
 
 
@@ -128,6 +144,23 @@ def _safe_model_route(model: Model | str | None) -> str:
     if isinstance(name, str) and name.strip():
         return name.strip()[:64]
     return type(model).__name__[:64]
+
+
+def _find_host_budget_exhausted(
+    exc: BaseException,
+) -> HostBudgetExhausted | None:
+    """Walk ExceptionGroup / cause chain for a typed HostBudgetExhausted."""
+    if isinstance(exc, HostBudgetExhausted):
+        return exc
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            found = _find_host_budget_exhausted(sub)
+            if found is not None:
+                return found
+    cause = exc.__cause__ or exc.__context__
+    if cause is not None and cause is not exc:
+        return _find_host_budget_exhausted(cause)
+    return None
 
 
 # Stable terminal reason when search_hit evidence conflicts with envelope scope.
@@ -347,6 +380,18 @@ class _ProgressProjector:
             if started is not None:
                 out.append(started)
             tool = event.tool_name
+            # R4-A5-7: expand_evidence → generic agent_running only (no
+            # tool_name, no pointer/body/handle in progress).
+            if tool == TOOL_EXPAND_EVIDENCE:
+                out.append(
+                    self._next(
+                        phase="agent_running",
+                        activity="started",
+                        summary="正在扩展证据",
+                        status="running",
+                    )
+                )
+                return out
             if tool not in _PUBLIC_TOOL_NAMES:
                 # Unknown tools: stay on generic agent activity, no dynamic names
                 # and no repeated agent_running/started spam.
@@ -381,6 +426,27 @@ class _ProgressProjector:
             raw_status = str(event.status or "").lower()
             activity = _TOOL_RESULT_ACTIVITY.get(raw_status, "failed")
             duration = event.duration_ms if event.duration_ms is not None else None
+            if tool == TOOL_EXPAND_EVIDENCE:
+                summary = {
+                    "completed": "已扩展证据",
+                    "unavailable": "证据扩展暂不可用",
+                    "failed": "证据扩展失败",
+                }.get(activity, "证据扩展失败")
+                status: ProgressStatus = {
+                    "completed": "ok",
+                    "unavailable": "unavailable",
+                    "failed": "failed",
+                }.get(activity, "failed")  # type: ignore[assignment]
+                out.append(
+                    self._next(
+                        phase="agent_running",
+                        activity=activity,
+                        summary=summary,
+                        status=status,
+                        duration_ms=duration,
+                    )
+                )
+                return out
             if tool == TOOL_READ_RANGE:
                 summary = {
                     "completed": "已读取相关上下文",
@@ -506,6 +572,7 @@ async def stream_agentic_thread_message(
     model: Model | str | None = None,
     run_fn: RunFn | None = None,
     auto_wire_dependencies: bool = True,
+    pointer_ledger: ExpansionPointerLedger | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -662,6 +729,11 @@ async def stream_agentic_thread_message(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
+    active_ledger = (
+        pointer_ledger
+        if pointer_ledger is not None
+        else get_process_pointer_ledger()
+    )
     agent_task = asyncio.create_task(
         run_agent(
             user_message=content,
@@ -670,6 +742,7 @@ async def stream_agentic_thread_message(
             model=active_model,
             article_rag=wired_rag,
             event_sink=sink,
+            pointer_ledger=active_ledger,
         )
     )
 
@@ -738,6 +811,87 @@ async def stream_agentic_thread_message(
         try:
             run_result = agent_task.result()
         except asyncio.CancelledError:
+            raise
+        except HostBudgetExhausted as exc:
+            # Typed host budget terminal — before generic exception handling.
+            # Never surface account dumps, body, or denial text on the wire.
+            logger.warning(
+                "reader_record_ask budget exhausted: account=%s turn_run_id=%s "
+                "message_id=%s model_route=%s envelope_fp=%s total_ms=%s",
+                getattr(exc, "account", "unknown"),
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                envelope.envelope_fingerprint[:12],
+                max(0, int((time.perf_counter() - started_at) * 1000)),
+            )
+            terminal = build_terminal_dto(
+                finalized=None,
+                message_id=assistant_msg["id"],
+                thread_id=str(thread_id),
+                turn_run_id=turn["id"],
+                envelope_fingerprint=envelope.envelope_fingerprint,
+                final_status="failed",
+                terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
+            )
+            await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status="failed",
+                final_status="failed",
+                terminal_reason=terminal.terminal_reason,
+                terminal_dto=terminal.model_dump(mode="json"),
+            )
+            yield encode_sse(
+                EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
+            )
+            yield encode_sse(
+                EVENT_MESSAGE_INTERRUPTED,
+                terminal.model_dump(mode="json"),
+            )
+            terminal_emitted = True
+            return
+        except BaseExceptionGroup as exc_group:
+            # Tool-path HostBudgetExhausted may surface inside ExceptionGroup.
+            budget_exc = _find_host_budget_exhausted(exc_group)
+            if budget_exc is not None:
+                logger.warning(
+                    "reader_record_ask budget exhausted (group): account=%s "
+                    "turn_run_id=%s message_id=%s",
+                    budget_exc.account,
+                    turn["id"],
+                    assistant_msg["id"],
+                )
+                terminal = build_terminal_dto(
+                    finalized=None,
+                    message_id=assistant_msg["id"],
+                    thread_id=str(thread_id),
+                    turn_run_id=turn["id"],
+                    envelope_fingerprint=envelope.envelope_fingerprint,
+                    final_status="failed",
+                    terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
+                )
+                await repo.terminal_agentic_turn_run(
+                    turn_run_id=turn_run_id,
+                    message_id=message_id,
+                    run_status="failed",
+                    final_status="failed",
+                    terminal_reason=terminal.terminal_reason,
+                    terminal_dto=terminal.model_dump(mode="json"),
+                )
+                yield encode_sse(
+                    EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
+                )
+                yield encode_sse(
+                    EVENT_MESSAGE_INTERRUPTED,
+                    terminal.model_dump(mode="json"),
+                )
+                terminal_emitted = True
+                return
+            # Fall through to UnexpectedModelBehavior / generic handling.
+            if isinstance(exc_group, ExceptionGroup):
+                # Re-raise first non-budget sub-exception path via generic.
+                raise exc_group.exceptions[0] from None
             raise
         except UnexpectedModelBehavior as exc:
             logger.warning(

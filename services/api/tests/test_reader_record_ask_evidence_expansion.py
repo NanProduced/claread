@@ -1532,14 +1532,23 @@ def test_expansion_source_has_no_io_runtime_or_model_retry() -> None:
         assert "sqlalchemy" not in source.lower()
 
 
-def test_expansion_not_wired_into_runtime_or_agent() -> None:
-    import app.services.reader_record_ask.agent as agent_mod
-    import app.services.reader_record_ask.production_stream as stream_mod
-    import app.services.reader_record_ask.runtime as runtime_mod
+def test_expansion_wired_only_via_turn_coordinator() -> None:
+    """R4-A5-7: expansion reaches production through TurnCoordinator only.
 
-    for wired in (agent_mod, stream_mod, runtime_mod):
-        source = open(wired.__file__, encoding="utf-8").read()
-        assert "evidence_expansion" not in source
+    Agent/runtime must not import the expansion session directly; the
+    coordinator owns ledger/session and tools call coordinator.expand_evidence.
+    """
+    import app.services.reader_record_ask.agent as agent_mod
+    import app.services.reader_record_ask.runtime as runtime_mod
+    import app.services.reader_record_ask.turn_coordinator as coord_mod
+
+    agent_src = open(agent_mod.__file__, encoding="utf-8").read()
+    runtime_src = open(runtime_mod.__file__, encoding="utf-8").read()
+    coord_src = open(coord_mod.__file__, encoding="utf-8").read()
+    assert "EvidenceExpansionSession" not in agent_src
+    assert "EvidenceExpansionSession" not in runtime_src
+    assert "evidence_expansion" in coord_src
+    assert "expand_evidence" in agent_src
 
 
 def test_init_validation_fail_closed() -> None:

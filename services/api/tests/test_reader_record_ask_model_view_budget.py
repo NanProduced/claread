@@ -100,9 +100,9 @@ def test_six_account_reserves_sum_to_cap() -> None:
         "expand": RESERVE_EXPAND,
         "rag": RESERVE_RAG,
     }
-    assert RESERVE_REQUEST_FRAME == 8_500
+    assert RESERVE_REQUEST_FRAME == 9_500
     assert RESERVE_SELECTION == 2_500
-    assert RESERVE_BASELINE == 4_500
+    assert RESERVE_BASELINE == 3_500
     assert RESERVE_MAP == 1_500
     assert RESERVE_EXPAND == 4_000
     assert RESERVE_RAG == 3_000

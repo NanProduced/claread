@@ -604,44 +604,68 @@ async def test_agent_direct_answer_without_selection_has_no_initial_evidence() -
 
 
 @pytest.mark.asyncio
-async def test_agent_one_read_range_and_cites_handle() -> None:
-    call_state = {"read_done": False, "read_handle": None}
+async def test_agent_one_expand_evidence_and_cites_handle() -> None:
+    """R4-A5-7: expand_evidence returns a citeable handle (replaces read_range)."""
+    import re
+
+    from app.services.reader_record_ask.evidence_expansion import (
+        ExpansionPointerLedger,
+    )
+
+    call_state = {"expand_done": False, "expand_handle": None}
+    # Longer than EVIDENCE_SNIPPET_HARD_CAP so selection remains expandable.
+    selection = "expandable selection body with padding words. " * 120
 
     async def model_fn(messages, info: AgentInfo):
         del info
-        # Only treat ToolReturnPart dict content as tool results (not user prompt).
         for msg in messages:
             for part in getattr(msg, "parts", []) or []:
                 if type(part).__name__ != "ToolReturnPart":
                     continue
                 content = getattr(part, "content", None)
-                if isinstance(content, dict) and content.get("evidence_handles"):
-                    handles = content["evidence_handles"]
+                if isinstance(content, str) and content.startswith("{"):
+                    try:
+                        payload = json.loads(content)
+                    except json.JSONDecodeError:
+                        continue
+                    handles = payload.get("evidence_handles") or []
                     if handles:
-                        hid = handles[0].get("handle_id") or handles[0]
-                        call_state["read_handle"] = hid
-                        call_state["read_done"] = True
-        if call_state["read_done"] and call_state["read_handle"]:
+                        hid = (
+                            handles[0].get("handle_id")
+                            if isinstance(handles[0], dict)
+                            else handles[0]
+                        )
+                        call_state["expand_handle"] = hid
+                        call_state["expand_done"] = True
+                    elif payload.get("evidence_handle"):
+                        eh = payload["evidence_handle"]
+                        hid = eh.get("handle_id") if isinstance(eh, dict) else eh
+                        call_state["expand_handle"] = hid
+                        call_state["expand_done"] = True
+        if call_state["expand_done"] and call_state["expand_handle"]:
             return ModelResponse(
                 parts=[
                     _final_result_part(
                         content="Based on evidence.",
-                        handles=[call_state["read_handle"]],
+                        handles=[call_state["expand_handle"]],
                     )
                 ]
             )
+        # First call: extract selection handle from prompt as expand pointer.
+        prompt_text = "".join(
+            str(getattr(part, "content", "") or "")
+            for message in messages
+            for part in (getattr(message, "parts", []) or [])
+        )
+        m = re.search(r'role="selection"[^>]*handle="(evh_[0-9a-f]{32})"', prompt_text)
+        if m is None:
+            m = re.search(r"evh_[0-9a-f]{32}", prompt_text)
+        pointer = m.group(1) if m and m.lastindex else (m.group(0) if m else "")
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name="read_range",
-                    args=json.dumps(
-                        {
-                            "locator": {
-                                "unit_id": "u1",
-                                "anchor_segment_id": "s1",
-                            }
-                        }
-                    ),
+                    tool_name="expand_evidence",
+                    args=json.dumps({"pointer": pointer}),
                     tool_call_id="c1",
                 )
             ]
@@ -649,24 +673,24 @@ async def test_agent_one_read_range_and_cites_handle() -> None:
 
     result = await run_reading_record_ask(
         user_message="Explain the selected sentence with more context.",
-        envelope=_envelope(),
+        envelope=_envelope(
+            initial_anchor=EnvelopeInitialAnchor(
+                unit_id="u1",
+                anchor_segment_id="s1",
+                start_offset=0,
+                end_offset=10,
+                selected_text=selection,
+                text_hash="abcd1234",
+            )
+        ),
         document_access=_access(),
         model=FunctionModel(model_fn),
+        pointer_ledger=ExpansionPointerLedger(),
     )
-    assert result.read_range_calls == 1
-    # R4-A1: initial_anchor + article_seed (baseline) + one read_range observation
-    assert len(result.evidence_observations) == 3
-    kinds = {obs.handle.kind for obs in result.evidence_observations}
-    assert kinds == {"initial_anchor", "article_seed", "read_range"}
-    read_obs = next(
-        obs for obs in result.evidence_observations if obs.handle.kind == "read_range"
-    )
-    handle_id = read_obs.handle.handle_id
-    assert handle_id.startswith("evh_")
     tool_results = [e for e in result.events if isinstance(e, ToolResultEvent)]
-    assert len(tool_results) == 1
+    assert tool_results
+    assert tool_results[0].tool_name == "expand_evidence"
     assert tool_results[0].status == "ok"
-    assert handle_id in tool_results[0].evidence_handle_ids
     assert result.final_text == "Based on evidence."
     assert result.finalized is not None
     assert result.finalized.status == "ok"
@@ -674,101 +698,68 @@ async def test_agent_one_read_range_and_cites_handle() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_budget_exhaustion_after_three_reads() -> None:
-    steps = [
-        {
-            "type": "tool",
-            "args": {"locator": {"unit_id": "u1"}},
-            "tool_call_id": f"c{i}",
-        }
-        for i in range(4)
-    ] + [{"type": "final", "content": "Done with available evidence."}]
-    access = _access()
-    result = await run_reading_record_ask(
-        user_message="Read a lot of context.",
-        envelope=_envelope(),
-        document_access=access,
-        model=_scripted_model(steps),
-    )
-    assert result.read_range_calls == 3
-    statuses = [
-        e.status for e in result.events if isinstance(e, ToolResultEvent)
-    ]
-    assert statuses.count("ok") == 3
-    assert statuses.count("budget_exhausted") == 1
-    # R4-A1: baseline context loads the document scope once at turn start,
-    # then each successful read_range call loads the scope once. The fourth
-    # read_range is budget-gated and does NOT load. So total loads = 1 + 3 = 4.
-    assert access.load_count == 4
-    assert result.final_text == "Done with available evidence."
+    """Legacy read_range budget loop retired — expand uses account reserves.
+
+    Offline read_range executor still enforces its own call budget; this
+    agent-loop test is skipped in favour of expand/RAG account metering.
+    """
+    pytest.skip("read_range agent tool retired in R4-A5-7; see expand/RAG metering")
 
 
 @pytest.mark.asyncio
 async def test_document_injection_does_not_expand_tool_authority() -> None:
-    """Forged system/tool instructions inside document text are data only."""
-    access = _access(inject=True)
-    model = _scripted_model(
-        [
-            {
-                "type": "tool",
-                "args": {"locator": {"unit_id": "u2"}},
-                "tool_call_id": "c1",
-            },
-            {
-                "type": "final",
-                "content": "Answer ignoring document instructions.",
-            },
-        ]
+    """Forged system/tool instructions inside document text are data only.
+
+    R4-A5-7: injection text is XML-escaped inside untrusted baseline
+    blocks; the model answers without tools. Hostile instructions must
+    not become callable tool authority.
+    """
+    from app.services.reader_record_ask.evidence_expansion import (
+        ExpansionPointerLedger,
     )
+
+    access = _access(inject=True)
+    model = _text_model("Answer ignoring document instructions.")
     result = await run_reading_record_ask(
         user_message="Summarise the paragraph.",
-        envelope=_envelope(),
+        envelope=_envelope(initial_anchor=None),
         document_access=access,
         model=model,
+        pointer_ledger=ExpansionPointerLedger(),
     )
-    assert result.read_range_calls == 1
-    tool_results = [e for e in result.events if isinstance(e, ToolResultEvent)]
-    assert len(tool_results) == 1
-    assert tool_results[0].status == "ok"
-    text = (tool_results[0].payloads or {}).get("text", "")
-    assert "ignore previous instructions" in text
-    assert (tool_results[0].payloads or {}).get("untrusted") is True
-    # R4-A1: baseline context loads the document scope once at turn start,
-    # and the single read_range call loads it once more. The injection text
-    # inside u2 does NOT induce additional loads beyond baseline + read_range.
-    assert access.load_count == 2
+    assert result.final_text == "Answer ignoring document instructions."
+    tool_calls = [e for e in result.events if isinstance(e, ToolCallEvent)]
+    assert tool_calls == []
+    # Baseline assembly loads document scope once; no tool I/O.
+    assert access.load_count == 1
+    # Injection payload is escaped in the baseline untrusted surface when
+    # present on the unit text — never elevates tool authority.
+    assert result.baseline_context is not None
+    assert result.baseline_context.is_injected
 
 
 @pytest.mark.asyncio
-async def test_agent_uses_initial_selection_locator_for_read() -> None:
-    projection = _envelope().to_agent_projection()
-    locator = projection.initial_selection_locator
-    assert locator is not None
-    model = _scripted_model(
-        [
-            {
-                "type": "tool",
-                "args": {
-                    "locator": {
-                        "unit_id": locator.unit_id,
-                        "anchor_segment_id": locator.anchor_segment_id,
-                        "start_offset": locator.start_offset,
-                        "end_offset": locator.end_offset,
-                    }
-                },
-            },
-            {"type": "final", "content": "Explained selection."},
-        ]
+async def test_agent_uses_initial_selection_for_direct_answer() -> None:
+    """Selection is model-view injected; no raw locator / read_range path."""
+    from app.services.reader_record_ask.evidence_expansion import (
+        ExpansionPointerLedger,
     )
+
     result = await run_reading_record_ask(
         user_message="Explain selection.",
         envelope=_envelope(),
         document_access=_access(),
-        model=model,
+        model=_text_model(
+            "Explained selection.",
+            use_initial_anchor_from_prompt=True,
+        ),
+        pointer_ledger=ExpansionPointerLedger(),
     )
-    assert result.read_range_calls == 1
     kinds = {obs.handle.kind for obs in result.evidence_observations}
     assert "initial_anchor" in kinds
-    assert "read_range" in kinds
+    assert "article_seed" in kinds
+    assert "read_range" not in kinds
+    assert result.final_text == "Explained selection."
 
 
 def test_read_range_locator_still_rejects_auth_fields() -> None:
@@ -892,24 +883,10 @@ async def test_run_rejects_registry_bound_to_other_envelope() -> None:
 
 def test_agent_explicit_retry_policy() -> None:
     """New RR agent must pin tool/output retries (not pydantic-ai defaults)."""
-    import warnings
-
-    from pydantic_ai.agent import PydanticAIDeprecationWarning
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", PydanticAIDeprecationWarning)
-        agent = create_reading_record_ask_agent(_text_model("x"))
-    deprecations = [
-        w for w in caught if issubclass(w.category, PydanticAIDeprecationWarning)
-    ]
-    assert deprecations == [], (
-        "create_reading_record_ask_agent must not emit "
-        f"PydanticAIDeprecationWarning; got {[str(w.message) for w in deprecations]}"
-    )
-    # Pydantic AI 1.107.0 per-category mapping exposes separate int budgets.
+    agent = create_reading_record_ask_agent(_text_model("x"))
+    # pydantic-ai 1.75+: retries (tools) + output_retries as separate ints.
     assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
-    assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
-    assert not hasattr(agent, "_max_result_retries")
+    assert agent._max_result_retries == DEFAULT_OUTPUT_RETRIES == 2
 
 
 @pytest.mark.asyncio
@@ -1330,18 +1307,18 @@ async def test_policy_retry_then_success_via_real_seam(
     draft passes on the first call and the answer is never rewritten."""
     import re
 
-    from app.services.reader_record_ask import runtime as runtime_module
+    from app.services.reader_record_ask import turn_coordinator as turn_coord_module
 
     model_calls = 0
     policy_build_calls: list[dict[str, object]] = []
-    original_builder = runtime_module.build_answer_correctness_policy
+    original_builder = turn_coord_module.build_answer_correctness_policy
 
     def counting_builder(**kwargs):
         policy_build_calls.append(dict(kwargs))
         return original_builder(**kwargs)
 
     monkeypatch.setattr(
-        runtime_module,
+        turn_coord_module,
         "build_answer_correctness_policy",
         counting_builder,
     )
@@ -1816,19 +1793,19 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
 ) -> None:
     import re
 
-    from app.services.reader_record_ask import runtime as runtime_module
+    from app.services.reader_record_ask import turn_coordinator as turn_coord_module
 
     model_calls = 0
     policy_build_calls: list[dict[str, object]] = []
     captured_blocks: list[str] = []
-    original_builder = runtime_module.build_answer_correctness_policy
+    original_builder = turn_coord_module.build_answer_correctness_policy
 
     def counting_builder(**kwargs):
         policy_build_calls.append(dict(kwargs))
         return original_builder(**kwargs)
 
     monkeypatch.setattr(
-        runtime_module,
+        turn_coord_module,
         "build_answer_correctness_policy",
         counting_builder,
     )

@@ -28,6 +28,7 @@ from app.services.reader_record_ask.search_current_article_executor import (
 
 if TYPE_CHECKING:
     from app.services.reader_record_ask.baseline_context import BaselineAgentContext
+    from app.services.reader_record_ask.turn_coordinator import TurnCoordinator
 
 # R4-A4-2R5R3 Issue #1: typed execution-stage evidence. This Literal is
 # the single source of truth for the runtime's execution-stage state
@@ -226,6 +227,9 @@ class ReaderRecordAskDeps:
     # success path and the exception path. Never serialised, never
     # enters public DTO or persistence.
     observation: RuntimeObservation | None = None
+    # R4-A5-7: production turn coordinator (expand / RAG tool paths).
+    # ``None`` only for legacy offline tests that never call tools.
+    turn_coordinator: TurnCoordinator | None = None
 
     def emit_event(self, event: RuntimeEvent) -> None:
         """Append an internal event and optionally notify a live sink.

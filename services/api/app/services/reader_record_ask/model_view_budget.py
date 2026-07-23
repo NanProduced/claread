@@ -56,9 +56,9 @@ MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 24_000
 # Rebalanced from the A5-1 placeholder 4k so production turns fit without
 # truncating the user question. Selection/expand/map stay at their A5-2/3/4
 # sizes so existing cost-fit tests remain valid. Sum remains 24_000.
-RESERVE_REQUEST_FRAME: int = 8_500
+RESERVE_REQUEST_FRAME: int = 9_500
 RESERVE_SELECTION: int = 2_500
-RESERVE_BASELINE: int = 4_500
+RESERVE_BASELINE: int = 3_500
 RESERVE_MAP: int = 1_500
 RESERVE_EXPAND: int = 4_000
 RESERVE_RAG: int = 3_000
