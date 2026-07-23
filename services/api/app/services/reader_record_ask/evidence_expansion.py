@@ -504,6 +504,31 @@ class ExpansionPointerLedger:
 
         return "rolled_back" if complete else "incomplete"
 
+    def discard_token_for_capacity(self, token: str) -> bool:
+        """Retention / capacity forget for one known pointer token.
+
+        Public seam used by the process-scoped ledger owner when soft
+        capacity is exceeded. Deletes the token **only when present**;
+        never inspects or rewrites foreign transaction claims by marker.
+
+        This is **not** a host-transaction rollback. Transaction undo must
+        use :meth:`rollback_transition_by_marker` so only marker-proven
+        writes are reversed. Capacity drop may cause a later expand of a
+        previously known pointer to surface as ``invalid_cursor`` (accepted
+        retention degradation — not a cross-process stale guarantee).
+
+        Returns
+        -------
+        True
+            Token was present and removed.
+        False
+            Token was already unknown (no mutation).
+        """
+        if token not in self._records:
+            return False
+        del self._records[token]
+        return True
+
     def __len__(self) -> int:
         return len(self._records)
 
@@ -1107,3 +1132,7 @@ __all__ = [
     "mint_transition_marker",
     "render_expand_success_view",
 ]
+
+
+# discard_token_for_capacity is a method on ExpansionPointerLedger (public
+# capacity seam; not a free function).

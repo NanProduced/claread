@@ -254,6 +254,12 @@ class ArticleMapResult:
     the model-visible surface is exactly ``rendered_block`` (inside the
     prompt capability) plus the metadata projection fields
     ``entry_count`` / ``truncated``.
+
+    ``issue_markers`` (R4-A5-7R): server-only per-cursor ledger markers
+    from this assembly's ``ledger.issue`` calls. Outer turn rollback must
+    revoke via :meth:`ExpansionPointerLedger.rollback_transition_by_marker`
+    — never by raw token pop. Order parallels ``entries`` / issued cursors.
+    Empty when status is not ``ok``.
     """
 
     status: MapAssembleStatus
@@ -263,6 +269,8 @@ class ArticleMapResult:
     entry_count: int = 0
     truncated: bool = False
     expander: ArticleMapExpander | None = None
+    # Server-only; never model-visible. Parallel to issued map cursors.
+    issue_markers: tuple[str, ...] = ()
 
     @property
     def is_ok(self) -> bool:
@@ -668,6 +676,7 @@ def assemble_article_map(
         entry_count=best_count,
         truncated=truncated,
         expander=expander,
+        issue_markers=tuple(issued_markers),
     )
 
 

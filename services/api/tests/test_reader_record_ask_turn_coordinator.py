@@ -339,6 +339,167 @@ async def test_outer_transaction_rollback_on_request_frame_failure():
     assert len(coord.ledger) == 0
 
 
+def test_coordinator_never_touches_private_ledger_records():
+    """Static guard: outer rollback must not pop ledger._records."""
+    from pathlib import Path
+
+    src = Path(
+        "app/services/reader_record_ask/turn_coordinator.py"
+    ).read_text(encoding="utf-8")
+    assert "._records" not in src
+    assert "records.pop" not in src
+    assert "rollback_transition_by_marker" in src
+
+
+@pytest.mark.asyncio
+async def test_outer_rollback_preserves_foreign_marker_on_same_token():
+    """request-frame fail after map issue: foreign issue_marker on same token survives.
+
+    Simulates: this transaction issued cursor C under marker M, then a
+    foreign owner replaced C under marker F. Outer rollback of M must not
+    delete C, must still refund budgets, and raise a stable incomplete
+    code without leaking markers/tokens/body.
+    """
+    from app.services.reader_record_ask.evidence_expansion import (
+        PointerRecord,
+        mint_transition_marker,
+    )
+
+    class _ReplaceableLedger(ExpansionPointerLedger):
+        """Test-only seam to simulate foreign re-issue of the same token."""
+
+        def replace_issue_marker(self, token: str, new_marker: str) -> None:
+            current = self.lookup(token)
+            assert current is not None
+            # Bypass public issue (would reject re-issue); host-only probe.
+            object.__setattr__(  # not needed; mutate private for simulation
+                self, "_records", dict(self._records)
+            )
+            records = self._records
+            records[token] = PointerRecord(
+                binding=current.binding,
+                consumed=current.consumed,
+                issue_marker=new_marker,
+                consume_marker=current.consume_marker,
+            )
+
+    ledger = _ReplaceableLedger()
+    selection = "sel-" + ("body " * 30)
+    # Assemble with huge system so request-frame fails after map; spy
+    # map assembly to inject foreign issue_marker on the same token.
+    captured: dict = {"markers": (), "tokens": ()}
+
+    orig_assemble = __import__(
+        "app.services.reader_record_ask.article_map_model_view",
+        fromlist=["assemble_article_map"],
+    ).assemble_article_map
+
+    def spy_assemble(**kwargs):
+        result = orig_assemble(**kwargs)
+        if result.is_ok and result.issue_markers:
+            captured["markers"] = result.issue_markers
+            captured["tokens"] = tuple(e.cursor for e in result.entries)
+            # Foreign marker replaces first issued cursor after our issue.
+            foreign = mint_transition_marker()
+            assert foreign != result.issue_markers[0]
+            ledger.replace_issue_marker(result.entries[0].cursor, foreign)
+            captured["foreign_marker"] = foreign
+            captured["foreign_token"] = result.entries[0].cursor
+        return result
+
+    import app.services.reader_record_ask.turn_coordinator as tc_mod
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(tc_mod, "assemble_article_map", spy_assemble)
+    try:
+        huge_system = "Z" * (RESERVE_REQUEST_FRAME + 50)
+        coord2 = TurnCoordinator(
+            envelope=_envelope(selection=selection),
+            document_access=_access(),
+            user_message="q",
+            system_instructions=huge_system,
+            pointer_ledger=ledger,
+        )
+        with pytest.raises((HostBudgetExhausted, RuntimeError)) as ei:
+            await coord2.assemble_turn()
+        # Foreign token must still be known under foreign marker.
+        foreign_token = captured.get("foreign_token")
+        assert foreign_token
+        rec = ledger.lookup(foreign_token)
+        assert rec is not None
+        assert rec.issue_marker == captured["foreign_marker"]
+        # Error is stable; no token / marker / body leak.
+        msg = str(ei.value)
+        assert foreign_token not in msg
+        assert captured["foreign_marker"] not in msg
+        for m in captured.get("markers", ()):
+            assert m not in msg
+        # Budget fully refunded even if ledger incomplete on that one token.
+        assert coord2.budget.total_spent() == 0
+        assert len(coord2.registry) == 0
+    finally:
+        monkeypatch.undo()
+
+
+@pytest.mark.asyncio
+async def test_outer_rollback_unproven_ledger_still_refunds():
+    """Incomplete marker rollback still refunds and fail-closes stably."""
+    from app.services.reader_record_ask.turn_coordinator import (
+        _OuterTxnReceipt,
+    )
+
+    class _IncompleteLedger(ExpansionPointerLedger):
+        def rollback_transition_by_marker(self, marker: str):  # type: ignore[override]
+            # Unproven: refuse to certify clean state (still allow refunds).
+            return "incomplete"
+
+    ledger = _IncompleteLedger()
+    # Pre-issue a real marker so claim path runs.
+    from app.services.reader_record_ask.evidence_expansion import (
+        PointerBinding,
+        mint_expansion_cursor_id,
+        mint_transition_marker,
+    )
+    from app.services.reader_record_ask.turn_capability_projection import (
+        mint_turn_id,
+    )
+
+    env = _envelope()
+    binding = PointerBinding(
+        turn_id=mint_turn_id(),
+        envelope_fingerprint=env.envelope_fingerprint,
+        record_generation=1,
+        base_id=_BASE,
+        reading_record_id=_RECORD,
+        scope_kind="map",
+    )
+    token = mint_expansion_cursor_id()
+    marker = mint_transition_marker()
+    ledger.issue(token=token, binding=binding, marker=marker)
+
+    coord = TurnCoordinator(
+        envelope=env,
+        document_access=_access(),
+        user_message="q",
+        system_instructions=_SYSTEM_INSTRUCTIONS,
+        pointer_ledger=ledger,
+    )
+    # Charge map account so refund path is exercised.
+    view = coord.renderer.render_plain("m" * 50)
+    coord.budget.charge("map", view)
+    receipt = _OuterTxnReceipt(
+        map_charge=view.char_cost,
+        map_issue_markers=(marker,),
+    )
+    with pytest.raises(RuntimeError, match=r"turn_assembly_rollback_failed code=map_ledger"):
+        coord._rollback_outer(receipt)
+    # Refund still applied.
+    assert coord.budget.spent("map") == 0
+    err = "turn_assembly_rollback_failed code=map_ledger"
+    # No token/marker in stable message.
+    assert token not in err and marker not in err
+
+
 @pytest.mark.asyncio
 async def test_expand_unknown_and_stale_across_turns():
     ledger = ExpansionPointerLedger()

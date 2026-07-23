@@ -85,10 +85,8 @@ def _enforce_capacity_unlocked() -> None:
             if not _token_order:
                 break
             old, _ = _token_order.popitem(last=False)
-            # Best-effort forget: remove record if still present.
-            records = getattr(_process_ledger, "_records", None)
-            if isinstance(records, dict):
-                records.pop(old, None)
+            # Public retention seam only — never touch private _records.
+            _process_ledger.discard_token_for_capacity(old)
 
 
 def get_process_pointer_ledger() -> ExpansionPointerLedger:

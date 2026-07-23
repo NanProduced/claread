@@ -153,10 +153,10 @@ class _OuterTxnReceipt:
     map_result: ArticleMapResult | None = None
     map_charge: int = 0
     request_frame_charge: int = 0
-    # Map assembly issues cursors under the shared ledger; on rollback we
-    # rely on assemble_article_map's own compensation when it fails mid-way.
-    # If a later step fails after map ok, we must revoke map cursors + refund.
-    map_cursors: tuple[str, ...] = ()
+    # Server-only map cursor issue markers from this assembly (parallel to
+    # issued cursors). Outer rollback uses
+    # ``ledger.rollback_transition_by_marker`` only — never raw token pop.
+    map_issue_markers: tuple[str, ...] = ()
 
 
 class TurnCoordinator:
@@ -428,7 +428,7 @@ class TurnCoordinator:
         receipt.map_result = map_result
         if map_result.is_ok and map_result.rendered_block is not None:
             receipt.map_charge = map_result.rendered_block.char_cost
-            receipt.map_cursors = tuple(e.cursor for e in map_result.entries)
+            receipt.map_issue_markers = map_result.issue_markers
             self._map_expander = map_result.expander
 
         # 4) Projection (turn_id server-minted; same value everywhere).
@@ -556,8 +556,20 @@ class TurnCoordinator:
         return assembly
 
     def _rollback_outer(self, receipt: _OuterTxnReceipt) -> None:
-        """Reverse-order cleanup of this transaction's writes only."""
-        # Request-frame refund.
+        """Reverse-order cleanup of this transaction's writes only.
+
+        Map cursors are revoked **only** via marker-scoped
+        :meth:`ExpansionPointerLedger.rollback_transition_by_marker` so
+        foreign issue markers under the same token are never deleted.
+        Compensation continues through every step even when a ledger
+        rollback is incomplete; a single stable fail-closed code is raised
+        at the end when any step is unproven. Never touches private
+        ``_records``.
+        """
+        # Stable failure codes only — no body / token / marker / repr.
+        unproven: list[str] = []
+
+        # 1) Request-frame refund (if charged).
         if receipt.request_frame_charge > 0:
             try:
                 spent = self.budget.spent("request_frame")
@@ -565,26 +577,35 @@ class TurnCoordinator:
                     self.budget._refund_chars(  # noqa: SLF001
                         "request_frame", receipt.request_frame_charge
                     )
+                elif spent > 0:
+                    unproven.append("request_frame_refund")
             except Exception:  # noqa: BLE001
-                raise RuntimeError(
-                    "turn_assembly_rollback_failed code=request_frame_refund"
-                ) from None
+                unproven.append("request_frame_refund")
 
-        # Map: refund + delete only this assembly's cursors.
-        if receipt.map_result is not None and receipt.map_charge > 0:
-            for cursor in receipt.map_cursors:
-                records = getattr(self.ledger, "_records", None)
-                if isinstance(records, dict):
-                    records.pop(cursor, None)
-            try:
-                if self.budget.spent("map") >= receipt.map_charge:
-                    self.budget._refund_chars("map", receipt.map_charge)  # noqa: SLF001
-            except Exception:  # noqa: BLE001
-                raise RuntimeError(
-                    "turn_assembly_rollback_failed code=map_refund"
-                ) from None
+        # 2) Map: marker-scoped ledger revoke, then always attempt refund.
+        if receipt.map_issue_markers or receipt.map_charge > 0:
+            ledger_complete = True
+            for marker in receipt.map_issue_markers:
+                try:
+                    status = self.ledger.rollback_transition_by_marker(marker)
+                    if status != "rolled_back":
+                        ledger_complete = False
+                except Exception:  # noqa: BLE001
+                    ledger_complete = False
+            if not ledger_complete:
+                unproven.append("map_ledger")
+            if receipt.map_charge > 0:
+                try:
+                    if self.budget.spent("map") >= receipt.map_charge:
+                        self.budget._refund_chars(  # noqa: SLF001
+                            "map", receipt.map_charge
+                        )
+                    elif self.budget.spent("map") > 0:
+                        unproven.append("map_refund")
+                except Exception:  # noqa: BLE001
+                    unproven.append("map_refund")
 
-        # Baseline.
+        # 3) Baseline.
         if (
             receipt.baseline_result is not None
             and receipt.baseline_result.status == "injected"
@@ -596,11 +617,9 @@ class TurnCoordinator:
                     result=receipt.baseline_result,
                 )
             except Exception:  # noqa: BLE001
-                raise RuntimeError(
-                    "turn_assembly_rollback_failed code=baseline_refund"
-                ) from None
+                unproven.append("baseline_refund")
 
-        # Selection.
+        # 4) Selection.
         if (
             receipt.selection_result is not None
             and receipt.selection_result.status == "injected"
@@ -617,9 +636,13 @@ class TurnCoordinator:
                     failure_domain="selection_inject",
                 )
             except Exception:  # noqa: BLE001
-                raise RuntimeError(
-                    "turn_assembly_rollback_failed code=selection_refund"
-                ) from None
+                unproven.append("selection_refund")
+
+        if unproven:
+            # Prefer the first unproven domain; never embed markers/tokens.
+            raise RuntimeError(
+                f"turn_assembly_rollback_failed code={unproven[0]}"
+            ) from None
 
     async def _load_document_scope(self) -> DocumentScopeSnapshot | None:
         try:
