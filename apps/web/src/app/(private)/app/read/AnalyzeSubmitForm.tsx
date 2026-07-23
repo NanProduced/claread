@@ -39,6 +39,10 @@ import {
 } from "./pending-candidate";
 import { CandidateConfirmDialog } from "./CandidateConfirmDialog";
 import {
+  MarkdownTextInput,
+  type MarkdownTextInputHandle,
+} from "./MarkdownTextInput";
+import {
   detectMarkdownMarkers,
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
@@ -837,7 +841,7 @@ export function AnalyzeSubmitForm({
   readingVariant: initialVariant,
 }: AnalyzeSubmitFormProps) {
   const router = useRouter();
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const markdownEditorRef = useRef<MarkdownTextInputHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastFileRef = useRef<File | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -874,7 +878,9 @@ export function AnalyzeSubmitForm({
     const timer = window.setTimeout(() => {
       const pending = readPendingCandidate();
       if (pending) {
-        setText(pending.inputSnapshot ?? "");
+        const snapshot = pending.inputSnapshot ?? "";
+        setText(snapshot);
+        markdownEditorRef.current?.setValue(snapshot);
         setState({
           kind: "candidate",
           candidate: pending,
@@ -940,7 +946,7 @@ export function AnalyzeSubmitForm({
     setCandidateDialogOpen(false);
     setState({ kind: "idle" });
     resetFileInput();
-    textareaRef.current?.focus();
+    markdownEditorRef.current?.focus();
   }
 
   function selectSourceFile(file: File) {
@@ -1332,7 +1338,7 @@ export function AnalyzeSubmitForm({
           savedAt: new Date().toISOString(),
         };
         // Do NOT save to localStorage; the BFF is the source of truth.
-        // Do NOT call setText() — resume mode must not pre-fill the textarea.
+        // Do NOT call setText() — resume mode must not pre-fill the input.
         setState({ kind: "candidate", candidate });
         setCandidateDialogOpen(true);
         return;
@@ -1509,7 +1515,7 @@ export function AnalyzeSubmitForm({
             className={cn("absolute inset-0 z-0", !attachedSource && "cursor-text")}
             onClick={() => {
               if (!attachedSource) {
-                textareaRef.current?.focus();
+                markdownEditorRef.current?.focus();
               }
             }}
           />
@@ -1558,19 +1564,14 @@ export function AnalyzeSubmitForm({
               onRemove={clearAttachedSource}
             />
           ) : (
-            <textarea
-              ref={textareaRef}
+            <MarkdownTextInput
+              ref={markdownEditorRef}
               id="analysis-text"
-              className="relative z-10 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink outline-none placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
+              initialValue={text}
+              onChange={(markdown) => setText(markdown)}
+              onSubmit={() => void handleSubmit()}
               placeholder="Paste an English article here"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  void handleSubmit();
-                }
-              }}
+              className="relative z-10 px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
             />
           )}
 
@@ -1580,7 +1581,8 @@ export function AnalyzeSubmitForm({
               className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
               onClick={() => {
                 setText("");
-                textareaRef.current?.focus();
+                markdownEditorRef.current?.clear();
+                markdownEditorRef.current?.focus();
               }}
               title="清空"
             >
@@ -1778,7 +1780,9 @@ export function AnalyzeSubmitForm({
                   size="sm"
                   onClick={() => {
                     clearPendingCandidate();
-                    setText(state.candidate.inputSnapshot ?? "");
+                    const snapshot = state.candidate.inputSnapshot ?? "";
+                    setText(snapshot);
+                    markdownEditorRef.current?.setValue(snapshot);
                     setCurrentAttachedSource(null);
                     setState({ kind: "idle" });
                     setCandidateDialogOpen(false);
@@ -1798,7 +1802,9 @@ export function AnalyzeSubmitForm({
               router.push(appReadingRecordRoute(candidate.readingRecordId));
             }}
             onRestart={(candidate) => {
-              setText(candidate.inputSnapshot ?? "");
+              const snapshot = candidate.inputSnapshot ?? "";
+              setText(snapshot);
+              markdownEditorRef.current?.setValue(snapshot);
               setCurrentAttachedSource(null);
               setState({ kind: "idle" });
               setCandidateDialogOpen(false);
