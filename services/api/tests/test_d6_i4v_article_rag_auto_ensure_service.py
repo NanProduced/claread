@@ -570,6 +570,11 @@ class TestStableReadyWiring:
                     "normalized_text": _english_text(),
                     "content_sha256": "a" * 64,
                     "blocks": [],
+                    # M1 收尾（c13e9eb29）给 NormalizedInputDocument
+                    # 加了 parser_identity 字段；stable_ready 服务现在
+                    # 会读取 normalized.parser_identity。mock 需同步，
+                    # pasted_text 路径为 None。
+                    "parser_identity": None,
                 },
             )()
             mock_plan.return_value = object()
@@ -653,6 +658,11 @@ class TestStableReadyWiring:
                     "normalized_text": _english_text(),
                     "content_sha256": "a" * 64,
                     "blocks": [],
+                    # M1 收尾（c13e9eb29）给 NormalizedInputDocument
+                    # 加了 parser_identity 字段；stable_ready 服务现在
+                    # 会读取 normalized.parser_identity。mock 需同步，
+                    # pasted_text 路径为 None。
+                    "parser_identity": None,
                 },
             )()
             mock_plan.return_value = object()
@@ -730,6 +740,11 @@ class TestStableReadyWiring:
                     "normalized_text": _english_text(),
                     "content_sha256": "a" * 64,
                     "blocks": [],
+                    # M1 收尾（c13e9eb29）给 NormalizedInputDocument
+                    # 加了 parser_identity 字段；stable_ready 服务现在
+                    # 会读取 normalized.parser_identity。mock 需同步，
+                    # pasted_text 路径为 None。
+                    "parser_identity": None,
                 },
             )()
             mock_plan.return_value = object()
