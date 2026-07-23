@@ -17,8 +17,16 @@
  *
  * 提交：Cmd/Ctrl+Enter 拦截触发 onSubmit 回调。
  *
+ * 样式策略（参考 Plate.js 官方 @plate/editor + 项目 reader-blocks-kit）：
+ * - 直接使用 PlateContent（ESLint 规则限制 src/app/** 不能 import
+ *   @/components/ui/*），把 @plate/editor Editor 的关键 className
+ *   （whitespace-pre-wrap break-words outline-none [&_strong]:font-bold）
+ *   内联到 PlateContent，解决"无换行"问题。
+ * - element/leaf component 用自包含 Tailwind utility class，显式给出
+ *   字号/间距/list marker/等宽字体等（解决"无字体大小"问题）。
+ *   不依赖 reader 的 --reader-record-note-* CSS 变量（输入页未定义）。
+ *
  * 边界：本组件只负责输入与实时渲染，不做样式打磨（UI/UX 后续交接）。
- * element/leaf component 用最小实现，与 spike 一致。
  */
 
 import {
@@ -46,36 +54,65 @@ import { cn } from "@/lib/cn";
 
 // ---------------------------------------------------------------------------
 // 最小 element / leaf component（自包含，不耦合 reader 上下文）
+// 显式 Tailwind utility class，不依赖 reader CSS 变量。
 // ---------------------------------------------------------------------------
 
 function MarkdownParagraph({ children, attributes }: PlateElementProps) {
-  return <p {...attributes}>{children}</p>;
+  return (
+    <p {...attributes} className="my-2 leading-relaxed">
+      {children}
+    </p>
+  );
 }
 
 function MarkdownHeading({ children, element, attributes }: PlateElementProps) {
   const type = (element as { type?: string }).type ?? "h6";
+  const sizeClass: Record<string, string> = {
+    h1: "text-2xl font-bold mt-6 mb-2 leading-tight",
+    h2: "text-xl font-bold mt-5 mb-2 leading-tight",
+    h3: "text-lg font-semibold mt-4 mb-2 leading-snug",
+    h4: "text-base font-semibold mt-3 mb-1 leading-snug",
+    h5: "text-sm font-semibold mt-3 mb-1 leading-snug",
+    h6: "text-sm font-semibold mt-3 mb-1 leading-snug uppercase tracking-wide",
+  };
+  const className = sizeClass[type] ?? sizeClass.h6;
   const Component = type as React.ElementType;
-  return <Component {...attributes}>{children}</Component>;
+  return (
+    <Component {...attributes} className={className}>
+      {children}
+    </Component>
+  );
 }
 
 function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
   return (
-    <blockquote {...attributes} className="border-l-2 border-hairline pl-3 italic">
+    <blockquote
+      {...attributes}
+      className="my-3 border-l-4 border-hairline pl-4 italic text-ink-soft"
+    >
       {children}
     </blockquote>
   );
 }
 
 function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
-  return <ul {...attributes}>{children}</ul>;
+  return (
+    <ul {...attributes} className="my-2 list-disc pl-6 leading-relaxed">
+      {children}
+    </ul>
+  );
 }
 
 function MarkdownOrderedList({ children, attributes }: PlateElementProps) {
-  return <ol {...attributes}>{children}</ol>;
+  return (
+    <ol {...attributes} className="my-2 list-decimal pl-6 leading-relaxed">
+      {children}
+    </ol>
+  );
 }
 
 function MarkdownListItem({ children, attributes }: PlateElementProps) {
-  return <li {...attributes}>{children}</li>;
+  return <li {...attributes} className="my-1 pl-1">{children}</li>;
 }
 
 function MarkdownListContent({ children, attributes }: PlateElementProps) {
@@ -84,7 +121,10 @@ function MarkdownListContent({ children, attributes }: PlateElementProps) {
 
 function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
   return (
-    <pre {...attributes} className="overflow-x-auto rounded bg-surface/60 p-2">
+    <pre
+      {...attributes}
+      className="my-3 overflow-x-auto rounded-md bg-surface/60 p-3 font-mono text-sm leading-relaxed"
+    >
       <code>{children}</code>
     </pre>
   );
@@ -96,8 +136,8 @@ function MarkdownCodeLine({ children, attributes }: PlateElementProps) {
 
 function MarkdownHr({ children, attributes }: PlateElementProps) {
   return (
-    <div {...attributes}>
-      <hr className="my-2 border-hairline" />
+    <div {...attributes} className="my-4">
+      <hr className="border-hairline" />
       {children}
     </div>
   );
@@ -105,7 +145,10 @@ function MarkdownHr({ children, attributes }: PlateElementProps) {
 
 function MarkdownTable({ children, attributes }: PlateElementProps) {
   return (
-    <table {...attributes} className="border-collapse border border-hairline">
+    <table
+      {...attributes}
+      className="my-3 w-full border-collapse border border-hairline text-sm"
+    >
       <tbody>{children}</tbody>
     </table>
   );
@@ -119,13 +162,16 @@ function MarkdownTableCell({ children, attributes, element }: PlateElementProps)
   const isHeader = (element as { type?: string }).type === "th";
   if (isHeader) {
     return (
-      <th {...attributes} className="border border-hairline px-2 py-1 font-semibold">
+      <th
+        {...attributes}
+        className="border border-hairline bg-surface/40 px-3 py-1.5 text-left font-semibold"
+      >
         {children}
       </th>
     );
   }
   return (
-    <td {...attributes} className="border border-hairline px-2 py-1">
+    <td {...attributes} className="border border-hairline px-3 py-1.5 text-left">
       {children}
     </td>
   );
@@ -139,7 +185,7 @@ function MarkdownLink({ children, element, attributes }: PlateElementProps) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-lens-blue underline"
+      className="text-lens-blue underline underline-offset-2"
     >
       {children}
     </a>
@@ -147,16 +193,19 @@ function MarkdownLink({ children, element, attributes }: PlateElementProps) {
 }
 
 function MarkdownBoldLeaf({ children, attributes }: PlateLeafProps) {
-  return <strong {...attributes}>{children}</strong>;
+  return <strong {...attributes} className="font-semibold">{children}</strong>;
 }
 
 function MarkdownItalicLeaf({ children, attributes }: PlateLeafProps) {
-  return <em {...attributes}>{children}</em>;
+  return <em {...attributes} className="italic">{children}</em>;
 }
 
 function MarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
   return (
-    <code {...attributes} className="rounded bg-surface/60 px-1">
+    <code
+      {...attributes}
+      className="rounded bg-surface/60 px-1 py-0.5 font-mono text-[0.9em]"
+    >
       {children}
     </code>
   );
@@ -224,7 +273,7 @@ export interface MarkdownTextInputProps {
   /** Cmd/Ctrl+Enter 提交回调 */
   onSubmit: () => void;
   placeholder?: string;
-  /** 透传给 PlateContent 的 className */
+  /** 透传给 Editor 的 className */
   className?: string;
   id?: string;
 }
@@ -304,7 +353,9 @@ export const MarkdownTextInput = forwardRef<
       <PlateContent
         id={id}
         className={cn(
-          "min-h-0 flex-1 resize-none overflow-y-auto bg-transparent outline-none",
+          "min-h-0 flex-1 resize-none overflow-y-auto bg-transparent",
+          "whitespace-pre-wrap break-words outline-none",
+          "[&_strong]:font-bold",
           className,
         )}
         placeholder={placeholder}
