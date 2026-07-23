@@ -143,6 +143,7 @@ class InputDocumentNormalizer:
             suitability=suitability,
             source_loss_flags=list(suitability.flags),
             warnings=[],
+            parser_identity=dict(_PARSER_IDENTITY) if used_markdown_parser else None,
         )
 
 

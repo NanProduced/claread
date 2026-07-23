@@ -21,6 +21,11 @@ from app.services.reader_orchestration.event_runtime import ReaderEventEnvelope
 from app.services.reader_orchestration.input_document_normalizer import (
     InputDocumentNormalizationError,
 )
+from app.services.reader_orchestration.markdown_source_parser import (
+    PARSER_NAME,
+    PARSER_VERSION,
+    PROFILE,
+)
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationError,
     StableReadyInputApplicationResult,
@@ -415,6 +420,10 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
             "flags": [],
             "reasons": captured["plan"].stable_document.source_profile_json["suitability"]["reasons"],
         },
+        # T1/T5 — plain text path has no structured-source parser, so
+        # parser_identity must be explicitly None (not omitted) to
+        # avoid false provenance attribution.
+        "parser_identity": None,
     }
 
     snapshot_call = snapshot_service.load_calls[0]
@@ -471,13 +480,17 @@ The closing paragraph explains how the revised decision was communicated to loca
 
     assert result.title == "Weekly Review"
     assert result.block_count == len(plan.blocks)
+    # Parser emits a ``list`` wrapper block before list_items, and
+    # ``thematic_break`` for ``---`` (structural, metadata_only) per
+    # the Structured Source Contract.
     assert block_types == [
         "heading",
         "paragraph",
+        "list",
         "list_item",
         "list_item",
         "code_block",
-        "unknown",
+        "thematic_break",
         "paragraph",
     ]
     assert "Weekly Review" in plan.canonical_text
@@ -486,6 +499,20 @@ The closing paragraph explains how the revised decision was communicated to loca
     assert "return a + b" not in plan.canonical_text
     assert "```python" not in plan.canonical_text
     assert "---" not in plan.canonical_text
+
+    # T5 / G1 验收条款 4 — parser version identity MUST appear in
+    # frozen document metadata (source_profile_json) for the
+    # markdown_file path. Document-level metadata must not rely on
+    # block-level quality_json inference.
+    source_profile = plan.stable_document.source_profile_json
+    parser_identity = source_profile.get("parser_identity")
+    assert parser_identity is not None, (
+        "markdown_file frozen document must carry parser_identity in "
+        "source_profile_json"
+    )
+    assert parser_identity["parser_name"] == PARSER_NAME
+    assert parser_identity["parser_version"] == PARSER_VERSION
+    assert parser_identity["profile"] == PROFILE
 
 
 @pytest.mark.parametrize(

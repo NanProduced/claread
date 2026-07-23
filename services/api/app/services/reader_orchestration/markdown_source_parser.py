@@ -80,6 +80,10 @@ _MSG_CODE_DOMINANT = (
     "Input is code-dominant with no narrative blocks; rejected from stable "
     "document freeze, action required."
 )
+_MSG_MISSING_SOURCE_RANGE = (
+    "Parser token missing source range; requires candidate review for "
+    "boundary correctness."
+)
 _MSG_UNSUP_RAW_HTML = (
     "Raw HTML is not a first-class block type in the first phase; text is "
     "extracted but structure is not preserved."
@@ -191,6 +195,26 @@ def _map_to_1based(map_val: list[int] | None) -> SourceRange | None:
         return None
     start, end = map_val
     return SourceRange(line_start=start + 1, line_end=end)
+
+
+def _resolve_range(
+    src_range: SourceRange | None,
+    flags: _DiagnosticFlags,
+) -> SourceRange:
+    """Return ``src_range`` or a fail-closed placeholder.
+
+    When ``src_range`` is ``None`` (token has no ``map``), set the
+    ``has_missing_source_range`` flag so the diagnostics stage can emit
+    a ``missing_source_range`` warning and route the document to
+    ``candidate_document_required`` (Clause 2). The placeholder
+    ``SourceRange(0, 0)`` is only used internally so block construction
+    never sees ``None``; the outcome routing ensures such documents do
+    not freeze as stable.
+    """
+    if src_range is None:
+        flags.has_missing_source_range = True
+        return SourceRange(0, 0)
+    return src_range
 
 
 def _extract_inline_text(token: Token) -> str:
@@ -582,7 +606,7 @@ class MarkdownSourceParser:
                         line_end=src_end.line_end,
                     )
                 else:
-                    final_range = src_start or SourceRange(0, 0)
+                    final_range = _resolve_range(src_start, flags)
 
                 blocks.append(
                     ParsedBlock(
@@ -627,7 +651,7 @@ class MarkdownSourceParser:
                         payload_json={"ordered": ordered, "depth": depth},
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -660,7 +684,7 @@ class MarkdownSourceParser:
                         payload_json={},
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -699,7 +723,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -738,7 +762,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -777,7 +801,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -803,7 +827,7 @@ class MarkdownSourceParser:
                         payload_json={"level": level},
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -863,7 +887,7 @@ class MarkdownSourceParser:
                         payload_json=payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -893,7 +917,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -915,7 +939,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -933,7 +957,7 @@ class MarkdownSourceParser:
                         payload_json={},
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -1013,7 +1037,7 @@ class MarkdownSourceParser:
                         },
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
-                        source_range=src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(src_range, flags),
                     )
                 )
                 order_index += 1
@@ -1059,7 +1083,7 @@ class MarkdownSourceParser:
                         payload_json={"footnote_id": footnote_id},
                         parent_block_id=None,
                         order_index=order_index,
-                        source_range=fn_src_range or SourceRange(0, 0),
+                        source_range=_resolve_range(fn_src_range, flags),
                     )
                 )
                 order_index += 1
@@ -1136,6 +1160,15 @@ class MarkdownSourceParser:
                 )
             )
 
+        if flags.has_missing_source_range:
+            warnings.append(
+                DiagnosticWarning(
+                    code="missing_source_range",
+                    message=_MSG_MISSING_SOURCE_RANGE,
+                    blocks_freeze=False,
+                )
+            )
+
         if flags.has_strikethrough:
             warnings.append(
                 DiagnosticWarning(
@@ -1180,6 +1213,7 @@ class MarkdownSourceParser:
             or flags.has_footnote_ref
             or flags.has_unclosed_fence
             or flags.has_inline_html
+            or flags.has_missing_source_range
         ):
             outcome = "candidate_document_required"
         else:
@@ -1209,3 +1243,4 @@ class _DiagnosticFlags:
     has_footnote_ref: bool = False
     has_unclosed_fence: bool = False
     has_strikethrough: bool = False
+    has_missing_source_range: bool = False

@@ -374,6 +374,39 @@ def test_clause6_normalizer_uses_structured_source_identity() -> None:
         assert quality["profile"] == PROFILE
 
 
+def test_clause2_missing_source_range_emits_warning_and_routes_to_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clause 2 — when a block token has no ``map``, the parser MUST
+    emit a ``missing_source_range`` warning and route the document to
+    ``candidate_document_required``. Silent ``SourceRange(0, 0)``
+    fallback without a warning is a contract violation.
+    """
+    from app.services.reader_orchestration import markdown_source_parser as mod
+
+    original_map_fn = mod._map_to_1based
+    call_count = {"n": 0}
+
+    def fake_map_to_1based(map_val):
+        call_count["n"] += 1
+        # Force the first call to return None to simulate a token with no map.
+        if call_count["n"] == 1:
+            return None
+        return original_map_fn(map_val)
+
+    monkeypatch.setattr(mod, "_map_to_1based", fake_map_to_1based)
+
+    result = _parse("# Title\n\nParagraph text here.")
+    warning_codes = {w.code for w in result.warnings}
+    assert "missing_source_range" in warning_codes, (
+        "Parser must emit missing_source_range warning when a token has no map"
+    )
+    assert result.outcome == "candidate_document_required", (
+        "Missing source range must route to candidate_document_required, "
+        f"got {result.outcome}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Explicit assertion: all 10 fixtures must exist on disk
 # ---------------------------------------------------------------------------

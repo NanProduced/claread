@@ -14,6 +14,11 @@ from app.services.reader_orchestration.candidate_document_creation_service impor
     CandidateDocumentCreationService,
     _build_candidate_blocks,
 )
+from app.services.reader_orchestration.markdown_source_parser import (
+    PARSER_NAME,
+    PARSER_VERSION,
+    PROFILE,
+)
 
 _USER_ID = UUID("00000000-0000-0000-0000-000000000501")
 _NOW = datetime(2026, 6, 26, 12, 0, tzinfo=UTC)
@@ -560,6 +565,66 @@ def test_candidate_fenced_block_does_not_emit_fence_in_text_content() -> None:
     code = next(b for b in blocks if b.block_type == "code_block")
     assert "```" not in code.text_content
     assert code.text_content.strip() == "hello"
+
+
+def test_markdown_candidate_blocks_carry_parser_identity_quality_json() -> None:
+    """T3 — markdown_file candidate blocks MUST carry the parser identity
+    triple (parser_name / parser_version / profile) in each block's
+    ``quality_json`` to preserve provenance symmetry with the normalizer
+    path (``input_document_normalizer._PARSER_IDENTITY``).
+
+    Without this, candidate blocks lose their parser provenance and
+    downstream consumers (Article RAG, Ask evidence adapter) cannot
+    distinguish structured-source blocks from legacy regex-produced
+    blocks. This is an M1 contract hard-gap per plan §5 G1.
+    """
+    blocks, _ = _build_candidate_blocks(
+        source_type="markdown_file",
+        text="# Title\n\nParagraph with [link](https://x.test).\n",
+        filename="x.md",
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks, "candidate path must produce at least one block"
+    for block in blocks:
+        quality = block.quality_json
+        assert quality.get("parser_name") == PARSER_NAME, (
+            f"block {block.block_id} ({block.block_type}) quality_json must "
+            f"carry parser_name={PARSER_NAME!r}, got {quality!r}"
+        )
+        assert quality.get("parser_version") == PARSER_VERSION, (
+            f"block {block.block_id} ({block.block_type}) quality_json must "
+            f"carry parser_version={PARSER_VERSION!r}, got {quality!r}"
+        )
+        assert quality.get("profile") == PROFILE, (
+            f"block {block.block_id} ({block.block_type}) quality_json must "
+            f"carry profile={PROFILE!r}, got {quality!r}"
+        )
+
+
+def test_plain_text_candidate_blocks_do_not_carry_parser_identity() -> None:
+    """T3 — plain text candidate blocks (pasted_text / txt_file) MUST NOT
+    carry the markdown parser identity triple, because they are not
+    produced by ``MarkdownSourceParser``. This guards against falsely
+    attributing plain-text content to the structured-source parser when
+    the markdown_file path is patched to carry identity.
+    """
+    blocks, _ = _build_candidate_blocks(
+        source_type="pasted_text",
+        text="Just plain text without any markdown syntax.\n\nSecond paragraph.",
+        filename=None,
+        source_metadata={},
+        original_input_id=uuid4(),
+    )
+    assert blocks, "plain text candidate path must produce at least one block"
+    for block in blocks:
+        quality = block.quality_json
+        assert "parser_name" not in quality, (
+            f"block {block.block_id} ({block.block_type}) quality_json must "
+            f"not carry parser_name for plain-text source, got {quality!r}"
+        )
+        assert "parser_version" not in quality
+        assert "profile" not in quality
 
 
 def test_candidate_freeze_plan_canonical_text_has_no_inline_markdown() -> None:

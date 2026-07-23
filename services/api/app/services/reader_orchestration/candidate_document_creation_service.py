@@ -25,6 +25,9 @@ from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
 from app.services.reader_orchestration.markdown_source_parser import (
+    PARSER_NAME,
+    PARSER_VERSION,
+    PROFILE,
     MarkdownSourceParser,
 )
 from app.services.reader_orchestration.repository import (
@@ -43,6 +46,16 @@ _CANDIDATE_CREATION_VERSION = "candidate_creation_v1"
 _READY_STATUS: CandidateReadingDocumentStatus = "ready"
 
 _MARKDOWN_PARSER = MarkdownSourceParser()
+
+# Parser identity triple (Clause 1) written into each markdown-sourced
+# candidate block's ``quality_json`` to preserve provenance symmetry with
+# the normalizer path (``input_document_normalizer._PARSER_IDENTITY``).
+# Plain-text candidate blocks do NOT carry this triple.
+_PARSER_IDENTITY: dict[str, str] = {
+    "parser_name": PARSER_NAME,
+    "parser_version": PARSER_VERSION,
+    "profile": PROFILE,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,10 +521,17 @@ def _build_candidate_blocks(
     normalized_text = _normalize_source_text(text)
     title = _title_from_source_metadata(source_metadata)
     if source_type == "markdown_file":
-        drafts, markdown_title = _build_markdown_candidate_drafts(normalized_text)
+        drafts, markdown_title = _build_markdown_drafts_from_parser(normalized_text)
         title = markdown_title or title
+        # markdown_file blocks carry the parser identity triple in
+        # quality_json for provenance symmetry with the normalizer path.
+        block_quality_json: dict[str, Any] = dict(_PARSER_IDENTITY)
     else:
         drafts = _build_plain_candidate_drafts(normalized_text)
+        # Plain-text candidate blocks are not produced by the structured
+        # source parser; quality_json stays empty to avoid false
+        # provenance attribution.
+        block_quality_json = {}
     blocks = [
         StableDocumentBlock(
             block_id=f"b{index + 1}",
@@ -528,6 +548,7 @@ def _build_candidate_blocks(
                 line_end=draft.line_end,
                 links=draft.links,
             ),
+            quality_json=dict(block_quality_json),
         )
         for index, draft in enumerate(drafts)
     ]
@@ -580,7 +601,7 @@ def _build_plain_candidate_drafts(source_text: str) -> list[_BlockDraft]:
     ]
 
 
-def _build_markdown_candidate_drafts(
+def _build_markdown_drafts_from_parser(
     source_text: str,
 ) -> tuple[list[_BlockDraft], str | None]:
     result = _MARKDOWN_PARSER.parse(source_text)

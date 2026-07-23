@@ -81,3 +81,11 @@ class NormalizedInputDocument(BaseModel):
     suitability: InputSuitabilityResult
     source_loss_flags: list[SourceLossFlag] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Document-level parser identity triple (parser_name / parser_version /
+    # profile) when the structured-source markdown parser produced the
+    # blocks; ``None`` for the plain text path. Downstream freeze
+    # persistence reads this to populate ``source_profile_json`` per
+    # plan §4 G0 Clause 1 (parser identity written into document
+    # metadata) — document-level metadata must not rely on block-level
+    # inference.
+    parser_identity: dict[str, str] | None = None

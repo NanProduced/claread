@@ -15,6 +15,11 @@ from app.services.reader_orchestration.input_document_normalizer import (
     InputDocumentNormalizer,
     normalize_input_document,
 )
+from app.services.reader_orchestration.markdown_source_parser import (
+    PARSER_NAME,
+    PARSER_VERSION,
+    PROFILE,
+)
 
 
 def _english_paragraph(multiplier: int = 1) -> str:
@@ -459,3 +464,46 @@ def test_pasted_text_markdown_upgraded_preserves_source_type() -> None:
     for block in normalized.blocks:
         assert block.source_refs_json["source_type"] == "pasted_text"
         assert block.quality_json["parser_name"]
+
+
+def test_normalized_document_exposes_parser_identity_for_markdown_file() -> None:
+    """T1 — ``NormalizedInputDocument`` MUST expose a document-level
+    ``parser_identity`` triple (parser_name / parser_version / profile)
+    when the markdown parser path is used, so downstream freeze
+    persistence can write it into ``source_profile_json`` (plan §4 G0
+    Clause 1: parser identity written into document metadata).
+
+    Block-level ``quality_json`` already carries the triple, but
+    document-level metadata must not rely on block-level inference.
+    """
+    normalized = _normalize(
+        source_type="markdown_file",
+        text=(
+            "# Title\n\n"
+            f"{_english_paragraph(multiplier=2)}"
+        ),
+    )
+
+    assert normalized.parser_identity is not None, (
+        "NormalizedInputDocument must expose parser_identity for markdown_file"
+    )
+    assert normalized.parser_identity["parser_name"] == PARSER_NAME
+    assert normalized.parser_identity["parser_version"] == PARSER_VERSION
+    assert normalized.parser_identity["profile"] == PROFILE
+
+
+def test_normalized_document_parser_identity_none_for_plain_text() -> None:
+    """T1 — ``NormalizedInputDocument.parser_identity`` MUST be ``None``
+    when the plain text path is used (no markdown structure detected),
+    so downstream freeze persistence does not falsely attribute the
+    document to the structured-source parser.
+    """
+    normalized = _normalize(
+        source_type="pasted_text",
+        text=f"{_english_paragraph(multiplier=2)}",
+    )
+
+    assert [block.block_type for block in normalized.blocks] == ["paragraph", "paragraph"]
+    assert normalized.parser_identity is None, (
+        "NormalizedInputDocument.parser_identity must be None for plain text path"
+    )

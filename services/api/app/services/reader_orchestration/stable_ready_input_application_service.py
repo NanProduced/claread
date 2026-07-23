@@ -226,6 +226,16 @@ class StableReadyInputApplicationService:
                                     "flags": list(normalized.suitability.flags),
                                     "reasons": list(normalized.suitability.reasons),
                                 },
+                                # Plan §4 G0 Clause 1: parser identity triple
+                                # (parser_name / parser_version / profile) is
+                                # written into document-level metadata, not
+                                # inferred from block-level quality_json.
+                                # ``None`` for the plain text path.
+                                "parser_identity": (
+                                    dict(normalized.parser_identity)
+                                    if normalized.parser_identity is not None
+                                    else None
+                                ),
                             },
                         )
                     except (StableDocumentFreezePlanError, ValueError) as exc:
