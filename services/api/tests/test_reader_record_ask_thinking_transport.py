@@ -525,3 +525,163 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
     assert isinstance(outcome.output, AgentAnswerDraft)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-8A1R3: tool-arg ModelRetry lifecycle behavioral coverage.
+#
+# Scenario: first round thinking + tool call → tool raises ModelRetry
+# (FunctionToolResultEvent carrying RetryPromptPart) → second round
+# thinking. The per-index ThinkingPartLifecycle must reset at the
+# FunctionToolResultEvent boundary so both rounds are observed exactly
+# once, index 0 is reused, and AnalysisStarted/Finished fire once each.
+#
+# This complements:
+#   - test_two_round_stream_observer_order_and_no_dup: tool-return boundary
+#     (FunctionToolResultEvent with ToolReturnPart)
+#   - test_model_retry_lifecycle_two_rounds_thinking_observer_order:
+#     output-validator boundary (OutputToolResultEvent with RetryPromptPart)
+#
+# Together these three tests cover all three retry boundary event kinds
+# in _TOOL_RESULT_EVENT_KINDS: function_tool_result (tool-return and
+# tool-arg ModelRetry), output_tool_result, and builtin_tool_result.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
+    """tool-arg ModelRetry: FunctionToolResultEvent with RetryPromptPart
+    triggers lifecycle reset; both rounds' thinking observed once each,
+    index 0 reused, AnalysisStarted/Finished fire once each, sentinel
+    never leaks.
+
+    Boundary: ``function_tool_result`` event_kind carrying a
+    RetryPromptPart (the tool raised ModelRetry). This is distinct from
+    the tool-return boundary (carries ToolReturnPart) and the
+    output-validator boundary (``output_tool_result`` event_kind).
+    """
+
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.messages import RetryPromptPart
+    from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
+    from pydantic_ai.profiles import ModelProfile
+
+    from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
+    from app.services.reader_record_ask.fence import StaticGenerationFence
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    tool_call_count = {"n": 0}
+
+    async def stream_fn(messages, info):
+        has_retry = any(
+            isinstance(p, RetryPromptPart)
+            for m in messages
+            for p in getattr(m, "parts", []) or []
+        )
+        if not has_retry:
+            # Round 1: thinking + tool call (tool will raise ModelRetry).
+            yield {0: DeltaThinkingPart(content=_SENTINEL)}
+            yield {
+                1: DeltaToolCall(
+                    name="flaky_tool",
+                    json_args=json.dumps({"query": "test"}),
+                    tool_call_id="tc1",
+                )
+            }
+            return
+        # Round 2 after tool-arg ModelRetry: thinking + final answer.
+        # Index 0 is reused — lifecycle.reset_stream() cleared the set.
+        yield {0: DeltaThinkingPart(content=_ROUND2)}
+        yield json.dumps(
+            {
+                "answer_text": "recovered after tool retry",
+                "cited_evidence_handles": [],
+                "response_kind": "clarification",
+            }
+        )
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=ModelProfile(supports_thinking=True),
+    )
+
+    def _build_agent(model) -> Agent:
+        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+            model,
+            deps_type=ReaderRecordAskDeps,
+            output_type=AgentAnswerDraft,
+            output_retries=2,
+        )
+
+        @agent.tool
+        async def flaky_tool(ctx, query: str) -> str:
+            tool_call_count["n"] += 1
+            if tool_call_count["n"] == 1:
+                raise ModelRetry("bad query, try again")
+            return "ok"
+
+        return agent
+
+    envelope = _envelope()
+    deps = ReaderRecordAskDeps(
+        envelope=envelope,
+        document_access=_access(),
+        fence=StaticGenerationFence(live_generation=envelope.record_generation),
+        evidence_registry=EvidenceRegistry(
+            envelope_fingerprint=envelope.envelope_fingerprint
+        ),
+    )
+
+    agent = _build_agent(model)
+    observer = BoundedThinkingObserver(char_cap=2000)
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = await run_agent_with_thinking_transport(
+            agent=agent,
+            prompt="use flaky_tool",
+            deps=deps,
+            thinking_observer=observer,
+            model=model,
+        )
+
+    # Tool was called once: raised ModelRetry, then model answered directly
+    # in round 2 without re-calling the tool (lifecycle reset boundary).
+    assert tool_call_count["n"] == 1
+
+    # Observer received both rounds' reasoning, each exactly once.
+    text = observer.text
+    assert _SENTINEL in text
+    assert _ROUND2 in text
+    assert text.count(_SENTINEL) == 1
+    assert text.count(_ROUND2) == 1
+
+    # Observer started/finished exactly once each.
+    assert observer.started is True
+    assert observer.finished is True
+
+    # AnalysisStarted/AnalysisFinished events fire once each.
+    started = [e for e in deps.events if isinstance(e, AnalysisStartedEvent)]
+    finished = [e for e in deps.events if isinstance(e, AnalysisFinishedEvent)]
+    assert len(started) == 1
+    assert len(finished) == 1
+
+    # Sentinel never leaks into RuntimeEvent payloads.
+    for event in deps.events:
+        dumped = (
+            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
+        )
+        assert _SENTINEL not in json.dumps(dumped)
+        assert _ROUND2 not in json.dumps(dumped)
+
+    # Sentinel never leaks into logs.
+    assert _SENTINEL not in caplog.text
+    assert _ROUND2 not in caplog.text
+
+    # Sentinel never leaks into the final answer.
+    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert _SENTINEL not in (outcome.output.answer_text or "")
+    assert _ROUND2 not in (outcome.output.answer_text or "")

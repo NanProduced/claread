@@ -35,16 +35,27 @@ EnablePayloadKind = Literal[
     "none",
 ]
 
-# Direct DeepSeek V4 wire thinking state (R4-A5-8A1R2).
+# Direct DeepSeek V4 wire thinking state (R4-A5-8A1R3).
 #
-# DeepSeek V4's official default is thinking ON, so the Direct path must
-# never conflate "field absent" with "thinking disabled". Product default
-# is to send an explicit ``{"type": "enabled"}``; an explicit off must
-# actually emit ``{"type": "disabled"}`` rather than delete the field.
+# DeepSeek V4's official default is thinking ON. The Direct path
+# distinguishes the **configured** state (what the caller wrote) from the
+# **effective wire** state (what we actually send):
+#
+#   configured   effective wire   payload
+#   -----------  ---------------  ---------------------------------
+#   absent       enabled          {"thinking": {"type": "enabled"}}
+#   enabled      enabled          {"thinking": {"type": "enabled"}}
+#   disabled     disabled         {"thinking": {"type": "disabled"}}
+#
+# R3 change: absent is no longer "leave the field out and let the server
+# default apply". Product policy normalizes absent to an explicit
+# ``{"type": "enabled"}`` so the wire payload is self-describing and
+# cannot accidentally fall into a non-thinking code path. Only an explicit
+# ``disabled`` turns thinking off.
 DirectDeepSeekThinkingMode = Literal[
-    "absent",  # no thinking field on wire (server default applies)
-    "enabled",  # thinking: {"type": "enabled"}
-    "disabled",  # thinking: {"type": "disabled"}
+    "absent",  # configured absent → effective wire enabled (product policy)
+    "enabled",  # configured enabled → effective wire enabled
+    "disabled",  # configured disabled → effective wire disabled
 ]
 
 
@@ -71,11 +82,11 @@ class ThinkingProviderCapability:
     tool_round_must_return_thinking: bool
     # DeepSeek direct thinking mode: omit meaningless sampling knobs.
     strip_sampling_params: bool
-    # Direct DeepSeek V4 wire thinking state (absent/enabled/disabled).
+    # Direct DeepSeek V4 **configured** thinking mode (absent/enabled/disabled).
     # Only meaningful for the ``deepseek_direct`` dialect; ``"absent"`` for
-    # every other dialect. Drives tool_choice omission and reasoning_effort
-    # so the wire payload reflects the *effective* thinking state, not a
-    # bool that collapses absent with disabled.
+    # every other dialect. This records what the caller wrote, NOT the
+    # effective wire state — see ``effective_wire_mode`` /
+    # ``direct_thinking_enabled_on_wire`` for the normalized wire state.
     direct_thinking_mode: DirectDeepSeekThinkingMode = "absent"
 
     @property
@@ -88,9 +99,26 @@ class ThinkingProviderCapability:
         )
 
     @property
+    def effective_wire_mode(self) -> DirectDeepSeekThinkingMode:
+        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3).
+
+        Absent configuration is normalized to ``enabled`` so the wire
+        payload always carries an explicit thinking field. Only an explicit
+        ``disabled`` yields a disabled wire state.
+        """
+        if self.direct_thinking_mode == "absent":
+            return "enabled"
+        return self.direct_thinking_mode
+
+    @property
     def direct_thinking_enabled_on_wire(self) -> bool:
-        """True only when Direct DeepSeek wire thinking is explicitly enabled."""
-        return self.direct_thinking_mode == "enabled"
+        """True when the effective Direct DeepSeek wire thinking is enabled.
+
+        R3: absent is normalized to enabled, so this is True for both
+        ``absent`` and ``enabled`` configured modes. Only ``disabled``
+        returns False.
+        """
+        return self.effective_wire_mode == "enabled"
 
 
 def _provider_looks_like_deepseek(
@@ -297,19 +325,26 @@ def resolve_thinking_capability(
 
     if dialect == "deepseek_direct":
         mode = _resolve_direct_deepseek_thinking_mode(model_settings)
-        enabled_on_wire = mode == "enabled"
-        raw_effort = _read_reasoning_effort(model_settings) if enabled_on_wire else None
-        effort = normalize_deepseek_direct_effort(raw_effort) if enabled_on_wire else None
+        # R3: absent is normalized to effective enabled on wire. Only an
+        # explicit ``disabled`` turns thinking off. This prevents absent
+        # from falling into the non-thinking code path.
+        effective_enabled = mode != "disabled"
+        raw_effort = (
+            _read_reasoning_effort(model_settings) if effective_enabled else None
+        )
+        effort = (
+            normalize_deepseek_direct_effort(raw_effort) if effective_enabled else None
+        )
         return ThinkingProviderCapability(
             dialect=dialect,
-            thinking_enabled=enabled_on_wire,
+            thinking_enabled=effective_enabled,
             enable_payload_kind="thinking_type_enabled",
             reasoning_effort=effort,
             thinking_budget=None,
             streaming_only=False,
             reasoning_field="reasoning_content",
             tool_round_must_return_thinking=True,
-            strip_sampling_params=enabled_on_wire,
+            strip_sampling_params=effective_enabled,
             direct_thinking_mode=mode,
         )
     if dialect == "dashscope_deepseek":
@@ -415,14 +450,14 @@ def apply_thinking_to_model_settings(
         if capability.enable_payload_kind == "enable_thinking_bool":
             body.setdefault("enable_thinking", False)
         elif capability.enable_payload_kind == "thinking_type_enabled":
-            # Direct DeepSeek three-state wire (R4-A5-8A1R2): V4 default is
-            # thinking ON, so "disabled" must emit {"type": "disabled"}
-            # rather than delete the field; "absent" leaves no field.
-            if capability.direct_thinking_mode == "disabled":
-                body["thinking"] = {"type": "disabled"}
-                body.pop("enable_thinking", None)
-            else:  # "absent"
-                body.pop("thinking", None)
+            # Direct DeepSeek: only ``disabled`` reaches this branch (R3).
+            # Absent is normalized to effective enabled above and emits
+            # ``{"type": "enabled"}`` via the thinking_enabled=True path.
+            # V4 default is thinking ON, so explicit off must emit
+            # ``{"type": "disabled"}`` — deleting the field would silently
+            # inherit the server default (ON).
+            body["thinking"] = {"type": "disabled"}
+            body.pop("enable_thinking", None)
             body.pop("reasoning_effort", None)
 
     update: dict[str, Any] = {"extra_body": body if body else None}

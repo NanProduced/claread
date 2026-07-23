@@ -156,11 +156,14 @@ def test_dialects_not_collapsed_to_generic_true():
     assert ds.dialect != dq.dialect
 
 
-def test_direct_deepseek_absent_mode_field_absent_no_effort_no_strip():
-    """absent mode: no thinking field, effort None, no sampling strip.
+def test_direct_deepseek_absent_mode_normalized_to_explicit_enabled():
+    """absent configured mode is normalized to explicit enabled on wire (R3).
 
-    DeepSeek V4 default is thinking ON, so absent is a real third state
-    (server default applies) — never conflated with disabled.
+    R4-A5-8A1R3: absent configuration must NOT fall into the non-thinking
+    branch. Product policy normalizes absent to an explicit
+    ``{"thinking": {"type": "enabled"}}`` so the wire payload is
+    self-describing. Sampling params are stripped (same as enabled);
+    reasoning_effort is None when the caller did not configure one.
     """
     settings = RunModelSettings(
         temperature=0.5,
@@ -175,22 +178,50 @@ def test_direct_deepseek_absent_mode_field_absent_no_effort_no_strip():
     )
     assert cap.dialect == "deepseek_direct"
     assert cap.direct_thinking_mode == "absent"
-    assert cap.direct_thinking_enabled_on_wire is False
-    assert cap.thinking_enabled is False
-    assert cap.reasoning_effort is None
-    assert cap.strip_sampling_params is False
+    # Configured mode is absent, but effective wire mode is enabled.
+    assert cap.effective_wire_mode == "enabled"
+    assert cap.direct_thinking_enabled_on_wire is True
+    assert cap.thinking_enabled is True
+    assert cap.reasoning_effort is None  # no effort configured
+    assert cap.strip_sampling_params is True
     normalized = apply_thinking_to_model_settings(settings, cap)
     assert normalized is not None
-    # absent mode removes the thinking field; if extra_body becomes empty
-    # it is normalized to None (correct behaviour). The invariant is that
-    # no thinking field survives on the wire payload.
-    body = normalized.extra_body or {}
-    assert "thinking" not in body, (
-        "absent mode must remove the thinking field from the wire payload"
+    assert normalized.extra_body is not None
+    # absent → explicit {"type": "enabled"} on wire (not field deletion).
+    assert normalized.extra_body["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in normalized.extra_body
+    # Sampling stripped because effective wire is enabled.
+    assert normalized.temperature is None
+
+
+def test_direct_deepseek_absent_mode_with_effort_carries_effort():
+    """absent mode + configured effort → enabled wire with effort (R3).
+
+    Even when the thinking field is absent, if reasoning_effort is
+    configured, the effective enabled wire state carries it.
+    """
+    settings = RunModelSettings(
+        temperature=0.7,
+        extra_body={"reasoning_effort": "high"},
     )
-    assert "reasoning_effort" not in body
-    # No sampling stripping when thinking is not enabled.
-    assert normalized.temperature == 0.5
+    cap = resolve_thinking_capability(
+        adapter="openai_compatible",
+        provider="deepseek",
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        model_settings=settings,
+    )
+    assert cap.direct_thinking_mode == "absent"
+    assert cap.effective_wire_mode == "enabled"
+    assert cap.thinking_enabled is True
+    assert cap.reasoning_effort == "high"
+    assert cap.strip_sampling_params is True
+    normalized = apply_thinking_to_model_settings(settings, cap)
+    assert normalized is not None
+    assert normalized.extra_body is not None
+    assert normalized.extra_body["thinking"] == {"type": "enabled"}
+    assert normalized.extra_body["reasoning_effort"] == "high"
+    assert normalized.temperature is None
 
 
 def test_direct_deepseek_disabled_mode_emits_disabled_payload():
@@ -268,12 +299,15 @@ def test_direct_deepseek_enabled_mode_keeps_effort_and_strips_sampling():
 
 
 def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
-    """All three modes resolve to distinct direct_thinking_mode values.
+    """All three configured modes resolve to distinct direct_thinking_mode values.
 
     Guards against a regression that collapses absent with disabled (the
-    classic bug when thinking is treated as a bool).
+    classic bug when thinking is treated as a bool). Also verifies that
+    effective_wire_mode collapses absent→enabled but keeps disabled
+    distinct (R3).
     """
     modes_seen: set[str] = set()
+    wire_modes_seen: set[str] = set()
     for extra in (
         None,
         {"thinking": {"type": "enabled"}},
@@ -290,4 +324,8 @@ def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
             model_settings=settings,
         )
         modes_seen.add(cap.direct_thinking_mode)
+        wire_modes_seen.add(cap.effective_wire_mode)
+    # Configured modes: three distinct values.
     assert modes_seen == {"absent", "enabled", "disabled"}
+    # Effective wire modes: absent collapses to enabled; disabled stays.
+    assert wire_modes_seen == {"enabled", "disabled"}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pydantic_ai.models import Model, ModelProfile
 from pydantic_ai.models.function import FunctionModel
@@ -16,6 +16,27 @@ from app.llm.types import ModelAdapter, ResolvedModelConfig
 
 class ModelProviderError(ValueError):
     """Raised when a configured provider cannot be built."""
+
+
+class DeepSeekProfileConflictError(ModelProviderError):
+    """Raised when an explicit DeepSeek profile conflicts with protocol fields (R4-A5-8A1R3).
+
+    Recognisable Direct/DashScope DeepSeek must carry canonical values for
+    ``openai_chat_thinking_field``, ``openai_chat_send_back_thinking_parts``
+    and ``supports_thinking``. A partial explicit ``openai_profile`` that
+    sets one of these to a non-canonical, non-default value is rejected
+    fail-closed rather than silently overridden — the caller must fix the
+    config.
+    """
+
+    def __init__(self, field_name: str, value: object, canonical: object) -> None:
+        self.field_name = field_name
+        self.value = value
+        self.canonical = canonical
+        super().__init__(
+            f"deepseek_profile_conflict field={field_name!r} "
+            f"value={value!r} canonical={canonical!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -99,30 +120,70 @@ def _profile_from_config(model_config: ResolvedModelConfig) -> OpenAIModelProfil
     return None
 
 
+# Pydantic-ai ``OpenAIModelProfile`` default values for thinking-related
+# fields. These are filled in by the framework when the caller omits them,
+# so they cannot be distinguished from an explicit user choice. We treat
+# them as "missing" and floor-merge to canonical rather than rejecting.
+_FRAMEWORK_DEFAULT_SEND_BACK: frozenset[str] = frozenset({"auto"})
+
+
 def _ensure_deepseek_thinking_fields(
     profile: OpenAIModelProfile | None,
 ) -> OpenAIModelProfile:
-    """Floor-merge DeepSeek protocol-required thinking fields (R4-A5-8A1R2).
+    """Enforce DeepSeek protocol-required thinking fields (R4-A5-8A1R3).
 
-    Recognisable Direct/DashScope DeepSeek must always carry
-    ``openai_chat_thinking_field="reasoning_content"``,
-    ``openai_chat_send_back_thinking_parts="field"`` and
-    ``supports_thinking=True`` so the agent graph forwards ThinkingPart
-    events and history conversion echoes reasoning_content on tool rounds.
+    Recognisable Direct/DashScope DeepSeek must always carry:
+    - ``openai_chat_thinking_field="reasoning_content"``
+    - ``openai_chat_send_back_thinking_parts="field"``
+    - ``supports_thinking=True``
+
+    so the agent graph forwards ThinkingPart events and history conversion
+    echoes reasoning_content on tool rounds.
 
     A partial explicit ``openai_profile`` (e.g. only JSON output flags)
-    must not accidentally drop these protocol-required fields. Fields the
-    caller explicitly set are preserved; only missing ones are filled.
+    must not accidentally drop or conflict with these fields:
+
+    - Falsy/missing values are floor-merged to the canonical value.
+    - Framework-default values (e.g. ``"auto"`` for send_back) are also
+      floor-merged — they are indistinguishable from an omitted field.
+    - Truthy values that match the canonical value are kept.
+    - Truthy values that **conflict** with the canonical value are
+      rejected fail-closed via :class:`DeepSeekProfileConflictError` —
+      the caller must fix the config rather than rely on silent override.
+    - ``supports_thinking=False`` is treated as "missing" (normalized to
+      True) because the pydantic default is falsy and cannot be
+      distinguished from an explicit False. An explicit True matches
+      canonical and is kept.
     """
     from app.llm.deepseek_direct import deepseek_v4_openai_profile
 
     floor = deepseek_v4_openai_profile()
     if profile is None:
         return floor
+
+    send_back = profile.openai_chat_send_back_thinking_parts
+    send_back_is_default = (
+        send_back is None or send_back in _FRAMEWORK_DEFAULT_SEND_BACK
+    )
+
+    # String fields: fail-closed on explicit non-canonical truthy value.
+    # Framework defaults are treated as missing (floor-merge, not conflict).
+    _check_string_field(
+        profile.openai_chat_thinking_field,
+        floor.openai_chat_thinking_field,
+        "openai_chat_thinking_field",
+    )
+    if not send_back_is_default:
+        _check_string_field(
+            send_back,
+            floor.openai_chat_send_back_thinking_parts,
+            "openai_chat_send_back_thinking_parts",
+        )
+
     updates: dict[str, object] = {}
     if not profile.openai_chat_thinking_field:
         updates["openai_chat_thinking_field"] = floor.openai_chat_thinking_field
-    if not profile.openai_chat_send_back_thinking_parts:
+    if send_back_is_default:
         updates["openai_chat_send_back_thinking_parts"] = (
             floor.openai_chat_send_back_thinking_parts
         )
@@ -130,7 +191,23 @@ def _ensure_deepseek_thinking_fields(
         updates["supports_thinking"] = floor.supports_thinking
     if not updates:
         return profile
-    return profile.model_copy(update=updates)
+    return replace(profile, **updates)
+
+
+def _check_string_field(
+    value: object,
+    canonical: str,
+    field_name: str,
+) -> None:
+    """Raise DeepSeekProfileConflictError if value is a non-canonical non-empty string."""
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise DeepSeekProfileConflictError(field_name, value, canonical)
+    if not value:
+        return  # falsy → floor-merge path
+    if value != canonical:
+        raise DeepSeekProfileConflictError(field_name, value, canonical)
 
 
 def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelProfile | None:
@@ -145,9 +222,12 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
       4. None — the OpenAIChatModel will use its own defaults.
 
     For recognisable Direct/DashScope DeepSeek, protocol-required thinking
-    fields are floor-merged onto the resolved profile so a partial explicit
-    ``openai_profile`` cannot drop them. Qwen / Moonshot / legacy providers
-    are untouched.
+    fields are enforced on the resolved profile (R4-A5-8A1R3): missing
+    fields are floor-merged to canonical values; explicit non-canonical
+    values are rejected fail-closed via
+    :class:`DeepSeekProfileConflictError`. This covers all three paths:
+    no hint, ``deepseek_v4`` hint, and explicit partial ``openai_profile``.
+    Qwen / Moonshot / legacy providers are untouched.
     """
     from app.llm.thinking_capability import resolve_thinking_dialect
 

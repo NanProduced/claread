@@ -1,4 +1,4 @@
-"""Narrow Direct DeepSeek OpenAI-compatible model (R4-A5-8A1R2).
+"""Narrow Direct DeepSeek OpenAI-compatible model (R4-A5-8A1R3).
 
 Wire contracts (official api.deepseek.com / V4 thinking + tools):
 
@@ -6,10 +6,20 @@ Wire contracts (official api.deepseek.com / V4 thinking + tools):
   ``extra_body`` (not nested effort);
 - ``reasoning_effort`` at request **top level** via OpenAI SDK param or
   ``extra_body`` sibling — never inside ``thinking``;
-- when thinking is enabled and function tools are present, the request
-  JSON must **omit** ``tool_choice`` entirely (not ``auto`` / ``required``);
+- when thinking is effectively enabled and function tools are present,
+  the request JSON must **omit** ``tool_choice`` entirely (not ``auto``
+  / ``required``);
 - assistant history with tool_calls keeps ``content`` as a string
   (empty string, never JSON null) plus full ``reasoning_content``.
+
+Effective wire state (R4-A5-8A1R3)
+----------------------------------
+The model stores the **configured** mode (absent/enabled/disabled) and
+derives the **effective wire** state from it. Absent is normalized to
+enabled (product policy: always send an explicit thinking field so the
+payload is self-describing and cannot fall into a non-thinking path).
+``_get_tool_choice`` omits ``tool_choice`` when the effective wire state
+is enabled — i.e. for both ``absent`` and ``enabled`` configured modes.
 
 Reentrancy (R4-A5-8A1R2)
 ------------------------
@@ -42,12 +52,15 @@ from app.llm.thinking_capability import DirectDeepSeekThinkingMode
 class DirectDeepSeekChatModel(OpenAIChatModel):
     """OpenAIChatModel specialized for DeepSeek official thinking wire rules.
 
-    The effective thinking mode (absent/enabled/disabled) is fixed at
-    construction from the resolved capability and drives only two
-    stateless, per-request behaviours:
+    The **configured** thinking mode (absent/enabled/disabled) is fixed at
+    construction from the resolved capability. The **effective wire** mode
+    is derived from it: absent → enabled (product policy). Only disabled
+    yields a disabled wire state.
+
+    The effective wire mode drives two stateless, per-request behaviours:
 
     1. ``_get_tool_choice`` returns ``None`` (→ wire key absent) when
-       thinking is ``enabled`` and tools are present;
+       thinking is effectively enabled and tools are present;
     2. ``_MapModelResponseContext._into_message_param`` keeps ``content``
        as a string when tool_calls are present (never JSON null).
     """
@@ -63,7 +76,24 @@ class DirectDeepSeekChatModel(OpenAIChatModel):
 
     @property
     def deepseek_thinking_mode(self) -> DirectDeepSeekThinkingMode:
-        """Effective Direct DeepSeek wire thinking state (read-only)."""
+        """Configured Direct DeepSeek thinking mode (absent/enabled/disabled).
+
+        This is the caller's configured value, NOT the effective wire state.
+        Use :attr:`deepseek_effective_wire_mode` for the normalized wire
+        state that drives ``tool_choice`` omission.
+        """
+        return self._deepseek_thinking_mode
+
+    @property
+    def deepseek_effective_wire_mode(self) -> DirectDeepSeekThinkingMode:
+        """Effective Direct DeepSeek wire thinking state (R4-A5-8A1R3).
+
+        Absent is normalized to ``enabled`` so the wire payload always
+        carries an explicit thinking field. Only ``disabled`` yields a
+        disabled wire state.
+        """
+        if self._deepseek_thinking_mode == "absent":
+            return "enabled"
         return self._deepseek_thinking_mode
 
     @dataclass
@@ -84,15 +114,16 @@ class DirectDeepSeekChatModel(OpenAIChatModel):
     ) -> tuple[list[chat.ChatCompletionToolParam], Any | None]:
         """Reentrant, per-request tool_choice seam.
 
-        Returns ``(tools, None)`` when thinking is ``enabled`` and tools
-        are present so the OpenAI SDK omits ``tool_choice`` from the wire
-        JSON entirely. No instance-global mutation is performed; each call
-        is independent and safe under concurrency.
+        Returns ``(tools, None)`` when the effective wire thinking state
+        is ``enabled`` (i.e. configured ``absent`` or ``enabled``) and
+        tools are present, so the OpenAI SDK omits ``tool_choice`` from
+        the wire JSON entirely. No instance-global mutation is performed;
+        each call is independent and safe under concurrency.
         """
         tools, tool_choice = super()._get_tool_choice(
             model_settings, model_request_parameters
         )
-        if self._deepseek_thinking_mode == "enabled" and tools:
+        if self.deepseek_effective_wire_mode == "enabled" and tools:
             return tools, None
         return tools, tool_choice
 
