@@ -1,4 +1,4 @@
-"""Tests for MapSourceMaterialProvider (M3 stage C, C1).
+"""Tests for MapSourceMaterialProvider (M3 stage C, C1 + B3 heading enrichment).
 
 Contract: docs/tmp/reader-orchestration/
 TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md (v5).
@@ -14,9 +14,11 @@ Covers:
       ) -> MapSourceMaterial
     The signature MUST NOT accept ``EnvelopeIdentity`` or a standalone
     ``user_id`` parameter (v5 §3.5.1.1).
-  * §5.1 3 — default OFF: ``include_rag_ask_only=False`` returns an
-    empty ``MapSourceMaterial(material_fence_ok=True)`` and does NOT
-    call ``plan_service.build_index_plan`` (no DB / embedding / Zilliz).
+  * §5.1 3 — default OFF semantics (B3 heading-enabled baseline):
+    ``include_rag_ask_only=False`` does NOT parse descriptors
+    (``descriptor_sources=()``) but DOES call ``plan_service.
+    build_index_plan`` to extract B3 heading enrichments
+    (§3.5.2 / §4.2 / §5.2 — heading belongs to ``main_reading``).
   * §5.1 26 — provider authorization subject uniqueness: both
     ``record_id`` and ``user_id`` for ``build_index_plan`` come from
     the same ``envelope``; no alternative ``EnvelopeIdentity`` /
@@ -31,8 +33,9 @@ Covers:
       - plan.content_sha256 != envelope.base_content_sha256
         → material_failure_reason="base_content_sha256_mismatch"
     On any material fence failure: ``material_fence_ok=False`` AND
-    ``descriptor_sources=()`` (整份 fail-closed; 不部分采纳 material
-    中的合法条目). Ask owner falls back to existing unit-window map.
+    ``descriptor_sources=()`` AND ``heading_enrichments=()`` (整份
+    fail-closed; 不部分采纳 material 中的合法条目). Ask owner falls
+    back to existing unit-window map.
   * Exception handling:
       - LookupError (record missing / ownership mismatch) →
         material_failure_reason="plan_build_failed"
@@ -47,10 +50,20 @@ Covers:
   * Frozen dataclass shape: ``MapSourceMaterial`` is frozen+slots;
     ``material_failure_reason`` is a fixed safe enum (no raw exception
     text interpolation, no caller-supplied value).
-  * Module contract: ``__all__`` exposes ``MapSourceMaterial``,
-    ``MapSourceMaterialProvider``, ``MaterialFailureReason``.
+  * Module contract: ``__all__`` exposes ``HeadingEnrichment``,
+    ``MapSourceMaterial``, ``MapSourceMaterialProvider``,
+    ``MaterialFailureReason``.
   * §5.1 9 — no RAG provenance: ``MapSourceMaterial`` does not carry
     ``index_run_id`` / ``plan_content_sha256`` fields.
+  * B3 heading enrichment (§4.2 / §5.2):
+      - ``include_rag_ask_only=False`` still populates
+        ``heading_enrichments`` (B3 baseline).
+      - ``include_rag_ask_only=True`` populates both
+        ``heading_enrichments`` and ``descriptor_sources``.
+      - material fence failure → ``heading_enrichments=()``.
+      - empty heading plan → ``heading_enrichments=()``.
+      - heading ↔ unit association by canonical order.
+      - ``HeadingEnrichment`` is frozen+slots.
 
 No DB, no asyncpg, no embedding, no Zilliz. A fake plan service
 implements the ``_PlanServiceProtocol`` structural protocol.
@@ -74,6 +87,7 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlanError,
 )
 from app.services.reader_orchestration.map_source_material_provider import (
+    HeadingEnrichment,
     MapSourceMaterial,
     MapSourceMaterialProvider,
     MaterialFailureReason,
@@ -246,6 +260,142 @@ def _make_plan(
     )
 
 
+def _heading_metadata(
+    *,
+    block_order_index: int = 0,
+) -> dict[str, Any]:
+    """Metadata for a ``block_type="heading"`` chunk (main_reading route)."""
+    return {
+        "block_type": "heading",
+        "block_order_index": block_order_index,
+        "source_scope": "main_reading_text",
+        "default_route": "main_reading",
+        "chunk_index": 0,
+        "has_canonical_offsets": True,
+    }
+
+
+def _main_reading_metadata(
+    *,
+    block_order_index: int = 0,
+) -> dict[str, Any]:
+    """Metadata for a ``block_type="paragraph"`` chunk (main_reading route)."""
+    return {
+        "block_type": "paragraph",
+        "block_order_index": block_order_index,
+        "source_scope": "main_reading_text",
+        "default_route": "main_reading",
+        "chunk_index": 0,
+        "has_canonical_offsets": True,
+    }
+
+
+def _make_heading_chunk(
+    chunk_id: str,
+    text: str,
+    *,
+    canonical_start: int,
+    canonical_end: int,
+    block_ids: tuple[str, ...] = ("block-heading",),
+    block_order_index: int = 0,
+) -> ArticleRagIndexChunk:
+    """Build a heading chunk with canonical UTF-16 range set."""
+    content_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return ArticleRagIndexChunk(
+        chunk_id=chunk_id,
+        citation=ArticleRagCitationRef(
+            reading_record_id=_RECORD_ID,
+            stable_document_id=_STABLE_DOC_ID,
+            base_id=_BASE_ID,
+            record_generation=1,
+            block_ids=block_ids,
+            unit_ids=(),
+            anchor_segment_ids=(),
+            canonical_text_start_utf16=canonical_start,
+            canonical_text_end_utf16=canonical_end,
+        ),
+        source_scope="main_reading_text",
+        text=text,
+        content_sha256=content_sha,
+        embedding_text_sha256=content_sha,
+        metadata_json=_heading_metadata(block_order_index=block_order_index),
+    )
+
+
+def _make_unit_chunk(
+    chunk_id: str,
+    text: str,
+    *,
+    unit_ids: tuple[str, ...],
+    canonical_start: int,
+    canonical_end: int | None = None,
+    block_ids: tuple[str, ...] = ("block-unit",),
+    block_order_index: int = 0,
+) -> ArticleRagIndexChunk:
+    """Build a main_reading chunk carrying ``unit_ids`` (a reading unit)."""
+    if canonical_end is None:
+        canonical_end = canonical_start + len(text)
+    content_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return ArticleRagIndexChunk(
+        chunk_id=chunk_id,
+        citation=ArticleRagCitationRef(
+            reading_record_id=_RECORD_ID,
+            stable_document_id=_STABLE_DOC_ID,
+            base_id=_BASE_ID,
+            record_generation=1,
+            block_ids=block_ids,
+            unit_ids=unit_ids,
+            anchor_segment_ids=(),
+            canonical_text_start_utf16=canonical_start,
+            canonical_text_end_utf16=canonical_end,
+        ),
+        source_scope="main_reading_text",
+        text=text,
+        content_sha256=content_sha,
+        embedding_text_sha256=content_sha,
+        metadata_json=_main_reading_metadata(block_order_index=block_order_index),
+    )
+
+
+def _make_plan_with_headings(
+    *,
+    chunks: tuple[ArticleRagIndexChunk, ...] | None = None,
+    stable_document_id: UUID = _STABLE_DOC_ID,
+    base_id: UUID = _BASE_ID,
+    content_sha256: str = _PLAN_CONTENT_SHA,
+) -> ArticleRagIndexPlan:
+    """Build a plan with a heading chunk followed by a unit chunk.
+
+    Default layout (canonical order):
+      - heading "Chapter 1" at [0, 10)
+      - unit "unit-1" starting at 20
+    """
+    if chunks is None:
+        chunks = (
+            _make_heading_chunk(
+                "c-heading-1",
+                "Chapter 1",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_unit_chunk(
+                "c-unit-1",
+                "Unit body text.",
+                unit_ids=("unit-1",),
+                canonical_start=20,
+            ),
+        )
+    return ArticleRagIndexPlan(
+        reading_record_id=_RECORD_ID,
+        stable_document_id=stable_document_id,
+        base_id=base_id,
+        record_generation=1,
+        content_sha256=content_sha256,
+        canonical_text_sha256=_CANON_TEXT_SHA,
+        chunks=chunks,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fake plan service (implements _PlanServiceProtocol structural protocol)
 # ---------------------------------------------------------------------------
@@ -365,6 +515,7 @@ class TestLoadSignatureContract:
         from app.services.reader_orchestration import map_source_material_provider as mod
 
         assert set(mod.__all__) == {
+            "HeadingEnrichment",
             "MapSourceMaterial",
             "MapSourceMaterialProvider",
             "MaterialFailureReason",
@@ -377,7 +528,7 @@ class TestLoadSignatureContract:
 
 
 class TestMapSourceMaterialShape:
-    """``MapSourceMaterial`` is a frozen+slots dataclass with three
+    """``MapSourceMaterial`` is a frozen+slots dataclass with four
     server-only fields. No RAG provenance fields (§5.1 9). No
     visible-retention promise field (§5.1 25)."""
 
@@ -398,6 +549,7 @@ class TestMapSourceMaterialShape:
         assert names == {
             "material_fence_ok",
             "descriptor_sources",
+            "heading_enrichments",
             "material_failure_reason",
         }
 
@@ -414,6 +566,33 @@ class TestMapSourceMaterialShape:
         )
         assert len(m2.descriptor_sources) == 1
         assert isinstance(m2.descriptor_sources[0], ArticleMapEntrySource)
+
+    def test_heading_enrichments_default_empty(self) -> None:
+        """B3 — ``heading_enrichments`` defaults to empty tuple."""
+        m = MapSourceMaterial(material_fence_ok=True)
+        assert m.heading_enrichments == ()
+
+    def test_heading_enrichments_is_tuple_of_heading_enrichment(self) -> None:
+        he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
+        m = MapSourceMaterial(
+            material_fence_ok=True,
+            heading_enrichments=(he,),
+        )
+        assert len(m.heading_enrichments) == 1
+        assert isinstance(m.heading_enrichments[0], HeadingEnrichment)
+        assert m.heading_enrichments[0].unit_id == "unit-1"
+        assert m.heading_enrichments[0].heading == "Chapter 1"
+
+    def test_heading_enrichment_is_frozen_dataclass(self) -> None:
+        """B3 — ``HeadingEnrichment`` is frozen+slots (contract interface)."""
+        assert dataclasses.is_dataclass(HeadingEnrichment)
+        he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            he.unit_id = "unit-2"  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            he.heading = "Chapter 2"  # type: ignore[misc]
+        # slots=True: no __dict__ on instances.
+        assert not hasattr(he, "__dict__")
 
     def test_default_failure_reason_is_ok(self) -> None:
         m = MapSourceMaterial(material_fence_ok=True)
@@ -445,14 +624,18 @@ class TestMapSourceMaterialShape:
 class TestDefaultOff:
     """§5.1 3 / §3.5.2 — default OFF path.
 
-    ``include_rag_ask_only=False`` (the default) returns an empty
-    ``MapSourceMaterial(material_fence_ok=True)`` and does NOT call
-    ``plan_service.build_index_plan``. No DB / embedding / Zilliz.
+    ``include_rag_ask_only=False`` (the default) does NOT parse
+    descriptors (``descriptor_sources=()``) but DOES call
+    ``plan_service.build_index_plan`` to extract B3 heading
+    enrichments (§4.2 / §5.2 — heading belongs to ``main_reading``,
+    populated regardless of opt-in).
     """
 
     @pytest.mark.anyio
-    async def test_default_off_returns_empty_ok_material(self) -> None:
-        plan = _make_plan()
+    async def test_default_off_populates_heading_only(self) -> None:
+        """§5.1 3 / §3.5.2 — default OFF still calls plan service for
+        heading extraction; descriptor_sources remains empty."""
+        plan = _make_plan_with_headings()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope()
@@ -465,12 +648,19 @@ class TestDefaultOff:
         assert material.material_fence_ok is True
         assert material.descriptor_sources == ()
         assert material.material_failure_reason == "ok"
-        # §5.1 3 — no plan build call when opt-in is off.
-        assert svc.calls == []
+        # B3 — heading is populated even when opt-in is off.
+        assert len(material.heading_enrichments) == 1
+        assert material.heading_enrichments[0].unit_id == "unit-1"
+        assert material.heading_enrichments[0].heading == "Chapter 1"
+        # Plan IS called for heading extraction.
+        assert len(svc.calls) == 1
+        assert svc.calls[0]["include_rag_ask_only"] is False
 
     @pytest.mark.anyio
-    async def test_explicit_false_also_skips_plan_build(self) -> None:
-        plan = _make_plan()
+    async def test_explicit_false_also_calls_plan_for_heading(self) -> None:
+        """§5.1 3 — explicit ``include_rag_ask_only=False`` behaves
+        identically to the default."""
+        plan = _make_plan_with_headings()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope()
@@ -484,19 +674,21 @@ class TestDefaultOff:
         assert material.material_fence_ok is True
         assert material.descriptor_sources == ()
         assert material.material_failure_reason == "ok"
-        assert svc.calls == []
+        assert len(material.heading_enrichments) == 1
+        assert len(svc.calls) == 1
+        assert svc.calls[0]["include_rag_ask_only"] is False
 
     @pytest.mark.anyio
-    async def test_default_off_even_when_envelope_lacks_stable_doc_id(
+    async def test_default_off_with_no_headings_returns_empty_enrichments(
         self,
     ) -> None:
-        """§5.1 3 — opt-in OFF has priority over envelope fence checks.
-        Even when ``envelope.stable_document_id`` is None, the default
-        path returns OK without touching the plan service."""
+        """§5.1 3 — default OFF with a plan containing no heading
+        chunks returns empty heading_enrichments (no error)."""
+        # Plan with only a rag_ask_only chunk (no heading, no unit).
         plan = _make_plan()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
-        env = _make_envelope(stable_document_id=None)
+        env = _make_envelope()
 
         material = await provider.load(
             envelope=env,
@@ -506,8 +698,9 @@ class TestDefaultOff:
 
         assert material.material_fence_ok is True
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert material.material_failure_reason == "ok"
-        assert svc.calls == []
+        assert len(svc.calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -629,13 +822,15 @@ class TestMaterialFenceFailureFallback:
     Each failure path returns:
       - ``material_fence_ok=False``
       - ``descriptor_sources=()`` (整份 fail-closed; 不部分采纳)
+      - ``heading_enrichments=()`` (B3 integral fail-closed — heading
+        and descriptor travel on the same material)
       - a fixed safe ``material_failure_reason`` enum value
     Ask owner MUST fall back to existing unit-window map.
     """
 
     @pytest.mark.anyio
     async def test_envelope_stable_document_id_missing(self) -> None:
-        plan = _make_plan()
+        plan = _make_plan_with_headings()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope(stable_document_id=None)
@@ -648,6 +843,7 @@ class TestMaterialFenceFailureFallback:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert (
             material.material_failure_reason
             == "envelope_stable_document_id_missing"
@@ -657,7 +853,7 @@ class TestMaterialFenceFailureFallback:
 
     @pytest.mark.anyio
     async def test_envelope_base_content_sha256_missing(self) -> None:
-        plan = _make_plan()
+        plan = _make_plan_with_headings()
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope(base_content_sha256=None)
@@ -670,6 +866,7 @@ class TestMaterialFenceFailureFallback:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert (
             material.material_failure_reason
             == "envelope_base_content_sha256_missing"
@@ -680,7 +877,9 @@ class TestMaterialFenceFailureFallback:
     @pytest.mark.anyio
     async def test_stable_document_id_mismatch(self) -> None:
         # Plan has a different stable_document_id than the envelope.
-        plan = _make_plan(stable_document_id=_OTHER_STABLE_DOC_ID)
+        plan = _make_plan_with_headings(
+            stable_document_id=_OTHER_STABLE_DOC_ID,
+        )
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope(stable_document_id=_STABLE_DOC_ID)
@@ -693,6 +892,7 @@ class TestMaterialFenceFailureFallback:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert (
             material.material_failure_reason == "stable_document_id_mismatch"
         )
@@ -703,7 +903,9 @@ class TestMaterialFenceFailureFallback:
     async def test_base_content_sha256_mismatch(self) -> None:
         # Plan has a different content_sha256 than the envelope's
         # base_content_sha256.
-        plan = _make_plan(content_sha256=_OTHER_PLAN_CONTENT_SHA)
+        plan = _make_plan_with_headings(
+            content_sha256=_OTHER_PLAN_CONTENT_SHA,
+        )
         svc = _FakePlanService(plan=plan)
         provider = MapSourceMaterialProvider(plan_service=svc)
         env = _make_envelope(base_content_sha256=_PLAN_CONTENT_SHA)
@@ -716,6 +918,7 @@ class TestMaterialFenceFailureFallback:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert (
             material.material_failure_reason
             == "base_content_sha256_mismatch"
@@ -728,10 +931,24 @@ class TestMaterialFenceFailureFallback:
     ) -> None:
         """§5.1 6(b) / §5.1 28 — material fence failure is integral
         fail-closed. Even when the plan contains MANY descriptor
-        candidates, ``descriptor_sources`` is empty on failure."""
-        # Plan has many descriptor candidates, but stable_document_id
-        # mismatches → integral fail-closed, no partial consumption.
-        chunks = tuple(
+        candidates AND heading chunks, both ``descriptor_sources`` and
+        ``heading_enrichments`` are empty on failure."""
+        # Plan has many descriptor candidates AND a heading+unit pair,
+        # but stable_document_id mismatches → integral fail-closed.
+        chunks = (
+            _make_heading_chunk(
+                "c-heading-1",
+                "Chapter 1",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_unit_chunk(
+                "c-unit-1",
+                "Unit body text.",
+                unit_ids=("unit-1",),
+                canonical_start=20,
+            ),
+        ) + tuple(
             _make_chunk(
                 f"c-tc-{i}",
                 f"text-{i}",
@@ -757,8 +974,10 @@ class TestMaterialFenceFailureFallback:
         )
 
         assert material.material_fence_ok is False
-        # Integral fail-closed — no partial consumption.
+        # Integral fail-closed — no partial consumption of either
+        # descriptor_sources or heading_enrichments.
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +1010,7 @@ class TestExceptionHandling:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert material.material_failure_reason == "plan_build_failed"
         assert len(svc.calls) == 1
 
@@ -812,6 +1032,7 @@ class TestExceptionHandling:
 
         assert material.material_fence_ok is False
         assert material.descriptor_sources == ()
+        assert material.heading_enrichments == ()
         assert material.material_failure_reason == "plan_build_failed"
         assert len(svc.calls) == 1
 
@@ -889,6 +1110,9 @@ class TestExceptionHandling:
             assert "RECORD-ID-LEAK-RAW-PAYLOAD-SECRET" not in (
                 src.window_text or ""
             )
+        for he in material.heading_enrichments:
+            assert "RECORD-ID-LEAK-RAW-PAYLOAD-SECRET" not in he.unit_id
+            assert "RECORD-ID-LEAK-RAW-PAYLOAD-SECRET" not in he.heading
 
 
 # ---------------------------------------------------------------------------
@@ -1158,6 +1382,7 @@ def test_module_does_not_import_ledger_or_assemble() -> None:
     assert hasattr(mod, "MapSourceMaterial")
     assert hasattr(mod, "MapSourceMaterialProvider")
     assert hasattr(mod, "MaterialFailureReason")
+    assert hasattr(mod, "HeadingEnrichment")
 
 
 def test_material_failure_reason_literal_covers_all_safe_values() -> None:
@@ -1175,3 +1400,390 @@ def test_material_failure_reason_literal_covers_all_safe_values() -> None:
         "base_content_sha256_mismatch",
         "plan_build_failed",
     }
+
+
+# ---------------------------------------------------------------------------
+# 11. B3 heading enrichment (§4.2 / §5.2)
+# ---------------------------------------------------------------------------
+
+
+class TestHeadingEnrichment:
+    """B3 — heading enrichment coverage (§4.2 / §5.2).
+
+    Tests the heading extraction and unit-association logic in
+    isolation, covering:
+      - ``include_rag_ask_only=False`` populates ``heading_enrichments``
+      - ``include_rag_ask_only=True`` populates both heading + descriptor
+      - material fence failure → ``heading_enrichments=()``
+      - empty heading plan → ``heading_enrichments=()``
+      - heading ↔ unit association by canonical order (multi-unit)
+      - ``HeadingEnrichment`` is frozen+slots
+      - edge cases: whitespace heading, None range, heading after last
+        unit, multiple headings for same unit
+    """
+
+    @pytest.mark.anyio
+    async def test_default_off_populates_heading_enrichments(self) -> None:
+        """§3.5.2 / §4.2 — ``include_rag_ask_only=False`` still
+        populates ``heading_enrichments`` (B3 baseline)."""
+        plan = _make_plan_with_headings()
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )  # default False
+
+        assert material.material_fence_ok is True
+        assert material.descriptor_sources == ()
+        assert len(material.heading_enrichments) == 1
+        assert material.heading_enrichments[0] == HeadingEnrichment(
+            unit_id="unit-1", heading="Chapter 1"
+        )
+
+    @pytest.mark.anyio
+    async def test_opt_in_populates_both_heading_and_descriptor(self) -> None:
+        """§3.5.2 / §5.4 — ``include_rag_ask_only=True`` populates
+        BOTH ``heading_enrichments`` AND ``descriptor_sources``."""
+        # Plan with a heading+unit pair AND a rag_ask_only chunk.
+        chunks = (
+            _make_heading_chunk(
+                "c-heading-1",
+                "Chapter 1",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_unit_chunk(
+                "c-unit-1",
+                "Unit body text.",
+                unit_ids=("unit-1",),
+                canonical_start=20,
+            ),
+            _make_chunk(
+                "c-tc-1",
+                "cell-text-1",
+                metadata=_rag_ask_metadata(
+                    block_type="table_cell", block_order_index=0
+                ),
+                block_ids=("block-tc-1",),
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+            include_rag_ask_only=True,
+        )
+
+        assert material.material_fence_ok is True
+        # Heading enrichment populated.
+        assert len(material.heading_enrichments) == 1
+        assert material.heading_enrichments[0].unit_id == "unit-1"
+        assert material.heading_enrichments[0].heading == "Chapter 1"
+        # Descriptor also populated.
+        assert len(material.descriptor_sources) == 1
+        assert isinstance(material.descriptor_sources[0], ArticleMapEntrySource)
+
+    @pytest.mark.anyio
+    async def test_fence_failure_heading_enrichments_empty(self) -> None:
+        """§5.1 6(b) — material fence failure → heading_enrichments=()
+        (integral fail-closed)."""
+        plan = _make_plan_with_headings()
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope(stable_document_id=None)
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+            include_rag_ask_only=True,
+        )
+
+        assert material.material_fence_ok is False
+        assert material.heading_enrichments == ()
+        assert material.descriptor_sources == ()
+
+    @pytest.mark.anyio
+    async def test_empty_heading_plan_returns_empty_enrichments(self) -> None:
+        """Plan with no heading chunks → heading_enrichments=() (no
+        error, even when include_rag_ask_only=True)."""
+        # Plan with only a rag_ask_only chunk (no heading, no unit).
+        plan = _make_plan()
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+            include_rag_ask_only=True,
+        )
+
+        assert material.material_fence_ok is True
+        assert material.heading_enrichments == ()
+
+    @pytest.mark.anyio
+    async def test_heading_unit_association_multi_unit(self) -> None:
+        """§4.2 / §5.2 — heading is associated with the first unit
+        whose canonical_start > heading's canonical_end (multi-unit
+        scenario).
+
+        Layout:
+          heading "Chapter 1" at [0, 10)
+          unit-1 starts at 20  → paired with "Chapter 1"
+          heading "Chapter 2" at [50, 60)
+          unit-2 starts at 70  → paired with "Chapter 2"
+        """
+        chunks = (
+            _make_heading_chunk(
+                "c-h1",
+                "Chapter 1",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_unit_chunk(
+                "c-u1",
+                "Unit 1 body.",
+                unit_ids=("unit-1",),
+                canonical_start=20,
+            ),
+            _make_heading_chunk(
+                "c-h2",
+                "Chapter 2",
+                canonical_start=50,
+                canonical_end=60,
+            ),
+            _make_unit_chunk(
+                "c-u2",
+                "Unit 2 body.",
+                unit_ids=("unit-2",),
+                canonical_start=70,
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        assert len(material.heading_enrichments) == 2
+        assert material.heading_enrichments[0] == HeadingEnrichment(
+            unit_id="unit-1", heading="Chapter 1"
+        )
+        assert material.heading_enrichments[1] == HeadingEnrichment(
+            unit_id="unit-2", heading="Chapter 2"
+        )
+
+    @pytest.mark.anyio
+    async def test_heading_without_following_unit_is_dropped(self) -> None:
+        """A heading at the end of the document (no unit after it)
+        produces no enrichment for that heading."""
+        chunks = (
+            _make_unit_chunk(
+                "c-u1",
+                "Unit 1 body.",
+                unit_ids=("unit-1",),
+                canonical_start=0,
+            ),
+            # Heading after the only unit — no unit follows it.
+            _make_heading_chunk(
+                "c-h-orphan",
+                "Orphan Heading",
+                canonical_start=50,
+                canonical_end=60,
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        assert material.heading_enrichments == ()
+
+    @pytest.mark.anyio
+    async def test_multiple_headings_for_same_unit_only_first_wins(
+        self,
+    ) -> None:
+        """§5.2 13 — heading 只补到同一 unit source, 不新增独立
+        heading entry. When two headings precede the same unit, only
+        the closest (first in canonical order that pairs) wins.
+
+        Layout:
+          heading "Chapter A" at [0, 10)
+          heading "Chapter B" at [20, 30)
+          unit-1 starts at 40  → paired with "Chapter A" (first heading
+                                whose end < unit start; "Chapter B" also
+                                precedes unit-1 but unit-1 is already
+                                paired)
+        """
+        chunks = (
+            _make_heading_chunk(
+                "c-h-a",
+                "Chapter A",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_heading_chunk(
+                "c-h-b",
+                "Chapter B",
+                canonical_start=20,
+                canonical_end=30,
+            ),
+            _make_unit_chunk(
+                "c-u1",
+                "Unit 1 body.",
+                unit_ids=("unit-1",),
+                canonical_start=40,
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        # Only one enrichment — unit-1 paired with "Chapter A" (the
+        # first heading in canonical order whose end < unit_start).
+        # "Chapter B" is skipped because unit-1 is already paired.
+        assert len(material.heading_enrichments) == 1
+        assert material.heading_enrichments[0] == HeadingEnrichment(
+            unit_id="unit-1", heading="Chapter A"
+        )
+
+    @pytest.mark.anyio
+    async def test_whitespace_only_heading_text_is_skipped(self) -> None:
+        """A heading chunk with whitespace-only text is skipped (no
+        enrichment produced for it)."""
+        chunks = (
+            _make_heading_chunk(
+                "c-h-ws",
+                "   \n\t  ",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+            _make_unit_chunk(
+                "c-u1",
+                "Unit 1 body.",
+                unit_ids=("unit-1",),
+                canonical_start=20,
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        assert material.heading_enrichments == ()
+
+    @pytest.mark.anyio
+    async def test_heading_with_none_canonical_range_is_skipped(self) -> None:
+        """A heading chunk with None canonical range is skipped (no
+        enrichment produced for it)."""
+        # Build a heading chunk with None range — _make_heading_chunk
+        # requires int args, so construct manually.
+        content_sha = hashlib.sha256(b"heading text").hexdigest()
+        heading_chunk = ArticleRagIndexChunk(
+            chunk_id="c-h-none-range",
+            citation=ArticleRagCitationRef(
+                reading_record_id=_RECORD_ID,
+                stable_document_id=_STABLE_DOC_ID,
+                base_id=_BASE_ID,
+                record_generation=1,
+                block_ids=("block-heading",),
+                unit_ids=(),
+                anchor_segment_ids=(),
+                canonical_text_start_utf16=None,
+                canonical_text_end_utf16=None,
+            ),
+            source_scope="main_reading_text",
+            text="Heading Text",
+            content_sha256=content_sha,
+            embedding_text_sha256=content_sha,
+            metadata_json=_heading_metadata(),
+        )
+        unit_chunk = _make_unit_chunk(
+            "c-u1",
+            "Unit 1 body.",
+            unit_ids=("unit-1",),
+            canonical_start=20,
+        )
+        plan = _make_plan_with_headings(chunks=(heading_chunk, unit_chunk))
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        assert material.heading_enrichments == ()
+
+    @pytest.mark.anyio
+    async def test_no_units_in_plan_returns_empty_enrichments(self) -> None:
+        """Plan with heading chunks but no unit chunks → empty
+        heading_enrichments (no units to pair with)."""
+        chunks = (
+            _make_heading_chunk(
+                "c-h1",
+                "Chapter 1",
+                canonical_start=0,
+                canonical_end=10,
+            ),
+        )
+        plan = _make_plan_with_headings(chunks=chunks)
+        svc = _FakePlanService(plan=plan)
+        provider = MapSourceMaterialProvider(plan_service=svc)
+        env = _make_envelope()
+
+        material = await provider.load(
+            envelope=env,
+            turn_id=_TURN_ID,
+        )
+
+        assert material.material_fence_ok is True
+        assert material.heading_enrichments == ()
+
+    def test_heading_enrichment_is_frozen(self) -> None:
+        """B3 — ``HeadingEnrichment`` is a frozen dataclass (cannot
+        mutate fields after construction)."""
+        he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            he.unit_id = "unit-2"  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            he.heading = "Chapter 2"  # type: ignore[misc]
+
+    def test_heading_enrichment_is_slots(self) -> None:
+        """B3 — ``HeadingEnrichment`` is a slots dataclass (no
+        ``__dict__`` on instances)."""
+        he = HeadingEnrichment(unit_id="unit-1", heading="Chapter 1")
+        assert not hasattr(he, "__dict__")
