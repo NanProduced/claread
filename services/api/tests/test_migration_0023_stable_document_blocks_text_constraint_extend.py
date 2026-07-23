@@ -1,25 +1,30 @@
 """Migration test for 0023_stable_document_blocks_text_constraint_extend.sql.
 
-Verifies that the ``ck_stable_document_blocks_text_for_textual_types``
-CHECK constraint on ``stable_document_blocks`` was extended to exempt
-``list`` and ``thematic_break`` block types from the non-empty
-``text_content`` requirement.
+Verifies that two CHECK constraints on ``stable_document_blocks`` were
+extended to include ``list`` and ``thematic_break`` block types:
 
-Background: migration 0004 defined the constraint with an exemption list
-of ``('table', 'table_row', 'table_cell', 'image', 'code_block',
-'unknown')``. M1 (Markdown Structured Source Contract) added ``list``
-and ``thematic_break`` to ``StableDocumentBlockType`` and
-``_STRUCTURAL_BLOCK_TYPES`` in app/schemas/reader_documents.py because
-markdown-it-py's list wrapper tokens and thematic break tokens carry no
-text content. The DB constraint was not synced at that time, causing
-stable-ready persistence to fail whenever a Markdown input contained a
-list or thematic break. Migration 0023 aligns the DB exemption list with
-the schema.
+1. ``stable_document_blocks_block_type_check`` — the block_type allow
+   list (migration 0004 omitted ``list`` and ``thematic_break``; M1
+   added them to StableDocumentBlockType but not to the DB constraint).
+2. ``ck_stable_document_blocks_text_for_textual_types`` — the
+   text_content exemption list for structural block types that may
+   carry NULL text_content (markdown-it-py's list wrapper and
+   thematic break tokens have no text content).
+
+Background: migration 0004 defined both constraints. M1 (Markdown
+Structured Source Contract) added ``list`` and ``thematic_break`` to
+``StableDocumentBlockType`` and ``_STRUCTURAL_BLOCK_TYPES`` in
+app/schemas/reader_documents.py but did not sync the DB constraints.
+The gap was hidden until breakpoint 2 (pasted_text/txt_file upgrade
+routing) made the markdown parser path reachable for pasted text, at
+which point both constraints violated in sequence: first the
+block_type allow list rejected ``list``, then (after that was fixed)
+the text_content exemption list rejected NULL text_content.
 
 The test connects to the main (public schema) database and SKIPS if
 migration 0023 has not been applied yet. This mirrors the pattern in
-test_migration_0022_ai_usage_events_invocation_key.py: the test does not
-apply the migration itself, it only verifies the post-apply state.
+test_migration_0022_ai_usage_events_invocation_key.py: the test does
+not apply the migration itself, it only verifies the post-apply state.
 
 See infra/migrations/0023_stable_document_blocks_text_constraint_extend.sql.
 """
@@ -37,34 +42,48 @@ from tests.test_reader_orchestration_schema_baseline import DATABASE_URL
 
 pytestmark = pytest.mark.anyio
 
-_CONSTRAINT_NAME = "ck_stable_document_blocks_text_for_textual_types"
+_BLOCK_TYPE_CONSTRAINT = "stable_document_blocks_block_type_check"
+_TEXT_CONTENT_CONSTRAINT = "ck_stable_document_blocks_text_for_textual_types"
 
 _SKIP_REASON = (
-    "Migration 0023 not applied: ck_stable_document_blocks_text_for_textual_types "
-    "exemption list does not include list/thematic_break. "
-    "Run migration 0023 to enable this test."
+    "Migration 0023 not applied: stable_document_blocks constraints do not "
+    "include list/thematic_break in both block_type allow list and "
+    "text_content exemption list. Run migration 0023 to enable this test."
 )
 
 
-async def _migration_0023_applied(conn: asyncpg.Connection) -> bool:
-    """Return True if the constraint's definition includes list + thematic_break."""
-    definition = await conn.fetchval(
-        """
-        SELECT pg_get_constraintdef(oid)
-        FROM pg_constraint
-        WHERE conname = $1
-        LIMIT 1
-        """,
-        _CONSTRAINT_NAME,
+async def _constraint_definition(
+    conn: asyncpg.Connection,
+    constraint_name: str,
+) -> str | None:
+    return cast(
+        "str | None",
+        await conn.fetchval(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conname = $1
+            LIMIT 1
+            """,
+            constraint_name,
+        ),
     )
-    if definition is None:
+
+
+async def _migration_0023_applied(conn: asyncpg.Connection) -> bool:
+    """Return True if both constraints include list + thematic_break."""
+    block_type_def = await _constraint_definition(conn, _BLOCK_TYPE_CONSTRAINT)
+    text_content_def = await _constraint_definition(conn, _TEXT_CONTENT_CONSTRAINT)
+    if block_type_def is None or text_content_def is None:
         return False
-    definition_lower = definition.lower()
-    # The new exemption list must include both list and thematic_break.
-    # Check for 'list' as a quoted string element to avoid matching
-    # substrings like 'table_cell' or 'list_item' (the latter is not in
-    # the list, but the check is defensive).
-    return "'list'" in definition_lower and "'thematic_break'" in definition_lower
+    block_type_lower = block_type_def.lower()
+    text_content_lower = text_content_def.lower()
+    return (
+        "'list'" in block_type_lower
+        and "'thematic_break'" in block_type_lower
+        and "'list'" in text_content_lower
+        and "'thematic_break'" in text_content_lower
+    )
 
 
 async def _skip_if_migration_0023_not_applied(conn: asyncpg.Connection) -> None:
@@ -169,35 +188,63 @@ async def _cleanup(
     await conn.execute("DELETE FROM users WHERE id = $1", user_id)
 
 
-# --- Test 1: constraint definition includes list + thematic_break -------------
+# --- Test 1a: block_type allow list includes list + thematic_break ------------
 
 
-async def test_constraint_exemption_list_includes_list_and_thematic_break(
+async def test_block_type_allow_list_includes_list_and_thematic_break(
     main_conn: asyncpg.Connection,
 ) -> None:
-    """Migration 0023 must extend the exemption list with list and thematic_break."""
+    """Migration 0023 must extend the block_type allow list with list + thematic_break."""
     await _skip_if_migration_0023_not_applied(main_conn)
 
-    definition = await main_conn.fetchval(
-        """
-        SELECT pg_get_constraintdef(oid)
-        FROM pg_constraint
-        WHERE conname = $1
-        """,
-        _CONSTRAINT_NAME,
+    definition = await _constraint_definition(main_conn, _BLOCK_TYPE_CONSTRAINT)
+    assert definition is not None, (
+        f"constraint {_BLOCK_TYPE_CONSTRAINT} must exist"
     )
-    assert definition is not None, f"constraint {_CONSTRAINT_NAME} must exist"
     definition_lower = definition.lower()
     assert "'list'" in definition_lower, (
-        f"constraint must exempt 'list'; got: {definition}"
+        f"block_type allow list must include 'list'; got: {definition}"
     )
     assert "'thematic_break'" in definition_lower, (
-        f"constraint must exempt 'thematic_break'; got: {definition}"
+        f"block_type allow list must include 'thematic_break'; got: {definition}"
+    )
+    # Sanity: the original allow-list entries must still be present.
+    for original in (
+        "'paragraph'",
+        "'heading'",
+        "'list_item'",
+        "'code_block'",
+        "'unknown'",
+    ):
+        assert original in definition_lower, (
+            f"block_type allow list must still include {original}; got: {definition}"
+        )
+
+
+# --- Test 1b: text_content exemption list includes list + thematic_break ------
+
+
+async def test_text_content_exemption_list_includes_list_and_thematic_break(
+    main_conn: asyncpg.Connection,
+) -> None:
+    """Migration 0023 must extend the text_content exemption list with list + thematic_break."""
+    await _skip_if_migration_0023_not_applied(main_conn)
+
+    definition = await _constraint_definition(main_conn, _TEXT_CONTENT_CONSTRAINT)
+    assert definition is not None, (
+        f"constraint {_TEXT_CONTENT_CONSTRAINT} must exist"
+    )
+    definition_lower = definition.lower()
+    assert "'list'" in definition_lower, (
+        f"text_content exemption list must include 'list'; got: {definition}"
+    )
+    assert "'thematic_break'" in definition_lower, (
+        f"text_content exemption list must include 'thematic_break'; got: {definition}"
     )
     # Sanity: the original exemptions must still be present.
     for original in ("'table'", "'code_block'", "'unknown'"):
         assert original in definition_lower, (
-            f"constraint must still exempt {original}; got: {definition}"
+            f"text_content exemption list must still include {original}; got: {definition}"
         )
 
 
