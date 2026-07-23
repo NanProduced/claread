@@ -53,18 +53,6 @@ class ResolvedRerankConfig:
     provider_options: dict[str, object]
 
 
-def _deepseek_v4_profile() -> OpenAIModelProfile:
-    """DeepSeek V4 OpenAI-compatible profile."""
-    return OpenAIModelProfile(
-        supports_json_object_output=True,
-        supports_json_schema_output=False,
-        default_structured_output_mode="prompted",
-        openai_supports_tool_choice_required=False,
-        openai_chat_thinking_field="reasoning_content",
-        openai_chat_send_back_thinking_parts="field",
-    )
-
-
 def _reasoning_content_profile() -> OpenAIModelProfile:
     """Generic OpenAI-compatible profile for providers that emit reasoning_content."""
     return OpenAIModelProfile(
@@ -87,10 +75,19 @@ def _moonshot_profile(model_name: str) -> OpenAIModelProfile:
 #
 # Supported hint values:
 #   "deepseek_v4"        – DeepSeek V4 reasoning + prompted JSON output
+#                          (single source: deepseek_v4_openai_profile)
 #   "reasoning_content"  – Generic reasoning_content field support
 #   "moonshot"           – Moonshot AI provider quirks
+def _deepseek_v4_profile_hint(_model_name: str) -> OpenAIModelProfile:
+    # Single source of truth lives in deepseek_direct to avoid divergence
+    # between the hint path and the no-hint fallback.
+    from app.llm.deepseek_direct import deepseek_v4_openai_profile
+
+    return deepseek_v4_openai_profile()
+
+
 _PROFILE_HINT_BUILDERS: dict[str, Callable[[str], OpenAIModelProfile]] = {
-    "deepseek_v4": lambda _model_name: _deepseek_v4_profile(),
+    "deepseek_v4": _deepseek_v4_profile_hint,
     "reasoning_content": lambda _model_name: _reasoning_content_profile(),
     "moonshot": lambda model_name: _moonshot_profile(model_name),
 }
@@ -100,6 +97,40 @@ def _profile_from_config(model_config: ResolvedModelConfig) -> OpenAIModelProfil
     if model_config.openai_profile is not None:
         return OpenAIModelProfile(**model_config.openai_profile.model_dump(exclude_none=True))
     return None
+
+
+def _ensure_deepseek_thinking_fields(
+    profile: OpenAIModelProfile | None,
+) -> OpenAIModelProfile:
+    """Floor-merge DeepSeek protocol-required thinking fields (R4-A5-8A1R2).
+
+    Recognisable Direct/DashScope DeepSeek must always carry
+    ``openai_chat_thinking_field="reasoning_content"``,
+    ``openai_chat_send_back_thinking_parts="field"`` and
+    ``supports_thinking=True`` so the agent graph forwards ThinkingPart
+    events and history conversion echoes reasoning_content on tool rounds.
+
+    A partial explicit ``openai_profile`` (e.g. only JSON output flags)
+    must not accidentally drop these protocol-required fields. Fields the
+    caller explicitly set are preserved; only missing ones are filled.
+    """
+    from app.llm.deepseek_direct import deepseek_v4_openai_profile
+
+    floor = deepseek_v4_openai_profile()
+    if profile is None:
+        return floor
+    updates: dict[str, object] = {}
+    if not profile.openai_chat_thinking_field:
+        updates["openai_chat_thinking_field"] = floor.openai_chat_thinking_field
+    if not profile.openai_chat_send_back_thinking_parts:
+        updates["openai_chat_send_back_thinking_parts"] = (
+            floor.openai_chat_send_back_thinking_parts
+        )
+    if not profile.supports_thinking:
+        updates["supports_thinking"] = floor.supports_thinking
+    if not updates:
+        return profile
+    return profile.model_copy(update=updates)
 
 
 def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelProfile | None:
@@ -112,18 +143,12 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
          routes (Direct + DashScope OpenAI-compat) even when no profile hint
          is present — ensures reasoning_content parse/send-back.
       4. None — the OpenAIChatModel will use its own defaults.
+
+    For recognisable Direct/DashScope DeepSeek, protocol-required thinking
+    fields are floor-merged onto the resolved profile so a partial explicit
+    ``openai_profile`` cannot drop them. Qwen / Moonshot / legacy providers
+    are untouched.
     """
-    profile = _profile_from_config(model_config)
-    if profile is not None:
-        return profile
-
-    profile_hint = str(model_config.provider_options.get("profile", ""))
-    builder = _PROFILE_HINT_BUILDERS.get(profile_hint)
-    if builder is not None:
-        return builder(model_config.model_name)
-
-    # Safe default without profile hint (A5-8A1R).
-    from app.llm.deepseek_direct import deepseek_v4_openai_profile
     from app.llm.thinking_capability import resolve_thinking_dialect
 
     dialect = resolve_thinking_dialect(
@@ -134,10 +159,22 @@ def _resolve_openai_profile(model_config: ResolvedModelConfig) -> OpenAIModelPro
         provider_options=model_config.provider_options,
         openai_profile=model_config.openai_profile,
     )
-    if dialect in ("deepseek_direct", "dashscope_deepseek"):
-        return deepseek_v4_openai_profile()
+    is_deepseek = dialect in ("deepseek_direct", "dashscope_deepseek")
 
-    return None
+    profile = _profile_from_config(model_config)
+    if profile is None:
+        profile_hint = str(model_config.provider_options.get("profile", ""))
+        builder = _PROFILE_HINT_BUILDERS.get(profile_hint)
+        if builder is not None:
+            profile = builder(model_config.model_name)
+        elif is_deepseek:
+            from app.llm.deepseek_direct import deepseek_v4_openai_profile
+
+            profile = deepseek_v4_openai_profile()
+
+    if is_deepseek:
+        return _ensure_deepseek_thinking_fields(profile)
+    return profile
 
 
 def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIChatModel | None:
@@ -176,7 +213,7 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
             provider=provider,
             profile=profile,
             settings=settings_payload,
-            thinking_enabled=capability.thinking_enabled,
+            thinking_mode=capability.direct_thinking_mode,
         )
 
     return OpenAIChatModel(

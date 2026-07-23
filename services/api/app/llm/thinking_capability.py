@@ -35,6 +35,18 @@ EnablePayloadKind = Literal[
     "none",
 ]
 
+# Direct DeepSeek V4 wire thinking state (R4-A5-8A1R2).
+#
+# DeepSeek V4's official default is thinking ON, so the Direct path must
+# never conflate "field absent" with "thinking disabled". Product default
+# is to send an explicit ``{"type": "enabled"}``; an explicit off must
+# actually emit ``{"type": "disabled"}`` rather than delete the field.
+DirectDeepSeekThinkingMode = Literal[
+    "absent",  # no thinking field on wire (server default applies)
+    "enabled",  # thinking: {"type": "enabled"}
+    "disabled",  # thinking: {"type": "disabled"}
+]
+
 
 @dataclass(frozen=True, slots=True)
 class ThinkingProviderCapability:
@@ -59,6 +71,12 @@ class ThinkingProviderCapability:
     tool_round_must_return_thinking: bool
     # DeepSeek direct thinking mode: omit meaningless sampling knobs.
     strip_sampling_params: bool
+    # Direct DeepSeek V4 wire thinking state (absent/enabled/disabled).
+    # Only meaningful for the ``deepseek_direct`` dialect; ``"absent"`` for
+    # every other dialect. Drives tool_choice omission and reasoning_effort
+    # so the wire payload reflects the *effective* thinking state, not a
+    # bool that collapses absent with disabled.
+    direct_thinking_mode: DirectDeepSeekThinkingMode = "absent"
 
     @property
     def preserve_reasoning_on_history(self) -> bool:
@@ -68,6 +86,11 @@ class ThinkingProviderCapability:
             and self.tool_round_must_return_thinking
             and self.dialect != "none"
         )
+
+    @property
+    def direct_thinking_enabled_on_wire(self) -> bool:
+        """True only when Direct DeepSeek wire thinking is explicitly enabled."""
+        return self.direct_thinking_mode == "enabled"
 
 
 def _provider_looks_like_deepseek(
@@ -148,6 +171,29 @@ def _thinking_flag_from_settings(settings: RunModelSettings | None) -> bool:
     if settings is None:
         return False
     return settings.thinking_enabled()
+
+
+def _resolve_direct_deepseek_thinking_mode(
+    settings: RunModelSettings | None,
+) -> DirectDeepSeekThinkingMode:
+    """Read the explicit Direct DeepSeek wire thinking state from settings.
+
+    Distinguishes three states so the Direct path never conflates
+    "field absent" (server default, V4 = ON) with "explicitly disabled".
+    Only ``extra_body.thinking.type`` is consulted — ``enable_thinking``
+    is a DashScope key and is ignored here.
+    """
+    if settings is None or not settings.extra_body:
+        return "absent"
+    thinking = settings.extra_body.get("thinking")
+    if not isinstance(thinking, dict):
+        return "absent"
+    kind = thinking.get("type")
+    if kind == "enabled":
+        return "enabled"
+    if kind == "disabled":
+        return "disabled"
+    return "absent"
 
 
 # Direct DeepSeek V4 official effort values.
@@ -250,18 +296,21 @@ def resolve_thinking_capability(
     enabled = _thinking_flag_from_settings(model_settings)
 
     if dialect == "deepseek_direct":
-        raw_effort = _read_reasoning_effort(model_settings) if enabled else None
-        effort = normalize_deepseek_direct_effort(raw_effort) if enabled else None
+        mode = _resolve_direct_deepseek_thinking_mode(model_settings)
+        enabled_on_wire = mode == "enabled"
+        raw_effort = _read_reasoning_effort(model_settings) if enabled_on_wire else None
+        effort = normalize_deepseek_direct_effort(raw_effort) if enabled_on_wire else None
         return ThinkingProviderCapability(
             dialect=dialect,
-            thinking_enabled=enabled,
+            thinking_enabled=enabled_on_wire,
             enable_payload_kind="thinking_type_enabled",
             reasoning_effort=effort,
             thinking_budget=None,
             streaming_only=False,
             reasoning_field="reasoning_content",
             tool_round_must_return_thinking=True,
-            strip_sampling_params=enabled,
+            strip_sampling_params=enabled_on_wire,
+            direct_thinking_mode=mode,
         )
     if dialect == "dashscope_deepseek":
         return ThinkingProviderCapability(
@@ -366,8 +415,14 @@ def apply_thinking_to_model_settings(
         if capability.enable_payload_kind == "enable_thinking_bool":
             body.setdefault("enable_thinking", False)
         elif capability.enable_payload_kind == "thinking_type_enabled":
-            # Leave absence as default (non-thinking) unless already set.
-            body.pop("thinking", None)
+            # Direct DeepSeek three-state wire (R4-A5-8A1R2): V4 default is
+            # thinking ON, so "disabled" must emit {"type": "disabled"}
+            # rather than delete the field; "absent" leaves no field.
+            if capability.direct_thinking_mode == "disabled":
+                body["thinking"] = {"type": "disabled"}
+                body.pop("enable_thinking", None)
+            else:  # "absent"
+                body.pop("thinking", None)
             body.pop("reasoning_effort", None)
 
     update: dict[str, Any] = {"extra_body": body if body else None}
@@ -400,6 +455,7 @@ def thinking_kwargs_for_dashscope(
 
 
 __all__ = [
+    "DirectDeepSeekThinkingMode",
     "EnablePayloadKind",
     "ThinkingDialect",
     "ThinkingEffortConfigError",

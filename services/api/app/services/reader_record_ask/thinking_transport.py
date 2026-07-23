@@ -1,4 +1,4 @@
-"""R4 Ask thinking transport spine (R4-A5-8A1 / A5-8A1R).
+"""R4 Ask thinking transport spine (R4-A5-8A1 / A5-8A1R / A5-8A1R2).
 
 Internal-only: captures provider reasoning for a bounded in-memory observer
 and emits **safe** analysis-phase runtime events. Never writes reasoning
@@ -6,13 +6,22 @@ text, length, hash, or provider payloads into SSE/DTO/DB/logs.
 
 Does **not** import legacy ``reader_ask`` agent_runner.
 
-Multi-turn completeness (A5-8A1R)
---------------------------------
+Multi-turn completeness (A5-8A1R / A5-8A1R2)
+-------------------------------------------
 Reasoning collection is deduplicated **per streamed part index lifecycle**,
-not with a single global ``saw_reasoning`` flag. After tool results, the
-lifecycle set is cleared so a second-round ThinkingPart delivered only via
-``PartEnd`` is still observed. ``AnalysisStarted`` / ``AnalysisFinished``
-still fire at most once per agent run.
+not with a single global ``saw_reasoning`` flag. The lifecycle set is
+cleared on every stable public tool-result boundary so a second-round
+ThinkingPart delivered only via ``PartEnd`` is still observed. This covers
+function-tool continuation, builtin-tool continuation, output-validator
+``ModelRetry`` (``OutputToolResultEvent`` carrying a ``RetryPromptPart``)
+and tool-arg ``ModelRetry`` (``FunctionToolResultEvent`` carrying a
+``RetryPromptPart``). ``AnalysisStarted`` / ``AnalysisFinished`` still fire
+at most once per agent run.
+
+Boundary detection uses the public ``event_kind`` Literal discriminator on
+each stream event — not ``type(event).__name__`` string matching, which is
+fragile across pydantic-ai versions (e.g. ``BuiltinToolResultEvent`` is
+deprecated and its inheritance changed).
 """
 
 from __future__ import annotations
@@ -22,10 +31,6 @@ from typing import Any, Protocol
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartEndEvent,
-    PartStartEvent,
     ThinkingPart,
     ThinkingPartDelta,
 )
@@ -40,6 +45,19 @@ from app.services.reader_record_ask.runtime_events import (
 
 # Hard ceiling on characters retained by any ThinkingObserver (host-only).
 DEFAULT_THINKING_OBSERVER_CHAR_CAP: int = 8_000
+
+# Stable public ``event_kind`` discriminator values that mark the end of a
+# tool/retry boundary — a new model response stream follows each of these,
+# so the per-index thinking lifecycle must reset. Using the documented
+# Literal discriminator (not type-name guessing) keeps this stable across
+# pydantic-ai releases.
+_TOOL_RESULT_EVENT_KINDS: frozenset[str] = frozenset(
+    {
+        "function_tool_result",  # FunctionToolResultEvent (tool return or ModelRetry)
+        "output_tool_result",  # OutputToolResultEvent (output-validator ModelRetry)
+        "builtin_tool_result",  # BuiltinToolResultEvent (deprecated, still covered)
+    }
+)
 
 
 class ThinkingObserver(Protocol):
@@ -238,23 +256,25 @@ async def run_agent_with_thinking_transport(
         )
     else:
         async for event in agent.run_stream_events(prompt, deps=deps):
-            type_name = type(event).__name__
+            event_kind = getattr(event, "event_kind", None)
 
-            if type_name == "AgentRunResultEvent":
+            if event_kind == "agent_run_result":
                 result = getattr(event, "result", None)
                 if result is not None:
                     final_output = getattr(result, "output", result)
                 continue
 
-            # New model response stream after tools: reset part-index lifecycle.
-            if isinstance(event, FunctionToolResultEvent):
-                lifecycle.reset_stream()
-                continue
-            if type_name == "BuiltinToolResultEvent":
+            # New model response stream after a tool/retry boundary: reset
+            # the per-index thinking lifecycle so a PartEnd-only second round
+            # is still observed exactly once. Covers FunctionToolResultEvent
+            # (tool return or tool-arg ModelRetry), OutputToolResultEvent
+            # (output-validator ModelRetry), and the deprecated
+            # BuiltinToolResultEvent — all via the stable event_kind Literal.
+            if event_kind in _TOOL_RESULT_EVENT_KINDS:
                 lifecycle.reset_stream()
                 continue
 
-            if isinstance(event, PartStartEvent) and isinstance(
+            if event_kind == "part_start" and isinstance(
                 event.part, ThinkingPart
             ):
                 piece = lifecycle.on_start(
@@ -264,7 +284,7 @@ async def run_agent_with_thinking_transport(
                 _emit_reasoning(piece)
                 continue
 
-            if isinstance(event, PartDeltaEvent) and isinstance(
+            if event_kind == "part_delta" and isinstance(
                 event.delta, ThinkingPartDelta
             ):
                 piece = lifecycle.on_delta(
@@ -278,7 +298,7 @@ async def run_agent_with_thinking_transport(
                 _emit_reasoning(piece)
                 continue
 
-            if isinstance(event, PartEndEvent) and isinstance(
+            if event_kind == "part_end" and isinstance(
                 event.part, ThinkingPart
             ):
                 piece = lifecycle.on_end(

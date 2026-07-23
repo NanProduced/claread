@@ -26,6 +26,7 @@ from app.services.reader_record_ask.document_access import (
     build_document_scope,
 )
 from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
+from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 from app.services.reader_record_ask.runtime import run_reading_record_ask
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
@@ -378,3 +379,149 @@ async def test_production_stream_analysis_phase_no_reasoning_leak():
     assert out2[-1].summary == "分析完成"
     blob = json.dumps([p.model_dump(mode="json") for p in out1 + out2])
     assert _SENTINEL not in blob
+
+
+# ---------------------------------------------------------------------------
+# R4-A5-8A1R2: output-validator ModelRetry lifecycle behavioral test.
+#
+# Scenario: first round thinking → output-validator raises ModelRetry
+# (OutputToolResultEvent with RetryPromptPart) → second round thinking.
+# The per-index ThinkingPartLifecycle must reset at the
+# OutputToolResultEvent boundary so both rounds are observed exactly
+# once. AnalysisStarted/AnalysisFinished must fire at most once each.
+# Raw reasoning must never enter RuntimeEvent payload, SSE DTO, logs,
+# or the final answer.
+#
+# The PartEnd-only delivery path (second round delivers thinking via
+# PartEnd without prior PartStart/PartDelta) is covered by the lifecycle
+# unit test ``test_part_end_only_second_round_via_lifecycle_and_transport_unit``
+# above. This test focuses on the OutputToolResultEvent boundary reset
+# via a real Agent + FunctionModel + output_validator integration.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
+    """First round thinking → output-validator ModelRetry → second round
+    thinking; observer receives both rounds' reasoning once each,
+    AnalysisStarted/Finished fire once each, sentinel never leaks."""
+
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.messages import RetryPromptPart
+
+    from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
+    from app.services.reader_record_ask.fence import StaticGenerationFence
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    validator_calls = {"n": 0}
+
+    def _build_agent(model) -> Agent:
+        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+            model,
+            deps_type=ReaderRecordAskDeps,
+            output_type=AgentAnswerDraft,
+            output_retries=2,
+        )
+
+        @agent.output_validator
+        async def validator(ctx, draft: AgentAnswerDraft) -> AgentAnswerDraft:
+            validator_calls["n"] += 1
+            if validator_calls["n"] == 1:
+                raise ModelRetry("first draft rejected for testing")
+            return draft
+
+        return agent
+
+    async def stream_fn(messages, info):
+        has_retry = any(
+            isinstance(p, RetryPromptPart)
+            for m in messages
+            for p in getattr(m, "parts", []) or []
+        )
+        if not has_retry:
+            yield {0: DeltaThinkingPart(content=_SENTINEL)}
+            yield json.dumps(
+                {
+                    "answer_text": "round1 draft",
+                    "cited_evidence_handles": [],
+                    "response_kind": "clarification",
+                }
+            )
+            return
+        yield {0: DeltaThinkingPart(content=_ROUND2)}
+        yield json.dumps(
+            {
+                "answer_text": "round2 final",
+                "cited_evidence_handles": [],
+                "response_kind": "clarification",
+            }
+        )
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=ModelProfile(supports_thinking=True),
+    )
+
+    envelope = _envelope()
+    deps = ReaderRecordAskDeps(
+        envelope=envelope,
+        document_access=_access(),
+        fence=StaticGenerationFence(live_generation=envelope.record_generation),
+        evidence_registry=EvidenceRegistry(
+            envelope_fingerprint=envelope.envelope_fingerprint
+        ),
+    )
+
+    agent = _build_agent(model)
+    observer = BoundedThinkingObserver(char_cap=2000)
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = await run_agent_with_thinking_transport(
+            agent=agent,
+            prompt="test prompt",
+            deps=deps,
+            thinking_observer=observer,
+            model=model,
+        )
+
+    # Validator was called exactly twice: first raised ModelRetry, second
+    # passed.
+    assert validator_calls["n"] == 2
+
+    # Observer received both rounds' reasoning, each exactly once.
+    text = observer.text
+    assert _SENTINEL in text
+    assert _ROUND2 in text
+    assert text.count(_SENTINEL) == 1
+    assert text.count(_ROUND2) == 1
+
+    # Observer started/finished exactly once each.
+    assert observer.started is True
+    assert observer.finished is True
+
+    # AnalysisStarted/AnalysisFinished events fire once each.
+    started = [e for e in deps.events if isinstance(e, AnalysisStartedEvent)]
+    finished = [e for e in deps.events if isinstance(e, AnalysisFinishedEvent)]
+    assert len(started) == 1
+    assert len(finished) == 1
+
+    # Sentinel never leaks into RuntimeEvent payloads.
+    for event in deps.events:
+        dumped = (
+            event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
+        )
+        assert _SENTINEL not in json.dumps(dumped)
+        assert _ROUND2 not in json.dumps(dumped)
+
+    # Sentinel never leaks into logs.
+    assert _SENTINEL not in caplog.text
+    assert _ROUND2 not in caplog.text
+
+    # Sentinel never leaks into the final answer.
+    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert _SENTINEL not in (outcome.output.answer_text or "")
+    assert _ROUND2 not in (outcome.output.answer_text or "")
