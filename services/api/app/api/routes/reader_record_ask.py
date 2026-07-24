@@ -37,10 +37,17 @@ def _streaming_response(generator) -> StreamingResponse:
                 f"event: error\ndata: {json.dumps({'code': str(exc.status_code), 'detail': exc.detail}, ensure_ascii=False)}\n\n"
             )
         except Exception as exc:
-            detail = str(exc) if _is_dev_error_mode() else "Ask Claread is temporarily unavailable."
+            if _is_dev_error_mode():
+                payload = {"code": "READER_ASK_FAILED", "detail": str(exc)}
+            else:
+                payload = {
+                    "code": "READER_ASK_FAILED",
+                    "detail": "Ask Claread 暂时不可用。",
+                    "user_message": "Ask Claread 暂时不可用。",
+                }
             yield (
                 "event: error\ndata: "
-                f"{json.dumps({'code': 'READER_ASK_FAILED', 'detail': detail}, ensure_ascii=False)}\n\n"
+                f"{json.dumps(payload, ensure_ascii=False)}\n\n"
             )
 
     return StreamingResponse(

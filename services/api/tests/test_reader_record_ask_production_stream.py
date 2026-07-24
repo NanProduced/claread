@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -40,11 +41,13 @@ from app.services.reader_record_ask.production_stream import (
     TERMINAL_REASON_BASELINE_UNAVAILABLE,
     TERMINAL_REASON_DOCUMENT_UNAVAILABLE,
     TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+    TERMINAL_REASON_PERSIST_FAILED,
     EvidenceScopeInvariantError,
     assert_evidence_scope_matches_items,
     build_completed_dto,
     build_terminal_dto,
     evidence_scope_from_envelope,
+    retry_agentic_thread_message,
     stream_agentic_thread_message,
 )
 from app.services.reader_record_ask.runtime import ReadingRecordAskRunResult
@@ -165,6 +168,15 @@ class _FakeRepo:
         self.turns: dict[str, dict] = {}
         self.completed_writes: list[dict] = []
         self.terminal_writes: list[dict] = []
+        # H1: when True, complete_agentic_turn_run raises to simulate DB
+        # persistence failure on the success path.
+        self.complete_should_fail: bool = False
+        # H3b: pre-populated assistant/user pair returned by the retry
+        # lookup. When None, get_assistant_message_with_preceding_user_message
+        # returns (None, None).
+        self.retry_assistant: dict[str, Any] | None = None
+        self.retry_user: dict[str, Any] | None = None
+        self.reset_calls: list[UUID] = []
 
     async def get_thread(self, **kwargs):
         return {
@@ -181,6 +193,37 @@ class _FakeRepo:
         self.messages.append(row)
         return row
 
+    async def get_assistant_message_with_preceding_user_message(
+        self,
+        *,
+        thread_id: UUID,
+        message_id: UUID,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if self.retry_assistant is None:
+            return None, None
+        return dict(self.retry_assistant), (
+            dict(self.retry_user) if self.retry_user is not None else None
+        )
+
+    async def reset_assistant_message_for_retry(
+        self,
+        *,
+        message_id: UUID,
+    ) -> dict[str, Any]:
+        self.reset_calls.append(message_id)
+        if self.retry_assistant is None:
+            return {
+                "id": str(message_id),
+                "thread_id": str(_THREAD),
+                "role": "assistant",
+                "status": "streaming",
+                "content_md": "",
+            }
+        reset = dict(self.retry_assistant)
+        reset["status"] = "streaming"
+        reset["content_md"] = ""
+        return reset
+
     async def create_agentic_turn_run(self, **kwargs):
         tid = str(uuid4())
         row = {
@@ -193,6 +236,8 @@ class _FakeRepo:
         return row
 
     async def complete_agentic_turn_run(self, **kwargs):
+        if self.complete_should_fail:
+            raise RuntimeError("simulated DB connection drop")
         self.completed_writes.append(kwargs)
         dto = kwargs["completed_dto"]
         self.turns[str(kwargs["turn_run_id"])] = {
@@ -2109,3 +2154,336 @@ async def test_message_delta_partial_then_failure_no_completed() -> None:
     assert EVENT_MESSAGE_INTERRUPTED in names
     terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
     assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
+
+
+# ---------------------------------------------------------------------------
+# H1: success-path DB persistence failure emits typed terminal
+# (regression: stream used to end without message.completed/interrupted
+#  when repo.complete_agentic_turn_run raised, leaving the frontend hanging)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_emits_typed_terminal_no_completed() -> None:
+    """When complete_agentic_turn_run raises on the success path, the stream
+    emits agentic.terminal + message.interrupted with the typed
+    persist_failed reason and never emits message.completed.
+
+    Privacy: the underlying DB error text must not leak into the SSE
+    payload or terminal_reason.
+    """
+    repo = _FakeRepo()
+    repo.complete_should_fail = True
+
+    async def _run(**kwargs):
+        env = kwargs["envelope"]
+        EvidenceRegistry(env.envelope_fingerprint)
+        return ReadingRecordAskRunResult(
+            final_text="ok answer",
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text="ok answer",
+                resolved_evidence=(),
+                envelope_fingerprint=env.envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model("ok answer"),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    # No success terminal.
+    assert EVENT_MESSAGE_COMPLETED not in names
+
+    # Typed failure terminal.
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+    terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
+    assert terminal["final_status"] == "failed"
+    assert terminal["terminal_reason"] == TERMINAL_REASON_PERSIST_FAILED
+
+    # Persistence: terminal_agentic_turn_run called with the typed reason.
+    assert len(repo.terminal_writes) == 1
+    term_write = repo.terminal_writes[0]
+    assert term_write["final_status"] == "failed"
+    assert term_write["terminal_reason"] == TERMINAL_REASON_PERSIST_FAILED
+    # complete_agentic_turn_run was attempted (and failed).
+    assert len(repo.completed_writes) == 0
+
+    # Privacy: raw DB error text must not leak into any SSE payload.
+    raw = json.dumps([d for _, d in events])
+    assert "simulated DB connection drop" not in raw
+    assert "RuntimeError" not in raw
+
+
+# ---------------------------------------------------------------------------
+# H3b: retry_agentic_thread_message resets existing assistant message and
+# reuses the preceding user message content (no new user message created)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_agentic_resets_message_and_reuses_user_content() -> None:
+    """retry_agentic_thread_message loads the existing assistant + preceding
+    user message, resets the assistant message to streaming, and re-runs the
+    agent with the original user content. No new user message is created.
+    """
+    repo = _FakeRepo()
+    existing_assistant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    existing_user_id = UUID("55555555-5555-5555-5555-555555555555")
+    original_user_content = "What is the main thesis of this article?"
+    repo.retry_assistant = {
+        "id": str(existing_assistant_id),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(existing_user_id),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": original_user_content,
+    }
+
+    captured: dict[str, Any] = {}
+
+    async def _run(**kwargs):
+        env = kwargs["envelope"]
+        captured["envelope"] = env
+        captured["user_message"] = kwargs.get("user_message")
+        EvidenceRegistry(env.envelope_fingerprint)
+        return ReadingRecordAskRunResult(
+            final_text="new retry answer",
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text="new retry answer",
+                resolved_evidence=(),
+                envelope_fingerprint=env.envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in retry_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            message_id=existing_assistant_id,
+            facts=_fake_facts(),
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model("new retry answer"),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    # reset_assistant_message_for_retry was called with the existing id.
+    assert repo.reset_calls == [existing_assistant_id]
+
+    # No new user message was created (retry mode reuses existing).
+    new_user_msgs = [
+        m for m in repo.messages if m.get("role") == "user"
+    ]
+    assert new_user_msgs == []
+
+    # Agent received the original user content.
+    assert captured["user_message"] == original_user_content
+
+    # Completed event carries the new answer.
+    assert EVENT_MESSAGE_COMPLETED in names
+    completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
+    assert completed["answer_text"] == "new retry answer"
+    # Completed message_id is the existing assistant message (was reset).
+    assert completed["message_id"] == str(existing_assistant_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_agentic_missing_assistant_emits_error_no_turn() -> None:
+    """When the retried message_id does not resolve to an assistant message
+    in the thread, retry emits an SSE error frame and creates no turn_run.
+    """
+    repo = _FakeRepo()
+    # retry_assistant stays None → lookup returns (None, None)
+    missing_id = UUID("deadbeef-dead-beef-dead-beefdeadbeef")
+
+    chunks = [
+        c
+        async for c in retry_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            message_id=missing_id,
+            facts=_fake_facts(),
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            auto_wire_dependencies=False,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+
+    # Error frame, no turn/run events.
+    assert "error" in names
+    assert EVENT_AGENTIC_RUN_STARTED not in names
+    assert EVENT_MESSAGE_COMPLETED not in names
+    # No reset, no completed, no terminal writes.
+    assert repo.reset_calls == []
+    assert repo.completed_writes == []
+    assert repo.terminal_writes == []
+
+
+# ---------------------------------------------------------------------------
+# H3c: service.retry_reading_record_ask_message routes by feature flag
+# (flag on → agentic retry; flag off → legacy stream_service.retry_thread_message)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_service_flag_off_uses_legacy_stream() -> None:
+    _clear_settings_cache()
+    with patch.object(
+        settings_mod.get_settings(),
+        "reader_record_ask_agentic_enabled",
+        False,
+    ):
+        async def _legacy(**kwargs):
+            yield encode_sse("message.completed", {"legacy": True})
+
+        with patch(
+            "app.services.reader_record_ask.service._load_snapshot_facts",
+            new_callable=AsyncMock,
+            return_value=_fake_facts(),
+        ):
+            with patch(
+                "app.services.reader_record_ask.service.stream_service.retry_thread_message",
+                side_effect=_legacy,
+            ) as mock_legacy:
+                from app.schemas.reader_ask import ReaderAskMessageRetryRequest
+                from app.services.reader_record_ask import service as svc
+
+                msg_id = uuid4()
+                chunks = []
+                async for c in svc.retry_reading_record_ask_message(
+                    user_id=_USER,
+                    reading_record_id=str(_RECORD),
+                    thread_id=_THREAD,
+                    message_id=msg_id,
+                    request=ReaderAskMessageRetryRequest(),
+                ):
+                    chunks.append(c)
+                assert mock_legacy.call_count == 1
+                assert any("legacy" in c for c in chunks)
+    _clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_retry_service_flag_on_uses_agentic_path() -> None:
+    _clear_settings_cache()
+    with patch.object(
+        settings_mod.get_settings(),
+        "reader_record_ask_agentic_enabled",
+        True,
+    ):
+        with patch(
+            "app.services.reader_record_ask.service._load_snapshot_facts",
+            new_callable=AsyncMock,
+            return_value=_fake_facts(),
+        ):
+            with patch(
+                "app.services.reader_record_ask.service.stream_service.retry_thread_message",
+                new_callable=AsyncMock,
+            ) as mock_legacy:
+                repo = _FakeRepo()
+                existing_assistant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+                repo.retry_assistant = {
+                    "id": str(existing_assistant_id),
+                    "thread_id": str(_THREAD),
+                    "role": "assistant",
+                    "status": "completed",
+                    "content_md": "old",
+                }
+                repo.retry_user = {
+                    "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+                    "thread_id": str(_THREAD),
+                    "role": "user",
+                    "status": "completed",
+                    "content_md": "original question",
+                }
+
+                async def _run(**kwargs):
+                    env = kwargs["envelope"]
+                    EvidenceRegistry(env.envelope_fingerprint)
+                    return ReadingRecordAskRunResult(
+                        final_text="agentic retry answer",
+                        finalized=FinalizedAskResult(
+                            status="ok",
+                            answer_text="agentic retry answer",
+                            resolved_evidence=(),
+                            envelope_fingerprint=env.envelope_fingerprint,
+                        ),
+                    )
+
+                with patch(
+                    "app.services.reader_record_ask.production_stream.run_reading_record_ask",
+                    side_effect=_run,
+                ):
+                    with patch(
+                        "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
+                        return_value=repo,
+                    ):
+                        with patch(
+                            "app.services.reader_record_ask.production_stream.resolve_agentic_model",
+                            return_value=_function_model("agentic retry answer"),
+                        ):
+                            with patch(
+                                "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+                                new_callable=AsyncMock,
+                                return_value=_DOC,
+                            ):
+                                from app.schemas.reader_ask import (
+                                    ReaderAskMessageRetryRequest,
+                                )
+                                from app.services.reader_record_ask import (
+                                    service as svc,
+                                )
+
+                                chunks = []
+                                async for c in svc.retry_reading_record_ask_message(
+                                    user_id=_USER,
+                                    reading_record_id=str(_RECORD),
+                                    thread_id=_THREAD,
+                                    message_id=existing_assistant_id,
+                                    request=ReaderAskMessageRetryRequest(),
+                                ):
+                                    chunks.append(c)
+                # Legacy retry never called.
+                assert mock_legacy.call_count == 0
+                events = _parse_sse(chunks)
+                names = [n for n, _ in events]
+                assert EVENT_MESSAGE_COMPLETED in names
+                completed = next(
+                    d for n, d in events if n == EVENT_MESSAGE_COMPLETED
+                )
+                assert completed["answer_text"] == "agentic retry answer"
+                # Assistant message was reset via agentic path.
+                assert repo.reset_calls == [existing_assistant_id]
+    _clear_settings_cache()

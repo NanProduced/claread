@@ -422,13 +422,37 @@ async def retry_reading_record_ask_message(
     request: ReaderAskMessageRetryRequest,
 ) -> AsyncIterator[str]:
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
-    async for chunk in stream_service.retry_thread_message(
+
+    if not get_settings().reader_record_ask_agentic_enabled:
+        await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+        async for chunk in stream_service.retry_thread_message(
+            user_id=user_id,
+            reading_record_id=parsed_record_id,
+            thread_id=thread_id,
+            message_id=message_id,
+            retry_body=request,
+        ):
+            yield chunk
+        return
+
+    # Agentic retry path: re-run the existing assistant message via the
+    # agentic lane.  Model is resolved inside retry_agentic_thread_message
+    # via auto_wire_dependencies (reader_ask route default).  Never falls
+    # back to legacy on agentic failure — consistent with send path.
+    facts = await _load_snapshot_facts(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+    )
+    from app.services.reader_record_ask.production_stream import (
+        retry_agentic_thread_message,
+    )
+
+    async for chunk in retry_agentic_thread_message(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=thread_id,
         message_id=message_id,
-        retry_body=request,
+        facts=facts,
     ):
         yield chunk
 

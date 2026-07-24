@@ -319,3 +319,103 @@ class ReaderRecordAskRepository:
             "execution_version": row["execution_version"],
             "envelope_snapshot_json": row["envelope_snapshot_json"],
         }
+
+    async def get_assistant_message_with_preceding_user_message(
+        self,
+        *,
+        thread_id: UUID,
+        message_id: UUID,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Fetch an assistant message and its closest preceding user message.
+
+        Used by the agentic retry path to re-run an assistant turn without
+        creating a new user message. Returns ``(assistant_msg, user_msg)``
+        or ``(None, None)`` when the assistant message does not exist in
+        this thread, is not role='assistant', or no preceding user message
+        is found.
+
+        Ownership of the thread is enforced by the caller via ``get_thread``
+        before this method is invoked; this method only reads message rows
+        scoped by ``thread_id``.
+        """
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            assistant_row = await conn.fetchrow(
+                """
+                SELECT id, thread_id, role, status, content_md, created_at
+                FROM reader_ask_messages
+                WHERE id = $1
+                  AND thread_id = $2
+                  AND role = 'assistant'
+                """,
+                message_id,
+                thread_id,
+            )
+            if assistant_row is None:
+                return None, None
+            user_row = await conn.fetchrow(
+                """
+                SELECT id, thread_id, role, status, content_md, created_at
+                FROM reader_ask_messages
+                WHERE thread_id = $1
+                  AND role = 'user'
+                  AND created_at < $2
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                thread_id,
+                assistant_row["created_at"],
+            )
+        assistant_msg = {
+            "id": str(assistant_row["id"]),
+            "thread_id": str(assistant_row["thread_id"]),
+            "role": assistant_row["role"],
+            "status": assistant_row["status"],
+            "content_md": assistant_row["content_md"],
+        }
+        if user_row is None:
+            return assistant_msg, None
+        user_msg = {
+            "id": str(user_row["id"]),
+            "thread_id": str(user_row["thread_id"]),
+            "role": user_row["role"],
+            "status": user_row["status"],
+            "content_md": user_row["content_md"],
+        }
+        return assistant_msg, user_msg
+
+    async def reset_assistant_message_for_retry(
+        self,
+        *,
+        message_id: UUID,
+    ) -> dict[str, Any]:
+        """Reset an assistant message to 'streaming' for an agentic retry.
+
+        Clears ``content_md`` and flips ``status`` back to ``streaming`` so
+        the new turn_run can repopulate it. Returns the reset row. Caller
+        must have already verified the message belongs to the user's thread
+        via ``get_assistant_message_with_preceding_user_message``.
+        """
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_messages
+                SET status = 'streaming',
+                    content_md = '',
+                    updated_at = $2
+                WHERE id = $1
+                RETURNING id, thread_id, role, status, content_md
+                """,
+                message_id,
+                now,
+            )
+        assert row is not None
+        return {
+            "id": str(row["id"]),
+            "thread_id": str(row["thread_id"]),
+            "role": row["role"],
+            "status": row["status"],
+            "content_md": row["content_md"],
+        }

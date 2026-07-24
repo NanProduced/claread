@@ -192,6 +192,108 @@ class TestReaderRecordAskRoute:
         assert response.json()["result"]["note_id"] == "note-1"
         mock_confirm.assert_awaited_once()
 
+    # ------------------------------------------------------------------
+    # H2: production-mode SSE error frame must use the fixed Chinese
+    # fallback message and must not leak the raw exception text.
+    # ------------------------------------------------------------------
+
+    @_mock_auth()
+    @patch(
+        "app.api.routes.reader_record_ask.get_settings",
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
+        new_callable=AsyncMock,
+        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), None),
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
+    )
+    def test_production_error_frame_uses_chinese_fallback_no_leak(
+        self,
+        mock_send,
+        mock_prepare,
+        mock_settings,
+        mock_auth,
+    ) -> None:
+        """In production mode, a generic streaming exception yields a fixed
+        Chinese fallback detail with a ``user_message`` field and never
+        leaks the raw exception text.
+        """
+
+        async def _boom(**kwargs):
+            raise RuntimeError("internal secret: connection refused to db")
+            yield  # pragma: no cover - generator marker
+
+        mock_send.return_value = _boom()
+        prod_settings = MagicMock()
+        prod_settings.app_env = "production"
+        mock_settings.return_value = prod_settings
+
+        client = create_client()
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/messages",
+            headers=AUTH_HEADERS,
+            json={"content": "hello"},
+        )
+
+        assert response.status_code == 200
+        body = response.text
+        assert "event: error" in body
+        # Chinese fallback message is present.
+        assert "Ask Claread 暂时不可用。" in body
+        # user_message field is present.
+        assert '"user_message"' in body
+        # Raw exception text must NOT leak.
+        assert "internal secret" not in body
+        assert "connection refused to db" not in body
+        assert "RuntimeError" not in body
+
+    @_mock_auth()
+    @patch(
+        "app.api.routes.reader_record_ask.get_settings",
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
+        new_callable=AsyncMock,
+        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), None),
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
+    )
+    def test_dev_error_frame_shows_raw_detail(
+        self,
+        mock_send,
+        mock_prepare,
+        mock_settings,
+        mock_auth,
+    ) -> None:
+        """In non-production (dev) mode, the raw exception text is shown
+        for debugging.  This preserves the existing dev-mode behavior.
+        """
+
+        async def _boom(**kwargs):
+            raise RuntimeError("dev-only diagnostic detail")
+            yield  # pragma: no cover - generator marker
+
+        mock_send.return_value = _boom()
+        dev_settings = MagicMock()
+        dev_settings.app_env = "development"
+        mock_settings.return_value = dev_settings
+
+        client = create_client()
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/messages",
+            headers=AUTH_HEADERS,
+            json={"content": "hello"},
+        )
+
+        assert response.status_code == 200
+        body = response.text
+        assert "event: error" in body
+        # Dev mode: raw detail is present for debugging.
+        assert "dev-only diagnostic detail" in body
+
 
 class TestReaderRecordAskService:
     @pytest.mark.asyncio

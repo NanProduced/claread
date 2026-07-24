@@ -50,6 +50,10 @@ from app.services.reader_record_ask.production_wiring import (
     load_active_stable_document_id,
     resolve_agentic_model,
 )
+# M3 C2 wiring: map-source material provider for B3 heading enrichment (§4.2).
+# Imported lazily inside stream_agentic_thread_message to avoid module-load
+# cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
+# runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
 from app.services.reader_record_ask.repository import ReaderRecordAskRepository
 from app.services.reader_record_ask.runtime import (
     ReadingRecordAskRunResult,
@@ -108,6 +112,10 @@ TERMINAL_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 # one of these typed terminal_reasons.
 TERMINAL_REASON_DOCUMENT_UNAVAILABLE = "document_unavailable"
 TERMINAL_REASON_BASELINE_UNAVAILABLE = "baseline_unavailable"
+
+# DB persistence failure on the success path. Typed reason only — never
+# embed the underlying DB error text, constraint name, or SQL fragment.
+TERMINAL_REASON_PERSIST_FAILED = "persist_failed"
 
 # Sentinel placed on the progress queue when the agent task finishes
 # (success or failure). Not a RuntimeEvent.
@@ -588,143 +596,36 @@ def _make_queue_sink(
     return _sink
 
 
-async def stream_agentic_thread_message(
+async def _run_agentic_turn(
     *,
-    user_id: UUID,
-    reading_record_id: UUID,
+    repo: ReaderRecordAskRepository,
     thread_id: UUID,
-    content: str,
-    facts: Any,
-    request_anchor: Any | None,
-    validated_anchor: Any | None = None,
-    stable_document_id: UUID | None = None,
-    repository: ReaderRecordAskRepository | None = None,
-    document_access: DocumentAccess | None = None,
-    article_rag: ArticleRagSearchPort | None = None,
-    model: Model | str | None = None,
-    run_fn: RunFn | None = None,
-    auto_wire_dependencies: bool = True,
-    pointer_ledger: ExpansionPointerLedger | None = None,
+    assistant_msg: dict[str, Any],
+    turn: dict[str, Any],
+    envelope: ReadingRecordAskContextEnvelope,
+    access: DocumentAccess,
+    active_model: Model | str | None,
+    wired_rag: ArticleRagSearchPort | None,
+    wired_map_source_provider: Any,
+    user_message: str,
+    run_fn: RunFn | None,
+    pointer_ledger: ExpansionPointerLedger | None,
 ) -> AsyncIterator[str]:
-    """Run the agentic path: persist + SSE with a single completed DTO truth.
+    """Run the agent task and stream SSE events to terminal/completed.
 
-    When ``auto_wire_dependencies`` is True (production default):
-    - resolve a real model via the ``reader_ask`` route (no stub success);
-    - load active stable document identity for the envelope;
-    - build Article RAG port when ``reader_article_rag_enabled``.
+    Shared core between ``stream_agentic_thread_message`` (new message) and
+    ``retry_agentic_thread_message`` (regenerate existing assistant message).
+    Both callers prepare thread / envelope / model / messages / turn_run
+    state and delegate the streaming + terminal handling here.
 
-    Explicit ``model`` / ``article_rag`` / ``stable_document_id`` overrides
-    always win (tests).  Missing model → typed terminal failed, never
-    ``message.completed``.
-
-    Live ``agentic.progress`` events are projected from runtime events via a
-    concurrent queue while the agent task is still running.
+    Caller invariants:
+    - ``assistant_msg`` has been persisted (or reset) with status='streaming'.
+    - ``turn`` is a freshly-created ``reader_ask_turn_runs`` row.
+    - ``envelope`` and ``access`` are fully resolved (stable document id,
+      anchor, facts) — the helper does not re-resolve them.
+    - ``active_model`` may be None — helper emits a typed terminal.
     """
-    repo = repository or ReaderRecordAskRepository()
     run_agent = run_fn or run_reading_record_ask
-    settings = get_settings()
-
-    thread = await repo.get_thread(
-        user_id=user_id,
-        thread_id=thread_id,
-        reading_record_id=reading_record_id,
-    )
-    if thread is None:
-        yield encode_sse(
-            "error",
-            {"code": "404", "detail": "Reader ask thread not found for this Reading Record"},
-        )
-        return
-
-    # Resolve base/generation from facts first so stable-document lookup
-    # can fence against the active base.
-    base = facts.build_result.base
-    base_id = UUID(str(base.base_id))
-    generation = int(facts.record.generation)
-
-    resolved_stable_id = stable_document_id
-    if resolved_stable_id is None and auto_wire_dependencies:
-        resolved_stable_id = await load_active_stable_document_id(
-            user_id=user_id,
-            reading_record_id=reading_record_id,
-            expected_generation=generation,
-            expected_base_id=base_id,
-        )
-
-    envelope = build_envelope_from_facts(
-        user_id=user_id,
-        reading_record_id=reading_record_id,
-        facts=facts,
-        request_anchor=request_anchor,
-        validated_anchor=validated_anchor,
-        stable_document_id=resolved_stable_id,
-    )
-    access = document_access or document_access_from_facts(
-        reading_record_id=reading_record_id,
-        facts=facts,
-        stable_document_id=resolved_stable_id,
-    )
-
-    # Model resolution — never invent a stub completed answer.
-    # Explicit model always wins. Production auto-wire resolves reader_ask
-    # route; test callers with auto_wire=False and model=None stay unconfigured.
-    if model is not None:
-        active_model: Model | str | None = model
-    elif auto_wire_dependencies:
-        active_model = resolve_agentic_model(settings, explicit=None)
-    else:
-        active_model = None
-    wired_rag = article_rag
-    if wired_rag is None and auto_wire_dependencies:
-        wired_rag = build_production_article_rag_port(settings)
-
-    user_msg = await repo.create_message(
-        thread_id=thread_id,
-        role="user",
-        status="completed",
-        content_md=content,
-        metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
-    )
-    assistant_msg = await repo.create_message(
-        thread_id=thread_id,
-        role="assistant",
-        status="streaming",
-        content_md="",
-        metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
-    )
-    turn = await repo.create_agentic_turn_run(
-        message_id=UUID(assistant_msg["id"]),
-        thread_id=thread_id,
-        user_id=user_id,
-        reading_record_id=reading_record_id,
-        base_id=envelope.base_id,
-        generation=envelope.record_generation,
-        turn_id=UUID(user_msg["id"]),
-        envelope_fingerprint=envelope.envelope_fingerprint,
-        envelope_snapshot=_safe_envelope_snapshot(envelope),
-    )
-
-    yield encode_sse(
-        EVENT_THREAD_READY,
-        {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V1},
-    )
-    yield encode_sse(
-        EVENT_MESSAGE_STARTED,
-        {
-            "message_id": assistant_msg["id"],
-            "thread_id": str(thread_id),
-            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
-        },
-    )
-    run_started = ReaderRecordAskRunStartedDTO(
-        message_id=assistant_msg["id"],
-        thread_id=str(thread_id),
-        turn_run_id=turn["id"],
-        envelope_fingerprint=envelope.envelope_fingerprint,
-        has_initial_selection=envelope.initial_anchor is not None,
-    )
-    yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
-
     turn_run_id = UUID(turn["id"])
     message_id = UUID(assistant_msg["id"])
 
@@ -768,13 +669,14 @@ async def stream_agentic_thread_message(
     )
     agent_task = asyncio.create_task(
         run_agent(
-            user_message=content,
+            user_message=user_message,
             envelope=envelope,
             document_access=access,
             model=active_model,
             article_rag=wired_rag,
             event_sink=sink,
             pointer_ledger=active_ledger,
+            map_source_material_provider=wired_map_source_provider,
         )
     )
 
@@ -1203,14 +1105,68 @@ async def stream_agentic_thread_message(
 
     completed_json = completed.model_dump(mode="json")
     evidence_json = [item.model_dump(mode="json") for item in completed.evidence]
-    persisted = await repo.complete_agentic_turn_run(
-        turn_run_id=turn_run_id,
-        message_id=message_id,
-        answer_text=completed.answer_text,
-        completed_dto=completed_json,
-        resolved_evidence=evidence_json,
-        final_status="ok",
-    )
+    try:
+        persisted = await repo.complete_agentic_turn_run(
+            turn_run_id=turn_run_id,
+            message_id=message_id,
+            answer_text=completed.answer_text,
+            completed_dto=completed_json,
+            resolved_evidence=evidence_json,
+            final_status="ok",
+        )
+    except Exception:
+        # Success-path DB persistence failed (connection drop, constraint,
+        # JSONB encoding, etc.).  Emit a typed terminal so the frontend
+        # receives a terminal signal instead of hanging on a stream that
+        # ended without message.completed / message.interrupted.
+        # The typed reason never embeds the underlying DB error text.
+        logger.exception(
+            "reader_record_ask persist failed: turn_run_id=%s message_id=%s",
+            turn_run_id,
+            message_id,
+        )
+        terminal = build_terminal_dto(
+            finalized=None,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            final_status="failed",
+            terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
+        )
+        terminal_json = terminal.model_dump(mode="json")
+        try:
+            await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status="failed",
+                final_status="failed",
+                terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
+                terminal_dto=terminal_json,
+            )
+        except Exception:
+            logger.exception(
+                "reader_record_ask terminal persist also failed: turn_run_id=%s",
+                turn_run_id,
+            )
+        logger.info(
+            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+            "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
+            "progress_events=%s read_range_calls=%s search_calls=%s "
+            "reason=%s",
+            turn["id"],
+            assistant_msg["id"],
+            _safe_model_route(active_model),
+            total_ms,
+            projector.time_to_first_activity_ms,
+            projector.progress_event_count,
+            run_result.read_range_calls,
+            run_result.search_current_article_calls,
+            TERMINAL_REASON_PERSIST_FAILED,
+        )
+        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
+        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
+        return
     stored = persisted.get("user_visible_output_json")
     emit_payload = stored if isinstance(stored, dict) else completed_json
     logger.info(
@@ -1227,3 +1183,264 @@ async def stream_agentic_thread_message(
         run_result.search_current_article_calls,
     )
     yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
+
+
+async def stream_agentic_thread_message(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+    thread_id: UUID,
+    content: str,
+    facts: Any,
+    request_anchor: Any | None,
+    validated_anchor: Any | None = None,
+    stable_document_id: UUID | None = None,
+    repository: ReaderRecordAskRepository | None = None,
+    document_access: DocumentAccess | None = None,
+    article_rag: ArticleRagSearchPort | None = None,
+    model: Model | str | None = None,
+    run_fn: RunFn | None = None,
+    auto_wire_dependencies: bool = True,
+    pointer_ledger: ExpansionPointerLedger | None = None,
+    retry_message_id: UUID | None = None,
+) -> AsyncIterator[str]:
+    """Run the agentic path: persist + SSE with a single completed DTO truth.
+
+    When ``auto_wire_dependencies`` is True (production default):
+    - resolve a real model via the ``reader_ask`` route (no stub success);
+    - load active stable document identity for the envelope;
+    - build Article RAG port when ``reader_article_rag_enabled``.
+
+    Explicit ``model`` / ``article_rag`` / ``stable_document_id`` overrides
+    always win (tests).  Missing model → typed terminal failed, never
+    ``message.completed``.
+
+    Live ``agentic.progress`` events are projected from runtime events via a
+    concurrent queue while the agent task is still running.
+
+    When ``retry_message_id`` is set, the function operates in retry mode:
+    instead of creating a new user message + assistant message, it resets the
+    existing assistant message (identified by ``retry_message_id``) to
+    ``streaming`` and reuses the preceding user message's content.  A new
+    ``turn_run`` is created linking the existing messages.  ``content`` is
+    ignored in retry mode — the original user message text is loaded from DB.
+    """
+    repo = repository or ReaderRecordAskRepository()
+    run_agent = run_fn or run_reading_record_ask
+    settings = get_settings()
+
+    thread = await repo.get_thread(
+        user_id=user_id,
+        thread_id=thread_id,
+        reading_record_id=reading_record_id,
+    )
+    if thread is None:
+        yield encode_sse(
+            "error",
+            {"code": "404", "detail": "Reader ask thread not found for this Reading Record"},
+        )
+        return
+
+    # Resolve base/generation from facts first so stable-document lookup
+    # can fence against the active base.
+    base = facts.build_result.base
+    base_id = UUID(str(base.base_id))
+    generation = int(facts.record.generation)
+
+    resolved_stable_id = stable_document_id
+    if resolved_stable_id is None and auto_wire_dependencies:
+        resolved_stable_id = await load_active_stable_document_id(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            expected_generation=generation,
+            expected_base_id=base_id,
+        )
+
+    envelope = build_envelope_from_facts(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        facts=facts,
+        request_anchor=request_anchor,
+        validated_anchor=validated_anchor,
+        stable_document_id=resolved_stable_id,
+    )
+    access = document_access or document_access_from_facts(
+        reading_record_id=reading_record_id,
+        facts=facts,
+        stable_document_id=resolved_stable_id,
+    )
+
+    # Model resolution — never invent a stub completed answer.
+    # Explicit model always wins. Production auto-wire resolves reader_ask
+    # route; test callers with auto_wire=False and model=None stay unconfigured.
+    if model is not None:
+        active_model: Model | str | None = model
+    elif auto_wire_dependencies:
+        active_model = resolve_agentic_model(settings, explicit=None)
+    else:
+        active_model = None
+    wired_rag = article_rag
+    if wired_rag is None and auto_wire_dependencies:
+        wired_rag = build_production_article_rag_port(settings)
+
+    # M3 C2 wiring: construct the map-source material provider so B3 heading
+    # enrichment (§4.2) takes effect on the production path. Only wired when
+    # auto_wire_dependencies=True (tests pass auto_wire=False or inject their
+    # own run_fn). The provider is a thin preflight adapter — no DB writes,
+    # no embedding/Zilliz calls (read-only plan service).
+    #
+    # Lazy import inside the function to avoid module-load cycles under
+    # uvicorn --reload (map_source_material_provider → source_evidence_descriptor
+    # → article_map_model_view → __init__ → runtime → turn_coordinator ← cycle).
+    wired_map_source_provider: Any = None
+    if auto_wire_dependencies:
+        from app.services.reader_orchestration.article_rag_index_plan import (
+            ArticleRagIndexPlanService,
+        )
+        from app.services.reader_orchestration.map_source_material_provider import (
+            MapSourceMaterialProvider,
+        )
+
+        wired_map_source_provider = MapSourceMaterialProvider(
+            plan_service=ArticleRagIndexPlanService()
+        )
+
+    if retry_message_id is not None:
+        # Retry mode: reset the existing assistant message and reuse the
+        # preceding user message's content.  No new user message is created.
+        existing_assistant, existing_user = (
+            await repo.get_assistant_message_with_preceding_user_message(
+                thread_id=thread_id,
+                message_id=retry_message_id,
+            )
+        )
+        if existing_assistant is None or existing_user is None:
+            yield encode_sse(
+                "error",
+                {
+                    "code": "404",
+                    "detail": (
+                        "Retried assistant message or its preceding user "
+                        "message was not found in this thread"
+                    ),
+                },
+            )
+            return
+        assistant_msg = await repo.reset_assistant_message_for_retry(
+            message_id=retry_message_id,
+        )
+        user_msg = existing_user
+        # Use the original user message text as agent input.
+        content = existing_user["content_md"] or ""
+    else:
+        user_msg = await repo.create_message(
+            thread_id=thread_id,
+            role="user",
+            status="completed",
+            content_md=content,
+            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
+        )
+        assistant_msg = await repo.create_message(
+            thread_id=thread_id,
+            role="assistant",
+            status="streaming",
+            content_md="",
+            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
+        )
+    turn = await repo.create_agentic_turn_run(
+        message_id=UUID(assistant_msg["id"]),
+        thread_id=thread_id,
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        base_id=envelope.base_id,
+        generation=envelope.record_generation,
+        turn_id=UUID(user_msg["id"]),
+        envelope_fingerprint=envelope.envelope_fingerprint,
+        envelope_snapshot=_safe_envelope_snapshot(envelope),
+    )
+
+    yield encode_sse(
+        EVENT_THREAD_READY,
+        {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V1},
+    )
+    yield encode_sse(
+        EVENT_MESSAGE_STARTED,
+        {
+            "message_id": assistant_msg["id"],
+            "thread_id": str(thread_id),
+            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        },
+    )
+    run_started = ReaderRecordAskRunStartedDTO(
+        message_id=assistant_msg["id"],
+        thread_id=str(thread_id),
+        turn_run_id=turn["id"],
+        envelope_fingerprint=envelope.envelope_fingerprint,
+        has_initial_selection=envelope.initial_anchor is not None,
+    )
+    yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
+
+    async for chunk in _run_agentic_turn(
+        repo=repo,
+        thread_id=thread_id,
+        assistant_msg=assistant_msg,
+        turn=turn,
+        envelope=envelope,
+        access=access,
+        active_model=active_model,
+        wired_rag=wired_rag,
+        wired_map_source_provider=wired_map_source_provider,
+        user_message=content,
+        run_fn=run_fn,
+        pointer_ledger=pointer_ledger,
+    ):
+        yield chunk
+
+
+async def retry_agentic_thread_message(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+    thread_id: UUID,
+    message_id: UUID,
+    facts: Any,
+    model: Model | str | None = None,
+    repository: ReaderRecordAskRepository | None = None,
+    document_access: DocumentAccess | None = None,
+    article_rag: ArticleRagSearchPort | None = None,
+    run_fn: RunFn | None = None,
+    auto_wire_dependencies: bool = True,
+    pointer_ledger: ExpansionPointerLedger | None = None,
+) -> AsyncIterator[str]:
+    """Retry an existing assistant message via the agentic path.
+
+    Resets the existing assistant message (``message_id``) to ``streaming``
+    and re-runs the agent using the preceding user message's content.  No new
+    user message is created.  A new ``turn_run`` is created linking the
+    existing messages.
+
+    Delegates to :func:`stream_agentic_thread_message` with
+    ``retry_message_id`` set; see that function for the retry-mode contract
+    (existing assistant message is reset, preceding user message content is
+    reused, ``content`` argument is ignored).
+    """
+    async for chunk in stream_agentic_thread_message(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        thread_id=thread_id,
+        content="",  # ignored in retry mode — loaded from existing user msg
+        facts=facts,
+        request_anchor=None,  # retry uses general document context
+        validated_anchor=None,
+        stable_document_id=None,
+        repository=repository,
+        document_access=document_access,
+        article_rag=article_rag,
+        model=model,
+        run_fn=run_fn,
+        auto_wire_dependencies=auto_wire_dependencies,
+        pointer_ledger=pointer_ledger,
+        retry_message_id=message_id,
+    ):
+        yield chunk
+    return
