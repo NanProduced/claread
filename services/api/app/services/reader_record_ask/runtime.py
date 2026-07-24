@@ -9,7 +9,7 @@ state machine beyond coordinator + finalizer. Does not wire into
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.models import Model
 
@@ -49,6 +49,15 @@ from app.services.reader_record_ask.finalizer import (
 from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
 )
+
+# M3 C2 wiring: MapSourceMaterialProvider is imported under TYPE_CHECKING to
+# avoid a circular import (see turn_coordinator.py header comment for the
+# cycle chain). It is only used as a type annotation here; the runtime
+# instance is constructed by production_stream.py and passed in.
+if TYPE_CHECKING:
+    from app.services.reader_orchestration.map_source_material_provider import (
+        MapSourceMaterialProvider,
+    )
 from app.services.reader_record_ask.runtime_deps import (
     ReaderRecordAskDeps,
     RuntimeObservation,
@@ -110,6 +119,11 @@ async def run_reading_record_ask(
     observation: RuntimeObservation | None = None,
     pointer_ledger: ExpansionPointerLedger | None = None,
     thinking_observer: ThinkingObserver | None = None,
+    # M3 C2 wiring: server-only map-source material provider. When None
+    # (tests / legacy callers), TurnCoordinator falls back to the unit-window
+    # map (pre-C2 behavior). Production wiring constructs the provider and
+    # passes it in so B3 heading enrichment (§4.2) takes effect.
+    map_source_material_provider: MapSourceMaterialProvider | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -150,6 +164,7 @@ async def run_reading_record_ask(
         pointer_ledger=ledger,
         max_search_current_article_calls=max_search_current_article_calls,
         product_search_enabled=True,
+        map_source_material_provider=map_source_material_provider,
     )
 
     try:
