@@ -1291,5 +1291,73 @@ describe("StructuredSourceRenderer", () => {
       expect(fallback?.tagName).toBe("P");
       expect(fallback?.textContent).toBe("fallback text");
     });
+
+    it("renderInlineMarks does not duplicate text when marks present", () => {
+      // Phase 4 / P3: regression test for the text duplication bug in
+      // renderInlineMarks. Previously `nodes` was initialized to
+      // `[textContent]` and then each mark was pushed, so the rendered
+      // output would contain textContent + concatenation of mark.text
+      // (i.e., every character rendered twice).
+      //
+      // The fix: when marks are present, render ONLY the marks (which
+      // MUST cover the full text span per the updated contract comment).
+      // When marks are absent, render textContent as-is (unchanged).
+      //
+      // The backend G0 frozen contract does not emit inline_marks today,
+      // so this test uses a synthetic marks array to guard the future
+      // parser-version bump path.
+      const marks = [
+        { kind: "strong" as const, text: "Bold" },
+        { kind: "emphasis" as const, text: " and italic" },
+        { kind: "inline_code" as const, text: " + code" },
+      ];
+      const fullText = marks.map((m) => m.text).join("");
+
+      const blocksWithMarks: ReaderStructuredSourceBlock[] = [
+        {
+          block_id: "b1",
+          block_type: "paragraph",
+          text_content: fullText,
+          payload_json: {},
+          parent_block_id: null,
+          order_index: 0,
+          source_range: { line_start: 1, line_end: 1 },
+          inline_marks: marks,
+        },
+      ];
+
+      const { container } = render(
+        <StructuredSourceRenderer blocks={blocksWithMarks} />,
+      );
+
+      const paragraph = container.querySelector('[data-block-id="b1"]');
+      expect(paragraph).toBeTruthy();
+      // The rendered text must equal exactly the concatenation of mark
+      // texts — NOT textContent + marks (which would double every char).
+      expect(paragraph?.textContent).toBe(fullText);
+
+      // Verify each mark kind rendered to its semantic element.
+      expect(paragraph?.querySelector("strong")?.textContent).toBe("Bold");
+      expect(paragraph?.querySelector("em")?.textContent).toBe(" and italic");
+      expect(paragraph?.querySelector("code")?.textContent).toBe(" + code");
+    });
+
+    it("renderInlineMarks returns textContent when marks are absent (unchanged)", () => {
+      // Phase 4 / P3: regression guard — the no-marks fast path must still
+      // return textContent as a plain string (this is the path the G0
+      // frozen backend actually takes today).
+      const { container } = render(
+        <StructuredSourceRenderer blocks={SIMPLE_PARAGRAPH_BLOCKS} />,
+      );
+
+      const paragraph = container.querySelector('[data-block-id="b1"]');
+      expect(paragraph?.textContent).toBe(
+        SIMPLE_PARAGRAPH_BLOCKS[0]?.text_content ?? "",
+      );
+      // No inline mark elements should be rendered.
+      expect(paragraph?.querySelector("strong")).toBeNull();
+      expect(paragraph?.querySelector("em")).toBeNull();
+      expect(paragraph?.querySelector("code")).toBeNull();
+    });
   });
 });

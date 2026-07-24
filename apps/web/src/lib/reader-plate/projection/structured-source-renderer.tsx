@@ -159,10 +159,21 @@ function renderInlineMarks(
     return textContent;
   }
 
-  // Render marks as inline spans in declaration order. This is a simple
-  // projection — the G0 fixtures do not emit `inline_marks`, so this path
-  // is reserved for a future parser version that preserves span boundaries.
-  const nodes: ReactNode[] = [textContent];
+  // Render marks as inline spans in declaration order.
+  //
+  // IMPORTANT: When the backend parser is upgraded to emit `inline_marks`,
+  // the marks array MUST cover the full text span of the block (i.e.,
+  // concatenating all mark.text must equal textContent). Partial-coverage
+  // marks would cause text loss. The G0 frozen contract currently does NOT
+  // emit inline_marks — backend flattens marks into text_content (see
+  // CONTRACT.md Clause 3, "Inline flattening"). This path is reserved for
+  // a future parser-version bump.
+  //
+  // Phase 4 / P3 bug fix: previously `nodes` was initialized to
+  // `[textContent]` and then each mark was pushed, causing the full text
+  // to render twice (once as raw textContent + once as concatenated mark
+  // texts). The bug was latent because the backend never emits marks.
+  const nodes: ReactNode[] = [];
   for (let i = 0; i < marks.length; i++) {
     const mark = marks[i];
     if (!mark) continue;
