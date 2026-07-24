@@ -1,0 +1,175 @@
+/**
+ * Markdown 输入端预警 lint（Phase 1 / P0）。
+ *
+ * 目标：在用户粘贴/输入 Markdown 时，前端实时检测会触发
+ * `candidate_document_required` 的危险内容，显示非阻塞警告 badge。
+ *
+ * 与后端对齐（启发式，前端不引入 markdown-it）：
+ *   - Raw HTML: services/api/.../markdown_source_parser.py
+ *     - html_block (行 566)
+ *     - html_inline (行 860-866)
+ *   - Unsafe link: _is_safe_link (行 101-112)
+ *     - SAFE_LINK_PROTOCOLS = {"http", "https", "mailto"} (行 54)
+ *   - Footnote ref: _has_footnote_ref (行 428-432, 调用点行 878-880)
+ *   - Unclosed fence: normalized.count("```") % 2 != 0 (行 534-536)
+ *
+ * 不变式：
+ *   - lint 是纯启发式，不改变 sourceType，不阻塞提交。
+ *   - 后端 markdown_source_parser.py + input_suitability_gate.py 仍是
+ *     fail-closed 单一真相源。
+ *   - 检测规则必须与后端对齐，避免前端报警但后端不路由、或后端路由但
+ *     前端不报警的不一致。
+ */
+
+export type MarkdownLintWarningKind =
+  | "raw_html"
+  | "unsafe_link"
+  | "footnote"
+  | "unclosed_fence";
+
+export interface MarkdownLintWarning {
+  kind: MarkdownLintWarningKind;
+  /** 中文消息，与现有 UI 风格一致 */
+  message: string;
+  /** 出现次数 */
+  count: number;
+}
+
+export interface MarkdownLintResult {
+  warnings: MarkdownLintWarning[];
+  hasDangerousContent: boolean;
+}
+
+/**
+ * 与后端 SAFE_LINK_PROTOCOLS = frozenset({"http", "https", "mailto"}) 对齐。
+ * 后端 _is_safe_link 允许无 scheme（相对链接/锚点）。
+ */
+const SAFE_LINK_SCHEMES = new Set(["http", "https", "mailto"]);
+
+/**
+ * 提取 [text](href) 中的 href，返回 { text, href } 数组。
+ *
+ * 后端 _is_safe_link 用 urlparse(href).scheme 判断协议；前端用相同思路。
+ * 不使用全局正则匹配嵌套结构（Markdown 链接语法不允许嵌套括号），
+ * 简单匹配第一个 `]` 到对应 `)`。
+ */
+const LINK_PATTERN = /\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+/**
+ * Footnote reference: `[^id]`，与后端 _has_footnote_ref 检测 footnote_ref
+ * token 对齐（markdown-it-footnote 插件语法）。
+ */
+const FOOTNOTE_REF_PATTERN = /\[\^[^\]]+\]/g;
+
+/**
+ * Raw HTML 检测：
+ *   - 块级 HTML：行首 <tag...>（与后端 html_block token 对齐）
+ *   - Inline HTML：任意位置的 <tag> 或 <tag/>（与后端 html_inline token 对齐）
+ *
+ * 不匹配 HTML comment / CDATA / declaration（这些 markdown-it 也归为 html_block，
+ * 但用户输入场景中极少出现，且不影响 candidate_review 路由判定）。
+ */
+const BLOCK_HTML_PATTERN = /^[ \t]*<[a-zA-Z][^>]*>/gm;
+const INLINE_HTML_PATTERN = /<[a-zA-Z][^>]*>/g;
+
+/**
+ * 检测单个 href 是否为不安全协议。
+ * 与后端 _is_safe_link 行为一致：
+ *   - 空 href → 安全（False，即不报警）
+ *   - 无 scheme（相对路径/锚点）→ 安全
+ *   - scheme 不在白名单 → 不安全
+ */
+function isUnsafeHref(href: string): boolean {
+  if (!href) return false;
+  // 与后端 urlparse(href).scheme 行为对齐：取 scheme 部分（不区分大小写）。
+  // 后端允许无 scheme（相对链接/锚点）；前端用相同判断。
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
+  if (!schemeMatch) return false; // 相对路径/锚点，安全
+  const scheme = schemeMatch[1]!.toLowerCase();
+  return !SAFE_LINK_SCHEMES.has(scheme);
+}
+
+/**
+ * 启发式检测 Markdown 输入中的危险内容。
+ *
+ * @param text 用户输入的 Markdown 字符串（来自 MarkdownTextInput.serialize()）
+ * @returns warnings 数组 + hasDangerousContent 标志
+ */
+export function lintMarkdownInput(text: string): MarkdownLintResult {
+  const warnings: MarkdownLintWarning[] = [];
+
+  if (!text || text.length === 0) {
+    return { warnings, hasDangerousContent: false };
+  }
+
+  // 1. Raw HTML（块级 + inline 合并计数，与后端 has_raw_html || has_inline_html 一致）
+  const blockHtmlMatches = text.match(BLOCK_HTML_PATTERN) ?? [];
+  // 临时移除已识别的块级 HTML 行，避免 inline 正则重复计数同一段
+  const textWithoutBlockHtml = text.replace(BLOCK_HTML_PATTERN, "");
+  const inlineHtmlMatches =
+    textWithoutBlockHtml.match(INLINE_HTML_PATTERN) ?? [];
+  const totalHtmlCount = blockHtmlMatches.length + inlineHtmlMatches.length;
+  if (totalHtmlCount > 0) {
+    warnings.push({
+      kind: "raw_html",
+      message: `检测到 ${totalHtmlCount} 处原始 HTML 标签`,
+      count: totalHtmlCount,
+    });
+  }
+
+  // 2. Unsafe link（协议不在白名单）
+  let unsafeLinkCount = 0;
+  let linkMatch: RegExpExecArray | null;
+  // 重置 lastIndex（全局正则在 match 后已重置，但 exec 循环需要显式重置）
+  LINK_PATTERN.lastIndex = 0;
+  while ((linkMatch = LINK_PATTERN.exec(text)) !== null) {
+    const href = linkMatch[2] ?? "";
+    if (isUnsafeHref(href)) {
+      unsafeLinkCount += 1;
+    }
+  }
+  if (unsafeLinkCount > 0) {
+    warnings.push({
+      kind: "unsafe_link",
+      message: `检测到 ${unsafeLinkCount} 个不安全协议链接（javascript/data/vbscript 等）`,
+      count: unsafeLinkCount,
+    });
+  }
+
+  // 3. Footnote reference
+  const footnoteMatches = text.match(FOOTNOTE_REF_PATTERN) ?? [];
+  if (footnoteMatches.length > 0) {
+    warnings.push({
+      kind: "footnote",
+      message: `检测到 ${footnoteMatches.length} 处脚注引用（[^id]）`,
+      count: footnoteMatches.length,
+    });
+  }
+
+  // 4. Unclosed fence（``` 出现次数为奇数）
+  const fenceCount = (text.match(/```/g) ?? []).length;
+  if (fenceCount % 2 !== 0) {
+    warnings.push({
+      kind: "unclosed_fence",
+      message: "检测到未闭合的代码围栏（``` 出现奇数次）",
+      count: 1,
+    });
+  }
+
+  return {
+    warnings,
+    hasDangerousContent: warnings.length > 0,
+  };
+}
+
+/**
+ * 把 warnings 数组渲染成单条中文摘要文案（用于警告 badge）。
+ *
+ * 例："[raw_html: 2, unsafe_link: 1]" →
+ *     "检测到 2 处原始 HTML、1 个不安全链接，提交后将进入审核流程"
+ */
+export function summarizeLintWarnings(warnings: MarkdownLintWarning[]): string {
+  if (warnings.length === 0) return "";
+  const parts = warnings.map((w) => w.message);
+  return `${parts.join("、")}，提交后将进入审核流程`;
+}

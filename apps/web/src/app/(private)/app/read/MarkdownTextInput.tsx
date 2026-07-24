@@ -51,6 +51,10 @@ import type { Descendant } from "platejs";
 import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
 import { deserializeMarkdownToBlocks } from "@/lib/reader-plate/markdown/deserialize";
 import { cn } from "@/lib/cn";
+import {
+  lintMarkdownInput,
+  type MarkdownLintResult,
+} from "./markdown-lint";
 
 // ---------------------------------------------------------------------------
 // 最小 element / leaf component（自包含，不耦合 reader 上下文）
@@ -272,6 +276,13 @@ export interface MarkdownTextInputProps {
   onChange: (markdown: string) => void;
   /** Cmd/Ctrl+Enter 提交回调 */
   onSubmit: () => void;
+  /**
+   * 输入端 lint 结果回调（Phase 1 / P0）。
+   *
+   * 每次 onChange 时同步触发，父组件据此显示警告 badge。
+   * lint 是预警不阻塞，后端仍是 fail-closed 单一真相源。
+   */
+  onLintResult?: (result: MarkdownLintResult) => void;
   placeholder?: string;
   /** 透传给 Editor 的 className */
   className?: string;
@@ -282,7 +293,7 @@ export const MarkdownTextInput = forwardRef<
   MarkdownTextInputHandle,
   MarkdownTextInputProps
 >(function MarkdownTextInput(
-  { initialValue, onChange, onSubmit, placeholder, className, id },
+  { initialValue, onChange, onSubmit, onLintResult, placeholder, className, id },
   ref,
 ) {
   const [initialBlocks] = useState<Descendant[]>(() =>
@@ -301,12 +312,16 @@ export const MarkdownTextInput = forwardRef<
   // 必须在 effect 中更新 ref（React 19 不允许 render 阶段写 ref.current）。
   const onChangeRef = useRef(onChange);
   const onSubmitRef = useRef(onSubmit);
+  const onLintResultRef = useRef(onLintResult);
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
   useEffect(() => {
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
+  useEffect(() => {
+    onLintResultRef.current = onLintResult;
+  }, [onLintResult]);
 
   useImperativeHandle(
     ref,
@@ -339,6 +354,11 @@ export const MarkdownTextInput = forwardRef<
   const handleChange = () => {
     const md = editor.getApi(MarkdownPlugin).markdown.serialize();
     onChangeRef.current(md);
+    // Phase 1 / P0: 输入端预警 lint（非阻塞，后端仍是 fail-closed 单一真相源）
+    const lintCallback = onLintResultRef.current;
+    if (lintCallback) {
+      lintCallback(lintMarkdownInput(md));
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {

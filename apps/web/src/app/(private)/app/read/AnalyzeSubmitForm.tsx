@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, Check, ChevronDown, FileCheck2, FileText, FileUp, ImageIcon, RefreshCw, Target, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, BookOpen, Check, ChevronDown, FileCheck2, FileText, FileUp, ImageIcon, RefreshCw, Target, X } from "lucide-react";
 import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -42,6 +42,11 @@ import {
   MarkdownTextInput,
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
+import {
+  lintMarkdownInput,
+  summarizeLintWarnings,
+  type MarkdownLintResult,
+} from "./markdown-lint";
 import {
   detectMarkdownMarkers,
   readPageSubmitEndpoint,
@@ -855,6 +860,11 @@ export function AnalyzeSubmitForm({
   const [readingVariant, setReadingVariant] = useState<ReaderRecordReadingVariant>(defaults.readingVariant);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const [isCandidateDialogOpen, setCandidateDialogOpen] = useState(false);
+  // Phase 1 / P0: 输入端预警 lint 结果（非阻塞，后端仍是 fail-closed 单一真相源）
+  const [lintResult, setLintResult] = useState<MarkdownLintResult>({
+    warnings: [],
+    hasDangerousContent: false,
+  });
   const isWaiting =
     state.kind === "pending" ||
     state.kind === "artifact-uploading" ||
@@ -1569,6 +1579,7 @@ export function AnalyzeSubmitForm({
               id="analysis-text"
               initialValue={text}
               onChange={(markdown) => setText(markdown)}
+              onLintResult={setLintResult}
               onSubmit={() => void handleSubmit()}
               placeholder="Paste an English article here"
               className="relative z-10 px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
@@ -1581,6 +1592,7 @@ export function AnalyzeSubmitForm({
               className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
               onClick={() => {
                 setText("");
+                setLintResult({ warnings: [], hasDangerousContent: false });
                 markdownEditorRef.current?.clear();
                 markdownEditorRef.current?.focus();
               }}
@@ -1697,6 +1709,17 @@ export function AnalyzeSubmitForm({
                       title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
                     >
                       将作为 Markdown 解析
+                    </span>
+                  ) : null}
+
+                  {!attachedSource && lintResult.hasDangerousContent ? (
+                    <span
+                      data-testid="read-source-lint-warning"
+                      className="self-center inline-flex items-center gap-1.5 rounded-[6px] border border-amber-400/60 bg-amber-50 px-2 py-1 font-sans text-[0.7rem] font-medium text-amber-800"
+                      title={summarizeLintWarnings(lintResult.warnings)}
+                    >
+                      <AlertTriangle aria-hidden className="h-3 w-3" />
+                      {summarizeLintWarnings(lintResult.warnings)}
                     </span>
                   ) : null}
 
