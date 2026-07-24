@@ -188,6 +188,16 @@ type ErrorEnvelope = {
 function isDevMode(): boolean {
   return process.env.NODE_ENV !== "production";
 }
+
+/** Returns true when the error is an AbortError from `fetch` / `AbortController`. */
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  // Some environments surface aborts as plain Error with name "AbortError".
+  return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";
+}
+
 const SHOW_ASK_DEBUG_DISCLOSURES = process.env.NEXT_PUBLIC_ASK_CLAREAD_DEBUG === "true";
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
 const workspaceRelatedRecordItemClassName = cn(
@@ -4320,11 +4330,23 @@ export function AiWorkspacePanel({
       );
       onClearAttachments();
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
-      setMessages((current) =>
-        current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
-      );
-      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+      // User-initiated stop: abort the SSE stream without showing an error.
+      // Mark the assistant message as "interrupted" so the UI reflects the
+      // user's intent rather than a system failure.
+      if (isAbortError(error)) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === tempAssistantId ? { ...message, status: "interrupted" } : message,
+          ),
+        );
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
+      } else {
+        setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
+        setMessages((current) =>
+          current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
+        );
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+      }
     } finally {
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
@@ -4345,6 +4367,14 @@ export function AiWorkspacePanel({
 
   async function handleSend(content: string) {
     await sendMessage({ content });
+  }
+
+  /** Stop the in-flight SSE stream (user clicked the stop button). */
+  function handleStop() {
+    if (sseAbortRef.current) {
+      sseAbortRef.current.abort();
+      sseAbortRef.current = null;
+    }
   }
 
   /** Regenerate (not resume/continue) the assistant answer for a given message. */
@@ -4432,22 +4462,40 @@ export function AiWorkspacePanel({
         controller.signal,
       );
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === messageId
-            ? {
-                ...message,
-                status: "failed",
-                // Restore original content so the user doesn't lose the previous answer
-                content_md: originalContentMd,
-                reasoning_md: originalReasoningMd,
-                reasoning_status: originalReasoningStatus,
-              }
-            : message,
-        ),
-      );
-      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+      if (isAbortError(error)) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  status: "interrupted",
+                  // Restore original content so the user doesn't lose the previous answer
+                  content_md: originalContentMd,
+                  reasoning_md: originalReasoningMd,
+                  reasoning_status: originalReasoningStatus,
+                }
+              : message,
+          ),
+        );
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
+      } else {
+        setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  status: "failed",
+                  // Restore original content so the user doesn't lose the previous answer
+                  content_md: originalContentMd,
+                  reasoning_md: originalReasoningMd,
+                  reasoning_status: originalReasoningStatus,
+                }
+              : message,
+          ),
+        );
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+      }
     } finally {
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
@@ -4672,6 +4720,7 @@ export function AiWorkspacePanel({
       <AskComposer
         onSubmit={handleSend}
         sending={sending}
+        onStop={handleStop}
         placeholder={COMPOSER_PLACEHOLDER}
         errorMessage={errorMessage}
         contextStrip={

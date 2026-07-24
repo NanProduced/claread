@@ -40,6 +40,8 @@ type AskComposerProps = {
   onModelChange?: (value: string | null) => void;
   onTextareaFocus?: () => void;
   onTextareaBlur?: () => void;
+  /** Called when the user clicks the stop button while generating. */
+  onStop?: () => void;
 };
 
 function AskComposerSurface({
@@ -57,10 +59,14 @@ function AskComposerSurface({
   onModelChange,
   onTextareaFocus,
   onTextareaBlur,
+  onStop,
 }: Omit<AskComposerProps, "errorMessage">) {
   const { textInput } = usePromptInputController();
   const canSend = textInput.value.trim().length > 0 && !sending;
   const hasContextStrip = Boolean(contextStrip) && React.Children.count(contextStrip) > 0;
+  // When generating, the submit button becomes a stop button and must NOT
+  // be disabled — otherwise the user cannot click it to abort the stream.
+  const submitDisabled = sending ? false : !canSend;
 
   return (
     <PromptInput
@@ -135,7 +141,8 @@ function AskComposerSurface({
             aria-label={sending ? "停止生成" : "发送"}
             className="rounded-full"
             status={sending ? "submitted" : "ready"}
-            disabled={!canSend}
+            disabled={submitDisabled}
+            onStop={sending ? onStop : undefined}
           />
         </PromptInputTools>
       </PromptInputFooter>
@@ -159,6 +166,7 @@ export function AskComposer({
   onModelChange,
   onTextareaFocus,
   onTextareaBlur,
+  onStop,
 }: AskComposerProps) {
   const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
 
@@ -186,6 +194,7 @@ export function AskComposer({
           onModelChange={onModelChange}
           onTextareaFocus={onTextareaFocus}
           onTextareaBlur={onTextareaBlur}
+          onStop={onStop}
         />
       </PromptInputProvider>
     </div>
