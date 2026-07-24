@@ -338,6 +338,10 @@ function renderCodeBlock(node: BlockTreeNode): ReactNode {
   const fenced = asBoolean(node.block.payload_json.fenced);
   const closed = asBoolean(node.block.payload_json.closed);
   const isMermaid = language === "mermaid";
+  // Phase 3 / P2: visible language badge for non-mermaid code blocks.
+  // Mermaid blocks already carry data-mermaid and are handled by a separate
+  // static-render path; showing a "MERMAID" badge would be noise.
+  const hasLanguageBadge = Boolean(language) && !isMermaid;
   return (
     <pre
       key={node.block.block_id}
@@ -346,7 +350,16 @@ function renderCodeBlock(node: BlockTreeNode): ReactNode {
       data-language={language ?? undefined}
       data-fenced={fenced === null ? undefined : fenced ? "true" : "false"}
       data-closed={closed === null ? undefined : closed ? "true" : "false"}
+      className="relative"
     >
+      {hasLanguageBadge ? (
+        <span
+          data-testid="code-language-badge"
+          className="absolute right-3 top-2 font-sans text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground/70"
+        >
+          {language}
+        </span>
+      ) : null}
       <code
         data-language={language ?? undefined}
         data-mermaid={isMermaid ? "true" : undefined}

@@ -875,6 +875,44 @@ describe("StructuredSourceRenderer", () => {
       expect(code?.textContent).toContain('def hello():');
     });
 
+    it("renders visible language badge for code_block with language", () => {
+      // Phase 3 / P2: code blocks with non-empty language render a visible
+      // badge in the top-right corner so users can identify the language
+      // without reading the code body.
+      const { container } = render(
+        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+      );
+
+      const codeBlock = container.querySelector('[data-block-id="b18"]');
+      const badge = codeBlock?.querySelector('[data-testid="code-language-badge"]');
+      expect(badge).toBeTruthy();
+      expect(badge?.textContent).toBe("python");
+    });
+
+    it("does not render language badge for code_block without language", () => {
+      // Phase 3 / P2: code blocks without a language identifier must not
+      // render an empty badge.
+      const blocksWithoutLang: ReaderStructuredSourceBlock[] = [
+        {
+          block_id: "b1",
+          block_type: "code_block",
+          text_content: "plain code",
+          payload_json: {},
+          parent_block_id: null,
+          order_index: 0,
+          source_range: { line_start: 1, line_end: 1 },
+        },
+      ];
+
+      const { container } = render(
+        <StructuredSourceRenderer blocks={blocksWithoutLang} />,
+      );
+
+      const codeBlock = container.querySelector('[data-block-id="b1"]');
+      const badge = codeBlock?.querySelector('[data-testid="code-language-badge"]');
+      expect(badge).toBeNull();
+    });
+
     it("renders blockquote and thematic_break", () => {
       const { container } = render(
         <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
@@ -992,6 +1030,27 @@ describe("StructuredSourceRenderer", () => {
       expect(mermaidCode?.getAttribute("data-language")).toBe("mermaid");
       // Mermaid content is stored as static text, not executed
       expect(mermaidCode?.textContent).toContain("graph TD");
+    });
+
+    it("does not render language badge for mermaid code_block", () => {
+      // Phase 3 / P2: mermaid blocks have a separate static-render path and
+      // already carry data-mermaid; a "MERMAID" badge would be noise.
+      const { container } = render(
+        <StructuredSourceRenderer
+          blocks={CODE_MERMAID_BLOCKS}
+          diagnostic={CODE_MERMAID_DIAGNOSTIC}
+        />,
+      );
+
+      const mermaidBlock = container.querySelector('[data-block-id="b3"]');
+      const badge = mermaidBlock?.querySelector('[data-testid="code-language-badge"]');
+      expect(badge).toBeNull();
+
+      // Sanity: non-mermaid code block in same fixture still gets a badge.
+      const pythonBlock = container.querySelector('[data-block-id="b4"]');
+      const pythonBadge = pythonBlock?.querySelector('[data-testid="code-language-badge"]');
+      expect(pythonBadge).toBeTruthy();
+      expect(pythonBadge?.textContent).toBe("python");
     });
 
     it("surfaces mermaid_static_only warning", () => {
