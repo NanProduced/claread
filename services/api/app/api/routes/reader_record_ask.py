@@ -191,6 +191,16 @@ async def retry_reading_record_ask_message(
     body: ReaderAskMessageRetryRequest,
     current_user: AuthUserDep,
 ) -> StreamingResponse:
+    # ASK-M1-R1: run the retry preflight BEFORE constructing the
+    # StreamingResponse so a config-unavailable option (or unknown
+    # model key, or missing record) surfaces as a real HTTP 503 / 422 /
+    # 400 instead of an SSE error frame. The generator never re-
+    # resolves facts / option / model — it reuses ``prepared``.
+    prepared = await rr_ask_svc.prepare_reading_record_ask_retry(
+        user_id=UUID(current_user.user_id),
+        reading_record_id=reading_record_id,
+        thread_id=thread_id,
+    )
     return _streaming_response(
         rr_ask_svc.retry_reading_record_ask_message(
             user_id=UUID(current_user.user_id),
@@ -198,6 +208,7 @@ async def retry_reading_record_ask_message(
             thread_id=thread_id,
             message_id=message_id,
             request=body,
+            prepared=prepared,
         )
     )
 

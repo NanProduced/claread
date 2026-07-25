@@ -36,6 +36,8 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 from pydantic_core import from_json
 
 from app.services.reader_record_ask.finalizer import AgentAnswerDraft
@@ -246,6 +248,8 @@ async def run_agent_with_thinking_transport(
     deps: ReaderRecordAskDeps,
     thinking_observer: ThinkingObserver | None = None,
     model: Any = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
 ) -> StreamedAgentOutcome:
     """Run the agent capturing thinking privately when streaming is available.
 
@@ -259,6 +263,12 @@ async def run_agent_with_thinking_transport(
     streamed TextPart content only) — never raw reasoning on the event
     sink. Tool calling, validators, and structured output use the same
     agent configuration as ``run()``.
+
+    ASK-M1: ``model_settings`` and ``usage_limits`` forward the resolved
+    product budget (provider completion cap + host second-layer guard)
+    into PydanticAI's ``agent.run`` / ``agent.run_stream_events``. Both
+    default to ``None`` (PydanticAI then uses the agent / model default)
+    so existing test callers that don't pass them are unaffected.
     """
     phase_events: list[RuntimeEvent] = []
     analysis_started = False
@@ -305,7 +315,12 @@ async def run_agent_with_thinking_transport(
 
     active_model = model if model is not None else getattr(agent, "model", None)
     if not _model_supports_request_stream(active_model):
-        result = await agent.run(prompt, deps=deps)
+        result = await agent.run(
+            prompt,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+        )
         final_output = result.output
         _notify_observer_from_messages(
             messages=getattr(result, "all_messages", lambda: ())(),
@@ -314,7 +329,12 @@ async def run_agent_with_thinking_transport(
             phase_events=phase_events,
         )
     else:
-        async for event in agent.run_stream_events(prompt, deps=deps):
+        async for event in agent.run_stream_events(
+            prompt,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+        ):
             event_kind = getattr(event, "event_kind", None)
 
             if event_kind == "agent_run_result":

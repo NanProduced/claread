@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 
 from app.services.reader_record_ask.agent import (
     _SYSTEM_INSTRUCTIONS,
@@ -119,6 +121,12 @@ async def run_reading_record_ask(
     observation: RuntimeObservation | None = None,
     pointer_ledger: ExpansionPointerLedger | None = None,
     thinking_observer: ThinkingObserver | None = None,
+    # ASK-M1: provider completion cap + host usage guard, compiled by
+    # resolve_reader_record_ask_execution from the persisted option's
+    # runtime_budget. Both default to None (agent/model default) so
+    # existing test callers are unaffected.
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
     # M3 C2 wiring: server-only map-source material provider. When None
     # (tests / legacy callers), TurnCoordinator falls back to the unit-window
     # map (pre-C2 behavior). Production wiring constructs the provider and
@@ -257,6 +265,8 @@ async def run_reading_record_ask(
         deps=deps,
         thinking_observer=thinking_observer,
         model=model,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
     )
     if observation is not None:
         observation.execution_stage = "agent_run_completed"

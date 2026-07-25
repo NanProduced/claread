@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from app.services.reader_record_ask.execution_config import (
+        ReaderRecordAskExecutionConfig,
+    )
 
 from app.api.routes.reader_record_ask import router as reader_record_ask_router
 from app.contracts.anchor_validation import (
@@ -69,6 +75,49 @@ def _stream_chunks(*chunks: str) -> AsyncIterator[str]:
             yield chunk
 
     return _gen()
+
+
+def _make_execution_config(
+    *,
+    option_key: str,
+    model: object,
+    max_output_tokens: int = 3200,
+) -> ReaderRecordAskExecutionConfig:
+    """Build a real ReaderRecordAskExecutionConfig for service-layer tests.
+
+    ASK-M1: service.py no longer calls ``build_model_for_route`` directly;
+    it calls ``resolve_reader_record_ask_execution``. Tests that previously
+    patched the build_model_for_route return value now patch the resolver
+    and return this config so service.py still propagates a real model
+    + budget into ``stream_agentic_thread_message``.
+
+    ASK-M1-R1: the config now also carries ``model_settings_payload``
+    (with ``max_tokens``) and ``usage_limits`` so budget-capture tests
+    can assert both the provider cap and the host guard.
+    """
+    from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig
+    from app.services.reader_record_ask.execution_config import (
+        ReaderRecordAskExecutionConfig,
+    )
+
+    return ReaderRecordAskExecutionConfig(
+        option_key=option_key,
+        model=model,  # type: ignore[arg-type]
+        model_settings_payload={"max_tokens": max_output_tokens},
+        usage_limits=_make_usage_limits(max_output_tokens),
+        runtime_budget=ReaderAskRuntimeBudgetConfig(
+            max_input_tokens=24000,
+            max_output_tokens=max_output_tokens,
+            prompt_buffer_tokens=800,
+        ),
+    )
+
+
+def _make_usage_limits(output_tokens_limit: int):
+    """Build a PydanticAI UsageLimits with only output_tokens_limit set."""
+    from pydantic_ai.usage import UsageLimits
+
+    return UsageLimits(output_tokens_limit=output_tokens_limit)
 
 
 def create_client() -> TestClient:
@@ -469,9 +518,12 @@ class TestReaderRecordAskService:
                 return_value=flash_option,
             ) as mock_resolve,
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                return_value=(flash_model, MagicMock(model_name="deepseek-v4-flash")),
-            ) as mock_build,
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                return_value=_make_execution_config(
+                    option_key="deepseek-v4-flash",
+                    model=flash_model,
+                ),
+            ) as mock_resolve_exec,
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
                 side_effect=_fake_agentic,
@@ -494,8 +546,7 @@ class TestReaderRecordAskService:
         mock_legacy.assert_not_called()
         mock_resolve.assert_awaited_once()
         assert mock_resolve.await_args.kwargs["requested_key"] is None
-        mock_build.assert_called_once()
-        assert mock_build.call_args.args[2] is flash_option.selection
+        mock_resolve_exec.assert_called_once_with(flash_option)
         assert captured["model"] is flash_model
 
     @pytest.mark.asyncio
@@ -545,8 +596,11 @@ class TestReaderRecordAskService:
                 return_value=flash_option,
             ) as mock_resolve,
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                return_value=(flash_model, MagicMock(model_name="deepseek-v4-flash")),
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                return_value=_make_execution_config(
+                    option_key="deepseek-v4-flash",
+                    model=flash_model,
+                ),
             ),
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
@@ -608,9 +662,12 @@ class TestReaderRecordAskService:
                 return_value=pro_option,
             ) as mock_resolve,
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                return_value=(pro_model, MagicMock(model_name="deepseek-v4-pro")),
-            ) as mock_build,
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                return_value=_make_execution_config(
+                    option_key="deepseek-pro",
+                    model=pro_model,
+                ),
+            ) as mock_resolve_exec,
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
                 side_effect=_fake_agentic,
@@ -628,7 +685,7 @@ class TestReaderRecordAskService:
 
         assert chunks
         assert mock_resolve.await_args.kwargs["requested_key"] == "deepseek-pro"
-        assert mock_build.call_args.args[2] is pro_option.selection
+        mock_resolve_exec.assert_called_once_with(pro_option)
         assert captured["model"] is pro_model
 
     @pytest.mark.asyncio
@@ -680,7 +737,9 @@ class TestReaderRecordAskService:
 
     @pytest.mark.asyncio
     async def test_model_build_provider_error_returns_typed_503_before_stream(self) -> None:
-        from app.llm.provider_factory import ModelProviderError
+        from app.services.reader_record_ask.execution_config import (
+            ReaderRecordAskExecutionUnavailable,
+        )
         from app.services.reader_record_ask.service import prepare_reading_record_ask_message
 
         request = MagicMock()
@@ -713,8 +772,11 @@ class TestReaderRecordAskService:
                 return_value=flash_option,
             ),
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                side_effect=ModelProviderError("secret provider details must not leak"),
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                side_effect=ReaderRecordAskExecutionUnavailable(
+                    option_key="deepseek-v4-flash",
+                    reason="model_build_failed",
+                ),
             ),
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
@@ -736,7 +798,9 @@ class TestReaderRecordAskService:
 
     @pytest.mark.asyncio
     async def test_model_build_selection_error_returns_typed_503_before_stream(self) -> None:
-        from app.llm.router import ModelSelectionError
+        from app.services.reader_record_ask.execution_config import (
+            ReaderRecordAskExecutionUnavailable,
+        )
         from app.services.reader_record_ask.service import prepare_reading_record_ask_message
 
         request = MagicMock()
@@ -769,8 +833,11 @@ class TestReaderRecordAskService:
                 return_value=pro_option,
             ),
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                side_effect=ModelSelectionError("Unknown model profile: secret-profile"),
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                side_effect=ReaderRecordAskExecutionUnavailable(
+                    option_key="deepseek-pro",
+                    reason="model_build_failed",
+                ),
             ),
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
@@ -791,6 +858,9 @@ class TestReaderRecordAskService:
 
     @pytest.mark.asyncio
     async def test_model_build_none_returns_typed_503_before_stream(self) -> None:
+        from app.services.reader_record_ask.execution_config import (
+            ReaderRecordAskExecutionUnavailable,
+        )
         from app.services.reader_record_ask.service import prepare_reading_record_ask_message
 
         request = MagicMock()
@@ -823,8 +893,11 @@ class TestReaderRecordAskService:
                 return_value=flash_option,
             ),
             patch(
-                "app.services.reader_record_ask.service.build_model_for_route",
-                return_value=(None, MagicMock(profile_name="ask-main-deepseek-v4-flash")),
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                side_effect=ReaderRecordAskExecutionUnavailable(
+                    option_key="deepseek-v4-flash",
+                    reason="model_unconfigured",
+                ),
             ),
             patch(
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
@@ -887,3 +960,370 @@ class TestReaderRecordAskService:
         assert result.status == "executed"
         assert result.result.note_id == "note-1"
         mock_confirm.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# ASK-M1-R1: Retry preflight + Send/Retry budget capture
+# ---------------------------------------------------------------------------
+
+
+class TestReaderRecordAskRetryPreflight:
+    """ASK-M1-R1: Retry must preflight before StreamingResponse.
+
+    Retry now mirrors Send's fail-closed HTTP semantics: if the
+    execution config cannot be resolved (model build failure,
+    unconfigured provider), the route returns a real HTTP 503 before
+    any SSE byte is written. The generator never re-resolves facts /
+    option / model — it reuses the ``RetryPreparedResult`` from the
+    preflight.
+    """
+
+    @_mock_auth()
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_retry",
+        new_callable=AsyncMock,
+        side_effect=HTTPException(
+            status_code=503,
+            detail={
+                "code": "model_unconfigured",
+                "message": "Ask Claread model is not configured for the selected option.",
+                "model_key": "deepseek-pro",
+            },
+        ),
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.retry_reading_record_ask_message",
+        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
+    )
+    def test_retry_config_resolution_failure_returns_503_no_stream(
+        self,
+        mock_retry,
+        mock_prepare,
+        mock_auth,
+    ) -> None:
+        """Retry preflight 503 — no SSE stream started.
+
+        The route awaits ``prepare_reading_record_ask_retry`` before
+        constructing the StreamingResponse. When the execution config
+        cannot be resolved, the HTTPException(503) propagates as a real
+        HTTP 503 response (not an SSE error frame), and the retry
+        generator is never invoked.
+        """
+        client = create_client()
+        message_id = "00000000-0000-0000-0000-0000000000d6"
+
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/threads/{THREAD_ID}"
+            f"/messages/{message_id}/retry/stream",
+            headers=AUTH_HEADERS,
+            json={},
+        )
+
+        assert response.status_code == 503
+        body = response.json()
+        assert body["detail"]["code"] == "model_unconfigured"
+        assert body["detail"]["model_key"] == "deepseek-pro"
+        # No SSE stream started — generator never called.
+        mock_retry.assert_not_called()
+        mock_prepare.assert_awaited_once()
+
+    @_mock_auth()
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_retry",
+        new_callable=AsyncMock,
+        side_effect=HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_uuid",
+                "field": "reading_record_id",
+                "message": "reading_record_id must be a UUID",
+            },
+        ),
+    )
+    @patch(
+        "app.api.routes.reader_record_ask.rr_ask_svc.retry_reading_record_ask_message",
+        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
+    )
+    def test_retry_invalid_record_id_returns_400_no_stream(
+        self,
+        mock_retry,
+        mock_prepare,
+        mock_auth,
+    ) -> None:
+        """Retry preflight 400 — UUID parse failure surfaces before stream."""
+        client = create_client()
+        message_id = "00000000-0000-0000-0000-0000000000d6"
+
+        response = client.post(
+            f"/reader/records/not-a-uuid/ask/threads/{THREAD_ID}"
+            f"/messages/{message_id}/retry/stream",
+            headers=AUTH_HEADERS,
+            json={},
+        )
+
+        # FastAPI path validation catches the non-UUID before the route
+        # body even runs — 422. But if the preflight itself raised 400,
+        # the route would propagate it. Here we just confirm no stream.
+        assert response.status_code in (400, 422)
+        mock_retry.assert_not_called()
+
+
+class TestReaderRecordAskBudgetCapture:
+    """ASK-M1-R1: Send and Retry must propagate the exact resolved model
+    + budget into the agentic stream.
+
+    Captures the kwargs passed to ``stream_agentic_thread_message``
+    (Send) and ``retry_agentic_thread_message`` (Retry) and asserts:
+
+    - ``model`` is the exact resolved model object (Pro);
+    - ``model_settings["max_tokens"]`` equals the option budget (6400);
+    - ``usage_limits.output_tokens_limit`` mirrors the same cap;
+    - ``usage_limits.input_tokens_limit`` and ``total_tokens_limit``
+      are both ``None`` (char ledger stays independent).
+    """
+
+    @pytest.mark.asyncio
+    async def test_send_agentic_pro_captures_resolved_model_and_budget(self) -> None:
+        """Send path: Pro option → resolved Pro model + 6400 cap on both layers."""
+        from app.services.reader_record_ask.service import send_reading_record_ask_message
+
+        request = MagicMock()
+        request.anchor = None
+        request.content = "deep analysis"
+        request.entry_action = "ask_about_this"
+        request.model = "deepseek-pro"
+
+        pro_option = MagicMock()
+        pro_option.key = "deepseek-pro"
+        pro_option.selection = MagicMock()
+        pro_model = object()
+
+        captured: dict[str, object] = {}
+
+        async def _fake_agentic(**kwargs):
+            captured.update(kwargs)
+            yield "event: message.completed\ndata: {}\n\n"
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
+                new_callable=AsyncMock,
+                return_value={"id": THREAD_ID, "title": "Test"},
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=pro_option,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                return_value=_make_execution_config(
+                    option_key="deepseek-pro",
+                    model=pro_model,
+                    max_output_tokens=6400,
+                ),
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
+                side_effect=_fake_agentic,
+            ),
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            chunks = [
+                chunk
+                async for chunk in send_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    request=request,
+                )
+            ]
+
+        assert chunks == ["event: message.completed\ndata: {}\n\n"]
+        # Exact resolved model — Pro model object, not a default.
+        assert captured["model"] is pro_model
+        # Provider completion cap.
+        model_settings = captured["model_settings"]
+        assert model_settings is not None
+        assert model_settings["max_tokens"] == 6400
+        # Host usage limit — output only, input/total left None.
+        usage_limits = captured["usage_limits"]
+        assert usage_limits is not None
+        assert usage_limits.output_tokens_limit == 6400
+        assert usage_limits.input_tokens_limit is None
+        assert usage_limits.total_tokens_limit is None
+
+    @pytest.mark.asyncio
+    async def test_retry_agentic_pro_captures_resolved_model_and_budget(self) -> None:
+        """Retry path: Pro option → resolved Pro model + 6400 cap on both layers.
+
+        Mirrors the Send capture test. The retry generator must receive
+        the same ``model`` / ``model_settings`` / ``usage_limits``
+        derived from the persisted Pro option — proving Send and Retry
+        have identical budget propagation.
+        """
+        from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig
+        from app.services.reader_record_ask.execution_config import (
+            ReaderRecordAskExecutionConfig,
+        )
+        from app.services.reader_record_ask.service import (
+            prepare_reading_record_ask_retry,
+            retry_reading_record_ask_message,
+        )
+
+        pro_option = MagicMock()
+        pro_option.key = "deepseek-pro"
+        pro_option.selection = MagicMock()
+        pro_model = object()
+
+        pro_execution = ReaderRecordAskExecutionConfig(
+            option_key="deepseek-pro",
+            model=pro_model,  # type: ignore[arg-type]
+            model_settings_payload={"max_tokens": 6400},
+            usage_limits=_make_usage_limits(6400),
+            runtime_budget=ReaderAskRuntimeBudgetConfig(
+                max_input_tokens=24000,
+                max_output_tokens=6400,
+                prompt_buffer_tokens=800,
+            ),
+        )
+
+        captured: dict[str, object] = {}
+
+        async def _fake_retry(**kwargs):
+            captured.update(kwargs)
+            yield "event: message.completed\ndata: {}\n\n"
+
+        message_id = uuid4()
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                new_callable=AsyncMock,
+                return_value=pro_option,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                return_value=pro_execution,
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.retry_agentic_thread_message",
+                side_effect=_fake_retry,
+            ),
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = True
+            prepared = await prepare_reading_record_ask_retry(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                thread_id=UUID(THREAD_ID),
+            )
+            chunks = [
+                chunk
+                async for chunk in retry_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    thread_id=UUID(THREAD_ID),
+                    message_id=message_id,
+                    request=MagicMock(),
+                    prepared=prepared,
+                )
+            ]
+
+        assert chunks == ["event: message.completed\ndata: {}\n\n"]
+        # Preflight resolved to agentic mode with the Pro execution config.
+        assert prepared.mode == "agentic"
+        assert prepared.execution is pro_execution
+        assert prepared.facts is not None
+        # Exact resolved model — Pro model object.
+        assert captured["model"] is pro_model
+        # Provider completion cap.
+        model_settings = captured["model_settings"]
+        assert model_settings is not None
+        assert model_settings["max_tokens"] == 6400
+        # Host usage limit — output only, input/total left None.
+        usage_limits = captured["usage_limits"]
+        assert usage_limits is not None
+        assert usage_limits.output_tokens_limit == 6400
+        assert usage_limits.input_tokens_limit is None
+        assert usage_limits.total_tokens_limit is None
+
+    @pytest.mark.asyncio
+    async def test_retry_legacy_mode_does_not_resolve_execution(self) -> None:
+        """Legacy retry (agentic flag off) — no execution config, no model.
+
+        ASK-M1-R1: ``mode`` is fixed at preflight time. When the
+        agentic flag is off, ``prepare_reading_record_ask_retry`` returns
+        ``mode="legacy"`` with ``execution=None`` and the generator
+        delegates to ``stream_service.retry_thread_message`` without
+        touching the agentic path.
+        """
+        from app.services.reader_record_ask.service import (
+            prepare_reading_record_ask_retry,
+            retry_reading_record_ask_message,
+        )
+
+        captured: dict[str, object] = {}
+
+        async def _fake_legacy_retry(**kwargs):
+            captured.update(kwargs)
+            yield "event: message.completed\ndata: {}\n\n"
+
+        message_id = uuid4()
+
+        with (
+            patch(
+                "app.services.reader_record_ask.service.get_settings",
+            ) as mock_settings,
+            patch(
+                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+                new_callable=AsyncMock,
+                return_value=MagicMock(record=MagicMock(title="Test")),
+            ),
+            patch(
+                "app.services.reader_record_ask.service.stream_service.retry_thread_message",
+                side_effect=_fake_legacy_retry,
+            ),
+            patch(
+                "app.services.reader_record_ask.production_stream.retry_agentic_thread_message",
+            ) as mock_agentic,
+        ):
+            mock_settings.return_value.reader_record_ask_agentic_enabled = False
+            prepared = await prepare_reading_record_ask_retry(
+                user_id=UUID(USER_ID),
+                reading_record_id=RECORD_ID,
+                thread_id=UUID(THREAD_ID),
+            )
+            chunks = [
+                chunk
+                async for chunk in retry_reading_record_ask_message(
+                    user_id=UUID(USER_ID),
+                    reading_record_id=RECORD_ID,
+                    thread_id=UUID(THREAD_ID),
+                    message_id=message_id,
+                    request=MagicMock(),
+                    prepared=prepared,
+                )
+            ]
+
+        assert chunks == ["event: message.completed\ndata: {}\n\n"]
+        assert prepared.mode == "legacy"
+        assert prepared.execution is None
+        # Legacy path never touches the agentic stream.
+        mock_agentic.assert_not_called()
+        # Legacy retry received message_id + retry_body.
+        assert captured["message_id"] == message_id

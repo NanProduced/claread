@@ -81,6 +81,48 @@ def _clear_settings_cache() -> None:
     settings_mod.get_settings.cache_clear()
 
 
+def _make_execution_config(
+    *,
+    option_key: str,
+    model: object,
+    max_output_tokens: int = 3200,
+):
+    """Build a real ReaderRecordAskExecutionConfig for service-layer tests.
+
+    ASK-M1: service.py no longer calls ``build_model_for_route`` directly;
+    tests now patch ``resolve_reader_record_ask_execution`` and return
+    this config so a real model + budget propagates into
+    ``stream_agentic_thread_message``.
+
+    ASK-M1-R1: the config now also carries ``model_settings_payload``
+    (with ``max_tokens``) and ``usage_limits`` so budget-capture tests
+    can assert both the provider cap and the host guard.
+    """
+    from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig
+    from app.services.reader_record_ask.execution_config import (
+        ReaderRecordAskExecutionConfig,
+    )
+
+    return ReaderRecordAskExecutionConfig(
+        option_key=option_key,
+        model=model,  # type: ignore[arg-type]
+        model_settings_payload={"max_tokens": max_output_tokens},
+        usage_limits=_make_usage_limits(max_output_tokens),
+        runtime_budget=ReaderAskRuntimeBudgetConfig(
+            max_input_tokens=24000,
+            max_output_tokens=max_output_tokens,
+            prompt_buffer_tokens=800,
+        ),
+    )
+
+
+def _make_usage_limits(output_tokens_limit: int):
+    """Build a PydanticAI UsageLimits with only output_tokens_limit set."""
+    from pydantic_ai.usage import UsageLimits
+
+    return UsageLimits(output_tokens_limit=output_tokens_limit)
+
+
 def _envelope(**overrides: object):
     payload = dict(
         user_id=_USER,
@@ -366,8 +408,11 @@ async def test_flag_on_does_not_call_legacy_stream() -> None:
                         ),
                     ):
                         with patch(
-                            "app.services.reader_record_ask.service.build_model_for_route",
-                            return_value=(_function_model("agentic answer"), MagicMock()),
+                            "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                            return_value=_make_execution_config(
+                                option_key="deepseek-v4-flash",
+                                model=_function_model("agentic answer"),
+                            ),
                         ):
                             with patch(
                                 "app.services.reader_record_ask.service._load_snapshot_facts",
@@ -2443,38 +2488,53 @@ async def test_retry_service_flag_on_uses_agentic_path() -> None:
                     )
 
                 with patch(
-                    "app.services.reader_record_ask.production_stream.run_reading_record_ask",
-                    side_effect=_run,
+                    "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+                    new_callable=AsyncMock,
+                    return_value=MagicMock(
+                        key="deepseek-v4-flash",
+                        selection=MagicMock(),
+                    ),
                 ):
                     with patch(
-                        "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
-                        return_value=repo,
+                        "app.services.reader_record_ask.service.resolve_reader_record_ask_execution",
+                        return_value=_make_execution_config(
+                            option_key="deepseek-v4-flash",
+                            model=_function_model("agentic retry answer"),
+                        ),
                     ):
                         with patch(
-                            "app.services.reader_record_ask.production_stream.resolve_agentic_model",
-                            return_value=_function_model("agentic retry answer"),
+                            "app.services.reader_record_ask.production_stream.run_reading_record_ask",
+                            side_effect=_run,
                         ):
                             with patch(
-                                "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
-                                new_callable=AsyncMock,
-                                return_value=_DOC,
+                                "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
+                                return_value=repo,
                             ):
-                                from app.schemas.reader_ask import (
-                                    ReaderAskMessageRetryRequest,
-                                )
-                                from app.services.reader_record_ask import (
-                                    service as svc,
-                                )
-
-                                chunks = []
-                                async for c in svc.retry_reading_record_ask_message(
-                                    user_id=_USER,
-                                    reading_record_id=str(_RECORD),
-                                    thread_id=_THREAD,
-                                    message_id=existing_assistant_id,
-                                    request=ReaderAskMessageRetryRequest(),
+                                with patch(
+                                    "app.services.reader_record_ask.production_stream.resolve_agentic_model",
+                                    return_value=_function_model("agentic retry answer"),
                                 ):
-                                    chunks.append(c)
+                                    with patch(
+                                        "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+                                        new_callable=AsyncMock,
+                                        return_value=_DOC,
+                                    ):
+                                        from app.schemas.reader_ask import (
+                                            ReaderAskMessageRetryRequest,
+                                        )
+                                        from app.services.reader_record_ask import (
+                                            service as svc,
+                                        )
+
+                                        chunks = []
+                                        async for c in svc.retry_reading_record_ask_message(
+                                            user_id=_USER,
+                                            reading_record_id=str(_RECORD),
+                                            thread_id=_THREAD,
+                                            message_id=existing_assistant_id,
+                                            request=ReaderAskMessageRetryRequest(),
+                                        ):
+                                            chunks.append(c)
                 # Legacy retry never called.
                 assert mock_legacy.call_count == 0
                 events = _parse_sse(chunks)

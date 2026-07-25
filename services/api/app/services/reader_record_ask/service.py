@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic_ai.models import Model
 
 from app.config.settings import get_settings
 from app.contracts.anchor_validation import (
@@ -15,9 +16,6 @@ from app.contracts.anchor_validation import (
     AnchorValidationError,
 )
 from app.database import connection as db_connect
-from app.llm.provider_factory import ModelProviderError
-from app.llm.router import ModelSelectionError, build_model_for_route
-from app.llm.routes import MODEL_ROUTE_READER_ASK
 from app.schemas.reader_ask import (
     ReaderAskActionConfirmRequest,
     ReaderAskActionConfirmResponse,
@@ -31,8 +29,41 @@ from app.schemas.reader_ask import (
 from app.services.ask_runtime import action_service, stream_service, thread_service
 from app.services.reader_orchestration.anchor_gate import load_validated_reading_record_anchor
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_record_ask.execution_config import (
+    ReaderRecordAskExecutionConfig,
+    ReaderRecordAskExecutionUnavailable,
+    resolve_reader_record_ask_execution,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Retry mode determined during preflight. ``"agentic"`` → use the
+# unified execution config + production_stream retry; ``"legacy"`` → use
+# stream_service.retry_thread_message. Resolving this before the
+# StreamingResponse starts prevents branch drift mid-stream.
+RetryMode = Literal["agentic", "legacy"]
+
+
+@dataclass(slots=True, frozen=True)
+class RetryPreparedResult:
+    """Result of the retry preflight (mirrors Send's prepared tuple).
+
+    Carries everything ``retry_reading_record_ask_message`` needs to
+    stream the retry without re-resolving the persisted option or
+    re-building the model. The route awaits the preflight coroutine
+    before constructing the StreamingResponse so a config-unavailable
+    option surfaces as a real HTTP 503 instead of an SSE error frame.
+
+    For legacy retry (agentic flag off), ``facts`` and ``execution``
+    are both ``None`` — ``stream_service.retry_thread_message`` loads
+    its own state.
+    """
+
+    reading_record_id: UUID
+    mode: RetryMode
+    facts: object | None
+    execution: ReaderRecordAskExecutionConfig | None
 
 
 def _parse_uuid(value: str, *, field: str) -> UUID:
@@ -216,67 +247,32 @@ async def reset_reading_record_ask_thread(
     )
 
 
-async def _build_agentic_model_for_option(option) -> Model | str:
-    """Build the reader_ask main model from a resolved catalog option.
+async def _resolve_agentic_execution(option) -> ReaderRecordAskExecutionConfig:
+    """Compile a persisted option into a unified execution config.
 
-    Uses the option's ModelSelection so thread/request choice wins over the
-    global ASK_CLAREAD_PROFILE route default. Known config/provider failures
-    become a typed 503 before any SSE stream starts. Never returns None into
-    production_stream auto-wire (that would re-resolve the global route).
+    ASK-M1: replaces the old ``_build_agentic_model_for_option``. Both
+    send and retry paths now call this so the persisted option is the
+    single source of truth for the model, the provider completion cap,
+    and the host usage limit. Fail-closed: raises a typed 503 — never
+    silently substitutes the global default model.
     """
     try:
-        model, model_config = build_model_for_route(
-            get_settings(),
-            MODEL_ROUTE_READER_ASK,
-            option.selection,
-        )
-    except (ModelProviderError, ModelSelectionError) as exc:
+        return resolve_reader_record_ask_execution(option)
+    except ReaderRecordAskExecutionUnavailable as exc:
         logger.warning(
-            "agentic_model_build_failed code=model_unconfigured model_key=%s "
-            "error_type=%s",
-            option.key,
-            type(exc).__name__,
+            "agentic_execution_unavailable code=model_unconfigured "
+            "model_key=%s reason=%s",
+            exc.option_key,
+            exc.reason,
         )
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "model_unconfigured",
                 "message": "Ask Claread model is not configured for the selected option.",
-                "model_key": option.key,
+                "model_key": exc.option_key,
             },
         ) from None
-    except Exception as exc:  # noqa: BLE001 — fail closed; no internal leakage
-        logger.warning(
-            "agentic_model_build_failed code=model_unconfigured model_key=%s "
-            "error_type=%s",
-            option.key,
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "model_unconfigured",
-                "message": "Ask Claread model is not configured for the selected option.",
-                "model_key": option.key,
-            },
-        ) from None
-
-    if model is None:
-        logger.warning(
-            "agentic_model_build_failed code=model_unconfigured model_key=%s "
-            "error_type=NoneResult profile=%s",
-            option.key,
-            getattr(model_config, "profile_name", None),
-        )
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "model_unconfigured",
-                "message": "Ask Claread model is not configured for the selected option.",
-                "model_key": option.key,
-            },
-        )
-    return model
 
 
 async def prepare_reading_record_ask_message(
@@ -285,13 +281,13 @@ async def prepare_reading_record_ask_message(
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
     thread_id: UUID | None = None,
-) -> tuple[UUID, UUID, Model | str | None]:
-    """Validate anchor/thread and resolve model before StreamingResponse starts.
+) -> tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None]:
+    """Validate anchor/thread and resolve execution config before StreamingResponse.
 
-    Returns ``(reading_record_id, thread_id, model)``. Raising here yields a
-    real HTTP 4xx/503 (e.g. unknown model key, unconfigured provider) instead
-    of an SSE error frame. For the legacy path, model may be None —
-    stream_service resolves its own.
+    Returns ``(reading_record_id, thread_id, execution)``. Raising here
+    yields a real HTTP 4xx/503 (e.g. unknown model key, unconfigured
+    provider) instead of an SSE error frame. For the legacy path,
+    execution is None — stream_service resolves its own model.
     """
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
     await _validate_reading_record_anchor(
@@ -317,8 +313,8 @@ async def prepare_reading_record_ask_message(
         requested_key=request.model,
         reading_record_id=parsed_record_id,
     )
-    model = await _build_agentic_model_for_option(option)
-    return parsed_record_id, resolved_thread_id, model
+    execution = await _resolve_agentic_execution(option)
+    return parsed_record_id, resolved_thread_id, execution
 
 
 async def _stream_legacy_or_agentic(
@@ -327,7 +323,7 @@ async def _stream_legacy_or_agentic(
     reading_record_id: UUID,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
-    model: Model | str | None = None,
+    execution: ReaderRecordAskExecutionConfig | None = None,
 ) -> AsyncIterator[str]:
     """Dispatch to agentic path when flag is on; never fall back on agentic failure."""
     if not get_settings().reader_record_ask_agentic_enabled:
@@ -349,6 +345,10 @@ async def _stream_legacy_or_agentic(
         stream_agentic_thread_message,
     )
 
+    model = execution.model if execution is not None else None
+    model_settings = execution.model_settings() if execution is not None else None
+    usage_limits = execution.usage_limits if execution is not None else None
+
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
         reading_record_id=reading_record_id,
@@ -359,6 +359,8 @@ async def _stream_legacy_or_agentic(
         validated_anchor=None,
         stable_document_id=None,
         model=model,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
     ):
         yield chunk
 
@@ -368,7 +370,7 @@ async def send_reading_record_ask_message(
     user_id: UUID,
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
-    prepared: tuple[UUID, UUID, Model | str | None] | None = None,
+    prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
         prepared = await prepare_reading_record_ask_message(
@@ -376,13 +378,13 @@ async def send_reading_record_ask_message(
             reading_record_id=reading_record_id,
             request=request,
         )
-    parsed_record_id, resolved_thread_id, model = prepared
+    parsed_record_id, resolved_thread_id, execution = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=resolved_thread_id,
         request=request,
-        model=model,
+        execution=execution,
     ):
         yield chunk
 
@@ -393,7 +395,7 @@ async def stream_reading_record_ask_thread_message(
     reading_record_id: str,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
-    prepared: tuple[UUID, UUID, Model | str | None] | None = None,
+    prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
         prepared = await prepare_reading_record_ask_message(
@@ -402,15 +404,73 @@ async def stream_reading_record_ask_thread_message(
             request=request,
             thread_id=thread_id,
         )
-    parsed_record_id, resolved_thread_id, model = prepared
+    parsed_record_id, resolved_thread_id, execution = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=resolved_thread_id,
         request=request,
-        model=model,
+        execution=execution,
     ):
         yield chunk
+
+
+async def prepare_reading_record_ask_retry(
+    *,
+    user_id: UUID,
+    reading_record_id: str,
+    thread_id: UUID,
+) -> RetryPreparedResult:
+    """Retry preflight — runs before the StreamingResponse starts.
+
+    Mirrors :func:`prepare_reading_record_ask_message` for the retry
+    path. Completes the same five preflight stages so a config-
+    unavailable option surfaces as a typed HTTP 503 (or 422 / 400)
+    before any SSE byte is written:
+
+    1. ``reading_record_id`` UUID parsing;
+    2. agentic feature flag decision (``mode``);
+    3. snapshot facts load (only required for the agentic path);
+    4. persisted option resolution via ``thread_service``;
+    5. ``resolve_reader_record_ask_execution``.
+
+    Legacy retry keeps the original ``stream_service.retry_thread_message``
+    behavior, but ``mode`` is fixed here so the generator cannot drift
+    branches after the response has started.
+    """
+    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    if not get_settings().reader_record_ask_agentic_enabled:
+        # Legacy mode still loads facts for parity with the previous
+        # behavior — retry_thread_message does not accept facts but
+        # the prior generator called _load_snapshot_facts first to
+        # produce the same 404/400 error before streaming.
+        await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+        return RetryPreparedResult(
+            reading_record_id=parsed_record_id,
+            mode="legacy",
+            facts=None,
+            execution=None,
+        )
+
+    # Agentic mode: preflight facts + option + execution config so the
+    # generator never re-resolves any of them.
+    facts = await _load_snapshot_facts(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+    )
+    option = await thread_service.resolve_and_persist_thread_model_option(
+        user_id=user_id,
+        thread_id=thread_id,
+        requested_key=None,
+        reading_record_id=parsed_record_id,
+    )
+    execution = await _resolve_agentic_execution(option)
+    return RetryPreparedResult(
+        reading_record_id=parsed_record_id,
+        mode="agentic",
+        facts=facts,
+        execution=execution,
+    )
 
 
 async def retry_reading_record_ask_message(
@@ -420,11 +480,26 @@ async def retry_reading_record_ask_message(
     thread_id: UUID,
     message_id: UUID,
     request: ReaderAskMessageRetryRequest,
+    prepared: RetryPreparedResult | None = None,
 ) -> AsyncIterator[str]:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
+    """Stream a retry. ``prepared`` must come from the route's preflight.
 
-    if not get_settings().reader_record_ask_agentic_enabled:
-        await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
+    The generator must not re-load facts, re-resolve the persisted
+    option, or rebuild the execution config — the route has already
+    done all three via :func:`prepare_reading_record_ask_retry`. This
+    guarantees Send and Retry have identical fail-closed HTTP semantics
+    (typed 503 before StreamingResponse) and identical model + budget
+    propagation.
+    """
+    if prepared is None:
+        prepared = await prepare_reading_record_ask_retry(
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            thread_id=thread_id,
+        )
+    parsed_record_id = prepared.reading_record_id
+
+    if prepared.mode == "legacy":
         async for chunk in stream_service.retry_thread_message(
             user_id=user_id,
             reading_record_id=parsed_record_id,
@@ -435,24 +510,23 @@ async def retry_reading_record_ask_message(
             yield chunk
         return
 
-    # Agentic retry path: re-run the existing assistant message via the
-    # agentic lane.  Model is resolved inside retry_agentic_thread_message
-    # via auto_wire_dependencies (reader_ask route default).  Never falls
-    # back to legacy on agentic failure — consistent with send path.
-    facts = await _load_snapshot_facts(
-        user_id=user_id,
-        reading_record_id=parsed_record_id,
-    )
+    # Agentic mode — preflight has already resolved facts + execution.
+    assert prepared.execution is not None, "agentic mode requires execution config"
+    assert prepared.facts is not None, "agentic mode requires preflight facts"
     from app.services.reader_record_ask.production_stream import (
         retry_agentic_thread_message,
     )
 
+    execution = prepared.execution
     async for chunk in retry_agentic_thread_message(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         thread_id=thread_id,
         message_id=message_id,
-        facts=facts,
+        facts=prepared.facts,
+        model=execution.model,
+        model_settings=execution.model_settings(),
+        usage_limits=execution.usage_limits,
     ):
         yield chunk
 

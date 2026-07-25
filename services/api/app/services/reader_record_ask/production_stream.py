@@ -15,6 +15,8 @@ from uuid import UUID
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
 
 from app.config.settings import get_settings
 from app.schemas.reader_record_ask_stream import (
@@ -610,6 +612,8 @@ async def _run_agentic_turn(
     user_message: str,
     run_fn: RunFn | None,
     pointer_ledger: ExpansionPointerLedger | None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -624,6 +628,10 @@ async def _run_agentic_turn(
     - ``envelope`` and ``access`` are fully resolved (stable document id,
       anchor, facts) — the helper does not re-resolve them.
     - ``active_model`` may be None — helper emits a typed terminal.
+
+    ASK-M1: ``model_settings`` / ``usage_limits`` forward the resolved
+    product budget into ``run_reading_record_ask`` (and from there into
+    PydanticAI ``agent.run``). Both default to ``None``.
     """
     run_agent = run_fn or run_reading_record_ask
     turn_run_id = UUID(turn["id"])
@@ -677,6 +685,8 @@ async def _run_agentic_turn(
             event_sink=sink,
             pointer_ledger=active_ledger,
             map_source_material_provider=wired_map_source_provider,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         )
     )
 
@@ -1203,6 +1213,8 @@ async def stream_agentic_thread_message(
     auto_wire_dependencies: bool = True,
     pointer_ledger: ExpansionPointerLedger | None = None,
     retry_message_id: UUID | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -1393,6 +1405,8 @@ async def stream_agentic_thread_message(
         user_message=content,
         run_fn=run_fn,
         pointer_ledger=pointer_ledger,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
     ):
         yield chunk
 
@@ -1411,6 +1425,8 @@ async def retry_agentic_thread_message(
     run_fn: RunFn | None = None,
     auto_wire_dependencies: bool = True,
     pointer_ledger: ExpansionPointerLedger | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
 ) -> AsyncIterator[str]:
     """Retry an existing assistant message via the agentic path.
 
@@ -1423,6 +1439,11 @@ async def retry_agentic_thread_message(
     ``retry_message_id`` set; see that function for the retry-mode contract
     (existing assistant message is reset, preceding user message content is
     reused, ``content`` argument is ignored).
+
+    ASK-M1: ``model_settings`` / ``usage_limits`` forward the resolved
+    product budget. Retry must receive the same execution config as the
+    original send — callers resolve via
+    :func:`resolve_reader_record_ask_execution` before calling.
     """
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
@@ -1441,6 +1462,8 @@ async def retry_agentic_thread_message(
         auto_wire_dependencies=auto_wire_dependencies,
         pointer_ledger=pointer_ledger,
         retry_message_id=message_id,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
     ):
         yield chunk
     return
