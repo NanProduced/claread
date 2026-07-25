@@ -417,6 +417,10 @@ function createAssistantMessage(overrides: Partial<ReaderAskUiMessageDto> = {}):
     replan_status: "idle",
     regenerate_preview: false,
     usage_event_id: null,
+    agentic_evidence: null,
+    agentic_evidence_scope: null,
+    agentic_answer_blocks: null,
+    agentic_citations: null,
     created_at: "2026-05-20T00:00:00Z",
     updated_at: "2026-05-20T00:00:00Z",
     ...overrides,
@@ -3669,44 +3673,27 @@ describe("createSseMessageHandler – agentic stream", () => {
   };
 
   const agenticCompleted = {
-    execution_version: "reader_record_ask_agentic_v1" as const,
+    execution_version: "reader_record_ask_agentic_v2" as const,
     final_status: "ok" as const,
     answer_text: "Climate change is discussed in paragraph 2.",
+    answer_blocks: [
+      {
+        text: "Climate change is discussed in paragraph 2.",
+        citation_ids: ["c1"],
+      },
+    ],
+    citations: [
+      {
+        citation_id: "c1",
+        source_kind: "article" as const,
+        snippet: "climate change impacts",
+      },
+    ],
+    knowledge_mode: "article_grounded" as const,
+    source_status: null,
     message_id: "msg-agentic-1",
     thread_id: "thread-1",
     turn_run_id: "turn-run-1",
-    envelope_fingerprint: "env-fp-1",
-    evidence_scope: agenticEvidenceScope,
-    evidence: [
-      {
-        handle_id: "evh_aabbccddeeff00112233445566778899",
-        kind: "search_hit" as const,
-        source_tool: "search_current_article",
-        snippet: "climate change impacts",
-        unit_id: "u1",
-        anchor_segment_id: "s1",
-        rag_citation: {
-          rag_substrate_id: "substrate-1",
-          index_run_id: "index-run-1",
-          index_version: "v1",
-          plan_content_sha256: "plan-sha-abc",
-          source_scope: "main_reading_text" as const,
-          block_type: "paragraph",
-          chunk_id: "chunk-1",
-          content_sha256: "content-sha-def",
-          canonical_text_start_utf16: 10,
-          canonical_text_end_utf16: 42,
-          snippet: "climate change impacts",
-          score: 0.91,
-          stable_document_id: "doc-stable-1",
-          base_id: "base-1",
-          record_generation: 1,
-          block_ids: ["b1"],
-          unit_ids: ["u1"],
-          anchor_segment_ids: ["s1"],
-        },
-      },
-    ],
   };
 
   it("completes temporary assistant from agentic answer_text without reading content_md", () => {
@@ -3727,23 +3714,19 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.regenerate_preview).toBe(false);
     // Must not invent legacy article_rag sidecar from agentic evidence.
     expect(message.article_rag ?? null).toBeNull();
-    // Agentic evidence is stored on the UI state, not mapped into legacy evidence DTO.
+    // Public v2: no raw evidence / handles in browser state.
     expect(message.evidence).toEqual([]);
-    expect(message.agentic_evidence).toEqual(agenticCompleted.evidence);
-    // R3B0-B: hot completed stores message-level evidence_scope.
-    expect(message.agentic_evidence_scope).toEqual(agenticEvidenceScope);
+    expect(message.agentic_evidence).toBeNull();
+    expect(message.agentic_evidence_scope).toBeNull();
+    expect(message.agentic_citations).toEqual(agenticCompleted.citations);
+    expect(message.agentic_answer_blocks).toEqual(agenticCompleted.answer_blocks);
     expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("hot completed with missing/null evidence_scope stores null scope", () => {
+  it("hot completed stores null scope (server-owned fence)", () => {
     const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
-    const withoutScope = {
-      ...agenticCompleted,
-      evidence_scope: undefined,
-    };
-    delete (withoutScope as { evidence_scope?: unknown }).evidence_scope;
-    handler({ event: "message.completed", data: withoutScope });
+    handler({ event: "message.completed", data: agenticCompleted });
     flushRaf();
     expect(getMessages()[0].agentic_evidence_scope ?? null).toBeNull();
 
@@ -3764,14 +3747,12 @@ describe("createSseMessageHandler – agentic stream", () => {
     ]);
 
     const terminal = {
-      execution_version: "reader_record_ask_agentic_v1",
+      execution_version: "reader_record_ask_agentic_v2",
       final_status: "failed",
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       terminal_reason: "agentic_model_unconfigured: no validated model",
-      rejected_handles: [],
     };
 
     handler({ event: "agentic.terminal", data: terminal });
@@ -3796,14 +3777,12 @@ describe("createSseMessageHandler – agentic stream", () => {
     ]);
 
     const terminal = {
-      execution_version: "reader_record_ask_agentic_v1",
+      execution_version: "reader_record_ask_agentic_v2",
       final_status: "context_stale",
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       terminal_reason: "generation mismatch",
-      rejected_handles: [],
     };
 
     handler({ event: "message.interrupted", data: terminal });
@@ -3825,18 +3804,17 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.run_started",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         message_id: "msg-agentic-1",
         thread_id: "thread-1",
         turn_run_id: "turn-run-1",
-        envelope_fingerprint: "env-fp-1",
         has_initial_selection: true,
       },
     });
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         phase: "agent_running",
         summary: "Running Reading Record Ask agent",
       },
@@ -3930,10 +3908,20 @@ describe("createSseMessageHandler – agentic stream", () => {
   });
 
   it("clears prior agentic_evidence on legacy message.completed", () => {
+    const priorEvidence = [
+      {
+        handle_id: "evh_" + "ab".repeat(16),
+        kind: "search_hit" as const,
+        source_tool: "search_current_article",
+        snippet: "old",
+        rag_citation: null,
+      },
+    ];
     const { handler, getMessages } = setupHandler([
       makeStreamingAssistant({
         id: "msg-1",
-        agentic_evidence: agenticCompleted.evidence,
+        agentic_evidence: priorEvidence as never,
+        agentic_citations: agenticCompleted.citations,
       }),
     ], "msg-1");
 
@@ -3970,18 +3958,17 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.run_started",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         message_id: "msg-agentic-1",
         thread_id: "thread-1",
         turn_run_id: "turn-1",
-        envelope_fingerprint: "fp",
         has_initial_selection: false,
       },
     });
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         sequence: 1,
         phase: "reading_context",
         activity: "started",
@@ -3995,7 +3982,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         sequence: 1,
         phase: "composing_answer",
         activity: "started",
@@ -4006,7 +3993,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         sequence: 2,
         phase: "composing_answer",
         activity: "started",
@@ -4034,7 +4021,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         sequence: 9,
         phase: "validating_evidence",
         activity: "started",
@@ -4101,18 +4088,17 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.run_started",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         message_id: "msg-agentic-1",
         thread_id: "thread-1",
         turn_run_id: "turn-1",
-        envelope_fingerprint: "fp",
         has_initial_selection: false,
       },
     });
     handler({
       event: "agentic.progress",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         sequence: 1,
         phase: "agent_running",
         activity: "started",
@@ -4141,14 +4127,12 @@ describe("createSseMessageHandler – agentic stream", () => {
     handler({
       event: "agentic.terminal",
       data: {
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "failed",
         message_id: "msg-failed-1",
         thread_id: "thread-1",
         turn_run_id: "turn-1",
-        envelope_fingerprint: "fp",
         terminal_reason: "agent_run_failed",
-        rejected_handles: [],
       },
     });
     flushRaf();
@@ -4189,12 +4173,9 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
 
   const agenticSearchHitEvidence = [
     {
-      handle_id: "evh_aabbccddeeff00112233445566778899",
       kind: "search_hit" as const,
       source_tool: "search_current_article",
       snippet: "climate change impacts",
-      unit_id: "u1",
-      anchor_segment_id: "s1",
       rag_citation: {
         rag_substrate_id: "substrate-secret",
         index_run_id: "index-run-secret",
@@ -4218,18 +4199,35 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     },
   ];
 
+  const agenticCompletedCitations = [
+    {
+      citation_id: "c1",
+      source_kind: "article" as const,
+      snippet: "climate change impacts",
+    },
+  ];
+
+  const agenticCompletedAnswerBlocks = [
+    {
+      text: "Climate change is discussed in paragraph 2.",
+      citation_ids: ["c1"],
+    },
+  ];
+
   const agenticCompletedPayload = {
-    execution_version: "reader_record_ask_agentic_v1",
+    execution_version: "reader_record_ask_agentic_v2",
     final_status: "ok",
     answer_text: "Climate change is discussed in paragraph 2.",
+    answer_blocks: agenticCompletedAnswerBlocks,
+    citations: agenticCompletedCitations,
+    knowledge_mode: "article_grounded",
+    source_status: null,
     message_id: "msg-agentic-1",
     thread_id: "thread-1",
     turn_run_id: "turn-run-1",
-    envelope_fingerprint: "env-fp-1",
-    evidence: agenticSearchHitEvidence,
   };
 
-  it("stores and renders agentic search_hit evidence without leaking internal fields", async () => {
+  it("stores and renders agentic inline citations without leaking internal fields", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
       onEvent({ event: "message.completed", data: agenticCompletedPayload });
@@ -4246,16 +4244,13 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
       expect(screen.getByText("Climate change is discussed in paragraph 2.")).not.toBeNull();
     });
 
-    expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
-    // Expand the disclosure so projected item labels become visible.
-    fireEvent.click(screen.getByRole("button", { name: "依据" }));
-
-    // Title is rendered both as the item heading and as the kind chip.
-    expect(screen.getAllByText("文章检索").length).toBeGreaterThan(0);
-    expect(screen.getByText("climate change impacts")).not.toBeNull();
-    expect(screen.getByText("来自当前文章检索")).not.toBeNull();
+    expect(screen.getByTestId("agentic-answer-blocks")).not.toBeNull();
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
+    expect(screen.getByRole("button", { name: /查看来源/ })).not.toBeNull();
 
     const text = container.textContent ?? "";
+    expect(text).not.toContain("evh_");
+    expect(text).not.toContain("handle_id");
     expect(text).not.toContain("substrate-secret");
     expect(text).not.toContain("index-run-secret");
     expect(text).not.toContain("plan-sha-secret");
@@ -4265,6 +4260,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     expect(text).not.toContain("0.91");
     expect(text).not.toContain("rag_substrate_id");
     expect(text).not.toContain("index_run_id");
+    expect(text).not.toContain("envelope_fingerprint");
     // Raw UTF-16 offsets must not be shown as user-facing text.
     expect(text).not.toContain("canonical_text_start_utf16");
     expect(text).not.toContain("canonicalTextStartUtf16");
@@ -4283,8 +4279,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
       expect(screen.getByText("解释完成。")).not.toBeNull();
     });
 
-    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
-    expect(screen.queryByText("来自当前文章检索")).toBeNull();
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
   });
 
   it("does not render agentic evidence disclosure when evidence is empty", async () => {
@@ -4296,7 +4291,8 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
           ...agenticCompletedPayload,
           message_id: "msg-agentic-empty",
           answer_text: "No citations this turn.",
-          evidence: [],
+          answer_blocks: [],
+          citations: [],
         },
       });
     });
@@ -4312,7 +4308,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
       expect(screen.getByText("No citations this turn.")).not.toBeNull();
     });
 
-    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
   });
 
   it("clears agentic evidence on regenerate placeholder before the next stream", async () => {
@@ -4334,14 +4330,14 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
+      expect(screen.queryByTestId("agentic-sources")).toBeNull();
     });
 
     const regenerateButton = await screen.findByRole("button", { name: "重新生成" });
     fireEvent.click(regenerateButton);
 
     await waitFor(() => {
-      expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+      expect(screen.queryByTestId("agentic-sources")).toBeNull();
     });
   });
 });
@@ -4434,16 +4430,29 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     stable_document_id: "doc-stable-1",
   };
 
-  it("maps agentic completed history into agentic_evidence and clears article_rag", () => {
+  it("maps agentic completed history to public citations and clears article_rag", () => {
     const [normalized] = normalizeReaderAskMessages([
       createAssistantMessage({
         id: "msg-history-1",
         content_md: "Climate change is discussed in paragraph 2.",
         status: "completed",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
         agentic_evidence_scope: historyScope,
+        agentic_answer_blocks: [
+          {
+            text: "Climate change is discussed in paragraph 2.",
+            citation_ids: ["c1"],
+          },
+        ],
+        agentic_citations: [
+          {
+            citation_id: "c1",
+            source_kind: "article",
+            snippet: "climate change impacts",
+          },
+        ],
         evidence: [],
         article_rag: {
           status: "available",
@@ -4456,27 +4465,30 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 
     expect(normalized.content_md).toBe("Climate change is discussed in paragraph 2.");
     expect(normalized.status).toBe("completed");
-    expect(normalized.execution_version).toBe("reader_record_ask_agentic_v1");
+    expect(normalized.execution_version).toBe("reader_record_ask_agentic_v2");
     expect(normalized.final_status).toBe("ok");
-    expect(normalized.agentic_evidence).toEqual(searchHitEvidence);
-    expect(normalized.agentic_evidence_scope).toEqual(historyScope);
+    // Public v2: never hydrate raw evidence / scope into browser state.
+    expect(normalized.agentic_evidence).toBeNull();
+    expect(normalized.agentic_evidence_scope).toBeNull();
+    expect(normalized.agentic_citations?.[0]?.citation_id).toBe("c1");
     expect(normalized.article_rag).toBeNull();
     expect(normalized.evidence).toEqual([]);
   });
 
-  it("cold history missing/null scope → null; malformed scope dropped", () => {
+  it("cold history never stores scope identity in browser state", () => {
     const [missing] = normalizeReaderAskMessages([
       createAssistantMessage({
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
       }),
     ]);
     expect(missing.agentic_evidence_scope ?? null).toBeNull();
+    expect(missing.agentic_evidence).toBeNull();
 
     const [explicitNull] = normalizeReaderAskMessages([
       createAssistantMessage({
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
         agentic_evidence_scope: null,
@@ -4486,7 +4498,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 
     const [malformed] = normalizeReaderAskMessages([
       createAssistantMessage({
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
         agentic_evidence_scope: {
@@ -4506,7 +4518,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
           id: `msg-terminal-${status}`,
           content_md: "",
           status,
-          execution_version: "reader_record_ask_agentic_v1",
+          execution_version: "reader_record_ask_agentic_v2",
           final_status: finalStatus,
           agentic_evidence: null,
           agentic_evidence_scope: historyScope,
@@ -4586,7 +4598,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     const [invalidEvidence] = normalizeReaderAskMessages([
       createAssistantMessage({
         content_md: "answer",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: [{ not: "valid" }] as unknown as ReaderAskUiMessageDto["agentic_evidence"],
       }),
@@ -4598,7 +4610,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     const [forgedVersion] = normalizeReaderAskMessages([
       createAssistantMessage({
         content_md: "answer",
-        execution_version: "not-a-real-version" as unknown as "reader_record_ask_agentic_v1",
+        execution_version: "not-a-real-version" as unknown as "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
         article_rag: {
@@ -4632,9 +4644,22 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
         id: "msg-history-1",
         content_md: "Climate change is discussed in paragraph 2.",
         status: "completed",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "ok",
         agentic_evidence: searchHitEvidence,
+        agentic_answer_blocks: [
+          {
+            text: "Climate change is discussed in paragraph 2.",
+            citation_ids: ["c1"],
+          },
+        ],
+        agentic_citations: [
+          {
+            citation_id: "c1",
+            source_kind: "article" as const,
+            snippet: "climate change impacts",
+          },
+        ],
         evidence: [],
         article_rag: null,
       }),
@@ -4646,11 +4671,9 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
       expect(screen.getByText("Climate change is discussed in paragraph 2.")).not.toBeNull();
     });
 
-    expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "依据" }));
-    expect(screen.getAllByText("文章检索").length).toBeGreaterThan(0);
-    expect(screen.getByText("climate change impacts")).not.toBeNull();
-    expect(screen.getByText("来自当前文章检索")).not.toBeNull();
+    expect(screen.getByTestId("agentic-answer-blocks")).not.toBeNull();
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
+    expect(screen.getByRole("button", { name: /查看来源/ })).not.toBeNull();
 
     const text = container.textContent ?? "";
     for (const forbidden of [
@@ -4663,6 +4686,8 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
       "0.91",
       "rag_substrate_id",
       "envelope_fingerprint",
+      "evh_",
+      "handle_id",
     ]) {
       expect(text).not.toContain(forbidden);
     }
@@ -4685,7 +4710,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
         id: "msg-stale-1",
         content_md: "",
         status: "interrupted",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "context_stale",
         agentic_evidence: null,
         evidence: [],
@@ -4698,7 +4723,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    expect(screen.queryByTestId("agentic-evidence-disclosure")).toBeNull();
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
     // No pseudo answer body from empty content_md.
     expect(screen.queryByText("Climate change is discussed in paragraph 2.")).toBeNull();
     // Terminal reload must not surface stream onError copy.
@@ -4708,59 +4733,16 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R3C-A Source UI integration (real click / pending / feedback)
+// ASK-PROV-P3-R2: v2 inline citations (no fake jump until typed-location adapter)
 // ---------------------------------------------------------------------------
 
-describe("AiWorkspacePanel agentic source navigation UI", () => {
-  const scope = {
-    reading_record_id: "record-1",
-    base_id: "base-1",
-    record_generation: 1,
-    stable_document_id: "doc-stable-1",
-  };
+describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
-  const completeSearchHit = {
-    handle_id: "evh_aabbccddeeff00112233445566778899",
-    kind: "search_hit" as const,
-    source_tool: "search_current_article",
-    snippet: "climate change impacts",
-    unit_id: "u1",
-    anchor_segment_id: "s1",
-    rag_citation: {
-      rag_substrate_id: "substrate-secret",
-      index_run_id: "index-run-secret",
-      index_version: "v1",
-      plan_content_sha256: "plan-sha-secret",
-      source_scope: "main_reading_text" as const,
-      block_type: "paragraph",
-      chunk_id: "chunk-1",
-      content_sha256: "content-sha-secret",
-      canonical_text_start_utf16: 10,
-      canonical_text_end_utf16: 42,
-      snippet: "climate change impacts",
-      score: 0.91,
-      stable_document_id: "doc-stable-1",
-      base_id: "base-1",
-      record_generation: 1,
-      block_ids: ["b1"],
-      unit_ids: ["u1"],
-      anchor_segment_ids: ["s1"],
-    },
-  };
-
-  const initialAnchor = {
-    handle_id: "evh_11223344556677889900aabbccddeeff",
-    kind: "initial_anchor" as const,
-    source_tool: "initial_anchor",
-    snippet: "selected sentence",
-    unit_id: "u1",
-    anchor_segment_id: "s1",
-  };
-
-  function setupPanel(
-    messages: ReaderAskUiMessageDto[],
-    onNavigate?: AiWorkspacePanelProps["onNavigateAgenticSource"],
-  ) {
+  it("shows InlineCitation hover content without jump-to-source button", async () => {
     vi.stubGlobal("fetch", mockFetch());
     vi.stubGlobal(
       "ResizeObserver",
@@ -4771,298 +4753,53 @@ describe("AiWorkspacePanel agentic source navigation UI", () => {
       },
     );
     HTMLElement.prototype.scrollIntoView = vi.fn();
-    mockThreadMessages(messages);
-    return renderPanel({
-      onNavigateAgenticSource: onNavigate,
-    });
-  }
-
-  async function openEvidenceDisclosure() {
-    await waitFor(() => {
-      expect(screen.getByTestId("agentic-evidence-disclosure")).not.toBeNull();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "依据" }));
-  }
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
-
-  it("shows navigate button when scope is complete; static when scope missing", async () => {
-    const onNavigate = vi.fn(async () => ({
-      status: "navigated" as const,
-      mode: "unit" as const,
-      targetId: "u1",
-    }));
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer with sources.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [completeSearchHit],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    expect(
-      screen.getByRole("button", { name: "定位到文章中的检索依据" }),
-    ).not.toBeNull();
-
-    cleanup();
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Legacy scope missing.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [completeSearchHit],
-          agentic_evidence_scope: null,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    expect(
-      screen.queryByRole("button", { name: "定位到文章中的检索依据" }),
-    ).toBeNull();
-    expect(screen.queryByText("跳到文章位置")).toBeNull();
-  });
-
-  // R4-A1 rework: "partial search_hit" (search_hit without rag_citation) is
-  // now illegal under the strict guard — isReaderAskAgenticEvidenceList
-  // rejects the whole list, so the disclosure would not render. The legal
-  // non-navigable kind is `observation` (no rag_citation, no nav button).
-  it("observation stays static even with scope", async () => {
-    const onNavigate = vi.fn(async () => ({
-      status: "navigated" as const,
-      mode: "unit" as const,
-      targetId: "u1",
-    }));
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [
-            {
-              handle_id: "evh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              kind: "observation",
-              source_tool: "initial_anchor",
-              snippet: "obs",
-            },
-          ],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    expect(screen.queryByText("跳到文章位置")).toBeNull();
-    expect(screen.getAllByText("观察结果").length).toBeGreaterThan(0);
-    expect(onNavigate).not.toHaveBeenCalled();
-  });
-
-  it("click builds correct descriptor and shows navigated feedback", async () => {
-    const onNavigate = vi.fn(async (source) => {
-      expect(source).toMatchObject({
-        handleId: completeSearchHit.handle_id,
-        kind: "search_hit",
-        evidenceScope: scope,
-        ragNavigation: {
-          stableDocumentId: "doc-stable-1",
-          baseId: "base-1",
-          recordGeneration: 1,
-          unitIds: ["u1"],
-          anchorSegmentIds: ["s1"],
-        },
-      });
-      expect(source).not.toHaveProperty("snippet");
-      expect(JSON.stringify(source)).not.toContain("substrate-secret");
-      expect(JSON.stringify(source)).not.toContain("fingerprint");
-      return {
-        status: "navigated" as const,
-        mode: "anchor_segment" as const,
-        targetId: "s1",
-      };
-    });
-
-    const { container } = setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer stays.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [completeSearchHit],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-
-    await openEvidenceDisclosure();
-    fireEvent.click(screen.getByRole("button", { name: "定位到文章中的检索依据" }));
+    mockThreadMessages([
+      createAssistantMessage({
+        id: "msg-cite-1",
+        content_md: "Answer stays.",
+        execution_version: "reader_record_ask_agentic_v2",
+        final_status: "ok",
+        agentic_answer_blocks: [
+          { text: "Answer stays.", citation_ids: ["c1", "c2"] },
+        ],
+        agentic_citations: [
+          {
+            citation_id: "c1",
+            source_kind: "article",
+            snippet: "climate change impacts",
+          },
+          {
+            citation_id: "c2",
+            source_kind: "article",
+            snippet: "second excerpt",
+          },
+        ],
+        agentic_evidence: null,
+        agentic_evidence_scope: null,
+      }),
+    ]);
+    const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(onNavigate).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
-        "已定位到文章中的相关位置",
-      );
+      expect(screen.getByTestId("agentic-answer-blocks")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("agentic-sources")).toBeNull();
+    // Typed-location adapter not wired: no fake jump control / no "已定位".
+    expect(screen.queryByTestId("agentic-citation-navigate-c1")).toBeNull();
+    expect(screen.queryByText("跳转到原文")).toBeNull();
+    expect(screen.queryByText("已定位到文章中的相关位置")).toBeNull();
+
+    const trigger = screen.getByRole("button", { name: /查看来源/ });
+    fireEvent.mouseEnter(trigger);
+    fireEvent.click(trigger);
+    await waitFor(() => {
+      expect(screen.getByText("climate change impacts")).not.toBeNull();
     });
 
-    // Answer unchanged; no answer-level error chrome.
-    expect(screen.getByText("Answer stays.")).not.toBeNull();
-    expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
     const text = container.textContent ?? "";
-    expect(text).not.toContain("s1");
-    expect(text).not.toContain(completeSearchHit.handle_id);
-    expect(text).not.toContain("substrate-secret");
-  });
-
-  it("shows safe feedback for stale and not-found; never surfaces enums", async () => {
-    const onNavigate = vi
-      .fn()
-      .mockResolvedValueOnce({ status: "stale_generation" })
-      .mockResolvedValueOnce({
-        status: "target_not_found",
-        attemptedModes: ["unit"],
-      });
-
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [initialAnchor],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
-    fireEvent.click(btn);
-    await waitFor(() => {
-      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toContain(
-        "版本已更新",
-      );
-    });
-    expect(screen.getByTestId("agentic-source-nav-feedback").textContent).not.toContain(
-      "stale_generation",
-    );
-
-    fireEvent.click(btn);
-    await waitFor(() => {
-      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toContain(
-        "未能在当前文章中找到",
-      );
-    });
-  });
-
-  it("pending prevents double-click; reject maps to safe retry message without onError", async () => {
-    let release!: (value: { status: "navigated"; mode: "unit"; targetId: string }) => void;
-    const deferred = new Promise<{
-      status: "navigated";
-      mode: "unit";
-      targetId: string;
-    }>((resolve) => {
-      release = resolve;
-    });
-    const onNavigate = vi.fn(() => deferred);
-    const onToggle = vi.fn();
-
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer body.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [initialAnchor],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-
-    await openEvidenceDisclosure();
-    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
-    fireEvent.click(btn);
-    fireEvent.click(btn);
-    expect(onNavigate).toHaveBeenCalledTimes(1);
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
-
-    release({ status: "navigated", mode: "unit", targetId: "u1" });
-    await waitFor(() => {
-      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
-        "已定位到文章中的相关位置",
-      );
-    });
-    expect(onToggle).not.toHaveBeenCalled();
-    expect(screen.getByText("Answer body.")).not.toBeNull();
-  });
-
-  it("callback reject shows safe fallback and does not call answer-level errors", async () => {
-    const onNavigate = vi.fn(async () => {
-      throw new Error("SECRET_DOM_ADAPTER_CRASH");
-    });
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer body.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [completeSearchHit],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    fireEvent.click(screen.getByRole("button", { name: "定位到文章中的检索依据" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("agentic-source-nav-feedback").textContent).toBe(
-        "暂时无法定位，请稍后重试",
-      );
-    });
-    expect(screen.queryByText(/SECRET_DOM/)).toBeNull();
-    expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
-    expect(screen.getByText("Answer body.")).not.toBeNull();
-  });
-
-  it("keyboard activation works and feedback has aria-live polite", async () => {
-    const onNavigate = vi.fn(async () => ({
-      status: "unavailable" as const,
-      reason: "page_identity_incomplete" as const,
-    }));
-    setupPanel(
-      [
-        createAssistantMessage({
-          content_md: "Answer.",
-          execution_version: "reader_record_ask_agentic_v1",
-          final_status: "ok",
-          agentic_evidence: [initialAnchor],
-          agentic_evidence_scope: scope,
-        }),
-      ],
-      onNavigate,
-    );
-    await openEvidenceDisclosure();
-    const btn = screen.getByRole("button", { name: "定位到文章中的初始选区" });
-    btn.focus();
-    fireEvent.keyDown(btn, { key: "Enter", code: "Enter" });
-    // Click still needed for button default; also fire click as keyboard activation path
-    fireEvent.click(btn);
-    await waitFor(() => {
-      const feedback = screen.getByTestId("agentic-source-nav-feedback");
-      expect(feedback.getAttribute("aria-live")).toBe("polite");
-      expect(feedback.textContent).toContain("尚未准备好");
-    });
-    expect(onNavigate).toHaveBeenCalled();
+    expect(text).not.toContain("evh_");
+    expect(text).not.toContain("handle_id");
+    expect(screen.getByText("Answer stays.")).not.toBeNull();
   });
 });
 
@@ -5122,14 +4859,12 @@ describe("AiWorkspacePanel – terminal error classification", () => {
 
   function agenticTerminal(overrides: Record<string, unknown> = {}) {
     return {
-      execution_version: "reader_record_ask_agentic_v1",
+      execution_version: "reader_record_ask_agentic_v2",
       final_status: "failed",
       message_id: "msg-failed-1",
       thread_id: "thread-1",
       turn_run_id: "turn-1",
-      envelope_fingerprint: "fp",
       terminal_reason: null,
-      rejected_handles: [],
       ...overrides,
     };
   }
@@ -5248,7 +4983,7 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
     mockThreadMessages([
       createAssistantMessage({
         status: "interrupted",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "context_stale",
         content_md: "partial answer",
       }),
@@ -5262,7 +4997,7 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
     mockThreadMessages([
       createAssistantMessage({
         status: "interrupted",
-        execution_version: "reader_record_ask_agentic_v1",
+        execution_version: "reader_record_ask_agentic_v2",
         final_status: "cancelled",
         content_md: "",
       }),

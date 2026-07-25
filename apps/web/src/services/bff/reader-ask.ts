@@ -19,6 +19,8 @@ import {
   resetUpstreamReadingRecordAskThread,
   retryUpstreamReaderAskMessage,
   retryUpstreamReadingRecordAskMessage,
+  navigateUpstreamReadingRecordAskCitation,
+  type ReadingRecordAskCitationNavigateResultDto,
 } from "@/services/api/reader-ask";
 import { getWebSession } from "@/services/bff/session";
 import type {
@@ -416,4 +418,32 @@ export async function retryReaderAskMessageForWeb(
       "x-accel-buffering": "no",
     },
   });
+}
+
+/** Secure citation navigate — message_id + citation_id only; server owns fence. */
+export async function navigateReadingRecordAskCitationForWeb(
+  recordId: string,
+  messageId: string,
+  citationId: string,
+): Promise<ReadingRecordAskCitationNavigateResultDto | Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  if (!recordId?.trim()) {
+    return missingReadingRecordIdResponse();
+  }
+  const upstream = await navigateUpstreamReadingRecordAskCitation(
+    recordId,
+    messageId,
+    citationId,
+    session.sessionToken,
+  );
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  return upstream.data;
 }

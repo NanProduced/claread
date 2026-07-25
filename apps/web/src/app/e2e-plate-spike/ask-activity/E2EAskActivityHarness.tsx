@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AiWorkspacePanel } from "@/components/reader/AiWorkspacePanel";
 import type { ReaderAskPageIdentity } from "@/lib/reader-plate/bridges/ask/types";
+import type { SpikeAskActivityApi, SpikeSseScriptEvent } from "./types";
 
 /**
  * R2.5 — E2E harness for Agentic Ask Activity browser acceptance.
@@ -17,34 +18,7 @@ import type { ReaderAskPageIdentity } from "@/lib/reader-plate/bridges/ask/types
  * Gate: ONLY rendered when CLAREAD_ENABLE_E2E_SPIKE === "1".
  */
 
-export type SpikeSseScriptEvent = {
-  event: string;
-  data: Record<string, unknown>;
-  /** When true, stream pauses after this event until releaseNext/releaseAll. */
-  hold?: boolean;
-  /** Optional delay (ms) before emitting this event. */
-  delayMs?: number;
-};
-
-type SpikeAskActivityApi = {
-  ready: boolean;
-  setScript: (events: SpikeSseScriptEvent[]) => void;
-  releaseNext: () => void;
-  releaseAll: () => void;
-  reset: () => void;
-  getStreamState: () => {
-    total: number;
-    emitted: number;
-    waiting: boolean;
-    finished: boolean;
-  };
-};
-
-declare global {
-  interface Window {
-    __spikeAskActivity?: SpikeAskActivityApi;
-  }
-}
+export type { SpikeAskActivityApi, SpikeSseScriptEvent };
 
 const RECORD_ID = "test-record-r2-activity";
 

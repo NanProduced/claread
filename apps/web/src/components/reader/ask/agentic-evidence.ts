@@ -1,4 +1,5 @@
 import type {
+  ReaderAskAgenticCitationDto,
   ReaderAskAgenticEvidenceItemDto,
   ReaderAskAgenticEvidenceKindDto,
   ReaderAskAgenticRagCitationDto,
@@ -10,6 +11,9 @@ import type {
  * Intentionally excludes internal/debug fields such as rag_substrate_id,
  * index_run_id, plan/content hashes, score, and source_scope. Callers must
  * not invent missing navigation and must not format UTF-16 offsets as text.
+ *
+ * Note: public completed DTOs no longer carry evidence; this projection is
+ * retained only for restricted server-side or future adapter consumers.
  */
 export interface AgenticEvidenceRagNavigation {
   stableDocumentId: string;
@@ -34,6 +38,17 @@ export interface AgenticEvidenceDisplayItem {
    * UTF-16 range fields. Never guessed from partial data.
    */
   ragNavigation: AgenticEvidenceRagNavigation | null;
+}
+
+/**
+ * Public citation display item — no internal handles.
+ * Consumed by InlineCitation hover cards.
+ */
+export interface AgenticCitationDisplayItem {
+  citationId: string;
+  sourceKind: ReaderAskAgenticCitationDto["source_kind"];
+  title: string;
+  snippet: string;
 }
 
 const EVIDENCE_KIND_TITLES: Record<ReaderAskAgenticEvidenceKindDto, string> = {
@@ -75,7 +90,6 @@ function projectRagNavigation(
   if (!citation || !isCompleteRagCitationForNavigation(citation)) {
     return null;
   }
-  // Copy arrays so callers cannot mutate the input DTO via the projection.
   return {
     stableDocumentId: citation.stable_document_id,
     baseId: citation.base_id,
@@ -96,8 +110,6 @@ function projectOne(
       ? item.snippet
       : "";
 
-  // Navigation is only meaningful for search_hit with a complete citation.
-  // Other kinds may carry unit/anchor ids but are not projected as ragNavigation.
   const ragNavigation =
     kind === "search_hit" ? projectRagNavigation(item.rag_citation) : null;
 
@@ -116,9 +128,29 @@ function projectOne(
  *
  * Pure, order-preserving, non-mutating. Does **not** map into legacy
  * {@link ReaderAskEvidenceItemDto} or article_rag sidecar shapes.
+ * Public completed payloads no longer include evidence; prefer
+ * {@link projectAgenticCitationsForDisplay}.
  */
 export function projectAgenticEvidenceForDisplay(
   evidence: readonly ReaderAskAgenticEvidenceItemDto[],
 ): AgenticEvidenceDisplayItem[] {
   return evidence.map(projectOne);
+}
+
+/**
+ * Project public citations for InlineCitation. No handle join.
+ */
+export function projectAgenticCitationsForDisplay(
+  citations: readonly ReaderAskAgenticCitationDto[],
+): AgenticCitationDisplayItem[] {
+  return citations.map((citation) => ({
+    citationId: citation.citation_id,
+    sourceKind: citation.source_kind,
+    title:
+      citation.source_kind === "article" ? "文章依据" : "网络来源",
+    snippet:
+      typeof citation.snippet === "string" && citation.snippet.length > 0
+        ? citation.snippet
+        : "",
+  }));
 }

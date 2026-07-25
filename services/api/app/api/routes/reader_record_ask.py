@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import get_settings
 from app.schemas.reader_ask import (
@@ -19,8 +20,32 @@ from app.schemas.reader_ask import (
 from app.schemas.reader_record_ask_stream import ReaderRecordAskThreadDetail
 from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_record_ask import service as rr_ask_svc
+from app.services.reader_record_ask.citation_navigation import (
+    load_live_document_fence,
+    resolve_citation_navigation,
+)
+from app.services.reader_record_ask.repository import ReaderRecordAskRepository
 
 router = APIRouter(tags=["reader-record-ask"])
+
+
+class CitationNavigateLocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str | None = None
+    anchor_segment_id: str | None = None
+    canonical_text_start_utf16: int | None = None
+    canonical_text_end_utf16: int | None = None
+
+
+class CitationNavigateResponse(BaseModel):
+    """Public navigate response — typed location only, no handles/identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    location: CitationNavigateLocation | None = None
+    reason: str | None = None
 
 
 def _is_dev_error_mode() -> bool:
@@ -106,6 +131,71 @@ async def get_reading_record_ask_thread(
         user_id=UUID(current_user.user_id),
         reading_record_id=reading_record_id,
         thread_id=thread_id,
+    )
+
+
+@router.post(
+    "/reader/records/{reading_record_id}/ask/messages/{message_id}/citations/{citation_id}/navigate",
+    response_model=CitationNavigateResponse,
+    summary="Securely resolve a public citation_id for article navigation",
+)
+async def navigate_reading_record_ask_citation(
+    reading_record_id: str,
+    message_id: UUID,
+    citation_id: str,
+    current_user: AuthUserDep,
+) -> CitationNavigateResponse:
+    """Client path submits only message_id + citation_id.
+
+    LiveDocumentFence is loaded from authoritative reading-record /
+    stable-document snapshot data. Client bodies cannot supply or override
+    base_id / generation / stable_document_id. Response never includes
+    handles, internal identity, or raw evidence.
+    """
+    user_id = UUID(current_user.user_id)
+    record_id = UUID(reading_record_id)
+
+    live_fence = await load_live_document_fence(
+        user_id=user_id,
+        reading_record_id=record_id,
+    )
+    if live_fence is None:
+        return CitationNavigateResponse(
+            status="unavailable",
+            reason="record_fence_unavailable",
+        )
+
+    repo = ReaderRecordAskRepository()
+    row = await repo.get_message_restricted_evidence_for_navigation(
+        user_id=user_id,
+        reading_record_id=record_id,
+        message_id=message_id,
+    )
+    if row is None:
+        return CitationNavigateResponse(status="not_found", reason="message_not_found")
+    if row.get("final_status") != "ok":
+        return CitationNavigateResponse(
+            status="unavailable",
+            reason="message_not_completed",
+        )
+
+    result = resolve_citation_navigation(
+        citation_id=citation_id,
+        restricted_evidence=row.get("resolved_evidence_json"),
+        live_fence=live_fence,
+    )
+    location = None
+    if result.location is not None:
+        location = CitationNavigateLocation(
+            unit_id=result.location.unit_id,
+            anchor_segment_id=result.location.anchor_segment_id,
+            canonical_text_start_utf16=result.location.canonical_text_start_utf16,
+            canonical_text_end_utf16=result.location.canonical_text_end_utf16,
+        )
+    return CitationNavigateResponse(
+        status=result.status,
+        location=location,
+        reason=result.reason,
     )
 
 

@@ -485,6 +485,18 @@ export interface ReaderAskMessageDto {
    * fallback. UI wiring is R3B0-B / R3C (not this transport slice).
    */
   agentic_evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
+  /**
+   * Semantic answer blocks with public message-local citation_ids (c1, c2…).
+   * Hot SSE and cold history both populate this for completed agentic turns.
+   * Null/missing on legacy. Never carries internal evidence handles.
+   */
+  agentic_answer_blocks?: ReaderAskAgenticAnswerBlockDto[] | null;
+  /**
+   * Public citations (citation_id + source_kind + optional snippet).
+   * Hot SSE and cold history both populate this for completed agentic turns.
+   * Null/missing on legacy. Never carries internal evidence handles.
+   */
+  agentic_citations?: ReaderAskAgenticCitationDto[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -515,6 +527,17 @@ export interface ReaderAskMessageUiStateDto {
    * legacy_scope_missing for all source navigation (including search_hit).
    */
   agentic_evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
+  /**
+   * Semantic answer blocks with public citation_ids for inline render.
+   * Null/missing means the completed payload predates blocks or is legacy.
+   */
+  agentic_answer_blocks?: ReaderAskAgenticAnswerBlockDto[] | null;
+  /**
+   * Public citations for InlineCitation (citation_id + snippet).
+   * Null/missing means no verified citations for this message.
+   * Article Sources list is not used for v2 article evidence.
+   */
+  agentic_citations?: ReaderAskAgenticCitationDto[] | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -673,7 +696,11 @@ export interface ReaderAskStreamEnvelopeDto<TData = Record<string, unknown>> {
 // and must never be treated as successful completions.
 // ---------------------------------------------------------------------------
 
+/** Canonical public agentic execution version (SSE / history / completed). */
 export const READER_ASK_AGENTIC_EXECUTION_VERSION =
+  "reader_record_ask_agentic_v2" as const;
+/** Historical cold-load only; never mint new production payloads as v1. */
+export const READER_ASK_AGENTIC_EXECUTION_VERSION_V1 =
   "reader_record_ask_agentic_v1" as const;
 
 export type ReaderAskAgenticExecutionVersionDto =
@@ -744,24 +771,44 @@ export interface ReaderAskAgenticEvidenceScopeDto {
   stable_document_id: string | null;
 }
 
+export interface ReaderAskAgenticCitationDto {
+  citation_id: string;
+  source_kind: "article" | "web";
+  snippet?: string | null;
+}
+
+export interface ReaderAskAgenticAnswerBlockDto {
+  text: string;
+  citation_ids: string[];
+}
+
+export type ReaderAskAgenticKnowledgeModeDto =
+  | "article_grounded"
+  | "general_knowledge"
+  | "web_grounded"
+  | "mixed";
+
+export type ReaderAskAgenticSourceStatusDto = "article_source_unavailable";
+
+export type ReaderAskAgenticLegacyClassificationDto = "legacy_unclassified";
+
 /**
  * Agentic `message.completed` payload. Only emitted for final_status=ok.
- * Distinct from legacy {@link ReaderAskCompletedPayloadDto} (content_md/citations).
+ * Public surface is no-evh: no handles, fingerprints, or raw evidence.
+ * answer_blocks / citations are required arrays (may be empty for
+ * source_unavailable). knowledge_mode / source_status are host-derived.
  */
 export interface ReaderAskAgenticCompletedPayloadDto {
   execution_version: ReaderAskAgenticExecutionVersionDto;
   final_status: "ok";
   answer_text: string;
+  answer_blocks: ReaderAskAgenticAnswerBlockDto[];
+  citations: ReaderAskAgenticCitationDto[];
+  knowledge_mode: ReaderAskAgenticKnowledgeModeDto | null;
+  source_status: ReaderAskAgenticSourceStatusDto | null;
   message_id: string;
   thread_id: string;
   turn_run_id: string;
-  envelope_fingerprint: string;
-  /**
-   * Optional for old v1 transport/history only. New production always sets a
-   * non-null complete scope. Malformed objects fail the completed guard.
-   */
-  evidence_scope?: ReaderAskAgenticEvidenceScopeDto | null;
-  evidence: ReaderAskAgenticEvidenceItemDto[];
 }
 
 /** Non-ok terminal statuses only — `ok` belongs exclusively to message.completed. */
@@ -781,9 +828,7 @@ export interface ReaderAskAgenticTerminalPayloadDto {
   message_id?: string | null;
   thread_id?: string | null;
   turn_run_id?: string | null;
-  envelope_fingerprint?: string | null;
   terminal_reason?: string | null;
-  rejected_handles: string[];
 }
 
 export interface ReaderAskAgenticRunStartedPayloadDto {
@@ -791,7 +836,6 @@ export interface ReaderAskAgenticRunStartedPayloadDto {
   message_id: string;
   thread_id: string;
   turn_run_id: string;
-  envelope_fingerprint: string;
   has_initial_selection: boolean;
 }
 
@@ -1035,6 +1079,58 @@ export function isReaderAskAgenticFinalStatus(
   );
 }
 
+export function isReaderAskAgenticAnswerBlockList(
+  value: unknown,
+): value is ReaderAskAgenticAnswerBlockDto[] {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  return value.every((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const block = item as Record<string, unknown>;
+    return (
+      typeof block.text === "string" &&
+      Array.isArray(block.citation_ids) &&
+      block.citation_ids.every((id) => typeof id === "string")
+    );
+  });
+}
+
+export function isReaderAskAgenticCitationList(
+  value: unknown,
+): value is ReaderAskAgenticCitationDto[] {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  return value.every((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    const citation = item as Record<string, unknown>;
+    return (
+      typeof citation.citation_id === "string" &&
+      (citation.source_kind === "article" || citation.source_kind === "web") &&
+      (citation.snippet == null || typeof citation.snippet === "string") &&
+      !("handle_id" in citation) &&
+      !("rag_navigation" in citation) &&
+      !("web_snapshot" in citation)
+    );
+  });
+}
+
+const READER_ASK_AGENTIC_KNOWLEDGE_MODES = new Set<string>([
+  "article_grounded",
+  "general_knowledge",
+  "web_grounded",
+  "mixed",
+]);
+
+const READER_ASK_AGENTIC_SOURCE_STATUSES = new Set<string>([
+  "article_source_unavailable",
+]);
+
 export function isReaderAskAgenticCompletedPayload(
   data: unknown,
 ): data is ReaderAskAgenticCompletedPayloadDto {
@@ -1048,18 +1144,46 @@ export function isReaderAskAgenticCompletedPayload(
     typeof payload.answer_text !== "string" ||
     typeof payload.message_id !== "string" ||
     typeof payload.thread_id !== "string" ||
-    typeof payload.turn_run_id !== "string" ||
-    typeof payload.envelope_fingerprint !== "string" ||
-    !isReaderAskAgenticEvidenceList(payload.evidence)
+    typeof payload.turn_run_id !== "string"
   ) {
     return false;
   }
-  // evidence_scope: missing or null → old v1 compatible; object → strict guard.
-  // Malformed object rejects the entire completed payload (no half-parse).
-  if (!("evidence_scope" in payload) || payload.evidence_scope == null) {
-    return true;
+  // Public no-evh: reject legacy fields if present.
+  if (
+    "envelope_fingerprint" in payload ||
+    "evidence" in payload ||
+    "evidence_scope" in payload ||
+    "handle_id" in payload
+  ) {
+    return false;
   }
-  return isReaderAskAgenticEvidenceScope(payload.evidence_scope);
+  // Canonical v2 requires answer_blocks + citations arrays (may be empty).
+  // Reject answer-only forgeries that omit structured projection.
+  if (!isReaderAskAgenticAnswerBlockList(payload.answer_blocks)) {
+    return false;
+  }
+  if (!isReaderAskAgenticCitationList(payload.citations)) {
+    return false;
+  }
+  // knowledge_mode: null or legal enum (host-derived).
+  if (
+    !("knowledge_mode" in payload) ||
+    (payload.knowledge_mode != null &&
+      (typeof payload.knowledge_mode !== "string" ||
+        !READER_ASK_AGENTIC_KNOWLEDGE_MODES.has(payload.knowledge_mode)))
+  ) {
+    return false;
+  }
+  // source_status: null or legal enum.
+  if (
+    !("source_status" in payload) ||
+    (payload.source_status != null &&
+      (typeof payload.source_status !== "string" ||
+        !READER_ASK_AGENTIC_SOURCE_STATUSES.has(payload.source_status)))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function isReaderAskAgenticTerminalPayload(
@@ -1076,8 +1200,8 @@ export function isReaderAskAgenticTerminalPayload(
     payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
     typeof status === "string" &&
     READER_ASK_AGENTIC_TERMINAL_STATUSES.has(status) &&
-    Array.isArray(payload.rejected_handles) &&
-    payload.rejected_handles.every((handle) => typeof handle === "string")
+    !("rejected_handles" in payload) &&
+    !("envelope_fingerprint" in payload)
   );
 }
 
@@ -1093,8 +1217,8 @@ export function isReaderAskAgenticRunStartedPayload(
     typeof payload.message_id === "string" &&
     typeof payload.thread_id === "string" &&
     typeof payload.turn_run_id === "string" &&
-    typeof payload.envelope_fingerprint === "string" &&
-    typeof payload.has_initial_selection === "boolean"
+    typeof payload.has_initial_selection === "boolean" &&
+    !("envelope_fingerprint" in payload)
   );
 }
 

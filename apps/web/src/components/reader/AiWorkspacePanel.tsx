@@ -22,6 +22,21 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
+  InlineCitation,
+  InlineCitationCard,
+  InlineCitationCardBody,
+  InlineCitationCardTrigger,
+  InlineCitationCarousel,
+  InlineCitationCarouselContent,
+  InlineCitationCarouselHeader,
+  InlineCitationCarouselIndex,
+  InlineCitationCarouselItem,
+  InlineCitationCarouselNext,
+  InlineCitationCarouselPrev,
+  InlineCitationQuote,
+  InlineCitationSource,
+} from "@/components/ai-elements/inline-citation";
+import {
   Attachment,
   AttachmentInfo,
   AttachmentPreview,
@@ -139,21 +154,19 @@ import type {
   ReaderAskUiMessageDto,
 } from "@/types/api/reader-ask";
 import {
-  isReaderAskAgenticEvidenceList,
-  isReaderAskAgenticEvidenceScope,
+  isReaderAskAgenticAnswerBlockList,
+  isReaderAskAgenticCitationList,
   isReaderAskAgenticFinalStatus,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
-  type ReaderAskAgenticEvidenceItemDto,
-  type ReaderAskAgenticEvidenceScopeDto,
+  type ReaderAskAgenticAnswerBlockDto,
 } from "@/types/api/reader-ask";
 import type {
-  AgenticSourceDescriptor,
   NavigateAgenticSource,
   SourceNavigationResult,
 } from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
 import {
-  projectAgenticEvidenceForDisplay,
-  type AgenticEvidenceDisplayItem,
+  projectAgenticCitationsForDisplay,
+  type AgenticCitationDisplayItem,
 } from "./ask/agentic-evidence";
 import {
   agenticActivityAriaLabel,
@@ -268,7 +281,6 @@ type AskPanelBlockKind =
   | "persisted_supplements"
   | "context_summary"
   | "evidence"
-  | "agentic_evidence"
   | "trace_summary"
   | "article_rag_citations"
   | "citations"
@@ -814,11 +826,13 @@ export function createSseMessageHandler(
           regenerate_preview: false,
           // Agentic path must not carry a legacy article_rag sidecar.
           article_rag: null,
-          // Store raw agentic evidence for UI-safe projection at render time.
-          agentic_evidence: payload.evidence ?? [],
-          // Message-level scope for source navigation fence (R3B0-B).
-          // Missing/null stays null; completed guard already rejects malformed.
-          agentic_evidence_scope: payload.evidence_scope ?? null,
+          // Public v2: no raw evidence / handles in browser state.
+          agentic_evidence: null,
+          agentic_evidence_scope: null,
+          // Semantic answer blocks with public citation_ids.
+          agentic_answer_blocks: payload.answer_blocks ?? null,
+          // Finalizer-minted public citations for InlineCitation only.
+          agentic_citations: payload.citations ?? null,
         };
       }),
     true);
@@ -867,9 +881,11 @@ export function createSseMessageHandler(
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
-          // Terminals never carry navigable sources.
+          // Terminals never carry navigable sources or displayable citations.
           agentic_evidence: null,
           agentic_evidence_scope: null,
+          agentic_answer_blocks: null,
+          agentic_citations: null,
         };
       }),
     true);
@@ -1738,24 +1754,26 @@ function normalizeReaderAskMessages(
     }
 
     // Agentic history: fail closed on evidence — never keep raw invalid payload.
-    const agenticEvidence = isReaderAskAgenticEvidenceList(message.agentic_evidence)
-      ? message.agentic_evidence
+    // Public v2 never hydrates raw agentic evidence / handles into UI state.
+    const agenticEvidence = null;
+    const agenticAnswerBlocks = isReaderAskAgenticAnswerBlockList(
+      message.agentic_answer_blocks,
+    )
+      ? message.agentic_answer_blocks
+      : null;
+    const agenticCitations = isReaderAskAgenticCitationList(message.agentic_citations)
+      ? message.agentic_citations
       : null;
     const finalStatus = isReaderAskAgenticFinalStatus(message.final_status)
       ? message.final_status
       : null;
 
-    // Scope: missing/null → null; complete object → keep; malformed → null (no raw dict).
-    // Non-ok terminals never keep navigable scope (matches hot applyAgenticTerminal).
-    const rawScope = message.agentic_evidence_scope;
-    let agenticEvidenceScope: ReaderAskAgenticEvidenceScopeDto | null =
-      rawScope == null
-        ? null
-        : isReaderAskAgenticEvidenceScope(rawScope)
-          ? rawScope
-          : null;
+    // Non-ok terminals never keep citations (matches hot applyAgenticTerminal).
+    let finalAnswerBlocks = agenticAnswerBlocks;
+    let finalCitations = agenticCitations;
     if (finalStatus != null && finalStatus !== "ok") {
-      agenticEvidenceScope = null;
+      finalAnswerBlocks = null;
+      finalCitations = null;
     }
 
     return {
@@ -1764,9 +1782,11 @@ function normalizeReaderAskMessages(
       // Never invent answers for terminals; keep content_md as returned.
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
       final_status: finalStatus,
-      // Strict guard only; invalid list → null (not raw).
+      // Public v2: never hydrate raw evidence / scope identity into browser state.
       agentic_evidence: agenticEvidence,
-      agentic_evidence_scope: agenticEvidenceScope,
+      agentic_evidence_scope: null,
+      agentic_answer_blocks: finalAnswerBlocks,
+      agentic_citations: finalCitations,
       // Agentic path must not carry legacy article_rag sidecar.
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
@@ -1781,17 +1801,21 @@ export { normalizeReaderAskMessages };
 function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   const blocks: AskPanelBlock[] = [];
 
-  if (submissionModeOf(message) === "quick_action" && message.response_cards.length > 0) {
+  const responseCards = message.response_cards ?? [];
+  if (submissionModeOf(message) === "quick_action" && responseCards.length > 0) {
     blocks.push({ kind: "response_cards" });
   }
   blocks.push({ kind: "answer" });
 
-  if (message.response_cards.length > 0 && !(submissionModeOf(message) === "quick_action")) {
+  if (responseCards.length > 0 && !(submissionModeOf(message) === "quick_action")) {
     blocks.push({ kind: "response_cards" });
   }
   if (
     SHOW_ASK_DEBUG_DISCLOSURES &&
-    (message.context_plan || message.resolved_context_input || message.evidence.length > 0 || message.trace_summary)
+    (message.context_plan ||
+      message.resolved_context_input ||
+      (message.evidence ?? []).length > 0 ||
+      message.trace_summary)
   ) {
     blocks.push({ kind: "context_summary" });
   }
@@ -1801,7 +1825,7 @@ function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   if (message.external_asset_disambiguation?.required) {
     blocks.push({ kind: "external_asset_disambiguation" });
   }
-  if (message.action_proposals.length > 0) {
+  if ((message.action_proposals ?? []).length > 0) {
     blocks.push({ kind: "action_proposals" });
   }
   if ((message.follow_up_suggestions ?? []).length > 0) {
@@ -1816,20 +1840,16 @@ function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
   if (hasRenderableArticleRagCitations(message.article_rag)) {
     blocks.push({ kind: "article_rag_citations" });
   }
-  // Agentic evidence is distinct from legacy article_rag / evidence DTO.
-  // Only render when the completed agentic payload stored non-empty items.
-  if ((message.agentic_evidence ?? []).length > 0) {
-    blocks.push({ kind: "agentic_evidence" });
-  }
-  if (message.citations.length > 0) {
+  // Article citations render inline via answer blocks — no end-of-answer Sources list.
+  if ((message.citations ?? []).length > 0) {
     blocks.push({ kind: "citations" });
   }
-  if (message.tool_trace.length > 0 && message.status !== "streaming") {
+  if ((message.tool_trace ?? []).length > 0 && message.status !== "streaming") {
     blocks.push({ kind: "tool_trace" });
   }
   if (
     pendingSupplementCandidates(message).length > 0 ||
-    message.persisted_supplements.some((item) => item.lifecycle_status === "persisted")
+    (message.persisted_supplements ?? []).some((item) => item.lifecycle_status === "persisted")
   ) {
     blocks.push({ kind: "supplement_candidates" });
   }
@@ -2234,7 +2254,11 @@ function EvidenceDisclosure({
   );
 }
 
-/** Safe Chinese feedback for source navigation — never surfaces enums/ids. */
+/**
+ * Safe Chinese feedback for legacy Reader-owned source navigation.
+ * Kept exported for unit tests / future typed-location adapter wiring.
+ * Must never surface enums or internal ids.
+ */
 export function formatSourceNavigationFeedback(
   result: SourceNavigationResult,
 ): string {
@@ -2259,218 +2283,102 @@ export function formatSourceNavigationFeedback(
   }
 }
 
-function canAttemptAgenticSourceNavigate(
-  raw: ReaderAskAgenticEvidenceItemDto,
-  display: AgenticEvidenceDisplayItem,
-  scope: ReaderAskAgenticEvidenceScopeDto | null,
-): boolean {
-  if (scope == null) return false;
-  if (raw.kind === "observation") return false;
-  if (raw.kind === "search_hit") {
-    return display.ragNavigation != null;
-  }
-  if (
-    raw.kind === "initial_anchor" ||
-    raw.kind === "read_range" ||
-    raw.kind === "article_seed"
-  ) {
-    return Boolean(raw.unit_id || raw.anchor_segment_id);
-  }
-  return false;
-}
-
-function buildAgenticSourceDescriptor(
-  raw: ReaderAskAgenticEvidenceItemDto,
-  display: AgenticEvidenceDisplayItem,
-  scope: ReaderAskAgenticEvidenceScopeDto | null,
-): AgenticSourceDescriptor {
-  return {
-    handleId: raw.handle_id,
-    kind: raw.kind,
-    evidenceScope: scope,
-    unitId: raw.unit_id ?? null,
-    anchorSegmentId: raw.anchor_segment_id ?? null,
-    ragNavigation: display.ragNavigation,
-  };
-}
-
-function navigateLabelForKind(kind: ReaderAskAgenticEvidenceItemDto["kind"]): string {
-  switch (kind) {
-    case "initial_anchor":
-      return "定位到文章中的初始选区";
-    case "read_range":
-      return "定位到文章中的阅读范围";
-    case "search_hit":
-      return "定位到文章中的检索依据";
-    case "article_seed":
-      return "定位到文章中的原文位置";
-    default:
-      return "定位到文章中的依据";
-  }
-}
-
 /**
- * Disclosure for agentic Reading Record Ask evidence + optional source navigation.
+ * Render agentic answer blocks with Markdown + inline AI Elements citations.
  *
- * Projects raw agentic DTOs through `projectAgenticEvidenceForDisplay` so
- * internal fields never reach the DOM. Distinct from legacy EvidenceDisclosure.
- * Navigation uses Ask-facing NavigateAgenticSource only (no identity/DOM props).
+ * Each semantic block reuses MessageResponse (Ask Markdown). Article
+ * InlineCitation appears after the block (public citation_id + snippet only).
+ * No end-of-answer Article Sources.
+ *
+ * Jump-to-source is intentionally **not** shown until a Reader typed-location
+ * adapter consumes the secure navigate API result (message_id + citation_id →
+ * server fence → typed location). Do not announce false "已定位" feedback.
+ * Follow-up: Plate integration passes only typed location — never handles,
+ * evidence scope, or client fence fields.
  */
-function AgenticEvidenceDisclosure({
-  evidence,
-  evidenceScope = null,
-  onNavigateAgenticSource,
-  onAnnounce,
+function AgenticAnswerBlocks({
+  blocks,
+  citations,
 }: {
-  evidence: NonNullable<ReaderAskUiMessageDto["agentic_evidence"]>;
-  evidenceScope?: ReaderAskAgenticEvidenceScopeDto | null;
-  onNavigateAgenticSource?: NavigateAgenticSource;
-  onAnnounce?: (message: string) => void;
+  blocks: ReaderAskAgenticAnswerBlockDto[];
+  citations: AgenticCitationDisplayItem[];
 }) {
-  const [pendingHandleId, setPendingHandleId] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
-
-  if (!evidence || evidence.length === 0) {
-    return null;
-  }
-
-  const items = projectAgenticEvidenceForDisplay(evidence);
-  if (items.length === 0) {
-    return null;
-  }
-
-  const rawByHandle = new Map(evidence.map((item) => [item.handle_id, item]));
-
-  async function handleNavigate(
-    raw: ReaderAskAgenticEvidenceItemDto,
-    display: AgenticEvidenceDisplayItem,
-  ) {
-    if (!onNavigateAgenticSource || pendingHandleId) {
-      return;
-    }
-    setPendingHandleId(raw.handle_id);
-    setFeedback(null);
-    try {
-      const result = await onNavigateAgenticSource(
-        buildAgenticSourceDescriptor(raw, display, evidenceScope ?? null),
-      );
-      const message = formatSourceNavigationFeedback(result);
-      setFeedback(message);
-      onAnnounce?.(message);
-    } catch {
-      // Fail-closed: runtime/DOM/inject errors must not surface as answer failure.
-      // Do not call onError; do not leak exception text.
-      const message = "暂时无法定位，请稍后重试";
-      setFeedback(message);
-      onAnnounce?.(message);
-    } finally {
-      setPendingHandleId(null);
-    }
-  }
+  const citationById = new Map(citations.map((c) => [c.citationId, c]));
 
   return (
-    <Plan
-      className="rounded-[20px] border border-border/70 bg-[color:var(--reader-entry-surface)] py-4 shadow-none backdrop-blur-sm"
-      data-testid="agentic-evidence-disclosure"
-    >
-      <PlanHeader className="gap-3 px-4 pb-3">
-        <div className="space-y-1">
-          <PlanTitle className="text-[0.95rem] text-ink">依据</PlanTitle>
-          <PlanDescription className="text-[12px] leading-5">
-            {`${items.length} 条回答依据`}
-          </PlanDescription>
-        </div>
-        <PlanTrigger aria-label="依据" />
-      </PlanHeader>
-      <PlanContent className="px-4">
-        <Attachments variant="list" className="w-full gap-2.5">
-          {items.map((item) => {
-            const raw = rawByHandle.get(item.handleId);
-            if (!raw) return null;
-            const canNavigate =
-              Boolean(onNavigateAgenticSource) &&
-              canAttemptAgenticSourceNavigate(raw, item, evidenceScope ?? null);
-            const isPending = pendingHandleId === item.handleId;
+    <div className="space-y-3" data-testid="agentic-answer-blocks">
+      {blocks.map((block, idx) => {
+        const blockCitations = (block.citation_ids ?? [])
+          .map((citationId) => citationById.get(citationId))
+          .filter(
+            (citation): citation is AgenticCitationDisplayItem =>
+              citation != null && citation.sourceKind === "article",
+          );
 
-            return (
-              <Attachment
-                key={item.handleId}
-                data={sourceDocumentPart(`agentic-evidence:${item.handleId}`, item.title)}
-                className="items-start rounded-[16px] border border-border/65 bg-background/68 px-3 py-3 shadow-none hover:bg-background/76"
-              >
-                <AttachmentPreview
-                  className="size-10 rounded-[12px] bg-muted/70"
-                  fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />}
-                />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <AttachmentInfo className="text-[13px] font-medium text-ink-soft" />
-                  <Attachments variant="inline" className="max-w-full gap-1.5">
-                    <Attachment
-                      data={sourceDocumentPart(
-                        `agentic-evidence-kind:${item.handleId}`,
-                        item.title,
-                      )}
-                      className="border-border/60 bg-background/84 text-[11px]"
+        return (
+          <div key={`block-${idx}`} data-testid={`agentic-answer-block-${idx}`}>
+            <MessageResponse
+              className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-reader-reading-ink shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-reader-reading-ink [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-reader-reading-ink [&_p+p]:mt-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-reader-reading-ink"
+            >
+              {block.text}
+            </MessageResponse>
+            {blockCitations.length > 0 ? (
+              <div className="mt-1.5 inline-flex flex-wrap items-center gap-1.5">
+                <InlineCitation>
+                  <InlineCitationCard>
+                    <InlineCitationCardTrigger
+                      aria-label={`查看来源 ${blockCitations[0].citationId}${
+                        blockCitations.length > 1
+                          ? ` +${blockCitations.length - 1}`
+                          : ""
+                      } 详情`}
                     >
-                      <AttachmentPreview
-                        fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />}
-                      />
-                      <AttachmentInfo className="text-xs" />
-                    </Attachment>
-                    {item.kind === "search_hit" && item.ragNavigation ? (
-                      <Attachment
-                        data={sourceDocumentPart(
-                          `agentic-evidence-nav:${item.handleId}`,
-                          "来自当前文章检索",
-                        )}
-                        className="border-border/60 bg-background/84 text-[11px]"
-                      >
-                        <AttachmentPreview
-                          fallbackIcon={<Search className="h-3 w-3 text-muted-foreground" />}
-                        />
-                        <AttachmentInfo className="text-xs" />
-                      </Attachment>
-                    ) : null}
-                  </Attachments>
-                  {item.snippet ? (
-                    <p className="text-[12px] leading-6 text-muted-foreground">{item.snippet}</p>
-                  ) : null}
-                  {canNavigate ? (
-                    <button
-                      type="button"
-                      className={cn(
-                        "mt-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium",
-                        "text-ink-soft underline-offset-2 hover:underline",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        isPending ? "opacity-60 pointer-events-none" : "",
+                      {blockCitations.length === 1
+                        ? blockCitations[0].citationId
+                        : `${blockCitations[0].citationId} +${blockCitations.length - 1}`}
+                    </InlineCitationCardTrigger>
+                    <InlineCitationCardBody>
+                      {blockCitations.length === 1 ? (
+                        <InlineCitationSource title={blockCitations[0].title}>
+                          {blockCitations[0].snippet ? (
+                            <InlineCitationQuote>
+                              {blockCitations[0].snippet}
+                            </InlineCitationQuote>
+                          ) : null}
+                        </InlineCitationSource>
+                      ) : (
+                        <InlineCitationCarousel count={blockCitations.length}>
+                          <InlineCitationCarouselHeader>
+                            <div className="flex items-center gap-1">
+                              <InlineCitationCarouselPrev data-testid="inline-citation-carousel-prev" />
+                              <InlineCitationCarouselNext data-testid="inline-citation-carousel-next" />
+                            </div>
+                            <InlineCitationCarouselIndex data-testid="inline-citation-carousel-index" />
+                          </InlineCitationCarouselHeader>
+                          <InlineCitationCarouselContent>
+                            {blockCitations.map((citation) => (
+                              <InlineCitationCarouselItem key={citation.citationId}>
+                                <InlineCitationSource title={citation.title}>
+                                  {citation.snippet ? (
+                                    <InlineCitationQuote>
+                                      {citation.snippet}
+                                    </InlineCitationQuote>
+                                  ) : null}
+                                </InlineCitationSource>
+                              </InlineCitationCarouselItem>
+                            ))}
+                          </InlineCitationCarouselContent>
+                        </InlineCitationCarousel>
                       )}
-                      data-testid={`agentic-source-navigate-${item.handleId}`}
-                      aria-label={navigateLabelForKind(raw.kind)}
-                      disabled={isPending || pendingHandleId !== null}
-                      onClick={() => {
-                        void handleNavigate(raw, item);
-                      }}
-                    >
-                      {isPending ? "定位中…" : "跳到文章位置"}
-                    </button>
-                  ) : null}
-                </div>
-              </Attachment>
-            );
-          })}
-        </Attachments>
-        {feedback ? (
-          <p
-            className="mt-3 px-0.5 text-[12px] leading-5 text-muted-foreground"
-            role="status"
-            aria-live="polite"
-            data-testid="agentic-source-nav-feedback"
-          >
-            {feedback}
-          </p>
-        ) : null}
-      </PlanContent>
-    </Plan>
+                    </InlineCitationCardBody>
+                  </InlineCitationCard>
+                </InlineCitation>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -3123,6 +3031,7 @@ function MessageBubble({
   const candidateSupplements = pendingSupplementCandidates(message);
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
   const hasAnswerContent = Boolean(message.content_md?.trim());
+  const hasAgenticAnswerBlocks = (message.agentic_answer_blocks ?? []).length > 0;
 
   return (
     <div
@@ -3169,7 +3078,14 @@ function MessageBubble({
                             {clarificationText}
                           </SystemMessage>
                         ) : null}
-                        {hasAnswerContent ? (
+                        {hasAgenticAnswerBlocks ? (
+                          <AgenticAnswerBlocks
+                            blocks={message.agentic_answer_blocks ?? []}
+                            citations={projectAgenticCitationsForDisplay(
+                              message.agentic_citations ?? [],
+                            )}
+                          />
+                        ) : hasAnswerContent ? (
                           <MessageResponse
                             className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-reader-reading-ink shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-reader-reading-ink [&_p+p]:mt-3 [&_table]:my-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted"
                           >
@@ -3265,16 +3181,6 @@ function MessageBubble({
                   <ArticleRagCitationList
                     key={`${message.id}-${block.kind}-${index}`}
                     sidecar={message.article_rag}
-                  />
-                ) : null;
-              case "agentic_evidence":
-                return (message.agentic_evidence ?? []).length > 0 ? (
-                  <AgenticEvidenceDisclosure
-                    key={`${message.id}-${block.kind}-${index}`}
-                    evidence={message.agentic_evidence ?? []}
-                    evidenceScope={message.agentic_evidence_scope ?? null}
-                    onNavigateAgenticSource={onNavigateAgenticSource}
-                    onAnnounce={onAnnounce}
                   />
                 ) : null;
               case "context_summary":
@@ -3694,7 +3600,9 @@ export function AiWorkspacePanel({
     if (provenanceSignatureRef.current !== provenanceSignature) {
       provenanceSignatureRef.current = provenanceSignature;
       if (provenanceJoinedParts.length > 0) {
-        setLiveAnnouncement(`Ask Claread 上下文已更新：${provenanceJoinedParts}`);
+        window.setTimeout(() => {
+          setLiveAnnouncement(`Ask Claread 上下文已更新：${provenanceJoinedParts}`);
+        }, 0);
       }
     }
   }, [provenanceSignature, provenanceJoinedParts]);
@@ -4265,6 +4173,8 @@ export function AiWorkspacePanel({
       // Clear agentic evidence so a new turn never inherits prior basis.
       agentic_evidence: null,
       agentic_evidence_scope: null,
+      agentic_answer_blocks: null,
+      agentic_citations: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -4427,6 +4337,8 @@ export function AiWorkspacePanel({
               // Clear agentic evidence so retry does not keep prior basis.
               agentic_evidence: null,
               agentic_evidence_scope: null,
+              agentic_answer_blocks: null,
+              agentic_citations: null,
             }
           : message,
       ),
@@ -4563,7 +4475,7 @@ export function AiWorkspacePanel({
             <ClareadAiMark size="sm" className="shadow-none" badgeClassName="shadow-none" />
             <div className="min-w-0">
               <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink outline-none">Ask Claread</h2>
-              <div aria-live="polite" role="status" className="sr-only">{liveAnnouncement}</div>
+              <div aria-live="polite" role="status" className="sr-only" data-testid="ai-workspace-live-announcement">{liveAnnouncement}</div>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">

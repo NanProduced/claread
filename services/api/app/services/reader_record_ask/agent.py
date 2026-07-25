@@ -60,6 +60,11 @@ Answer shape:
   ``clarification_text`` and exactly ``answer_blocks=[]``. Use it only
   for genuinely missing user intent; a clarification carries no evidence,
   article scope, or knowledge mode.
+- For ``response_kind="source_unavailable"``, return empty
+  ``answer_blocks=[]`` and no ``clarification_text``. Use it only when
+  you cannot reliably locate supporting article evidence for an
+  article-dependent claim. Do not invent free-text copy for this
+  outcome; the host projects the user-visible limitation message.
 - Do not output legacy ``answer_text`` / ``cited_evidence_handles``
   fields. Do not output ``knowledge_mode``; the host derives it after
   validation.
@@ -107,6 +112,8 @@ def create_reading_record_ask_agent(
         output_type=AgentAnswerDraftOutput,
         name=name,
         instructions=_SYSTEM_INSTRUCTIONS,
+        # Canonical AgentRetries map (tools + output). Do not pass the
+        # deprecated output_retries kwarg.
         retries={
             "tools": DEFAULT_TOOL_RETRIES,
             "output": DEFAULT_OUTPUT_RETRIES,

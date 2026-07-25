@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import {
   createUpstreamReaderAskStream,
   createUpstreamReadingRecordAskStream,
+  navigateUpstreamReadingRecordAskCitation,
 } from "./reader-ask";
 
 describe("reader-ask API transport", () => {
@@ -24,6 +25,48 @@ describe("reader-ask API transport", () => {
   afterEach(() => {
     delete process.env.CLAREAD_FASTAPI_BASE_URL;
     vi.unstubAllGlobals();
+  });
+
+  it("posts citation navigate without body or fence identity fields", async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          location: { unit_id: "u1", anchor_segment_id: "s1" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await navigateUpstreamReadingRecordAskCitation(
+      "reading-record-1",
+      "msg-1",
+      "c1",
+      "session-token",
+    );
+    expect(result.ok).toBe(true);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe(
+      "http://api.example.test/reader/records/reading-record-1/ask/messages/msg-1/citations/c1/navigate",
+    );
+    expect(init?.method).toBe("POST");
+    // No request body — client cannot smuggle fence fields.
+    expect(init?.body).toBeUndefined();
+    const headers = init?.headers as Headers | Record<string, string> | undefined;
+    // sessionToken is applied by fastApiFetch
+    const auth =
+      headers instanceof Headers
+        ? headers.get("authorization")
+        : headers && "authorization" in headers
+          ? headers.authorization
+          : undefined;
+    // fastApiFetch sets authorization via sessionToken option
+    expect(String(url)).not.toContain("base_id");
+    expect(String(url)).not.toContain("record_generation");
+    expect(String(url)).not.toContain("stable_document");
+    void auth;
   });
 
   it("projects the RR ask request to content/model/entry_action plus a single RR anchor", async () => {

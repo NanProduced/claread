@@ -20,8 +20,25 @@ from pydantic import (
 )
 
 from app.services.reader_record_ask.evidence import LEGAL_EVIDENCE_KIND_SOURCE
+from app.services.reader_record_ask.finalizer import (
+    PublicAnswerBlock,
+    PublicCitation,
+)
 
+# Historical wire identity retained for cold-load legacy degradation only.
 EXECUTION_VERSION_AGENTIC_V1 = "reader_record_ask_agentic_v1"
+# Canonical public / SSE / history identity for new production turns.
+EXECUTION_VERSION_AGENTIC_V2 = "reader_record_ask_agentic_v2"
+
+KnowledgeModePublic = Literal[
+    "article_grounded",
+    "general_knowledge",
+    "web_grounded",
+    "mixed",
+]
+
+SourceStatusPublic = Literal["article_source_unavailable"]
+LegacyClassification = Literal["legacy_unclassified"]
 
 FinalStatus = Literal[
     "ok",
@@ -187,57 +204,62 @@ class ReaderRecordAskEvidenceScope(BaseModel):
 
 
 class ReaderRecordAskCompletedDTO(BaseModel):
-    """Canonical completed payload for SSE and DB.
+    """Canonical public completed payload for SSE, DB, and cold history.
 
     Only finalizer ``ok`` paths produce this as a successful completed
     event. Stale/invalid paths use :class:`ReaderRecordAskTerminalDTO`
     instead and must not put a displayable answer on completed.
 
-    ``evidence_scope`` is null only for legacy persisted rows; production
-    builders must emit a complete non-null scope object.
+    Public surface is no-evh: no handles, fingerprints, raw evidence, or
+    identity fences. Restricted evidence for server navigation lives only in
+    ``resolved_evidence_json``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v1"] = EXECUTION_VERSION_AGENTIC_V1
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        EXECUTION_VERSION_AGENTIC_V2
+    )
     final_status: Literal["ok"] = "ok"
     answer_text: str
+    answer_blocks: list[PublicAnswerBlock] = Field(default_factory=list)
+    citations: list[PublicCitation] = Field(default_factory=list)
+    knowledge_mode: KnowledgeModePublic | None = None
+    source_status: SourceStatusPublic | None = None
     message_id: str
     thread_id: str
     turn_run_id: str
-    envelope_fingerprint: str
-    # Nullable for historical v1 JSON only — not a valid new production state.
-    evidence_scope: ReaderRecordAskEvidenceScope | None = None
-    evidence: list[ReaderRecordAskEvidenceItem] = Field(default_factory=list)
 
 
 class ReaderRecordAskTerminalDTO(BaseModel):
     """Typed non-ok terminal (stale / invalid citations / cancelled / failed).
 
     Emitted as ``message.interrupted`` or ``error`` depending on status.
-    Never carries a displayable answer for stale/invalid.
+    Never carries a displayable answer for stale/invalid. Public surface is
+    no-evh: no fingerprints or rejected handles.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v1"] = EXECUTION_VERSION_AGENTIC_V1
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        EXECUTION_VERSION_AGENTIC_V2
+    )
     final_status: FinalStatus
     message_id: str | None = None
     thread_id: str | None = None
     turn_run_id: str | None = None
-    envelope_fingerprint: str | None = None
     terminal_reason: str | None = None
-    rejected_handles: list[str] = Field(default_factory=list)
 
 
 class ReaderRecordAskRunStartedDTO(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v1"] = EXECUTION_VERSION_AGENTIC_V1
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        EXECUTION_VERSION_AGENTIC_V2
+    )
     message_id: str
     thread_id: str
     turn_run_id: str
-    envelope_fingerprint: str
     has_initial_selection: bool
 
 
@@ -250,7 +272,9 @@ class ReaderRecordAskProgressDTO(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    execution_version: Literal["reader_record_ask_agentic_v1"] = EXECUTION_VERSION_AGENTIC_V1
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        EXECUTION_VERSION_AGENTIC_V2
+    )
     sequence: int = Field(ge=1)
     phase: ProgressPhase
     activity: ProgressActivity
@@ -262,7 +286,11 @@ class ReaderRecordAskProgressDTO(BaseModel):
 
 
 def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
-    """Project a server observation to the public evidence item."""
+    """Project a server observation to a restricted (non-public) evidence item.
+
+    Used only for internal ``resolved_evidence_json`` / navigation. Must not be
+    attached to public completed DTOs.
+    """
     handle = obs.handle
     rag_public = None
     rag = getattr(obs, "rag_citation", None)
@@ -368,12 +396,18 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     article_rag_citations: list[ReaderAskArticleRagCitation] = Field(default_factory=list)
     # Agentic-only history fields. Omitted for legacy RR messages via
     # response_model_exclude_none on the RR thread-detail route.
-    execution_version: Literal["reader_record_ask_agentic_v1"] | None = None
+    execution_version: (
+        Literal["reader_record_ask_agentic_v1", "reader_record_ask_agentic_v2"]
+        | None
+    ) = None
     final_status: FinalStatus | None = None
-    agentic_evidence: list[ReaderRecordAskEvidenceItem] | None = None
-    # Message-level scope from completed DTO; null for old v1 / terminals.
-    # Navigation consumers must treat null as legacy_scope_missing.
-    agentic_evidence_scope: ReaderRecordAskEvidenceScope | None = None
+    # Public v2 blocks/citations — no handles. Null on terminals / legacy.
+    agentic_answer_blocks: list[PublicAnswerBlock] | None = None
+    agentic_citations: list[PublicCitation] | None = None
+    knowledge_mode: KnowledgeModePublic | None = None
+    source_status: SourceStatusPublic | None = None
+    # Old flat/v1 rows that only retain answer text.
+    legacy_classification: LegacyClassification | None = None
     created_at: str
     updated_at: str
 

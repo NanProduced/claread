@@ -12,7 +12,7 @@ from uuid import UUID
 
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
-from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V1
+from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
 
 
 class ReaderRecordAskRepository:
@@ -156,7 +156,7 @@ class ReaderRecordAskRepository:
                 generation,
                 turn_id,
                 status,
-                EXECUTION_VERSION_AGENTIC_V1,
+                EXECUTION_VERSION_AGENTIC_V2,
                 envelope_fingerprint,
                 jsonb_param(envelope_snapshot),
                 now,
@@ -318,6 +318,54 @@ class ReaderRecordAskRepository:
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
             "envelope_snapshot_json": row["envelope_snapshot_json"],
+        }
+
+    async def get_message_restricted_evidence_for_navigation(
+        self,
+        *,
+        user_id: UUID,
+        reading_record_id: UUID,
+        message_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Load restricted evidence for secure citation navigation.
+
+        Enforces thread ownership via user_id + reading_record_id. Returns
+        ``resolved_evidence_json`` and message identity only — never public
+        handle leaks through this method's return contract documentation.
+        """
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT m.id AS message_id,
+                       m.thread_id,
+                       t.reading_record_id,
+                       tr.resolved_evidence_json,
+                       tr.final_status,
+                       tr.execution_version
+                FROM reader_ask_messages m
+                JOIN reader_ask_threads t ON t.id = m.thread_id
+                LEFT JOIN reader_ask_turn_runs tr
+                  ON tr.id = m.current_turn_run_id
+                WHERE m.id = $1
+                  AND m.role = 'assistant'
+                  AND t.user_id = $2
+                  AND t.reading_record_id = $3
+                  AND t.archived_at IS NULL
+                """,
+                message_id,
+                user_id,
+                reading_record_id,
+            )
+        if row is None:
+            return None
+        return {
+            "message_id": str(row["message_id"]),
+            "thread_id": str(row["thread_id"]),
+            "reading_record_id": str(row["reading_record_id"]),
+            "resolved_evidence_json": row["resolved_evidence_json"],
+            "final_status": row["final_status"],
+            "execution_version": row["execution_version"],
         }
 
     async def get_assistant_message_with_preceding_user_message(

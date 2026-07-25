@@ -340,3 +340,33 @@ export async function retryUpstreamReadingRecordAskMessage(
     cache: "no-store",
   });
 }
+
+export type ReadingRecordAskCitationNavigateResultDto = {
+  status: string;
+  location?: {
+    unit_id?: string | null;
+    anchor_segment_id?: string | null;
+    canonical_text_start_utf16?: number | null;
+    canonical_text_end_utf16?: number | null;
+  } | null;
+  reason?: string | null;
+};
+
+/** Secure citation navigation — path only; no fence body fields. */
+export function navigateUpstreamReadingRecordAskCitation(
+  recordId: string,
+  messageId: string,
+  citationId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReadingRecordAskCitationNavigateResultDto>> {
+  return fastApiFetch<ReadingRecordAskCitationNavigateResultDto>(
+    readingRecordAskPath(
+      recordId,
+      `/messages/${encodeURIComponent(messageId)}/citations/${encodeURIComponent(citationId)}/navigate`,
+    ),
+    {
+      method: "POST",
+      sessionToken,
+    },
+  );
+}

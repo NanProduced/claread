@@ -38,7 +38,7 @@ from app.services.reader_record_ask.fence import (
     SequenceGenerationFence,
     StaticGenerationFence,
 )
-from app.services.reader_record_ask.finalizer import AgentAnswerDraft
+from app.services.reader_record_ask.grounding_validator import AgentAnswerDraftOutput
 from app.services.reader_record_ask.read_range_executor import (
     MAX_UNIT_ORDER_SPAN_WIDTH,
     SERVER_READ_RANGE_MAX_CHARS,
@@ -887,9 +887,9 @@ async def test_run_rejects_registry_bound_to_other_envelope() -> None:
 
 
 def test_agent_explicit_retry_policy() -> None:
-    """New RR agent must pin tool/output retries (not pydantic-ai defaults)."""
+    """New RR agent must pin tools/output via canonical AgentRetries map."""
     agent = create_reading_record_ask_agent(_text_model("x"))
-    # pydantic-ai 1.75+: retries (tools) + output_retries as separate ints.
+    # pydantic-ai 1.107: retries={"tools", "output"} → split max counters.
     assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
     assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
 
@@ -903,16 +903,15 @@ async def test_structured_output_recovers_within_output_retry_budget() -> None:
         del messages, info
         calls["n"] += 1
         if calls["n"] == 1:
-            # Illegal: empty answer_text violates AgentAnswerDraft.min_length=1
+            # Illegal: grounded_answer with empty answer_blocks.
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name="final_result",
                         args=json.dumps(
                             {
-                                "answer_text": "",
-                                "cited_evidence_handles": [],
                                 "response_kind": "grounded_answer",
+                                "answer_blocks": [],
                             }
                         ),
                         tool_call_id="bad-1",
@@ -940,7 +939,7 @@ async def test_structured_output_recovers_within_output_retry_budget() -> None:
     assert result.final_text == "Recovered structured answer."
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert isinstance(result.agent_draft, AgentAnswerDraft)
+    assert isinstance(result.agent_draft, AgentAnswerDraftOutput)
     assert result.agent_output is not None
     assert result.agent_output.answer_text == "Recovered structured answer."
 
@@ -953,18 +952,15 @@ async def test_structured_output_exhausted_raises_unexpected_model_behavior() ->
     async def model_fn(messages, info: AgentInfo):
         del messages, info
         calls["n"] += 1
-        # Persistently invalid: empty answer_text violates min_length=1.
-        # (TypeError from handle coercion can surface outside the output
-        # retry path; keep the failure inside AgentAnswerDraft validation.)
+        # Persistently invalid: grounded_answer requires non-empty blocks.
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
                     args=json.dumps(
                         {
-                            "answer_text": "",
-                            "cited_evidence_handles": [],
                             "response_kind": "grounded_answer",
+                            "answer_blocks": [],
                         }
                     ),
                     tool_call_id=f"bad-{calls['n']}",

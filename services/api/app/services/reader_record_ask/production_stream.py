@@ -20,7 +20,7 @@ from pydantic_ai.usage import UsageLimits
 
 from app.config.settings import get_settings
 from app.schemas.reader_record_ask_stream import (
-    EXECUTION_VERSION_AGENTIC_V1,
+    EXECUTION_VERSION_AGENTIC_V2,
     ProgressActivity,
     ProgressPhase,
     ProgressStatus,
@@ -52,6 +52,7 @@ from app.services.reader_record_ask.production_wiring import (
     load_active_stable_document_id,
     resolve_agentic_model,
 )
+
 # M3 C2 wiring: map-source material provider for B3 heading enrichment (§4.2).
 # Imported lazily inside stream_agentic_thread_message to avoid module-load
 # cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
@@ -262,6 +263,57 @@ def assert_evidence_scope_matches_items(
             )
 
 
+def build_restricted_evidence_json(
+    *,
+    run_result: ReadingRecordAskRunResult,
+    envelope: ReadingRecordAskContextEnvelope,
+) -> list[dict[str, Any]]:
+    """Build restricted evidence for ``resolved_evidence_json`` only.
+
+    Includes citation bindings + server observations needed for secure
+    navigation. Never attached to public completed DTOs.
+    """
+    assert run_result.finalized is not None
+    finalized = run_result.finalized
+    scope = evidence_scope_from_envelope(envelope)
+    # Defense-in-depth: search_hit identity must still match envelope scope.
+    evidence_items = [
+        evidence_item_from_observation(obs) for obs in finalized.resolved_evidence
+    ]
+    assert_evidence_scope_matches_items(scope, evidence_items)
+
+    bindings = list(finalized.citation_bindings)
+    if not bindings and not evidence_items:
+        return []
+
+    if bindings:
+        return [
+            {
+                "citation_id": binding.citation_id,
+                "handle_id": binding.handle_id,
+                "source_kind": binding.source_kind,
+                "snippet": binding.snippet,
+                "unit_id": binding.unit_id,
+                "anchor_segment_id": binding.anchor_segment_id,
+                "kind": binding.kind,
+                "source_tool": binding.source_tool,
+                "rag_citation": binding.rag_citation,
+                "evidence_scope": scope.model_dump(mode="json"),
+            }
+            for binding in bindings
+        ]
+
+    # Clarification / empty-citation ok paths: no public citations, nothing
+    # to navigate. Scope is still recorded for audit consistency.
+    return [
+        {
+            **item.model_dump(mode="json"),
+            "evidence_scope": scope.model_dump(mode="json"),
+        }
+        for item in evidence_items
+    ]
+
+
 def build_completed_dto(
     *,
     run_result: ReadingRecordAskRunResult,
@@ -270,29 +322,28 @@ def build_completed_dto(
     turn_run_id: str,
     envelope: ReadingRecordAskContextEnvelope,
 ) -> ReaderRecordAskCompletedDTO:
-    """Build the single completed truth object for SSE + persistence.
+    """Build the single public completed truth object for SSE + persistence.
 
-    Always attaches a non-null ``evidence_scope`` projected from ``envelope``.
-    Raises :class:`EvidenceScopeInvariantError` when search_hit identity does
-    not match scope — callers must terminal fail-closed (no ok completed).
+    Public surface is no-evh. Restricted evidence is written separately via
+    :func:`build_restricted_evidence_json`. Raises
+    :class:`EvidenceScopeInvariantError` when search_hit identity does not
+    match scope — callers must terminal fail-closed (no ok completed).
     """
     assert run_result.finalized is not None
     assert run_result.finalized.status == "ok"
     assert run_result.final_text is not None
-    evidence = [
-        evidence_item_from_observation(obs) for obs in run_result.finalized.resolved_evidence
-    ]
-    # Production invariant: new ok turns never omit scope (nullable is history-only).
-    scope = evidence_scope_from_envelope(envelope)
-    assert_evidence_scope_matches_items(scope, evidence)
+    # Validate restricted evidence invariants before emitting public ok.
+    build_restricted_evidence_json(run_result=run_result, envelope=envelope)
+    finalized = run_result.finalized
     return ReaderRecordAskCompletedDTO(
         answer_text=run_result.final_text,
+        answer_blocks=list(finalized.answer_blocks),
+        citations=list(finalized.public_citations),
+        knowledge_mode=finalized.knowledge_mode,
+        source_status=finalized.source_status,
         message_id=message_id,
         thread_id=thread_id,
         turn_run_id=turn_run_id,
-        envelope_fingerprint=envelope.envelope_fingerprint,
-        evidence_scope=scope,
-        evidence=evidence,
     )
 
 
@@ -302,13 +353,12 @@ def build_terminal_dto(
     message_id: str | None,
     thread_id: str | None,
     turn_run_id: str | None,
-    envelope_fingerprint: str | None,
+    envelope_fingerprint: str | None = None,
     final_status: str,
     terminal_reason: str | None,
 ) -> ReaderRecordAskTerminalDTO:
-    rejected: list[str] = []
+    del envelope_fingerprint  # internal only; never enter public terminal DTO
     if finalized is not None:
-        rejected = list(finalized.rejected_handles)
         terminal_reason = terminal_reason or finalized.reason
         # Only override final_status for wire-compatible internal statuses.
         # ``"unavailable"`` is internal-only and must NEVER leak to wire —
@@ -323,9 +373,7 @@ def build_terminal_dto(
         message_id=message_id,
         thread_id=thread_id,
         turn_run_id=turn_run_id,
-        envelope_fingerprint=envelope_fingerprint,
         terminal_reason=terminal_reason,
-        rejected_handles=rejected,
     )
 
 
@@ -1114,14 +1162,40 @@ async def _run_agentic_turn(
         return
 
     completed_json = completed.model_dump(mode="json")
-    evidence_json = [item.model_dump(mode="json") for item in completed.evidence]
+    try:
+        restricted_evidence = build_restricted_evidence_json(
+            run_result=run_result,
+            envelope=envelope,
+        )
+    except EvidenceScopeInvariantError:
+        terminal = build_terminal_dto(
+            finalized=None,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            final_status="failed",
+            terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+        )
+        terminal_json = terminal.model_dump(mode="json")
+        await repo.terminal_agentic_turn_run(
+            turn_run_id=turn_run_id,
+            message_id=message_id,
+            run_status="failed",
+            final_status="failed",
+            terminal_reason=terminal.terminal_reason,
+            terminal_dto=terminal_json,
+        )
+        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
+        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
+        return
     try:
         persisted = await repo.complete_agentic_turn_run(
             turn_run_id=turn_run_id,
             message_id=message_id,
             answer_text=completed.answer_text,
             completed_dto=completed_json,
-            resolved_evidence=evidence_json,
+            resolved_evidence=restricted_evidence,
             final_status="ok",
         )
     except Exception:
@@ -1350,14 +1424,14 @@ async def stream_agentic_thread_message(
             role="user",
             status="completed",
             content_md=content,
-            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
+            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V2},
         )
         assistant_msg = await repo.create_message(
             thread_id=thread_id,
             role="assistant",
             status="streaming",
             content_md="",
-            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V1},
+            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V2},
         )
     turn = await repo.create_agentic_turn_run(
         message_id=UUID(assistant_msg["id"]),
@@ -1373,21 +1447,20 @@ async def stream_agentic_thread_message(
 
     yield encode_sse(
         EVENT_THREAD_READY,
-        {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V1},
+        {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V2},
     )
     yield encode_sse(
         EVENT_MESSAGE_STARTED,
         {
             "message_id": assistant_msg["id"],
             "thread_id": str(thread_id),
-            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         },
     )
     run_started = ReaderRecordAskRunStartedDTO(
         message_id=assistant_msg["id"],
         thread_id=str(thread_id),
         turn_run_id=turn["id"],
-        envelope_fingerprint=envelope.envelope_fingerprint,
         has_initial_selection=envelope.initial_anchor is not None,
     )
     yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))

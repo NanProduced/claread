@@ -68,8 +68,9 @@ from app.services.reader_record_ask.fence import (
     StaticGenerationFence,
 )
 from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft,
     FinalizedAskResult,
+    PublicAnswerBlock,
+    PublicCitation,
     finalize_agent_answer,
 )
 from app.services.reader_record_ask.initial_anchor_evidence import (
@@ -105,7 +106,6 @@ from app.services.reader_record_ask.tool_contracts import (
 
 __all__ = [
     "ALLOWED_ASK_RAG_SOURCE_SCOPES",
-    "AgentAnswerDraft",
     "AgentInitialSelectionLocator",
     "AnchorSegmentView",
     "ArticleRagCitationEvidence",
@@ -129,6 +129,8 @@ __all__ = [
     "FakeArticleRagSearchPort",
     "FenceCheckResult",
     "FinalizedAskResult",
+    "PublicAnswerBlock",
+    "PublicCitation",
     "InMemoryDocumentAccess",
     "LEGAL_EVIDENCE_KIND_SOURCE",
     "MAX_UNIT_ORDER_SPAN_UNITS",

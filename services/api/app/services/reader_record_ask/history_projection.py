@@ -13,12 +13,18 @@ from pydantic import ValidationError
 
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V1,
+    EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskCompletedDTO,
-    ReaderRecordAskEvidenceItem,
     ReaderRecordAskTerminalDTO,
 )
 
-AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V1
+AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V2
+AGENTIC_EXECUTION_VERSIONS = frozenset(
+    {
+        EXECUTION_VERSION_AGENTIC_V1,
+        EXECUTION_VERSION_AGENTIC_V2,
+    }
+)
 
 _TERMINAL_UI_STATUS: dict[str, str] = {
     "failed": "failed",
@@ -29,11 +35,11 @@ _TERMINAL_UI_STATUS: dict[str, str] = {
 
 
 def is_agentic_execution_version(value: Any) -> bool:
-    return value == AGENTIC_EXECUTION_VERSION
+    return value in AGENTIC_EXECUTION_VERSIONS
 
 
 def claims_agentic_payload(value: Any) -> bool:
-    """True when a persisted JSON blob self-identifies as agentic v1.
+    """True when a persisted JSON blob self-identifies as agentic.
 
     Used only for isolation: such blobs must not enter legacy evidence
     hydration. They are never treated as a trusted successful agentic fact
@@ -41,7 +47,7 @@ def claims_agentic_payload(value: Any) -> bool:
     """
     if not isinstance(value, dict):
         return False
-    return value.get("execution_version") == AGENTIC_EXECUTION_VERSION
+    return value.get("execution_version") in AGENTIC_EXECUTION_VERSIONS
 
 
 def quarantine_untrusted_agentic_claim(
@@ -56,11 +62,11 @@ def quarantine_untrusted_agentic_claim(
     current_turn_run_id: str | None,
     current_turn_run: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """DB version missing/non-v1 but JSON claims v1 → isolate, do not parse.
+    """DB version missing/non-agentic but JSON claims agentic → isolate.
 
     Emits a failed empty message with **no** legacy evidence and **no**
-    agentic_evidence, so substrate/index/hash cannot leak through the
-    loose legacy evidence channel.
+    public agentic citations, so substrate/index/hash cannot leak through
+    the loose legacy evidence channel.
     """
     anchors = list(context_anchors or [])
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
@@ -84,8 +90,11 @@ def quarantine_untrusted_agentic_claim(
         # Do not advertise agentic success identity without a trusted DB column.
         "execution_version": None,
         "final_status": "failed",
-        "agentic_evidence": None,
-        "agentic_evidence_scope": None,
+        "agentic_answer_blocks": None,
+        "agentic_citations": None,
+        "knowledge_mode": None,
+        "source_status": None,
+        "legacy_classification": None,
     }
 
 
@@ -142,7 +151,7 @@ def _safe_degraded_message(
     current_turn_run_id: str | None,
     current_turn_run: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Corrupt / untrusted agentic payload → no answer, no evidence leak."""
+    """Corrupt / untrusted agentic payload — no answer, no evidence leak."""
     return {
         "id": message_id,
         "thread_id": thread_id,
@@ -162,33 +171,77 @@ def _safe_degraded_message(
         "updated_at": updated_at,
         "execution_version": AGENTIC_EXECUTION_VERSION,
         "final_status": "failed",
-        "agentic_evidence": None,
-        "agentic_evidence_scope": None,
+        "agentic_answer_blocks": None,
+        "agentic_citations": None,
+        "knowledge_mode": None,
+        "source_status": None,
+        "legacy_classification": None,
     }
 
 
-def _validate_evidence_items(raw: Any) -> list[dict[str, Any]] | None:
-    if not isinstance(raw, list):
+def _project_legacy_unclassified(
+    *,
+    message_id: str,
+    thread_id: str,
+    role: str,
+    created_at: str | None,
+    updated_at: str | None,
+    context_anchors: list[Any],
+    usage_event_id: str | None,
+    current_turn_run_id: str | None,
+    current_turn_run: dict[str, Any] | None,
+    answer_text: str,
+) -> dict[str, Any]:
+    """Old v1 / flat completed rows: answer only, no inferred provenance."""
+
+    return {
+        "id": message_id,
+        "thread_id": thread_id,
+        "role": role,
+        "status": "completed",
+        "content_md": answer_text,
+        "submission_mode": "chat",
+        "resolved_intent": None,
+        "context_anchors": context_anchors,
+        **_empty_legacy_lists(),
+        "usage_event_id": usage_event_id,
+        "current_turn_run_id": current_turn_run_id,
+        "current_turn_run": current_turn_run,
+        "current_user_visible_output": None,
+        "current_eval_trace": None,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        "final_status": "ok",
+        "agentic_answer_blocks": None,
+        "agentic_citations": None,
+        "knowledge_mode": None,
+        "source_status": None,
+        "legacy_classification": "legacy_unclassified",
+    }
+
+
+def _try_project_v2_completed(visible: dict[str, Any]) -> ReaderRecordAskCompletedDTO | None:
+    try:
+        completed = ReaderRecordAskCompletedDTO.model_validate(visible)
+    except ValidationError:
         return None
-    out: list[dict[str, Any]] = []
-    for item in raw:
-        try:
-            out.append(ReaderRecordAskEvidenceItem.model_validate(item).model_dump(mode="json"))
-        except ValidationError:
-            return None
-    return out
+    if completed.final_status != "ok":
+        return None
+    return completed
 
 
-def _completed_evidence(
-    completed: ReaderRecordAskCompletedDTO,
-    resolved_evidence_json: Any,
-) -> list[dict[str, Any]]:
-    """Prefer validated completed.evidence; restricted fallback to resolved_evidence_json."""
-    primary = [item.model_dump(mode="json") for item in completed.evidence]
-    if primary:
-        return primary
-    fallback = _validate_evidence_items(resolved_evidence_json)
-    return fallback if fallback is not None else []
+def _legacy_answer_from_v1_blob(visible: dict[str, Any]) -> str | None:
+    """Extract answer text from pre-v2 agentic completed blobs without rehydrating citations."""
+
+    if visible.get("execution_version") != EXECUTION_VERSION_AGENTIC_V1:
+        return None
+    if visible.get("final_status") != "ok":
+        return None
+    answer = visible.get("answer_text")
+    if isinstance(answer, str) and answer.strip():
+        return answer
+    return None
 
 
 def project_agentic_history_message(
@@ -215,11 +268,11 @@ def project_agentic_history_message(
     - Trust DB ``final_status`` column as source of truth; JSON may only
       confirm it. Mismatch → safe degrade (P0).
     - Never hydrate legacy ``evidence`` / ``article_rag`` from agentic JSON.
-    - Never emit ``envelope_fingerprint`` or raw ``terminal_reason``.
-    - ``resolved_evidence_json`` is only a restricted fallback after completed
-      DTO validation — never mapped to legacy evidence.
+    - Never emit ``envelope_fingerprint``, handles, or raw restricted evidence.
+    - ``resolved_evidence_json`` is server-only and is never projected to history.
     """
     del row_status  # reserved for future streaming mid-run projection
+    del resolved_evidence_json  # restricted server-only; never cold-project
     anchors = list(context_anchors or [])
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
     base_kwargs = {
@@ -240,48 +293,64 @@ def project_agentic_history_message(
 
     if db_final == "ok":
         if not isinstance(visible, dict):
-            return _safe_degraded_message(**base_kwargs)
-        try:
-            completed = ReaderRecordAskCompletedDTO.model_validate(visible)
-        except ValidationError:
-            return _safe_degraded_message(**base_kwargs)
-        # Completed DTO is always final_status=ok by schema; still require match
-        # against DB fact (defensive if schema ever widens).
-        if completed.final_status != "ok":
+            # Prefer row content for degraded ok without structured blob.
+            answer = (row_content_md or "").strip()
+            if answer:
+                return _project_legacy_unclassified(
+                    **base_kwargs,
+                    answer_text=answer,
+                )
             return _safe_degraded_message(**base_kwargs)
 
-        answer = completed.answer_text
-        content_md = answer if answer else (row_content_md or "")
-        # Scope only from validated completed DTO — never invent from page or fingerprint.
-        # None on old v1 rows: answer/evidence still hydrate; navigation must treat as
-        # unavailable.legacy_scope_missing (no rag_citation-only or page-identity fallback).
-        scope_wire = (
-            completed.evidence_scope.model_dump(mode="json")
-            if completed.evidence_scope is not None
-            else None
-        )
-        return {
-            "id": message_id,
-            "thread_id": thread_id,
-            "role": role,
-            "status": "completed",
-            "content_md": content_md,
-            "submission_mode": "chat",
-            "resolved_intent": None,
-            "context_anchors": anchors,
-            **_empty_legacy_lists(),
-            "usage_event_id": usage_event_id,
-            "current_turn_run_id": current_turn_run_id,
-            "current_turn_run": safe_turn_run,
-            "current_user_visible_output": None,
-            "current_eval_trace": None,
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "execution_version": AGENTIC_EXECUTION_VERSION,
-            "final_status": "ok",
-            "agentic_evidence": _completed_evidence(completed, resolved_evidence_json),
-            "agentic_evidence_scope": scope_wire,
-        }
+        completed = _try_project_v2_completed(visible)
+        if completed is not None:
+            answer = completed.answer_text
+            content_md = answer if answer else (row_content_md or "")
+            return {
+                "id": message_id,
+                "thread_id": thread_id,
+                "role": role,
+                "status": "completed",
+                "content_md": content_md,
+                "submission_mode": "chat",
+                "resolved_intent": None,
+                "context_anchors": anchors,
+                **_empty_legacy_lists(),
+                "usage_event_id": usage_event_id,
+                "current_turn_run_id": current_turn_run_id,
+                "current_turn_run": safe_turn_run,
+                "current_user_visible_output": None,
+                "current_eval_trace": None,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                "final_status": "ok",
+                "agentic_answer_blocks": [
+                    block.model_dump(mode="json") for block in completed.answer_blocks
+                ],
+                "agentic_citations": [
+                    citation.model_dump(mode="json") for citation in completed.citations
+                ],
+                "knowledge_mode": completed.knowledge_mode,
+                "source_status": completed.source_status,
+                "legacy_classification": None,
+            }
+
+        legacy_answer = _legacy_answer_from_v1_blob(visible)
+        if legacy_answer is not None:
+            return _project_legacy_unclassified(
+                **base_kwargs,
+                answer_text=legacy_answer,
+            )
+
+        # Unrecognised ok blob: surface row text only if present.
+        fallback = (row_content_md or "").strip()
+        if fallback:
+            return _project_legacy_unclassified(
+                **base_kwargs,
+                answer_text=fallback,
+            )
+        return _safe_degraded_message(**base_kwargs)
 
     if db_final in _TERMINAL_UI_STATUS:
         # If a terminal DTO is present it must agree with the DB column.
@@ -289,10 +358,14 @@ def project_agentic_history_message(
             try:
                 terminal = ReaderRecordAskTerminalDTO.model_validate(visible)
             except ValidationError:
+                # Tolerate pre-v2 terminal blobs that still carried fingerprint.
+                status_match = visible.get("final_status") == db_final
+                if not status_match and "final_status" in visible:
+                    return _safe_degraded_message(**base_kwargs)
                 terminal = None
-            if terminal is not None and terminal.final_status != db_final:
-                # DB vs JSON mismatch → corrupt persistence, do not let JSON win.
-                return _safe_degraded_message(**base_kwargs)
+            else:
+                if terminal.final_status != db_final:
+                    return _safe_degraded_message(**base_kwargs)
 
         ui_status = _TERMINAL_UI_STATUS[db_final]
         return {
@@ -314,8 +387,11 @@ def project_agentic_history_message(
             "updated_at": updated_at,
             "execution_version": AGENTIC_EXECUTION_VERSION,
             "final_status": db_final,
-            "agentic_evidence": None,
-            "agentic_evidence_scope": None,
+            "agentic_answer_blocks": None,
+            "agentic_citations": None,
+            "knowledge_mode": None,
+            "source_status": None,
+            "legacy_classification": None,
         }
 
     # final_status column missing on an agentic row: incomplete / streaming /
@@ -340,8 +416,11 @@ def project_agentic_history_message(
             "updated_at": updated_at,
             "execution_version": AGENTIC_EXECUTION_VERSION,
             "final_status": None,
-            "agentic_evidence": None,
-            "agentic_evidence_scope": None,
+            "agentic_answer_blocks": None,
+            "agentic_citations": None,
+            "knowledge_mode": None,
+            "source_status": None,
+            "legacy_classification": None,
         }
 
     return _safe_degraded_message(**base_kwargs)

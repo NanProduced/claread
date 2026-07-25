@@ -23,6 +23,10 @@ from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry
 
 from app.services.reader_record_ask.agent import _SYSTEM_INSTRUCTIONS
+from app.services.reader_record_ask.answer_block_provenance import (
+    AnswerBlockDraft,
+    ValidatedAnswerBlocks,
+)
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
     VerifiedEnvelopeInput,
@@ -33,9 +37,6 @@ from app.services.reader_record_ask.evidence import (
 )
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import StaticGenerationFence
-from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft as FinalizerAgentAnswerDraft,
-)
 from app.services.reader_record_ask.finalizer import (
     FinalizedAskResult,
     finalize_agent_answer,
@@ -515,16 +516,23 @@ async def test_finalizer_scope_failure_still_returns_typed_terminal() -> None:
     foreign_registry.register(obs)
     handle = foreign_registry.list_handle_refs()[0].handle_id
 
-    draft = FinalizerAgentAnswerDraft(
-        answer_text="x",
-        cited_evidence_handles=[handle],
-        response_kind="grounded_answer",
+    validated = ValidatedAnswerBlocks(
+        blocks=(
+            AnswerBlockDraft(
+                text="x",
+                basis="article",
+                article_scope="evidence_bounded",
+                evidence_handles=(handle,),
+            ),
+        ),
+        knowledge_mode="article_grounded",
     )
     result = await finalize_agent_answer(
         envelope=envelope,
         registry=foreign_registry,
-        draft=draft,
         fence=StaticGenerationFence(live_generation=1),
+        response_kind="grounded_answer",
+        validated_answer_blocks=validated,
     )
     assert isinstance(result, FinalizedAskResult)
     assert result.status == "invalid_citations"

@@ -36,10 +36,8 @@ from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLe
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import FenceFn, StaticGenerationFence
 from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft as FinalizerAgentAnswerDraft,
-)
-from app.services.reader_record_ask.finalizer import (
     FinalizedAskResult,
+    ResponseKind,
     finalize_agent_answer,
 )
 from app.services.reader_record_ask.grounding_validator import AgentAnswerDraftOutput
@@ -85,8 +83,8 @@ class ReadingRecordAskRunResult:
     """Outcome of one independent agent run (including finalizer).
 
     ``baseline_context`` carries the typed baseline assembly result. Successful
-    model runs also carry immutable validated blocks; the committed flat
-    finalizer receives only its three-field compatibility projection.
+    grounded runs carry immutable validated blocks that the finalizer consumes
+    directly (no flat compatibility projection).
     """
 
     final_text: str | None
@@ -96,28 +94,10 @@ class ReadingRecordAskRunResult:
     search_current_article_calls: int = 0
     evidence_observations: tuple[ServerEvidenceObservation, ...] = ()
     initial_anchor_handle: EvidenceHandleRef | None = None
-    agent_draft: FinalizerAgentAnswerDraft | None = None
+    agent_draft: AgentAnswerDraftOutput | None = None
     finalized: FinalizedAskResult | None = None
     agent_output: Any = None
     baseline_context: BaselineAgentContext | None = None
-
-
-def _to_finalizer_draft(
-    draft: AgentAnswerDraftOutput,
-) -> FinalizerAgentAnswerDraft:
-    """Project onto the committed flat finalizer API from ``HEAD``.
-
-    Temporary compatibility seam: the finalizer still consumes this flat
-    three-field projection. Once the Citation/P3 line owns the finalizer it
-    will consume ``ValidatedAnswerBlocks`` directly and this projection is
-    deleted.
-    """
-
-    return FinalizerAgentAnswerDraft(
-        answer_text=draft.answer_text,
-        cited_evidence_handles=draft.cited_evidence_handles,
-        response_kind=draft.response_kind,
-    )
 
 
 async def run_reading_record_ask(
@@ -290,7 +270,8 @@ async def run_reading_record_ask(
         and validated_answer_blocks is None
     ):
         raise TypeError("grounded answer did not pass block validation")
-    draft = _to_finalizer_draft(agent_output)
+
+    finalizer_kind: ResponseKind = agent_output.response_kind  # type: ignore[assignment]
 
     deps.emit_event(ComposingAnswerEvent())
     deps.emit_event(ValidatingEvidenceEvent())
@@ -300,8 +281,10 @@ async def run_reading_record_ask(
     finalized = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
-        draft=draft,
         fence=active_fence,
+        response_kind=finalizer_kind,
+        validated_answer_blocks=validated_answer_blocks,
+        clarification_text=agent_output.clarification_text,
     )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
@@ -329,7 +312,7 @@ async def run_reading_record_ask(
             if assembly.selection_result.status == "injected"
             else None
         ),
-        agent_draft=draft,
+        agent_draft=agent_output,
         finalized=finalized,
         agent_output=agent_output,
         baseline_context=baseline,

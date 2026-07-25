@@ -67,7 +67,11 @@ class AgentAnswerDraftOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    response_kind: Literal["grounded_answer", "clarification"]
+    response_kind: Literal[
+        "grounded_answer",
+        "clarification",
+        "source_unavailable",
+    ]
     clarification_text: str | None = Field(
         default=None,
         min_length=1,
@@ -87,6 +91,15 @@ class AgentAnswerDraftOutput(BaseModel):
                 raise ValueError("clarification requires answer_blocks=[]")
             return self
 
+        if self.response_kind == "source_unavailable":
+            if self.clarification_text is not None:
+                raise ValueError(
+                    "source_unavailable requires clarification_text=null"
+                )
+            if self.answer_blocks:
+                raise ValueError("source_unavailable requires answer_blocks=[]")
+            return self
+
         if self.clarification_text is not None:
             raise ValueError("grounded_answer requires clarification_text=null")
         if not self.answer_blocks:
@@ -95,7 +108,7 @@ class AgentAnswerDraftOutput(BaseModel):
 
     @property
     def validated_answer_blocks(self) -> ValidatedAnswerBlocks | None:
-        """Return host validation output; clarifications intentionally have none."""
+        """Return host validation output; non-grounded kinds have none."""
 
         return self._validated_answer_blocks
 
@@ -112,6 +125,8 @@ class AgentAnswerDraftOutput(BaseModel):
 
         if self.response_kind == "clarification":
             return self.clarification_text or ""
+        if self.response_kind == "source_unavailable":
+            return ""
         return "\n\n".join(block.text for block in self.answer_blocks)
 
     @property
@@ -131,7 +146,9 @@ class AgentAnswerDraftOutput(BaseModel):
         """Attach host-only validation output without changing model schema."""
 
         if self.response_kind != "grounded_answer":
-            raise ValueError("clarification cannot bind validated answer blocks")
+            raise ValueError(
+                "only grounded_answer can bind validated answer blocks"
+            )
         self._validated_answer_blocks = validated
 
 
@@ -264,13 +281,17 @@ async def _grounding_validator_final_body(
     wrapper.
     """
     response_kind = draft.response_kind
-    if response_kind not in ("grounded_answer", "clarification"):
+    if response_kind not in (
+        "grounded_answer",
+        "clarification",
+        "source_unavailable",
+    ):
         raise ModelRetry(
-            f"response_kind must be grounded_answer|clarification, "
-            f"got {response_kind!r}"
+            "response_kind must be grounded_answer|clarification|"
+            f"source_unavailable, got {response_kind!r}"
         )
 
-    if draft.response_kind == "clarification":
+    if draft.response_kind in ("clarification", "source_unavailable"):
         return draft
 
     try:

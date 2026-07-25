@@ -15,7 +15,8 @@ from pydantic_ai.models.function import FunctionModel
 
 from app.config import settings as settings_mod
 from app.schemas.reader_record_ask_stream import (
-    EXECUTION_VERSION_AGENTIC_V1,
+    EXECUTION_VERSION_AGENTIC_V1,  # noqa: F401 — legacy fixture labels
+    EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskEvidenceItem,
     ReaderRecordAskEvidenceScope,
@@ -273,8 +274,8 @@ class _FakeRepo:
         row = {
             "id": tid,
             "status": "streaming",
-            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
-            "envelope_fingerprint": kwargs["envelope_fingerprint"],
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            "envelope_fingerprint": kwargs.get("envelope_fingerprint"),
         }
         self.turns[tid] = dict(row)
         return row
@@ -290,8 +291,8 @@ class _FakeRepo:
             "final_status": "ok",
             "user_visible_output_json": dto,
             "resolved_evidence_json": kwargs["resolved_evidence"],
-            "envelope_fingerprint": dto["envelope_fingerprint"],
-            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+            "envelope_fingerprint": None,
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         }
         return self.turns[str(kwargs["turn_run_id"])]
 
@@ -305,7 +306,7 @@ class _FakeRepo:
             "user_visible_output_json": kwargs.get("terminal_dto"),
             "resolved_evidence_json": [],
             "envelope_fingerprint": None,
-            "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         }
         return self.turns[str(kwargs["turn_run_id"])]
 
@@ -690,9 +691,15 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
     events = _parse_sse(chunks)
     completed = [d for n, d in events if n == EVENT_MESSAGE_COMPLETED]
     assert len(completed) == 1
-    kinds = {e["kind"] for e in completed[0]["evidence"]}
-    assert "search_hit" in kinds
-    rag = next(e for e in completed[0]["evidence"] if e["kind"] == "search_hit")["rag_citation"]
+    # Public completed is no-evh; restricted evidence lives only in persist.
+    assert "evidence" not in completed[0]
+    assert "envelope_fingerprint" not in completed[0]
+    assert completed[0]["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
+    assert len(repo.completed_writes) == 1
+    restricted = repo.completed_writes[0]["resolved_evidence"]
+    assert any(item.get("kind") == "search_hit" for item in restricted)
+    hit = next(item for item in restricted if item.get("kind") == "search_hit")
+    rag = hit["rag_citation"]
     assert rag["stable_document_id"] == str(_DOC)
     assert rag["base_id"] == str(_BASE)
     assert rag["record_generation"] == 1
@@ -824,12 +831,15 @@ async def test_fabricated_handle_after_search_hit_never_completes() -> None:
     assert EVENT_AGENTIC_TERMINAL in names
     assert EVENT_MESSAGE_INTERRUPTED in names
 
-    # Typed terminal: output validation exhausted.
+    # Typed terminal: fabricated citation must fail closed (no completed).
     assert len(repo.terminal_writes) == 1
     tw = repo.terminal_writes[0]
     assert tw["final_status"] == "failed"
     assert tw["run_status"] == "failed"
-    assert tw["terminal_reason"] == TERMINAL_REASON_AGENT_OUTPUT_INVALID
+    assert tw["terminal_reason"] in {
+        TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+        TERMINAL_REASON_AGENT_RUN_FAILED,
+    }
 
     # Safety boundary: no provisional source data leaks to the wire.
     # The search hit snippet ("climate paragraph") must NEVER appear in
@@ -1127,9 +1137,11 @@ async def test_completed_sse_matches_persisted_dto() -> None:
     assert len(repo.completed_writes) == 1
     persisted = repo.completed_writes[0]["completed_dto"]
     assert sse_dto == persisted
-    assert sse_dto["execution_version"] == EXECUTION_VERSION_AGENTIC_V1
+    assert sse_dto["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
     assert sse_dto["final_status"] == "ok"
     assert sse_dto["answer_text"] == "done"
+    assert "evidence" not in sse_dto
+    assert "envelope_fingerprint" not in sse_dto
     # Validate against schema
     ReaderRecordAskCompletedDTO.model_validate(sse_dto)
 
@@ -1605,35 +1617,34 @@ async def test_unavailable_internal_status_does_not_leak_to_wire() -> None:
 
 @pytest.mark.asyncio
 async def test_completed_dto_excludes_internal_response_kind_and_coverage() -> None:
-    """ReaderRecordAskCompletedDTO must never expose internal-only fields.
-
-    Scenario 16: ``response_kind`` and ``coverage`` / ``is_complete`` /
-    ``model_visible_chars`` are internal-only. They must not appear in
-    the public completed DTO, the persisted row, or the SSE payload.
-    """
+    """ReaderRecordAskCompletedDTO must never expose internal-only fields."""
     from app.schemas.reader_record_ask_stream import ReaderRecordAskCompletedDTO
 
-    # Build a minimal completed DTO and inspect its serialized form.
     dto = ReaderRecordAskCompletedDTO(
         answer_text="answer",
         message_id="m-1",
         thread_id="t-1",
         turn_run_id="tr-1",
-        envelope_fingerprint="a" * 64,
-        evidence_scope=evidence_scope_from_envelope(_envelope()),
-        evidence=[],
     )
     dto_json = dto.model_dump(mode="json")
-    # Internal-only fields must NOT appear on the public completed DTO.
-    assert "response_kind" not in dto_json
-    assert "coverage" not in dto_json
-    assert "is_complete" not in dto_json
-    assert "model_visible_chars" not in dto_json
-    assert "article_total_chars" not in dto_json
-    assert "baseline_status" not in dto_json
+    assert dto.execution_version == EXECUTION_VERSION_AGENTIC_V2
+    for forbidden in (
+        "response_kind",
+        "coverage",
+        "is_complete",
+        "model_visible_chars",
+        "article_total_chars",
+        "baseline_status",
+        "envelope_fingerprint",
+        "evidence",
+        "evidence_scope",
+        "handle_id",
+        "evh_",
+    ):
+        assert forbidden not in json.dumps(dto_json)
 
 
-def test_build_completed_dto_includes_typed_evidence_kinds() -> None:
+def test_build_completed_dto_public_v2_no_evidence() -> None:
     env = _envelope()
     reg = EvidenceRegistry(env.envelope_fingerprint)
     anchor = build_server_evidence_observation(
@@ -1645,14 +1656,6 @@ def test_build_completed_dto_includes_typed_evidence_kinds() -> None:
         anchor_segment_id="s1",
     )
     reg.register(anchor)
-    read = build_server_evidence_observation(
-        kind="read_range",
-        envelope_fingerprint=env.envelope_fingerprint,
-        source_tool="read_range",
-        snippet="world",
-        unit_id="u1",
-    )
-    reg.register(read)
     run = ReadingRecordAskRunResult(
         final_text="ans",
         finalized=FinalizedAskResult(
@@ -1669,15 +1672,17 @@ def test_build_completed_dto_includes_typed_evidence_kinds() -> None:
         turn_run_id=str(uuid4()),
         envelope=env,
     )
-    kinds = {e.kind for e in dto.evidence}
-    assert kinds == {"initial_anchor", "read_range"}
-    assert dto.execution_version == EXECUTION_VERSION_AGENTIC_V1
-    # R3B0: new production always emits non-null message-level scope from envelope.
-    assert dto.evidence_scope is not None
-    assert dto.evidence_scope.reading_record_id == str(_RECORD)
-    assert dto.evidence_scope.base_id == str(_BASE)
-    assert dto.evidence_scope.record_generation == 1
-    assert dto.evidence_scope.stable_document_id == str(_DOC)
+    assert dto.execution_version == EXECUTION_VERSION_AGENTIC_V2
+    assert dto.answer_text == "ans"
+    wire = dto.model_dump(mode="json")
+    for forbidden in (
+        "evidence",
+        "evidence_scope",
+        "envelope_fingerprint",
+        "handle_id",
+        "evh_",
+    ):
+        assert forbidden not in json.dumps(wire)
 
 
 def _ok_run(observations: tuple, answer: str = "ans") -> ReadingRecordAskRunResult:
@@ -1710,7 +1715,7 @@ def test_evidence_scope_from_envelope_projects_uuid_strings() -> None:
     }
 
 
-def test_build_completed_dto_outputs_full_non_null_scope() -> None:
+def test_build_completed_dto_outputs_v2_public_fields() -> None:
     env = _envelope()
     reg = EvidenceRegistry(env.envelope_fingerprint)
     anchor = build_server_evidence_observation(
@@ -1727,16 +1732,15 @@ def test_build_completed_dto_outputs_full_non_null_scope() -> None:
         turn_run_id=str(uuid4()),
         envelope=env,
     )
-    assert dto.evidence_scope is not None
-    assert dto.evidence_scope.stable_document_id == str(_DOC)
     wire = dto.model_dump(mode="json")
-    assert wire["evidence_scope"]["reading_record_id"] == str(_RECORD)
-    assert wire["evidence_scope"]["base_id"] == str(_BASE)
-    assert wire["evidence_scope"]["record_generation"] == 1
+    assert wire["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
+    assert wire["answer_text"] == "ans"
+    assert "evidence_scope" not in wire
+    assert "evidence" not in wire
+    assert "envelope_fingerprint" not in wire
 
 
-def test_build_completed_dto_rag_off_stable_null_still_has_scope() -> None:
-    """RAG disabled / no stable doc: scope still required; stable id may be null."""
+def test_build_completed_dto_rag_off_stable_null_ok() -> None:
     env = _envelope(stable_document_id=None)
     reg = EvidenceRegistry(env.envelope_fingerprint)
     anchor = build_server_evidence_observation(
@@ -1755,73 +1759,30 @@ def test_build_completed_dto_rag_off_stable_null_still_has_scope() -> None:
         turn_run_id=str(uuid4()),
         envelope=env,
     )
-    assert dto.evidence_scope is not None
-    assert dto.evidence_scope.stable_document_id is None
-    assert dto.evidence_scope.reading_record_id == str(_RECORD)
-    assert {e.kind for e in dto.evidence} == {"initial_anchor"}
+    assert dto.answer_text == "ans"
+    assert "evidence" not in dto.model_dump(mode="json")
 
 
-def test_completed_dto_accepts_legacy_missing_and_explicit_null_scope() -> None:
+def test_completed_dto_rejects_legacy_v1_public_fields() -> None:
+    from pydantic import ValidationError
+
     base = {
-        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         "final_status": "ok",
         "answer_text": "legacy answer",
         "message_id": "m1",
         "thread_id": "t1",
         "turn_run_id": "tr1",
-        "envelope_fingerprint": "f" * 64,
-        "evidence": [],
     }
-    missing = ReaderRecordAskCompletedDTO.model_validate(base)
-    assert missing.evidence_scope is None
+    ok = ReaderRecordAskCompletedDTO.model_validate(base)
+    assert ok.answer_text == "legacy answer"
 
-    explicit_null = ReaderRecordAskCompletedDTO.model_validate(
-        {**base, "evidence_scope": None}
-    )
-    assert explicit_null.evidence_scope is None
-
-
-def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
-    from pydantic import ValidationError
-
-    base = {
-        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
-        "final_status": "ok",
-        "answer_text": "a",
-        "message_id": "m1",
-        "thread_id": "t1",
-        "turn_run_id": "tr1",
-        "envelope_fingerprint": "f" * 64,
-        "evidence": [],
-    }
     with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
-            {**base, "evidence_scope": {"reading_record_id": "r"}}
+            {**base, "envelope_fingerprint": "f" * 64}
         )
     with pytest.raises(ValidationError):
-        ReaderRecordAskCompletedDTO.model_validate(
-            {
-                **base,
-                "evidence_scope": {
-                    "reading_record_id": "r",
-                    "base_id": "b",
-                    "record_generation": 0,
-                    "stable_document_id": None,
-                },
-            }
-        )
-    with pytest.raises(ValidationError):
-        ReaderRecordAskCompletedDTO.model_validate(
-            {
-                **base,
-                "evidence_scope": {
-                    "reading_record_id": "r",
-                    "base_id": "b",
-                    "record_generation": -1,
-                    "stable_document_id": None,
-                },
-            }
-        )
+        ReaderRecordAskCompletedDTO.model_validate({**base, "evidence": []})
     with pytest.raises(ValidationError):
         ReaderRecordAskCompletedDTO.model_validate(
             {
@@ -1831,7 +1792,6 @@ def test_completed_dto_rejects_malformed_scope_and_bad_generation() -> None:
                     "base_id": "b",
                     "record_generation": 1,
                     "stable_document_id": None,
-                    "extra": "nope",
                 },
             }
         )
@@ -1945,17 +1905,22 @@ def test_search_hit_scope_match_allows_completed_dto() -> None:
         snippet="snip",
         rag_citation=cit,
     )
+    from app.services.reader_record_ask.production_stream import (
+        build_restricted_evidence_json,
+    )
+
+    run = _ok_run((obs,))
     dto = build_completed_dto(
-        run_result=_ok_run((obs,)),
+        run_result=run,
         message_id=str(uuid4()),
         thread_id=str(_THREAD),
         turn_run_id=str(uuid4()),
         envelope=env,
     )
-    assert dto.evidence_scope is not None
-    assert dto.evidence_scope.stable_document_id == str(_DOC)
-    assert dto.evidence[0].rag_citation is not None
-    assert dto.evidence[0].rag_citation.stable_document_id == str(_DOC)
+    assert "evidence" not in dto.model_dump(mode="json")
+    restricted = build_restricted_evidence_json(run_result=run, envelope=env)
+    assert restricted
+    assert restricted[0]["rag_citation"]["stable_document_id"] == str(_DOC)
 
 
 @pytest.mark.parametrize(

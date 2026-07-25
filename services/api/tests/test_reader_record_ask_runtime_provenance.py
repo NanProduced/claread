@@ -15,14 +15,10 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from app.services.reader_record_ask import runtime as runtime_module
-from app.services.reader_record_ask.agent import (
-    DEFAULT_OUTPUT_RETRIES,
-)
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
     VerifiedEnvelopeInput,
@@ -45,7 +41,6 @@ from app.services.reader_record_ask.grounding_validator import (
     grounding_validator,
 )
 from app.services.reader_record_ask.runtime import (
-    _to_finalizer_draft,
     run_reading_record_ask,
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
@@ -520,40 +515,23 @@ async def test_finalizer_projection_uses_head_flat_constructor_only(
         ),
     )
 
-    class HeadOnlyFinalizerDraft:
-        def __init__(
-            self,
-            *,
-            answer_text: str,
-            cited_evidence_handles: list[str],
-            response_kind: str,
-        ) -> None:
-            self.answer_text = answer_text
-            self.cited_evidence_handles = cited_evidence_handles
-            self.response_kind = response_kind
-
-    monkeypatch.setattr(
-        runtime_module,
-        "FinalizerAgentAnswerDraft",
-        HeadOnlyFinalizerDraft,
-    )
-
-    projected = _to_finalizer_draft(draft)
-    assert projected.answer_text == (
+    # Finalizer consumes validated blocks directly (no flat seam).
+    assert draft.validated_answer_blocks is not None
+    assert draft.cited_evidence_handles == [handle_id]
+    assert draft.response_kind == "grounded_answer"
+    assert draft.answer_text == (
         "文章确认了人物身份。\n\n人物背景属于通用知识。"
     )
-    assert projected.cited_evidence_handles == [handle_id]
-    assert projected.response_kind == "grounded_answer"
 
     clarification = AgentAnswerDraftOutput(
         response_kind="clarification",
         clarification_text="请明确你希望了解的范围。",
         answer_blocks=[],
     )
-    projected_clarification = _to_finalizer_draft(clarification)
-    assert projected_clarification.answer_text == "请明确你希望了解的范围。"
-    assert projected_clarification.cited_evidence_handles == []
-    assert projected_clarification.response_kind == "clarification"
+    assert clarification.answer_text == "请明确你希望了解的范围。"
+    assert clarification.cited_evidence_handles == []
+    assert clarification.response_kind == "clarification"
+    assert clarification.validated_answer_blocks is None
 
 
 @pytest.mark.asyncio
@@ -651,37 +629,22 @@ async def test_runtime_clarification_has_no_validated_blocks_or_evidence() -> No
     assert result.finalized.resolved_evidence == ()
 
 
-@pytest.mark.asyncio
-async def test_online_legacy_flat_no_handle_output_uses_retry_budget() -> None:
-    model_calls = 0
+def test_model_schema_rejects_legacy_flat_answer_fields() -> None:
+    """Legacy flat answer_text / cited_evidence_handles are not accepted input."""
+    from pydantic import ValidationError
 
-    async def model_fn(messages, info):
-        del messages, info
-        nonlocal model_calls
-        model_calls += 1
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "response_kind": "grounded_answer",
-                            "answer_text": "旧 flat 无 handle 回答。",
-                            "cited_evidence_handles": [],
-                        },
-                        ensure_ascii=False,
-                    ),
-                    tool_call_id=f"legacy-{model_calls}",
-                )
-            ]
+    with pytest.raises(ValidationError):
+        AgentAnswerDraftOutput.model_validate(
+            {
+                "response_kind": "grounded_answer",
+                "answer_text": "旧 flat 无 handle 回答。",
+                "cited_evidence_handles": [],
+            }
         )
-
-    with pytest.raises(UnexpectedModelBehavior):
-        await run_reading_record_ask(
-            user_message="请回答。",
-            envelope=_envelope(),
-            document_access=_document_access(),
-            model=FunctionModel(model_fn),
+    with pytest.raises(ValidationError):
+        AgentAnswerDraftOutput.model_validate(
+            {
+                "response_kind": "grounded_answer",
+                "answer_blocks": [],
+            }
         )
-
-    assert model_calls == DEFAULT_OUTPUT_RETRIES + 1

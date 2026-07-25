@@ -8,6 +8,7 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-activity/types";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
 const RECORD_ID = "test-record-r2-activity";
@@ -19,33 +20,6 @@ const ENVELOPE_FINGERPRINT =
   "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00";
 const EXECUTION_VERSION = "reader_record_ask_agentic_v1";
 const browserConsoleErrors = new WeakMap<Page, string[]>();
-
-type SpikeSseScriptEvent = {
-  event: string;
-  data: Record<string, unknown>;
-  hold?: boolean;
-  delayMs?: number;
-};
-
-type SpikeAskActivityApi = {
-  ready: boolean;
-  setScript: (events: SpikeSseScriptEvent[]) => void;
-  releaseNext: () => void;
-  releaseAll: () => void;
-  reset: () => void;
-  getStreamState: () => {
-    total: number;
-    emitted: number;
-    waiting: boolean;
-    finished: boolean;
-  };
-};
-
-declare global {
-  interface Window {
-    __spikeAskActivity?: SpikeAskActivityApi;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Wire-contract payloads

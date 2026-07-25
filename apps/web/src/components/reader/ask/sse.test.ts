@@ -80,19 +80,32 @@ const AGENTIC_EVIDENCE_SCOPE = {
   stable_document_id: "doc-stable-1",
 } as const;
 
+/** Canonical public v2 completed payload (no-evh). */
 const AGENTIC_COMPLETED_PAYLOAD = {
   execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
   final_status: "ok",
   answer_text: "Climate change is discussed in paragraph 2.",
+  answer_blocks: [
+    {
+      text: "Climate change is discussed in paragraph 2.",
+      citation_ids: ["c1"],
+    },
+  ],
+  citations: [
+    {
+      citation_id: "c1",
+      source_kind: "article",
+      snippet: "climate change impacts",
+    },
+  ],
+  knowledge_mode: "article_grounded",
+  source_status: null,
   message_id: "msg-agentic-1",
   thread_id: "thread-1",
   turn_run_id: "turn-run-1",
-  envelope_fingerprint: "env-fp-1",
-  evidence_scope: AGENTIC_EVIDENCE_SCOPE,
-  evidence: [AGENTIC_SEARCH_HIT_EVIDENCE],
 } as const;
 
-/** Pre-R3B0 wire shape: no evidence_scope field (legacy v1 compatible). */
+/** Legacy v1 wire shape — must fail the public v2 completed guard. */
 const AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE = {
   execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
   final_status: "ok",
@@ -255,7 +268,6 @@ describe("consumeReaderAskSse", () => {
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       has_initial_selection: true,
     });
     const events = await collectEvents([
@@ -280,7 +292,6 @@ describe("consumeReaderAskSse", () => {
         message_id: "msg-agentic-1",
         thread_id: "thread-1",
         turn_run_id: "turn-run-1",
-        envelope_fingerprint: "env-fp-1",
         has_initial_selection: false,
       })}\n\n`,
     ]);
@@ -293,7 +304,6 @@ describe("consumeReaderAskSse", () => {
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       has_initial_selection: false,
     });
   });
@@ -317,7 +327,7 @@ describe("consumeReaderAskSse", () => {
     });
   });
 
-  it("parses agentic message.completed with search_hit evidence and rag_citation", async () => {
+  it("parses agentic message.completed with public citations (no raw evidence)", async () => {
     const events = await collectEvents([
       `event: message.completed\ndata: ${JSON.stringify(AGENTIC_COMPLETED_PAYLOAD)}\n\n`,
     ]);
@@ -330,20 +340,10 @@ describe("consumeReaderAskSse", () => {
     expect(events[0].data).not.toHaveProperty("article_rag");
     expect(events[0].data).toEqual(AGENTIC_COMPLETED_PAYLOAD);
 
-    const evidence = (
-      events[0].data as typeof AGENTIC_COMPLETED_PAYLOAD
-    ).evidence[0];
-    expect(evidence.kind).toBe("search_hit");
-    expect(evidence.rag_citation).toMatchObject({
-      stable_document_id: "doc-stable-1",
-      base_id: "base-1",
-      record_generation: 1,
-      canonical_text_start_utf16: 10,
-      canonical_text_end_utf16: 42,
-      rag_substrate_id: "substrate-1",
-      index_run_id: "index-run-1",
-      plan_content_sha256: "plan-sha-abc",
-    });
+    const completed = events[0].data as typeof AGENTIC_COMPLETED_PAYLOAD;
+    expect(completed.citations[0].citation_id).toBe("c1");
+    expect(completed.knowledge_mode).toBe("article_grounded");
+    expect("evidence" in completed).toBe(false);
   });
 
   it("parses failed agentic terminal on agentic.terminal and message.interrupted", async () => {
@@ -353,9 +353,7 @@ describe("consumeReaderAskSse", () => {
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       terminal_reason: "agentic_model_unconfigured: no validated model",
-      rejected_handles: [],
     };
 
     const events = await collectEvents([
@@ -373,7 +371,6 @@ describe("consumeReaderAskSse", () => {
     expect(events[0].data).toMatchObject({
       final_status: "failed",
       terminal_reason: expect.stringContaining("agentic_model_unconfigured"),
-      rejected_handles: [],
     });
   });
 
@@ -384,9 +381,7 @@ describe("consumeReaderAskSse", () => {
       message_id: "msg-agentic-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
-      envelope_fingerprint: "env-fp-1",
       terminal_reason: "generation mismatch",
-      rejected_handles: [],
     };
 
     const events = await collectEvents([
@@ -486,53 +481,43 @@ describe("agentic payload type guards", () => {
     ).toBe(false);
   });
 
-  it("accepts completed payloads with typed evidence and optional rag_citation", () => {
+  it("accepts canonical public v2 completed payload", () => {
     expect(isReaderAskAgenticCompletedPayload(AGENTIC_COMPLETED_PAYLOAD)).toBe(
       true,
     );
+  });
+
+  it("rejects answer-only forgeries missing blocks/citations/mode", () => {
     expect(
       isReaderAskAgenticCompletedPayload({
         execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
         final_status: "ok",
-        answer_text: "no search",
+        answer_text: "only answer",
         message_id: "msg-1",
         thread_id: "thread-1",
         turn_run_id: "turn-1",
-        envelope_fingerprint: "env-1",
-        evidence: [
-          {
-            handle_id: "evh_anchor",
-            kind: "initial_anchor",
-            source_tool: "initial_anchor",
-            snippet: "hello",
-            unit_id: "u1",
-          },
-        ],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("accepts complete evidence_scope on agentic completed", () => {
+  it("evidence_scope helper remains for restricted cold paths; not on public completed", () => {
     expect(isReaderAskAgenticEvidenceScope(AGENTIC_EVIDENCE_SCOPE)).toBe(true);
     expect(isReaderAskAgenticCompletedPayload(AGENTIC_COMPLETED_PAYLOAD)).toBe(
       true,
     );
-    expect(AGENTIC_COMPLETED_PAYLOAD.evidence_scope).toEqual(
-      AGENTIC_EVIDENCE_SCOPE,
-    );
+    expect("evidence_scope" in AGENTIC_COMPLETED_PAYLOAD).toBe(false);
   });
 
-  it("accepts legacy completed without evidence_scope or with null scope", () => {
-    // Missing field = old v1 compatible; navigation later uses legacy_scope_missing.
+  it("rejects legacy completed that still carries evidence / fingerprint", () => {
     expect(
       isReaderAskAgenticCompletedPayload(AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isReaderAskAgenticCompletedPayload({
         ...AGENTIC_COMPLETED_PAYLOAD_LEGACY_NO_SCOPE,
         evidence_scope: null,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("rejects malformed evidence_scope on agentic completed (no half-parse)", () => {
@@ -618,32 +603,35 @@ describe("agentic payload type guards", () => {
     );
   });
 
-  it("accepts evidence_scope with null stable_document_id (RAG off)", () => {
+  it("scope helper accepts null stable_document_id; public completed rejects scope", () => {
+    expect(
+      isReaderAskAgenticEvidenceScope({
+        reading_record_id: "r1",
+        base_id: "b1",
+        record_generation: 2,
+        stable_document_id: null,
+      }),
+    ).toBe(true);
     expect(
       isReaderAskAgenticCompletedPayload({
         execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
         final_status: "ok",
         answer_text: "anchor only",
+        answer_blocks: [],
+        citations: [],
+        knowledge_mode: "general_knowledge",
+        source_status: null,
         message_id: "msg-1",
         thread_id: "thread-1",
         turn_run_id: "turn-1",
-        envelope_fingerprint: "env-1",
         evidence_scope: {
           reading_record_id: "r1",
           base_id: "b1",
           record_generation: 2,
           stable_document_id: null,
         },
-        evidence: [
-          {
-            handle_id: "evh_anchor",
-            kind: "initial_anchor",
-            source_tool: "initial_anchor",
-            snippet: "hello",
-          },
-        ],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("rejects final_status ok as agentic terminal", () => {
@@ -660,7 +648,15 @@ describe("agentic payload type guards", () => {
     ).toBe(false);
   });
 
-  it("accepts invalid_citations terminal payloads", () => {
+  it("accepts invalid_citations terminal payloads without rejected handles", () => {
+    expect(
+      isReaderAskAgenticTerminalPayload({
+        execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+        final_status: "invalid_citations",
+        terminal_reason: "bad handle",
+      }),
+    ).toBe(true);
+    // Public terminal must not carry rejected_handles / evh_* leakage.
     expect(
       isReaderAskAgenticTerminalPayload({
         execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
@@ -668,7 +664,7 @@ describe("agentic payload type guards", () => {
         terminal_reason: "bad handle",
         rejected_handles: ["evh_aabbccddeeff00112233445566778899"],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
@@ -692,16 +688,17 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
   } as const;
 
   const ARTICLE_SEED_COMPLETED = {
-    execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
-    final_status: "ok",
-    answer_text: "Article-level answer.",
-    message_id: "msg-seed-1",
-    thread_id: "thread-1",
-    turn_run_id: "turn-run-1",
-    envelope_fingerprint: "env-fp-seed",
-    evidence_scope: AGENTIC_EVIDENCE_SCOPE,
-    evidence: [ARTICLE_SEED_EVIDENCE],
-  } as const;
+  execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+  final_status: "ok",
+  answer_text: "Grounded answer.",
+  answer_blocks: [{ text: "Grounded answer.", citation_ids: ["c1"] }],
+  citations: [{ citation_id: "c1", source_kind: "article", snippet: "article body snippet" }],
+  knowledge_mode: "article_grounded",
+  source_status: null,
+  message_id: "msg-seed-1",
+  thread_id: "thread-1",
+  turn_run_id: "turn-run-1",
+} as const;
 
   it("accepts completed payload with legal article_seed evidence", () => {
     expect(
@@ -709,7 +706,19 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
     ).toBe(true);
   });
 
-  it("accepts article_seed with null snippet and no locator", () => {
+  it("evidence list accepts article_seed with null snippet; completed rejects evidence", () => {
+    expect(
+      isReaderAskAgenticEvidenceList([
+        {
+          handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+          kind: "article_seed",
+          source_tool: "baseline_context",
+          snippet: null,
+          unit_id: null,
+          anchor_segment_id: null,
+        },
+      ]),
+    ).toBe(true);
     expect(
       isReaderAskAgenticCompletedPayload({
         ...ARTICLE_SEED_COMPLETED,
@@ -719,12 +728,10 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
             kind: "article_seed",
             source_tool: "baseline_context",
             snippet: null,
-            unit_id: null,
-            anchor_segment_id: null,
           },
         ],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("rejects completed payload when article_seed has malformed rag_citation", () => {
@@ -815,19 +822,10 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.completed");
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(true);
-    const evidence = (events[0].data as typeof ARTICLE_SEED_COMPLETED)
-      .evidence[0] as {
-      handle_id: string;
-      kind: string;
-      source_tool: string;
-      snippet?: string | null;
-      rag_citation?: unknown;
-    };
-    expect(evidence.kind).toBe("article_seed");
-    expect(evidence.source_tool).toBe("baseline_context");
-    expect(evidence.snippet).toBe("article body snippet");
-    // article_seed must not carry rag_citation.
-    expect(evidence.rag_citation).toBeUndefined();
+    const completed = events[0].data as typeof ARTICLE_SEED_COMPLETED;
+    expect(completed.citations[0].snippet).toBe("article body snippet");
+    expect(completed.answer_blocks[0].citation_ids).toEqual(["c1"]);
+    expect("evidence" in completed).toBe(false);
   });
 });
 
@@ -1102,90 +1100,109 @@ describe("agentic evidence legal-map — illegal combinations (R4-A1 rework)", (
     });
   });
 
-  describe("hot completed guard accepts legal kind/source pairs", () => {
-    it("accepts article_seed + baseline_context without rag_citation", () => {
+  describe("public completed never carries evidence (legal-map is list-only)", () => {
+    it("rejects completed payloads that still embed raw evidence", () => {
       expect(
         isReaderAskAgenticCompletedPayload(
           makeCompletedWithEvidence({
             handle_id: "evh_seed_aabbccddeeff00112233445566778899",
             kind: "article_seed",
             source_tool: "baseline_context",
-            snippet: "legal snippet",
+            snippet: "snippet",
           }),
         ),
+      ).toBe(false);
+    });
+  });
+
+  describe("evidence list guard accepts legal kind/source pairs", () => {
+    it("accepts article_seed + baseline_context without rag_citation", () => {
+      expect(
+        isReaderAskAgenticEvidenceList([
+          {
+            handle_id: "evh_seed_aabbccddeeff00112233445566778899",
+            kind: "article_seed",
+            source_tool: "baseline_context",
+            snippet: "legal snippet",
+          },
+        ]),
       ).toBe(true);
     });
 
     it("accepts initial_anchor + initial_anchor without rag_citation", () => {
       expect(
-        isReaderAskAgenticCompletedPayload(
-          makeCompletedWithEvidence({
+        isReaderAskAgenticEvidenceList([
+          {
             handle_id: "evh_anchor_aabbccddeeff00112233445566778899",
             kind: "initial_anchor",
             source_tool: "initial_anchor",
             snippet: "legal snippet",
-          }),
-        ),
+          },
+        ]),
       ).toBe(true);
     });
 
     it("accepts read_range + read_range without rag_citation", () => {
       expect(
-        isReaderAskAgenticCompletedPayload(
-          makeCompletedWithEvidence({
+        isReaderAskAgenticEvidenceList([
+          {
             handle_id: "evh_range_aabbccddeeff00112233445566778899",
             kind: "read_range",
             source_tool: "read_range",
             snippet: "legal snippet",
-          }),
-        ),
+          },
+        ]),
       ).toBe(true);
     });
 
     it("accepts search_hit + search_current_article with complete rag_citation", () => {
+      expect(isReaderAskAgenticEvidenceList([AGENTIC_SEARCH_HIT_EVIDENCE])).toBe(
+        true,
+      );
+      // Public completed still rejects raw evidence blobs.
       expect(
         isReaderAskAgenticCompletedPayload(
           makeCompletedWithEvidence(AGENTIC_SEARCH_HIT_EVIDENCE),
         ),
-      ).toBe(true);
+      ).toBe(false);
     });
 
     it("accepts observation + initial_anchor without rag_citation", () => {
       expect(
-        isReaderAskAgenticCompletedPayload(
-          makeCompletedWithEvidence({
+        isReaderAskAgenticEvidenceList([
+          {
             handle_id: "evh_obs_aabbccddeeff00112233445566778899",
             kind: "observation",
             source_tool: "initial_anchor",
             snippet: "legal snippet",
-          }),
-        ),
+          },
+        ]),
       ).toBe(true);
     });
 
     it("accepts observation + read_range without rag_citation", () => {
       expect(
-        isReaderAskAgenticCompletedPayload(
-          makeCompletedWithEvidence({
+        isReaderAskAgenticEvidenceList([
+          {
             handle_id: "evh_obs_aabbccddeeff00112233445566778899",
             kind: "observation",
             source_tool: "read_range",
             snippet: "legal snippet",
-          }),
-        ),
+          },
+        ]),
       ).toBe(true);
     });
 
     it("accepts observation + search_current_article without rag_citation", () => {
       expect(
-        isReaderAskAgenticCompletedPayload(
-          makeCompletedWithEvidence({
+        isReaderAskAgenticEvidenceList([
+          {
             handle_id: "evh_obs_aabbccddeeff00112233445566778899",
             kind: "observation",
             source_tool: "search_current_article",
             snippet: "legal snippet",
-          }),
-        ),
+          },
+        ]),
       ).toBe(true);
     });
   });
