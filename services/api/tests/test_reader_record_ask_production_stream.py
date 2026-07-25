@@ -586,7 +586,12 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
             )
         ]
     )
-    # Run real agent with search then final via FunctionModel
+    # Run real agent with search then final via FunctionModel.
+    # The search tool returns a canonical JSON string (produced by
+    # ModelViewRenderer.render_tool_view → render_json), so a real LLM
+    # must parse that JSON to extract evidence handle ids. The model_fn
+    # below mirrors that: it json.loads the ToolReturnPart.content string
+    # and pulls ``evidence_handles[0].handle_id``.
     state = {"searched": False}
 
     async def model_fn(messages, info):
@@ -608,10 +613,18 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
                 if type(part).__name__ != "ToolReturnPart":
                     continue
                 content = getattr(part, "content", None)
-                if isinstance(content, dict):
-                    ehs = content.get("evidence_handles") or []
-                    if ehs:
-                        handle = ehs[0].get("handle_id") or ehs[0]
+                # Tool return content is a canonical JSON string, not a
+                # dict — a real LLM receives this string and parses it.
+                if isinstance(content, str):
+                    try:
+                        content_obj = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if not isinstance(content_obj, dict):
+                        continue
+                    ehs = content_obj.get("evidence_handles") or []
+                    if ehs and isinstance(ehs[0], dict):
+                        handle = ehs[0].get("handle_id")
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -673,6 +686,332 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
     assert rag["stable_document_id"] == str(_DOC)
     assert rag["base_id"] == str(_BASE)
     assert rag["record_generation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fabricated_handle_after_search_hit_never_completes() -> None:
+    """A model that cites a fabricated (mint-shaped but unregistered) handle
+    after a successful search_current_article hit must NEVER produce a
+    completed message or stale source UI state.
+
+    Validates fail-closed safety boundary: provisional evidence registered
+    by the search tool does NOT leak to the wire when the model fabricates
+    a citation. The grounding_validator rejects the fabricated handle with
+    ModelRetry; retries exhaust → UnexpectedModelBehavior → typed terminal.
+    """
+    from app.services.reader_record_ask.article_rag_port import (
+        ArticleRagHitView,
+        ArticleRagSearchOutcome,
+        FakeArticleRagSearchPort,
+    )
+
+    repo = _FakeRepo()
+    hit = ArticleRagHitView(
+        chunk_id="c1",
+        text="climate paragraph",
+        source_scope="main_reading_text",
+        block_type="paragraph",
+        content_sha256="d" * 64,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=10,
+        score=0.9,
+        reading_record_id=_RECORD,
+        stable_document_id=_DOC,
+        base_id=_BASE,
+        record_generation=1,
+    )
+    port = FakeArticleRagSearchPort(
+        outcomes=[
+            ArticleRagSearchOutcome(
+                status="ok",
+                summary="ok",
+                hits=(hit,),
+                rag_substrate_id=UUID("55555555-5555-5555-5555-555555555555"),
+                plan_content_sha256="c" * 64,
+                stable_document_id=_DOC,
+                base_id=_BASE,
+                record_generation=1,
+            )
+        ]
+    )
+    # Mint-shaped but NEVER registered in this turn's EvidenceRegistry.
+    fabricated_handle = "evh_" + "ff" * 16
+    state = {"searched": False}
+
+    async def model_fn(messages, info):
+        del info
+        if not state["searched"]:
+            state["searched"] = True
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_current_article",
+                        args=json.dumps({"query": "climate"}),
+                        tool_call_id="s1",
+                    )
+                ]
+            )
+        # Always cite the FABRICATED handle — never the real one returned
+        # by the search tool. This must be rejected by grounding_validator.
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": "fabricated citation",
+                            "cited_evidence_handles": [fabricated_handle],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id="f1",
+                )
+            ]
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="What about climate?",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            document_access=InMemoryDocumentAccess(
+                snapshot=build_document_scope(
+                    reading_record_id=_RECORD,
+                    base_id=_BASE,
+                    record_generation=1,
+                    base_content_sha256=_SHA,
+                    stable_document_id=_DOC,
+                    units=[
+                        ReadingUnitView(
+                            unit_id="u1",
+                            order_index=0,
+                            text="hello",
+                            text_hash="11111111",
+                            base_start_utf16=0,
+                            base_end_utf16=5,
+                        )
+                    ],
+                )
+            ),
+            article_rag=port,
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    # Search DID execute (provisional evidence was registered server-side).
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+    assert port.call_count == 1
+
+    # No completed message — fabricated citation must never succeed.
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+
+    # Typed terminal: output validation exhausted.
+    assert len(repo.terminal_writes) == 1
+    tw = repo.terminal_writes[0]
+    assert tw["final_status"] == "failed"
+    assert tw["run_status"] == "failed"
+    assert tw["terminal_reason"] == TERMINAL_REASON_AGENT_OUTPUT_INVALID
+
+    # Safety boundary: no provisional source data leaks to the wire.
+    # The search hit snippet ("climate paragraph") must NEVER appear in
+    # any SSE payload, terminal_dto, or persisted terminal row.
+    # default=str is needed because the raw kwargs dict captured by the
+    # fake repo contains UUID values (turn_run_id, message_id, etc.).
+    blob = json.dumps([d for _, d in events], ensure_ascii=False)
+    assert "climate paragraph" not in blob
+    assert "climate paragraph" not in json.dumps(tw, ensure_ascii=False, default=str)
+    # Terminal DTO has no evidence field at all (only rejected_handles).
+    terminal_dto = tw.get("terminal_dto") or {}
+    assert "evidence" not in terminal_dto
+    # resolved_evidence_json on terminal path is always empty.
+    assert tw.get("resolved_evidence_json") in (None, [], "[]")
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_after_search_hit_does_not_leak_provisional_evidence() -> None:
+    """When complete_agentic_turn_run raises AFTER a successful search hit
+    + valid citation + ok finalizer, the persist-failed terminal must NOT
+    preserve or leak the provisional source evidence.
+
+    Validates fail-closed safety boundary: terminal_agentic_turn_run on the
+    persist-failed path receives finalized=None → terminal_dto carries no
+    evidence, no snippet, no source identity. The provisional evidence
+    registered by the search tool is discarded, not persisted.
+    """
+    from app.services.reader_record_ask.article_rag_port import (
+        ArticleRagHitView,
+        ArticleRagSearchOutcome,
+        FakeArticleRagSearchPort,
+    )
+
+    repo = _FakeRepo()
+    repo.complete_should_fail = True
+    hit = ArticleRagHitView(
+        chunk_id="c1",
+        text="climate paragraph",
+        source_scope="main_reading_text",
+        block_type="paragraph",
+        content_sha256="d" * 64,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=10,
+        score=0.9,
+        reading_record_id=_RECORD,
+        stable_document_id=_DOC,
+        base_id=_BASE,
+        record_generation=1,
+    )
+    port = FakeArticleRagSearchPort(
+        outcomes=[
+            ArticleRagSearchOutcome(
+                status="ok",
+                summary="ok",
+                hits=(hit,),
+                rag_substrate_id=UUID("55555555-5555-5555-5555-555555555555"),
+                plan_content_sha256="c" * 64,
+                stable_document_id=_DOC,
+                base_id=_BASE,
+                record_generation=1,
+            )
+        ]
+    )
+    state = {"searched": False}
+
+    async def model_fn(messages, info):
+        del info
+        if not state["searched"]:
+            state["searched"] = True
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_current_article",
+                        args=json.dumps({"query": "climate"}),
+                        tool_call_id="s1",
+                    )
+                ]
+            )
+        # Cite the REAL handle returned by the search tool — finalizer
+        # succeeds, but complete_agentic_turn_run will raise.
+        handle = None
+        for msg in messages:
+            for part in getattr(msg, "parts", []) or []:
+                if type(part).__name__ != "ToolReturnPart":
+                    continue
+                content = getattr(part, "content", None)
+                if isinstance(content, str):
+                    try:
+                        content_obj = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if not isinstance(content_obj, dict):
+                        continue
+                    ehs = content_obj.get("evidence_handles") or []
+                    if ehs and isinstance(ehs[0], dict):
+                        handle = ehs[0].get("handle_id")
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "answer_text": "about climate",
+                            "cited_evidence_handles": [handle] if handle else [],
+                            "response_kind": "grounded_answer",
+                        }
+                    ),
+                    tool_call_id="f1",
+                )
+            ]
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="What about climate?",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            document_access=InMemoryDocumentAccess(
+                snapshot=build_document_scope(
+                    reading_record_id=_RECORD,
+                    base_id=_BASE,
+                    record_generation=1,
+                    stable_document_id=_DOC,
+                    base_content_sha256=_SHA,
+                    units=[
+                        ReadingUnitView(
+                            unit_id="u1",
+                            order_index=0,
+                            text="hello",
+                            text_hash="11111111",
+                            base_start_utf16=0,
+                            base_end_utf16=5,
+                        )
+                    ],
+                )
+            ),
+            article_rag=port,
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    # Search executed + finalizer succeeded (provisional evidence existed).
+    assert port.call_count == 1
+    events = _parse_sse(chunks)
+    names = [n for n, _ in events]
+
+    # No completed message — persist failure must never emit success.
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    assert EVENT_MESSAGE_INTERRUPTED in names
+
+    # Typed terminal: persist_failed.
+    assert len(repo.terminal_writes) == 1
+    tw = repo.terminal_writes[0]
+    assert tw["final_status"] == "failed"
+    assert tw["run_status"] == "failed"
+    assert tw["terminal_reason"] == TERMINAL_REASON_PERSIST_FAILED
+    # complete_agentic_turn_run was attempted (and failed) — no success row.
+    assert len(repo.completed_writes) == 0
+
+    # Safety boundary: provisional source data must NOT leak.
+    # The search hit snippet, source identity (stable_document_id,
+    # base_id, chunk_id), and raw DB error text must never appear in
+    # any SSE payload, terminal_dto, or persisted terminal row.
+    # default=str is needed because the raw kwargs dict captured by the
+    # fake repo contains UUID values (turn_run_id, message_id, etc.).
+    blob = json.dumps([d for _, d in events], ensure_ascii=False)
+    tw_blob = json.dumps(tw, ensure_ascii=False, default=str)
+    # Snippet text must not leak.
+    assert "climate paragraph" not in blob
+    assert "climate paragraph" not in tw_blob
+    # Source identity must not leak.
+    assert str(_DOC) not in blob
+    assert str(_DOC) not in tw_blob
+    assert str(_BASE) not in blob
+    assert str(_BASE) not in tw_blob
+    assert "chunk_id" not in blob
+    assert "chunk_id" not in tw_blob
+    # Terminal DTO has no evidence field at all (only rejected_handles).
+    terminal_dto = tw.get("terminal_dto") or {}
+    assert "evidence" not in terminal_dto
+    # resolved_evidence_json on terminal path is always empty.
+    assert tw.get("resolved_evidence_json") in (None, [], "[]")
+    # Raw DB error text must not leak.
+    assert "simulated DB connection drop" not in blob
+    assert "simulated DB connection drop" not in tw_blob
 
 
 @pytest.mark.asyncio

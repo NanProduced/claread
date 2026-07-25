@@ -170,11 +170,21 @@ def _model_search_then_final():
             if handle is None:
                 for msg in messages:
                     for part in getattr(msg, "parts", []) or []:
+                        if type(part).__name__ != "ToolReturnPart":
+                            continue
                         content = getattr(part, "content", None)
-                        if isinstance(content, dict):
-                            ehs = content.get("evidence_handles") or []
-                            if ehs:
-                                handle = ehs[0].get("handle_id") or ehs[0]
+                        # Tool return content is a canonical JSON string,
+                        # not a dict — a real LLM parses it.
+                        if isinstance(content, str):
+                            try:
+                                content_obj = json.loads(content)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                            if not isinstance(content_obj, dict):
+                                continue
+                            ehs = content_obj.get("evidence_handles") or []
+                            if ehs and isinstance(ehs[0], dict):
+                                handle = ehs[0].get("handle_id")
             return ModelResponse(
                 parts=[
                     _final_part(
@@ -513,11 +523,21 @@ async def test_agent_one_rag_search_registers_substrate_citation() -> None:
         handle = None
         for msg in messages:
             for part in getattr(msg, "parts", []) or []:
+                if type(part).__name__ != "ToolReturnPart":
+                    continue
                 content = getattr(part, "content", None)
-                if isinstance(content, dict):
-                    ehs = content.get("evidence_handles") or []
-                    if ehs:
-                        handle = ehs[0].get("handle_id") or ehs[0]
+                # Tool return content is a canonical JSON string, not a
+                # dict — a real LLM receives this string and parses it.
+                if isinstance(content, str):
+                    try:
+                        content_obj = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if not isinstance(content_obj, dict):
+                        continue
+                    ehs = content_obj.get("evidence_handles") or []
+                    if ehs and isinstance(ehs[0], dict):
+                        handle = ehs[0].get("handle_id")
         return ModelResponse(
             parts=[_final_part("Found across the article.", [handle] if handle else [])]
         )
@@ -544,7 +564,42 @@ async def test_agent_one_rag_search_registers_substrate_citation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_second_rag_budget_exhausted() -> None:
+async def test_agent_second_rag_search_call_limit_returns_unavailable_no_io() -> None:
+    """Second search_current_article call hits the TurnCoordinator call-limit
+    and returns a typed ``unavailable`` (detail_code=call_limit) — NOT
+    ``budget_exhausted``.
+
+    Budget semantics adjudication (two-tier):
+
+    1. Call-limit budget (``max_search_current_article_calls``): caps the
+       NUMBER of search calls per turn. Enforced by
+       ``TurnCoordinator.search_current_article`` BEFORE the RAG port is
+       touched. When exceeded, the coordinator calls
+       ``_rag_safe_unavailable(detail="call_limit")`` which returns
+       ``MeteredToolReturn(status="unavailable", host_budget_abort=False)``.
+       The agent sees a model-visible ``unavailable`` tool view and can
+       continue to produce a final answer using existing evidence. No I/O.
+
+    2. Model-view budget (``self.budget`` / host budget): caps the
+       token/cost of RENDERING tool views. When the budget denies the
+       charge, ``MeteredToolReturn(status="budget_exhausted",
+       host_budget_abort=True)`` is returned, which the agent tool
+       wrapper converts to ``HostBudgetExhausted`` — a typed HOST ABORT
+       that terminates the run. This never appears as a ``ToolResultEvent``
+       with ``status="budget_exhausted"`` in ``result.events`` because the
+       exception is raised BEFORE the event is emitted.
+
+    The lower-level ``execute_search_current_article`` executor (tested
+    separately in ``test_search_budget_second_call_no_io``) uses
+    ``budget_exhausted`` for the call-limit condition, but the AGENT
+    RUNTIME does NOT go through the executor — it goes through the
+    TurnCoordinator, which uses ``unavailable`` for the call-limit.
+
+    Old assertion ``"budget_exhausted" in statuses`` was wrong: it
+    conflated the executor-layer status with the TurnCoordinator-layer
+    status. The current behavior (``["ok", "unavailable"]``) is correct
+    per the TurnCoordinator contract.
+    """
     port = FakeArticleRagSearchPort(outcomes=[_ok_outcome()])
     steps_done = {"n": 0}
 
@@ -571,11 +626,17 @@ async def test_agent_second_rag_budget_exhausted() -> None:
         model=FunctionModel(model_fn),
         article_rag=port,
     )
+    # Only the first search reached the port (call-limit short-circuits).
     assert result.search_current_article_calls == 1
     assert port.call_count == 1
     statuses = [e.status for e in result.events if isinstance(e, ToolResultEvent)]
-    assert "ok" in statuses
-    assert "budget_exhausted" in statuses
+    # First search succeeded; second hit the call-limit → unavailable.
+    assert statuses == ["ok", "unavailable"]
+    # Call-limit is NOT budget_exhausted in the agent runtime.
+    assert "budget_exhausted" not in statuses
+    # The run completes normally (call-limit is a soft cap, not a host abort).
+    assert result.finalized is not None
+    assert result.finalized.status == "ok"
 
 
 @pytest.mark.asyncio
