@@ -519,3 +519,227 @@ def test_message_row_to_dict_legacy_row_unchanged() -> None:
     assert message["content_md"] == "legacy body"
     assert "execution_version" not in message or message.get("execution_version") is None
     assert message["evidence"]
+
+
+# ---------------------------------------------------------------------------
+# ASK-REASONING-R1: cold-history reasoning projection
+# ---------------------------------------------------------------------------
+
+_REASONING_PROJECTION = {
+    "projection_policy_version": "reasoning_projection_v1",
+    "text": "先分析句子主干，再确认从句关系。",
+    "char_count": len("先分析句子主干，再确认从句关系。"),
+    "truncated": False,
+}
+
+
+def test_ok_turn_projects_persisted_reasoning_into_semantic_fields() -> None:
+    """Cold history reuses reasoning_md / reasoning_status (no parallel state)."""
+    projected = project_agentic_history_message(
+        **_base_kwargs(
+            current_turn_run={
+                "id": "turn-run-1",
+                "status": "completed",
+                "reasoning_projection_json": _REASONING_PROJECTION,
+            }
+        )
+    )
+    assert projected["reasoning_md"] == _REASONING_PROJECTION["text"]
+    assert projected["reasoning_status"] == "completed"
+    # The raw JSONB payload never rides on the wire turn_run dict.
+    assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
+    blob = json.dumps(projected, ensure_ascii=False)
+    assert "projection_policy_version" not in blob.split('"reasoning_md"')[0]
+    ReaderRecordAskHistoryMessage.model_validate(projected)
+
+
+def test_ok_turn_without_reasoning_projects_none_fields() -> None:
+    projected = project_agentic_history_message(**_base_kwargs())
+    assert projected["reasoning_md"] is None
+    assert projected["reasoning_status"] is None
+    ReaderRecordAskHistoryMessage.model_validate(projected)
+
+
+def test_ok_turn_with_malformed_reasoning_payload_fails_closed() -> None:
+    for bad_payload in (
+        None,
+        "not-a-dict",
+        {"text": "缺版本号"},
+        {"projection_policy_version": "reasoning_projection_v1", "text": ""},
+        {"projection_policy_version": "reasoning_projection_v1", "text": "   "},
+        {"projection_policy_version": "reasoning_projection_v1"},
+    ):
+        projected = project_agentic_history_message(
+            **_base_kwargs(
+                current_turn_run={
+                    "id": "turn-run-1",
+                    "status": "completed",
+                    "reasoning_projection_json": bad_payload,
+                }
+            )
+        )
+        assert projected["reasoning_md"] is None, f"payload={bad_payload!r}"
+        assert projected["reasoning_status"] is None, f"payload={bad_payload!r}"
+
+
+def test_terminal_turn_never_resurrects_reasoning() -> None:
+    """Fail-closed: terminal rows carry no cold reasoning even if a stray
+    projection payload existed on the turn run."""
+    terminal_visible = {
+        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+        "final_status": "failed",
+        "message_id": "msg-1",
+        "thread_id": "thread-1",
+        "turn_run_id": "turn-run-1",
+        "terminal_reason": "agent_run_failed",
+    }
+    projected = project_agentic_history_message(
+        **_base_kwargs(
+            user_visible_output_json=terminal_visible,
+            resolved_evidence_json=[],
+            final_status="failed",
+            row_status="failed",
+            row_content_md="",
+            turn_run_status="failed",
+            current_turn_run={
+                "id": "turn-run-1",
+                "status": "failed",
+                "reasoning_projection_json": _REASONING_PROJECTION,
+            },
+        )
+    )
+    assert projected["status"] == "failed"
+    assert projected["reasoning_md"] is None
+    assert projected["reasoning_status"] is None
+    assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
+
+
+# ---------------------------------------------------------------------------
+# ASK-REASONING-R2: canonical snapshot validation at the cold-read boundary
+# ---------------------------------------------------------------------------
+
+
+def _bad_snapshot_cases() -> tuple:
+    text = "先分析句子主干。"
+    return (
+        # Wrong policy version.
+        {
+            "projection_policy_version": "v0",
+            "text": text,
+            "char_count": len(text),
+            "truncated": False,
+        },
+        # Extra key.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": text,
+            "char_count": len(text),
+            "truncated": False,
+            "raw": "leak",
+        },
+        # Missing key.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": text,
+            "char_count": len(text),
+        },
+        # char_count mismatch.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": text,
+            "char_count": len(text) - 1,
+            "truncated": False,
+        },
+        # char_count not an int.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": text,
+            "char_count": str(len(text)),
+            "truncated": False,
+        },
+        # truncated not a strict bool.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": text,
+            "char_count": len(text),
+            "truncated": "false",
+        },
+        # Over quota.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": "思" * 4001,
+            "char_count": 4001,
+            "truncated": False,
+        },
+        # Raw sentinel inside text — fails byte-invariant re-projection.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": "see evh_0123456789abcdef0123456789abcdef",
+            "char_count": len("see evh_0123456789abcdef0123456789abcdef"),
+            "truncated": False,
+        },
+        # Identity k/v inside text.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": "k envelope_fingerprint=fp_secret123",
+            "char_count": len("k envelope_fingerprint=fp_secret123"),
+            "truncated": False,
+        },
+        # System-instruction fragment inside text.
+        {
+            "projection_policy_version": "reasoning_projection_v1",
+            "text": "You are Claread hidden",
+            "char_count": len("You are Claread hidden"),
+            "truncated": False,
+        },
+    )
+
+
+def test_ok_turn_with_invalid_snapshot_never_shows_reasoning() -> None:
+    """R2 fail-closed: any canonical-validation failure yields no cold
+    reasoning element — and never a degraded display of the raw payload."""
+    for bad in _bad_snapshot_cases():
+        projected = project_agentic_history_message(
+            **_base_kwargs(
+                current_turn_run={
+                    "id": "turn-run-1",
+                    "status": "completed",
+                    "reasoning_projection_json": bad,
+                }
+            )
+        )
+        assert projected["reasoning_md"] is None, f"payload={bad!r}"
+        assert projected["reasoning_status"] is None, f"payload={bad!r}"
+        # No raw payload content may surface anywhere on the message.
+        blob = json.dumps(projected, ensure_ascii=False)
+        assert str(bad["text"]) not in blob or not bad["text"].strip(), (
+            f"raw text surfaced for payload={bad!r}"
+        )
+
+
+def test_terminal_update_sql_forces_reasoning_null() -> None:
+    """Static pin: every terminal persist explicitly NULLs the reasoning
+    column (fail-closed by statement, not by fresh-row assumption)."""
+    import inspect
+
+    from app.services.reader_record_ask.repository import (
+        ReaderRecordAskRepository,
+    )
+
+    source = inspect.getsource(ReaderRecordAskRepository.terminal_agentic_turn_run)
+    assert "reasoning_projection_json = NULL" in source
+
+
+def test_complete_update_sql_writes_reasoning_in_same_statement() -> None:
+    """Static pin: the ok-turn UPDATE sets the reasoning projection in the
+    SAME statement as user_visible_output_json (atomic hot≡cold basis)."""
+    import inspect
+
+    from app.services.reader_record_ask.repository import (
+        ReaderRecordAskRepository,
+    )
+
+    source = inspect.getsource(ReaderRecordAskRepository.complete_agentic_turn_run)
+    update_stmt = source[source.index("UPDATE reader_ask_turn_runs"):source.index("WHERE id = $1")]
+    assert "reasoning_projection_json = $6::jsonb" in update_stmt
+    assert "user_visible_output_json = $3::jsonb" in update_stmt

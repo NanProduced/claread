@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -60,13 +61,14 @@ from app.services.reader_record_ask.runtime_events import (
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
+    EVENT_AGENTIC_REASONING_COMPLETED,
+    EVENT_AGENTIC_REASONING_DELTA,
+    EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
-    EVENT_REASONING_COMPLETED,
-    EVENT_REASONING_STARTED,
     encode_sse,
 )
 
@@ -291,6 +293,9 @@ class _FakeRepo:
             "final_status": "ok",
             "user_visible_output_json": dto,
             "resolved_evidence_json": kwargs["resolved_evidence"],
+            # ASK-REASONING-R1: the reasoning projection commits in the
+            # same write as the answer (None when absent).
+            "reasoning_projection_json": kwargs.get("reasoning_projection"),
             "envelope_fingerprint": None,
             "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         }
@@ -2278,14 +2283,53 @@ def test_production_rag_factory_builds_retrieval_backed_port_when_ready() -> Non
 
 
 # ---------------------------------------------------------------------------
-# R4-A6-T2: reasoning lifecycle SSE events (phase-only "thinking…" signal)
+# ASK-REASONING-R1: agentic.reasoning.* SSE contract
 # ---------------------------------------------------------------------------
 
 
+def _ok_run_result(kwargs: dict) -> ReadingRecordAskRunResult:
+    return ReadingRecordAskRunResult(
+        final_text="done",
+        finalized=FinalizedAskResult(
+            status="ok",
+            answer_text="done",
+            resolved_evidence=(),
+            envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+        ),
+    )
+
+
+async def _stream_with_run_async(
+    run_fn, repo: _FakeRepo | None = None
+) -> tuple[list[tuple[str, dict]], _FakeRepo]:
+    repo = repo if repo is not None else _FakeRepo()
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=run_fn,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    return _parse_sse(chunks), repo
+
+
 @pytest.mark.asyncio
-async def test_reasoning_lifecycle_events_on_successful_run() -> None:
-    """Successful run emits reasoning.started/completed — no reasoning.delta."""
-    repo = _FakeRepo()
+async def test_analysis_phase_events_no_longer_emit_reasoning_lifecycle() -> None:
+    """AnalysisStarted/Finished map to agentic.progress only.
+
+    The agentic path no longer maps phase events onto legacy
+    ``reasoning.*`` lifecycle signals — progress and reasoning are
+    separate channels.
+    """
 
     async def _run(**kwargs):
         sink = kwargs["event_sink"]
@@ -2297,85 +2341,210 @@ async def test_reasoning_lifecycle_events_on_successful_run() -> None:
         )
         sink(AnalysisStartedEvent())
         sink(AnalysisFinishedEvent())
-        return ReadingRecordAskRunResult(
-            final_text="done",
-            finalized=FinalizedAskResult(
-                status="ok",
-                answer_text="done",
-                resolved_evidence=(),
-                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
-            ),
-        )
+        return _ok_run_result(kwargs)
 
-    chunks = [
-        c
-        async for c in stream_agentic_thread_message(
-            user_id=_USER,
-            reading_record_id=_RECORD,
-            thread_id=_THREAD,
-            content="q",
-            facts=_fake_facts(),
-            request_anchor=None,
-            repository=repo,  # type: ignore[arg-type]
-            model=_function_model(),
-            run_fn=_run,
-            auto_wire_dependencies=False,
-            stable_document_id=_DOC,
-        )
-    ]
-    events = _parse_sse(chunks)
+    events, _ = await _stream_with_run_async(_run)
     names = [name for name, _ in events]
 
-    assert names.count(EVENT_REASONING_STARTED) == 1
-    assert names.count(EVENT_REASONING_COMPLETED) == 1
-    # No reasoning content channel exists on the agentic path.
+    assert "reasoning.started" not in names
+    assert "reasoning.completed" not in names
     assert "reasoning.delta" not in names
-
-    run_started_at = names.index(EVENT_AGENTIC_RUN_STARTED)
-    started_at = names.index(EVENT_REASONING_STARTED)
-    completed_at = names.index(EVENT_REASONING_COMPLETED)
-    message_completed_at = names.index(EVENT_MESSAGE_COMPLETED)
-
-    # reasoning.started: after agentic.run_started, before the analysis
-    # agentic.progress it introduces.
-    assert run_started_at < started_at
-    assert names[started_at + 1] == EVENT_AGENTIC_PROGRESS
-    # reasoning.completed: after the analysis agentic.progress ("分析完成"),
-    # before message.completed.
-    assert names[completed_at - 1] == EVENT_AGENTIC_PROGRESS
-    assert started_at < completed_at < message_completed_at
-
-    # Payloads are phase signals only: message_id correlation and nothing
-    # else — never reasoning text/length/hash.
-    message_id = next(
-        data for name, data in events if name == "message.started"
-    )["message_id"]
-    for name, data in events:
-        if name in (EVENT_REASONING_STARTED, EVENT_REASONING_COMPLETED):
-            assert data == {"message_id": message_id}
-        # No event on the agentic path may carry reasoning content fields.
-        assert "delta" not in data
-        assert "reasoning_md" not in data
-        assert "thinking" not in data
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
+    # Phase progress is still projected.
+    assert EVENT_AGENTIC_PROGRESS in names
+    assert EVENT_MESSAGE_COMPLETED in names
 
 
 @pytest.mark.asyncio
-async def test_reasoning_started_without_completed_when_run_fails() -> None:
-    """Failed run: AnalysisFinishedEvent never fires → no reasoning.completed.
-
-    Mirrors thinking_transport behavior: the finished phase signal is only
-    emitted on normal analysis completion, so an interrupted run leaves the
-    lifecycle half-open and the client falls back to message.interrupted.
-    """
-    repo = _FakeRepo()
+async def test_agentic_reasoning_events_on_successful_run() -> None:
+    """Provider reasoning streams as agentic.reasoning.* with strict seq,
+    identity binding, and persist-before-completed ordering."""
+    first_chunk = "先分析句子主干。" * 60  # > holdback → several deltas
+    second_chunk = "再确认从句关系。"
 
     async def _run(**kwargs):
         sink = kwargs["event_sink"]
+        observer = kwargs["thinking_observer"]
+        sink(
+            RunStartedEvent(
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+                has_initial_selection=True,
+            )
+        )
         sink(AnalysisStartedEvent())
+        observer.on_analysis_started()
+        observer.on_reasoning_delta(first_chunk)
+        observer.on_reasoning_delta(second_chunk)
+        observer.on_analysis_finished()
+        sink(AnalysisFinishedEvent())
+        return _ok_run_result(kwargs)
+
+    events, repo = await _stream_with_run_async(_run)
+    names = [name for name, _ in events]
+
+    # Exactly one started, at least one delta, exactly one completed.
+    started = [d for n, d in events if n == EVENT_AGENTIC_REASONING_STARTED]
+    deltas = [d for n, d in events if n == EVENT_AGENTIC_REASONING_DELTA]
+    completed = [d for n, d in events if n == EVENT_AGENTIC_REASONING_COMPLETED]
+    assert len(started) == 1
+    assert len(deltas) >= 2
+    assert len(completed) == 1
+
+    # Strict monotonic seq: started=0, deltas 1..n, completed=n+1.
+    assert started[0]["seq"] == 0
+    seqs = [d["seq"] for d in deltas]
+    assert seqs == list(range(1, len(deltas) + 1))
+    assert completed[0]["seq"] == len(deltas) + 1
+    assert completed[0]["has_content"] is True
+    assert completed[0]["truncated"] is False
+    assert completed[0]["projection_policy_version"] == "reasoning_projection_v1"
+
+    # Identity binding: all three events agree with agentic.run_started.
+    run_started = next(d for n, d in events if n == EVENT_AGENTIC_RUN_STARTED)
+    for data in [*started, *deltas, *completed]:
+        assert data["message_id"] == run_started["message_id"]
+        assert data["thread_id"] == run_started["thread_id"]
+        assert data["turn_run_id"] == run_started["turn_run_id"]
+
+    # Ordering: run_started < reasoning.started < deltas <
+    # reasoning.completed < message.completed.
+    assert names.index(EVENT_AGENTIC_RUN_STARTED) < names.index(
+        EVENT_AGENTIC_REASONING_STARTED
+    )
+    assert names.index(EVENT_AGENTIC_REASONING_STARTED) < names.index(
+        EVENT_AGENTIC_REASONING_DELTA
+    )
+    assert names.index(EVENT_AGENTIC_REASONING_COMPLETED) > max(
+        i for i, n in enumerate(names) if n == EVENT_AGENTIC_REASONING_DELTA
+    )
+    assert names.index(EVENT_AGENTIC_REASONING_COMPLETED) < names.index(
+        EVENT_MESSAGE_COMPLETED
+    )
+
+    # Hot/cold golden invariant: concat(SSE deltas) == persisted text.
+    streamed_text = "".join(d["delta"] for d in deltas)
+    assert streamed_text == first_chunk + second_chunk
+    assert len(repo.completed_writes) == 1
+    persisted = repo.completed_writes[0]["reasoning_projection"]
+    assert persisted is not None
+    assert persisted["text"] == streamed_text
+    assert persisted["char_count"] == len(streamed_text)
+    assert persisted["truncated"] is False
+    assert persisted["projection_policy_version"] == "reasoning_projection_v1"
+
+    # No legacy reasoning lifecycle on the agentic path.
+    assert "reasoning.started" not in names
+    assert "reasoning.completed" not in names
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_scrubs_sentinels_before_sse_and_db(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Raw internal sentinels never reach SSE, persistence, or logs."""
+    evh = "evh_0123456789abcdef0123456789abcdef"
+    key = "sk-liveKEYMATERIAL0123456789"
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        observer.on_analysis_started()
+        observer.on_reasoning_delta(f"检查 {evh}，使用 {key}。" + "补" * 400)
+        observer.on_analysis_finished()
+        sink(AnalysisFinishedEvent())
+        return _ok_run_result(kwargs)
+
+    with caplog.at_level(logging.DEBUG):
+        events, repo = await _stream_with_run_async(_run)
+
+    wire = json.dumps(
+        [d for _, d in events], ensure_ascii=False
+    )
+    assert evh not in wire
+    assert key not in wire
+    assert "〔引用〕" in wire
+    persisted = repo.completed_writes[0]["reasoning_projection"]
+    assert persisted is not None
+    assert evh not in persisted["text"]
+    assert key not in persisted["text"]
+    assert evh not in caplog.text
+    assert key not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_no_events_when_provider_returns_none() -> None:
+    """No provider reasoning ⇒ zero agentic.reasoning.* events, NULL persist,
+    and no fabricated placeholder signal."""
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        # Observer exists but is never fed: provider emitted no thinking.
+        sink(AnalysisStartedEvent())
+        sink(AnalysisFinishedEvent())
+        return _ok_run_result(kwargs)
+
+    events, repo = await _stream_with_run_async(_run)
+    names = [name for name, _ in events]
+
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
+    assert EVENT_MESSAGE_COMPLETED in names
+    # Fail-closed persistence: NULL reasoning column.
+    assert repo.completed_writes[0]["reasoning_projection"] is None
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_failed_run_no_completed_no_persist() -> None:
+    """Session-visible deltas freeze on failure; completed is never emitted
+    and nothing is persisted."""
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        observer.on_analysis_started()
+        observer.on_reasoning_delta("部分思考。" * 100)  # > holdback → emitted
         raise RuntimeError("boom")
 
-    chunks = [
-        c
+    events, repo = await _stream_with_run_async(_run)
+    names = [name for name, _ in events]
+
+    # Deltas were visible in-session...
+    assert EVENT_AGENTIC_REASONING_STARTED in names
+    assert EVENT_AGENTIC_REASONING_DELTA in names
+    # ...but no completion promise, no completed answer.
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
+    assert EVENT_MESSAGE_COMPLETED not in names
+    assert EVENT_AGENTIC_TERMINAL in names
+    terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
+    assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
+    # Nothing persisted: no ok write, terminal writes carry no reasoning.
+    assert repo.completed_writes == []
+    assert repo.terminal_writes
+    assert "reasoning_projection" not in repo.terminal_writes[0]
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_cancel_no_completed_no_persist() -> None:
+    """Cancellation: deltas freeze interrupted; no completed, no persist.
+
+    The cancel path re-raises CancelledError after emitting the typed
+    terminal (existing contract) — consume inside try/except.
+    """
+    import asyncio as _asyncio
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        observer.on_reasoning_delta("思考中。" * 130)  # > holdback → emitted
+        raise _asyncio.CancelledError()
+
+    repo = _FakeRepo()
+    chunks: list[str] = []
+    with pytest.raises(_asyncio.CancelledError):
         async for c in stream_agentic_thread_message(
             user_id=_USER,
             reading_record_id=_RECORD,
@@ -2388,20 +2557,41 @@ async def test_reasoning_started_without_completed_when_run_fails() -> None:
             run_fn=_run,
             auto_wire_dependencies=False,
             stable_document_id=_DOC,
-        )
-    ]
+        ):
+            chunks.append(c)
     events = _parse_sse(chunks)
     names = [name for name, _ in events]
 
-    assert names.count(EVENT_REASONING_STARTED) == 1
-    assert EVENT_REASONING_COMPLETED not in names
-    assert "reasoning.delta" not in names
-    # Interrupted terminal, never message.completed.
+    assert EVENT_AGENTIC_REASONING_STARTED in names
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
     assert EVENT_MESSAGE_COMPLETED not in names
-    assert EVENT_AGENTIC_TERMINAL in names
-    assert EVENT_MESSAGE_INTERRUPTED in names
+    assert repo.completed_writes == []
     terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
-    assert terminal["terminal_reason"] == TERMINAL_REASON_AGENT_RUN_FAILED
+    assert terminal["final_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_agentic_reasoning_persist_failure_no_completed() -> None:
+    """Persist failure on the success path: completed must NOT be emitted
+    (the promise requires same-transaction persistence success)."""
+    repo = _FakeRepo()
+    repo.complete_should_fail = True
+
+    async def _run(**kwargs):
+        observer = kwargs["thinking_observer"]
+        observer.on_reasoning_delta("思考内容。" * 60)
+        observer.on_analysis_finished()
+        return _ok_run_result(kwargs)
+
+    events, _ = await _stream_with_run_async(_run, repo=repo)
+    names = [name for name, _ in events]
+
+    assert EVENT_AGENTIC_REASONING_STARTED in names
+    assert EVENT_AGENTIC_REASONING_DELTA in names
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
+    assert EVENT_MESSAGE_COMPLETED not in names
+    terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
+    assert terminal["terminal_reason"] == TERMINAL_REASON_PERSIST_FAILED
 
 
 # ---------------------------------------------------------------------------
@@ -2464,20 +2654,20 @@ async def test_message_delta_streams_answer_text_on_success() -> None:
     completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
     assert completed["answer_text"] == "Hello world"
 
-    # Order: reasoning.started → first delta → last delta →
-    # reasoning.completed → message.completed.
-    reasoning_started_at = names.index(EVENT_REASONING_STARTED)
+    # Order: analysis progress (started) → first delta → last delta →
+    # analysis progress (finished) → message.completed.
+    progress_indices = [i for i, n in enumerate(names) if n == EVENT_AGENTIC_PROGRESS]
     first_delta_at = names.index(EVENT_MESSAGE_DELTA)
     last_delta_at = len(names) - 1 - names[::-1].index(EVENT_MESSAGE_DELTA)
-    reasoning_completed_at = names.index(EVENT_REASONING_COMPLETED)
     message_completed_at = names.index(EVENT_MESSAGE_COMPLETED)
-    assert reasoning_started_at < first_delta_at
+    assert progress_indices[0] < first_delta_at
     assert first_delta_at < last_delta_at
-    assert last_delta_at < reasoning_completed_at
-    assert reasoning_completed_at < message_completed_at
+    assert last_delta_at < progress_indices[-1]
+    assert progress_indices[-1] < message_completed_at
 
     # Privacy: no reasoning channel, no reasoning fields in delta payloads.
     assert "reasoning.delta" not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
     for data in deltas:
         assert "reasoning_md" not in data
         assert "thinking" not in data

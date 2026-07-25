@@ -180,6 +180,9 @@ import {
   consumeReaderAskSse,
   isReaderAskAgenticCompletedPayload,
   isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticReasoningCompletedPayload,
+  isReaderAskAgenticReasoningDeltaPayload,
+  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
 } from "./ask/sse";
@@ -776,6 +779,33 @@ export function createSseMessageHandler(
   // Agentic terminal may arrive as both agentic.terminal and message.interrupted
   // with the same payload; only apply UI terminal side-effects once per stream.
   let agenticTerminalHandled = false;
+  // ASK-REASONING-R2: strict identity/seq state machine for
+  // agentic.reasoning.* (one stream per handler instance). `started`
+  // (seq === 0) establishes the turn identity binding; delta/completed
+  // must match that identity exactly and carry seq === lastSeq + 1 —
+  // duplicates, gaps, out-of-order frames, foreign-turn frames, and
+  // repeated started frames are all ignored. A null seq means no started
+  // has been accepted yet, so delta/completed are dropped until then.
+  // Once completed is accepted the stream is frozen: later deltas are
+  // dropped so the displayed text never exceeds the persisted projection
+  // (hot≡cold invariant).
+  let agenticReasoningBinding: {
+    messageId: string;
+    threadId: string;
+    turnRunId: string;
+  } | null = null;
+  let agenticReasoningLastSeq: number | null = null;
+  let agenticReasoningCompleted = false;
+  // R3 P1b: identity of the active run, captured when agentic.run_started
+  // is accepted. agentic.reasoning.started must match this exactly to
+  // establish a reasoning binding — foreign / stale-turn started frames are
+  // ignored. This is part of the same handler state machine (not a second
+  // parallel state).
+  let activeRunIdentity: {
+    messageId: string;
+    threadId: string;
+    turnRunId: string;
+  } | null = null;
   const commitStreamingMessageUpdate = createStreamingCommit(updateMessage);
 
   function applyAgenticCompleted(payload: ReaderAskAgenticCompletedPayloadDto) {
@@ -797,11 +827,16 @@ export function createSseMessageHandler(
         }
         // Preserve any streamed reasoning; agentic completed does not carry it.
         const nextReasoningMd = message.reasoning_md || null;
-        const nextReasoningStatus =
-          message.reasoning_status === "completed" ||
-          message.reasoning_status === "streaming" ||
-          nextReasoningMd
-            ? "completed"
+        // R3 P2: only an accepted agentic.reasoning.completed may mark
+        // reasoning completed. If reasoning was still streaming (or has
+        // visible text) when the answer completed, freeze it as
+        // interrupted — keep the session-visible projection, but do not
+        // claim replay equivalence with cold history. No reasoning ⇒ null
+        // (no placeholder is rendered).
+        const nextReasoningStatus = agenticReasoningCompleted
+          ? "completed"
+          : message.reasoning_status === "streaming" || nextReasoningMd
+            ? "interrupted"
             : message.reasoning_status ?? null;
         return {
           ...message,
@@ -874,9 +909,13 @@ export function createSseMessageHandler(
           final_status: payload.final_status,
           // Never write answer_text / content_md from non-ok terminals.
           content_md: message.content_md,
+          // ASK-REASONING-R1: session-visible partial reasoning freezes as
+          // interrupted on agentic terminals (cancel / failure / budget /
+          // persist failure). Cold history never carries it — reload shows
+          // no reasoning for this turn.
           reasoning_status:
             message.reasoning_status === "streaming" || message.reasoning_md
-              ? "completed"
+              ? "interrupted"
               : message.reasoning_status,
           replan_status: "idle",
           compacting: false,
@@ -900,6 +939,13 @@ export function createSseMessageHandler(
           currentMessageId = event.data.message_id;
           onMessageIdAssigned?.(event.data.message_id);
         }
+        // R3 P1b: capture the active run identity that a later
+        // agentic.reasoning.started must match exactly.
+        activeRunIdentity = {
+          messageId: event.data.message_id,
+          threadId: event.data.thread_id,
+          turnRunId: event.data.turn_run_id,
+        };
         onAgenticActivity?.({
           type: "run_started",
           messageId: event.data.message_id ?? currentMessageId,
@@ -932,6 +978,147 @@ export function createSseMessageHandler(
     if (event.event === "agentic.terminal") {
       if (isReaderAskAgenticTerminalPayload(event.data)) {
         applyAgenticTerminal(event.data);
+      }
+      return;
+    }
+
+    // ASK-REASONING-R1/R2: safe reasoning projection. The server-side
+    // chokepoint owns all redaction / quota — the client only appends.
+    // These events reuse the existing reasoning_md / reasoning_status
+    // semantic fields (no parallel UI state). started fires only when the
+    // provider produced non-empty projected reasoning, so a message with
+    // no reasoning never leaves idle state and renders no reasoning UI.
+    if (event.event === "agentic.reasoning.started") {
+      if (isReaderAskAgenticReasoningStartedPayload(event.data)) {
+        const payload = event.data;
+        // Strict rules: seq must be exactly 0 and a started may only be
+        // accepted once per stream (repeated started ignored).
+        if (payload.seq !== 0 || agenticReasoningLastSeq !== null) {
+          return;
+        }
+        // R3 P1b: the started must belong to the active run. If a trusted
+        // run_started was accepted, require an exact identity match; a
+        // foreign or stale-turn started is ignored (no state change). If no
+        // run_started has been seen yet, require at least a strict match to
+        // the current message id (fail-closed).
+        if (activeRunIdentity !== null) {
+          if (
+            payload.message_id !== activeRunIdentity.messageId ||
+            payload.thread_id !== activeRunIdentity.threadId ||
+            payload.turn_run_id !== activeRunIdentity.turnRunId
+          ) {
+            return;
+          }
+        } else if (payload.message_id !== currentMessageId) {
+          return;
+        }
+        // Establish the identity binding every later frame must match.
+        agenticReasoningBinding = {
+          messageId: payload.message_id,
+          threadId: payload.thread_id,
+          turnRunId: payload.turn_run_id,
+        };
+        agenticReasoningLastSeq = 0;
+        commitStreamingMessageUpdate(
+          (messages) =>
+            messages.map((message) =>
+              message.id === currentMessageId
+                ? {
+                    ...message,
+                    reasoning_status: "streaming",
+                    reasoning_md: message.reasoning_md ?? "",
+                    compacting: false,
+                  }
+                : message,
+            ),
+          true,
+        );
+      }
+      return;
+    }
+
+    if (event.event === "agentic.reasoning.delta") {
+      if (isReaderAskAgenticReasoningDeltaPayload(event.data)) {
+        const payload = event.data;
+        const binding = agenticReasoningBinding;
+        // Requires an accepted started, no accepted completed (stream
+        // frozen), exact identity match (foreign turns dropped), and
+        // seq === lastSeq + 1 (duplicates, gaps and out-of-order frames
+        // dropped).
+        if (
+          binding === null ||
+          agenticReasoningLastSeq === null ||
+          agenticReasoningCompleted
+        ) {
+          return;
+        }
+        if (
+          payload.message_id !== binding.messageId ||
+          payload.thread_id !== binding.threadId ||
+          payload.turn_run_id !== binding.turnRunId
+        ) {
+          return;
+        }
+        if (payload.seq !== agenticReasoningLastSeq + 1) {
+          return;
+        }
+        agenticReasoningLastSeq = payload.seq;
+        const delta = payload.delta;
+        // Batched via rAF like message.delta / legacy reasoning.delta.
+        commitStreamingMessageUpdate((messages) =>
+          messages.map((message) =>
+            message.id === currentMessageId
+              ? {
+                  ...message,
+                  reasoning_status: "streaming",
+                  reasoning_md: `${message.reasoning_md ?? ""}${delta}`,
+                }
+              : message,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (event.event === "agentic.reasoning.completed") {
+      if (isReaderAskAgenticReasoningCompletedPayload(event.data)) {
+        const payload = event.data;
+        const binding = agenticReasoningBinding;
+        // Requires started + exact identity + contiguous seq + content.
+        // At most one completed is accepted per stream.
+        if (
+          binding === null ||
+          agenticReasoningLastSeq === null ||
+          agenticReasoningCompleted
+        ) {
+          return;
+        }
+        if (
+          payload.message_id !== binding.messageId ||
+          payload.thread_id !== binding.threadId ||
+          payload.turn_run_id !== binding.turnRunId
+        ) {
+          return;
+        }
+        if (payload.seq !== agenticReasoningLastSeq + 1) {
+          return;
+        }
+        if (payload.has_content !== true) {
+          return;
+        }
+        agenticReasoningLastSeq = payload.seq;
+        agenticReasoningCompleted = true;
+        // Immediate: the projection is persisted server-side; from now on
+        // any reload returns the same text (collapsed, re-expandable).
+        commitStreamingMessageUpdate(
+          (messages) =>
+            messages.map((message) =>
+              message.id === currentMessageId
+                ? { ...message, reasoning_status: "completed" }
+                : message,
+            ),
+          true,
+        );
       }
       return;
     }

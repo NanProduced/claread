@@ -5,7 +5,7 @@
  * tool args, queries, locators, evidence handles, fingerprints, or raw errors.
  */
 
-export const AGENTIC_EXECUTION_VERSION = "reader_record_ask_agentic_v1" as const;
+export const AGENTIC_EXECUTION_VERSION = "reader_record_ask_agentic_v2" as const;
 
 export type AgenticActivityPhase =
   | "agent_running"

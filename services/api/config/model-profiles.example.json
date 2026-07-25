@@ -353,7 +353,7 @@
       "model_settings": {
         "extra_body": {
           "thinking": {
-            "type": "disabled"
+            "type": "enabled"
           }
         }
       }
@@ -363,7 +363,7 @@
       "model_settings": {
         "extra_body": {
           "thinking": {
-            "type": "disabled"
+            "type": "enabled"
           }
         }
       }

@@ -17,6 +17,9 @@ from app.schemas.reader_record_ask_stream import (
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskTerminalDTO,
 )
+from app.services.reader_record_ask.reasoning_projection import (
+    validate_reasoning_snapshot,
+)
 
 AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V2
 AGENTIC_EXECUTION_VERSIONS = frozenset(
@@ -133,10 +136,31 @@ def _sanitize_turn_run_for_wire(turn_run: dict[str, Any] | None) -> dict[str, An
         "envelope_fingerprint",
         "user_visible_output_json",
         "resolved_evidence_json",
+        "reasoning_projection_json",
         "usage_summary_json",
     ):
         cleaned.pop(key, None)
     return cleaned
+
+
+def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | None:
+    """Extract the visible reasoning text for cold history, fail-closed.
+
+    ASK-REASONING-R1/R2: delegates to the canonical snapshot validator
+    shared with the write path — exact policy version, exact key set,
+    non-empty text within quota, exact char_count, strict bool truncated,
+    and byte-invariant re-projection (no raw sentinel may have reached the
+    stored shape). Any invalid snapshot yields no reasoning element at
+    all — never a degraded display of the raw payload.
+    """
+    if not isinstance(turn_run, dict):
+        return None
+    validated = validate_reasoning_snapshot(
+        turn_run.get("reasoning_projection_json")
+    )
+    if validated is None:
+        return None
+    return validated["text"]
 
 
 def _safe_degraded_message(
@@ -274,6 +298,10 @@ def project_agentic_history_message(
     del row_status  # reserved for future streaming mid-run projection
     del resolved_evidence_json  # restricted server-only; never cold-project
     anchors = list(context_anchors or [])
+    # ASK-REASONING-R1: cold reasoning comes only from the persisted
+    # projection (committed atomically with the ok answer). Extracted
+    # before wire sanitization strips the raw JSONB payload.
+    reasoning_text = _safe_reasoning_projection_text(current_turn_run)
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
     base_kwargs = {
         "message_id": message_id,
@@ -316,6 +344,12 @@ def project_agentic_history_message(
                 "resolved_intent": None,
                 "context_anchors": anchors,
                 **_empty_legacy_lists(),
+                # ASK-REASONING-R1: reuse the existing semantic reasoning
+                # fields (hot SSE and cold history share them). Byte-identical
+                # to the hot projection: persisted snapshot text == concat of
+                # streamed deltas by construction.
+                "reasoning_md": reasoning_text,
+                "reasoning_status": "completed" if reasoning_text is not None else None,
                 "usage_event_id": usage_event_id,
                 "current_turn_run_id": current_turn_run_id,
                 "current_turn_run": safe_turn_run,

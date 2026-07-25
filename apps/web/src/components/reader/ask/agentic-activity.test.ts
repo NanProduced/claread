@@ -17,7 +17,7 @@ function progress(
   return {
     type: "progress" as const,
     payload: {
-      execution_version: "reader_record_ask_agentic_v1",
+      execution_version: "reader_record_ask_agentic_v2",
       sequence,
       phase,
       summary,
@@ -209,7 +209,7 @@ describe("reduceAgenticActivityEvent", () => {
   it("never keeps internal-looking fields from the payload", () => {
     let state = runningState();
     const dirtyPayload = {
-      execution_version: "reader_record_ask_agentic_v1",
+      execution_version: "reader_record_ask_agentic_v2",
       sequence: 1,
       phase: "reading_context",
       summary: "正在读取文章上下文",

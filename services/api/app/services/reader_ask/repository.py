@@ -254,6 +254,11 @@ def _turn_run_row_to_dict(row: Any) -> dict[str, Any]:
         "final_status": row.get(f"{prefix}final_status"),
         "terminal_reason": row.get(f"{prefix}terminal_reason"),
         "resolved_evidence_json": row.get(f"{prefix}resolved_evidence_json"),
+        # ASK-REASONING-R1: safe reasoning projection (NULL for legacy
+        # turns and for agentic turns without provider reasoning). The
+        # history projector promotes only its visible text onto the
+        # message's existing reasoning_md / reasoning_status fields.
+        "reasoning_projection_json": row.get(f"{prefix}reasoning_projection_json"),
         "envelope_fingerprint": row.get(f"{prefix}envelope_fingerprint"),
     }
 
@@ -330,6 +335,7 @@ SELECT m.id, m.thread_id, m.role, m.status, m.content_md,
        tr.final_status AS current_turn_run_final_status,
        tr.terminal_reason AS current_turn_run_terminal_reason,
        tr.resolved_evidence_json AS current_turn_run_resolved_evidence_json,
+       tr.reasoning_projection_json AS current_turn_run_reasoning_projection_json,
        tr.envelope_fingerprint AS current_turn_run_envelope_fingerprint,
        et.turn_run_id AS eval_trace_turn_run_id,
        et.trace_schema_version,

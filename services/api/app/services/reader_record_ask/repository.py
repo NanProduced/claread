@@ -178,6 +178,7 @@ class ReaderRecordAskRepository:
         completed_dto: dict[str, Any],
         resolved_evidence: list[dict[str, Any]],
         final_status: str = "ok",
+        reasoning_projection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
@@ -191,18 +192,22 @@ class ReaderRecordAskRepository:
                         terminal_reason = NULL,
                         user_visible_output_json = $3::jsonb,
                         resolved_evidence_json = $4::jsonb,
+                        reasoning_projection_json = $6::jsonb,
                         completed_at = $5,
                         updated_at = $5
                     WHERE id = $1
                     RETURNING id, status, final_status, user_visible_output_json,
-                              resolved_evidence_json, envelope_fingerprint,
-                              execution_version
+                              resolved_evidence_json, reasoning_projection_json,
+                              envelope_fingerprint, execution_version
                     """,
                     turn_run_id,
                     final_status,
                     jsonb_param(completed_dto),
                     jsonb_param(resolved_evidence),
                     now,
+                    jsonb_param(reasoning_projection)
+                    if reasoning_projection is not None
+                    else None,
                 )
                 await conn.execute(
                     """
@@ -225,6 +230,7 @@ class ReaderRecordAskRepository:
             "final_status": row["final_status"],
             "user_visible_output_json": row["user_visible_output_json"],
             "resolved_evidence_json": row["resolved_evidence_json"],
+            "reasoning_projection_json": row["reasoning_projection_json"],
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
         }
@@ -239,7 +245,13 @@ class ReaderRecordAskRepository:
         terminal_reason: str | None,
         terminal_dto: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Persist non-ok terminal (stale / invalid / cancelled / failed)."""
+        """Persist non-ok terminal (stale / invalid / cancelled / failed).
+
+        ASK-REASONING-R2: ``reasoning_projection_json`` is explicitly
+        forced to NULL on every terminal path — fail-closed by statement,
+        not by relying on fresh rows starting empty. Cancel / validation
+        failure / budget / persist failure never persist reasoning.
+        """
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
@@ -252,14 +264,15 @@ class ReaderRecordAskRepository:
                         terminal_reason = $4,
                         user_visible_output_json = $5::jsonb,
                         resolved_evidence_json = '[]'::jsonb,
+                        reasoning_projection_json = NULL,
                         failed_at = CASE WHEN $2 IN ('failed', 'stale', 'cancelled')
                                          THEN $6 ELSE failed_at END,
                         completed_at = CASE WHEN $2 = 'stale' THEN $6 ELSE completed_at END,
                         updated_at = $6
                     WHERE id = $1
                     RETURNING id, status, final_status, terminal_reason,
-                              user_visible_output_json, envelope_fingerprint,
-                              execution_version
+                              user_visible_output_json, reasoning_projection_json,
+                              envelope_fingerprint, execution_version
                     """,
                     turn_run_id,
                     run_status,
@@ -288,6 +301,7 @@ class ReaderRecordAskRepository:
             "final_status": row["final_status"],
             "terminal_reason": row["terminal_reason"],
             "user_visible_output_json": row["user_visible_output_json"],
+            "reasoning_projection_json": row["reasoning_projection_json"],
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
         }

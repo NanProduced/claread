@@ -460,7 +460,14 @@ export interface ReaderAskMessageDto {
   supplement_candidates: ReaderAskSupplementCandidateDto[];
   persisted_supplements: ReaderAskPersistedSupplementDto[];
   reasoning_md?: string | null;
-  reasoning_status?: "idle" | "streaming" | "completed" | null;
+  /**
+   * Reasoning UI state shared by both lanes (no parallel state):
+   * - legacy reader_ask `reasoning.*` uses idle/streaming/completed;
+   * - agentic `agentic.reasoning.*` (ASK-REASONING-R1) additionally freezes
+   *   session-visible partial reasoning as `interrupted` on cancel/failure
+   *   terminals — cold history never carries interrupted reasoning.
+   */
+  reasoning_status?: "idle" | "streaming" | "completed" | "interrupted" | null;
   follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
   /**
@@ -675,6 +682,13 @@ export type ReaderAskStreamEventName =
   | "agentic.run_started"
   | "agentic.progress"
   | "agentic.terminal"
+  // ASK-REASONING-R1: safe reasoning projection (redacted + quota-bounded
+  // server-side). Distinct from legacy `reasoning.*` (raw CoT passthrough
+  // on the legacy reader_ask path). Clients append deltas verbatim — all
+  // security filtering happens server-side.
+  | "agentic.reasoning.started"
+  | "agentic.reasoning.delta"
+  | "agentic.reasoning.completed"
   | "error";
 
 /**
@@ -846,6 +860,48 @@ export interface ReaderAskAgenticProgressPayloadDto {
   summary: string;
 }
 
+/**
+ * ASK-REASONING-R1 reasoning projection payloads.
+ *
+ * `delta` is already projected by the server-side chokepoint (deterministic
+ * redaction of internal handles / identity / auth material / system
+ * fragments + host quota). Clients never filter — only append. `seq` is
+ * strictly monotonic: started=0, deltas 1..n, completed=n+1.
+ */
+export interface ReaderAskAgenticReasoningStartedPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  seq: number;
+  projection_policy_version: string;
+}
+
+export interface ReaderAskAgenticReasoningDeltaPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  seq: number;
+  delta: string;
+}
+
+/**
+ * Replayable completion promise — emitted only after the projection and
+ * the answer were persisted in the same successful transaction, and
+ * before `message.completed`. Never emitted on cancel / failure.
+ */
+export interface ReaderAskAgenticReasoningCompletedPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  seq: number;
+  has_content: boolean;
+  truncated: boolean;
+  projection_policy_version: string;
+}
+
 /** Legacy interrupt payload (partial streamed answer). */
 export interface ReaderAskInterruptedPayloadDto {
   content_md?: string;
@@ -872,6 +928,18 @@ export type ReaderAskTypedStreamEnvelopeDto =
       data: ReaderAskAgenticTerminalPayloadDto;
     }
   | {
+      event: "agentic.reasoning.started";
+      data: ReaderAskAgenticReasoningStartedPayloadDto;
+    }
+  | {
+      event: "agentic.reasoning.delta";
+      data: ReaderAskAgenticReasoningDeltaPayloadDto;
+    }
+  | {
+      event: "agentic.reasoning.completed";
+      data: ReaderAskAgenticReasoningCompletedPayloadDto;
+    }
+  | {
       event: "message.completed";
       data:
         | ReaderAskCompletedPayloadDto
@@ -891,6 +959,9 @@ export type ReaderAskTypedStreamEnvelopeDto =
         | "agentic.run_started"
         | "agentic.progress"
         | "agentic.terminal"
+        | "agentic.reasoning.started"
+        | "agentic.reasoning.delta"
+        | "agentic.reasoning.completed"
         | "message.completed"
         | "message.interrupted"
       >;
@@ -1233,6 +1304,74 @@ export function isReaderAskAgenticProgressPayload(
     payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
     typeof payload.phase === "string" &&
     typeof payload.summary === "string"
+  );
+}
+
+function isNonNegativeInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/** ASK-REASONING-R1: identity binding + seq only; no content fields. */
+export function isReaderAskAgenticReasoningStartedPayload(
+  data: unknown,
+): data is ReaderAskAgenticReasoningStartedPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    payload.seq === 0 &&
+    typeof payload.projection_policy_version === "string" &&
+    !("envelope_fingerprint" in payload) &&
+    !("delta" in payload)
+  );
+}
+
+/** ASK-REASONING-R1: projected increment — already sanitized server-side. */
+export function isReaderAskAgenticReasoningDeltaPayload(
+  data: unknown,
+): data is ReaderAskAgenticReasoningDeltaPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    isNonNegativeInt(payload.seq) &&
+    payload.seq >= 1 &&
+    typeof payload.delta === "string" &&
+    payload.delta.length > 0 &&
+    !("envelope_fingerprint" in payload)
+  );
+}
+
+/** ASK-REASONING-R1: completion promise — flags only, no content. */
+export function isReaderAskAgenticReasoningCompletedPayload(
+  data: unknown,
+): data is ReaderAskAgenticReasoningCompletedPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    isNonNegativeInt(payload.seq) &&
+    payload.seq >= 1 &&
+    typeof payload.has_content === "boolean" &&
+    typeof payload.truncated === "boolean" &&
+    typeof payload.projection_policy_version === "string" &&
+    !("delta" in payload) &&
+    !("envelope_fingerprint" in payload)
   );
 }
 

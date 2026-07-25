@@ -2154,7 +2154,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("正在组织回答")).toBeNull();
   });
 
-  it("shows reasoning while streaming even before reasoning markdown arrives", async () => {
+  it("keeps reasoning collapsed with a shimmer trigger while streaming (ASK-REASONING-R1)", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "streaming",
@@ -2168,13 +2168,21 @@ describe("AiWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("思考中")).not.toBeNull();
-      expect(screen.getByText("正在形成可展示的思路…")).not.toBeNull();
     });
 
+    // Default collapsed while streaming — no auto-open, no fabricated
+    // placeholder content.
     const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     const content = container.querySelector('[data-slot="reasoning-content"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-    expect(content?.getAttribute("data-state")).toBe("open");
+    expect(content?.getAttribute("data-state")).toBe("closed");
+    expect(content?.textContent?.trim() ?? "").toBe("");
+
+    // The user can expand the empty streaming shell.
+    fireEvent.click(screen.getByText("思考中"));
+    await waitFor(() => {
+      expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    });
   });
 
   it("normalizes duplicated tool trace entries into one visible step while streaming", async () => {
@@ -2427,7 +2435,7 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
-  it("renders reasoning deltas immediately while the answer is still streaming", async () => {
+  it("keeps streamed reasoning collapsed until the user expands it", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "streaming",
@@ -2437,10 +2445,21 @@ describe("AiWorkspacePanel", () => {
       }),
     ]);
 
-    renderPanel();
+    const { container } = renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText("正文正在生成。")).not.toBeNull();
+      expect(screen.getByText("思考中")).not.toBeNull();
+    });
+
+    // Collapsed while streaming: the projected text is not forced open.
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("先判断句子主干。")).toBeNull();
+
+    // Expanding reveals the live content.
+    fireEvent.click(screen.getByText("思考中"));
+    await waitFor(() => {
       expect(screen.getByText("先判断句子主干。")).not.toBeNull();
     });
   });
@@ -2457,10 +2476,18 @@ describe("AiWorkspacePanel", () => {
       }),
     ]);
 
-    renderPanel();
+    const { container } = renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText("刷新后仍可见的正文片段。")).not.toBeNull();
+      expect(screen.getByText("思考中")).not.toBeNull();
+    });
+
+    // Collapsed by default; the rehydrated projection is expandable.
+    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
+    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByText("思考中"));
+    await waitFor(() => {
       expect(screen.getByText("刷新后仍可见的 thinking 片段。")).not.toBeNull();
     });
 
@@ -2529,7 +2556,7 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
-  it("keeps a completed reasoning trigger visible even when the model returned no reasoning text", async () => {
+  it("renders no reasoning element when the model returned no reasoning text (ASK-REASONING-R1)", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "completed",
@@ -2543,17 +2570,13 @@ describe("AiWorkspacePanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("这是直接回答。")).not.toBeNull();
-      expect(screen.getByText("思考过程")).not.toBeNull();
     });
 
-    const trigger = container.querySelector('[data-slot="reasoning-trigger"]');
-    expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-
-    fireEvent.click(screen.getByText("思考过程"));
-
-    await waitFor(() => {
-      expect(screen.getByText("本轮模型未返回可展示的思考内容。")).not.toBeNull();
-    });
+    // No fabricated "model returned no reasoning" placeholder — the whole
+    // reasoning element is absent.
+    expect(screen.queryByText("思考过程")).toBeNull();
+    expect(screen.queryByText("本轮模型未返回可展示的思考内容。")).toBeNull();
+    expect(container.querySelector('[data-slot="reasoning"]')).toBeNull();
   });
 
   it("shows the user-facing insufficient credits message from stream errors", async () => {
@@ -3407,6 +3430,452 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
 
     expect(getMessages()[0].status).toBe("interrupted");
     expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSseMessageHandler – agentic reasoning projection (ASK-REASONING-R1)
+//
+// agentic.reasoning.* events reuse the existing reasoning_md /
+// reasoning_status semantic fields (no parallel UI state). Deltas are
+// server-side projected — the client appends verbatim with a strict
+// monotonic seq guard. Terminals freeze session-visible reasoning as
+// "interrupted"; cold history never carries it.
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – agentic reasoning projection", () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let rafIdCounter = 1;
+
+  beforeEach(() => {
+    rafCallbacks = [];
+    rafIdCounter = 1;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      const id = rafIdCounter++;
+      rafCallbacks.push(cb);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function flushRaf() {
+    const callbacks = [...rafCallbacks];
+    rafCallbacks = [];
+    for (const cb of callbacks) {
+      cb(0);
+    }
+  }
+
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[]) {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, onError);
+    return { getMessages: () => updatedMessages, handler, onError };
+  }
+
+  const VERSION = "reader_record_ask_agentic_v2";
+  const startedPayload = (seq = 0) => ({
+    execution_version: VERSION,
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    turn_run_id: "run-1",
+    seq,
+    projection_policy_version: "reasoning_projection_v1",
+  });
+  const deltaPayload = (seq: number, delta: string) => ({
+    execution_version: VERSION,
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    turn_run_id: "run-1",
+    seq,
+    delta,
+  });
+  const completedPayload = (seq: number) => ({
+    execution_version: VERSION,
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    turn_run_id: "run-1",
+    seq,
+    has_content: true,
+    truncated: false,
+    projection_policy_version: "reasoning_projection_v1",
+  });
+
+  it("enters streaming on agentic.reasoning.started (seq=0, immediate)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    // Immediate: no rAF flush required.
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    expect(getMessages()[0].reasoning_md).toBe("");
+  });
+
+  it("appends agentic.reasoning.delta batches in order via rAF", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "先分析") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "句子主干。") });
+    // Batched: nothing applied before the rAF flush.
+    expect(getMessages()[0].reasoning_md).toBe("");
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("先分析句子主干。");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("drops duplicate, gapped and out-of-order delta seq (strict contiguity)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "甲。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "重复。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(3, "缺口。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "连续。") });
+    flushRaf();
+    // Duplicate seq 1 dropped; gapped seq 3 dropped; contiguous seq 2 kept.
+    expect(getMessages()[0].reasoning_md).toBe("甲。连续。");
+  });
+
+  it("transitions to completed on agentic.reasoning.completed and keeps text", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "思考内容。") });
+    flushRaf();
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(2) });
+
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].reasoning_md).toBe("思考内容。");
+  });
+
+  it("freezes session-visible reasoning as interrupted on agentic terminal", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "部分思考。") });
+    flushRaf();
+    handler({
+      event: "agentic.terminal",
+      data: {
+        execution_version: VERSION,
+        final_status: "failed",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        terminal_reason: "agent_run_failed",
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].status).toBe("failed");
+    // Session-visible partial reasoning freezes interrupted — never
+    // "completed" (no replay promise); cold history will carry none.
+    expect(getMessages()[0].reasoning_status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_md).toBe("部分思考。");
+  });
+
+  it("ignores agentic reasoning payloads with wrong version or bad seq", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), execution_version: "legacy" },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "x"), seq: -1 },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "x"), delta: 42 },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+  });
+
+  it("ignores a delta that arrives before any started (R2 strict gating)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "直接到达。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+    expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+
+  it("ignores started with seq !== 0", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload(1) });
+    // And a later delta is still dropped (no started was accepted).
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "后续。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+  });
+
+  it("ignores a repeated started (at most once per stream)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "一。") });
+    // Repeated started must not reset the seq baseline.
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "二。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("一。二。");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("ignores delta and completed from a foreign turn (identity mismatch)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "外turn。"), turn_run_id: "run-OTHER" },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "外线程。"), thread_id: "thread-OTHER" },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "外消息。"), message_id: "msg-OTHER" },
+    });
+    handler({
+      event: "agentic.reasoning.completed",
+      data: { ...completedPayload(1), turn_run_id: "run-OTHER" },
+    });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("ignores completed with gapped seq or has_content=false", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "内容。") });
+    flushRaf();
+    // Gapped completed (seq 3, expected 2) → ignored.
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(3) });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    // has_content=false → ignored even with contiguous seq.
+    handler({
+      event: "agentic.reasoning.completed",
+      data: { ...completedPayload(2), has_content: false },
+    });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    // Contiguous + has_content → accepted.
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(2) });
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("ignores completed that arrives before any started", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(1) });
+    expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+
+  it("full state machine: started(0) → deltas(1..2) → completed(3)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "第一。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "第二。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("第一。第二。");
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(3) });
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].reasoning_md).toBe("第一。第二。");
+    // Post-completed deltas are dropped (seq baseline is now 3).
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(4, "迟到。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("第一。第二。");
+  });
+
+  // --- R3 P1b: reasoning.started must match the active run identity ---
+
+  const runStartedPayload = (
+    overrides: Partial<{ message_id: string; thread_id: string; turn_run_id: string }> = {},
+  ) => ({
+    execution_version: VERSION,
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    turn_run_id: "run-1",
+    has_initial_selection: false,
+    ...overrides,
+  });
+
+  it("accepts reasoning.started matching the active run identity", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("ignores reasoning.started from a foreign message/thread/run (no state change)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    // Foreign message id.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), message_id: "msg-OTHER" },
+    });
+    // Foreign thread id.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), thread_id: "thread-OTHER" },
+    });
+    // Foreign turn run id.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), turn_run_id: "run-OTHER" },
+    });
+    // No binding established, no streaming state, seq baseline untouched.
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+    // A later matching started is still accepted (baseline never advanced).
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("ignores a stale-turn reasoning.started after a newer run_started", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    // Active run is turn-2.
+    handler({
+      event: "agentic.run_started",
+      data: runStartedPayload({ turn_run_id: "run-2" }),
+    });
+    // Stale started for turn-1 → ignored.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), turn_run_id: "run-1" },
+    });
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    // Matching started for the active turn-2 → accepted.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), turn_run_id: "run-2" },
+    });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  it("without run_started, accepts reasoning.started only if message_id matches current", () => {
+    // No run_started seen → fallback requires strict current message_id match.
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    // Foreign message id (≠ current "msg-1") → ignored.
+    handler({
+      event: "agentic.reasoning.started",
+      data: { ...startedPayload(), message_id: "msg-OTHER" },
+    });
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    // Matching current message id → accepted.
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+  });
+
+  // --- R3 P2: message.completed must not mask incomplete reasoning ---
+
+  const agenticMessageCompleted = (messageId = "msg-1") => ({
+    execution_version: VERSION,
+    final_status: "ok" as const,
+    answer_text: "答案正文。",
+    answer_blocks: [{ text: "答案正文。", citation_ids: [] as string[] }],
+    citations: [],
+    knowledge_mode: null,
+    source_status: null,
+    message_id: messageId,
+    thread_id: "thread-1",
+    turn_run_id: "run-1",
+  });
+
+  it("freezes incomplete streaming reasoning as interrupted on message.completed", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "部分思考。") });
+    flushRaf();
+    // No reasoning.completed — answer completes while reasoning is streaming.
+    handler({ event: "message.completed", data: agenticMessageCompleted() });
+    // Not forced to completed; frozen interrupted; text preserved.
+    expect(getMessages()[0].reasoning_status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_md).toBe("部分思考。");
+  });
+
+  it("keeps reasoning completed after message.completed when reasoning.completed accepted", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "思考。") });
+    flushRaf();
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(2) });
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    handler({ event: "message.completed", data: agenticMessageCompleted() });
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+    expect(getMessages()[0].reasoning_md).toBe("思考。");
+  });
+
+  it("freezes reasoning as interrupted when reasoning.completed was rejected (gapped)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "思考。") });
+    flushRaf();
+    // Gapped completed (seq 5, expected 2) → rejected.
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(5) });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    // Answer completes with reasoning still incomplete → interrupted.
+    handler({ event: "message.completed", data: agenticMessageCompleted() });
+    expect(getMessages()[0].reasoning_status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_md).toBe("思考。");
+  });
+
+  it("renders no reasoning when the answer has none (no placeholder)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    // No reasoning events at all.
+    handler({ event: "message.completed", data: agenticMessageCompleted() });
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
   });
 });
 

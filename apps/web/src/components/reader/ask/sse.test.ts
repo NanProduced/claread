@@ -5,6 +5,9 @@ import {
   isReaderAskAgenticEvidenceList,
   isReaderAskAgenticEvidenceScope,
   isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticReasoningCompletedPayload,
+  isReaderAskAgenticReasoningDeltaPayload,
+  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
@@ -1205,5 +1208,122 @@ describe("agentic evidence legal-map — illegal combinations (R4-A1 rework)", (
         ]),
       ).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-REASONING-R1: agentic.reasoning.* payload guards
+// ---------------------------------------------------------------------------
+
+describe("agentic reasoning payload guards", () => {
+  const BASE = {
+    execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+    message_id: "msg-1",
+    thread_id: "thread-1",
+    turn_run_id: "turn-1",
+  };
+
+  it("accepts well-formed started / delta / completed payloads", () => {
+    expect(
+      isReaderAskAgenticReasoningStartedPayload({
+        ...BASE,
+        seq: 0,
+        projection_policy_version: "reasoning_projection_v1",
+      }),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticReasoningDeltaPayload({
+        ...BASE,
+        seq: 1,
+        delta: "投影增量",
+      }),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticReasoningCompletedPayload({
+        ...BASE,
+        seq: 2,
+        has_content: true,
+        truncated: false,
+        projection_policy_version: "reasoning_projection_v1",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects started carrying content fields", () => {
+    expect(
+      isReaderAskAgenticReasoningStartedPayload({
+        ...BASE,
+        seq: 0,
+        projection_policy_version: "reasoning_projection_v1",
+        delta: "leak",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects delta with seq 0, empty delta, or internal fields", () => {
+    expect(isReaderAskAgenticReasoningDeltaPayload({ ...BASE, seq: 0, delta: "x" })).toBe(false);
+    expect(isReaderAskAgenticReasoningDeltaPayload({ ...BASE, seq: 1, delta: "" })).toBe(false);
+    expect(
+      isReaderAskAgenticReasoningDeltaPayload({
+        ...BASE,
+        seq: 1,
+        delta: "x",
+        envelope_fingerprint: "fp",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects completed carrying delta or missing flags", () => {
+    expect(
+      isReaderAskAgenticReasoningCompletedPayload({
+        ...BASE,
+        seq: 2,
+        has_content: true,
+        truncated: false,
+        projection_policy_version: "reasoning_projection_v1",
+        delta: "leak",
+      }),
+    ).toBe(false);
+    expect(
+      isReaderAskAgenticReasoningCompletedPayload({ ...BASE, seq: 2, has_content: true }),
+    ).toBe(false);
+  });
+
+  it("rejects wrong execution_version on all three events", () => {
+    const legacy = { ...BASE, execution_version: "legacy" };
+    expect(
+      isReaderAskAgenticReasoningStartedPayload({
+        ...legacy,
+        seq: 0,
+        projection_policy_version: "v1",
+      }),
+    ).toBe(false);
+    expect(isReaderAskAgenticReasoningDeltaPayload({ ...legacy, seq: 1, delta: "x" })).toBe(false);
+    expect(
+      isReaderAskAgenticReasoningCompletedPayload({
+        ...legacy,
+        seq: 2,
+        has_content: true,
+        truncated: false,
+        projection_policy_version: "v1",
+      }),
+    ).toBe(false);
+  });
+
+  it("parses agentic.reasoning.delta frames through the SSE consumer", async () => {
+    const events = await collectEvents([
+      `event: agentic.reasoning.started\ndata: ${JSON.stringify({ ...BASE, seq: 0, projection_policy_version: "reasoning_projection_v1" })}\n\n`,
+      `event: agentic.reasoning.delta\ndata: ${JSON.stringify({ ...BASE, seq: 1, delta: "思考" })}\n\n`,
+      `event: agentic.reasoning.completed\ndata: ${JSON.stringify({ ...BASE, seq: 2, has_content: true, truncated: false, projection_policy_version: "reasoning_projection_v1" })}\n\n`,
+    ]);
+
+    expect(events.map((e) => e.event)).toEqual([
+      "agentic.reasoning.started",
+      "agentic.reasoning.delta",
+      "agentic.reasoning.completed",
+    ]);
+    expect(isReaderAskAgenticReasoningStartedPayload(events[0].data)).toBe(true);
+    expect(isReaderAskAgenticReasoningDeltaPayload(events[1].data)).toBe(true);
+    expect(isReaderAskAgenticReasoningCompletedPayload(events[2].data)).toBe(true);
   });
 });

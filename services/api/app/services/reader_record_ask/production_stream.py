@@ -57,12 +57,17 @@ from app.services.reader_record_ask.production_wiring import (
 # Imported lazily inside stream_agentic_thread_message to avoid module-load
 # cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
 # runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
+from app.services.reader_record_ask.reasoning_projection import (
+    ReasoningProjectorObserver,
+)
 from app.services.reader_record_ask.repository import ReaderRecordAskRepository
 from app.services.reader_record_ask.runtime import (
     ReadingRecordAskRunResult,
     run_reading_record_ask,
 )
 from app.services.reader_record_ask.runtime_events import (
+    AgenticReasoningDeltaEvent,
+    AgenticReasoningStartedEvent,
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
@@ -77,14 +82,15 @@ from app.services.reader_record_ask.runtime_events import (
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
+    EVENT_AGENTIC_REASONING_COMPLETED,
+    EVENT_AGENTIC_REASONING_DELTA,
+    EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
     EVENT_MESSAGE_STARTED,
-    EVENT_REASONING_COMPLETED,
-    EVENT_REASONING_STARTED,
     EVENT_THREAD_READY,
     encode_sse,
 )
@@ -718,6 +724,20 @@ async def _run_agentic_turn(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
+    # ASK-REASONING-R1: the single approved reasoning projection
+    # chokepoint for this turn. Receives raw provider reasoning via the
+    # ThinkingObserver injection, publishes only the deterministic
+    # redacted + quota-bounded projection as agentic.reasoning.* events.
+    # Raw reasoning never enters SSE/DTO/DB/logs. When the provider
+    # returns no non-empty reasoning it stays silent (no events, no
+    # persistence) and the UI renders no reasoning element.
+    reasoning_projector = ReasoningProjectorObserver(
+        emit=sink,
+        message_id=assistant_msg["id"],
+        thread_id=str(thread_id),
+        turn_run_id=turn["id"],
+    )
+
     active_ledger = (
         pointer_ledger
         if pointer_ledger is not None
@@ -735,6 +755,7 @@ async def _run_agentic_turn(
             map_source_material_provider=wired_map_source_provider,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            thinking_observer=reasoning_projector,
         )
     )
 
@@ -754,6 +775,23 @@ async def _run_agentic_turn(
             item = await event_queue.get()
             if item is _AGENT_DONE:
                 break
+            if isinstance(item, AgenticReasoningStartedEvent):
+                # ASK-REASONING-R1: safe projection only — emitted by the
+                # reasoning projector on the first non-empty projected
+                # chunk. 1:1 wire mapping; never progress, never phase.
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_STARTED,
+                    item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, AgenticReasoningDeltaEvent):
+                # ASK-REASONING-R1: projected reasoning increment
+                # (redaction + quota already applied server-side).
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_DELTA,
+                    item.model_dump(mode="json"),
+                )
+                continue
             if not isinstance(
                 item,
                 RunStartedEvent
@@ -769,15 +807,6 @@ async def _run_agentic_turn(
             ):
                 # Only project known runtime events; never dump raw objects.
                 continue
-            if isinstance(item, AnalysisStartedEvent):
-                # R4-A6: reasoning lifecycle signal for the frontend
-                # "thinking…" indicator — after agentic.run_started and
-                # before this event's agentic.progress. Phase only: never
-                # carries reasoning text/length/hash.
-                yield encode_sse(
-                    EVENT_REASONING_STARTED,
-                    {"message_id": assistant_msg["id"]},
-                )
             if isinstance(item, AnswerDeltaEvent):
                 # R4-A6: token-level answer_text increment — user-visible
                 # answer content, never reasoning. Maps 1:1 to
@@ -789,13 +818,6 @@ async def _run_agentic_turn(
                     EVENT_AGENTIC_PROGRESS,
                     progress.model_dump(mode="json"),
                 )
-            if isinstance(item, AnalysisFinishedEvent):
-                # R4-A6: reasoning lifecycle signal — after the analysis
-                # progress and before message.completed. Phase only.
-                yield encode_sse(
-                    EVENT_REASONING_COMPLETED,
-                    {"message_id": assistant_msg["id"]},
-                )
 
         # Drain any late events that arrived with/after DONE.
         while not event_queue.empty():
@@ -804,6 +826,20 @@ async def _run_agentic_turn(
             except asyncio.QueueEmpty:
                 break
             if item is _AGENT_DONE:
+                continue
+            if isinstance(item, AgenticReasoningStartedEvent):
+                # ASK-REASONING-R1 (late drain path).
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_STARTED,
+                    item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, AgenticReasoningDeltaEvent):
+                # ASK-REASONING-R1 (late drain path).
+                yield encode_sse(
+                    EVENT_AGENTIC_REASONING_DELTA,
+                    item.model_dump(mode="json"),
+                )
                 continue
             if isinstance(
                 item,
@@ -818,12 +854,6 @@ async def _run_agentic_turn(
                 | FinalAnswerEvent
                 | RunFinishedEvent,
             ):
-                if isinstance(item, AnalysisStartedEvent):
-                    # R4-A6: reasoning lifecycle signal (late drain path).
-                    yield encode_sse(
-                        EVENT_REASONING_STARTED,
-                        {"message_id": assistant_msg["id"]},
-                    )
                 if isinstance(item, AnswerDeltaEvent):
                     # R4-A6: token-level answer_text increment (drain path).
                     yield encode_sse(
@@ -834,12 +864,6 @@ async def _run_agentic_turn(
                     yield encode_sse(
                         EVENT_AGENTIC_PROGRESS,
                         progress.model_dump(mode="json"),
-                    )
-                if isinstance(item, AnalysisFinishedEvent):
-                    # R4-A6: reasoning lifecycle signal (late drain path).
-                    yield encode_sse(
-                        EVENT_REASONING_COMPLETED,
-                        {"message_id": assistant_msg["id"]},
                     )
 
         try:
@@ -1197,6 +1221,11 @@ async def _run_agentic_turn(
             completed_dto=completed_json,
             resolved_evidence=restricted_evidence,
             final_status="ok",
+            # ASK-REASONING-R1: the visible reasoning projection commits
+            # in the SAME transaction as the answer (or NULL when the
+            # provider returned no reasoning). Persist failure below
+            # leaves no cold-history reasoning — fail-closed.
+            reasoning_projection=reasoning_projector.persistence_payload(),
         )
     except Exception:
         # Success-path DB persistence failed (connection drop, constraint,
@@ -1253,10 +1282,18 @@ async def _run_agentic_turn(
         return
     stored = persisted.get("user_visible_output_json")
     emit_payload = stored if isinstance(stored, dict) else completed_json
+    # ASK-REASONING-R1: persist-first ordering contract. The projection
+    # and the answer are now committed in one transaction, so from this
+    # point on any reload returns the same visible reasoning text. Only
+    # now may the completion promise be emitted — and it must precede
+    # message.completed. None when the provider returned no reasoning
+    # (nothing started, nothing to complete, no cold content).
+    reasoning_completed = reasoning_projector.build_completed_event()
     logger.info(
         "reader_record_ask turn completed: turn_run_id=%s message_id=%s "
         "model_route=%s final_status=ok total_ms=%s ttfa_ms=%s "
-        "progress_events=%s read_range_calls=%s search_calls=%s",
+        "progress_events=%s read_range_calls=%s search_calls=%s "
+        "reasoning_projected=%s",
         turn["id"],
         assistant_msg["id"],
         _safe_model_route(active_model),
@@ -1265,7 +1302,13 @@ async def _run_agentic_turn(
         projector.progress_event_count,
         run_result.read_range_calls,
         run_result.search_current_article_calls,
+        reasoning_completed is not None,
     )
+    if reasoning_completed is not None:
+        yield encode_sse(
+            EVENT_AGENTIC_REASONING_COMPLETED,
+            reasoning_completed.model_dump(mode="json"),
+        )
     yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
 
 
@@ -1312,7 +1355,6 @@ async def stream_agentic_thread_message(
     ignored in retry mode — the original user message text is loaded from DB.
     """
     repo = repository or ReaderRecordAskRepository()
-    run_agent = run_fn or run_reading_record_ask
     settings = get_settings()
 
     thread = await repo.get_thread(

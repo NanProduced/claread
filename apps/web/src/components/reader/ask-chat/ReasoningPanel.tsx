@@ -18,6 +18,18 @@ type ReasoningPanelProps = {
   // re-surface ASK_MARKDOWN_COMPONENTS from AiWorkspacePanel.
 };
 
+/**
+ * Ask reasoning surface (legacy reasoning.* + agentic.reasoning.* share it).
+ *
+ * ASK-REASONING-R1 contract:
+ * - collapsed by default (`defaultOpen={false}` — no auto-open while
+ *   streaming); the trigger carries a low-weight shimmer while running;
+ * - expanded view appends projected text live as deltas arrive;
+ * - completed/interrupted stay collapsed and re-expandable;
+ * - no fabricated content: when there is no actual reasoning (provider
+ *   returned none, or the turn never produced a projection), nothing
+ *   renders — never an empty "model returned no reasoning" placeholder.
+ */
 export function ReasoningPanel({
   reasoningMd,
   reasoningStatus,
@@ -26,58 +38,16 @@ export function ReasoningPanel({
   const reasoningText = reasoningMd ?? "";
   const hasReasoningContent = reasoningText.trim().length > 0;
   const isStreaming = reasoningStatus === "streaming";
-  const isCompleted = reasoningStatus === "completed";
-  const shouldRender = isStreaming || isCompleted || hasReasoningContent;
 
-  if (!shouldRender) {
+  // Render only when there is real projected content or an active stream.
+  // Empty + completed/idle/interrupted ⇒ nothing to show ⇒ no element.
+  if (!isStreaming && !hasReasoningContent) {
     return null;
-  }
-
-  // Empty + completed: trigger collapsed with placeholder inside content.
-  if (!hasReasoningContent && isCompleted) {
-    return (
-      <div data-slot="reasoning" className={cn(className)}>
-        <Reasoning>
-          <ReasoningTrigger
-            className="gap-1.5 text-[12px] font-medium text-muted-foreground"
-            data-slot="reasoning-trigger"
-            getThinkingMessage={() => <span>思考过程</span>}
-          />
-          <ReasoningContent
-            className="mt-2 pl-5"
-            data-slot="reasoning-content"
-          >
-            本轮模型未返回可展示的思考内容。
-          </ReasoningContent>
-        </Reasoning>
-      </div>
-    );
-  }
-
-  // Empty + streaming: trigger open with shimmer placeholder text in content.
-  if (!hasReasoningContent && isStreaming) {
-    return (
-      <div data-slot="reasoning" className={cn(className)}>
-        <Reasoning isStreaming={isStreaming}>
-          <ReasoningTrigger
-            className="gap-1.5 text-[12px] font-medium text-muted-foreground"
-            data-slot="reasoning-trigger"
-            getThinkingMessage={() => <Shimmer as="span" duration={1}>思考中</Shimmer>}
-          />
-          <ReasoningContent
-            className="mt-2 pl-5"
-            data-slot="reasoning-content"
-          >
-            正在形成可展示的思路…
-          </ReasoningContent>
-        </Reasoning>
-      </div>
-    );
   }
 
   return (
     <div data-slot="reasoning" className={cn(className)}>
-      <Reasoning isStreaming={isStreaming}>
+      <Reasoning isStreaming={isStreaming} defaultOpen={false}>
         <ReasoningTrigger
           className="gap-1.5 text-[12px] font-medium text-muted-foreground"
           data-slot="reasoning-trigger"

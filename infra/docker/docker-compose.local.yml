@@ -33,6 +33,7 @@ services:
       - ../migrations/0019_reader_ask_dual_scope_nullable_analysis_record_id.sql:/docker-entrypoint-initdb.d/0019_reader_ask_dual_scope_nullable_analysis_record_id.sql:ro
       - ../migrations/0022_ai_usage_events_invocation_key.sql:/docker-entrypoint-initdb.d/0022_ai_usage_events_invocation_key.sql:ro
       - ../migrations/0023_stable_document_blocks_text_constraint_extend.sql:/docker-entrypoint-initdb.d/0023_stable_document_blocks_text_constraint_extend.sql:ro
+      - ../migrations/0024_reader_ask_turn_runs_reasoning_projection.sql:/docker-entrypoint-initdb.d/0024_reader_ask_turn_runs_reasoning_projection.sql:ro
       - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]

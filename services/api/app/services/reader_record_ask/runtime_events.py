@@ -104,6 +104,77 @@ class ValidatingEvidenceEvent(BaseModel):
     type: Literal["validating_evidence"] = "validating_evidence"
 
 
+class AgenticReasoningStartedEvent(BaseModel):
+    """Safe reasoning projection signal: first non-empty projected chunk.
+
+    Emitted by the approved reasoning projector only — never by phase
+    events. Carries only identity binding and policy version; never raw
+    reasoning, length, hash, or provider payloads. ``seq`` is always 0
+    and the event fires at most once per turn.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["agentic_reasoning_started"] = "agentic_reasoning_started"
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        "reader_record_ask_agentic_v2"
+    )
+    message_id: str
+    thread_id: str
+    turn_run_id: str
+    seq: int = Field(ge=0)
+    projection_policy_version: str
+
+
+class AgenticReasoningDeltaEvent(BaseModel):
+    """Safe reasoning projection increment.
+
+    ``delta`` is already projected (deterministic redaction + quota) by
+    the server-side chokepoint; clients append, never filter. Raw
+    reasoning, length, hash, or provider payloads never appear here.
+    ``seq`` is strictly monotonic (1..n); only non-empty projected
+    increments consume a seq.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["agentic_reasoning_delta"] = "agentic_reasoning_delta"
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        "reader_record_ask_agentic_v2"
+    )
+    message_id: str
+    thread_id: str
+    turn_run_id: str
+    seq: int = Field(ge=1)
+    delta: str = Field(min_length=1)
+
+
+class AgenticReasoningCompletedEvent(BaseModel):
+    """Safe reasoning projection completion promise.
+
+    Built by the projector host ONLY after the projection and the final
+    answer were persisted in the same successful transaction; production
+    stream emits it before ``message.completed``. Never emitted on
+    cancel / validation-failure / budget-exhausted / persist-failure
+    paths — those never persist reasoning and never complete it.
+    Carries only booleans, seq, and policy version; never content.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["agentic_reasoning_completed"] = "agentic_reasoning_completed"
+    execution_version: Literal["reader_record_ask_agentic_v2"] = (
+        "reader_record_ask_agentic_v2"
+    )
+    message_id: str
+    thread_id: str
+    turn_run_id: str
+    seq: int = Field(ge=1)
+    has_content: bool
+    truncated: bool
+    projection_policy_version: str
+
+
 class RunFinishedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -124,4 +195,7 @@ RuntimeEvent = (
     | ValidatingEvidenceEvent
     | FinalAnswerEvent
     | RunFinishedEvent
+    | AgenticReasoningStartedEvent
+    | AgenticReasoningDeltaEvent
+    | AgenticReasoningCompletedEvent
 )

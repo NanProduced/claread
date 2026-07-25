@@ -1,8 +1,18 @@
 """R4 Ask thinking transport spine (R4-A5-8A1 / A5-8A1R / A5-8A1R2).
 
 Internal-only: captures provider reasoning for a bounded in-memory observer
-and emits **safe** analysis-phase runtime events. Never writes reasoning
-text, length, hash, or provider payloads into SSE/DTO/DB/logs.
+and emits **safe** analysis-phase runtime events. Never writes raw
+reasoning text, length, hash, or provider payloads into SSE/DTO/DB/logs.
+
+Reasoning projection (ASK-REASONING-R1)
+---------------------------------------
+The observer injection point is the only structural path by which provider
+reasoning can leave this module. The default production path passes
+``None`` (zero collection). When a turn wires the approved server-side
+projector (``reader_record_ask.reasoning_projection``), that projector may
+publish the deterministic, redacted, quota-bounded **projection** via
+``agentic.reasoning.*`` events — and nothing else. Raw reasoning remains
+forbidden from log/persist/publish on every path.
 
 Does **not** import legacy ``reader_ask`` agent_runner.
 
@@ -69,10 +79,15 @@ _TOOL_RESULT_EVENT_KINDS: frozenset[str] = frozenset(
 
 
 class ThinkingObserver(Protocol):
-    """Injected probe for tests / future controlled diagnostics.
+    """Injected probe receiving raw provider reasoning chunks.
 
-    Default production path passes ``None`` — zero collection.
-    Implementations must never log, persist, or publish content.
+    Raw reasoning is never safe content. Implementations must never log,
+    persist, or publish raw content. The only approved production
+    publisher is the server-side reasoning projection chokepoint
+    (``reader_record_ask.reasoning_projection``), which may publish the
+    deterministically redacted, quota-bounded projection — and nothing
+    else — via ``agentic.reasoning.*`` events. The default production
+    path passes ``None`` — zero collection.
     """
 
     def on_analysis_started(self) -> None: ...
@@ -344,108 +359,121 @@ async def run_agent_with_thinking_transport(
             phase_events=phase_events,
         )
     else:
-        async for event in agent.run_stream_events(
+        # Context-managed event stream (PydanticAI-recommended API; direct
+        # iteration of ``AgentEventStream`` is deprecated). ``__aexit__``
+        # guarantees deterministic generator cleanup on normal completion,
+        # exception, and cancellation; multi-round tool-call behavior is
+        # unchanged (same events, same order, same lifecycle resets).
+        async with agent.run_stream_events(
             prompt,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
-        ):
-            event_kind = getattr(event, "event_kind", None)
+        ) as stream:
+            async for event in stream:
+                event_kind = getattr(event, "event_kind", None)
 
-            if event_kind == "agent_run_result":
-                result = getattr(event, "result", None)
-                if result is not None:
-                    final_output = getattr(result, "output", result)
-                continue
+                if event_kind == "agent_run_result":
+                    result = getattr(event, "result", None)
+                    if result is not None:
+                        final_output = getattr(result, "output", result)
+                    continue
 
-            # New model response stream after a tool/retry boundary: reset
-            # the per-index thinking lifecycle so a PartEnd-only second round
-            # is still observed exactly once. Covers FunctionToolResultEvent
-            # (tool return or tool-arg ModelRetry), OutputToolResultEvent
-            # (output-validator ModelRetry), and the deprecated
-            # BuiltinToolResultEvent — all via the stable event_kind Literal.
-            if event_kind in _TOOL_RESULT_EVENT_KINDS:
-                lifecycle.reset_stream()
-                # R4-A6: a new model response stream follows the boundary —
-                # drop any intermediate text so the final answer JSON parses
-                # from a clean buffer (indices restart as well).
-                answer_streamer.reset()
-                answer_streamed_indices.clear()
-                continue
+                # New model response stream after a tool/retry boundary:
+                # reset the per-index thinking lifecycle so a PartEnd-only
+                # second round is still observed exactly once. Covers
+                # FunctionToolResultEvent (tool return or tool-arg
+                # ModelRetry), OutputToolResultEvent (output-validator
+                # ModelRetry), and the deprecated BuiltinToolResultEvent —
+                # all via the stable event_kind Literal.
+                if event_kind in _TOOL_RESULT_EVENT_KINDS:
+                    lifecycle.reset_stream()
+                    # R4-A6: a new model response stream follows the
+                    # boundary — drop any intermediate text so the final
+                    # answer JSON parses from a clean buffer (indices
+                    # restart as well).
+                    answer_streamer.reset()
+                    answer_streamed_indices.clear()
+                    continue
 
-            if event_kind == "part_start" and isinstance(
-                event.part, ThinkingPart
-            ):
-                piece = lifecycle.on_start(
-                    event.index,
-                    str(event.part.content) if event.part.content else None,
-                )
-                _emit_reasoning(piece)
-                continue
+                if event_kind == "part_start" and isinstance(
+                    event.part, ThinkingPart
+                ):
+                    piece = lifecycle.on_start(
+                        event.index,
+                        str(event.part.content) if event.part.content else None,
+                    )
+                    _emit_reasoning(piece)
+                    continue
 
-            if event_kind == "part_delta" and isinstance(
-                event.delta, ThinkingPartDelta
-            ):
-                piece = lifecycle.on_delta(
-                    event.index,
-                    (
+                if event_kind == "part_delta" and isinstance(
+                    event.delta, ThinkingPartDelta
+                ):
+                    piece = lifecycle.on_delta(
+                        event.index,
+                        (
+                            str(event.delta.content_delta)
+                            if event.delta.content_delta
+                            else None
+                        ),
+                    )
+                    _emit_reasoning(piece)
+                    continue
+
+                if event_kind == "part_end" and isinstance(
+                    event.part, ThinkingPart
+                ):
+                    piece = lifecycle.on_end(
+                        event.index,
+                        str(event.part.content) if event.part.content else None,
+                    )
+                    _emit_reasoning(piece)
+                    continue
+
+                # R4-A6: answer-block text streaming. TextPart carries
+                # streamed structured-output JSON; feed content into the
+                # partial parser and emit AnswerDeltaEvent prefix
+                # increments. Fully isolated from the ThinkingPart path
+                # above: no observer calls, no AnalysisStarted synthesis,
+                # no shared content.
+                if event_kind == "part_start" and isinstance(
+                    event.part, TextPart
+                ):
+                    content = (
+                        str(event.part.content) if event.part.content else None
+                    )
+                    if content:
+                        answer_streamed_indices.add(event.index)
+                        _emit_answer_delta(answer_streamer.feed(content))
+                    continue
+
+                if event_kind == "part_delta" and isinstance(
+                    event.delta, TextPartDelta
+                ):
+                    piece = (
                         str(event.delta.content_delta)
                         if event.delta.content_delta
                         else None
-                    ),
-                )
-                _emit_reasoning(piece)
-                continue
-
-            if event_kind == "part_end" and isinstance(
-                event.part, ThinkingPart
-            ):
-                piece = lifecycle.on_end(
-                    event.index,
-                    str(event.part.content) if event.part.content else None,
-                )
-                _emit_reasoning(piece)
-                continue
-
-            # R4-A6: answer-block text streaming. TextPart carries streamed
-            # structured-output JSON; feed content into the partial parser
-            # and emit AnswerDeltaEvent prefix increments. Fully
-            # isolated from the ThinkingPart path above: no observer calls,
-            # no AnalysisStarted synthesis, no shared content.
-            if event_kind == "part_start" and isinstance(event.part, TextPart):
-                content = (
-                    str(event.part.content) if event.part.content else None
-                )
-                if content:
-                    answer_streamed_indices.add(event.index)
-                    _emit_answer_delta(answer_streamer.feed(content))
-                continue
-
-            if event_kind == "part_delta" and isinstance(
-                event.delta, TextPartDelta
-            ):
-                piece = (
-                    str(event.delta.content_delta)
-                    if event.delta.content_delta
-                    else None
-                )
-                if piece:
-                    answer_streamed_indices.add(event.index)
-                    _emit_answer_delta(answer_streamer.feed(piece))
-                continue
-
-            if event_kind == "part_end" and isinstance(event.part, TextPart):
-                # PartEnd-only delivery: full content without prior
-                # start/delta for this index.
-                if (
-                    event.index not in answer_streamed_indices
-                    and event.part.content
-                ):
-                    answer_streamed_indices.add(event.index)
-                    _emit_answer_delta(
-                        answer_streamer.feed(str(event.part.content))
                     )
-                continue
+                    if piece:
+                        answer_streamed_indices.add(event.index)
+                        _emit_answer_delta(answer_streamer.feed(piece))
+                    continue
+
+                if event_kind == "part_end" and isinstance(
+                    event.part, TextPart
+                ):
+                    # PartEnd-only delivery: full content without prior
+                    # start/delta for this index.
+                    if (
+                        event.index not in answer_streamed_indices
+                        and event.part.content
+                    ):
+                        answer_streamed_indices.add(event.index)
+                        _emit_answer_delta(
+                            answer_streamer.feed(str(event.part.content))
+                        )
+                    continue
 
         if analysis_started:
             _finish_analysis()

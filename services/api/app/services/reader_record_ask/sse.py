@@ -20,11 +20,17 @@ EVENT_ERROR = "error"
 EVENT_AGENTIC_PROGRESS = "agentic.progress"
 EVENT_AGENTIC_RUN_STARTED = "agentic.run_started"
 EVENT_AGENTIC_TERMINAL = "agentic.terminal"
-# Reasoning lifecycle signals (R4-A6): phase-only "thinking…" indicator for
-# the frontend. Deliberately no EVENT_REASONING_DELTA — reasoning text never
-# enters SSE/DTO/DB/logs.
-EVENT_REASONING_STARTED = "reasoning.started"
-EVENT_REASONING_COMPLETED = "reasoning.completed"
+# Reasoning projection (ASK-REASONING-R1): safe projected provider
+# reasoning, produced exclusively by the server-side reasoning projection
+# chokepoint (reader_record_ask.reasoning_projection). Raw reasoning never
+# enters SSE/DTO/DB/logs — only the deterministic redacted, quota-bounded
+# projection does. Distinct from legacy ``reasoning.*`` (raw CoT passthrough
+# on the legacy reader_ask path); the agentic path no longer maps analysis
+# phase events onto reasoning lifecycle signals — progress and reasoning
+# are separate channels.
+EVENT_AGENTIC_REASONING_STARTED = "agentic.reasoning.started"
+EVENT_AGENTIC_REASONING_DELTA = "agentic.reasoning.delta"
+EVENT_AGENTIC_REASONING_COMPLETED = "agentic.reasoning.completed"
 
 
 def encode_sse(event: str, data: dict[str, Any]) -> str:

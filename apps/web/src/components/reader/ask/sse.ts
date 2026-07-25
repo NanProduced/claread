@@ -5,6 +5,9 @@ import type {
 import {
   isReaderAskAgenticCompletedPayload,
   isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticReasoningCompletedPayload,
+  isReaderAskAgenticReasoningDeltaPayload,
+  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
@@ -13,6 +16,9 @@ import {
 export {
   isReaderAskAgenticCompletedPayload,
   isReaderAskAgenticProgressPayload,
+  isReaderAskAgenticReasoningCompletedPayload,
+  isReaderAskAgenticReasoningDeltaPayload,
+  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
   READER_ASK_AGENTIC_EXECUTION_VERSION,

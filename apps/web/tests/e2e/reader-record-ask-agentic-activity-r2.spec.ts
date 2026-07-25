@@ -15,14 +15,18 @@ const RECORD_ID = "test-record-r2-activity";
 const THREAD_ID = "test-thread-r2-activity";
 const MESSAGE_ID = "msg-agentic-r2-1";
 const TURN_RUN_ID = "turn-run-r2-1";
-// 64-char lowercase hex — matches backend fingerprint pattern.
+// ASK-REASONING-R2: every Agentic helper/payload in this spec uses the
+// current public v2 wire contract (no envelope_fingerprint / evidence /
+// rejected_handles — those keys are public-forbidden and would be
+// rejected by the typed guards). ENVELOPE_FINGERPRINT is retained ONLY
+// as a canary value for leak-absence assertions.
 const ENVELOPE_FINGERPRINT =
   "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00";
-const EXECUTION_VERSION = "reader_record_ask_agentic_v1";
+const EXECUTION_VERSION = "reader_record_ask_agentic_v2";
 const browserConsoleErrors = new WeakMap<Page, string[]>();
 
 // ---------------------------------------------------------------------------
-// Wire-contract payloads
+// Wire-contract payloads (Agentic v2)
 // ---------------------------------------------------------------------------
 
 function runStartedPayload(overrides: Record<string, unknown> = {}) {
@@ -31,7 +35,6 @@ function runStartedPayload(overrides: Record<string, unknown> = {}) {
     message_id: MESSAGE_ID,
     thread_id: THREAD_ID,
     turn_run_id: TURN_RUN_ID,
-    envelope_fingerprint: ENVELOPE_FINGERPRINT,
     has_initial_selection: false,
     ...overrides,
   };
@@ -59,11 +62,13 @@ function agenticCompletedPayload(answerText: string) {
     execution_version: EXECUTION_VERSION,
     final_status: "ok" as const,
     answer_text: answerText,
+    answer_blocks: [{ text: answerText, citation_ids: [] as string[] }],
+    citations: [],
+    knowledge_mode: null,
+    source_status: null,
     message_id: MESSAGE_ID,
     thread_id: THREAD_ID,
     turn_run_id: TURN_RUN_ID,
-    envelope_fingerprint: ENVELOPE_FINGERPRINT,
-    evidence: [] as unknown[],
   };
 }
 
@@ -77,13 +82,13 @@ function agenticTerminalPayload(
     message_id: MESSAGE_ID,
     thread_id: THREAD_ID,
     turn_run_id: TURN_RUN_ID,
-    envelope_fingerprint: ENVELOPE_FINGERPRINT,
     terminal_reason: null,
-    rejected_handles: [] as string[],
     ...overrides,
   };
 }
 
+// Legacy reader_ask payload — used ONLY by the isolated legacy regression
+// test (17). Never mixed with the Agentic v2 helpers above.
 function legacyCompletedPayload(contentMd: string) {
   return {
     id: "msg-legacy-1",
@@ -111,6 +116,35 @@ function legacyCompletedPayload(contentMd: string) {
       used_dictionary: false,
       source_labels: [],
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ASK-REASONING-R1/R2: reasoning projection wire payloads (v2 contract)
+// ---------------------------------------------------------------------------
+
+const REASONING_POLICY_VERSION = "reasoning_projection_v1";
+
+function reasoningStartedPayload(seq = 0) {
+  return {
+    execution_version: EXECUTION_VERSION,
+    message_id: MESSAGE_ID,
+    thread_id: THREAD_ID,
+    turn_run_id: TURN_RUN_ID,
+    seq,
+    projection_policy_version: REASONING_POLICY_VERSION,
+  };
+}
+
+function reasoningDeltaPayload(seq: number, delta: string) {
+  return { ...reasoningStartedPayload(seq), delta };
+}
+
+function reasoningCompletedPayload(seq: number) {
+  return {
+    ...reasoningStartedPayload(seq),
+    has_content: true,
+    truncated: false,
   };
 }
 
@@ -1150,5 +1184,200 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain(ENVELOPE_FINGERPRINT);
     expect(pageContent).not.toContain("agentic_evidence");
+  });
+
+  // -------------------------------------------------------------------------
+  // ASK-REASONING-R1: real reasoning projection UI acceptance
+  // -------------------------------------------------------------------------
+
+  test("18. Reasoning 默认折叠 + 展开实时追加 + 完成后回看", async ({ page }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      { event: "agentic.reasoning.started", data: reasoningStartedPayload() },
+      {
+        event: "agentic.reasoning.delta",
+        data: reasoningDeltaPayload(1, "先判断句子主干。"),
+        hold: true,
+      },
+      {
+        event: "agentic.reasoning.delta",
+        data: reasoningDeltaPayload(2, "再确认从句关系。"),
+        hold: true,
+      },
+      { event: "agentic.reasoning.completed", data: reasoningCompletedPayload(3) },
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "reasoning 流式测试问题");
+
+    // Reasoning appears collapsed by default (shimmer trigger, no auto-open).
+    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    await expect(trigger).toBeVisible({ timeout: 10_000 });
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    // Expanding reveals the first projected delta (stream still held).
+    // Scope to :visible so stale hidden Radix nodes from remounts (the
+    // streaming→completed layout swap re-keys the message block) are ignored.
+    await trigger.click();
+    const visibleContent = page.locator('[data-slot="reasoning-content"]:visible');
+    await expect(visibleContent).toContainText("先判断句子主干。", { timeout: 10_000 });
+
+    // Release delta2 only (completed / message.completed stay gated): the
+    // second delta appends live while the panel is still open.
+    await releaseNext(page);
+    await expect(visibleContent).toContainText("先判断句子主干。再确认从句关系。", {
+      timeout: 10_000,
+    });
+
+    // Release the rest: the answer completes. The completed layout re-keys
+    // the message block into a default-collapsed reasoning panel, which
+    // remains fully reviewable on re-expand.
+    await releaseAll(page);
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await trigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]:visible')).toContainText(
+      "先判断句子主干。再确认从句关系。",
+      { timeout: 10_000 },
+    );
+  });
+
+  test("19. 无 reasoning 时不渲染任何 reasoning 元素", async ({ page }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      {
+        event: "agentic.progress",
+        data: progressPayload(1, "agent_running", "开始分析"),
+      },
+      {
+        event: "agentic.progress",
+        data: progressPayload(2, "agent_running", "分析完成"),
+      },
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "无 reasoning 问题");
+
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+
+    // No reasoning events ⇒ no reasoning element, no empty placeholder.
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain("本轮模型未返回可展示的思考内容");
+    expect(pageContent).not.toContain("思考过程");
+  });
+
+  test("20. Reasoning 投影泄漏扫描", async ({ page }) => {
+    await loginAndOpenHarness(page);
+    // Deltas carry the already-projected text (neutral citation marker);
+    // raw sentinels never enter the scripted wire.
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      { event: "agentic.reasoning.started", data: reasoningStartedPayload() },
+      {
+        event: "agentic.reasoning.delta",
+        data: reasoningDeltaPayload(1, "检查〔引用〕的范围后得出结论。"),
+      },
+      { event: "agentic.reasoning.completed", data: reasoningCompletedPayload(2) },
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "reasoning 泄漏扫描问题");
+
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+
+    // Projected text is reviewable.
+    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    await trigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]')).toContainText(
+      "检查〔引用〕的范围后得出结论。",
+      { timeout: 10_000 },
+    );
+
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain(ENVELOPE_FINGERPRINT);
+    expect(pageContent).not.toContain("reasoning_content");
+    expect(pageContent).not.toContain("evh_");
+    expect(pageContent).not.toContain("handle_id");
+    expect(pageContent).not.toContain("envelope_fingerprint");
+    expect(pageContent).not.toContain("turn_run_id");
+    expect(pageContent).not.toContain("projection_policy_version");
+  });
+
+  test("21. 外轮 reasoning.started 被忽略,不建立 reasoning 状态 (R3 P1b)", async ({
+    page,
+  }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      // Foreign-turn reasoning.started (turn_run_id mismatch) → ignored.
+      {
+        event: "agentic.reasoning.started",
+        data: { ...reasoningStartedPayload(), turn_run_id: "turn-run-FOREIGN" },
+      },
+      {
+        event: "agentic.reasoning.delta",
+        data: { ...reasoningDeltaPayload(1, "外来思考。"), turn_run_id: "turn-run-FOREIGN" },
+      },
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "外轮 reasoning 测试问题");
+
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+
+    // Foreign reasoning is ignored ⇒ no reasoning element, no foreign text.
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain("外来思考");
+  });
+
+  test("22. reasoning 未完成即 message.completed → interrupted 冻结且保留投影 (R3 P2)", async ({
+    page,
+  }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      { event: "agentic.reasoning.started", data: reasoningStartedPayload() },
+      {
+        event: "agentic.reasoning.delta",
+        data: reasoningDeltaPayload(1, "部分投影思考。"),
+      },
+      // No reasoning.completed — the answer completes while reasoning is
+      // still streaming. message.completed must freeze it as interrupted
+      // (not force completed) while preserving the projected text.
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "未完成 reasoning 测试问题");
+
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+
+    // Reasoning frozen as interrupted: trigger present, projected text
+    // preserved and re-expandable.
+    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    await expect(trigger).toBeVisible({ timeout: 10_000 });
+    await trigger.click();
+    await expect(page.locator('[data-slot="reasoning-content"]:visible')).toContainText(
+      "部分投影思考。",
+      { timeout: 10_000 },
+    );
   });
 });
