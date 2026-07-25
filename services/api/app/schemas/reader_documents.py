@@ -90,11 +90,13 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 # Per-block-type interpretation policy defaults. Mirrors the D6
 # projection rules in
 # docs/initiatives/reader-agentic-orchestration/modules/plate-reader-projection.md
-# and the RAG scope taxonomy in rag-substrate.md. A table / image /
-# code / footnote block MUST NOT silently enter the main reading chain
-# by default; only the textual narrative blocks (paragraph / heading /
-# list_item / blockquote / caption) flow into main grammar / sentence
-# analysis on first freeze.
+# and the RAG scope taxonomy in rag-substrate.md. The textual narrative
+# blocks (paragraph / heading / list_item / blockquote / caption) flow
+# into main grammar / sentence analysis on first freeze. Since the
+# Markdown ecosystem refactor (D2), code_block and the table hierarchy
+# are also first-class main-reading content so the reading surface can
+# render them. image / image_ocr / footnote / unknown still MUST NOT
+# silently enter the main reading chain by default.
 _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] = {
     # Narrative blocks -> main reading, scope = main_reading_text.
     "paragraph": dict(
@@ -137,23 +139,29 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
         default_route="main_reading",
         rag_eligible=True,
     ),
-    # Table structural blocks -> metadata_only by default. The user can
-    # promote a table to main reading via Candidate Document edits in
-    # D6-I2; the default here keeps the main grammar pass free of
-    # flattened table truth.
+    # Table structural blocks -> main reading by default (Markdown
+    # ecosystem refactor D2): tables are first-class reading content
+    # and must flow into canonical text so the reading surface can
+    # render them. The table / table_row wrapper blocks carry no
+    # text_content (the narrative text lives in the table_cell
+    # children), so the freeze plan skips them when deriving canonical
+    # text — the same treatment as the ``list`` wrapper. rag_eligible
+    # stays False for the wrappers: RAG targets the table_cell leaves.
+    # A caller-supplied policy may still demote any table block back to
+    # metadata_only / rag_ask_only explicitly.
     "table": dict(
         allowed_source_scope=["table_cell"],
-        default_route="metadata_only",
+        default_route="main_reading",
         rag_eligible=False,
     ),
     "table_row": dict(
         allowed_source_scope=["table_cell"],
-        default_route="metadata_only",
+        default_route="main_reading",
         rag_eligible=False,
     ),
     "table_cell": dict(
         allowed_source_scope=["table_cell"],
-        default_route="rag_ask_only",
+        default_route="main_reading",
         rag_eligible=True,
     ),
     "image": dict(
@@ -172,8 +180,14 @@ _DEFAULT_POLICY_BY_BLOCK_TYPE: dict[str, "StableDocumentInterpretationPolicy"] =
         rag_eligible=True,
     ),
     "code_block": dict(
+        # Code blocks are first-class reading content (Markdown
+        # ecosystem refactor D2): they route into main reading so the
+        # reading surface can render them; rag_eligible stays True so
+        # they remain retrievable via the main RAG path. A
+        # caller-supplied policy may still demote a code block back to
+        # rag_ask_only explicitly.
         allowed_source_scope=["code_block"],
-        default_route="rag_ask_only",
+        default_route="main_reading",
         rag_eligible=True,
     ),
     "thematic_break": dict(
@@ -210,10 +224,15 @@ def default_interpretation_policy_for(
         * paragraph / list_item / blockquote / caption / heading ->
           main_reading (caption uses main_reading_text, heading uses
           the dedicated heading scope)
-        * table_cell / image_ocr / footnote / code_block -> rag_ask_only
-        * table / table_row / image / unknown -> metadata_only, with a
-          conservative scope ("published_layer" for unknown since no
-          closer match exists; "table_cell" for table / table_row; and
+        * table / table_row / table_cell / code_block -> main_reading
+          (Markdown ecosystem refactor D2: code/table are first-class
+          reading content; the table / table_row wrappers carry no
+          text_content and are skipped during canonical text
+          derivation, and stay rag_eligible=False — RAG targets the
+          table_cell leaves)
+        * image_ocr / footnote -> rag_ask_only
+        * image / unknown -> metadata_only, with a conservative scope
+          ("published_layer" for unknown since no closer match exists;
           "image_ocr" for image since the image's structural truth is
           best reached via its OCR child).
 

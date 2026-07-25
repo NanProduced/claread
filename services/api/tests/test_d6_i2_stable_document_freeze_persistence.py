@@ -536,11 +536,12 @@ class TestBlockInsertParams:
 
         # heading -> main_reading
         assert policies_by_block_id["h1"]["default_route"] == "main_reading"
-        # table -> metadata_only
-        assert policies_by_block_id["t1"]["default_route"] == "metadata_only"
+        # table -> main_reading (Markdown ecosystem refactor D2 / A1),
+        # still not rag_eligible (structural wrapper, no text_content).
+        assert policies_by_block_id["t1"]["default_route"] == "main_reading"
         assert policies_by_block_id["t1"]["rag_eligible"] is False
-        # table_cell -> rag_ask_only
-        assert policies_by_block_id["t1_c1"]["default_route"] == "rag_ask_only"
+        # table_cell -> main_reading (Markdown ecosystem refactor D2 / A1)
+        assert policies_by_block_id["t1_c1"]["default_route"] == "main_reading"
         # paragraph -> main_reading
         assert policies_by_block_id["p1"]["default_route"] == "main_reading"
 
@@ -1599,7 +1600,26 @@ class TestReadingUnitsInsert:
             assert isinstance(order_index, int)
             assert order_index >= 1
             unit_type = call.args[4]
-            assert unit_type in ("body", "heading", "list", "quote", "unknown", "fallback")
+            # A5: when a freeze plan supplies stable block annotations,
+            # unit_type is derived from the stable ``block_type``
+            # (e.g. ``paragraph``, ``list_item``) instead of the legacy
+            # text heuristic (``body``, ``list``). Both sets are valid.
+            assert unit_type in (
+                "body",
+                "heading",
+                "list",
+                "quote",
+                "unknown",
+                "fallback",
+                # A5 stable block types
+                "paragraph",
+                "list_item",
+                "blockquote",
+                "table",
+                "table_row",
+                "table_cell",
+                "code_block",
+            )
             boundary_quality = call.args[5]
             assert boundary_quality in ("normal", "low")
             base_start = call.args[6]
@@ -1663,7 +1683,12 @@ class TestReadingUnitsInsert:
 
     def test_reading_units_with_list_type(self) -> None:
         """A list_item block with markdown list markers should be
-        classified as unit_type='list' by the base builder."""
+        classified as unit_type='list_item' by the base builder.
+
+        A5: when the freeze plan supplies a stable block annotation
+        for a ``list_item`` block, the base builder derives
+        ``unit_type`` from the stable ``block_type`` (``list_item``)
+        instead of the legacy text heuristic (``list``)."""
         conn = FakeConn()
         conn.queue_fetchrow(None)
         conn.set_execute_result("UPDATE stable_reading_documents", "UPDATE 0")
@@ -1674,8 +1699,8 @@ class TestReadingUnitsInsert:
             c for c in conn.execute_calls if "INSERT INTO reading_units" in c.query
         ]
         unit_types = {c.args[2]: c.args[4] for c in unit_calls}
-        # u2 is the list_item block.
-        assert unit_types["u2"] == "list"
+        # u2 is the list_item block. A5: stable block_type is "list_item".
+        assert unit_types["u2"] == "list_item"
 
 
 class TestAnchorSegmentsInsert:

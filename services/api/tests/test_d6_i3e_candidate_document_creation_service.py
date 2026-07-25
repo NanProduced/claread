@@ -300,9 +300,12 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
     ]
     assert [block["order_index"] for block in blocks_json] == list(range(10))
     assert blocks_json[0]["interpretation_policy"]["default_route"] == "main_reading"
-    assert blocks_json[2]["interpretation_policy"]["default_route"] == "metadata_only"
+    assert blocks_json[2]["interpretation_policy"]["default_route"] == "main_reading"
     assert blocks_json[9]["interpretation_policy"]["default_route"] == "main_reading"
-    assert all(block["source_refs_json"]["original_input_id"] == str(result.original_input_id) for block in blocks_json)
+    assert all(
+        block["source_refs_json"]["original_input_id"] == str(result.original_input_id)
+        for block in blocks_json
+    )
 
     assert source_refs_json == {
         "source_type": "markdown_file",
@@ -489,11 +492,18 @@ def test_candidate_heading_strips_inline_markdown() -> None:
     )
     assert blocks[0].block_type == "heading"
     assert blocks[0].text_content == "Bold heading with link"
-    assert blocks[0].payload_json == {"level": 2}
-    # The heading parser flattens inline marks (strong/link) into text
-    # via _extract_inline_text; link text is preserved but the URL is
-    # not captured in payload_json or source_refs_json (only paragraphs
-    # get link extraction via _process_paragraph_inline).
+    # A2: heading payload carries inline_marks (structured inline marks with
+    # UTF-16 offsets). The markdown SYNTAX (**, []) is stripped from
+    # text_content, but the mark ranges + safe link href are preserved as
+    # structured data in inline_marks. No top-level `links` key is added
+    # to heading payload (only paragraphs get the `links` key).
+    assert blocks[0].payload_json.get("level") == 2
+    assert "inline_marks" in blocks[0].payload_json, (
+        f"A2: heading with inline marks must carry inline_marks, got {blocks[0].payload_json!r}"
+    )
+    marks = blocks[0].payload_json["inline_marks"]
+    assert {"type": "strong", "start": 0, "end": 12} in marks
+    assert {"type": "link", "start": 18, "end": 22, "href": "https://x.test"} in marks
     assert "links" not in blocks[0].payload_json
     assert "links" not in blocks[0].source_refs_json
 

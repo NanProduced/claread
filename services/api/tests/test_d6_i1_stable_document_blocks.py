@@ -557,9 +557,11 @@ _DEFAULT_POLICY_MATRIX: dict[str, dict[str, object]] = {
         "allowed_source_scope": ["heading"],
         "rag_eligible": True,
     },
-    # Table-cell-ish RAG-ask-only types.
+    # Table hierarchy -> main_reading (Markdown ecosystem refactor D2 /
+    # A1). The table / table_row wrappers carry no text_content and stay
+    # rag_eligible=False; RAG targets the table_cell leaves.
     "table_cell": {
-        "default_route": "rag_ask_only",
+        "default_route": "main_reading",
         "allowed_source_scope": ["table_cell"],
         "rag_eligible": True,
     },
@@ -574,17 +576,18 @@ _DEFAULT_POLICY_MATRIX: dict[str, dict[str, object]] = {
         "rag_eligible": True,
     },
     "code_block": {
-        "default_route": "rag_ask_only",
+        "default_route": "main_reading",
         "allowed_source_scope": ["code_block"],
         "rag_eligible": True,
     },
-    # Structural / unknown blocks -> metadata_only, NOT RAG-eligible.
+    # Structural / unknown blocks -> main_reading (table wrappers) or
+    # metadata_only (image / unknown), NOT RAG-eligible.
     "table": {
-        "default_route": "metadata_only",
+        "default_route": "main_reading",
         "rag_eligible": False,
     },
     "table_row": {
-        "default_route": "metadata_only",
+        "default_route": "main_reading",
         "rag_eligible": False,
     },
     "image": {
@@ -732,10 +735,19 @@ def test_metadata_only_blocks_are_not_rag_eligible_by_default() -> None:
     """The structural / unknown default policies must all carry
     rag_eligible=False so RAG indexing never silently pulls table /
     image / unknown truth.
+
+    Since the Markdown ecosystem refactor (D2 / A1), table / table_row
+    default to ``main_reading`` (they render in the main reading flow)
+    but stay ``rag_eligible=False`` (structural wrappers carry no
+    text).  image / unknown remain ``metadata_only``.
     """
-    for block_type in ("table", "table_row", "image", "unknown"):
+    for block_type in ("image", "unknown"):
         policy = default_interpretation_policy_for(block_type)
         assert policy.default_route == "metadata_only", block_type
+        assert policy.rag_eligible is False, block_type
+    for block_type in ("table", "table_row"):
+        policy = default_interpretation_policy_for(block_type)
+        assert policy.default_route == "main_reading", block_type
         assert policy.rag_eligible is False, block_type
 
 
@@ -774,10 +786,11 @@ def test_content_sha256_uses_default_policy_when_unspecified() -> None:
 def test_empty_dict_policy_is_treated_as_omitted_table_cell(supplied: object) -> None:
     """A storage-placeholder empty dict `{}` (or explicit None) for
     `interpretation_policy` MUST be replaced by the per-block-type
-    default. For `table_cell`, that means `rag_ask_only` /
-    `table_cell`, not `main_reading` / `main_reading_text`. This
+    default. For `table_cell`, that means `main_reading` /
+    `table_cell` (Markdown ecosystem refactor D2 / A1), not the
+    model-level `main_reading` / `main_reading_text` fallback. This
     prevents the DB `'{}'::jsonb` storage default from silently
-    re-routing RAG-ask-only blocks into the main grammar pass.
+    re-scoping table_cell blocks as narrative main-reading text.
     """
     block = StableDocumentBlock.model_validate(
         {
@@ -788,7 +801,7 @@ def test_empty_dict_policy_is_treated_as_omitted_table_cell(supplied: object) ->
             "interpretation_policy": supplied,
         }
     )
-    assert block.interpretation_policy.default_route == "rag_ask_only"
+    assert block.interpretation_policy.default_route == "main_reading"
     assert block.interpretation_policy.allowed_source_scope == ["table_cell"]
     assert block.interpretation_policy.rag_eligible is True
 
@@ -830,20 +843,20 @@ def test_absent_interpretation_policy_uses_default() -> None:
             "text_content": "cell value",
         }
     )
-    assert block.interpretation_policy.default_route == "rag_ask_only"
+    assert block.interpretation_policy.default_route == "main_reading"
     assert block.interpretation_policy.allowed_source_scope == ["table_cell"]
 
 
 @pytest.mark.parametrize(
     "block_type",
-    ["table", "table_row", "image", "code_block", "unknown"],
+    ["image", "unknown"],
 )
 def test_empty_dict_policy_never_silently_routes_to_main_reading(
     block_type: str,
 ) -> None:
     """Cross-block-type safety net: an empty-dict interpretation_policy
     must NEVER yield `main_reading` for any block type whose default is
-    metadata_only / rag_ask_only. This is the core invariant the
+    metadata_only. This is the core invariant the
     storage-placeholder split exists to enforce.
     """
     block_kwargs: dict[str, object] = {
@@ -860,13 +873,13 @@ def test_empty_dict_policy_never_silently_routes_to_main_reading(
 
     block = StableDocumentBlock.model_validate(block_kwargs)
     assert block.interpretation_policy.default_route != "main_reading", block_type
-    # Metadata-only / rag_ask-only blocks must never claim
-    # rag_eligible=True either; the per-block-type defaults are
-    # metadata_only for table / table_row / image / unknown
-    # (rag_eligible=False) and rag_ask_only for table_cell /
-    # image_ocr / footnote / code_block (rag_eligible=True). Both are
-    # safe; main_reading is the only route that would let the block
-    # leak into the main grammar pass.
+    # Metadata-only blocks must never claim rag_eligible=True either;
+    # the per-block-type defaults are metadata_only for image / unknown
+    # (rag_eligible=False). main_reading is the route that would let
+    # the block leak into the main grammar pass; table / table_row /
+    # table_cell / code_block legitimately default to main_reading
+    # since the Markdown ecosystem refactor (D2 / A1), so they are no
+    # longer part of this safety net.
 
 
 def test_non_empty_dict_explicit_policy_is_preserved() -> None:

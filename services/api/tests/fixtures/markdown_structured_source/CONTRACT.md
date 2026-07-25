@@ -1,6 +1,6 @@
 # Structured Source Contract — G0 Frozen
 
-**Status**: G0 frozen artifact. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility regression). Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
+**Status**: G0 frozen artifact. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility regression), re-frozen on 2026-07-25 (Markdown ecosystem refactor D2 / A1: `code_block` and the `table` / `table_row` / `table_cell` hierarchy now default to `main_reading`; `table` / `table_row` wrappers stay `rag_eligible=false` — RAG targets the `table_cell` leaves; Clause 4 table and `gfm_table` / `code_mermaid` / `r14_complex` fixtures updated). Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
 
 **Scope**: This contract governs the structured Markdown source pipeline output — the parser adapter (`markdown_source_parser.py`) and the downstream freeze/candidate/RAG consumers. It does NOT modify the read path for legacy frozen documents or snapshot-only records (Clause 6).
 
@@ -119,13 +119,13 @@ Mirrors `_DEFAULT_POLICY_BY_BLOCK_TYPE` in `app/schemas/reader_documents.py`. Th
 | `list_item` | `main_reading` | `true` | `["main_reading_text"]` |
 | `blockquote` | `main_reading` | `true` | `["main_reading_text"]` |
 | `caption` | `main_reading` | `true` | `["main_reading_text"]` |
-| `table` | `metadata_only` | `false` | `["table_cell"]` |
-| `table_row` | `metadata_only` | `false` | `["table_cell"]` |
-| `table_cell` | `rag_ask_only` | `true` | `["table_cell"]` |
+| `table` | `main_reading` | `false` | `["table_cell"]` |
+| `table_row` | `main_reading` | `false` | `["table_cell"]` |
+| `table_cell` | `main_reading` | `true` | `["table_cell"]` |
 | `image` | `metadata_only` | `false` | `["image_ocr"]` |
 | `image_ocr` | `rag_ask_only` | `true` | `["image_ocr"]` |
 | `footnote` | `rag_ask_only` | `true` | `["footnote"]` |
-| `code_block` | `rag_ask_only` | `true` | `["code_block"]` |
+| `code_block` | `main_reading` | `true` | `["code_block"]` |
 | `thematic_break` | `metadata_only` | `false` | `["published_layer"]` |
 | `unknown` | `metadata_only` | `false` | `["published_layer"]` |
 

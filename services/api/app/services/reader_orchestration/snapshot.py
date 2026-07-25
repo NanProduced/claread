@@ -109,6 +109,8 @@ def build_reader_plate_snapshot(
                     base_start_utf16=navigation_unit.base_start_utf16,
                     base_end_utf16=navigation_unit.base_end_utf16,
                     text_hash=units_by_id[navigation_unit.unit_id].text_hash,
+                    stable_block_type=navigation_unit.stable_block_type,
+                    heading_level=navigation_unit.heading_level,
                 )
                 for navigation_unit in build_result.navigation_units
             ]
@@ -529,7 +531,37 @@ def _build_source_block(
         "base_start_utf16": unit.base_start_utf16,
         "base_end_utf16": unit.base_end_utf16,
         "children": children,
+        **_project_stable_block_fields(unit),
     }
+
+
+def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
+    """A5: project stable block metadata onto the ``reader_source_block``
+    payload.
+
+    Returns an empty dict when the unit has no stable block annotation
+    (legacy path) so the snapshot payload stays byte-for-byte stable.
+    When the unit carries a ``stable_block_type``, the source block
+    payload gains ``stableBlockType`` plus ``headingLevel``, ``inlineMarks``,
+    ``tableRole`` and ``parentStableBlockId`` fields (each ``None`` when
+    not applicable) so the Web reading surface can render Markdown block
+    structure without re-parsing the canonical text and without having
+    to guard key existence. ``stableBlockId`` is emitted only when
+    present (it is a diagnostic identifier, not a render contract).
+    """
+    if unit.stable_block_type is None:
+        return {}
+
+    fields: dict[str, object] = {
+        "stableBlockType": unit.stable_block_type,
+        "headingLevel": unit.heading_level,
+        "inlineMarks": list(unit.inline_marks),
+        "tableRole": unit.table_role,
+        "parentStableBlockId": unit.parent_stable_block_id,
+    }
+    if unit.stable_block_id is not None:
+        fields["stableBlockId"] = unit.stable_block_id
+    return fields
 
 
 def _build_stable_leaf(

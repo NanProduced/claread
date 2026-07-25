@@ -28,6 +28,7 @@ from app.services.reader_orchestration.markdown_source_parser import (
     PARSER_NAME,
     PARSER_VERSION,
     PROFILE,
+    MarkdownParseResult,
     MarkdownSourceParser,
 )
 from app.services.reader_orchestration.repository import (
@@ -119,6 +120,7 @@ class CandidateDocumentCreationService:
         reading_variant: ReaderOrchestrationReadingVariant = (
             DEFAULT_READER_ORCHESTRATION_READING_VARIANT
         ),
+        preparsed: MarkdownParseResult | None = None,
     ) -> CandidateDocumentCreationResult:
         created_at = now or datetime.now(UTC)
         language_value = (language or "en").strip() or "en"
@@ -135,13 +137,19 @@ class CandidateDocumentCreationService:
         try:
             async with pool.acquire() as conn:
                 async with conn.transaction():
+                    # A4 — 解析结果共享: thread the caller-provided parse
+                    # result through the gate and the candidate block
+                    # builder so the markdown parser runs at most once
+                    # per request. ``preparsed=None`` preserves the
+                    # legacy behavior (parse inside the gate).
                     suitability = evaluate_input_suitability(
                         InputSuitabilityRequest(
                             source_type=source_type,
                             text=text,
                             filename=filename,
                             source_metadata=source_metadata_value,
-                        )
+                        ),
+                        preparsed=preparsed,
                     )
                     if suitability.outcome == "stable_document_ready":
                         raise CandidateDocumentCreationError(
@@ -172,6 +180,7 @@ class CandidateDocumentCreationService:
                         filename=filename,
                         source_metadata=source_metadata_value,
                         original_input_id=original_input_id,
+                        preparsed=preparsed,
                     )
                     if not blocks:
                         raise CandidateDocumentCreationError(
@@ -517,11 +526,14 @@ def _build_candidate_blocks(
     filename: str | None,
     source_metadata: dict[str, Any],
     original_input_id: UUID,
+    preparsed: MarkdownParseResult | None = None,
 ) -> tuple[list[StableDocumentBlock], str | None]:
     normalized_text = _normalize_source_text(text)
     title = _title_from_source_metadata(source_metadata)
     if source_type == "markdown_file":
-        drafts, markdown_title = _build_markdown_drafts_from_parser(normalized_text)
+        drafts, markdown_title = _build_markdown_drafts_from_parser(
+            normalized_text, parse_result=preparsed
+        )
         title = markdown_title or title
         # markdown_file blocks carry the parser identity triple in
         # quality_json for provenance symmetry with the normalizer path.
@@ -603,8 +615,19 @@ def _build_plain_candidate_drafts(source_text: str) -> list[_BlockDraft]:
 
 def _build_markdown_drafts_from_parser(
     source_text: str,
+    *,
+    parse_result: MarkdownParseResult | None = None,
 ) -> tuple[list[_BlockDraft], str | None]:
-    result = _MARKDOWN_PARSER.parse(source_text)
+    # A4 — 解析结果共享: reuse the caller-provided parse result when
+    # available; otherwise parse once here. The caller (candidate
+    # creation service) may already have parsed for the gate, so the
+    # same MarkdownParseResult is threaded through to avoid a second
+    # parse on the same text.
+    result = (
+        parse_result
+        if parse_result is not None
+        else _MARKDOWN_PARSER.parse(source_text)
+    )
     title: str | None = None
     drafts: list[_BlockDraft] = []
 

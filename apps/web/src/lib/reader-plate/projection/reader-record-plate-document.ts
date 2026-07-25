@@ -14,6 +14,7 @@ import type {
   ReaderSentenceAnalysisNodeDto,
   ReaderSnapshotAskSupplementDto,
   ReaderSourceBlockChildNodeDto,
+  ReaderSourceBlockInlineMarkDto,
   ReaderSourceBlockNodeDto,
   ReaderStableSeparatorLeafDto,
   ReaderStableSegmentTextLeafDto,
@@ -75,7 +76,19 @@ export type ReaderRecordPlateBlock =
   | ReaderRecordPlateParagraphBlock
   | ReaderRecordPlateBlockquoteBlock
   | ReaderRecordPlateCalloutBlock
-  | ReaderRecordPlateSentenceAnalysisBlock;
+  | ReaderRecordPlateSentenceAnalysisBlock
+  // B2: Markdown stable-block-derived types. Only emitted when backend
+  // `reader_source_block` carries `stableBlockType` metadata; legacy
+  // snapshots without `StableBlockAnnotation` fall through to paragraph.
+  | ReaderRecordPlateHeadingBlock
+  | ReaderRecordPlateListBlock
+  | ReaderRecordPlateListItemBlock
+  | ReaderRecordPlateCodeBlockBlock
+  | ReaderRecordPlateMarkdownBlockquoteBlock
+  | ReaderRecordPlateTableBlock
+  | ReaderRecordPlateTableRowBlock
+  | ReaderRecordPlateTableCellBlock
+  | ReaderRecordPlateHrBlock;
 
 /** 原文段落块 — 一个 source span 对应一个 paragraph */
 export interface ReaderRecordPlateParagraphBlock {
@@ -181,6 +194,146 @@ export interface ReaderRecordPlateSentenceAnalysisChunk
   };
 }
 
+// ---------------------------------------------------------------------------
+// B2: Markdown stable-block-derived block types.
+//
+// These block types are projected from `ReaderSourceBlockNodeDto` when the
+// backend emits `stableBlockType` metadata (A5). They share a common
+// `ReaderRecordPlateStableBlockData` shape that carries anchor-segment /
+// base-range / hash info so selection, vocabulary marks and grammar marks
+// continue to work on Markdown-rendered blocks.
+//
+// Legacy snapshots (no `StableBlockAnnotation`) never produce these block
+// types — they fall through to the paragraph path.
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared data for stable-block-derived blocks (heading / list / list_item /
+ * code_block / markdown_blockquote / table / table_row / table_cell / hr).
+ *
+ * Mirrors the essential fields of `ReaderRecordPlateParagraphData` so the
+ * DOM contract (data-reader-record-block-id, data-unit-id, etc.) and
+ * selection anchor reconstruction work uniformly across paragraph and
+ * Markdown block types.
+ */
+export interface ReaderRecordPlateStableBlockData {
+  unitId: string;
+  baseId: string;
+  baseRange: ReaderRecordPlateRange;
+  /** Primary anchor segment hash when this block covers anchor segments. */
+  textHash: string;
+  hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
+  /** Backend stable block type string (`heading`/`list`/`list_item`/`code_block`/...). */
+  stableBlockType: string;
+  /** Diagnostic stable block id from backend (not a render contract). */
+  stableBlockId?: string | null;
+  /** Parent stable block id for nested structures (table cells → row, etc.). */
+  parentStableBlockId?: string | null;
+  /** Primary anchor segment id when this block covers anchor segments. */
+  anchorSegmentId?: string;
+  /** All anchor segment ids covered by this block (may be empty for hr). */
+  coveredAnchorSegmentIds: string[];
+  /** Boundary quality inherited from the source unit. */
+  boundaryQuality?: ReaderBoundaryQuality;
+  /** Segment type inherited from primary anchor segment. */
+  segmentType?: AnchorSegmentType;
+  /** True when this block starts a new unit (used for navigable attrs). */
+  isUnitStart?: boolean;
+}
+
+/** Markdown 标题块 — `stableBlockType === "heading"` */
+export interface ReaderRecordPlateHeadingBlock {
+  type: "heading";
+  id: string;
+  /** 1-based heading level (clamped to 1-6). */
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/** Markdown 列表块 — `stableBlockType === "list"` (wrapper) */
+export interface ReaderRecordPlateListBlock {
+  type: "list";
+  id: string;
+  /** True for ordered lists (`1.` / `2.`), false for bullet lists (`-` / `*` / `+`). */
+  ordered: boolean;
+  children: ReaderRecordPlateListItemBlock[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/** Markdown 列表项块 — `stableBlockType === "list_item"` */
+export interface ReaderRecordPlateListItemBlock {
+  type: "list_item";
+  id: string;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/** Markdown 代码块 — `stableBlockType === "code_block"` */
+export interface ReaderRecordPlateCodeBlockBlock {
+  type: "code_block";
+  id: string;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData & {
+    /** Language hint from fence info (` ```python `), may be empty / null. */
+    language?: string | null;
+  };
+}
+
+/**
+ * Markdown 引用块 — `stableBlockType === "blockquote"`.
+ *
+ * Distinct from `ReaderRecordPlateBlockquoteBlock` (translation group) to
+ * avoid conflating source-text quotes with AI-translated text. The Plate
+ * element key is `blockquote` (shared with Markdown plugin), but the data
+ * shape differs.
+ */
+export interface ReaderRecordPlateMarkdownBlockquoteBlock {
+  type: "markdown_blockquote";
+  id: string;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/** Markdown 表格块 — `stableBlockType === "table"` (wrapper) */
+export interface ReaderRecordPlateTableBlock {
+  type: "table";
+  id: string;
+  children: ReaderRecordPlateTableRowBlock[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/** Markdown 表格行块 — `stableBlockType === "table_row"` */
+export interface ReaderRecordPlateTableRowBlock {
+  type: "table_row";
+  id: string;
+  children: ReaderRecordPlateTableCellBlock[];
+  data: ReaderRecordPlateStableBlockData & {
+    isHeader?: boolean;
+    rowIndex?: number;
+  };
+}
+
+/** Markdown 表格单元格块 — `stableBlockType === "table_cell"` */
+export interface ReaderRecordPlateTableCellBlock {
+  type: "table_cell";
+  id: string;
+  children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData & {
+    columnIndex?: number;
+    alignment?: "default" | "left" | "center" | "right";
+    isHeader?: boolean;
+  };
+}
+
+/** Markdown 水平分隔线块 — `stableBlockType === "thematic_break"` */
+export interface ReaderRecordPlateHrBlock {
+  type: "hr";
+  id: string;
+  children: [];
+  data: ReaderRecordPlateStableBlockData;
+}
+
 /**
  * @deprecated 使用 `Descendant[]` 替代。保留为兼容别名。
  * Callout children 现在是标准 Plate 节点树，由 deserializeMarkdownToBlocks 生成。
@@ -222,6 +375,34 @@ export interface ReaderRecordPlateTextLeaf {
   anchorSegmentId?: string;
   segmentRange?: ReaderRecordPlateRange;
   marks: ReaderRecordPlateMark[];
+  /**
+   * B3: Inline marks (bold / italic / strikethrough / inline_code / link)
+   * projected from the backend `ReaderSourceBlockNodeDto.inlineMarks`.
+   *
+   * Unlike `marks` (vocabulary / grammar / user annotations), inline marks
+   * are pure typography spans emitted by the Markdown parser. Offsets are
+   * segment-level UTF-16 so they compose with `segmentRange` without
+   * requiring a separate anchor shape.
+   */
+  inlineMarks?: ReaderRecordPlateInlineMark[];
+}
+
+/**
+ * B3: Inline mark projected from backend `ReaderSourceBlockInlineMarkDto`.
+ *
+ * `start` / `end` are segment-level UTF-16 offsets (already converted from
+ * block-level offsets via `segment.unit_start_utf16`). The renderer slices
+ * leaves at mark boundaries so each sub-leaf carries the marks that fully
+ * cover its range.
+ */
+export interface ReaderRecordPlateInlineMark {
+  kind: "strong" | "em" | "strikethrough" | "inline_code" | "link";
+  /** Segment-level UTF-16 start offset. */
+  start: number;
+  /** Segment-level UTF-16 end offset (exclusive). */
+  end: number;
+  /** Safe href for `kind === "link"` (whitelist-filtered by parser). */
+  href?: string;
 }
 
 export type ReaderRecordPlateMark =
@@ -984,6 +1165,13 @@ function mapTextLeaf(
   segment: Extract<ReaderSourceBlockChildNodeDto, { type: "reader_anchor_segment" }>,
   leaf: ReaderStableSegmentTextLeafDto,
   context: UnitProjectionContext,
+  /**
+   * B3: Source block carrying inline marks (bold / italic / strikethrough /
+   * inline_code / link). Only stable-block-derived blocks pass a source
+   * block; legacy paragraph projection omits it so inline marks stay
+   * disabled on the paragraph path.
+   */
+  sourceBlock?: ReaderSourceBlockNodeDto,
 ): ReaderRecordPlateTextLeaf[] {
   const vocabularyMarks =
     leaf.reader_vocabulary_marks?.map((mark) => mapVocabularyMark(segment, mark)) ??
@@ -1004,7 +1192,123 @@ function mapTextLeaf(
     ...userNoteMarks,
   ];
 
-  return splitTextLeafByMarks(leaf, marks);
+  const projectedLeaves = splitTextLeafByMarks(leaf, marks);
+
+  // B3: when the backend emitted inline marks for this stable block,
+  // further slice each sub-leaf at inline mark boundaries so the
+  // renderer can apply bold / italic / strikethrough / code / link
+  // styling. Block-level offsets are converted to segment-level via
+  // `segment.unit_start_utf16` (block text === unit text for stable
+  // blocks projected by `buildStableBlockForSourceSpan`).
+  const blockInlineMarks = sourceBlock?.inlineMarks;
+  if (!blockInlineMarks || blockInlineMarks.length === 0) {
+    return projectedLeaves;
+  }
+
+  return projectedLeaves.flatMap((subLeaf) =>
+    splitLeafByInlineMarks(subLeaf, blockInlineMarks, segment.unit_start_utf16),
+  );
+}
+
+/**
+ * B3: split a projected text leaf at inline mark boundaries.
+ *
+ * `blockInlineMarks` carries block-level UTF-16 offsets (relative to the
+ * stable block's canonical text). `segmentOffsetInBlock` is the segment's
+ * start offset within the block text (= `segment.unit_start_utf16` since
+ * block text === unit text for stable blocks). We convert mark offsets to
+ * segment-level, clamp to the leaf's segment range, then slice the leaf
+ * at every boundary so each sub-leaf carries only the marks that fully
+ * cover it.
+ *
+ * Sub-leaves preserve `marks` (vocabulary / grammar / user annotations)
+ * and `baseRange` is recomputed from the original leaf's base start so
+ * selection anchors stay valid.
+ */
+function splitLeafByInlineMarks(
+  leaf: ReaderRecordPlateTextLeaf,
+  blockInlineMarks: ReaderSourceBlockInlineMarkDto[],
+  segmentOffsetInBlock: number,
+): ReaderRecordPlateTextLeaf[] {
+  if (!leaf.segmentRange || !leaf.anchorSegmentId) {
+    // Separator leaf or leaf without anchor metadata — inline marks do
+    // not apply. Return as-is.
+    return [leaf];
+  }
+
+  const leafSegmentStart = leaf.segmentRange.startUtf16;
+  const leafSegmentEnd = leaf.segmentRange.endUtf16;
+
+  // Convert block-level inline marks to segment-level and keep only
+  // those overlapping this leaf's range.
+  const segmentInlineMarks: ReaderRecordPlateInlineMark[] = [];
+  for (const mark of blockInlineMarks) {
+    if (typeof mark.start !== "number" || typeof mark.end !== "number") {
+      continue;
+    }
+    const segStart = mark.start - segmentOffsetInBlock;
+    const segEnd = mark.end - segmentOffsetInBlock;
+    // Skip marks that do not overlap the leaf range.
+    if (segEnd <= leafSegmentStart || segStart >= leafSegmentEnd) {
+      continue;
+    }
+    // Clamp mark range to leaf range (mark may extend beyond leaf).
+    const clampedStart = Math.max(segStart, leafSegmentStart);
+    const clampedEnd = Math.min(segEnd, leafSegmentEnd);
+    if (clampedEnd <= clampedStart) {
+      continue;
+    }
+    segmentInlineMarks.push({
+      kind: mark.type,
+      start: clampedStart,
+      end: clampedEnd,
+      href: mark.href,
+    });
+  }
+
+  if (segmentInlineMarks.length === 0) {
+    return [leaf];
+  }
+
+  // Compute split boundaries from leaf range + mark boundaries.
+  const boundaries = new Set<number>([leafSegmentStart, leafSegmentEnd]);
+  for (const mark of segmentInlineMarks) {
+    boundaries.add(mark.start);
+    boundaries.add(mark.end);
+  }
+  const sortedBoundaries = [...boundaries].sort((a, b) => a - b);
+
+  const leafBaseStart = leaf.baseRange.startUtf16;
+  const result: ReaderRecordPlateTextLeaf[] = [];
+
+  for (let i = 0; i < sortedBoundaries.length - 1; i += 1) {
+    const start = sortedBoundaries[i];
+    const end = sortedBoundaries[i + 1];
+    if (end <= start) {
+      continue;
+    }
+
+    const relativeStart = start - leafSegmentStart;
+    const relativeEnd = end - leafSegmentStart;
+
+    // Find marks that fully cover this sub-range.
+    const coveringMarks = segmentInlineMarks.filter(
+      (m) => m.start <= start && m.end >= end,
+    );
+
+    result.push({
+      ...leaf,
+      text: leaf.text.slice(relativeStart, relativeEnd),
+      baseRange: range(
+        leafBaseStart + relativeStart,
+        leafBaseStart + relativeEnd,
+      ),
+      segmentRange: range(start, end),
+      inlineMarks: coveringMarks.length > 0 ? coveringMarks : undefined,
+    });
+  }
+
+  return result;
 }
 
 // --- Block builders ---
@@ -1062,6 +1366,228 @@ function buildParagraphBlock(
   options: { isUnitStart?: boolean } = {},
 ): ReaderRecordPlateParagraphBlock {
   return buildParagraphBlockForSourceSpan([segment], [segment], context, options);
+}
+
+// ---------------------------------------------------------------------------
+// B2.3: Stable-block-derived block builders.
+//
+// When a unit's `reader_source_block` carries `stableBlockType` metadata
+// (A5), we project the unit to the corresponding Markdown block type
+// instead of a plain paragraph. The text leaves, anchor-segment metadata,
+// and translation/annotation flow remain identical — only the block type
+// and `data` shape change.
+//
+// Wrapper blocks (`list` / `table` / `table_row`) are not reconstructed
+// here; they are assembled in B2.6 by grouping child blocks via
+// `parentStableBlockId`. This function only emits leaf/standalone blocks.
+// ---------------------------------------------------------------------------
+
+/** Recognized stable block types that map to a non-paragraph Plate block. */
+const STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION: ReadonlySet<string> = new Set([
+  "heading",
+  "code_block",
+  "blockquote",
+  "thematic_break",
+  "list_item",
+  "table_cell",
+]);
+
+/**
+ * Extract the first `reader_source_block` child from a unit. A unit
+ * typically has exactly one source block; if absent (legacy / malformed),
+ * returns `null` so the caller falls through to the paragraph path.
+ */
+function findUnitSourceBlock(
+  unit: ReaderUnitNodeDto,
+): ReaderSourceBlockNodeDto | null {
+  for (const child of unit.children) {
+    if (isSourceBlockNode(child)) {
+      return child;
+    }
+  }
+  return null;
+}
+
+/**
+ * Determine whether a unit should be projected as a stable Markdown block
+ * (heading / code_block / etc.) rather than the legacy paragraph path.
+ * Returns the stable block type string when a projection applies, or
+ * `null` to fall through to the paragraph path.
+ */
+function getUnitStableBlockType(unit: ReaderUnitNodeDto): string | null {
+  const sourceBlock = findUnitSourceBlock(unit);
+  if (!sourceBlock) {
+    return null;
+  }
+  const rawType = sourceBlock.stableBlockType;
+  if (typeof rawType !== "string" || rawType.length === 0) {
+    return null;
+  }
+  if (!STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION.has(rawType)) {
+    return null;
+  }
+  return rawType;
+}
+
+/**
+ * Build the shared `ReaderRecordPlateStableBlockData` from anchor-segment
+ * metadata + source-block metadata. Mirrors the paragraph data shape so
+ * selection, vocabulary marks, and grammar marks work uniformly.
+ */
+function buildStableBlockData(
+  anchorSegments: ReaderAnchorSegmentNode[],
+  sourceBlock: ReaderSourceBlockNodeDto,
+  unit: ReaderUnitNodeDto,
+  options: { isUnitStart?: boolean } = {},
+): ReaderRecordPlateStableBlockData {
+  const primaryAnchor = anchorSegments[0];
+  const terminalAnchor = anchorSegments[anchorSegments.length - 1];
+  const coveredAnchorSegmentIds = anchorSegments.map(
+    (segment) => segment.anchor_segment_id,
+  );
+
+  return {
+    unitId: unit.unit_id,
+    baseId: unit.base_id,
+    baseRange: range(
+      primaryAnchor.base_start_utf16,
+      terminalAnchor.base_end_utf16,
+    ),
+    textHash: primaryAnchor.text_hash,
+    hashAlgorithm: primaryAnchor.hash_algorithm,
+    stableBlockType: sourceBlock.stableBlockType ?? "paragraph",
+    stableBlockId: sourceBlock.stableBlockId ?? null,
+    parentStableBlockId: sourceBlock.parentStableBlockId ?? null,
+    anchorSegmentId: primaryAnchor.anchor_segment_id,
+    coveredAnchorSegmentIds,
+    boundaryQuality: unit.boundary_quality,
+    segmentType: primaryAnchor.segment_type,
+    isUnitStart: options.isUnitStart || undefined,
+  };
+}
+
+/**
+ * Project a source span to the appropriate stable Markdown block type
+ * based on `stableBlockType`. Falls back to the paragraph builder when
+ * the type is not recognized (defensive — should not happen after
+ * `getUnitStableBlockType` gates entry).
+ */
+function buildStableBlockForSourceSpan(
+  sourceChildren: ReaderSourceBlockChildNodeDto[],
+  anchorSegments: ReaderAnchorSegmentNode[],
+  context: UnitProjectionContext,
+  unit: ReaderUnitNodeDto,
+  sourceBlock: ReaderSourceBlockNodeDto,
+  options: { isUnitStart?: boolean } = {},
+): ReaderRecordPlateBlock {
+  if (anchorSegments.length === 0) {
+    throw new Error("Expected at least one anchor segment in source span");
+  }
+
+  const stableType = sourceBlock.stableBlockType;
+  const children = sourceChildren.flatMap((child) =>
+    isAnchorSegmentNode(child)
+      ? child.children.flatMap((leaf) =>
+          mapTextLeaf(child, leaf, context, sourceBlock),
+        )
+      : [mapSeparatorLeaf(child)],
+  );
+  const data = buildStableBlockData(anchorSegments, sourceBlock, unit, options);
+
+  // Clamp heading level to 1-6; default to 1 when missing/invalid.
+  const headingLevel =
+    typeof sourceBlock.headingLevel === "number" &&
+    Number.isFinite(sourceBlock.headingLevel) &&
+    sourceBlock.headingLevel >= 1 &&
+    sourceBlock.headingLevel <= 6
+      ? (Math.trunc(sourceBlock.headingLevel) as 1 | 2 | 3 | 4 | 5 | 6)
+      : 1;
+
+  const primaryAnchor = anchorSegments[0];
+
+  switch (stableType) {
+    case "heading":
+      return {
+        type: "heading",
+        id: `heading:${primaryAnchor.anchor_segment_id}`,
+        level: headingLevel,
+        children,
+        data,
+      };
+    case "code_block":
+      return {
+        type: "code_block",
+        id: `code_block:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data: {
+          ...data,
+          // Language hint is not yet projected by the backend DTO;
+          // reserve the field so B2.5 renderer can read it without a
+          // second type bump.
+          language: null,
+        },
+      };
+    case "blockquote":
+      return {
+        type: "markdown_blockquote",
+        id: `markdown_blockquote:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data,
+      };
+    case "thematic_break":
+      return {
+        type: "hr",
+        id: `hr:${primaryAnchor.anchor_segment_id}`,
+        children: [],
+        data,
+      };
+    case "list_item":
+      return {
+        type: "list_item",
+        id: `list_item:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data,
+      };
+    case "table_cell":
+      return {
+        type: "table_cell",
+        id: `table_cell:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data: {
+          ...data,
+          // Column index / alignment / header flag are not yet projected
+          // by the backend DTO; B2.6 will populate them when
+          // reconstructing table structure via `parentStableBlockId`.
+          alignment: "default",
+          isHeader: false,
+        },
+      };
+    default:
+      // Defensive: unrecognized stable type → fall back to paragraph.
+      return buildParagraphBlockForSourceSpan(
+        sourceChildren,
+        anchorSegments,
+        context,
+        options,
+      );
+  }
+}
+
+function buildStableBlock(
+  segment: ReaderAnchorSegmentNode,
+  context: UnitProjectionContext,
+  unit: ReaderUnitNodeDto,
+  sourceBlock: ReaderSourceBlockNodeDto,
+  options: { isUnitStart?: boolean } = {},
+): ReaderRecordPlateBlock {
+  return buildStableBlockForSourceSpan(
+    [segment],
+    [segment],
+    context,
+    unit,
+    sourceBlock,
+    options,
+  );
 }
 
 function buildBlockquoteBlock(
@@ -1375,11 +1901,25 @@ function mapUnitToBlocks(
   const { layout, spans } = buildValidTranslationGroupSpans(unit);
   let nextAnchorIndex = 0;
 
+  // B2.3: When the unit's source block carries a recognized
+  // `stableBlockType`, project the unit to the corresponding Markdown
+  // block type (heading / code_block / blockquote / hr / list_item /
+  // table_cell) instead of the legacy paragraph. Translation blockquotes
+  // and annotation blocks (callouts / sentence analysis / supplements)
+  // remain unchanged so enhancement layers still attach correctly.
+  const stableBlockType = getUnitStableBlockType(unit);
+  const sourceBlock = stableBlockType ? findUnitSourceBlock(unit) : null;
+  const useStableProjection = stableBlockType !== null && sourceBlock !== null;
+
   const pushFallbackSegment = (segment: ReaderAnchorSegmentNode) => {
     blocks.push(
-      buildParagraphBlock(segment, context, {
-        isUnitStart: isFirstAnchorSegmentInUnit,
-      }),
+      useStableProjection && sourceBlock
+        ? buildStableBlock(segment, context, unit, sourceBlock, {
+            isUnitStart: isFirstAnchorSegmentInUnit,
+          })
+        : buildParagraphBlock(segment, context, {
+            isUnitStart: isFirstAnchorSegmentInUnit,
+          }),
     );
     isFirstAnchorSegmentInUnit = false;
     blocks.push(...buildAnnotationBlocksForSegments([segment], context));
@@ -1395,14 +1935,25 @@ function mapUnitToBlocks(
     }
 
     blocks.push(
-      buildParagraphBlockForSourceSpan(
-        span.sourceChildren,
-        span.coveredSegments,
-        context,
-        {
-          isUnitStart: isFirstAnchorSegmentInUnit,
-        },
-      ),
+      useStableProjection && sourceBlock
+        ? buildStableBlockForSourceSpan(
+            span.sourceChildren,
+            span.coveredSegments,
+            context,
+            unit,
+            sourceBlock,
+            {
+              isUnitStart: isFirstAnchorSegmentInUnit,
+            },
+          )
+        : buildParagraphBlockForSourceSpan(
+            span.sourceChildren,
+            span.coveredSegments,
+            context,
+            {
+              isUnitStart: isFirstAnchorSegmentInUnit,
+            },
+          ),
     );
     isFirstAnchorSegmentInUnit = false;
 
@@ -1425,6 +1976,239 @@ function mapUnitToBlocks(
   return blocks;
 }
 
+// ---------------------------------------------------------------------------
+// B2.6: Reconstruct wrapper blocks (`list` / `table` / `table_row`) from
+// leaf blocks (`list_item` / `table_cell`).
+//
+// The backend `StableBlockAnnotation` is only created for leaf blocks that
+// have canonical-text offsets (heading / list_item / code_block / blockquote
+// / thematic_break / table_cell). Wrapper blocks (list / table / table_row)
+// do not carry canonical text — they exist only as `parent_block_id`
+// references on their children. This means the frontend receives a flat
+// sequence of leaf blocks, each carrying `parentStableBlockId`, and must
+// reconstruct the nesting.
+//
+// Strategy: post-process the flat `children` array from `mapUnitToBlocks`.
+// Group consecutive `list_item` blocks by `parentStableBlockId` into `list`
+// wrappers. Group consecutive `table_cell` blocks into rows (by
+// `parentStableBlockId`) and then into a single `table` wrapper per
+// contiguous run.
+//
+// Non-leaf blocks (callouts, translations, paragraphs, headings, etc.)
+// between leaf blocks break the contiguous run — each side forms its own
+// wrapper. This is acceptable because Markdown source documents typically
+// do not have per-item AI annotations, and the alternative (moving
+// annotation blocks inside list items) requires changing the
+// `list_item` children type which is out of B2.6 scope.
+// ---------------------------------------------------------------------------
+
+/**
+ * Group consecutive `list_item` blocks into `list` wrappers by
+ * `parentStableBlockId`. Items with the same parent form one list; items
+ * with `null` parent each form a single-item fallback list.
+ */
+function groupListItemsIntoLists(
+  items: ReaderRecordPlateListItemBlock[],
+): ReaderRecordPlateListBlock[] {
+  const lists: ReaderRecordPlateListBlock[] = [];
+  let fallbackCounter = 0;
+
+  let index = 0;
+  while (index < items.length) {
+    const item = items[index];
+    const parentId = item.data.parentStableBlockId ?? null;
+
+    // Collect consecutive items with the same parentStableBlockId.
+    const group: ReaderRecordPlateListItemBlock[] = [item];
+    let next = index + 1;
+    while (
+      next < items.length &&
+      (items[next].data.parentStableBlockId ?? null) === parentId
+    ) {
+      group.push(items[next]);
+      next += 1;
+    }
+
+    const listId =
+      parentId !== null
+        ? `list:${parentId}`
+        : `list:fallback:${fallbackCounter++}`;
+
+    // Clone data from the first item; override stableBlockType to "list".
+    const firstData = group[0].data;
+    const listData: ReaderRecordPlateStableBlockData = {
+      ...firstData,
+      stableBlockType: "list",
+      // The list wrapper's parentStableBlockId is not meaningful (the
+      // backend `list` block has no parent in the Markdown model). Clear
+      // it so downstream consumers don't misinterpret a stale value.
+      parentStableBlockId: null,
+      // isUnitStart is only meaningful for the first child; the wrapper
+      // itself inherits it so navigation attrs attach correctly.
+      isUnitStart: firstData.isUnitStart,
+    };
+
+    lists.push({
+      type: "list",
+      id: listId,
+      // Default to unordered; the backend does not currently project
+      // list ordering. B2.6 leaves this as `false` — a future task can
+      // enrich the backend DTO to carry `ordered` from the `list`
+      // block's `payload_json`.
+      ordered: false,
+      children: group,
+      data: listData,
+    });
+
+    index = next;
+  }
+
+  return lists;
+}
+
+/**
+ * Group consecutive `table_cell` blocks into `table_row` blocks (by
+ * `parentStableBlockId`) and then into a single `table` wrapper per
+ * contiguous run.
+ */
+function groupTableCellsIntoTable(
+  cells: ReaderRecordPlateTableCellBlock[],
+  tableCounter: { value: number },
+): ReaderRecordPlateTableBlock[] {
+  if (cells.length === 0) {
+    return [];
+  }
+
+  // Phase 1: group cells into rows by parentStableBlockId (row id).
+  const rows: ReaderRecordPlateTableRowBlock[] = [];
+  let fallbackRowCounter = 0;
+
+  let index = 0;
+  while (index < cells.length) {
+    const cell = cells[index];
+    const rowId = cell.data.parentStableBlockId ?? null;
+
+    const rowCells: ReaderRecordPlateTableCellBlock[] = [cell];
+    let next = index + 1;
+    while (
+      next < cells.length &&
+      (cells[next].data.parentStableBlockId ?? null) === rowId
+    ) {
+      rowCells.push(cells[next]);
+      next += 1;
+    }
+
+    const tableRowId =
+      rowId !== null
+        ? `table_row:${rowId}`
+        : `table_row:fallback:${fallbackRowCounter++}`;
+
+    const firstCellData = rowCells[0].data;
+    const rowData: ReaderRecordPlateStableBlockData & {
+      isHeader?: boolean;
+      rowIndex?: number;
+    } = {
+      ...firstCellData,
+      stableBlockType: "table_row",
+      parentStableBlockId: null,
+      isUnitStart: firstCellData.isUnitStart,
+      // rowIndex is assigned after we know how many rows exist.
+      // isHeader defaults to false; the backend does not currently
+      // project header-row metadata. A future task can enrich this
+      // from the `table_row` block's `payload_json`.
+      isHeader: false,
+    };
+
+    // Assign per-cell columnIndex based on position in the row.
+    const cellsWithColumnIndex = rowCells.map((cell, columnIndex) => ({
+      ...cell,
+      data: {
+        ...cell.data,
+        columnIndex,
+      },
+    }));
+
+    rows.push({
+      type: "table_row",
+      id: tableRowId,
+      children: cellsWithColumnIndex,
+      data: { ...rowData, rowIndex: rows.length },
+    });
+
+    index = next;
+  }
+
+  // Phase 2: wrap all rows into a single table block.
+  const firstRowData = rows[0].data;
+  const tableId = `table:fallback:${tableCounter.value++}`;
+
+  const tableData: ReaderRecordPlateStableBlockData = {
+    ...firstRowData,
+    stableBlockType: "table",
+    parentStableBlockId: null,
+    isUnitStart: firstRowData.isUnitStart,
+  };
+
+  return [
+    {
+      type: "table",
+      id: tableId,
+      children: rows,
+      data: tableData,
+    },
+  ];
+}
+
+/**
+ * Post-process the flat block array to reconstruct `list` / `table` /
+ * `table_row` wrapper blocks from consecutive `list_item` / `table_cell`
+ * leaf blocks.
+ *
+ * Non-leaf blocks between leaf blocks break the contiguous run — each
+ * side forms its own wrapper. This keeps the grouping deterministic and
+ * avoids mis-associating items across structural boundaries.
+ */
+function groupStableWrapperBlocks(
+  blocks: ReaderRecordPlateBlock[],
+): ReaderRecordPlateBlock[] {
+  const result: ReaderRecordPlateBlock[] = [];
+  const tableCounter = { value: 0 };
+
+  let index = 0;
+  while (index < blocks.length) {
+    const block = blocks[index];
+
+    if (block.type === "list_item") {
+      // Collect a contiguous run of list_item blocks.
+      const run: ReaderRecordPlateListItemBlock[] = [];
+      while (
+        index < blocks.length &&
+        blocks[index].type === "list_item"
+      ) {
+        run.push(blocks[index] as ReaderRecordPlateListItemBlock);
+        index += 1;
+      }
+      result.push(...groupListItemsIntoLists(run));
+    } else if (block.type === "table_cell") {
+      // Collect a contiguous run of table_cell blocks.
+      const run: ReaderRecordPlateTableCellBlock[] = [];
+      while (
+        index < blocks.length &&
+        blocks[index].type === "table_cell"
+      ) {
+        run.push(blocks[index] as ReaderRecordPlateTableCellBlock);
+        index += 1;
+      }
+      result.push(...groupTableCellsIntoTable(run, tableCounter));
+    } else {
+      result.push(block);
+      index += 1;
+    }
+  }
+
+  return result;
+}
+
 export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordPlateDocument {
@@ -1440,9 +2224,12 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
     progressByUnit: buildProgressByUnit(snapshot, progress),
   };
 
-  const children = snapshot.value.flatMap((unit) =>
+  const flatChildren = snapshot.value.flatMap((unit) =>
     mapUnitToBlocks(unit, context),
   );
+  // B2.6: reconstruct `list` / `table` / `table_row` wrapper blocks from
+  // consecutive `list_item` / `table_cell` leaf blocks.
+  const children = groupStableWrapperBlocks(flatChildren);
 
   return {
     type: "reader_record_plate_document",

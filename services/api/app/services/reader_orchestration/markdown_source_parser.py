@@ -39,6 +39,8 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
 
+from app.contracts.annotation import utf16_code_unit_length
+
 # ---------------------------------------------------------------------------
 # Identity constants (Clause 1)
 # ---------------------------------------------------------------------------
@@ -390,32 +392,251 @@ def _extract_links_from_link_open(
 
 def _process_paragraph_inline(
     token: Token,
-) -> tuple[str, list[dict[str, str]], list[dict[str, str]], bool, bool]:
+) -> tuple[
+    str,
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+    bool,
+    bool,
+]:
     """Process paragraph inline tokens.
 
-    Returns (text, safe_links, unsafe_links, has_inline_html, starts_with_html_inline).
+    Returns (text, inline_marks, safe_links, unsafe_links, has_inline_html,
+    starts_with_html_inline).
+
+    A3 — link safety single-point convergence:
+      html_inline + link overlap no longer "rescued" via
+      ``_reconstruct_raw_with_html`` + regex re-parse. html_inline is
+      detected and recorded as ``inline_html`` warning; the broken link
+      syntax is not merged. text_content is the flattened inline text
+      with html_inline stripped.
+      Non-html_inline unsafe links (javascript:/vbscript:) are still
+      categorized via link_open attrs and recorded in ``stripped_links``.
     """
-    has_inline_html = _has_inline_html(token)
-    starts_with_html_inline = bool(
-        token.children and token.children[0].type == "html_inline"
-    )
+    return _process_inline_with_marks(token)
 
-    # Reconstruct raw text (including html_inline) for unsafe link detection
-    raw_text = _reconstruct_raw_with_html(token)
 
-    # Extract links from raw text (unsafe links not parsed by markdown-it-py)
-    cleaned_text, regex_safe_links, regex_unsafe_links = _extract_and_strip_links(
-        raw_text
-    )
+def _process_inline_with_marks(
+    token: Token,
+) -> tuple[
+    str,
+    list[dict[str, Any]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+    bool,
+    bool,
+]:
+    """Process an inline token, extracting text + inline_marks + links.
 
-    # Extract safe links from link_open (parsed by markdown-it-py)
-    link_open_safe, link_open_unsafe = _extract_links_from_link_open(token)
+    Returns (text, inline_marks, safe_links, unsafe_links,
+    has_inline_html, starts_with_html_inline).
 
-    # Merge: safe from link_open, unsafe from both sources
-    safe_links = link_open_safe
-    unsafe_links = link_open_unsafe + regex_unsafe_links
+    inline_marks: list of {type, start, end, [href]} where start/end are
+    UTF-16 code unit offsets within the returned text. Marks are emitted
+    in close-order (innermost marks first when nested).
+    safe_links: list of {text, href} for safe-protocol links.
+    unsafe_links: list of {text, href, reason} for unsafe-protocol links.
 
-    return cleaned_text, safe_links, unsafe_links, has_inline_html, starts_with_html_inline
+    A3 — link safety single-point:
+      markdown-it-py refuses to parse unsafe-protocol links (javascript:/vbscript:/data:),
+      leaving them as raw ``[label](href)`` text. This function detects such
+      patterns in text tokens, strips them to ``label``, records them in
+      ``unsafe_links``, and emits NO inline_mark (unsafe hrefs must not be
+      exposed in marks). Safe links parsed by markdown-it-py (link_open) and
+      safe links left as raw text (rare) both become inline_marks.
+      html_inline is always stripped from text and flags has_inline_html
+      (no rescue merge).
+    """
+    if not token.children:
+        return token.content or "", [], [], [], False, False
+
+    text_parts: list[str] = []
+    marks: list[dict[str, Any]] = []
+    safe_links: list[dict[str, str]] = []
+    unsafe_links: list[dict[str, str]] = []
+    # Stack of (mark_type, start_utf16_offset) for open marks.
+    open_marks: list[tuple[str, int]] = []
+    # Open link context: {start, href, is_safe, label_parts}.
+    open_link: dict[str, Any] | None = None
+
+    has_inline_html = False
+    starts_with_html_inline = token.children[0].type == "html_inline"
+
+    current_utf16 = 0
+
+    def _append_text(s: str) -> None:
+        nonlocal current_utf16
+        text_parts.append(s)
+        current_utf16 += utf16_code_unit_length(s)
+
+    def _try_match_link_pattern(content: str, start_idx: int) -> tuple[str, str, int] | None:
+        """Try to match ``[label](href)`` at content[start_idx].
+        Returns (label, href, end_idx) or None.
+        """
+        if start_idx >= len(content) or content[start_idx] != "[":
+            return None
+        close_bracket = content.find("]", start_idx + 1)
+        if close_bracket == -1:
+            return None
+        if close_bracket + 1 >= len(content) or content[close_bracket + 1] != "(":
+            return None
+        k = close_bracket + 2
+        depth = 1
+        length = len(content)
+        while k < length and depth > 0:
+            if content[k] == "(":
+                depth += 1
+            elif content[k] == ")":
+                depth -= 1
+            if depth > 0:
+                k += 1
+        if depth != 0:
+            return None
+        label = content[start_idx + 1:close_bracket]
+        href = content[close_bracket + 2:k]
+        return label, href, k + 1
+
+    for child in token.children:
+        ctype = child.type
+        if ctype == "text":
+            # Scan for unparsed [label](href) patterns (unsafe links that
+            # markdown-it-py refused to parse, plus rare safe ones).
+            content = child.content
+            i = 0
+            length = len(content)
+            while i < length:
+                if content[i] == "[":
+                    match = _try_match_link_pattern(content, i)
+                    if match is not None:
+                        label, href, next_i = match
+                        is_safe = _is_safe_link(href)
+                        start = current_utf16
+                        _append_text(label)
+                        end = current_utf16
+                        if is_safe:
+                            marks.append(
+                                {
+                                    "type": "link",
+                                    "start": start,
+                                    "end": end,
+                                    "href": href,
+                                }
+                            )
+                            safe_links.append({"text": label, "href": href})
+                        else:
+                            unsafe_links.append(
+                                {
+                                    "text": label,
+                                    "href": href,
+                                    "reason": "unsafe_protocol",
+                                }
+                            )
+                        if open_link is not None:
+                            open_link["label_parts"].append(label)
+                        i = next_i
+                        continue
+                # Batch regular characters up to next '[' to limit appends.
+                next_bracket = content.find("[", i + 1)
+                if next_bracket == -1:
+                    next_bracket = length
+                batch = content[i:next_bracket]
+                _append_text(batch)
+                if open_link is not None:
+                    open_link["label_parts"].append(batch)
+                i = next_bracket
+        elif ctype == "code_inline":
+            start = current_utf16
+            _append_text(child.content)
+            marks.append(
+                {"type": "inline_code", "start": start, "end": current_utf16}
+            )
+            if open_link is not None:
+                open_link["label_parts"].append(child.content)
+        elif ctype in ("softbreak", "hardbreak"):
+            _append_text("\n")
+            if open_link is not None:
+                open_link["label_parts"].append("\n")
+        elif ctype == "link_open":
+            href = ""
+            if child.attrs and "href" in child.attrs:
+                href = str(child.attrs["href"])
+            open_link = {
+                "start": current_utf16,
+                "href": href,
+                "is_safe": _is_safe_link(href),
+                "label_parts": [],
+            }
+        elif ctype == "link_close":
+            if open_link is not None:
+                start = open_link["start"]
+                end = current_utf16
+                href = open_link["href"]
+                label = "".join(open_link["label_parts"])
+                if open_link["is_safe"]:
+                    marks.append(
+                        {
+                            "type": "link",
+                            "start": start,
+                            "end": end,
+                            "href": href,
+                        }
+                    )
+                    safe_links.append({"text": label, "href": href})
+                else:
+                    unsafe_links.append(
+                        {
+                            "text": label,
+                            "href": href,
+                            "reason": "unsafe_protocol",
+                        }
+                    )
+                open_link = None
+        elif ctype in ("em_open", "strong_open", "s_open", "del_open"):
+            mark_type = {
+                "em_open": "em",
+                "strong_open": "strong",
+                "s_open": "strikethrough",
+                "del_open": "strikethrough",
+            }[ctype]
+            open_marks.append((mark_type, current_utf16))
+        elif ctype in ("em_close", "strong_close", "s_close", "del_close"):
+            close_to_type = {
+                "em_close": "em",
+                "strong_close": "strong",
+                "s_close": "strikethrough",
+                "del_close": "strikethrough",
+            }[ctype]
+            # Pop the most recent matching open (handles nesting).
+            for idx in range(len(open_marks) - 1, -1, -1):
+                if open_marks[idx][0] == close_to_type:
+                    mark_type, start = open_marks.pop(idx)
+                    marks.append(
+                        {
+                            "type": mark_type,
+                            "start": start,
+                            "end": current_utf16,
+                        }
+                    )
+                    break
+        elif ctype == "html_inline":
+            has_inline_html = True
+            # Skip from text (A3: no rescue merge).
+            continue
+        elif ctype == "image":
+            _append_text(child.content)
+            if open_link is not None:
+                open_link["label_parts"].append(child.content)
+        elif ctype == "footnote_ref":
+            continue
+        else:
+            if child.content:
+                _append_text(child.content)
+                if open_link is not None:
+                    open_link["label_parts"].append(child.content)
+
+    text = "".join(text_parts)
+    return text, marks, safe_links, unsafe_links, has_inline_html, starts_with_html_inline
 
 
 def _has_inline_html(token: Token) -> bool:
@@ -670,18 +891,31 @@ class MarkdownSourceParser:
                 src_range = _map_to_1based(token.map)
                 bq_id = f"b{order_index + 1}"
                 bq_text = ""
+                bq_marks: list[dict[str, Any]] = []
                 # Consume blockquote content
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "blockquote_close":
                     if tokens[j].type == "inline":
-                        bq_text = _extract_inline_text(tokens[j])
+                        (
+                            bq_text,
+                            bq_marks,
+                            _bq_safe_links,
+                            _bq_unsafe_links,
+                            _bq_has_html,
+                            _bq_starts_html,
+                        ) = _process_inline_with_marks(tokens[j])
+                        if _bq_unsafe_links:
+                            flags.has_unsafe_link = True
                     j += 1
+                bq_payload: dict[str, Any] = {}
+                if bq_marks:
+                    bq_payload["inline_marks"] = bq_marks
                 blocks.append(
                     ParsedBlock(
                         block_id=bq_id,
                         block_type="blockquote",
                         text_content=bq_text,
-                        payload_json={},
+                        payload_json=bq_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
@@ -779,26 +1013,39 @@ class MarkdownSourceParser:
                 # source_range from parent tr_open map (th_open/td_open map=None)
                 src_range = _map_to_1based(current_tr_map)
                 cell_text = ""
+                cell_marks: list[dict[str, Any]] = []
                 j = i + 1
                 while (
                     j < len(tokens)
                     and tokens[j].type not in ("td_close", "th_close")
                 ):
                     if tokens[j].type == "inline":
-                        cell_text = _extract_inline_text(tokens[j])
+                        (
+                            cell_text,
+                            cell_marks,
+                            _cell_safe_links,
+                            _cell_unsafe_links,
+                            _cell_has_html,
+                            _cell_starts_html,
+                        ) = _process_inline_with_marks(tokens[j])
+                        if _cell_unsafe_links:
+                            flags.has_unsafe_link = True
                     j += 1
                 is_header = token_type == "th_open"
                 alignment = _extract_alignment(token)
+                cell_payload: dict[str, Any] = {
+                    "column_index": table_column_index,
+                    "alignment": alignment,
+                    "is_header": is_header,
+                }
+                if cell_marks:
+                    cell_payload["inline_marks"] = cell_marks
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
                         block_type="table_cell",
                         text_content=cell_text,
-                        payload_json={
-                            "column_index": table_column_index,
-                            "alignment": alignment,
-                            "is_header": is_header,
-                        },
+                        payload_json=cell_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
@@ -814,17 +1061,30 @@ class MarkdownSourceParser:
                 level = int(token.tag[1:]) if token.tag.startswith("h") else 1
                 src_range = _map_to_1based(token.map)
                 heading_text = ""
+                heading_marks: list[dict[str, Any]] = []
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "heading_close":
                     if tokens[j].type == "inline":
-                        heading_text = _extract_inline_text(tokens[j])
+                        (
+                            heading_text,
+                            heading_marks,
+                            _heading_safe_links,
+                            _heading_unsafe_links,
+                            _heading_has_html,
+                            _heading_starts_html,
+                        ) = _process_inline_with_marks(tokens[j])
+                        if _heading_unsafe_links:
+                            flags.has_unsafe_link = True
                     j += 1
+                heading_payload: dict[str, Any] = {"level": level}
+                if heading_marks:
+                    heading_payload["inline_marks"] = heading_marks
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
                         block_type="heading",
                         text_content=heading_text,
-                        payload_json={"level": level},
+                        payload_json=heading_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
@@ -849,6 +1109,7 @@ class MarkdownSourceParser:
                 if inline_token is not None:
                     (
                         para_text,
+                        inline_marks,
                         safe_links,
                         unsafe_links,
                         has_inline_html,
@@ -857,12 +1118,9 @@ class MarkdownSourceParser:
                     # Strip any remaining HTML tags from text (from html_inline
                     # tokens that survived link extraction).
                     para_text = re.sub(r"<[^>]+>", "", para_text)
-                    # Only flag inline_html when there are no unsafe links.
-                    # When unsafe links are present, html_inline tokens are
-                    # typically artifacts of the unsafe link breaking the
-                    # markdown link syntax (e.g. <script> inside data: href),
-                    # not standalone inline HTML.
-                    if has_inline_html and not unsafe_links:
+                    # A3: html_inline is always flagged when present (no
+                    # "rescue" merge — link safety is single-point).
+                    if has_inline_html:
                         flags.has_inline_html = True
                     if unsafe_links:
                         flags.has_unsafe_link = True
@@ -872,6 +1130,9 @@ class MarkdownSourceParser:
                         payload["links"] = safe_links
                     if unsafe_links:
                         payload["stripped_links"] = unsafe_links
+                    # A2: inline_marks only when non-empty (minimal payload).
+                    if inline_marks:
+                        payload["inline_marks"] = inline_marks
                     # M-6: paragraph starting with html_inline
                     if starts_with_html_inline:
                         payload["extracted_from"] = "html_inline"
@@ -969,6 +1230,7 @@ class MarkdownSourceParser:
                 src_range = _map_to_1based(token.map)
                 li_id = f"b{order_index + 1}"
                 li_text = ""
+                li_marks: list[dict[str, Any]] = []
                 # Only consume the list item's own paragraph (for text).
                 # Do NOT consume nested list tokens — let the main loop
                 # process them so nested lists produce their own blocks.
@@ -981,7 +1243,16 @@ class MarkdownSourceParser:
                         k = j + 1
                         while k < len(tokens) and tokens[k].type != "paragraph_close":
                             if tokens[k].type == "inline":
-                                li_text = _extract_inline_text(tokens[k])
+                                (
+                                    li_text,
+                                    li_marks,
+                                    _li_safe_links,
+                                    _li_unsafe_links,
+                                    _li_has_html,
+                                    _li_starts_html,
+                                ) = _process_inline_with_marks(tokens[k])
+                                if _li_unsafe_links:
+                                    flags.has_unsafe_link = True
                             k += 1
                         consumed_end = k + 1  # advance past paragraph_close
                         break
@@ -998,7 +1269,16 @@ class MarkdownSourceParser:
                         break
                     elif t.type == "inline":
                         # Bare inline (no paragraph wrapper)
-                        li_text = _extract_inline_text(t)
+                        (
+                            li_text,
+                            li_marks,
+                            _li_safe_links,
+                            _li_unsafe_links,
+                            _li_has_html,
+                            _li_starts_html,
+                        ) = _process_inline_with_marks(t)
+                        if _li_unsafe_links:
+                            flags.has_unsafe_link = True
                         consumed_end = j + 1
                         break
                     j += 1
@@ -1024,17 +1304,20 @@ class MarkdownSourceParser:
                 else:
                     marker = token.markup
 
+                li_payload: dict[str, Any] = {
+                    "ordered": ordered,
+                    "marker": marker,
+                    "ordinal": ordinal,
+                    "depth": depth,
+                }
+                if li_marks:
+                    li_payload["inline_marks"] = li_marks
                 blocks.append(
                     ParsedBlock(
                         block_id=li_id,
                         block_type="list_item",
                         text_content=li_text,
-                        payload_json={
-                            "ordered": ordered,
-                            "marker": marker,
-                            "ordinal": ordinal,
-                            "depth": depth,
-                        },
+                        payload_json=li_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),

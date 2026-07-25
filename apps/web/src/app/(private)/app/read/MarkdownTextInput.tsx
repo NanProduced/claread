@@ -17,6 +17,29 @@
  *
  * 提交：Cmd/Ctrl+Enter 拦截触发 onSubmit 回调。
  *
+ * C1.2 placeholder 修复：
+ * - 移除 PlateContent 自带 placeholder（与父组件 overlay 重叠）。
+ * - 父组件 AnalyzeSubmitForm 在 `!text.trim()` 时渲染 overlay 提示，
+ *   是 placeholder 的单一真相源；本组件不再重复渲染。
+ *
+ * C1.3 可见降级：
+ * - 初值与 setValue 使用 `deserializeMarkdownToBlocksWithStatus`，
+ *   失败时通过 `onDegraded` 回调通知父组件，UI 显示"Markdown 解析失败，
+ *   已按纯文本处理"提示态，禁止原始标记静默上屏。
+ *
+ * C1.4 粘贴保真提交：
+ * - onPaste 记录用户原始粘贴文本与 dirty=false。
+ * - 用户后续编辑（非粘贴触发的 onChange）将 dirty 置 true。
+ * - `getSubmitText()` 在 `!dirty && lastPastedText` 时返回原始粘贴文本，
+ *   消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
+ * - 上传 `.md` 路径不经过本组件，维持直接提交文件内容不变。
+ *
+ * C1.5 serialize 配置：
+ * - serialize 选项由 MarkdownKit 的 remarkStringifyOptions 统一锁定
+ *   （bullet/emphasis/strong/fence/rule/incrementListMarker 等），
+ *   本组件调用 `editor.getApi(MarkdownPlugin).markdown.serialize()` 时
+ *   自动继承，无需额外传 options。
+ *
  * 样式策略（参考 Plate.js 官方 @plate/editor + 项目 reader-blocks-kit）：
  * - 直接使用 PlateContent（ESLint 规则限制 src/app/** 不能 import
  *   @/components/ui/*），把 @plate/editor Editor 的关键 className
@@ -35,6 +58,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
@@ -49,7 +73,10 @@ import {
 import type { Descendant } from "platejs";
 
 import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
-import { deserializeMarkdownToBlocks } from "@/lib/reader-plate/markdown/deserialize";
+import {
+  deserializeMarkdownToBlocksWithStatus,
+  type DeserializeMarkdownResult,
+} from "@/lib/reader-plate/markdown/deserialize";
 import { cn } from "@/lib/cn";
 import {
   lintMarkdownInput,
@@ -255,6 +282,13 @@ const markdownTextInputPlugins = [
 // ---------------------------------------------------------------------------
 
 export interface MarkdownTextInputHandle {
+  /**
+   * C1.4: 获取提交文本（粘贴保真优先）。
+   *
+   * 若用户粘贴后未编辑（dirty=false 且有 lastPastedText），返回原始粘贴文本，
+   * 消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
+   */
+  getSubmitText: () => string;
   /** 序列化当前编辑器内容为 Markdown 字符串 */
   getMarkdown: () => string;
   /** 聚焦编辑器 */
@@ -283,7 +317,15 @@ export interface MarkdownTextInputProps {
    * lint 是预警不阻塞，后端仍是 fail-closed 单一真相源。
    */
   onLintResult?: (result: MarkdownLintResult) => void;
-  placeholder?: string;
+  /**
+   * C1.3: deserialize 降级回调。
+   *
+   * 挂载与 setValue 时触发：status === "degraded" 表示解析失败，
+   * blocks 兜底为纯文本段落；调用方应显示可见降级提示，
+   * 禁止原始标记静默上屏。status === "success" | "empty" 时也会触发，
+   * 调用方可据清除降级提示。
+   */
+  onDegraded?: (result: DeserializeMarkdownResult) => void;
   /** 透传给 Editor 的 className */
   className?: string;
   id?: string;
@@ -293,12 +335,18 @@ export const MarkdownTextInput = forwardRef<
   MarkdownTextInputHandle,
   MarkdownTextInputProps
 >(function MarkdownTextInput(
-  { initialValue, onChange, onSubmit, onLintResult, placeholder, className, id },
+  { initialValue, onChange, onSubmit, onLintResult, onDegraded, className, id },
   ref,
 ) {
-  const [initialBlocks] = useState<Descendant[]>(() =>
-    initialValue ? deserializeMarkdownToBlocks(initialValue) : [],
-  );
+  // C1.3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
+  // 并通过 onDegraded 回调通知父组件显示可见降级提示。
+  // useState initializer 不能有副作用，先把结果存 ref，mount effect 中回调。
+  const initialResultRef = useRef<DeserializeMarkdownResult | null>(null);
+  const [initialBlocks] = useState<Descendant[]>(() => {
+    const result = deserializeMarkdownToBlocksWithStatus(initialValue ?? "");
+    initialResultRef.current = result;
+    return result.blocks;
+  });
 
   const editor = usePlateEditor(
     {
@@ -313,6 +361,7 @@ export const MarkdownTextInput = forwardRef<
   const onChangeRef = useRef(onChange);
   const onSubmitRef = useRef(onSubmit);
   const onLintResultRef = useRef(onLintResult);
+  const onDegradedRef = useRef(onDegraded);
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
@@ -322,10 +371,38 @@ export const MarkdownTextInput = forwardRef<
   useEffect(() => {
     onLintResultRef.current = onLintResult;
   }, [onLintResult]);
+  useEffect(() => {
+    onDegradedRef.current = onDegraded;
+  }, [onDegraded]);
+
+  // C1.3: 挂载时通知父组件初始 deserialize 状态（仅一次）。
+  useEffect(() => {
+    const result = initialResultRef.current;
+    if (result) {
+      initialResultRef.current = null;
+      onDegradedRef.current?.(result);
+    }
+  }, []);
+
+  // C1.4: 粘贴保真状态。
+  // - lastPastedTextRef: 用户最后一次"整篇粘贴"的原始文本（编辑器为空时粘贴）。
+  // - dirtyRef: 用户是否在粘贴后进行了非粘贴编辑。
+  // - isPastingRef: 标记当前 onChange 批次是否由粘贴触发（Slate 可能多次 normalize）。
+  const lastPastedTextRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+  const isPastingRef = useRef(false);
 
   useImperativeHandle(
     ref,
     () => ({
+      // C1.4: 粘贴保真 — 未编辑时返回原始粘贴文本，消除 serialize 往返损耗。
+      getSubmitText: () => {
+        if (!editor) return "";
+        if (!dirtyRef.current && lastPastedTextRef.current) {
+          return lastPastedTextRef.current;
+        }
+        return editor.getApi(MarkdownPlugin).markdown.serialize();
+      },
       getMarkdown: () => {
         if (!editor) return "";
         return editor.getApi(MarkdownPlugin).markdown.serialize();
@@ -337,11 +414,19 @@ export const MarkdownTextInput = forwardRef<
       clear: () => {
         if (!editor) return;
         editor.tf.setValue([]);
+        // C1.4: 清空时重置粘贴保真状态
+        lastPastedTextRef.current = null;
+        dirtyRef.current = false;
       },
       setValue: (markdown: string) => {
         if (!editor) return;
-        const blocks = markdown ? deserializeMarkdownToBlocks(markdown) : [];
-        editor.tf.setValue(blocks as never[]);
+        // C1.3: setValue 使用带状态 deserialize，失败时通知父组件。
+        const result = deserializeMarkdownToBlocksWithStatus(markdown);
+        editor.tf.setValue(result.blocks as never[]);
+        onDegradedRef.current?.(result);
+        // C1.4: programmatic setValue 重置粘贴保真状态
+        lastPastedTextRef.current = null;
+        dirtyRef.current = false;
       },
     }),
     [editor],
@@ -352,6 +437,12 @@ export const MarkdownTextInput = forwardRef<
   }
 
   const handleChange = () => {
+    // C1.4: 区分粘贴触发的 onChange 与用户编辑触发的 onChange。
+    // 粘贴触发的 onChange 不置 dirty（保留保真）；用户编辑置 dirty 并清除 pastedText。
+    if (!isPastingRef.current) {
+      dirtyRef.current = true;
+      lastPastedTextRef.current = null;
+    }
     const md = editor.getApi(MarkdownPlugin).markdown.serialize();
     onChangeRef.current(md);
     // Phase 1 / P0: 输入端预警 lint（非阻塞，后端仍是 fail-closed 单一真相源）
@@ -359,6 +450,37 @@ export const MarkdownTextInput = forwardRef<
     if (lintCallback) {
       lintCallback(lintMarkdownInput(md));
     }
+  };
+
+  const handlePaste = (event: ClipboardEvent) => {
+    // C1.4: 记录用户原始粘贴文本，用于提交保真。
+    // 仅当编辑器当前为空（整篇粘贴场景）时记录；增量粘贴视为编辑。
+    const clipboardText = event.clipboardData?.getData("text/plain") ?? "";
+    if (!clipboardText.trim()) {
+      return;
+    }
+    // 检查编辑器是否"实质为空"：0 或 1 个段落且无文本内容
+    const children = editor.children as Array<{
+      children?: Array<{ text?: string }>;
+    }>;
+    const isEmpty =
+      children.length === 0 ||
+      (children.length === 1 &&
+        (children[0]?.children ?? []).every((c) => !c.text?.trim()));
+    if (isEmpty) {
+      lastPastedTextRef.current = clipboardText;
+      dirtyRef.current = false;
+    } else {
+      // 粘贴到非空编辑器 → 视为编辑，不再保真
+      dirtyRef.current = true;
+      lastPastedTextRef.current = null;
+    }
+    isPastingRef.current = true;
+    // C1.4: 延迟重置 isPasting，确保 Slate paste 同步批次内所有 onChange
+    // 都被视为粘贴触发（Slate 可能多次 normalize → 多次 onChange）。
+    setTimeout(() => {
+      isPastingRef.current = false;
+    }, 0);
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -378,9 +500,9 @@ export const MarkdownTextInput = forwardRef<
           "[&_strong]:font-bold",
           className,
         )}
-        placeholder={placeholder}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
       />
     </Plate>
   );

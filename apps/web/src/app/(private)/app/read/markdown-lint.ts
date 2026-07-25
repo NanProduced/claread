@@ -1,10 +1,20 @@
 /**
- * Markdown 输入端预警 lint（Phase 1 / P0）。
+ * Markdown 输入端预警 lint（Phase 1 / P0，C2 降级为纯提示）。
  *
- * 目标：在用户粘贴/输入 Markdown 时，前端实时检测会触发
- * `candidate_document_required` 的危险内容，显示非阻塞警告 badge。
+ * 目标：在用户粘贴/输入 Markdown 时，前端实时检测**可能**触发
+ * `candidate_document_required` 的危险内容，显示**非阻塞**警告提示。
  *
- * 与后端对齐（启发式，前端不引入 markdown-it）：
+ * 与后端关系（重要，C2 固化）：
+ *   - 前端 lint 是纯启发式正则，**不与后端判定做强制一致承诺**。
+ *   - 后端 `markdown_source_parser.py` + `input_suitability_gate.py` 仍是
+ *     fail-closed 单一真相源；前端 lint 仅作 UX 提示，不影响 sourceType、
+ *     不阻塞提交、不改变路由。
+ *   - 已知差异：代码块内 `<tag>` 前端正则假阳性、未闭合围栏处理细节等
+ *     都属于启发式边界，后端会做权威判定。
+ *   - 不再新增规则副本：本文件保持当前 4 类检测，后续若后端规则扩展，
+ *     通过文案层弱化提示而非同步复制规则。
+ *
+ * 启发式参考（仅用于解释当前正则来源，非一致性承诺）：
  *   - Raw HTML: services/api/.../markdown_source_parser.py
  *     - html_block (行 566)
  *     - html_inline (行 860-866)
@@ -15,10 +25,8 @@
  *
  * 不变式：
  *   - lint 是纯启发式，不改变 sourceType，不阻塞提交。
- *   - 后端 markdown_source_parser.py + input_suitability_gate.py 仍是
- *     fail-closed 单一真相源。
- *   - 检测规则必须与后端对齐，避免前端报警但后端不路由、或后端路由但
- *     前端不报警的不一致。
+ *   - 文案为"含可能进入审核的内容"风格，弱化为提示而非警告。
+ *   - 后端仍是 fail-closed 单一真相源。
  */
 
 export type MarkdownLintWarningKind =
@@ -165,11 +173,15 @@ export function lintMarkdownInput(text: string): MarkdownLintResult {
 /**
  * 把 warnings 数组渲染成单条中文摘要文案（用于警告 badge）。
  *
+ * C2 降级为纯提示：文案从"提交后将进入审核流程"（阻塞式语气）
+ * 改为"含可能进入审核的内容"（提示式语气），强调前端只是预警、
+ * 后端才是 fail-closed 单一真相源。
+ *
  * 例："[raw_html: 2, unsafe_link: 1]" →
- *     "检测到 2 处原始 HTML、1 个不安全链接，提交后将进入审核流程"
+ *     "检测到 2 处原始 HTML 标签、检测到 1 个不安全协议链接（javascript/data/vbscript 等），含可能进入审核的内容"
  */
 export function summarizeLintWarnings(warnings: MarkdownLintWarning[]): string {
   if (warnings.length === 0) return "";
   const parts = warnings.map((w) => w.message);
-  return `${parts.join("、")}，提交后将进入审核流程`;
+  return `${parts.join("、")}，含可能进入审核的内容`;
 }

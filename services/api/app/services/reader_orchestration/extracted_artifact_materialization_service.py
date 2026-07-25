@@ -67,6 +67,10 @@ from app.services.reader_orchestration.input_document_normalizer import (
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownParseResult,
+    MarkdownSourceParser,
+)
 from app.services.reader_orchestration.repository import (
     CandidateWriteLockError,
     ReaderOrchestrationRepository,
@@ -83,6 +87,19 @@ _MARKDOWN_CONTENT_TYPES: frozenset[str] = frozenset({
     "text/x-markdown",
 })
 _PLAIN_CONTENT_TYPES: frozenset[str] = frozenset({"text/plain"})
+
+# A4 — 解析结果共享: single module-level parser used to pre-parse the
+# extracted artifact source text once and share the result across the
+# suitability gate, the normalizer, and the candidate block builder.
+# Reusing one parser instance avoids re-instantiating per request; the
+# parser is stateless and deterministic.
+_MARKDOWN_PARSER = MarkdownSourceParser()
+
+
+def _normalize_source_text(text: str) -> str:
+    """Mirror the gate's text normalization so the pre-parse runs on the
+    same text the downstream pipeline will see."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 class ExtractedArtifactMaterializationError(ValueError):
@@ -437,7 +454,17 @@ class ExtractedArtifactMaterializationService:
             filename=filename,
             source_metadata=source_metadata,
         )
-        suitability = evaluate_input_suitability(suitability_request)
+        # A4 — 解析结果共享: parse once on the normalized text and
+        # thread the result through the gate + downstream stable /
+        # candidate path. The gate, normalizer (stable path), and
+        # ``_build_candidate_blocks`` (candidate path) all consume this
+        # single parse, eliminating 2 redundant parses per request.
+        # The parser is deterministic and the source text is immutable
+        # within the transaction, so sharing is safe.
+        preparsed = _MARKDOWN_PARSER.parse(_normalize_source_text(source_text))
+        suitability = evaluate_input_suitability(
+            suitability_request, preparsed=preparsed
+        )
 
         # 6. Branch on outcome
         if suitability.outcome == "stable_document_ready":
@@ -454,6 +481,7 @@ class ExtractedArtifactMaterializationService:
                 source_text=source_text,
                 language=language_value,
                 suitability=suitability,
+                preparsed=preparsed,
                 now=now,
             )
         elif suitability.outcome == "candidate_document_required":
@@ -469,6 +497,7 @@ class ExtractedArtifactMaterializationService:
                 source_metadata=source_metadata,
                 source_text=source_text,
                 suitability=suitability,
+                preparsed=preparsed,
                 now=now,
             )
         else:
@@ -501,6 +530,7 @@ class ExtractedArtifactMaterializationService:
         source_text: str,
         language: str,
         suitability: InputSuitabilityResult,
+        preparsed: MarkdownParseResult | None = None,
         now: datetime,
     ) -> MaterializationResult:
         # Normalize → freeze plan → persist → set_active_base → publish event
@@ -510,7 +540,9 @@ class ExtractedArtifactMaterializationService:
             filename=filename,
             source_metadata=source_metadata,
         )
-        normalized = normalize_input_document(request)
+        # A4 — 解析结果共享: reuse the parse result produced by the
+        # caller; the normalizer MUST NOT re-parse.
+        normalized = normalize_input_document(request, preparsed=preparsed)
 
         source_profile_json: dict[str, Any] = {
             "source_type": source_type,
@@ -622,14 +654,19 @@ class ExtractedArtifactMaterializationService:
         source_metadata: dict[str, Any],
         source_text: str,
         suitability: InputSuitabilityResult,
+        preparsed: MarkdownParseResult | None = None,
         now: datetime,
     ) -> MaterializationResult:
+        # A4 — 解析结果共享: reuse the parse result produced by the
+        # caller; ``_build_candidate_blocks`` MUST NOT re-parse the
+        # markdown source.
         blocks, title = _build_candidate_blocks(
             source_type=source_type,
             text=source_text,
             filename=filename,
             source_metadata=source_metadata,
             original_input_id=input_id,
+            preparsed=preparsed,
         )
         candidate_document_id = uuid4()
         preview = _canonical_text_preview(suitability=suitability, blocks=blocks)

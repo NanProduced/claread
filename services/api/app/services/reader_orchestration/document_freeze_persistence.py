@@ -94,6 +94,7 @@ from app.services.reader_orchestration.base_builder import (
     BuiltReadingUnit,
     NavigationUnitFact,
     ReadingBaseBuildResult,
+    StableBlockAnnotation,
     build_reading_base_from_canonical_text,
 )
 from app.services.reader_orchestration.document_freeze_plan import (
@@ -423,6 +424,7 @@ async def persist_stable_document_freeze_plan(
             builder_version=builder_version,
             segmenter_version=segmenter_version,
             canonicalizer_version=canonicalizer_version,
+            stable_block_annotations=_stable_block_annotations_from_plan(plan),
         )
     except ValueError as exc:
         raise StableDocumentFreezePersistenceError(
@@ -988,6 +990,51 @@ def _navigation_json_from_build_result(
             for unit in build_result.navigation_units
         ]
     }
+
+
+def _stable_block_annotations_from_plan(
+    plan: StableDocumentFreezePlan,
+) -> list[StableBlockAnnotation]:
+    """A5: derive ``StableBlockAnnotation`` intervals from a freeze plan.
+
+    Each ``StableDocumentBlock`` whose ``canonical_text_start_utf16`` /
+    ``canonical_text_end_utf16`` are both set (i.e. the block
+    contributed text to the canonical text layer) becomes a
+    ``StableBlockAnnotation``. Blocks without canonical-text offsets
+    (table / table_row wrappers, image / image_ocr blocks, etc.) are
+    skipped — they carry no unit-level text and so cannot match a
+    built unit's UTF-16 range.
+
+    The annotation's ``payload_json`` is the block's ``payload_json``
+    verbatim (carries ``level`` for headings, ``inline_marks`` for
+    paragraphs, ``column_index`` / ``alignment`` / ``is_header`` for
+    table cells, etc.) so the base builder can project the right
+    fields onto the matching unit and into the snapshot
+    ``reader_source_block`` payload.
+    """
+    annotations: list[StableBlockAnnotation] = []
+    for block in plan.blocks:
+        start = block.canonical_text_start_utf16
+        end = block.canonical_text_end_utf16
+        if start is None or end is None:
+            continue
+        if end <= start:
+            # Defensive: a non-positive-length range cannot match any
+            # unit (units always have base_end_utf16 > base_start_utf16).
+            # Skip silently rather than failing the whole freeze — the
+            # freeze plan is responsible for emitting valid ranges.
+            continue
+        annotations.append(
+            StableBlockAnnotation(
+                start_utf16=start,
+                end_utf16=end,
+                block_type=block.block_type,
+                block_id=block.block_id,
+                parent_block_id=block.parent_block_id,
+                payload_json=dict(block.payload_json) if block.payload_json else {},
+            )
+        )
+    return annotations
 
 
 async def _insert_reading_unit(

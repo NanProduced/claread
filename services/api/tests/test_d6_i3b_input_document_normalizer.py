@@ -181,7 +181,7 @@ def test_blockquote_text_strips_quote_markers() -> None:
     )
 
 
-def test_fenced_code_block_preserves_code_but_stays_out_of_canonical_by_default() -> None:
+def test_fenced_code_block_preserves_code_and_defaults_to_main_reading() -> None:
     normalized = _normalize(
         source_type="markdown_file",
         filename="review.md",
@@ -206,7 +206,9 @@ The article continues in plain English after the short example.
     assert code_block.payload_json["language"] == "python"
     assert code_block.payload_json["fenced"] is True
     assert code_block.payload_json["closed"] is True
-    assert code_block.interpretation_policy.default_route == "rag_ask_only"
+    # Markdown ecosystem refactor (D2 / A1): code_block defaults to
+    # main_reading (it contributes to canonical text).
+    assert code_block.interpretation_policy.default_route == "main_reading"
 
 
 def test_divider_becomes_unknown_metadata_only_block() -> None:
@@ -295,7 +297,7 @@ def test_complex_markdown_input_raises_when_gate_requires_candidate_document(
     assert flag in excinfo.value.flags
 
 
-def test_canonical_text_contains_reading_blocks_and_excludes_code_and_divider() -> None:
+def test_canonical_text_contains_reading_blocks_and_code_but_excludes_divider() -> None:
     normalized = _normalize(
         source_type="markdown_file",
         filename="review.md",
@@ -329,7 +331,10 @@ def add(a, b):
     assert "Overview" in plan.canonical_text
     assert "Readers map each supporting reason to the main claim before discussion starts." in plan.canonical_text
     assert "The quoted summary still belongs in the main reading flow for interpretation." in plan.canonical_text
-    assert "return a + b" not in plan.canonical_text
+    # Markdown ecosystem refactor (D2 / A1): code_block defaults to
+    # main_reading, so the fenced code body now contributes to canonical
+    # text (without the fence markers themselves).
+    assert "return a + b" in plan.canonical_text
     assert "# Overview" not in plan.canonical_text
     assert "```python" not in plan.canonical_text
     assert "\n---\n" not in plan.canonical_text

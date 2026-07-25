@@ -94,7 +94,29 @@ VocabularyPhraseType = Literal[
 ParsedDecisionState = Literal["not_started", "partial", "parsed", "skipped", "failed"]
 AnchorSegmentType = Literal["sentence", "clause", "fallback_window"]
 ReaderBoundaryQuality = Literal["normal", "low"]
-ReaderUnitType = Literal["body", "heading", "list", "quote", "unknown", "fallback"]
+# A5: ``unit_type`` is derived from the stable ``block_type`` when a
+# ``StableBlockAnnotation`` matches the unit's UTF-16 range. The legacy
+# heuristic types (``body`` / ``list`` / ``quote`` / ``fallback``) are
+# kept for backward compatibility; the stable block types are added so
+# the snapshot schema accepts units whose type came from
+# ``StableDocumentBlockType``.
+ReaderUnitType = Literal[
+    "body",
+    "heading",
+    "list",
+    "quote",
+    "unknown",
+    "fallback",
+    # A5: stable block types that can become reading units when their
+    # canonical text offsets match a ``StableBlockAnnotation``.
+    "paragraph",
+    "list_item",
+    "blockquote",
+    "table",
+    "table_row",
+    "table_cell",
+    "code_block",
+]
 ReaderLayerTargetScope = Literal["unit", "anchor_segment", "unit_range", "record"]
 ReaderArtifactInputSourceType = Literal["file", "pdf", "image"]
 ReaderArtifactOriginalInputType = Literal["file_ref", "image_ref"]
@@ -548,6 +570,13 @@ class ReaderSnapshotNavigationUnit(BaseModel):
     base_end_utf16: int = Field(gt=0)
     text_hash: str = Field(pattern=r"^[0-9a-f]{8}$")
     hash_algorithm: Literal["fnv1a32-utf16"] = TEXT_RANGE_HASH_ALGORITHM
+    # A5: stable block metadata projected from ``BuiltReadingUnit`` when
+    # a ``StableBlockAnnotation`` matched the unit's UTF-16 range. Both
+    # fields default to ``None`` so legacy snapshots (no annotations)
+    # keep their existing byte-for-byte shape — the snapshot builder
+    # only sets them when the source unit carries a stable block type.
+    stable_block_type: str | None = None
+    heading_level: int | None = Field(default=None, ge=1)
 
 
 class ReaderSnapshotNavigation(BaseModel):

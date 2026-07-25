@@ -24,6 +24,9 @@ type UnitIn = {
   unit_id: string;
   order_index: number;
   label?: string | null;
+  unit_type?: string;
+  stable_block_type?: string | null;
+  heading_level?: number | null;
 };
 
 function makeParagraph(
@@ -127,12 +130,14 @@ function makeSnapshot(
         unit_id: u.unit_id,
         order_index: u.order_index,
         label: u.label ?? null,
-        unit_type: "body",
+        unit_type: (u.unit_type ?? "body") as ReaderPlateSnapshotDto["navigation"]["units"][number]["unit_type"],
         boundary_quality: "normal" as const,
         base_start_utf16: 0,
         base_end_utf16: 10,
         text_hash: "hash",
         hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        stable_block_type: u.stable_block_type ?? null,
+        heading_level: u.heading_level ?? null,
       })),
     },
     anchor_segments: [],
@@ -397,17 +402,297 @@ describe("pickReaderOutlineSource (priority seam)", () => {
   });
 });
 
-describe("projectMarkdownOutlineView (not implemented this round)", () => {
-  it("returns an honest unavailable model with no faked headings", () => {
+describe("projectMarkdownOutlineView (B4 implementation)", () => {
+  it("returns an unavailable model when there are no navigation units", () => {
     const view = projectMarkdownOutlineView(
-      makeSnapshot(bodyUnits, readyOutline()),
-      doc4(),
+      makeSnapshot([], readyOutline()),
+      makeDoc([]),
     );
     expect(view.available).toBe(false);
     expect(view.identity.sourceKind).toBe("markdown");
     expect(view.identity.sourceIdentityKey).toBe("base_1:1");
     expect(view.panelItems).toEqual([]);
     expect(view.tickItems).toEqual([]);
+  });
+
+  it("returns an unavailable model when no units carry stable_block_type=heading", () => {
+    const units: UnitIn[] = [
+      { unit_id: "u1", order_index: 1, stable_block_type: "paragraph" },
+      { unit_id: "u2", order_index: 2, stable_block_type: "paragraph" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["u1", "u2"]),
+    );
+    expect(view.available).toBe(false);
+    expect(view.panelItems).toEqual([]);
+  });
+
+  it("returns unavailable when only a single heading is present (no sections to navigate)", () => {
+    const units: UnitIn[] = [
+      { unit_id: "u1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "Only" },
+      { unit_id: "u2", order_index: 2, stable_block_type: "paragraph" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["u1", "u2"]),
+    );
+    expect(view.available).toBe(false);
+    expect(view.panelItems).toEqual([]);
+  });
+
+  it("projects two level-1 headings as flat section rows with full coverage", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "First" },
+      { unit_id: "p1", order_index: 2, stable_block_type: "paragraph" },
+      { unit_id: "h2", order_index: 3, stable_block_type: "heading", heading_level: 1, label: "Second" },
+      { unit_id: "p2", order_index: 4, stable_block_type: "paragraph" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "p1", "h2", "p2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.status).toBe("ready");
+    expect(view.identity.sourceKind).toBe("markdown");
+    expect(view.identity.revision).toBeNull();
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+    expect(view.panelItems.map((i) => i.title)).toEqual(["First", "Second"]);
+    expect(view.panelItems.every((i) => i.role === "section")).toBe(true);
+    expect(view.panelItems.every((i) => i.parentKey === null)).toBe(true);
+    expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
+    // Coverage: h1 covers [h1, p1] (last unit before h2); h2 covers [h2, p2] (last)
+    expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p1" });
+    expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p2" });
+    // Tick items are depth===1 only.
+    expect(view.tickItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+    expect(view.orderedUnitIds).toEqual(["h1", "p1", "h2", "p2"]);
+    expect(view.unitOrderById.get("p1")).toBe(2);
+  });
+
+  it("caps heading level at depth 3 for the rail panel but keeps nesting via parentKey", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "L1" },
+      { unit_id: "h2", order_index: 2, stable_block_type: "heading", heading_level: 2, label: "L2" },
+      { unit_id: "h3", order_index: 3, stable_block_type: "heading", heading_level: 3, label: "L3" },
+      { unit_id: "h4", order_index: 4, stable_block_type: "heading", heading_level: 4, label: "L4" },
+      { unit_id: "p", order_index: 5, stable_block_type: "paragraph" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2", "h3", "h4", "p"]),
+    );
+    expect(view.available).toBe(true);
+    // Depth cap: max depth is 3 even when heading_level is 4.
+    expect(view.panelItems.map((i) => i.depth)).toEqual([1, 2, 3, 3]);
+    // Parent chain: h2 → h1; h3 → h2; h4 → h3 (most recent strictly shallower).
+    expect(view.panelItems[0]!.parentKey).toBeNull();
+    expect(view.panelItems[1]!.parentKey).toBe("md:h1");
+    expect(view.panelItems[2]!.parentKey).toBe("md:h2");
+    expect(view.panelItems[3]!.parentKey).toBe("md:h3");
+    // Tick items: only depth===1 (h1).
+    expect(view.tickItems.map((i) => i.key)).toEqual(["md:h1"]);
+  });
+
+  it("resolves coverage so a parent heading covers its children + trailing units", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "Top" },
+      { unit_id: "h2", order_index: 2, stable_block_type: "heading", heading_level: 2, label: "Sub A" },
+      { unit_id: "p1", order_index: 3, stable_block_type: "paragraph" },
+      { unit_id: "h3", order_index: 4, stable_block_type: "heading", heading_level: 2, label: "Sub B" },
+      { unit_id: "p2", order_index: 5, stable_block_type: "paragraph" },
+      { unit_id: "h4", order_index: 6, stable_block_type: "heading", heading_level: 1, label: "Top 2" },
+      { unit_id: "p3", order_index: 7, stable_block_type: "paragraph" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2", "p1", "h3", "p2", "h4", "p3"]),
+    );
+    // h1 covers [h1, p2] (everything before h4, the next level-1 heading).
+    expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p2" });
+    // h2 covers [h2, p1] (everything before h3, the next level-2 heading).
+    expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p1" });
+    // h3 covers [h3, p2] (everything before h4, which is level-1 <= level-2).
+    expect(view.panelItems[2]!.coverage).toEqual({ startUnitId: "h3", endUnitId: "p2" });
+    // h4 covers [h4, p3] (last unit).
+    expect(view.panelItems[3]!.coverage).toEqual({ startUnitId: "h4", endUnitId: "p3" });
+  });
+
+  it("skips heading units with NaN heading_level defensively", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "H1" },
+      // NaN heading_level — truly broken payload, should be skipped.
+      { unit_id: "h2", order_index: 2, stable_block_type: "heading", heading_level: Number.NaN, label: "Broken" },
+      { unit_id: "h3", order_index: 3, stable_block_type: "heading", heading_level: 2, label: "H3" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2", "h3"]),
+    );
+    expect(view.available).toBe(true);
+    // Only 2 valid headings (h1, h3); the NaN one is skipped.
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h3"]);
+    // Still passes the >=2 threshold.
+    expect(view.panelItems[1]!.parentKey).toBe("md:h1");
+  });
+
+  it("falls back to empty title when navigation unit label is null", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: null },
+      { unit_id: "h2", order_index: 2, stable_block_type: "heading", heading_level: 2 },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.title)).toEqual(["", ""]);
+  });
+
+  it("clamps out-of-range heading levels (0, 7, NaN) defensively", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 0, label: "Zero" },
+      // NaN is skipped defensively (not clamped), so it doesn't count.
+      { unit_id: "h_bad", order_index: 2, stable_block_type: "heading", heading_level: Number.NaN, label: "Bad" },
+      { unit_id: "h2", order_index: 3, stable_block_type: "heading", heading_level: 7, label: "Seven" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h_bad", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    // 0 → clamped to 1; 7 → clamped to 6 (then capped to depth 3 in projection).
+    // NaN skipped, so only 2 headings in the panel.
+    expect(view.panelItems.map((i) => i.depth)).toEqual([1, 3]);
+  });
+
+  it("ignores units with stable_block_type values that are not 'heading'", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "Real" },
+      // Misconfigured: list block with heading_level.
+      { unit_id: "l1", order_index: 2, stable_block_type: "list", heading_level: 1 },
+      { unit_id: "h2", order_index: 3, stable_block_type: "heading", heading_level: 2, label: "Real 2" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "l1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+  });
+
+  it("P0: treats unit_type === 'heading' as a heading even without stable_block_type (legacy heuristic path)", () => {
+    // Legacy snapshot: _classify_unit_type heuristically detected headings,
+    // so unit_type === "heading" but stable_block_type is null and
+    // heading_level is null. The frontend must still project these so the
+    // rail is not blanked after the backend skips semantic outline.
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, unit_type: "heading", label: "Intro" },
+      { unit_id: "p1", order_index: 2, unit_type: "body" },
+      { unit_id: "h2", order_index: 3, unit_type: "heading", label: "Body" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "p1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+    // heading_level missing → default to 1 (top-level).
+    expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
+    expect(view.panelItems.map((i) => i.title)).toEqual(["Intro", "Body"]);
+  });
+
+  it("P0: defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
+    // Defensive case: A5 annotation marked the block as heading but the
+    // payload did not carry a level. Should still project at level 1
+    // instead of being skipped.
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", label: "First" },
+      { unit_id: "h2", order_index: 2, stable_block_type: "heading", label: "Second" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
+  });
+
+  it("P0: prefers explicit heading_level over the default-1 fallback when unit_type is heading", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, unit_type: "heading", heading_level: 2, label: "Sub" },
+      { unit_id: "h2", order_index: 2, unit_type: "heading", heading_level: 3, label: "SubSub" },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.depth)).toEqual([2, 3]);
+  });
+
+  it("P0: does not double-count a unit that has both unit_type and stable_block_type set to heading", () => {
+    const units: UnitIn[] = [
+      {
+        unit_id: "h1",
+        order_index: 1,
+        unit_type: "heading",
+        stable_block_type: "heading",
+        heading_level: 1,
+        label: "A",
+      },
+      {
+        unit_id: "h2",
+        order_index: 2,
+        unit_type: "heading",
+        stable_block_type: "heading",
+        heading_level: 2,
+        label: "B",
+      },
+    ];
+    const view = projectMarkdownOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "h2"]),
+    );
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+  });
+
+  it("the priority combinator prefers the markdown outline when available", () => {
+    const units: UnitIn[] = [
+      { unit_id: "h1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "MD A" },
+      { unit_id: "p1", order_index: 2, stable_block_type: "paragraph" },
+      { unit_id: "h2", order_index: 3, stable_block_type: "heading", heading_level: 1, label: "MD B" },
+      { unit_id: "p2", order_index: 4, stable_block_type: "paragraph" },
+    ];
+    const view = projectReaderOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["h1", "p1", "h2", "p2"]),
+    );
+    // Markdown wins over semantic per priority rule.
+    expect(view.identity.sourceKind).toBe("markdown");
+    expect(view.available).toBe(true);
+    expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
+    // Markdown never applies the semantic group rule: all rows are sections.
+    expect(view.panelItems.every((i) => i.role === "section")).toBe(true);
+  });
+
+  it("falls through to semantic when markdown is unavailable (single heading)", () => {
+    // Use u1 as the single heading so the semantic outline's readyOutline()
+    // defaults (which reference u1/u2/u3/u4) still pass their own gate.
+    const units: UnitIn[] = [
+      { unit_id: "u1", order_index: 1, stable_block_type: "heading", heading_level: 1, label: "Only" },
+      { unit_id: "u2", order_index: 2, stable_block_type: "paragraph" },
+      { unit_id: "u3", order_index: 3, stable_block_type: "paragraph" },
+      { unit_id: "u4", order_index: 4, stable_block_type: "paragraph" },
+    ];
+    const view = projectReaderOutlineView(
+      makeSnapshot(units, readyOutline()),
+      makeDoc(["u1", "u2", "u3", "u4"]),
+    );
+    // Markdown unavailable (single heading) → semantic wins.
+    expect(view.identity.sourceKind).toBe("semantic");
+    expect(view.available).toBe(true);
   });
 });
 

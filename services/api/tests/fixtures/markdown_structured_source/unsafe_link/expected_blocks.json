@@ -1,6 +1,6 @@
 {
   "fixture_name": "unsafe_link",
-  "description": "Unsafe protocol links (javascript/data/vbscript) stripped; safe https/mailto links preserved.",
+  "description": "Unsafe protocol links (javascript/data/vbscript) stripped; safe https/mailto links preserved. A3: html_inline+link overlap (data: link with <script>) is fail-closed — no rescue merge, raw link syntax remains in text, inline_html warning emitted.",
   "blocks": [
     {
       "block_id": "b1",
@@ -14,12 +14,11 @@
     {
       "block_id": "b2",
       "block_type": "paragraph",
-      "text_content": "A javascript link and a data link and a vbscript link.",
+      "text_content": "A javascript link and a [data link](data:text/html,alert(1)) and a vbscript link.",
       "payload_json": {
         "links": [],
         "stripped_links": [
           {"text": "javascript link", "href": "javascript:alert(1)", "reason": "unsafe_protocol"},
-          {"text": "data link", "href": "data:text/html,<script>alert(1)</script>", "reason": "unsafe_protocol"},
           {"text": "vbscript link", "href": "vbscript:msgbox(1)", "reason": "unsafe_protocol"}
         ]
       },
@@ -35,6 +34,10 @@
         "links": [
           {"text": "https link", "href": "https://example.com"},
           {"text": "mailto", "href": "mailto:test@example.com"}
+        ],
+        "inline_marks": [
+          {"type": "link", "start": 7, "end": 17, "href": "https://example.com"},
+          {"type": "link", "start": 22, "end": 28, "href": "mailto:test@example.com"}
         ]
       },
       "parent_block_id": null,

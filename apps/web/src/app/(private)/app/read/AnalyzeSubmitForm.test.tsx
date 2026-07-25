@@ -22,6 +22,139 @@ vi.mock("next/navigation", () => ({
   useRouter: () => navigationMock,
 }));
 
+// C1: Plate WYSIWYG 编辑器在 jsdom 下渲染为 contenteditable，无法用
+// `fireEvent.change(textarea, { target: { value } })` 驱动，且 placeholder
+// 由父组件 overlay 渲染而非 textarea 属性。
+// 这里把 `./MarkdownTextInput` 桩成原生 `<textarea>`，保留 placeholder 属性
+// 与 ref handle（getSubmitText / getMarkdown / focus / clear / setValue），
+// 让 AnalyzeSubmitForm 行为测试聚焦于表单提交、候选确认、resume 流程，
+// 不耦合 Plate 编辑器实现。MarkdownTextInput 自身的.deserialize / lint /
+// 粘贴保真由其专属单测覆盖。
+vi.mock("./MarkdownTextInput", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./MarkdownTextInput")>();
+  const React = await import("react");
+  const { forwardRef, useEffect, useImperativeHandle, useRef, useState } = React;
+
+  type MockHandle = {
+    getSubmitText: () => string;
+    getMarkdown: () => string;
+    focus: () => void;
+    clear: () => void;
+    setValue: (markdown: string) => void;
+  };
+
+  type MockProps = {
+    initialValue: string;
+    onChange: (markdown: string) => void;
+    onSubmit: () => void;
+    onLintResult?: (result: unknown) => void;
+    onDegraded?: (result: unknown) => void;
+    className?: string;
+    id?: string;
+  };
+
+  const MockMarkdownTextInput = forwardRef<MockHandle, MockProps>(
+    function MockMarkdownTextInput(props, ref) {
+      const {
+        initialValue,
+        onChange,
+        onSubmit,
+        onLintResult,
+        onDegraded,
+        className,
+        id,
+      } = props;
+      const [value, setValue] = useState<string>(initialValue ?? "");
+      const valueRef = useRef<string>(value);
+      valueRef.current = value;
+
+      // 模拟真实组件：挂载时通过 onDegraded 上报初始 deserialize 状态。
+      // 真实组件用 deserializeMarkdownToBlocksWithStatus 判定 empty/success/degraded。
+      // 这里只模拟 empty / success 两种正常路径（degraded 由 deserialize 专属测试覆盖）。
+      useEffect(() => {
+        if (!onDegraded) return;
+        const isEmpty = !initialValue?.trim();
+        onDegraded({
+          status: isEmpty ? "empty" : "success",
+          blocks: isEmpty
+            ? [{ type: "p", children: [{ text: "" }] }]
+            : [{ type: "p", children: [{ text: initialValue }] }],
+          error: undefined,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      useImperativeHandle(
+        ref,
+        () => ({
+          getSubmitText: () => valueRef.current,
+          getMarkdown: () => valueRef.current,
+          focus: () => {
+            const el = document.getElementById(id ?? "analysis-text");
+            if (el instanceof HTMLTextAreaElement) el.focus();
+          },
+          clear: () => {
+            setValue("");
+            valueRef.current = "";
+          },
+          setValue: (markdown: string) => {
+            setValue(markdown);
+            valueRef.current = markdown;
+            // 与真实组件 setValue 一致：programmatic 重置触发 onDegraded。
+            if (!onDegraded) return;
+            const isEmpty = !markdown?.trim();
+            onDegraded({
+              status: isEmpty ? "empty" : "success",
+              blocks: isEmpty
+                ? [{ type: "p", children: [{ text: "" }] }]
+                : [{ type: "p", children: [{ text: markdown }] }],
+              error: undefined,
+            });
+          },
+        }),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [id, onDegraded],
+      );
+
+      const handleChange = (
+        event: React.ChangeEvent<HTMLTextAreaElement>,
+      ) => {
+        const next = event.target.value;
+        setValue(next);
+        valueRef.current = next;
+        onChange(next);
+        // 模拟 lint 回调（结果不参与断言，仅保持调用契约）。
+        if (onLintResult) {
+          onLintResult({ warnings: [], hasDangerousContent: false });
+        }
+      };
+
+      const handleKeyDown = (
+        event: React.KeyboardEvent<HTMLTextAreaElement>,
+      ) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.preventDefault();
+          onSubmit();
+        }
+      };
+
+      return React.createElement("textarea", {
+        id,
+        className,
+        placeholder: "Paste an English article here",
+        value,
+        onChange: handleChange,
+        onKeyDown: handleKeyDown,
+      });
+    },
+  );
+
+  return {
+    ...actual,
+    MarkdownTextInput: MockMarkdownTextInput,
+  };
+});
+
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>();
 

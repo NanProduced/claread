@@ -19,17 +19,21 @@ and the per-block-type defaults materialized by
       contribute their ``text_content`` to the canonical text.
     * paragraph / list_item / blockquote / caption / heading default to
       ``main_reading`` and therefore enter canonical text by default.
-    * table / table_row / image / unknown default to ``metadata_only``
-      and therefore do NOT enter canonical text by default.
-    * table_cell / image_ocr / footnote / code_block default to
-      ``rag_ask_only`` and therefore do NOT enter canonical text by
-      default.
-    * A caller-supplied policy may promote a table_cell / image_ocr /
-      footnote / code_block to ``main_reading``; in that case the block
-      MUST enter canonical text.
+    * table / table_row / table_cell / code_block also default to
+      ``main_reading`` (Markdown ecosystem refactor D2: code/table are
+      first-class reading content), so table_cell / code_block text
+      enters canonical text by default.
+    * image / unknown default to ``metadata_only`` and therefore do NOT
+      enter canonical text by default.
+    * image_ocr / footnote default to ``rag_ask_only`` and therefore do
+      NOT enter canonical text by default.
+    * A caller-supplied policy may promote an image_ocr / footnote to
+      ``main_reading``; in that case the block MUST enter canonical
+      text.
     * A caller-supplied policy may also demote a normally-main_reading
-      block (e.g. paragraph) to ``rag_ask_only`` / ``metadata_only`` /
-      ``ignored``; in that case the block MUST NOT enter canonical text.
+      block (e.g. paragraph / table_cell / code_block) to
+      ``rag_ask_only`` / ``metadata_only`` / ``ignored``; in that case
+      the block MUST NOT enter canonical text.
     * Each canonical-text block carries UTF-16 offsets into the final
       canonical text. Non-canonical blocks keep ``canonical_text_*_utf16``
       = ``None``.
@@ -38,17 +42,19 @@ and the per-block-type defaults materialized by
     * UTF-16 offsets are computed in JavaScript UTF-16 code units via
       ``app.contracts.annotation.utf16_code_unit_length``, NOT Python
       ``len``. This matters for emoji and surrogate pairs.
-    * The ``list`` wrapper block is the one structural exception: its
-      ``default_route == "main_reading"`` (so the list structure
-      participates in the document tree) but ``text_content`` is
-      ``None`` because the narrative text lives in the child
-      ``list_item`` blocks. The plan skips ``list`` wrapper blocks
-      when deriving canonical text — they carry no canonical offsets
-      and never raise — while ``list_item`` children still contribute
-      their ``text_content`` to canonical text normally.
+    * The structural wrapper blocks (``list`` / ``table`` /
+      ``table_row``) are the one structural exception: their
+      ``default_route`` defaults to ``"main_reading"`` (so the
+      structure participates in the document tree) but
+      ``text_content`` is ``None`` because the narrative text lives in
+      the child ``list_item`` / ``table_cell`` blocks. The plan skips
+      structural wrapper blocks when deriving canonical text — they
+      carry no canonical offsets and never raise — while their
+      children still contribute their ``text_content`` to canonical
+      text normally.
     * For other ``main_reading`` blocks with empty ``text_content``
-      (possible for promoted structural blocks such as ``table_cell``
-      / ``code_block`` whose ``text_content`` may be ``None``), the
+      (possible for structural blocks such as ``table_cell`` /
+      ``code_block`` whose ``text_content`` may be ``None``), the
       plan fails closed with ``StableDocumentFreezePlanError``. A
       ``main_reading`` route with no text would produce an
       inconsistent block (main_reading policy but ``None`` canonical
@@ -87,6 +93,14 @@ from app.services.reader_orchestration.document_blocks import (
 # this value; changing it invalidates already-frozen documents because
 # UTF-16 offsets shift.
 CANONICAL_TEXT_BLOCK_SEPARATOR = "\n\n"
+
+# Structural wrapper block types: their ``default_route`` defaults to
+# ``"main_reading"`` (so the structure participates in the document
+# tree) but ``text_content`` is ``None`` because the narrative text
+# lives in child blocks (``list_item`` for ``list``; ``table_cell``
+# for ``table`` / ``table_row``). The freeze plan skips these wrappers
+# when deriving canonical text instead of failing closed.
+_STRUCTURAL_WRAPPER_BLOCK_TYPES = frozenset({"list", "table", "table_row"})
 
 
 class StableDocumentFreezePlanError(ValueError):
@@ -203,9 +217,9 @@ def build_stable_document_freeze_plan(
     # (2) Derive Canonical Text Layer. Only blocks whose
     # interpretation_policy.default_route == "main_reading" contribute.
     # Block-type defaults (paragraph / heading / list_item / blockquote
-    # / caption -> main_reading; table_cell / image_ocr / footnote /
-    # code_block -> rag_ask_only; table / table_row / image / unknown
-    # -> metadata_only) are already materialized by
+    # / caption / table / table_row / table_cell / code_block ->
+    # main_reading; image_ocr / footnote -> rag_ask_only; image /
+    # unknown -> metadata_only) are already materialized by
     # StableDocumentBlock's before-validator, so reading
     # interpretation_policy.default_route here is sufficient.
     canonical_chunks: list[str] = []
@@ -225,22 +239,24 @@ def build_stable_document_freeze_plan(
 
         text = _block_canonical_text(block)
         if not text:
-            # The ``list`` wrapper block is the one structural exception:
-            # its ``default_route`` defaults to ``"main_reading"`` (so the
-            # list structure participates in the document tree) but
+            # Structural wrapper blocks (``list`` / ``table`` /
+            # ``table_row``) are the one structural exception: their
+            # ``default_route`` defaults to ``"main_reading"`` (so the
+            # structure participates in the document tree) but
             # ``text_content`` is ``None`` because the narrative text
-            # lives in the child ``list_item`` blocks. Skip it rather
-            # than raising — ``list_item`` children still contribute
-            # their ``text_content`` to canonical text normally.
+            # lives in the child ``list_item`` / ``table_cell`` blocks.
+            # Skip them rather than raising — the children still
+            # contribute their ``text_content`` to canonical text
+            # normally.
             #
             # For other ``main_reading`` blocks with empty
-            # ``text_content`` (possible for promoted structural blocks
+            # ``text_content`` (possible for structural blocks
             # such as ``table_cell`` / ``code_block`` whose
             # ``text_content`` may be ``None``), the plan fails closed
             # with ``StableDocumentFreezePlanError``. A ``main_reading``
             # route with no text would produce an inconsistent block
             # (main_reading policy but ``None`` canonical offsets).
-            if block.block_type == "list":
+            if block.block_type in _STRUCTURAL_WRAPPER_BLOCK_TYPES:
                 continue
             raise StableDocumentFreezePlanError(
                 f"block_id={block.block_id!r} "

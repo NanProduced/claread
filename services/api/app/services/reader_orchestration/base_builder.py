@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.contracts.annotation import (
     compute_text_range_hash,
@@ -185,6 +187,35 @@ class StableReadingBase:
 
 
 @dataclass(frozen=True, slots=True)
+class StableBlockAnnotation:
+    """A5: stable block interval annotation for unit classification.
+
+    A ``StableBlockAnnotation`` carries the stable ``block_type`` and
+    payload of a ``StableDocumentBlock`` plus its UTF-16 range in the
+    canonical text. When ``build_reading_base_from_canonical_text`` is
+    given a sequence of these annotations, a built unit whose
+    ``(base_start_utf16, base_end_utf16)`` exactly matches an
+    annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
+    from ``block_type`` instead of the legacy text heuristic, and the
+    annotation's payload (heading level / inline marks / table role /
+    parent block id) is projected onto the unit and into the snapshot
+    ``reader_source_block`` payload.
+
+    Annotations that do not match any unit's UTF-16 range are silently
+    ignored — the heuristic runs for that unit and no stable block
+    fields are emitted. This keeps the annotation path fail-safe: a
+    stale or mismatched annotation can never corrupt the unit type.
+    """
+
+    start_utf16: int
+    end_utf16: int
+    block_type: str
+    block_id: str
+    parent_block_id: str | None = None
+    payload_json: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class BuiltReadingUnit:
     reading_record_id: str
     base_id: str
@@ -202,6 +233,18 @@ class BuiltReadingUnit:
     # when the unit's segments came from the clause / fallback-window
     # stage. Persisted into reading_units.metadata_json.
     sentence_provider: str | None = None
+    # A5: stable block metadata. Populated when a ``StableBlockAnnotation``
+    # matched this unit's UTF-16 range; ``None`` / empty for legacy units
+    # (no annotations supplied or no annotation matched). The snapshot
+    # builder only emits the corresponding payload fields when
+    # ``stable_block_type`` is not ``None``, so legacy snapshots stay
+    # byte-for-byte stable.
+    stable_block_type: str | None = None
+    stable_block_id: str | None = None
+    heading_level: int | None = None
+    inline_marks: tuple[dict[str, Any], ...] = ()
+    table_role: str | None = None
+    parent_stable_block_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +276,11 @@ class NavigationUnitFact:
     label: str | None
     base_start_utf16: int
     base_end_utf16: int
+    # A5: stable block metadata projected from the matched
+    # ``StableBlockAnnotation``. ``None`` for legacy units so the
+    # snapshot navigation projection omits the fields entirely.
+    stable_block_type: str | None = None
+    heading_level: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +335,7 @@ def build_reading_base_from_canonical_text(
     builder_version: str = DETERMINISTIC_READING_BASE_BUILDER_VERSION,
     segmenter_version: str = AUTO_SEGMENTER_POLICY,
     canonicalizer_version: str = EXACT_CANONICAL_TEXT_VERSION,
+    stable_block_annotations: Sequence[StableBlockAnnotation] | None = None,
 ) -> ReadingBaseBuildResult:
     """Build a reading base from an EXACT canonical text.
 
@@ -301,6 +350,17 @@ def build_reading_base_from_canonical_text(
     The private split/segment/hash helpers are reused so segmentation
     behavior is identical to the low-impact builder.
 
+    A5: When ``stable_block_annotations`` is supplied, a built unit
+    whose ``(base_start_utf16, base_end_utf16)`` exactly matches an
+    annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
+    from the annotation's ``block_type`` (instead of the legacy text
+    heuristic) and carries the annotation's payload (heading level /
+    inline marks / table role / parent block id) onto the unit and
+    into the snapshot ``reader_source_block`` payload. Annotations
+    that match no unit are silently ignored (fail-safe). When the
+    parameter is ``None`` or empty, behavior is identical to the
+    legacy path — no stable block fields are emitted.
+
     Args:
         reading_record_id: The reading record id.
         base_id: The base id (UUID string).
@@ -313,6 +373,11 @@ def build_reading_base_from_canonical_text(
         canonicalizer_version: Canonicalizer version label; defaults
             to :data:`EXACT_CANONICAL_TEXT_VERSION` to mark that the
             text was supplied exactly (not recanonicalized).
+        stable_block_annotations: Optional sequence of
+            :class:`StableBlockAnnotation` intervals. When supplied,
+            units whose UTF-16 range exactly matches an annotation
+            derive their ``unit_type`` from the annotation's
+            ``block_type`` and carry the stable block payload.
 
     Returns:
         A validated :class:`ReadingBaseBuildResult`.
@@ -332,6 +397,7 @@ def build_reading_base_from_canonical_text(
         canonicalizer_version=canonicalizer_version,
         builder_version=builder_version,
         segmenter_version=segmenter_version,
+        stable_block_annotations=stable_block_annotations,
     )
 
 
@@ -345,6 +411,7 @@ def _build_reading_base_core(
     canonicalizer_version: str,
     builder_version: str,
     segmenter_version: str,
+    stable_block_annotations: Sequence[StableBlockAnnotation] | None = None,
 ) -> ReadingBaseBuildResult:
     """Core builder shared by :func:`build_low_impact_reading_base` and
     :func:`build_reading_base_from_canonical_text`.
@@ -362,6 +429,17 @@ def _build_reading_base_core(
     ``StableReadingBase.segmenter_version`` plus per-unit into
     ``BuiltReadingUnit.sentence_provider``. Explicit provider identities run
     that provider; unsupported labels fail closed.
+
+    A5: When ``stable_block_annotations`` is supplied, a built unit whose
+    ``(base_start_utf16, base_end_utf16)`` exactly matches an
+    annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
+    from the annotation's ``block_type`` (instead of the legacy text
+    heuristic) and carries the annotation's payload (heading level /
+    inline marks / table role / parent block id) onto the unit and
+    into the snapshot ``reader_source_block`` payload. Annotations
+    that match no unit are silently ignored (fail-safe). When the
+    parameter is ``None`` or empty, behavior is identical to the
+    legacy path — no stable block fields are emitted.
     """
     utf16_prefix = _build_utf16_prefix(text)
     block_spans = _split_structure_blocks(text)
@@ -372,6 +450,25 @@ def _build_reading_base_core(
         requested_segmenter_version=segmenter_version,
         language=language,
     )
+
+    # A5: index stable block annotations by their UTF-16 range so the
+    # unit loop can do an O(1) exact-match lookup. Multiple annotations
+    # with the same range are disallowed — the freeze plan guarantees
+    # uniqueness, and a duplicate here means the caller built the
+    # annotations incorrectly. We keep the FIRST annotation per range
+    # and silently ignore later duplicates to stay fail-safe (the
+    # heuristic would have classified the unit identically anyway).
+    annotations_by_range: dict[tuple[int, int], StableBlockAnnotation] = {}
+    if stable_block_annotations:
+        for annotation in stable_block_annotations:
+            key = (annotation.start_utf16, annotation.end_utf16)
+            if annotation.start_utf16 >= annotation.end_utf16:
+                # Invalid range — skip silently rather than failing the
+                # whole build. The freeze plan is responsible for
+                # emitting valid ranges; a bad annotation must never
+                # corrupt the unit classification.
+                continue
+            annotations_by_range.setdefault(key, annotation)
 
     units: list[BuiltReadingUnit] = []
     anchor_segments: list[BuiltAnchorSegment] = []
@@ -429,6 +526,33 @@ def _build_reading_base_core(
         ):
             unit_type = "fallback"
 
+        # A5: when a stable block annotation exactly matches this
+        # unit's UTF-16 range, override the heuristic unit_type with
+        # the stable block_type and project the payload onto the unit.
+        # Annotations that match no unit are silently ignored.
+        matched_annotation = annotations_by_range.get(
+            (base_start_utf16, base_end_utf16)
+        )
+        stable_block_type: str | None = None
+        stable_block_id: str | None = None
+        heading_level: int | None = None
+        inline_marks: tuple[dict[str, Any], ...] = ()
+        table_role: str | None = None
+        parent_stable_block_id: str | None = None
+        if matched_annotation is not None:
+            stable_block_type = matched_annotation.block_type
+            stable_block_id = matched_annotation.block_id
+            parent_stable_block_id = matched_annotation.parent_block_id
+            unit_type = matched_annotation.block_type
+            payload = matched_annotation.payload_json or {}
+            heading_level = _extract_heading_level(payload)
+            inline_marks = _extract_inline_marks(payload)
+            table_role = _derive_table_role(matched_annotation.block_type)
+            # Re-derive the label from the new unit_type so a stable
+            # heading still produces a heading label even when the
+            # heuristic would have classified it as body.
+            label = _build_unit_label(block_text, unit_type)
+
         unit_text_hash = compute_text_range_hash(block_text)
         built_unit = BuiltReadingUnit(
             reading_record_id=reading_record_id,
@@ -443,6 +567,12 @@ def _build_reading_base_core(
             text=block_text,
             label=label,
             sentence_provider=sentence_provider,
+            stable_block_type=stable_block_type,
+            stable_block_id=stable_block_id,
+            heading_level=heading_level,
+            inline_marks=inline_marks,
+            table_role=table_role,
+            parent_stable_block_id=parent_stable_block_id,
         )
         units.append(built_unit)
         navigation_units.append(
@@ -454,6 +584,8 @@ def _build_reading_base_core(
                 label=label,
                 base_start_utf16=base_start_utf16,
                 base_end_utf16=base_end_utf16,
+                stable_block_type=stable_block_type,
+                heading_level=heading_level,
             )
         )
 
@@ -1223,6 +1355,66 @@ def _build_unit_label(block_text: str, unit_type: str) -> str | None:
     if unit_type != "heading":
         return None
     return " ".join(block_text.split())
+
+
+def _extract_heading_level(payload: dict[str, Any]) -> int | None:
+    """A5: extract a 1-based heading level from a stable block payload.
+
+    The Markdown ecosystem refactor stores the heading level under
+    ``payload_json.level`` (1-based, matching ATX ``#`` count). Returns
+    ``None`` when the key is absent or the value is not a positive
+    integer. A non-positive or non-integer value is silently ignored
+    so a malformed payload can never corrupt the heading_level field.
+    """
+    raw = payload.get("level")
+    if isinstance(raw, bool):
+        # ``bool`` is a subclass of ``int`` — reject it explicitly so
+        # ``True`` / ``False`` never become heading levels 1 / 0.
+        return None
+    if not isinstance(raw, int):
+        return None
+    if raw < 1:
+        return None
+    return raw
+
+
+def _extract_inline_marks(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """A5: extract inline marks from a stable block payload.
+
+    The Markdown ecosystem refactor stores inline marks under
+    ``payload_json.inline_marks`` as a list of objects with
+    ``type`` / ``start`` / ``end`` keys (UTF-16 offsets into the
+    block's canonical text). Returns an empty tuple when the key is
+    absent or the value is not a list. Each entry must be a dict;
+    non-dict entries are skipped silently so a malformed payload can
+    never corrupt the inline_marks tuple.
+    """
+    raw = payload.get("inline_marks")
+    if not isinstance(raw, list):
+        return ()
+    marks: list[dict[str, Any]] = []
+    for entry in raw:
+        if isinstance(entry, dict):
+            marks.append(entry)
+    return tuple(marks)
+
+
+def _derive_table_role(block_type: str) -> str | None:
+    """A5: map a stable block_type to a snapshot table_role.
+
+    The snapshot ``reader_source_block`` payload carries a
+    ``tableRole`` field so the Web reading surface can render table
+    structure without re-parsing the canonical text. Only table-family
+    block types get a non-None role; everything else returns ``None``
+    so legacy snapshots (no table blocks) stay byte-for-byte stable.
+    """
+    if block_type == "table":
+        return "table"
+    if block_type == "table_row":
+        return "row"
+    if block_type == "table_cell":
+        return "cell"
+    return None
 
 
 def _next_visible_index(text: str, start: int) -> int:

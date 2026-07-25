@@ -2,7 +2,8 @@
 
 Covers the 14 test requirements from the task spec:
  1. paragraph/heading/list_item/blockquote/caption default indexable
- 2. table/image/footnote/code_block/unknown default not indexable
+ 2. explicit non-main_reading policies (table/image/footnote/code_block/
+    unknown overrides) not indexable by default
  3. explicit policy promotes image_ocr/table_cell into rag_ask_only
  4. metadata_only blocks not indexed
  5. chunk content_sha256 deterministic
@@ -494,15 +495,17 @@ async def test_default_indexable_block_types_produce_chunks(index_env: asyncpg.P
 
 
 # ===================================================================
-# Test 2: table/image/footnote/code_block/unknown default not indexable
+# Test 2: explicit non-main_reading overrides not indexable by default
 # ===================================================================
 
 
 async def test_default_non_indexable_block_types_excluded(index_env: asyncpg.Pool) -> None:
-    """Requirement 2: table/image/footnote/code_block/unknown are not
-    indexed by default.  Footnote/code_block are rag_eligible but route to
-    rag_ask_only; table/image/unknown are metadata_only / not eligible.
-    With only non-indexable blocks, the plan fails closed."""
+    """Requirement 2: blocks explicitly routed to metadata_only /
+    rag_ask_only are not indexed by default.  Since the Markdown
+    ecosystem refactor (D2 / A1), code_block / table_cell DEFAULT to
+    main_reading — this test pins that an explicit rag_ask_only
+    override still excludes them (footnote keeps its rag_ask_only
+    default).  With only non-indexable blocks, the plan fails closed."""
     para_text = "Indexable paragraph."
     await _seed_full_environment(index_env, base_text=para_text)
 
@@ -517,8 +520,8 @@ async def test_default_non_indexable_block_types_excluded(index_env: asyncpg.Poo
         canonical_text_end_utf16=utf16_code_unit_length(para_text),
         interpretation_policy=_main_reading_policy(),
     )
-    # Non-indexable blocks (by default route / eligibility).
-    # table: metadata_only, not eligible
+    # Non-indexable blocks (explicit overrides away from main_reading).
+    # table: explicit metadata_only override, not eligible
     await _seed_block(
         index_env,
         block_id="table-1",
@@ -545,7 +548,7 @@ async def test_default_non_indexable_block_types_excluded(index_env: asyncpg.Poo
         text_content="Footnote text.",
         interpretation_policy=_rag_ask_only_policy("footnote"),
     )
-    # code_block: rag_ask_only, eligible
+    # code_block: explicit rag_ask_only override, eligible
     await _seed_block(
         index_env,
         block_id="code-1",
@@ -1375,11 +1378,12 @@ async def test_empty_policy_footnote_defaults_rag_ask_only(
     assert plan.chunks[0].metadata_json["default_route"] == "rag_ask_only"
 
 
-async def test_empty_policy_code_block_defaults_rag_ask_only(
+async def test_empty_policy_code_block_defaults_main_reading(
     index_env: asyncpg.Pool,
 ) -> None:
     """P1-1: ``{}`` policy on a code_block must materialize as
-    rag_ask_only (not main_reading)."""
+    main_reading / eligible (Markdown ecosystem refactor D2 / A1) —
+    indexed by default when canonical offsets are present."""
     code_text = "print('hello')"
     await _seed_full_environment(index_env, base_text=code_text)
 
@@ -1389,23 +1393,20 @@ async def test_empty_policy_code_block_defaults_rag_ask_only(
         order_index=0,
         block_type="code_block",
         text_content=code_text,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=utf16_code_unit_length(code_text),
         interpretation_policy={},
     )
 
     service = _build_service(index_env)
 
-    with pytest.raises(ArticleRagIndexPlanError, match="No RAG-eligible"):
-        await service.build_index_plan(record_id=_RECORD_ID, user_id=_USER_ID)
-
-    plan = await service.build_index_plan(
-        record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        include_rag_ask_only=True,
-    )
+    # main_reading + rag_eligible -> indexed by default (no
+    # include_rag_ask_only needed).
+    plan = await service.build_index_plan(record_id=_RECORD_ID, user_id=_USER_ID)
     assert len(plan.chunks) == 1
     assert plan.chunks[0].citation.block_ids == ("code-1",)
     assert plan.chunks[0].source_scope == "code_block"
-    assert plan.chunks[0].metadata_json["default_route"] == "rag_ask_only"
+    assert plan.chunks[0].metadata_json["default_route"] == "main_reading"
 
 
 async def test_empty_policy_paragraph_defaults_main_reading(
@@ -1463,11 +1464,12 @@ async def test_empty_policy_heading_defaults_main_reading_heading_scope(
     assert plan.chunks[0].metadata_json["default_route"] == "main_reading"
 
 
-async def test_empty_policy_table_cell_defaults_rag_ask_only(
+async def test_empty_policy_table_cell_defaults_main_reading(
     index_env: asyncpg.Pool,
 ) -> None:
     """P1-1: ``{}`` policy on a table_cell must materialize as
-    rag_ask_only / eligible (not metadata_only)."""
+    main_reading / eligible (Markdown ecosystem refactor D2 / A1) —
+    indexed by default when canonical offsets are present."""
     cell_text = "Cell content."
     await _seed_full_environment(index_env, base_text=cell_text)
 
@@ -1477,23 +1479,20 @@ async def test_empty_policy_table_cell_defaults_rag_ask_only(
         order_index=0,
         block_type="table_cell",
         text_content=cell_text,
+        canonical_text_start_utf16=0,
+        canonical_text_end_utf16=utf16_code_unit_length(cell_text),
         interpretation_policy={},
     )
 
     service = _build_service(index_env)
 
-    # Default: rag_ask_only not indexed -> fail closed.
-    with pytest.raises(ArticleRagIndexPlanError, match="No RAG-eligible"):
-        await service.build_index_plan(record_id=_RECORD_ID, user_id=_USER_ID)
-
-    plan = await service.build_index_plan(
-        record_id=_RECORD_ID,
-        user_id=_USER_ID,
-        include_rag_ask_only=True,
-    )
+    # main_reading + rag_eligible -> indexed by default (no
+    # include_rag_ask_only needed).
+    plan = await service.build_index_plan(record_id=_RECORD_ID, user_id=_USER_ID)
     assert len(plan.chunks) == 1
     assert plan.chunks[0].citation.block_ids == ("table-cell-1",)
     assert plan.chunks[0].source_scope == "table_cell"
+    assert plan.chunks[0].metadata_json["default_route"] == "main_reading"
 
 
 # ===================================================================

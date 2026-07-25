@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
@@ -99,6 +100,19 @@ DEFAULT_SEMANTIC_OUTLINE_MAX_ATTEMPTS = 3
 _ARTICLE_READY_READINESS_STATES = frozenset(
     {"article_ready", "initial_enhancement_ready", "coverage_complete"}
 )
+
+# A6 (D3) — Semantic outline content-sufficiency short-circuit.
+# When the stable document already carries at least this many ``heading``
+# reading_units, the backend skips semantic outline job creation: the
+# Markdown headings already form a usable outline (D3). The threshold is
+# frozen as a module-level constant (not a Settings flag) per the plan:
+# this is a content-type eligibility short-circuit, NOT a third runtime
+# activation flag. The existing ``generation_enabled AND profile_configured``
+# activation predicate is unchanged.
+SEMANTIC_OUTLINE_HEADINGS_SUFFICIENT_THRESHOLD = 2
+SEMANTIC_OUTLINE_SKIP_DIAGNOSTIC = "skipped_markdown_headings_sufficient"
+
+_logger = logging.getLogger(__name__)
 
 # T1.1 Short-article batch path: whole-article batch compute, per-unit publish.
 # When the active base text is below the short-article char threshold, the
@@ -750,13 +764,45 @@ def settings_aware_semantic_outline_request_eligibility(
     ``reader_semantic_outline_model_profile=""``) so this predicate returns
     False under default settings; the production composition root is the
     only caller that wires it.
+
+    A6 (D3) content-sufficiency short-circuit: when ``activation_ready`` is
+    True AND ``state.unit_types`` is populated with at least
+    :data:`SEMANTIC_OUTLINE_HEADINGS_SUFFICIENT_THRESHOLD` ``heading``
+    units, the predicate returns False (skip outline job) and emits a
+    structured ``skipped_markdown_headings_sufficient`` diagnostic log.
+    When ``state.unit_types`` is ``None`` (not loaded by the caller), the
+    predicate fail-closed to the activation-only result (``activation_ready``)
+    so the existing behavior is preserved on code paths that do not
+    pre-load units. This is a content-type eligibility short-circuit, NOT
+    a third runtime activation flag; the ``generation_enabled AND
+    profile_configured`` activation predicate is unchanged.
     """
     activation_ready = bool(
         settings.semantic_outline_generation_enabled
     ) and bool(settings.reader_semantic_outline_model_profile)
 
-    def _predicate(_state: "_LockedActiveBaseState") -> bool:
-        return activation_ready
+    def _predicate(state: _LockedActiveBaseState) -> bool:
+        if not activation_ready:
+            return False
+        # A6: fail-closed when unit_types is not loaded — preserve existing
+        # behavior (do not skip) on code paths that did not pre-load units.
+        if state.unit_types is None:
+            return True
+        heading_count = sum(
+            1 for unit_type in state.unit_types if unit_type == "heading"
+        )
+        if heading_count >= SEMANTIC_OUTLINE_HEADINGS_SUFFICIENT_THRESHOLD:
+            _logger.info(
+                "semantic_outline_skip reason=%s heading_count=%d threshold=%d "
+                "record_id=%s base_id=%s",
+                SEMANTIC_OUTLINE_SKIP_DIAGNOSTIC,
+                heading_count,
+                SEMANTIC_OUTLINE_HEADINGS_SUFFICIENT_THRESHOLD,
+                state.record_id,
+                state.base_id,
+            )
+            return False
+        return True
 
     return _predicate
 
@@ -2680,9 +2726,37 @@ async def _bootstrap_semantic_outline_job(
     - readiness_state has reached article_ready milestone
     - injected request eligibility returns True
     - stale fingerprint jobs superseded (queued/retry_later/paused only)
+
+    A6 (D3): before invoking ``request_eligibility``, lazily load
+    ``state.unit_types`` when not already cached so the settings-aware
+    predicate can apply the content-sufficiency short-circuit (heading
+    count ≥ threshold). Code paths that already populated ``unit_types``
+    (e.g., ``_bootstrap_missing_jobs`` via ``_load_article_route``) reuse
+    the cached value with no extra DB call.
     """
     if state.readiness_state not in _ARTICLE_READY_READINESS_STATES:
         return []
+    # A6: ensure unit_types is loaded so the predicate can inspect heading
+    # count for the content-sufficiency short-circuit. Fail-closed: if the
+    # load returns no rows, ``unit_types`` becomes ``()`` (not ``None``),
+    # which the predicate treats as "no headings" → no skip.
+    if state.unit_types is None:
+        unit_rows = await conn.fetch(
+            """
+            SELECT unit_type
+            FROM reading_units
+            WHERE reading_record_id = $1
+              AND base_id = $2
+            ORDER BY order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+        )
+        object.__setattr__(
+            state,
+            "unit_types",
+            tuple(str(r["unit_type"]) for r in unit_rows),
+        )
     if not request_eligibility(state):
         return []
 

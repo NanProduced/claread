@@ -865,6 +865,8 @@ export function AnalyzeSubmitForm({
     warnings: [],
     hasDangerousContent: false,
   });
+  // C1.3: Markdown 解析降级提示（非阻塞，初值/setValue 解析失败时显示）
+  const [degradedMessage, setDegradedMessage] = useState<string | null>(null);
   const isWaiting =
     state.kind === "pending" ||
     state.kind === "artifact-uploading" ||
@@ -1401,7 +1403,9 @@ export function AnalyzeSubmitForm({
       return;
     }
 
-    const trimmed = text.trim();
+    // C1.4: 粘贴保真提交 — 优先使用原始粘贴文本，消除 Plate serialize 往返损耗。
+    const submitText = markdownEditorRef.current?.getSubmitText() ?? text;
+    const trimmed = submitText.trim();
     if (trimmed.length === 0) {
       setState({ kind: "error", message: "请先粘贴一段需要透读的英文内容。" });
       return;
@@ -1578,10 +1582,21 @@ export function AnalyzeSubmitForm({
               ref={markdownEditorRef}
               id="analysis-text"
               initialValue={text}
-              onChange={(markdown) => setText(markdown)}
+              onChange={(markdown) => {
+                setText(markdown);
+                // C1.3: 用户编辑后清除降级提示（新一轮内容由用户掌控）
+                if (degradedMessage) setDegradedMessage(null);
+              }}
               onLintResult={setLintResult}
+              onDegraded={(result) => {
+                // C1.3: 解析失败时显示可见降级提示，禁止原始标记静默上屏
+                if (result.status === "degraded") {
+                  setDegradedMessage("Markdown 解析失败，已按纯文本处理。可直接编辑或重新粘贴。");
+                } else {
+                  setDegradedMessage(null);
+                }
+              }}
               onSubmit={() => void handleSubmit()}
-              placeholder="Paste an English article here"
               className="relative z-10 px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
             />
           )}
@@ -1593,6 +1608,7 @@ export function AnalyzeSubmitForm({
               onClick={() => {
                 setText("");
                 setLintResult({ warnings: [], hasDangerousContent: false });
+                setDegradedMessage(null);
                 markdownEditorRef.current?.clear();
                 markdownEditorRef.current?.focus();
               }}
@@ -1720,6 +1736,17 @@ export function AnalyzeSubmitForm({
                     >
                       <AlertTriangle aria-hidden className="h-3 w-3" />
                       {summarizeLintWarnings(lintResult.warnings)}
+                    </span>
+                  ) : null}
+
+                  {!attachedSource && degradedMessage ? (
+                    <span
+                      data-testid="read-source-degraded-hint"
+                      className="self-center inline-flex items-center gap-1.5 rounded-[6px] border border-amber-400/60 bg-amber-50 px-2 py-1 font-sans text-[0.7rem] font-medium text-amber-800"
+                      title={degradedMessage}
+                    >
+                      <AlertTriangle aria-hidden className="h-3 w-3" />
+                      {degradedMessage}
                     </span>
                   ) : null}
 

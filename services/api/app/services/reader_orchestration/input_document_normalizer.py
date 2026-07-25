@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,12 +41,12 @@ _SUPPORTED_SOURCE_TYPES = frozenset(
     {"pasted_text", "txt_file", "markdown_file"}
 )
 
-_INLINE_LINK_PATTERN = re.compile(
-    r"\[(?P<label>[^\]]+)\]\((?P<url>[^)\s]+)(?:\s+\"[^\"]*\")?\)"
-)
-_INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
-_STRONG_PATTERN = re.compile(r"(\*\*|__)(.+?)\1")
-_EMPHASIS_PATTERN = re.compile(r"(?<![\*_])(\*|_)([^ \t\n].*?[^ \t\n]|[^ \t\n])\1(?![\*_])")
+# A4 — emitted in ``NormalizedInputDocument.warnings`` when a plain-text
+# source is silently upgraded to the Markdown path because the parser
+# detected non-paragraph block structure (heading / list / ...). The
+# frontend can surface this so the reader understands why block-typed
+# rendering kicked in for a ``pasted_text`` / ``txt_file`` input.
+_WARNING_PLAINTEXT_UPGRADED_TO_MARKDOWN = "plaintext_upgraded_to_markdown"
 
 
 class InputDocumentNormalizationError(ValueError):
@@ -85,8 +84,10 @@ class InputDocumentNormalizer:
     def normalize(
         self,
         request: InputSuitabilityRequest,
+        *,
+        preparsed: MarkdownParseResult | None = None,
     ) -> NormalizedInputDocument:
-        suitability = evaluate_input_suitability(request)
+        suitability = evaluate_input_suitability(request, preparsed=preparsed)
         if suitability.outcome != "stable_document_ready":
             raise InputDocumentNormalizationError(suitability=suitability)
 
@@ -101,28 +102,51 @@ class InputDocumentNormalizer:
             )
 
         source_text = _normalize_source_text(request.text)
+        # A4 — 解析结果共享: reuse the caller-provided parse result when
+        # available; otherwise parse once here. Both the upgrade probe
+        # and the block construction below consume this single result.
+        parse_result = (
+            preparsed
+            if preparsed is not None
+            else _MARKDOWN_PARSER.parse(source_text)
+        )
+
+        warnings: list[str] = [w.code for w in parse_result.warnings]
         used_markdown_parser = False
         if request.source_type in _PLAIN_TEXT_SOURCE_TYPES:
-            # 方案 C (upgrade routing): parse first, then check for
-            # Markdown-specific structure (any block type other than
-            # ``paragraph``). Paragraphs alone do not trigger the
-            # upgrade because the plain text path already handles them;
-            # only headings / lists / blockquotes / tables / code blocks
-            # / thematic breaks require the typed-block markdown path.
-            probe_result = _MARKDOWN_PARSER.parse(source_text)
+            # 方案 C (upgrade routing): check for Markdown-specific
+            # structure (any block type other than ``paragraph``).
+            # Paragraphs alone do not trigger the upgrade because the
+            # plain text path already handles them; only headings /
+            # lists / blockquotes / tables / code blocks / thematic
+            # breaks require the typed-block markdown path.
             has_markdown_structure = any(
-                block.block_type != "paragraph" for block in probe_result.blocks
+                block.block_type != "paragraph" for block in parse_result.blocks
             )
             if has_markdown_structure:
                 drafts, title = _normalize_markdown_blocks(
-                    source_text, parse_result=probe_result
+                    source_text, parse_result=parse_result
                 )
                 used_markdown_parser = True
+                # A4 — record the silent upgrade so the frontend can hint.
+                if _WARNING_PLAINTEXT_UPGRADED_TO_MARKDOWN not in warnings:
+                    warnings.append(_WARNING_PLAINTEXT_UPGRADED_TO_MARKDOWN)
             else:
-                drafts = _normalize_plain_text_blocks(source_text)
-                title = None
+                # A4 — plain-text path now reuses the parser inline
+                # flatten (links / inline_marks) instead of the legacy
+                # regex ``_strip_inline_markdown``. Only the blank-line
+                # segmentation thin logic is preserved: the parser
+                # already splits paragraphs on blank lines, so we map
+                # each paragraph block to a draft directly. Soft line
+                # breaks (parser-emitted "\n") are joined with a space
+                # to preserve the legacy plain-text reading behavior.
+                drafts, title = _normalize_plain_text_blocks_from_parser(
+                    parse_result
+                )
         else:
-            drafts, title = _normalize_markdown_blocks(source_text)
+            drafts, title = _normalize_markdown_blocks(
+                source_text, parse_result=parse_result
+            )
             used_markdown_parser = True
 
         blocks = [
@@ -142,56 +166,67 @@ class InputDocumentNormalizer:
             blocks=blocks,
             suitability=suitability,
             source_loss_flags=list(suitability.flags),
-            warnings=[],
+            warnings=warnings,
             parser_identity=dict(_PARSER_IDENTITY) if used_markdown_parser else None,
         )
 
 
 def normalize_input_document(
     request: InputSuitabilityRequest,
+    *,
+    preparsed: MarkdownParseResult | None = None,
 ) -> NormalizedInputDocument:
-    return InputDocumentNormalizer().normalize(request)
+    return InputDocumentNormalizer().normalize(request, preparsed=preparsed)
 
 
 def _normalize_source_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _normalize_plain_text_blocks(source_text: str) -> list[_BlockDraft]:
-    blocks: list[_BlockDraft] = []
-    lines = source_text.split("\n")
-    paragraph_lines: list[str] = []
-    paragraph_start: int | None = None
+def _normalize_plain_text_blocks_from_parser(
+    parse_result: MarkdownParseResult,
+) -> tuple[list[_BlockDraft], str | None]:
+    """Build plain-text drafts from parser paragraph blocks.
 
-    def flush(line_end: int) -> None:
-        nonlocal paragraph_lines, paragraph_start
-        if paragraph_start is None:
-            return
-        text, links = _strip_inline_markdown(_join_soft_lines(paragraph_lines))
-        if text:
-            blocks.append(
-                _BlockDraft(
-                    block_type="paragraph",
-                    text_content=text,
-                    payload_json={},
-                    line_start=paragraph_start,
-                    line_end=line_end,
-                    links=links,
-                )
-            )
-        paragraph_lines = []
-        paragraph_start = None
+    A4 — replaces the legacy ``_normalize_plain_text_blocks`` +
+    ``_strip_inline_markdown`` regex path. The parser already:
+      * splits paragraphs on blank lines,
+      * flattens inline marks (bold / italic / code) into text,
+      * extracts safe links into ``payload_json.links``,
+      * records inline marks in ``payload_json.inline_marks``.
+    The only plain-text-specific post-processing is joining soft line
+    breaks (parser-emitted ``\\n``) with a space, preserving the legacy
+    reading-flow behavior for non-markdown sources.
+    """
+    drafts: list[_BlockDraft] = []
+    title: str | None = None
 
-    for index, line in enumerate(lines, start=1):
-        if not line.strip():
-            flush(index - 1)
+    for block in parse_result.blocks:
+        # Skip non-paragraph blocks in the plain-text path; if the
+        # probe detected structure, the upgrade path is used instead.
+        if block.block_type != "paragraph":
             continue
-        if paragraph_start is None:
-            paragraph_start = index
-        paragraph_lines.append(line)
+        text_content = block.text_content or ""
+        # Plain-text soft line breaks join with a space (legacy behavior).
+        text_content = text_content.replace("\n", " ")
+        payload = dict(block.payload_json)
+        # Inline links: keep in payload_json per Structured Source
+        # Contract, and also surface as ``links`` on the draft for
+        # source_refs_json (preserving the legacy plain-text contract).
+        links = list(payload.get("links", []))
+        drafts.append(
+            _BlockDraft(
+                block_type="paragraph",
+                text_content=text_content,
+                payload_json=payload,
+                line_start=block.source_range.line_start,
+                line_end=block.source_range.line_end,
+                links=links,
+                parent_block_id=block.parent_block_id,
+            )
+        )
 
-    flush(len(lines))
-    return blocks
+    return drafts, title
 
 
 def _normalize_markdown_blocks(
@@ -224,27 +259,6 @@ def _normalize_markdown_blocks(
         )
 
     return drafts, title
-
-
-def _join_soft_lines(lines: list[str]) -> str:
-    return re.sub(r"[ \t]+", " ", " ".join(line.strip() for line in lines)).strip()
-
-
-def _strip_inline_markdown(text: str) -> tuple[str, list[dict[str, str]]]:
-    links: list[dict[str, str]] = []
-
-    def replace_link(match: re.Match[str]) -> str:
-        label = re.sub(r"\s+", " ", match.group("label")).strip()
-        url = match.group("url").strip()
-        links.append({"label": label, "url": url})
-        return label
-
-    text = _INLINE_LINK_PATTERN.sub(replace_link, text)
-    text = _INLINE_CODE_PATTERN.sub(r"\1", text)
-    text = _STRONG_PATTERN.sub(r"\2", text)
-    text = _EMPHASIS_PATTERN.sub(r"\2", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text, links
 
 
 def _draft_to_block(

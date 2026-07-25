@@ -349,9 +349,14 @@ def test_dev_c3_composition_unconfigured_when_profile_empty() -> None:
 class _StubState:
     """Stub state object for eligibility predicate testing.
 
-    The settings-aware predicate only inspects activation_ready (captured at
-    factory time), never the state object's attributes. Any object suffices.
+    The settings-aware predicate inspects ``activation_ready`` (captured at
+    factory time) and, since A6, ``unit_types`` for the content-sufficiency
+    short-circuit. When ``unit_types`` is ``None`` (the default here), the
+    predicate fail-closed to the activation-only result, so this stub still
+    yields ``True`` under activation-ready settings.
     """
+
+    unit_types: tuple[str, ...] | None = None
 
 
 def test_dev_c4_composition_bootstrap_uses_settings_aware_eligibility() -> None:

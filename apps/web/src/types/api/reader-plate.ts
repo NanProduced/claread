@@ -21,7 +21,20 @@ export type ReaderUnitType =
   | "list"
   | "quote"
   | "unknown"
-  | "fallback";
+  | "fallback"
+  // A5: stable block types that can become reading units when their
+  // canonical text offsets match a `StableBlockAnnotation`. Mirrors the
+  // backend `ReaderUnitType` Literal in
+  // `services/api/app/schemas/reader_orchestration.py`. Legacy snapshots
+  // (no annotations) only emit the 6 heuristic types above, so existing
+  // byte-for-byte consumers stay stable.
+  | "paragraph"
+  | "list_item"
+  | "blockquote"
+  | "table"
+  | "table_row"
+  | "table_cell"
+  | "code_block";
 
 export type ReaderBoundaryQuality = "normal" | "low";
 
@@ -189,6 +202,19 @@ export interface ReaderSnapshotNavigationUnitDto {
   base_end_utf16: number;
   text_hash: string;
   hash_algorithm: typeof READER_TEXT_RANGE_HASH_ALGORITHM;
+  /**
+   * A5: stable block metadata projected from `BuiltReadingUnit` when a
+   * `StableBlockAnnotation` matched the unit's UTF-16 range. Both fields
+   * are optional and absent for legacy snapshots (no annotations) so the
+   * existing byte-for-byte shape stays stable.
+   *
+   * `stable_block_type` is the narrow stable-document block type string
+   * (`heading` / `paragraph` / `list` / `code_block` / `table` / ...).
+   * `heading_level` is the 1-based heading level when `stable_block_type
+   * === "heading"`, otherwise `null`.
+   */
+  stable_block_type?: string | null;
+  heading_level?: number | null;
 }
 
 export interface ReaderSnapshotNavigationDto {
@@ -528,6 +554,33 @@ export type ReaderUnitChildNodeDto =
   | ReaderTranslationNodeDto
   | ReaderSentenceAnalysisNodeDto;
 
+/**
+ * A5/B2: inline mark emitted by the backend Markdown parser into
+ * `reader_source_block` payload. Mirrors the backend
+ * `inline_marks` shape (`{type, start, end, [href]}`) where `start` /
+ * `end` are UTF-16 code unit offsets within the block's canonical text.
+ *
+ * Unlike `ReaderStructuredSourceInlineMark` (which carries the plain-text
+ * fragment), this representation expresses marks as intervals over the
+ * block text so the renderer can slice leaves at mark boundaries while
+ * preserving anchor segment offsets.
+ */
+export interface ReaderSourceBlockInlineMarkDto {
+  /** Inline mark kind (mirrors backend `type` field). */
+  type:
+    | "strong"
+    | "em"
+    | "strikethrough"
+    | "inline_code"
+    | "link";
+  /** UTF-16 start offset within the block's canonical text. */
+  start: number;
+  /** UTF-16 end offset within the block's canonical text (exclusive). */
+  end: number;
+  /** Safe href for `type === "link"` (whitelist-filtered by parser). */
+  href?: string;
+}
+
 export interface ReaderSourceBlockNodeDto {
   type: "reader_source_block";
   owner: "stable";
@@ -536,6 +589,33 @@ export interface ReaderSourceBlockNodeDto {
   base_start_utf16: number;
   base_end_utf16: number;
   children: ReaderSourceBlockChildNodeDto[];
+  /**
+   * A5/B2: stable block metadata projected by the backend
+   * `_project_stable_block_fields`. All fields are optional and absent
+   * for legacy snapshots (no `StableBlockAnnotation`) so the existing
+   * byte-for-byte shape stays stable.
+   *
+   * `stableBlockType` is the narrow stable-document block type string
+   * (`heading` / `paragraph` / `list` / `list_item` / `code_block` /
+   * `table` / `table_row` / `table_cell` / `blockquote` /
+   * `thematic_break`).
+   * `headingLevel` is the 1-based heading level when
+   * `stableBlockType === "heading"`, otherwise `null`.
+   * `inlineMarks` is the list of inline mark intervals over the block's
+   * canonical text (UTF-16 offsets).
+   * `tableRole` is `table` / `row` / `cell` when `stableBlockType` is a
+   * table-related type, otherwise `null`.
+   * `parentStableBlockId` is the parent block id for nested structures
+   * (table rows → table, table cells → row, list items → list).
+   * `stableBlockId` is the diagnostic identifier of the stable block
+   * (not a render contract; emitted only when present).
+   */
+  stableBlockType?: string | null;
+  headingLevel?: number | null;
+  inlineMarks?: ReaderSourceBlockInlineMarkDto[] | null;
+  tableRole?: string | null;
+  parentStableBlockId?: string | null;
+  stableBlockId?: string | null;
 }
 
 export type ReaderSourceBlockChildNodeDto =

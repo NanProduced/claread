@@ -274,15 +274,17 @@ def test_narrative_block_types_all_default_to_main_reading() -> None:
 
 
 # --------------------------------------------------------------------
-# table / table_row / table_cell default excluded
+# table / table_row wrappers skipped; table_cell enters canonical text
 # --------------------------------------------------------------------
 
 
-def test_table_hierarchy_default_excluded_from_canonical_text() -> None:
-    """table / table_row / table_cell default to metadata_only /
-    rag_ask_only respectively, so NONE of them enter canonical text by
-    default. The table hierarchy (parent / child) is preserved in the
-    output blocks.
+def test_table_hierarchy_default_canonical_text() -> None:
+    """Since the Markdown ecosystem refactor (D2 / A1), table /
+    table_row / table_cell all default to ``main_reading``. The
+    table / table_row wrappers carry no ``text_content`` so the plan
+    skips them (no canonical offsets), while the table_cell leaves
+    contribute their text to canonical text. The table hierarchy
+    (parent / child) is preserved in the output blocks.
     """
     plan = _build(
         [
@@ -296,19 +298,24 @@ def test_table_hierarchy_default_excluded_from_canonical_text() -> None:
 
     blocks_by_id = {b.block_id: b for b in plan.blocks}
 
-    # Table / table_row / table_cell must NOT carry canonical offsets.
+    # Table / table_row wrappers must NOT carry canonical offsets
+    # (skipped like the ``list`` wrapper).
     assert blocks_by_id["tbl1"].canonical_text_start_utf16 is None
     assert blocks_by_id["tbl1"].canonical_text_end_utf16 is None
     assert blocks_by_id["tbl1_r1"].canonical_text_start_utf16 is None
     assert blocks_by_id["tbl1_r1"].canonical_text_end_utf16 is None
-    assert blocks_by_id["tbl1_r1_c1"].canonical_text_start_utf16 is None
-    assert blocks_by_id["tbl1_r1_c1"].canonical_text_end_utf16 is None
 
-    # The cell text MUST NOT leak into the canonical text.
-    assert "cell value" not in plan.canonical_text
+    # table_cell is main_reading and DOES carry canonical offsets.
+    assert blocks_by_id["tbl1_r1_c1"].canonical_text_start_utf16 is not None
+    assert blocks_by_id["tbl1_r1_c1"].canonical_text_end_utf16 is not None
 
-    # Only h1 + p1 contribute to canonical text.
-    assert plan.canonical_text == "Title" + CANONICAL_TEXT_BLOCK_SEPARATOR + "Body after table."
+    # The cell text flows into the canonical text.
+    assert "cell value" in plan.canonical_text
+
+    # h1 + table_cell + p1 contribute to canonical text.
+    assert plan.canonical_text == CANONICAL_TEXT_BLOCK_SEPARATOR.join(
+        ["Title", "cell value", "Body after table."]
+    )
 
     # Table hierarchy is preserved.
     assert blocks_by_id["tbl1_r1"].parent_block_id == "tbl1"
@@ -325,9 +332,9 @@ def test_table_hierarchy_routes_recorded_in_diagnostics() -> None:
         ]
     )
     routes = plan.diagnostics.block_routes
-    assert routes["tbl1"] == "metadata_only"
-    assert routes["tbl1_r1"] == "metadata_only"
-    assert routes["tbl1_r1_c1"] == "rag_ask_only"
+    assert routes["tbl1"] == "main_reading"
+    assert routes["tbl1_r1"] == "main_reading"
+    assert routes["tbl1_r1_c1"] == "main_reading"
     assert routes["p1"] == "main_reading"
 
 
@@ -384,11 +391,11 @@ def test_image_ocr_default_excluded_but_explicit_main_reading_promotes() -> None
 
 
 # --------------------------------------------------------------------
-# footnote / code_block default excluded
+# footnote default excluded; code_block enters canonical text (D2 / A1)
 # --------------------------------------------------------------------
 
 
-def test_footnote_and_code_block_default_excluded() -> None:
+def test_footnote_default_excluded_code_block_included() -> None:
     plan = _build(
         [
             _paragraph("p1", "Body.", 0),
@@ -398,18 +405,23 @@ def test_footnote_and_code_block_default_excluded() -> None:
     )
     blocks_by_id = {b.block_id: b for b in plan.blocks}
 
-    # footnote / code_block default to rag_ask_only -> no canonical offsets.
+    # footnote defaults to rag_ask_only -> no canonical offsets.
     assert blocks_by_id["fn1"].canonical_text_start_utf16 is None
     assert blocks_by_id["fn1"].canonical_text_end_utf16 is None
-    assert blocks_by_id["cb1"].canonical_text_start_utf16 is None
-    assert blocks_by_id["cb1"].canonical_text_end_utf16 is None
 
-    # Their text MUST NOT leak into canonical text.
+    # code_block defaults to main_reading (Markdown ecosystem refactor
+    # D2 / A1) -> canonical offsets populated.
+    assert blocks_by_id["cb1"].canonical_text_start_utf16 is not None
+    assert blocks_by_id["cb1"].canonical_text_end_utf16 is not None
+
+    # footnote text MUST NOT leak into canonical text; code text does.
     assert "Footnote body." not in plan.canonical_text
-    assert "print('hi')" not in plan.canonical_text
+    assert "print('hi')" in plan.canonical_text
 
-    # Only paragraph contributes.
-    assert plan.canonical_text == "Body."
+    # paragraph + code_block contribute (in order).
+    assert plan.canonical_text == CANONICAL_TEXT_BLOCK_SEPARATOR.join(
+        ["Body.", "print('hi')"]
+    )
 
 
 # --------------------------------------------------------------------
@@ -597,14 +609,16 @@ def test_no_main_reading_blocks_fails_closed() -> None:
     """When no block contributes to canonical text, the builder MUST
     raise StableDocumentFreezePlanError instead of returning an empty
     canonical text.
+
+    Since the Markdown ecosystem refactor (D2 / A1), table_cell and
+    code_block default to main_reading, so the "no main_reading"
+    scenario uses image (metadata_only) + footnote (rag_ask_only).
     """
     with pytest.raises(StableDocumentFreezePlanError, match="no main-reading"):
         _build(
             [
-                _table("t1", 0),
-                _table_row("t1_r1", 1, parent="t1"),
-                _table_cell("t1_r1_c1", "cell", 2, parent="t1_r1"),
-                _image("img1", 3),
+                _image("img1", 0),
+                _footnote("fn1", "footnote body", 1),
             ]
         )
 
@@ -776,16 +790,16 @@ def test_input_blocks_not_mutated() -> None:
 
 
 def test_input_blocks_not_mutated_when_non_main_reading_has_caller_offsets() -> None:
-    """A non-main_reading block (e.g. table_cell) with caller-supplied
+    """A non-main_reading block (e.g. footnote) with caller-supplied
     canonical offsets MUST have those offsets cleared in the OUTPUT (the
     freeze plan only honors main_reading canonical mappings), but the
     INPUT instance MUST be left untouched.
     """
     cell_with_offsets = StableDocumentBlock(
-        block_id="cell1",
+        block_id="fn1",
         order_index=1,
-        block_type="table_cell",
-        text_content="cell",
+        block_type="footnote",
+        text_content="footnote body",
         canonical_text_start_utf16=42,
         canonical_text_end_utf16=46,
     )
@@ -799,9 +813,9 @@ def test_input_blocks_not_mutated_when_non_main_reading_has_caller_offsets() -> 
     assert cell_with_offsets == cell_before
     assert cell_with_offsets.canonical_text_start_utf16 == 42
 
-    # Output cell has cleared canonical offsets (table_cell defaults to
+    # Output footnote has cleared canonical offsets (footnote defaults to
     # rag_ask_only, so it does not contribute to canonical text).
-    out_cell = next(b for b in plan.blocks if b.block_id == "cell1")
+    out_cell = next(b for b in plan.blocks if b.block_id == "fn1")
     assert out_cell.canonical_text_start_utf16 is None
     assert out_cell.canonical_text_end_utf16 is None
     assert out_cell is not cell_with_offsets
@@ -876,19 +890,23 @@ def test_non_main_reading_blocks_have_none_canonical_offsets_in_output() -> None
     """Even if the caller passes a non-main_reading block with
     pre-populated canonical offsets, the OUTPUT must have None offsets.
     The canonical mapping is derived solely from the policy decision.
+
+    Uses footnote (rag_ask_only by default) — table_cell / code_block
+    defaulted to main_reading since the Markdown ecosystem refactor
+    (D2 / A1) and would keep offsets.
     """
-    cell = StableDocumentBlock(
-        block_id="cell1",
+    note = StableDocumentBlock(
+        block_id="fn1",
         order_index=1,
-        block_type="table_cell",
-        text_content="cell",
+        block_type="footnote",
+        text_content="note",
         canonical_text_start_utf16=10,
         canonical_text_end_utf16=14,
     )
-    plan = _build([_paragraph("p1", "Body.", 0), cell])
-    out_cell = next(b for b in plan.blocks if b.block_id == "cell1")
-    assert out_cell.canonical_text_start_utf16 is None
-    assert out_cell.canonical_text_end_utf16 is None
+    plan = _build([_paragraph("p1", "Body.", 0), note])
+    out_note = next(b for b in plan.blocks if b.block_id == "fn1")
+    assert out_note.canonical_text_start_utf16 is None
+    assert out_note.canonical_text_end_utf16 is None
 
 
 # --------------------------------------------------------------------
@@ -1250,10 +1268,10 @@ def test_non_main_reading_block_with_caller_offsets_deep_copy_nested_dicts() -> 
     uses ``model_copy(deep=True, update={...})`` with non-None update).
     """
     cell = StableDocumentBlock(
-        block_id="cell1",
+        block_id="fn1",
         order_index=1,
-        block_type="table_cell",
-        text_content="cell",
+        block_type="footnote",
+        text_content="footnote body",
         canonical_text_start_utf16=42,
         canonical_text_end_utf16=46,
         payload_json={"meta": ["original"]},
@@ -1262,9 +1280,9 @@ def test_non_main_reading_block_with_caller_offsets_deep_copy_nested_dicts() -> 
     )
     p1 = _paragraph("p1", "Body.", 0)
     plan = _build([p1, cell])
-    out_cell = next(b for b in plan.blocks if b.block_id == "cell1")
+    out_cell = next(b for b in plan.blocks if b.block_id == "fn1")
 
-    # Offsets cleared in output (table_cell defaults to rag_ask_only).
+    # Offsets cleared in output (footnote defaults to rag_ask_only).
     assert out_cell.canonical_text_start_utf16 is None
     assert out_cell.canonical_text_end_utf16 is None
 
@@ -1325,26 +1343,33 @@ def test_full_document_freeze_with_mixed_block_types() -> None:
         ]
     )
 
-    # Canonical text contains: heading, p1, p2, promoted OCR.
+    # Canonical text contains: heading, p1, table cells (main_reading
+    # since D2 / A1), p2, promoted OCR, code block (main_reading since
+    # D2 / A1). The table / table_row wrappers are skipped; footnote
+    # stays excluded (rag_ask_only default).
     expected_chunks = [
         "Document Title",
         "Intro paragraph.",
+        "cell A",
+        "cell B",
         "After table.",
         "OCR captured text.",
+        "x = 1",
     ]
     assert plan.canonical_text == CANONICAL_TEXT_BLOCK_SEPARATOR.join(expected_chunks)
 
-    # Table / image / footnote / code blocks have no canonical offsets.
+    # Table wrappers / image / footnote have no canonical offsets.
     blocks_by_id = {b.block_id: b for b in plan.blocks}
     for excluded_id in (
-        "tbl1", "tbl1_r1", "tbl1_r1_c1", "tbl1_r1_c2",
-        "img1", "fn1", "cb1",
+        "tbl1", "tbl1_r1",
+        "img1", "fn1",
     ):
         assert blocks_by_id[excluded_id].canonical_text_start_utf16 is None
         assert blocks_by_id[excluded_id].canonical_text_end_utf16 is None
 
-    # main_reading blocks (including promoted OCR) have offsets.
-    for included_id in ("h1", "p1", "p2", "img1_ocr"):
+    # main_reading blocks (table cells + code block by default, plus
+    # promoted OCR) have offsets.
+    for included_id in ("h1", "p1", "tbl1_r1_c1", "tbl1_r1_c2", "p2", "img1_ocr", "cb1"):
         assert blocks_by_id[included_id].canonical_text_start_utf16 is not None
         assert blocks_by_id[included_id].canonical_text_end_utf16 is not None
 
@@ -1353,13 +1378,13 @@ def test_full_document_freeze_with_mixed_block_types() -> None:
     assert routes["h1"] == "main_reading"
     assert routes["p1"] == "main_reading"
     assert routes["p2"] == "main_reading"
-    assert routes["tbl1"] == "metadata_only"
-    assert routes["tbl1_r1"] == "metadata_only"
-    assert routes["tbl1_r1_c1"] == "rag_ask_only"
+    assert routes["tbl1"] == "main_reading"
+    assert routes["tbl1_r1"] == "main_reading"
+    assert routes["tbl1_r1_c1"] == "main_reading"
     assert routes["img1"] == "metadata_only"
     assert routes["img1_ocr"] == "main_reading"  # promoted
     assert routes["fn1"] == "rag_ask_only"
-    assert routes["cb1"] == "rag_ask_only"
+    assert routes["cb1"] == "main_reading"
 
     # content_sha256 matches.
     assert plan.stable_document.content_sha256 == plan.content_sha256

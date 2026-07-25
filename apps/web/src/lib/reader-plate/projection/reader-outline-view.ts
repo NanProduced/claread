@@ -200,26 +200,232 @@ function semanticToOutlineViewModel(
 }
 
 /**
- * Markdown-heading outline source. NOT implemented this round.
+ * Markdown-heading outline source (B4).
  *
- * Returns an honest unavailable model (no items, no faked headings) so the
- * priority combinator falls through to the semantic source. A real implementation
- * parses heading structure (block type heading + depth/heading_level) from the
- * stable source document — see
- * docs/tmp/reader-orchestration/TMP-reader-markdown-rich-input-deep-research-2026-07-16.md §7.
+ * Projects heading structure from the stable snapshot into the source-agnostic
+ * `ReaderOutlineViewModel`. A unit is a Markdown heading candidate when its
+ * `unit_type === "heading"` (canonical, mirrors the backend semantic-outline
+ * skip predicate in `job_bootstrap.py`) OR `stable_block_type === "heading"`
+ * (defensive A5 payload mirror). `heading_level` is optional — when absent
+ * (legacy heuristic path) the heading projects at level 1. Each selected
+ * heading becomes an `OutlineItem` with:
+ *
+ *   - `depth = min(headingLevel, 3)` — the rail panel caps depth at 3 to match
+ *     the semantic source (depths 1–3 only). Deeper headings are still visible
+ *     in the reading surface; only the outline rail caps them.
+ *   - `target = { unitId: heading.unit_id, anchorSegmentId: null }` — the rail
+ *     scrolls to the heading unit; no anchor segment is needed because the
+ *     heading itself is the section start.
+ *   - `coverage = { startUnitId: this heading, endUnitId: next heading (same
+ *     or higher level) − 1, or last unit }` — scroll-spy uses this interval to
+ *     pick the currently active heading. The end is the unit *before* the next
+ *     heading at level ≤ this heading's level, mirroring how Markdown section
+ *     nesting works (a level-2 heading covers everything until the next level-1
+ *     or level-2 heading).
+ *   - `role = "section"` — every Markdown heading is independently navigable.
+ *     Unlike the semantic source, Markdown never produces non-navigable groups:
+ *     a heading is always a clickable landing point.
+ *   - `key = "md:{unit_id}"` — namespaced by source kind so it cannot collide
+ *     with semantic `nodeId`s when both sources are projected in tests.
+ *   - `parentKey` — resolved by tracking the most recent heading at level
+ *     `< this heading's level` (strictly shallower). A level-1 heading has no
+ *     parent. This produces a true nesting tree without re-parsing Markdown.
+ *
+ * Fail-closed rules:
+ *   - No `navigation.units` → unavailable (empty model).
+ *   - Fewer than 2 heading units → unavailable. A single heading does not
+ *     produce a useful rail (no sections to navigate between); fall through to
+ *     the semantic source so the rail is not blanked out by one stray `#`.
+ *   - A heading unit missing both `unit_type !== "heading"` and
+ *     `stable_block_type !== "heading"` is skipped silently (defensive —
+ *     should not happen when A5 is wired, but the projection never throws).
+ *     `heading_level` missing is NOT a skip reason — it defaults to 1.
+ *   - Coverage `endUnitId` falls back to the last unit when the heading is the
+ *     final one or no subsequent same-or-shallower heading exists.
+ *
+ * Reference: .trae/documents/markdown-ecosystem-refactor-plan-2026-07-24.md B4
  */
 export function projectMarkdownOutlineView(
   snapshot: ReaderPlateSnapshotDto,
   plateDocument: ReaderRecordPlateDocument,
 ): ReaderOutlineViewModel {
-  // TODO(markdown-outline): parse headings from the stable source document and
-  // project them into OutlineItem[] (depth from heading level; coverage heading →
-  // next heading; target from the heading's unit/anchor). Until then, no items.
   void plateDocument;
-  return emptyOutlineViewModel(
-    "markdown",
-    buildReaderRecordSourceIdentityKey(snapshot),
-  );
+
+  const sourceIdentityKey = buildReaderRecordSourceIdentityKey(snapshot);
+  const units = snapshot.navigation?.units ?? [];
+  if (units.length === 0) {
+    return emptyOutlineViewModel("markdown", sourceIdentityKey);
+  }
+
+  const sortedUnits = [...units].sort((a, b) => a.order_index - b.order_index);
+
+  // Select heading units. The check mirrors the backend semantic-outline
+  // skip predicate (`unit_type == "heading"` in job_bootstrap.py) so the
+  // frontend Markdown outline and the backend skip decision stay aligned:
+  // whenever the backend counts a unit as a heading, the frontend does too.
+  //
+  // Acceptance criteria (any one):
+  //   - `unit_type === "heading"` (backend canonical; covers A5-annotated
+  //     snapshots AND legacy heuristic-classified snapshots)
+  //   - `stable_block_type === "heading"` (defensive: A5 payload mirror;
+  //     present whenever a StableBlockAnnotation matched, even if the
+  //     snapshot was built before `unit_type` was overridden)
+  //
+  // `heading_level` resolution (P0 legacy heuristic support):
+  //   - `null` / `undefined` (not provided) → DEFAULT to 1. The backend
+  //     heuristic `_classify_unit_type` detects headings without extracting
+  //     a level, and legacy snapshots carry `unit_type === "heading"` with
+  //     `heading_level === null`. These MUST still project at level 1 so the
+  //     rail is not blanked after the backend skips semantic outline.
+  //   - A finite number → clamp to [1, 6] (0 → 1, 7 → 6).
+  //   - `NaN` / non-finite (truly broken payload) → SKIP defensively. A
+  //     non-finite level cannot be placed in the hierarchy and projecting it
+  //     at any value would distort coverage intervals. This is distinct from
+  //     "not provided" — NaN means the payload explicitly carried garbage.
+  interface HeadingPick {
+    unitId: string;
+    orderIndex: number;
+    level: number; // 1-based, clamped to [1, 6]
+    fallbackIndex: number;
+  }
+  const picks: HeadingPick[] = [];
+  for (const unit of sortedUnits) {
+    const isHeading =
+      unit.unit_type === "heading" || unit.stable_block_type === "heading";
+    if (!isHeading) continue;
+    const rawLevel = unit.heading_level;
+    // Missing/null → default to 1 (P0 legacy heuristic path).
+    if (rawLevel === null || rawLevel === undefined) {
+      picks.push({
+        unitId: unit.unit_id,
+        orderIndex: unit.order_index,
+        level: 1,
+        fallbackIndex: picks.length,
+      });
+      continue;
+    }
+    // Non-finite number (NaN, Infinity, -Infinity) → skip defensively.
+    if (typeof rawLevel !== "number" || !Number.isFinite(rawLevel)) {
+      continue;
+    }
+    const level = Math.min(Math.max(Math.trunc(rawLevel), 1), 6);
+    picks.push({
+      unitId: unit.unit_id,
+      orderIndex: unit.order_index,
+      level,
+      fallbackIndex: picks.length,
+    });
+  }
+
+  // Fail-closed: fewer than 2 headings → not a useful Markdown outline.
+  // Fall through to the semantic source instead of blanking the rail.
+  if (picks.length < 2) {
+    return emptyOutlineViewModel("markdown", sourceIdentityKey);
+  }
+
+  // Build a unit_id → order_index map for coverage resolution.
+  const unitOrderById = new Map<string, number>();
+  for (const unit of sortedUnits) {
+    unitOrderById.set(unit.unit_id, unit.order_index);
+  }
+  const orderedUnitIds = sortedUnits.map((u) => u.unit_id);
+
+  // Coverage resolution: for each heading, find the unit just before the next
+  // heading at level <= this heading's level. If none, coverage extends to the
+  // last unit.
+  interface ResolvedHeading extends HeadingPick {
+    endUnitId: string;
+    parentLevel0Index: number | null; // index into picks[] of parent, or null
+  }
+  const resolved: ResolvedHeading[] = picks.map((pick, i) => {
+    let endIndex = sortedUnits.length - 1;
+    for (let j = i + 1; j < picks.length; j += 1) {
+      if (picks[j]!.level <= pick.level) {
+        // The next heading at same-or-shallower level: coverage ends at the
+        // unit just before that heading. Find the unit just before picks[j].
+        const nextHeadingOrder = picks[j]!.orderIndex;
+        // sortedUnits is in order_index order; find the largest order_index
+        // strictly less than nextHeadingOrder.
+        let cursor = sortedUnits.length - 1;
+        for (let k = sortedUnits.length - 1; k >= 0; k -= 1) {
+          if (sortedUnits[k]!.order_index < nextHeadingOrder) {
+            cursor = k;
+            break;
+          }
+        }
+        endIndex = cursor;
+        break;
+      }
+    }
+    const endUnitId = sortedUnits[endIndex]!.unit_id;
+
+    // Parent resolution: most recent prior heading with strictly smaller level.
+    let parentIndex: number | null = null;
+    for (let p = i - 1; p >= 0; p -= 1) {
+      if (picks[p]!.level < pick.level) {
+        parentIndex = p;
+        break;
+      }
+    }
+    return { ...pick, endUnitId, parentLevel0Index: parentIndex };
+  });
+
+  // Project to OutlineItem[].
+  const panelItems: OutlineItem[] = resolved.map((heading, i) => {
+    const parentKey =
+      heading.parentLevel0Index === null
+        ? null
+        : `md:${resolved[heading.parentLevel0Index]!.unitId}`;
+    return {
+      key: `md:${heading.unitId}`,
+      parentKey,
+      depth: Math.min(heading.level, 3),
+      title: "", // Title is read from the snapshot unit label/text at render
+      // time; the outline projection keeps it empty so the projection stays
+      // pure w.r.t. text content (the renderer has the actual heading text via
+      // the stable source preview / navigation unit label).
+      target: { unitId: heading.unitId, anchorSegmentId: null },
+      coverage: {
+        startUnitId: heading.unitId,
+        endUnitId: heading.endUnitId,
+      },
+      orderIndex: i,
+      fallbackIndex: i,
+      role: "section",
+    };
+  });
+
+  // Fill titles from the navigation unit labels (defensive: label may be null
+  // when the builder did not synthesize one — the renderer falls back to the
+  // heading text from the stable source preview).
+  const unitLabelById = new Map<string, string | null>();
+  for (const unit of sortedUnits) {
+    unitLabelById.set(unit.unit_id, unit.label ?? null);
+  }
+  for (let i = 0; i < panelItems.length; i += 1) {
+    const item = panelItems[i]!;
+    const label = unitLabelById.get(item.target.unitId);
+    if (typeof label === "string" && label.length > 0) {
+      panelItems[i] = { ...item, title: label };
+    }
+  }
+
+  const tickItems = panelItems.filter((item) => item.depth === 1);
+
+  return {
+    available: true,
+    status: "ready",
+    isPartial: false,
+    identity: {
+      sourceKind: "markdown",
+      sourceIdentityKey,
+      revision: null,
+    },
+    panelItems,
+    tickItems,
+    orderedUnitIds,
+    unitOrderById,
+  };
 }
 
 /**

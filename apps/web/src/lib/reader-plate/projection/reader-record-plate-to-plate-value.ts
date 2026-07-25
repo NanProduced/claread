@@ -4,9 +4,20 @@
  * 把 ReaderRecordPlateDocument（V2 标准 Plate blocks）转换为 Plate editor
  * 可直接消费的 Descendant[]。每种 block 映射为自定义 element type：
  * - paragraph  → reader_paragraph
- * - blockquote → reader_blockquote
+ * - blockquote → reader_blockquote (译文引用块)
  * - callout    → reader_callout
  * - sentence_analysis → reader_sentence_analysis
+ *
+ * B2: Markdown stable-block-derived blocks 也映射为 reader_* element types：
+ * - heading             → reader_heading (carries level)
+ * - list                → reader_list (carries ordered)
+ * - list_item           → reader_list_item
+ * - code_block          → reader_code_block (carries language)
+ * - markdown_blockquote → reader_markdown_blockquote
+ * - table               → reader_table
+ * - table_row           → reader_table_row
+ * - table_cell          → reader_table_cell (carries columnIndex/alignment/isHeader)
+ * - hr                  → reader_hr
  *
  * text leaf 的 marks 转换为 text node 属性，供 leaf plugin 渲染。
  * vocabulary / grammar continuation leaf 也携带 mark data，保证跨 leaf 标注完整渲染。
@@ -17,12 +28,22 @@ import type {
   ReaderRecordPlateBlock,
   ReaderRecordPlateBlockquoteBlock,
   ReaderRecordPlateCalloutBlock,
+  ReaderRecordPlateCodeBlockBlock,
   ReaderRecordPlateDocument,
   ReaderRecordPlateGrammarMark,
+  ReaderRecordPlateHeadingBlock,
+  ReaderRecordPlateHrBlock,
+  ReaderRecordPlateInlineMark,
+  ReaderRecordPlateListBlock,
+  ReaderRecordPlateListItemBlock,
+  ReaderRecordPlateMarkdownBlockquoteBlock,
   ReaderRecordPlateMark,
   ReaderRecordPlateParagraphBlock,
   ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateSentenceAnalysisBlock,
+  ReaderRecordPlateTableBlock,
+  ReaderRecordPlateTableCellBlock,
+  ReaderRecordPlateTableRowBlock,
   ReaderRecordPlateTextLeaf,
   ReaderRecordPlateTranslationTextLeaf,
   ReaderRecordPlateUserHighlightMark,
@@ -40,6 +61,22 @@ export const READER_SENTENCE_ANALYSIS_CHUNKS_TYPE =
   "reader_sentence_analysis_chunks" as const;
 export const READER_SENTENCE_ANALYSIS_CHUNK_TYPE =
   "reader_sentence_analysis_chunk" as const;
+
+// B2: Markdown stable-block-derived element types.
+// Prefixed with `reader_` to avoid colliding with Plate's built-in Markdown
+// plugin node types (`heading`, `ul`, `ol`, `li`, `code_block`, `blockquote`,
+// `table`, `tr`, `td`/`th`, `hr`). Reader-owned elements let us attach
+// anchor-segment / stable-block metadata without polluting the standard
+// Markdown plugin contract.
+export const READER_HEADING_TYPE = "reader_heading" as const;
+export const READER_LIST_TYPE = "reader_list" as const;
+export const READER_LIST_ITEM_TYPE = "reader_list_item" as const;
+export const READER_CODE_BLOCK_TYPE = "reader_code_block" as const;
+export const READER_MARKDOWN_BLOCKQUOTE_TYPE = "reader_markdown_blockquote" as const;
+export const READER_TABLE_TYPE = "reader_table" as const;
+export const READER_TABLE_ROW_TYPE = "reader_table_row" as const;
+export const READER_TABLE_CELL_TYPE = "reader_table_cell" as const;
+export const READER_HR_TYPE = "reader_hr" as const;
 
 // --- Mark key constants ---
 
@@ -93,13 +130,92 @@ export interface ReaderSentenceAnalysisChunkElement {
   data: ReaderRecordPlateSentenceAnalysisBlock["data"]["chunks"][number];
 }
 
+// B2: Markdown stable-block-derived element types.
+
+export interface ReaderHeadingElement {
+  type: typeof READER_HEADING_TYPE;
+  id: ReaderRecordPlateHeadingBlock["id"];
+  /** 1-based heading level (clamped to 1-6). */
+  level: ReaderRecordPlateHeadingBlock["level"];
+  children: PlateTextNode[];
+  data: ReaderRecordPlateHeadingBlock["data"];
+}
+
+export interface ReaderListElement {
+  type: typeof READER_LIST_TYPE;
+  id: ReaderRecordPlateListBlock["id"];
+  /** True for ordered lists, false for bullet lists. */
+  ordered: ReaderRecordPlateListBlock["ordered"];
+  children: ReaderListItemElement[];
+  data: ReaderRecordPlateListBlock["data"];
+}
+
+export interface ReaderListItemElement {
+  type: typeof READER_LIST_ITEM_TYPE;
+  id: ReaderRecordPlateListItemBlock["id"];
+  children: PlateTextNode[];
+  data: ReaderRecordPlateListItemBlock["data"];
+}
+
+export interface ReaderCodeBlockElement {
+  type: typeof READER_CODE_BLOCK_TYPE;
+  id: ReaderRecordPlateCodeBlockBlock["id"];
+  children: PlateTextNode[];
+  data: ReaderRecordPlateCodeBlockBlock["data"];
+}
+
+export interface ReaderMarkdownBlockquoteElement {
+  type: typeof READER_MARKDOWN_BLOCKQUOTE_TYPE;
+  id: ReaderRecordPlateMarkdownBlockquoteBlock["id"];
+  children: PlateTextNode[];
+  data: ReaderRecordPlateMarkdownBlockquoteBlock["data"];
+}
+
+export interface ReaderTableElement {
+  type: typeof READER_TABLE_TYPE;
+  id: ReaderRecordPlateTableBlock["id"];
+  children: ReaderTableRowElement[];
+  data: ReaderRecordPlateTableBlock["data"];
+}
+
+export interface ReaderTableRowElement {
+  type: typeof READER_TABLE_ROW_TYPE;
+  id: ReaderRecordPlateTableRowBlock["id"];
+  children: ReaderTableCellElement[];
+  data: ReaderRecordPlateTableRowBlock["data"];
+}
+
+export interface ReaderTableCellElement {
+  type: typeof READER_TABLE_CELL_TYPE;
+  id: ReaderRecordPlateTableCellBlock["id"];
+  children: PlateTextNode[];
+  data: ReaderRecordPlateTableCellBlock["data"];
+}
+
+export interface ReaderHrElement {
+  type: typeof READER_HR_TYPE;
+  id: ReaderRecordPlateHrBlock["id"];
+  children: [];
+  data: ReaderRecordPlateHrBlock["data"];
+}
+
 export type ReaderPlateElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
   | ReaderCalloutElement
   | ReaderSentenceAnalysisElement
   | ReaderSentenceAnalysisChunksElement
-  | ReaderSentenceAnalysisChunkElement;
+  | ReaderSentenceAnalysisChunkElement
+  // B2: Markdown stable-block-derived elements.
+  | ReaderHeadingElement
+  | ReaderListElement
+  | ReaderListItemElement
+  | ReaderCodeBlockElement
+  | ReaderMarkdownBlockquoteElement
+  | ReaderTableElement
+  | ReaderTableRowElement
+  | ReaderTableCellElement
+  | ReaderHrElement;
 
 // --- Text node type ---
 
@@ -123,6 +239,18 @@ export interface PlateTextNode {
   segment_start_utf16?: number;
   /** 该 leaf 在 anchor segment 内的 UTF-16 结束偏移 */
   segment_end_utf16?: number;
+  /**
+   * B3: Inline marks from Markdown parser. Plate leaf plugins with the
+   * matching key (`bold` / `italic` / `strikethrough` / `code` / `link`)
+   * render these as `<strong>` / `<em>` / `<s>` / `<code>` / `<a>`.
+   */
+  bold?: boolean;
+  italic?: boolean;
+  strikethrough?: boolean;
+  code?: boolean;
+  link?: boolean;
+  /** Safe href for `link === true` (whitelist-filtered by parser). */
+  link_href?: string;
 }
 
 // --- Mark → Plate text node props ---
@@ -214,10 +342,73 @@ export function marksToPlateProps(
 }
 
 /**
+ * B3: 把 ReaderRecordPlateInlineMark[] 转换为 Plate text node 属性。
+ *
+ * `splitLeafByInlineMarks` 已经按 mark 边界切分过 leaf，每个 sub-leaf
+ * 携带的 inlineMarks 都是「完全覆盖该 sub-leaf」的标记。因此这里只需要
+ * 把每个 mark 的 kind 映射到对应布尔属性，并把 link 的 href 单独写到
+ * `link_href`。
+ *
+ * 注意：inline marks 是纯排版属性，与 `marks`（词汇 / 语法 / 用户标注）
+ * 正交，可以同时存在于同一个 text node 上。
+ */
+export function inlineMarksToPlateProps(
+  inlineMarks: ReaderRecordPlateInlineMark[] | undefined,
+): Pick<
+  PlateTextNode,
+  "bold" | "italic" | "strikethrough" | "code" | "link" | "link_href"
+> {
+  if (!inlineMarks || inlineMarks.length === 0) {
+    return {};
+  }
+
+  const props: Partial<
+    Pick<
+      PlateTextNode,
+      "bold" | "italic" | "strikethrough" | "code" | "link" | "link_href"
+    >
+  > = {};
+
+  for (const mark of inlineMarks) {
+    switch (mark.kind) {
+      case "strong":
+        props.bold = true;
+        break;
+      case "em":
+        props.italic = true;
+        break;
+      case "strikethrough":
+        props.strikethrough = true;
+        break;
+      case "inline_code":
+        props.code = true;
+        break;
+      case "link":
+        props.link = true;
+        // 后端已对 href 做白名单过滤（http/https/mailto），这里直接透传。
+        if (typeof mark.href === "string" && mark.href.length > 0) {
+          props.link_href = mark.href;
+        }
+        break;
+    }
+  }
+
+  return props as Pick<
+    PlateTextNode,
+    "bold" | "italic" | "strikethrough" | "code" | "link" | "link_href"
+  >;
+}
+
+/**
  * ReaderRecordPlateTextLeaf → Plate text node。
  *
  * 无 anchor metadata 的 leaf（例如 separator）不会生成选区锚点属性。
  * 携带 anchor segment id 和 segment range 的 source leaf 会继续输出选区锚点 data 属性。
+ *
+ * B3: 携带 inlineMarks 的 leaf（由 splitLeafByInlineMarks 切分得到）会
+ * 额外输出 bold / italic / strikethrough / code / link / link_href 属性，
+ * 供 reader-blocks-kit 中的 leaf plugin 渲染为 <strong> / <em> / <s> /
+ * <code> / <a>。
  */
 export function textLeafToPlateTextNode(
   leaf: ReaderRecordPlateTextLeaf,
@@ -225,6 +416,7 @@ export function textLeafToPlateTextNode(
   return {
     text: leaf.text,
     ...marksToPlateProps(leaf.marks),
+    ...inlineMarksToPlateProps(leaf.inlineMarks),
     ...(leaf.anchorSegmentId && leaf.segmentRange
       ? {
           anchor_segment_id: leaf.anchorSegmentId,
@@ -323,11 +515,165 @@ function sentenceAnalysisBlockToElement(
   };
 }
 
+// --- B2: Markdown stable-block-derived converters ---
+
+function headingBlockToElement(
+  block: ReaderRecordPlateHeadingBlock,
+): ReaderHeadingElement {
+  const children: PlateTextNode[] =
+    block.children.length > 0
+      ? block.children.map(textLeafToPlateTextNode)
+      : [{ text: "" }];
+
+  return {
+    type: READER_HEADING_TYPE,
+    id: block.id,
+    level: block.level,
+    children,
+    data: block.data,
+  };
+}
+
+function listItemBlockToElement(
+  block: ReaderRecordPlateListItemBlock,
+): ReaderListItemElement {
+  const children: PlateTextNode[] =
+    block.children.length > 0
+      ? block.children.map(textLeafToPlateTextNode)
+      : [{ text: "" }];
+
+  return {
+    type: READER_LIST_ITEM_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function listBlockToElement(block: ReaderRecordPlateListBlock): ReaderListElement {
+  // Backend guarantees list blocks contain at least one list_item (B2.6
+  // groups by parentStableBlockId). If a malformed empty list slips through,
+  // we emit a single empty list_item to keep Plate value valid rather than
+  // crashing the editor.
+  const children: ReaderListItemElement[] =
+    block.children.length > 0
+      ? block.children.map(listItemBlockToElement)
+      : [
+          {
+            type: READER_LIST_ITEM_TYPE,
+            id: `${block.id}:empty`,
+            children: [{ text: "" }],
+            data: block.data,
+          },
+        ];
+
+  return {
+    type: READER_LIST_TYPE,
+    id: block.id,
+    ordered: block.ordered,
+    children,
+    data: block.data,
+  };
+}
+
+function codeBlockBlockToElement(
+  block: ReaderRecordPlateCodeBlockBlock,
+): ReaderCodeBlockElement {
+  const children: PlateTextNode[] =
+    block.children.length > 0
+      ? block.children.map(textLeafToPlateTextNode)
+      : [{ text: "" }];
+
+  return {
+    type: READER_CODE_BLOCK_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function markdownBlockquoteBlockToElement(
+  block: ReaderRecordPlateMarkdownBlockquoteBlock,
+): ReaderMarkdownBlockquoteElement {
+  const children: PlateTextNode[] =
+    block.children.length > 0
+      ? block.children.map(textLeafToPlateTextNode)
+      : [{ text: "" }];
+
+  return {
+    type: READER_MARKDOWN_BLOCKQUOTE_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function tableCellBlockToElement(
+  block: ReaderRecordPlateTableCellBlock,
+): ReaderTableCellElement {
+  const children: PlateTextNode[] =
+    block.children.length > 0
+      ? block.children.map(textLeafToPlateTextNode)
+      : [{ text: "" }];
+
+  return {
+    type: READER_TABLE_CELL_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function tableRowBlockToElement(
+  block: ReaderRecordPlateTableRowBlock,
+): ReaderTableRowElement {
+  const children: ReaderTableCellElement[] = block.children.map(
+    tableCellBlockToElement,
+  );
+
+  return {
+    type: READER_TABLE_ROW_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function tableBlockToElement(
+  block: ReaderRecordPlateTableBlock,
+): ReaderTableElement {
+  const children: ReaderTableRowElement[] = block.children.map(
+    tableRowBlockToElement,
+  );
+
+  return {
+    type: READER_TABLE_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function hrBlockToElement(block: ReaderRecordPlateHrBlock): ReaderHrElement {
+  return {
+    type: READER_HR_TYPE,
+    id: block.id,
+    children: [],
+    data: block.data,
+  };
+}
+
 /**
  * 把 ReaderRecordPlateDocument 转换为 Plate editor 可消费的 Descendant[]。
  *
  * 空 children 的 block 会填充空文本节点，保证 Plate value 合法。
  * enhancement children 已经是 Descendant[]（由 projection 层 deserializeMarkdownToBlocks 生成），直接传递。
+ *
+ * B2: Markdown stable-block-derived blocks (heading/list/list_item/code_block/
+ * markdown_blockquote/table/table_row/table_cell/hr) are converted to
+ * reader_* element types. They carry `ReaderRecordPlateStableBlockData`
+ * (anchor segment id, base range, hash, etc.) so selection / vocabulary /
+ * grammar marks continue to work on Markdown-rendered blocks.
  */
 export function projectReaderRecordPlateToPlateValue(
   document: ReaderRecordPlateDocument,
@@ -342,6 +688,25 @@ export function projectReaderRecordPlateToPlateValue(
         return calloutBlockToElement(block) as unknown as Descendant;
       case "sentence_analysis":
         return sentenceAnalysisBlockToElement(block) as unknown as Descendant;
+      // B2: Markdown stable-block-derived blocks.
+      case "heading":
+        return headingBlockToElement(block) as unknown as Descendant;
+      case "list":
+        return listBlockToElement(block) as unknown as Descendant;
+      case "list_item":
+        return listItemBlockToElement(block) as unknown as Descendant;
+      case "code_block":
+        return codeBlockBlockToElement(block) as unknown as Descendant;
+      case "markdown_blockquote":
+        return markdownBlockquoteBlockToElement(block) as unknown as Descendant;
+      case "table":
+        return tableBlockToElement(block) as unknown as Descendant;
+      case "table_row":
+        return tableRowBlockToElement(block) as unknown as Descendant;
+      case "table_cell":
+        return tableCellBlockToElement(block) as unknown as Descendant;
+      case "hr":
+        return hrBlockToElement(block) as unknown as Descendant;
     }
   });
 }

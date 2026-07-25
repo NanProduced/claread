@@ -5,6 +5,7 @@ import type {
   ReaderRecordPlateCalloutBlock,
   ReaderRecordPlateDocument,
   ReaderRecordPlateGrammarMark,
+  ReaderRecordPlateInlineMark,
   ReaderRecordPlateParagraphBlock,
   ReaderRecordPlateSentenceAnalysisBlock,
   ReaderRecordPlateTextLeaf,
@@ -14,6 +15,7 @@ import type {
   ReaderRecordPlateVocabularyMark,
 } from "./reader-record-plate-document";
 import {
+  inlineMarksToPlateProps,
   marksToPlateProps,
   projectReaderRecordPlateToPlateValue,
   READER_BLOCKQUOTE_TYPE,
@@ -488,6 +490,179 @@ describe("textLeafToPlateTextNode", () => {
     expect(leafNodes[1]?.vocabulary_data).toEqual(vocabContinuation);
     expect(leafNodes[1]?.grammar_data).toEqual(grammarStart);
     expect(leafNodes[2]?.grammar_data).toEqual(grammarContinuation);
+  });
+});
+
+// --- B3: inline marks (Markdown bold / italic / strikethrough / code / link) ---
+
+function makeInlineMark(
+  overrides: Partial<ReaderRecordPlateInlineMark> & {
+    kind: ReaderRecordPlateInlineMark["kind"];
+  },
+): ReaderRecordPlateInlineMark {
+  return {
+    start: 0,
+    end: 10,
+    ...overrides,
+  };
+}
+
+describe("inlineMarksToPlateProps", () => {
+  it("returns empty object for undefined inline marks", () => {
+    expect(inlineMarksToPlateProps(undefined)).toEqual({});
+  });
+
+  it("returns empty object for empty inline marks array", () => {
+    expect(inlineMarksToPlateProps([])).toEqual({});
+  });
+
+  it("converts strong mark to bold prop", () => {
+    const mark = makeInlineMark({ kind: "strong" });
+    const props = inlineMarksToPlateProps([mark]);
+
+    expect(props.bold).toBe(true);
+    expect(props.italic).toBeUndefined();
+    expect(props.strikethrough).toBeUndefined();
+    expect(props.code).toBeUndefined();
+    expect(props.link).toBeUndefined();
+    expect(props.link_href).toBeUndefined();
+  });
+
+  it("converts em mark to italic prop", () => {
+    const props = inlineMarksToPlateProps([makeInlineMark({ kind: "em" })]);
+
+    expect(props.italic).toBe(true);
+    expect(props.bold).toBeUndefined();
+  });
+
+  it("converts strikethrough mark to strikethrough prop", () => {
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "strikethrough" }),
+    ]);
+
+    expect(props.strikethrough).toBe(true);
+  });
+
+  it("converts inline_code mark to code prop", () => {
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "inline_code" }),
+    ]);
+
+    expect(props.code).toBe(true);
+  });
+
+  it("converts link mark to link + link_href props", () => {
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "link", href: "https://example.com" }),
+    ]);
+
+    expect(props.link).toBe(true);
+    expect(props.link_href).toBe("https://example.com");
+  });
+
+  it("omits link_href when link mark has no href", () => {
+    const props = inlineMarksToPlateProps([makeInlineMark({ kind: "link" })]);
+
+    expect(props.link).toBe(true);
+    expect(props.link_href).toBeUndefined();
+  });
+
+  it("omits link_href when link mark has empty href", () => {
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "link", href: "" }),
+    ]);
+
+    expect(props.link).toBe(true);
+    expect(props.link_href).toBeUndefined();
+  });
+
+  it("combines multiple inline marks on the same leaf", () => {
+    // `splitLeafByInlineMarks` 已经按边界切分 leaf，每个 sub-leaf 携带
+    // 完全覆盖它的 marks。这里验证多 mark 叠加场景（如 bold + italic）。
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "strong" }),
+      makeInlineMark({ kind: "em" }),
+    ]);
+
+    expect(props.bold).toBe(true);
+    expect(props.italic).toBe(true);
+  });
+
+  it("combines bold + link with href", () => {
+    const props = inlineMarksToPlateProps([
+      makeInlineMark({ kind: "strong" }),
+      makeInlineMark({ kind: "link", href: "https://claread.com" }),
+    ]);
+
+    expect(props.bold).toBe(true);
+    expect(props.link).toBe(true);
+    expect(props.link_href).toBe("https://claread.com");
+  });
+});
+
+describe("textLeafToPlateTextNode (B3 inline marks)", () => {
+  it("preserves inline marks on text leaf alongside vocabulary marks", () => {
+    const vocabMark = makeVocabularyMark({ startsHere: true });
+    const leaf = makeTextLeaf({
+      text: "bold text",
+      marks: [vocabMark],
+      inlineMarks: [makeInlineMark({ kind: "strong", start: 0, end: 9 })],
+    });
+
+    const node = textLeafToPlateTextNode(leaf);
+
+    expect(node.text).toBe("bold text");
+    expect(node.bold).toBe(true);
+    expect(node.vocabulary).toBe(true);
+    expect(node.vocabulary_data).toEqual(vocabMark);
+  });
+
+  it("projects link href from inline marks", () => {
+    const leaf = makeTextLeaf({
+      text: "click here",
+      inlineMarks: [
+        makeInlineMark({
+          kind: "link",
+          start: 0,
+          end: 10,
+          href: "https://example.com/path",
+        }),
+      ],
+    });
+
+    const node = textLeafToPlateTextNode(leaf);
+
+    expect(node.link).toBe(true);
+    expect(node.link_href).toBe("https://example.com/path");
+  });
+
+  it("does not set inline mark props when inlineMarks is undefined", () => {
+    const leaf = makeTextLeaf({ text: "plain" });
+
+    const node = textLeafToPlateTextNode(leaf);
+
+    expect(node.bold).toBeUndefined();
+    expect(node.italic).toBeUndefined();
+    expect(node.strikethrough).toBeUndefined();
+    expect(node.code).toBeUndefined();
+    expect(node.link).toBeUndefined();
+    expect(node.link_href).toBeUndefined();
+  });
+
+  it("preserves anchor metadata alongside inline marks", () => {
+    const leaf = makeTextLeaf({
+      text: "code span",
+      anchorSegmentId: "seg_inline",
+      segmentRange: { startUtf16: 100, endUtf16: 110 },
+      inlineMarks: [makeInlineMark({ kind: "inline_code", start: 100, end: 110 })],
+    });
+
+    const node = textLeafToPlateTextNode(leaf);
+
+    expect(node.code).toBe(true);
+    expect(node.anchor_segment_id).toBe("seg_inline");
+    expect(node.segment_start_utf16).toBe(100);
+    expect(node.segment_end_utf16).toBe(110);
   });
 });
 

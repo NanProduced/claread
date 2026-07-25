@@ -28,17 +28,35 @@ import {
 import type {
   ReaderBlockquoteElement,
   ReaderCalloutElement,
+  ReaderCodeBlockElement,
+  ReaderHeadingElement,
+  ReaderHrElement,
+  ReaderListItemElement,
+  ReaderListElement,
+  ReaderMarkdownBlockquoteElement,
   ReaderParagraphElement,
   ReaderSentenceAnalysisChunkElement,
   ReaderSentenceAnalysisElement,
+  ReaderTableCellElement,
+  ReaderTableElement,
+  ReaderTableRowElement,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import {
   READER_BLOCKQUOTE_TYPE,
   READER_CALLOUT_TYPE,
+  READER_CODE_BLOCK_TYPE,
+  READER_HEADING_TYPE,
+  READER_HR_TYPE,
+  READER_LIST_ITEM_TYPE,
+  READER_LIST_TYPE,
+  READER_MARKDOWN_BLOCKQUOTE_TYPE,
   READER_PARAGRAPH_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
   READER_SENTENCE_ANALYSIS_TYPE,
+  READER_TABLE_CELL_TYPE,
+  READER_TABLE_ROW_TYPE,
+  READER_TABLE_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
 
@@ -1090,6 +1108,341 @@ export const ReaderSentenceAnalysisChunkPlugin = createPlatePlugin({
   },
 });
 
+// ---------------------------------------------------------------------------
+// B2.5: Stable-block-derived element plugins (reader_heading / reader_list /
+// reader_list_item / reader_code_block / reader_markdown_blockquote /
+// reader_table / reader_table_row / reader_table_cell / reader_hr).
+//
+// These render Markdown stable blocks emitted by the backend (A5) projected
+// through B2.4. They differ from the `markdownElementPlugins` below:
+// - They carry `ReaderRecordPlateStableBlockData` (anchor segment / unit id /
+//   base range / hash) so selection, vocabulary marks, grammar marks and the
+//   navigation rail continue to work on Markdown-rendered blocks.
+// - They emit `data-reader-record-node` + `data-unit-id` to join the shared
+//   navigation contract (`readerRecordNavigableNodeAttrs`).
+// - Heading level comes from `element.level` (not from `h1`/`h2`/... type).
+// - List ordering comes from `element.ordered` (not from `ul`/`ol` type).
+// ---------------------------------------------------------------------------
+
+function ReaderStableHeadingComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderHeadingElement).data;
+  const level = (element as unknown as ReaderHeadingElement).level ?? 1;
+  const Tag = (`h${Math.min(Math.max(level, 1), 6)}` as unknown) as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+
+  return (
+    <Tag
+      {...attributes}
+      className={`reader-record-plate-markdown-heading reader-record-plate-markdown-heading--h${level} ${
+        attributes?.className ?? ""
+      }`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "heading",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderHeadingElement).id}
+      data-reader-record-stable-block-type="heading"
+      data-reader-record-markdown-node={`h${level}`}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+function ReaderStableListComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderListElement).data;
+  const ordered = (element as unknown as ReaderListElement).ordered;
+  const Tag = ordered ? "ol" : "ul";
+  const listClass = ordered
+    ? "reader-record-plate-markdown-list list-decimal"
+    : "reader-record-plate-markdown-list list-disc";
+
+  return (
+    <Tag
+      {...attributes}
+      className={`${listClass} ${attributes?.className ?? ""}`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "list",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderListElement).id}
+      data-reader-record-stable-block-type="list"
+      data-reader-record-markdown-node={ordered ? "ol" : "ul"}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+function ReaderStableListItemComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderListItemElement).data;
+
+  return (
+    <li
+      {...attributes}
+      className={`${attributes?.className ?? ""}`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "list_item",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderListItemElement).id}
+      data-reader-record-stable-block-type="list_item"
+      data-reader-record-markdown-node="li"
+    >
+      {children}
+    </li>
+  );
+}
+
+function ReaderStableCodeBlockComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderCodeBlockElement).data;
+  const language = data?.language ?? null;
+
+  return (
+    <pre
+      {...attributes}
+      className={`reader-record-plate-markdown-code-block overflow-x-auto rounded bg-muted/40 ${
+        attributes?.className ?? ""
+      }`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "code_block",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderCodeBlockElement).id}
+      data-reader-record-stable-block-type="code_block"
+      data-reader-record-markdown-node="code_block"
+      data-language={language ?? undefined}
+    >
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+function ReaderStableMarkdownBlockquoteComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderMarkdownBlockquoteElement).data;
+
+  return (
+    <blockquote
+      {...attributes}
+      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+        attributes?.className ?? ""
+      }`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "markdown_blockquote",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={
+        (element as unknown as ReaderMarkdownBlockquoteElement).id
+      }
+      data-reader-record-stable-block-type="markdown_blockquote"
+      data-reader-record-markdown-node="blockquote"
+    >
+      {children}
+    </blockquote>
+  );
+}
+
+function ReaderStableTableComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderTableElement).data;
+
+  return (
+    <div
+      {...attributes}
+      className={`reader-record-plate-markdown-table-wrapper my-2 overflow-x-auto ${
+        attributes?.className ?? ""
+      }`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "table",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderTableElement).id}
+      data-reader-record-stable-block-type="table"
+      data-reader-record-markdown-node="table"
+    >
+      <table className="reader-record-plate-markdown-table w-full border-collapse">
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReaderStableTableRowComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderTableRowElement).data;
+  const isHeader = data?.isHeader ?? false;
+
+  return (
+    <tr
+      {...attributes}
+      className={`reader-record-plate-markdown-table-row ${
+        isHeader ? "reader-record-plate-markdown-table-row--header" : ""
+      } ${attributes?.className ?? ""}`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "table_row",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderTableRowElement).id}
+      data-reader-record-stable-block-type="table_row"
+      data-reader-record-markdown-node="tr"
+      data-header-row={isHeader ? "true" : undefined}
+    >
+      {children}
+    </tr>
+  );
+}
+
+function ReaderStableTableCellComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderTableCellElement).data;
+  const isHeader = data?.isHeader ?? false;
+  const alignment = data?.alignment ?? "default";
+  const Tag = isHeader ? "th" : "td";
+  const alignClass =
+    alignment === "left"
+      ? "text-left"
+      : alignment === "center"
+        ? "text-center"
+        : alignment === "right"
+          ? "text-right"
+          : "";
+
+  return (
+    <Tag
+      {...attributes}
+      className={`reader-record-plate-markdown-table-cell border border-hairline/60 px-2 py-1 ${
+        isHeader ? "bg-muted/40 font-semibold" : ""
+      } ${alignClass} ${attributes?.className ?? ""}`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "table_cell",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderTableCellElement).id}
+      data-reader-record-stable-block-type="table_cell"
+      data-reader-record-markdown-node={isHeader ? "th" : "td"}
+      data-alignment={alignment !== "default" ? alignment : undefined}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+function ReaderStableHrComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderHrElement).data;
+
+  return (
+    <div
+      {...attributes}
+      className={`my-2 ${attributes?.className ?? ""}`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "hr",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={(element as unknown as ReaderHrElement).id}
+      data-reader-record-stable-block-type="hr"
+      data-reader-record-markdown-node="hr"
+    >
+      <hr className="border-current/15" />
+      {children}
+    </div>
+  );
+}
+
+export const ReaderStableHeadingPlugin = createPlatePlugin({
+  key: READER_HEADING_TYPE,
+  node: { isElement: true, component: ReaderStableHeadingComponent },
+});
+
+export const ReaderStableListPlugin = createPlatePlugin({
+  key: READER_LIST_TYPE,
+  node: { isElement: true, component: ReaderStableListComponent },
+});
+
+export const ReaderStableListItemPlugin = createPlatePlugin({
+  key: READER_LIST_ITEM_TYPE,
+  node: { isElement: true, component: ReaderStableListItemComponent },
+});
+
+export const ReaderStableCodeBlockPlugin = createPlatePlugin({
+  key: READER_CODE_BLOCK_TYPE,
+  node: { isElement: true, component: ReaderStableCodeBlockComponent },
+});
+
+export const ReaderStableMarkdownBlockquotePlugin = createPlatePlugin({
+  key: READER_MARKDOWN_BLOCKQUOTE_TYPE,
+  node: { isElement: true, component: ReaderStableMarkdownBlockquoteComponent },
+});
+
+export const ReaderStableTablePlugin = createPlatePlugin({
+  key: READER_TABLE_TYPE,
+  node: { isElement: true, component: ReaderStableTableComponent },
+});
+
+export const ReaderStableTableRowPlugin = createPlatePlugin({
+  key: READER_TABLE_ROW_TYPE,
+  node: { isElement: true, component: ReaderStableTableRowComponent },
+});
+
+export const ReaderStableTableCellPlugin = createPlatePlugin({
+  key: READER_TABLE_CELL_TYPE,
+  node: { isElement: true, component: ReaderStableTableCellComponent },
+});
+
+export const ReaderStableHrPlugin = createPlatePlugin({
+  key: READER_HR_TYPE,
+  node: { isElement: true, component: ReaderStableHrComponent },
+});
+
 // --- Markdown element plugins used by enhancement children ---
 
 function ReaderMarkdownParagraphComponent({
@@ -1331,14 +1684,18 @@ function ReaderMarkdownStrikethroughLeaf({
   children,
   attributes,
 }: PlateLeafProps) {
+  // P1: Use semantic <s> tag (GFM strikethrough) instead of <span> with
+  // `line-through` class. Matches the input page (MarkdownStrikethroughLeaf
+  // in MarkdownTextInput.tsx) and keeps accessibility/semantics consistent
+  // across both rendering paths.
   return (
-    <span
+    <s
       {...attributes}
       className={`line-through ${attributes?.className ?? ""}`.trim()}
       data-reader-record-markdown-mark="strikethrough"
     >
       {children}
-    </span>
+    </s>
   );
 }
 
@@ -1353,6 +1710,93 @@ function ReaderMarkdownCodeLeaf({ children, attributes }: PlateLeafProps) {
     >
       {children}
     </code>
+  );
+}
+
+/**
+ * B3: Markdown link leaf.
+ *
+ * `leaf.link_href` 由 `inlineMarksToPlateProps` 投影而来，后端已对 href
+ * 做白名单过滤（仅允许 http / https / mailto），这里直接渲染为 <a>。
+ * 缺失 href 时退化为 <span>，避免渲染出空的锚点。
+ */
+function ReaderMarkdownLinkLeaf({
+  children,
+  attributes,
+  leaf,
+}: PlateLeafProps) {
+  const plateLeaf = leaf as unknown as { link_href?: string };
+  const href =
+    typeof plateLeaf?.link_href === "string" && plateLeaf.link_href.length > 0
+      ? plateLeaf.link_href
+      : undefined;
+
+  if (!href) {
+    return (
+      <span
+        {...attributes}
+        data-reader-record-markdown-mark="link"
+        data-reader-record-markdown-link-missing-href="true"
+      >
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      {...attributes}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`reader-record-plate-link ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="link"
+    >
+      {children}
+    </a>
+  );
+}
+
+/**
+ * P1: Markdown link element (deserialized `a` node).
+ *
+ * When `MarkdownPlugin.deserialize()` (used by callout / sentence-analysis
+ * children via `deserializeMarkdownToBlocks`) encounters a Markdown link like
+ * `[text](https://example.com)`, it emits a Plate element of type `"a"` with
+ * `element.url` carrying the href. The B3 `ReaderMarkdownLinkLeaf` path is a
+ * separate rendering: it projects `link` leaves from backend inline marks.
+ *
+ * This element plugin ensures deserialized Markdown links inside callouts /
+ * sentence-analysis blocks render as real `<a>` elements with safe rel attrs.
+ * Without it, `a` nodes would render as plain text (no plugin component).
+ *
+ * `element.url` is already remark-validated (URL shape). The parser-level
+ * protocol whitelist is enforced in the backend `markdown_source_parser`
+ * (http/https/mailto only), so by the time we reach here the href is safe.
+ * Defensive fallback to `#` when `url` is missing — never render an empty href.
+ */
+function ReaderMarkdownLinkElement({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const url =
+    typeof (element as { url?: unknown }).url === "string"
+      ? (element as { url: string }).url
+      : "";
+  const href = url.length > 0 ? url : "#";
+  return (
+    <a
+      {...attributes}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`reader-record-plate-link ${attributes?.className ?? ""}`.trim()}
+      data-reader-record-markdown-mark="link"
+      data-reader-record-markdown-link-source="deserialized"
+    >
+      {children}
+    </a>
   );
 }
 
@@ -1399,6 +1843,21 @@ const markdownElementPlugins = [
     key: "hr",
     node: { isElement: true, component: ReaderMarkdownHrComponent },
   }),
+  // P1: `a` element plugin for deserialized Markdown links. Without this,
+  // links inside callout/sentence-analysis children (produced by
+  // `deserializeMarkdownToBlocks`) would render as plain text. The B3
+  // `link` leaf plugin is separate — it serves the inline-marks projection
+  // path. Both coexist without conflict (different node kinds: element vs
+  // leaf, different keys: "a" vs "link").
+  // The `options.mode` field mirrors Plate's LinkPlugin contract so that
+  // shared UI (e.g. FloatingToolbar's `usePluginOption({ key: KEYS.link },
+  // "mode")`) does not crash with OPTION_UNDEFINED when the reader kit is
+  // mounted alongside the floating toolbar in tests or composed editors.
+  createPlatePlugin({
+    key: "a",
+    node: { isElement: true, component: ReaderMarkdownLinkElement },
+    options: { mode: "inline" },
+  }),
 ];
 
 const markdownLeafPlugins = [
@@ -1418,6 +1877,13 @@ const markdownLeafPlugins = [
     key: "code",
     node: { isLeaf: true, component: ReaderMarkdownCodeLeaf },
   }),
+  // B3: link leaf. Plate's link plugin key is "link"; leaf propagates
+  // `link_href` from the projected text node so the renderer can emit
+  // a real <a> with a whitelisted href.
+  createPlatePlugin({
+    key: "link",
+    node: { isLeaf: true, component: ReaderMarkdownLinkLeaf },
+  }),
 ];
 
 // --- Kit aggregation ---
@@ -1430,6 +1896,16 @@ export const ReaderBlocksKit = [
   ReaderSentenceAnalysisPlugin,
   ReaderSentenceAnalysisChunksPlugin,
   ReaderSentenceAnalysisChunkPlugin,
+  // B2.5: Stable-block-derived plugins for Markdown rendering.
+  ReaderStableHeadingPlugin,
+  ReaderStableListPlugin,
+  ReaderStableListItemPlugin,
+  ReaderStableCodeBlockPlugin,
+  ReaderStableMarkdownBlockquotePlugin,
+  ReaderStableTablePlugin,
+  ReaderStableTableRowPlugin,
+  ReaderStableTableCellPlugin,
+  ReaderStableHrPlugin,
   ...markdownElementPlugins,
   ...markdownLeafPlugins,
 ];

@@ -111,6 +111,8 @@ class InputSuitabilityGate:
     def evaluate(
         self,
         request: InputSuitabilityRequest,
+        *,
+        preparsed: MarkdownParseResult | None = None,
     ) -> InputSuitabilityResult:
         normalized_text = _normalize_text(request.text)
         preview = _build_preview(normalized_text)
@@ -132,10 +134,19 @@ class InputSuitabilityGate:
                 preview=preview,
             )
 
-        # Parse once and share the result across code-structure metrics,
-        # markdown complexity detection, and downstream consumers to avoid
-        # redundant parser invocations.
-        parse_result = _MARKDOWN_PARSER.parse(normalized_text)
+        # A4 — 解析结果共享: when the caller has already parsed the
+        # normalized text (e.g. the upload/materialization pipeline that
+        # wants to share one parse across gate + normalizer + candidate
+        # creation), reuse that result instead of invoking the parser
+        # again. The caller is responsible for ensuring ``preparsed``
+        # was produced from the same text (after ``_normalize_text``
+        # normalization); we do not re-validate because the parser is
+        # deterministic and the pipeline is single-threaded per request.
+        parse_result = (
+            preparsed
+            if preparsed is not None
+            else _MARKDOWN_PARSER.parse(normalized_text)
+        )
         code_metrics = _compute_code_structure_metrics(normalized_text, parse_result)
         metrics = _measure_text(normalized_text)
         metrics = replace(metrics, code_line_ratio=code_metrics.code_line_ratio)
@@ -290,8 +301,10 @@ class InputSuitabilityGate:
 
 def evaluate_input_suitability(
     request: InputSuitabilityRequest,
+    *,
+    preparsed: MarkdownParseResult | None = None,
 ) -> InputSuitabilityResult:
-    return InputSuitabilityGate().evaluate(request)
+    return InputSuitabilityGate().evaluate(request, preparsed=preparsed)
 
 
 def _build_result(

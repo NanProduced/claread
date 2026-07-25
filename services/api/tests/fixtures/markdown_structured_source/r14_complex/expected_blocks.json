@@ -24,7 +24,14 @@
       "block_id": "b3",
       "block_type": "paragraph",
       "text_content": "The article covers multiple topics including inline code and a link.",
-      "payload_json": {"links": [{"text": "a link", "href": "https://example.com"}]},
+      "payload_json": {
+        "links": [{"text": "a link", "href": "https://example.com"}],
+        "inline_marks": [
+          {"type": "strong", "start": 19, "end": 27},
+          {"type": "inline_code", "start": 45, "end": 56},
+          {"type": "link", "start": 61, "end": 67, "href": "https://example.com"}
+        ]
+      },
       "parent_block_id": null,
       "order_index": 2,
       "source_range": {"line_start": 5, "line_end": 5}
@@ -60,7 +67,13 @@
       "block_id": "b7",
       "block_type": "list_item",
       "text_content": "Second item with emphasis",
-      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "payload_json": {
+        "ordered": false,
+        "marker": "-",
+        "ordinal": null,
+        "depth": 0,
+        "inline_marks": [{"type": "em", "start": 17, "end": 25}]
+      },
       "parent_block_id": "b5",
       "order_index": 6,
       "source_range": {"line_start": 10, "line_end": 13}
@@ -168,7 +181,9 @@
       "block_id": "b19",
       "block_type": "blockquote",
       "text_content": "A blockquote with strikethrough.",
-      "payload_json": {},
+      "payload_json": {
+        "inline_marks": [{"type": "strikethrough", "start": 18, "end": 31}]
+      },
       "parent_block_id": null,
       "order_index": 18,
       "source_range": {"line_start": 23, "line_end": 23}
@@ -186,7 +201,12 @@
       "block_id": "b21",
       "block_type": "paragraph",
       "text_content": "Final paragraph with code and bold.",
-      "payload_json": {},
+      "payload_json": {
+        "inline_marks": [
+          {"type": "inline_code", "start": 21, "end": 25},
+          {"type": "strong", "start": 30, "end": 34}
+        ]
+      },
       "parent_block_id": null,
       "order_index": 20,
       "source_range": {"line_start": 27, "line_end": 27}

@@ -1,6 +1,7 @@
 {
   "fixture_name": "unsafe_link",
   "warnings": [
+    {"code": "inline_html", "message": "Inline HTML tag stripped from paragraph text.", "blocks_freeze": false},
     {"code": "unsafe_link_protocol", "message": "Links with unsafe protocols (javascript/data/vbscript) were stripped from paragraph text; link text preserved.", "blocks_freeze": false}
   ],
   "unsupported": [
