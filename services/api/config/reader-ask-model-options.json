@@ -8,6 +8,7 @@
   "runtime_defaults": {
     "max_input_tokens": 24000,
     "max_output_tokens": 3200,
+    "max_turn_output_tokens": 9600,
     "prompt_buffer_tokens": 800
   },
   "options": {

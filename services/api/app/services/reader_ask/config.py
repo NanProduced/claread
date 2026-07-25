@@ -12,6 +12,7 @@ MIN_MAX_OUTPUT_TOKENS: int = 400
 PROMPT_BUDGET_BUFFER_TOKENS: int = 800
 DEFAULT_RUNTIME_MAX_INPUT_TOKENS: int = 24000
 DEFAULT_RUNTIME_MAX_OUTPUT_TOKENS: int = 3200
+DEFAULT_RUNTIME_MAX_TURN_OUTPUT_TOKENS: int = 9600
 
 # ---------------------------------------------------------------------------
 # History / context limits

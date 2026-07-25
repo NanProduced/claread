@@ -18,7 +18,8 @@ This module compiles a persisted option into a single
   ``RunModelSettings.max_tokens`` and forwarded as PydanticAI
   ``ModelSettings``);
 - a PydanticAI :class:`UsageLimits` carrying ``output_tokens_limit``
-  so the host can enforce the same cap as a second-layer guard;
+  derived from ``option.runtime_budget.max_turn_output_tokens`` so the
+  host can enforce an explicit cumulative per-turn output cap;
 - a privacy-safe :class:`ReaderRecordAskExecutionSnapshot` (option
   key, resolved provider / model / profile names, budget policy
   version + fingerprint) — never API key, body, raw reasoning,
@@ -60,7 +61,7 @@ logger = logging.getLogger(__name__)
 # Policy version stamped on every snapshot. Bumped only when the
 # resolver's *compilation semantics* change (new fields, new mapping
 # rules). Option-level config drift is captured by ``budget_fingerprint``.
-EXECUTION_CONFIG_POLICY_VERSION: str = "reader_record_ask_execution_v1"
+EXECUTION_CONFIG_POLICY_VERSION: str = "reader_record_ask_execution_v2"
 
 
 class ReaderRecordAskExecutionUnavailable(RuntimeError):
@@ -106,6 +107,7 @@ class ReaderRecordAskExecutionSnapshot(BaseModel):
     # UsageLimits so an operator can audit the cap without re-running
     # the resolver).
     max_output_tokens: int = Field(ge=1)
+    max_turn_output_tokens: int = Field(ge=1)
     max_input_tokens: int = Field(ge=1)
     prompt_buffer_tokens: int = Field(ge=0)
     # Resolver / policy identity.
@@ -119,7 +121,7 @@ class ReaderRecordAskExecutionSnapshot(BaseModel):
 def _budget_fingerprint(budget: ReaderAskRuntimeBudgetConfig) -> str:
     """Stable SHA-256 fingerprint of the resolved budget policy.
 
-    Only the three numeric fields enter the hash — never the option
+    Only the four numeric fields enter the hash — never the option
     key, label, or provider identity. This lets an operator verify
     "did the budget change between two turns of the same option"
     without learning anything else.
@@ -127,6 +129,7 @@ def _budget_fingerprint(budget: ReaderAskRuntimeBudgetConfig) -> str:
     payload = (
         f"in={budget.max_input_tokens};"
         f"out={budget.max_output_tokens};"
+        f"turn_out={budget.max_turn_output_tokens};"
         f"buf={budget.prompt_buffer_tokens}"
     ).encode()
     return hashlib.sha256(payload).hexdigest()
@@ -151,12 +154,13 @@ class ReaderRecordAskExecutionConfig:
     purpose-built for that) plus ``option_key`` / ``runtime_budget``.
 
     ``model_settings_payload`` is the dict form forwarded to PydanticAI
-    as ``ModelSettings``; ``usage_limits`` is the PydanticAI
-    :class:`UsageLimits` instance. Both are derived from
-    ``option.runtime_budget.max_output_tokens`` only — ``max_input_tokens``
-    is intentionally **not** mapped to a char ledger (the existing
-    :class:`ModelVisibleTurnBudget` remains the independent input
-    safety ledger).
+    as ``ModelSettings`` and uses the per-request
+    ``option.runtime_budget.max_output_tokens`` cap. ``usage_limits`` is
+    the PydanticAI :class:`UsageLimits` instance and uses the distinct
+    cumulative ``max_turn_output_tokens`` cap. ``max_input_tokens`` is
+    intentionally **not** mapped to a host token limit (the existing
+    :class:`ModelVisibleTurnBudget` remains the independent input safety
+    ledger).
     """
 
     option_key: str
@@ -205,8 +209,10 @@ def _resolve_model_settings(
     cap actually enforced on the wire. Other provider-level fields
     (temperature, thinking payload, extra_body) are preserved.
 
-    Returns ``(payload_dict, merged_settings)`` so callers can log
-    the dict form safely and pass either form to PydanticAI.
+    Returns ``(payload_dict, merged_settings)`` for provider execution.
+    The payload may contain sensitive ``extra_headers`` and must never
+    be logged; use :class:`ReaderRecordAskExecutionSnapshot` for
+    observability.
     """
     merged = base or RunModelSettings()
     merged = merged.with_max_tokens(max_output_tokens)
@@ -216,12 +222,14 @@ def _resolve_model_settings(
 
 def _resolve_usage_limits(
     *,
-    max_output_tokens: int,
+    max_turn_output_tokens: int,
 ) -> UsageLimits:
-    """Map the product output cap to a PydanticAI host UsageLimits.
+    """Map the cumulative turn cap to PydanticAI host UsageLimits.
 
-    Only ``output_tokens_limit`` is set: this is the host-side
-    second-layer guard mirroring the provider completion cap. We
+    PydanticAI checks ``output_tokens_limit`` against cumulative
+    ``RunUsage.output_tokens`` after each model response. It must
+    therefore use the explicit per-turn cap, not the per-request
+    provider ``max_output_tokens`` setting. We
     intentionally do **not** set ``input_tokens_limit`` or
     ``total_tokens_limit`` from ``max_input_tokens`` — the existing
     :class:`ModelVisibleTurnBudget` is the independent fail-closed
@@ -233,7 +241,7 @@ def _resolve_usage_limits(
     agent can still perform its bounded tool fan-out (read_range /
     search_current_article / expand_evidence).
     """
-    return UsageLimits(output_tokens_limit=max_output_tokens)
+    return UsageLimits(output_tokens_limit=max_turn_output_tokens)
 
 
 def resolve_reader_record_ask_execution(
@@ -301,7 +309,7 @@ def resolve_reader_record_ask_execution(
         max_output_tokens=budget.max_output_tokens,
     )
     usage_limits = _resolve_usage_limits(
-        max_output_tokens=budget.max_output_tokens,
+        max_turn_output_tokens=budget.max_turn_output_tokens,
     )
 
     snapshot = ReaderRecordAskExecutionSnapshot(
@@ -311,6 +319,7 @@ def resolve_reader_record_ask_execution(
         profile_name=model_config.profile_name,
         adapter=model_config.adapter,
         max_output_tokens=budget.max_output_tokens,
+        max_turn_output_tokens=budget.max_turn_output_tokens,
         max_input_tokens=budget.max_input_tokens,
         prompt_buffer_tokens=budget.prompt_buffer_tokens,
         policy_version=EXECUTION_CONFIG_POLICY_VERSION,

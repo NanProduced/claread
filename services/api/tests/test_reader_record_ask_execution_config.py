@@ -5,8 +5,9 @@ Covers the four user-required guarantees:
 1. Pro / Flash / Qwen send + retry resolved-selection symmetry — the
    persisted option is the single source of truth; the resolver is
    deterministic and never silently substitutes the global default.
-2. ``max_output_tokens`` reaches both the provider completion cap
-   (``ModelSettings.max_tokens``) and the PydanticAI host guard
+2. ``max_output_tokens`` reaches the per-request provider completion
+   cap (``ModelSettings.max_tokens``), while the distinct cumulative
+   ``max_turn_output_tokens`` reaches the PydanticAI host guard
    (``UsageLimits.output_tokens_limit``).
 3. The existing ``ModelVisibleTurnBudget`` char ledger stays
    independent — the resolver does not map ``max_input_tokens`` to
@@ -132,6 +133,7 @@ _THREE_OPTION_CATALOG = {
     "runtime_defaults": {
         "max_input_tokens": 24000,
         "max_output_tokens": 3200,
+        "max_turn_output_tokens": 9600,
         "prompt_buffer_tokens": 800,
     },
     "options": {
@@ -145,7 +147,10 @@ _THREE_OPTION_CATALOG = {
                 }
             },
             "price_multiplier": 1.0,
-            "runtime_budget": {"max_output_tokens": 3200},
+            "runtime_budget": {
+                "max_output_tokens": 3200,
+                "max_turn_output_tokens": 9600,
+            },
         },
         "qwen-max": {
             "label": "Qwen 3.7 Max",
@@ -157,7 +162,10 @@ _THREE_OPTION_CATALOG = {
                 }
             },
             "price_multiplier": 1.6,
-            "runtime_budget": {"max_output_tokens": 4800},
+            "runtime_budget": {
+                "max_output_tokens": 4800,
+                "max_turn_output_tokens": 14400,
+            },
         },
         "deepseek-pro": {
             "label": "DeepSeek V4 Pro",
@@ -169,7 +177,10 @@ _THREE_OPTION_CATALOG = {
                 }
             },
             "price_multiplier": 1.3,
-            "runtime_budget": {"max_output_tokens": 6400},
+            "runtime_budget": {
+                "max_output_tokens": 6400,
+                "max_turn_output_tokens": 19200,
+            },
         },
     },
 }
@@ -270,7 +281,7 @@ def test_retry_with_persisted_option_does_not_substitute_default() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. max_output_tokens reaches provider and UsageLimits
+# 2. Per-request provider cap and cumulative turn cap stay distinct
 # ---------------------------------------------------------------------------
 
 
@@ -298,25 +309,25 @@ def test_max_output_tokens_reaches_provider_completion_cap(
 
 
 @pytest.mark.parametrize(
-    "option_key, expected_max_output",
+    "option_key, expected_turn_output",
     [
-        ("deepseek-v4-flash", 3200),
-        ("qwen-max", 4800),
-        ("deepseek-pro", 6400),
+        ("deepseek-v4-flash", 9600),
+        ("qwen-max", 14400),
+        ("deepseek-pro", 19200),
     ],
 )
-def test_max_output_tokens_reaches_pydantic_ai_usage_limits(
+def test_max_turn_output_tokens_reaches_pydantic_ai_usage_limits(
     option_key: str,
-    expected_max_output: int,
+    expected_turn_output: int,
 ) -> None:
-    """Host UsageLimits.output_tokens_limit mirrors the same cap (second guard)."""
+    """Host UsageLimits uses the cumulative turn cap, not the request cap."""
     settings = _three_option_settings()
     option = _resolve_option(settings, option_key)
     execution = resolve_reader_record_ask_execution(option, settings=settings)
 
     assert execution.usage_limits is not None
-    # PydanticAI UsageLimits exposes output_tokens_limit.
-    assert execution.usage_limits.output_tokens_limit == expected_max_output
+    assert execution.usage_limits.output_tokens_limit == expected_turn_output
+    assert execution.usage_limits.output_tokens_limit != option.runtime_budget.max_output_tokens
     # input_tokens_limit must NOT be set from max_input_tokens — the
     # ModelVisibleTurnBudget char ledger remains the independent input guard.
     assert execution.usage_limits.input_tokens_limit is None
@@ -424,6 +435,7 @@ def test_snapshot_model_forbids_sensitive_extra_fields() -> None:
         profile_name="ask-main-deepseek-v4-flash",
         adapter="openai_compatible",
         max_output_tokens=3200,
+        max_turn_output_tokens=9600,
         max_input_tokens=24000,
         prompt_buffer_tokens=800,
         policy_version=EXECUTION_CONFIG_POLICY_VERSION,
@@ -469,6 +481,7 @@ def test_snapshot_carries_only_safe_policy_identity() -> None:
     assert snap.profile_name == "ask-main-deepseek-v4-flash"
     assert snap.adapter == "openai_compatible"
     assert snap.max_output_tokens == 3200
+    assert snap.max_turn_output_tokens == 9600
     assert snap.max_input_tokens == 24000
     assert snap.prompt_buffer_tokens == 800
     assert snap.policy_version == EXECUTION_CONFIG_POLICY_VERSION
@@ -477,7 +490,7 @@ def test_snapshot_carries_only_safe_policy_identity() -> None:
 
 
 def test_budget_fingerprint_is_stable_and_field_only() -> None:
-    """The budget fingerprint hashes only the three numeric budget fields.
+    """The budget fingerprint hashes only the four numeric budget fields.
 
     Two options with the same budget numbers produce the same fingerprint
     (verifying the hash never mixes in option key, label, or provider).
@@ -487,11 +500,13 @@ def test_budget_fingerprint_is_stable_and_field_only() -> None:
     a = ReaderAskRuntimeBudgetConfig(
         max_input_tokens=24000,
         max_output_tokens=3200,
+        max_turn_output_tokens=9600,
         prompt_buffer_tokens=800,
     )
     b = ReaderAskRuntimeBudgetConfig(
         max_input_tokens=24000,
         max_output_tokens=3200,
+        max_turn_output_tokens=9600,
         prompt_buffer_tokens=800,
     )
     assert _budget_fingerprint(a) == _budget_fingerprint(b)
@@ -499,9 +514,18 @@ def test_budget_fingerprint_is_stable_and_field_only() -> None:
     c = ReaderAskRuntimeBudgetConfig(
         max_input_tokens=24000,
         max_output_tokens=6400,  # different output
+        max_turn_output_tokens=9600,
         prompt_buffer_tokens=800,
     )
     assert _budget_fingerprint(a) != _budget_fingerprint(c)
+
+    d = ReaderAskRuntimeBudgetConfig(
+        max_input_tokens=24000,
+        max_output_tokens=3200,
+        max_turn_output_tokens=12800,  # different cumulative turn cap
+        prompt_buffer_tokens=800,
+    )
+    assert _budget_fingerprint(a) != _budget_fingerprint(d)
 
 
 # ---------------------------------------------------------------------------
@@ -875,3 +899,6 @@ def test_model_settings_payload_not_described_as_safely_loggable() -> None:
     doc_flat = re.sub(r"\s+", " ", doc).lower()
     assert "not" in doc_flat
     assert "safely loggable" in doc_flat
+
+    module_flat = re.sub(r"\s+", " ", _execution_config_source()).lower()
+    assert "callers can log the dict form safely" not in module_flat

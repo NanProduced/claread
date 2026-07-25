@@ -4,8 +4,9 @@ import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config.settings import Settings
 from app.llm.provider_factory import ModelProviderError, build_model_instance
@@ -50,7 +51,20 @@ class ReaderAskRuntimeBudgetConfig(BaseModel):
 
     max_input_tokens: int = Field(default=cfg.DEFAULT_RUNTIME_MAX_INPUT_TOKENS, ge=1)
     max_output_tokens: int = Field(default=cfg.DEFAULT_RUNTIME_MAX_OUTPUT_TOKENS, ge=1)
+    max_turn_output_tokens: int = Field(
+        default=cfg.DEFAULT_RUNTIME_MAX_TURN_OUTPUT_TOKENS,
+        ge=1,
+    )
     prompt_buffer_tokens: int = Field(default=cfg.PROMPT_BUDGET_BUFFER_TOKENS, ge=0)
+
+    @model_validator(mode="after")
+    def validate_output_caps(self) -> Self:
+        if self.max_turn_output_tokens < self.max_output_tokens:
+            raise ValueError(
+                "max_turn_output_tokens must be greater than or equal to "
+                "max_output_tokens"
+            )
+        return self
 
 
 class ReaderAskModelCatalogConfig(BaseModel):

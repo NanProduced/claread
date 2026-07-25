@@ -86,6 +86,7 @@ def _make_execution_config(
     option_key: str,
     model: object,
     max_output_tokens: int = 3200,
+    max_turn_output_tokens: int = 9600,
 ):
     """Build a real ReaderRecordAskExecutionConfig for service-layer tests.
 
@@ -107,10 +108,11 @@ def _make_execution_config(
         option_key=option_key,
         model=model,  # type: ignore[arg-type]
         model_settings_payload={"max_tokens": max_output_tokens},
-        usage_limits=_make_usage_limits(max_output_tokens),
+        usage_limits=_make_usage_limits(max_turn_output_tokens),
         runtime_budget=ReaderAskRuntimeBudgetConfig(
             max_input_tokens=24000,
             max_output_tokens=max_output_tokens,
+            max_turn_output_tokens=max_turn_output_tokens,
             prompt_buffer_tokens=800,
         ),
     )

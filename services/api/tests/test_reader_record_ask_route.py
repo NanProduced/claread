@@ -82,6 +82,7 @@ def _make_execution_config(
     option_key: str,
     model: object,
     max_output_tokens: int = 3200,
+    max_turn_output_tokens: int = 9600,
 ) -> ReaderRecordAskExecutionConfig:
     """Build a real ReaderRecordAskExecutionConfig for service-layer tests.
 
@@ -104,10 +105,11 @@ def _make_execution_config(
         option_key=option_key,
         model=model,  # type: ignore[arg-type]
         model_settings_payload={"max_tokens": max_output_tokens},
-        usage_limits=_make_usage_limits(max_output_tokens),
+        usage_limits=_make_usage_limits(max_turn_output_tokens),
         runtime_budget=ReaderAskRuntimeBudgetConfig(
             max_input_tokens=24000,
             max_output_tokens=max_output_tokens,
+            max_turn_output_tokens=max_turn_output_tokens,
             prompt_buffer_tokens=800,
         ),
     )
@@ -1077,14 +1079,14 @@ class TestReaderRecordAskBudgetCapture:
 
     - ``model`` is the exact resolved model object (Pro);
     - ``model_settings["max_tokens"]`` equals the option budget (6400);
-    - ``usage_limits.output_tokens_limit`` mirrors the same cap;
+    - ``usage_limits.output_tokens_limit`` uses the cumulative turn cap;
     - ``usage_limits.input_tokens_limit`` and ``total_tokens_limit``
       are both ``None`` (char ledger stays independent).
     """
 
     @pytest.mark.asyncio
     async def test_send_agentic_pro_captures_resolved_model_and_budget(self) -> None:
-        """Send path: Pro option → resolved Pro model + 6400 cap on both layers."""
+        """Send path: Pro option → 6400 request cap + 19200 turn cap."""
         from app.services.reader_record_ask.service import send_reading_record_ask_message
 
         request = MagicMock()
@@ -1129,6 +1131,7 @@ class TestReaderRecordAskBudgetCapture:
                     option_key="deepseek-pro",
                     model=pro_model,
                     max_output_tokens=6400,
+                    max_turn_output_tokens=19200,
                 ),
             ),
             patch(
@@ -1156,13 +1159,13 @@ class TestReaderRecordAskBudgetCapture:
         # Host usage limit — output only, input/total left None.
         usage_limits = captured["usage_limits"]
         assert usage_limits is not None
-        assert usage_limits.output_tokens_limit == 6400
+        assert usage_limits.output_tokens_limit == 19200
         assert usage_limits.input_tokens_limit is None
         assert usage_limits.total_tokens_limit is None
 
     @pytest.mark.asyncio
     async def test_retry_agentic_pro_captures_resolved_model_and_budget(self) -> None:
-        """Retry path: Pro option → resolved Pro model + 6400 cap on both layers.
+        """Retry path: Pro option → 6400 request cap + 19200 turn cap.
 
         Mirrors the Send capture test. The retry generator must receive
         the same ``model`` / ``model_settings`` / ``usage_limits``
@@ -1187,10 +1190,11 @@ class TestReaderRecordAskBudgetCapture:
             option_key="deepseek-pro",
             model=pro_model,  # type: ignore[arg-type]
             model_settings_payload={"max_tokens": 6400},
-            usage_limits=_make_usage_limits(6400),
+            usage_limits=_make_usage_limits(19200),
             runtime_budget=ReaderAskRuntimeBudgetConfig(
                 max_input_tokens=24000,
                 max_output_tokens=6400,
+                max_turn_output_tokens=19200,
                 prompt_buffer_tokens=800,
             ),
         )
@@ -1258,7 +1262,7 @@ class TestReaderRecordAskBudgetCapture:
         # Host usage limit — output only, input/total left None.
         usage_limits = captured["usage_limits"]
         assert usage_limits is not None
-        assert usage_limits.output_tokens_limit == 6400
+        assert usage_limits.output_tokens_limit == 19200
         assert usage_limits.input_tokens_limit is None
         assert usage_limits.total_tokens_limit is None
 

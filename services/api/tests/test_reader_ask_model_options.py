@@ -71,6 +71,7 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
                 "runtime_defaults": {
                     "max_input_tokens": 28000,
                     "max_output_tokens": 3600,
+                    "max_turn_output_tokens": 10800,
                     "prompt_buffer_tokens": 900,
                 },
                 "options": {
@@ -85,7 +86,8 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
                         },
                         "price_multiplier": 1.5,
                         "runtime_budget": {
-                            "max_output_tokens": 4200
+                            "max_output_tokens": 4200,
+                            "max_turn_output_tokens": 12600,
                         },
                     }
                 },
@@ -103,7 +105,19 @@ def test_list_reader_ask_model_options_resolves_stage_model_names(monkeypatch) -
     assert items[0].billing.price_multiplier == 1.5
     assert items[0].runtime_budget.max_input_tokens == 28000
     assert items[0].runtime_budget.max_output_tokens == 4200
+    assert items[0].runtime_budget.max_turn_output_tokens == 12600
     assert items[0].runtime_budget.prompt_buffer_tokens == 900
+
+
+def test_runtime_budget_rejects_turn_cap_below_request_cap() -> None:
+    with pytest.raises(
+        ValueError,
+        match="max_turn_output_tokens must be greater than or equal",
+    ):
+        model_options_svc.ReaderAskRuntimeBudgetConfig(
+            max_output_tokens=3200,
+            max_turn_output_tokens=1600,
+        )
 
 
 def test_resolve_reader_ask_model_option_falls_back_for_stale_thread_key(monkeypatch) -> None:
