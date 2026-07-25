@@ -1048,7 +1048,7 @@ async def test_rag_off_basic_answer_still_completes_via_initial_anchor() -> None
 # retries["output"], producing either a second model call (success) or a
 # finite UnexpectedModelBehavior (budget exhausted). This is distinct from
 # the existing schema-validation retry tests above (which use empty
-# answer_text that fails AgentAnswerDraft.min_length=1).
+# answer text that fails AgentAnswerDraftOutput validation).
 # ---------------------------------------------------------------------------
 
 

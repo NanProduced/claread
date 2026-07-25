@@ -9,6 +9,10 @@ import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from app.services.reader_record_ask.answer_block_provenance import (
+    AnswerBlockDraft,
+    ValidatedAnswerBlocks,
+)
 from app.services.reader_record_ask.article_rag_port import (
     ArticleRagHitView,
     ArticleRagSearchOutcome,
@@ -33,10 +37,7 @@ from app.services.reader_record_ask.fence import (
     SequenceGenerationFence,
     StaticGenerationFence,
 )
-from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft,
-    finalize_agent_answer,
-)
+from app.services.reader_record_ask.finalizer import finalize_agent_answer
 from app.services.reader_record_ask.runtime import run_reading_record_ask
 from app.services.reader_record_ask.runtime_events import ToolResultEvent
 from app.services.reader_record_ask.search_current_article_executor import (
@@ -214,6 +215,23 @@ def _model_search_then_final():
         )
 
     return FunctionModel(model_fn), state
+
+
+def _validated_article_answer(
+    text: str,
+    handles: list[str],
+) -> ValidatedAnswerBlocks:
+    return ValidatedAnswerBlocks(
+        blocks=(
+            AnswerBlockDraft(
+                text=text,
+                basis="article",
+                article_scope="evidence_bounded",
+                evidence_handles=tuple(handles),
+            ),
+        ),
+        knowledge_mode="article_grounded",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -397,10 +415,10 @@ async def test_finalizer_rejects_unknown_handle() -> None:
     result = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
-        draft=AgentAnswerDraft(
-            answer_text="x",
-            cited_evidence_handles=["evh_" + ("ab" * 16)],
-            response_kind="grounded_answer",
+        response_kind="grounded_answer",
+        validated_answer_blocks=_validated_article_answer(
+            "x",
+            ["evh_" + ("ab" * 16)],
         ),
         fence=StaticGenerationFence(live_generation=1),
     )
@@ -428,10 +446,10 @@ async def test_finalizer_rejects_foreign_envelope_handle() -> None:
     result = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
-        draft=AgentAnswerDraft(
-            answer_text="x",
-            cited_evidence_handles=[obs.handle.handle_id],
-            response_kind="grounded_answer",
+        response_kind="grounded_answer",
+        validated_answer_blocks=_validated_article_answer(
+            "x",
+            [obs.handle.handle_id],
         ),
         fence=StaticGenerationFence(live_generation=1),
     )
@@ -454,10 +472,10 @@ async def test_finalizer_stale_fence_no_answer() -> None:
     result = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
-        draft=AgentAnswerDraft(
-            answer_text="should not submit",
-            cited_evidence_handles=[ref.handle_id],
-            response_kind="grounded_answer",
+        response_kind="grounded_answer",
+        validated_answer_blocks=_validated_article_answer(
+            "should not submit",
+            [ref.handle_id],
         ),
         fence=StaticGenerationFence(live_generation=99),
     )

@@ -7163,10 +7163,9 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
            ``ModelRetry``, neither counter incremented (partial mode
            is a pre-validation nudge, not a final validation attempt).
     """
-    from app.services.reader_record_ask.finalizer import (  # noqa: PLC0415
-        AgentAnswerDraft,
-    )
     from app.services.reader_record_ask.grounding_validator import (  # noqa: PLC0415
+        AgentAnswerBlockOutput,
+        AgentAnswerDraftOutput,
         grounding_validator,
     )
     from pydantic_ai.exceptions import ModelRetry  # noqa: PLC0415
@@ -7177,10 +7176,16 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
         observation=observation_1,
         partial_output=True,
     )
-    draft_pass = AgentAnswerDraft(
-        answer_text="partial answer",
-        cited_evidence_handles=[],
+    draft_pass = AgentAnswerDraftOutput(
         response_kind="grounded_answer",
+        answer_blocks=[
+            AgentAnswerBlockOutput(
+                text="partial answer",
+                basis="general",
+                article_scope=None,
+                evidence_handles=[],
+            )
+        ],
     )
     result = await grounding_validator(ctx_pass, draft_pass)
     assert result is draft_pass
@@ -7205,11 +7210,11 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
         observation=observation_2,
         partial_output=True,
     )
-    draft_no_kind = AgentAnswerDraft.model_construct(
-        answer_text="partial answer",
-        cited_evidence_handles=[],
+    draft_no_kind = AgentAnswerDraftOutput.model_construct(
         response_kind="",  # bypass Literal validation; partial mode
                             # handles missing/invalid response_kind
+        answer_blocks=[],
+        clarification_text=None,
     )
     with pytest.raises(ModelRetry):
         await grounding_validator(ctx_retry, draft_no_kind)

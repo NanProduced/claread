@@ -1,6 +1,7 @@
 # Ask Claread Agentic Product and Runtime Contract
 
-Status: accepted design specification, 2026-07-25.
+Status: accepted design specification, 2026-07-25; implementation tracker
+verified 2026-07-26.
 
 ## Purpose
 
@@ -254,40 +255,71 @@ derived from the visible Search control and the selected model adapter.
 
 ## Current implementation status
 
-Status verified on 2026-07-25:
+Status verified on 2026-07-26:
 
-- Article search now has positive and negative evidence-lifecycle regression
-  coverage, including server-minted search evidence, fabricated-handle
-  rejection, and persistence-failure non-leakage (`35922806`).
-- Agentic model execution configuration is resolved once per turn and applied
-  symmetrically to send and retry paths (`b28fbe0d`).
-- The production Agent now owns semantic intent and tool-use decisions. The
-  unused Host intent resolver, exact-question correctness policy, duplicate
-  prompt assembly path, and policy JSON prompt block have been removed
-  (`9ee3c736`).
-- Canonical internal answer-block provenance is active. Article, general, and
-  mixed blocks are validated mechanically; article scope and evidence identity
-  fail closed; `knowledge_mode` is derived by the Host.
-- AI Elements article-citation and prompt.kit Web-source primitives exist
-  (`ebb7c5b9`), but the public citation projection and end-to-end UI contract
-  are not yet closed.
+| Workstream | State | Current evidence |
+|---|---|---|
+| Article RAG evidence lifecycle | accepted | Search-to-server-minted-evidence positive path, fabricated-handle rejection, call-limit semantics, and persistence-failure non-leakage are covered. |
+| Per-turn model execution configuration | accepted | Send and retry use one resolver; provider completion caps and host output limits are applied symmetrically without silently substituting a default model (`b28fbe0d`). |
+| Prompt and semantic ownership | accepted | The Agent owns natural-language intent and tool decisions. The unused Host intent resolver, exact-question correctness rules, duplicate prompt assembly, and policy JSON block are removed (`9ee3c736`). |
+| Internal block provenance | accepted | Article, general, and mixed blocks are mechanically validated; evidence identity and article coverage fail closed; the Host derives `knowledge_mode`. |
+| Public citation projection | accepted | The finalizer consumes canonical validated blocks; `reader_record_ask_agentic_v2` exposes message-local citation IDs only; `source_unavailable` is replayable; hot SSE and cold history agree; public surfaces are no-`evh` (`66cd6635`). |
+| Article citation UI | accepted with one deferred affordance | AI Elements Inline Citation supports hover preview and ordered multi-citation navigation. Article Sources are not repeated at answer end. The secure navigation API is present, but the visible jump action remains intentionally hidden until the Plate typed-location adapter exists. |
+| Reasoning SSE and persistence | not implemented | Provider thinking parts can reach the internal transport observer, but production passes no projector. No reasoning delta is published or persisted. |
+| Provisional answer streaming | not implemented | The agentic path still publishes only the validated final answer. |
+| Web Search and Web Sources | not implemented | `basis=web` remains fail-closed. The visible Search control, provider adapters, verified Web evidence, and prompt.kit Source integration remain future work. |
 
-The remaining implementation order is:
+### Verification snapshot
 
-1. Finalize the citation projection so the finalizer consumes canonical
-   validated blocks, public DTOs expose only message-local citation IDs, and
-   hot SSE and cold history agree.
-2. Add the replayable `source_unavailable` completed outcome at the same
-   finalization seam.
-3. Implement provider reasoning SSE, deterministic redaction, persistence, and
-   cold-history replay.
-4. Implement provisional answer streaming with retry replacement and atomic
-   finalization.
-5. Add the visible Search capability, provider-specific Web Search adapters,
-   verified Web evidence, and prompt.kit Web Sources.
+- The completed backend seams pass a combined focused gate of 265 tests.
+- All 699 `reader_record_ask` tests collect after the citation-finalizer test
+  migration; the focused Article RAG file passes 18 tests.
+- The Ask workspace, Inline Citation, API/BFF, and SSE frontend seams pass 189
+  focused tests. Citation browser acceptance passes the hover, carousel,
+  no-answer-end-Sources, no-fake-jump, and no-raw-handle contract.
+- The repository-wide aggregate is not a release gate yet: unrelated global
+  state, current-working-directory, temp-directory permission, and parallel
+  Plate/Reader changes still make broad suites order-dependent. Focused gates
+  remain the attributable acceptance evidence.
+- No bounded real-provider acceptance has yet verified that each configured
+  model emits usable reasoning or follows the new provenance contract. That
+  belongs to the later real-model and LLM-as-a-Judge gates, not to structural
+  unit tests.
 
-Reasoning streaming, provisional answer streaming, and Web Search are not
-implemented by the completed provenance work.
+### Reasoning workstream entry conditions
+
+The next workstream may start, with these current gaps treated as requirements:
+
+1. `ask-main-deepseek-v4-flash` and its replan profile still set
+   `thinking.type=disabled`; this conflicts with the accepted product contract
+   and must be corrected and wire-tested.
+2. `thinking_transport` receives provider reasoning, but production passes
+   `thinking_observer=None`; no content reaches SSE, persistence, or history.
+3. The agentic path currently maps safe analysis lifecycle events onto legacy
+   `reasoning.started/completed`. The Web UI can therefore render an empty
+   “model returned no displayable reasoning” placeholder even though no
+   reasoning projection exists. New agentic content events must be distinct
+   from those phase events, and the new UI must not fabricate empty content.
+4. The AI Elements Reasoning wrapper currently auto-opens while streaming.
+   Ask Claread requires `defaultOpen={false}` so the shimmer remains collapsed
+   unless the user opens it.
+5. Direct iteration of PydanticAI `AgentEventStream` is deprecated. The
+   reasoning implementation must migrate to the context-managed stream API and
+   preserve cancellation and multi-tool-round behavior.
+6. Successful turns must persist the exact visible reasoning projection
+   atomically with the final answer. Cancellation, validation failure, and
+   persistence failure must not create cold-history reasoning.
+
+After reasoning, the remaining implementation order is:
+
+1. provisional answer streaming with retry replacement and atomic
+   finalization;
+2. Plate typed-location navigation for article Inline Citations;
+3. visible Search capability, provider-specific Web Search adapters, verified
+   Web evidence, and prompt.kit Web Sources;
+4. joint real-model and browser acceptance;
+5. legacy agentic-v1 handlers, old workflow code, and obsolete-document
+   cleanup after the new path is accepted.
 
 ## Implementation boundaries
 

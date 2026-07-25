@@ -584,7 +584,7 @@ async def test_partial_output_missing_response_kind_triggers_model_retry() -> No
         partial_output=True,
     )
     # Construct a draft-like object WITHOUT response_kind attribute.
-    # AgentAnswerDraft itself requires response_kind, so we use a stub.
+    # AgentAnswerDraftOutput itself requires response_kind, so we use a stub.
     stub = SimpleNamespace(
         answer_text="x",
         cited_evidence_handles=[],

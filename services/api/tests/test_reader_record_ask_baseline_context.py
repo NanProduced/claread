@@ -923,7 +923,7 @@ async def test_finalizer_resolves_model_cited_seed_handle() -> None:
 
     The model reads the first prompt, extracts the article_seed handle from
     the <untrusted_article_text handle="..."> attribute, and cites it in the
-    AgentAnswerDraft. The finalizer must resolve it successfully.
+    AgentAnswerDraftOutput. The finalizer must resolve it successfully.
     """
     units = _make_units("Article body for finalizer test.")
     envelope = _make_envelope(initial_anchor=None)
@@ -1074,7 +1074,7 @@ async def test_units_sorted_by_order_index_deterministically() -> None:
 # Tests the full runtime → build_completed_dto → history_projector chain
 # with a FunctionModel that reads the first prompt, extracts the
 # article_seed handle from <untrusted_article_text handle="evh_...">, and
-# cites it in the AgentAnswerDraft. The test asserts:
+# cites it in the AgentAnswerDraftOutput. The test asserts:
 #   - message.completed evidence contains article_seed
 #   - repository completed write would contain the same handle/kind/source
 #   - no full article text enters the persisted JSON
