@@ -96,6 +96,10 @@ from app.services.reader_record_ask.selection_model_view import (
 from app.services.reader_record_ask.tool_contracts import (
     is_expand_pointer_shape,
 )
+from app.services.reader_record_ask.turn_answer_policy import (
+    ArticleScope,
+    TurnAnswerPolicy,
+)
 from app.services.reader_record_ask.turn_capability_projection import (
     TurnCapabilityProjection,
     build_turn_capability_projection,
@@ -153,10 +157,12 @@ class TurnAssembly:
     turn_id: str
     user_prompt: str
     system_instructions: str
+    turn_answer_policy: TurnAnswerPolicy
     turn_frame: TurnFramePromptCapability
     projection: TurnCapabilityProjection
     baseline_context: BaselineAgentContext
     answer_correctness_policy: AnswerCorrectnessPolicy | None
+    confirmed_article_scopes: frozenset[ArticleScope]
     selection_result: SelectionModelViewResult
     baseline_result: BaselineModelViewResult
     map_result: ArticleMapResult
@@ -199,6 +205,7 @@ class TurnCoordinator:
         max_search_current_article_calls: int = (DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS),
         product_search_enabled: bool = True,
         map_source_material_provider: MapSourceMaterialProvider | None = None,
+        turn_answer_policy: TurnAnswerPolicy | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
@@ -225,6 +232,16 @@ class TurnCoordinator:
         self.renderer = renderer if renderer is not None else ModelViewRenderer()
         self.max_search_current_article_calls = max_search_current_article_calls
         self.product_search_enabled = product_search_enabled
+        self.turn_answer_policy = (
+            turn_answer_policy
+            if turn_answer_policy is not None
+            else TurnAnswerPolicy(
+                article_only=False,
+                citation_required=False,
+                requested_citation_scope="none",
+                web_capability="unavailable",
+            )
+        )
         # M3 C2: server-only map-source material provider (§3.4 preflight).
         # None = no provider configured → coordinator falls back to the
         # existing unit-window map (C2 skeleton; production wiring is a
@@ -351,10 +368,12 @@ class TurnCoordinator:
             turn_id=self.turn_id,
             user_prompt=self.user_message,
             system_instructions=self.system_instructions,
+            turn_answer_policy=self.turn_answer_policy,
             turn_frame=turn_frame,
             projection=projection,
             baseline_context=baseline_ctx,
             answer_correctness_policy=None,
+            confirmed_article_scopes=frozenset(),
             selection_result=selection_absent,
             baseline_result=baseline_mv,
             map_result=map_absent,
@@ -500,7 +519,27 @@ class TurnCoordinator:
             model_visible_chunk_texts=tuple(c.text for c in baseline.model_context_chunks),
             baseline_is_complete=baseline.is_complete,
         )
-        correctness_block = policy.render_prompt_block()
+        answer_policy_json = json.dumps(
+            {
+                "article_only": self.turn_answer_policy.article_only,
+                "citation_required": self.turn_answer_policy.citation_required,
+                "requested_citation_scope": (
+                    self.turn_answer_policy.requested_citation_scope
+                ),
+                "web_capability": self.turn_answer_policy.web_capability,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        confirmed_article_scopes: set[ArticleScope] = {"evidence_bounded"}
+        if selection.status == "injected" and sel_view.present:
+            confirmed_article_scopes.add("selection_bounded")
+        if baseline.is_complete:
+            confirmed_article_scopes.update(
+                {"article_overview", "full_article"}
+            )
 
         # 6) Handles listing (selection + baseline seeds).
         handle_ids: list[str] = []
@@ -524,13 +563,14 @@ class TurnCoordinator:
                 projection_json=projection_json,
                 handles_block=handles_block,
                 baseline_is_complete=baseline.is_complete,
-                correctness_block=correctness_block,
+                correctness_block=None,
                 user_question=self.user_message,
                 budget=self.budget,
                 renderer=self.renderer,
                 selection_prompt=selection_prompt,
                 baseline_prompt=baseline_prompt,
                 map_prompt=map_prompt,
+                answer_policy_json=answer_policy_json,
                 charge=True,
             )
         except ModelViewBudgetError:
@@ -555,10 +595,12 @@ class TurnCoordinator:
             turn_id=self.turn_id,
             user_prompt=turn_frame.user_prompt,
             system_instructions=self.system_instructions,
+            turn_answer_policy=self.turn_answer_policy,
             turn_frame=turn_frame,
             projection=projection,
             baseline_context=baseline.to_baseline_agent_context(),
             answer_correctness_policy=policy,
+            confirmed_article_scopes=frozenset(confirmed_article_scopes),
             selection_result=selection,
             baseline_result=baseline,
             map_result=map_result,

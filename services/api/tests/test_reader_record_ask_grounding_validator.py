@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry
 
 from app.services.reader_record_ask.agent import (
@@ -37,16 +38,20 @@ from app.services.reader_record_ask.evidence import (
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import StaticGenerationFence
 from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft,
+    AgentAnswerDraft as FinalizerAgentAnswerDraft,
+)
+from app.services.reader_record_ask.finalizer import (
     FinalizedAskResult,
     finalize_agent_answer,
 )
 from app.services.reader_record_ask.grounding_validator import (
-    CORE_GROUNDED_QUESTION_HINTS,
     MAX_CITED_EVIDENCE_HANDLES,
+    AgentAnswerBlockOutput,
+    AgentAnswerDraftOutput,
     grounding_validator,
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+from app.services.reader_record_ask.turn_answer_policy import TurnAnswerPolicy
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -127,6 +132,20 @@ def _ctx(
         document_access=None,  # type: ignore[arg-type]
         fence=StaticGenerationFence(live_generation=1),
         evidence_registry=registry,
+        turn_answer_policy=TurnAnswerPolicy(
+            article_only=False,
+            citation_required=False,
+            requested_citation_scope="none",
+            web_capability="unavailable",
+        ),
+        confirmed_article_scopes=frozenset(
+            {
+                "selection_bounded",
+                "evidence_bounded",
+                "article_overview",
+                "full_article",
+            }
+        ),
         baseline_available=baseline_available,
         answer_correctness_policy=answer_correctness_policy,
     )
@@ -138,11 +157,36 @@ def _draft(
     answer_text: str = "answer",
     handles: list[str] | None = None,
     response_kind: str = "grounded_answer",
-) -> AgentAnswerDraft:
-    return AgentAnswerDraft(
-        answer_text=answer_text,
-        cited_evidence_handles=handles or [],
+    basis: str | None = None,
+) -> AgentAnswerDraftOutput:
+    evidence_handles = handles or []
+    resolved_basis = basis or (
+        "article"
+        if evidence_handles or response_kind == "grounded_answer"
+        else "general"
+    )
+    block = AgentAnswerBlockOutput(
+        text=answer_text,
+        basis=resolved_basis,  # type: ignore[arg-type]
+        article_scope=(
+            "evidence_bounded" if resolved_basis == "article" else None
+        ),
+        evidence_handles=evidence_handles,
+    )
+    if response_kind == "unavailable":
+        return AgentAnswerDraftOutput.model_construct(
+            response_kind=response_kind,
+            answer_blocks=[block],
+        )
+    if response_kind == "clarification":
+        return AgentAnswerDraftOutput(
+            response_kind="clarification",
+            clarification_text=answer_text,
+            answer_blocks=[],
+        )
+    return AgentAnswerDraftOutput(
         response_kind=response_kind,  # type: ignore[arg-type]
+        answer_blocks=[block],
     )
 
 
@@ -279,22 +323,30 @@ async def test_clarification_allows_empty_handles() -> None:
     result = await grounding_validator(ctx, draft)
     assert result is draft
     assert result.response_kind == "clarification"
+    assert result.answer_blocks == []
+    assert result.validated_answer_blocks is None
 
 
-@pytest.mark.asyncio
-async def test_clarification_with_valid_handle_passes() -> None:
-    """clarification may cite a handle when present; it must be valid."""
+def test_clarification_with_valid_handle_is_schema_invalid() -> None:
+    """Clarification cannot cite even a valid current-turn handle."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=1)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
     handle = registry.list_handle_refs()[0].handle_id
-    draft = _draft(
-        answer_text="...",
-        handles=[handle],
-        response_kind="clarification",
-    )
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
+    with pytest.raises(ValidationError):
+        AgentAnswerDraftOutput.model_validate(
+            {
+                "response_kind": "clarification",
+                "clarification_text": "Could you clarify?",
+                "answer_blocks": [
+                    {
+                        "text": "invalid evidence carrier",
+                        "basis": "article",
+                        "article_scope": "evidence_bounded",
+                        "evidence_handles": [handle],
+                    }
+                ],
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -319,15 +371,14 @@ async def test_unavailable_with_handles_triggers_model_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unavailable_allowed_when_baseline_not_available() -> None:
-    """unavailable with empty handles passes when baseline_available=False."""
+async def test_unavailable_is_host_owned_when_baseline_not_available() -> None:
+    """The model cannot emit unavailable even when baseline is unavailable."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
     ctx = _ctx(registry=registry, envelope=envelope, baseline_available=False)
     draft = _draft(answer_text="x", handles=[], response_kind="unavailable")
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-    assert result.response_kind == "unavailable"
+    with pytest.raises(ModelRetry):
+        await grounding_validator(ctx, draft)
 
 
 # ---------------------------------------------------------------------------
@@ -436,40 +487,12 @@ def test_agent_prompt_partial_forbids_exhaustive_negative_claims() -> None:
 def test_agent_prompt_external_knowledge_boundary_contract() -> None:
     """_SYSTEM_INSTRUCTIONS must carry the external knowledge boundary contract."""
     instructions = _SYSTEM_INSTRUCTIONS
-    # Article knowledge vs general knowledge section
-    assert "Article knowledge vs general knowledge" in instructions
-    # Must allow extension/comparison/example questions
-    assert "extension" in instructions.lower() or "comparison" in instructions.lower()
-    # Must require labelling external facts as general knowledge / analogy
+    assert "answer_blocks" in instructions
+    assert "basis" in instructions
     assert "general knowledge" in instructions.lower()
-    assert "analogy" in instructions.lower()
-    # Must forbid using article evidence to back external facts
-    assert "article" in instructions.lower()
-    assert (
-        "external" in instructions.lower() or "not provided by the article" in instructions.lower()
-    )
-
-
-# ---------------------------------------------------------------------------
-# Scenario 14: 5 core grounded question hints constant shape
-# ---------------------------------------------------------------------------
-
-
-def test_core_grounded_question_hints_constant_shape() -> None:
-    """CORE_GROUNDED_QUESTION_HINTS must contain exactly the 5 required shapes."""
-    expected = (
-        "这篇文章主要说了什么",
-        "概括核心观点",
-        "作者最想说明什么",
-        "文章是怎么展开论证的",
-        "基于文章出一道小练习",
-    )
-    assert CORE_GROUNDED_QUESTION_HINTS == expected
-    # Each hint is a non-empty Chinese string
-    for hint in CORE_GROUNDED_QUESTION_HINTS:
-        assert isinstance(hint, str)
-        assert hint.strip() == hint
-        assert len(hint) > 0
+    assert "article handles to support general knowledge" in instructions
+    assert "which cities are mentioned" not in instructions
+    assert "knowledge_mode" in instructions
 
 
 def test_max_cited_evidence_handles_constant_is_six() -> None:
@@ -516,7 +539,7 @@ async def test_finalizer_scope_failure_still_returns_typed_terminal() -> None:
     foreign_registry.register(obs)
     handle = foreign_registry.list_handle_refs()[0].handle_id
 
-    draft = AgentAnswerDraft(
+    draft = FinalizerAgentAnswerDraft(
         answer_text="x",
         cited_evidence_handles=[handle],
         response_kind="grounded_answer",
@@ -645,28 +668,26 @@ async def test_grounded_answer_duplicate_handle_triggers_model_retry() -> None:
     assert draft.cited_evidence_handles == dup_handles
 
 
-@pytest.mark.asyncio
-async def test_clarification_duplicate_handle_triggers_model_retry() -> None:
-    """clarification with a duplicate handle must also ModelRetry.
-
-    The duplicate check is shared across grounded_answer and
-    clarification via a single private helper, so both branches enforce
-    it identically.
-    """
+def test_clarification_duplicate_handle_is_schema_invalid() -> None:
+    """Clarification rejects evidence before block provenance validation."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=1)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
     handle = registry.list_handle_refs()[0].handle_id
-    draft = _draft(
-        answer_text="Could you clarify...",
-        handles=[handle, handle],
-        response_kind="clarification",
-    )
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    assert "remove duplicate handles" in str(exc_info.value)
-    # No fingerprint leakage.
-    assert envelope.envelope_fingerprint not in str(exc_info.value)
+    with pytest.raises(ValidationError):
+        AgentAnswerDraftOutput.model_validate(
+            {
+                "response_kind": "clarification",
+                "clarification_text": "Could you clarify?",
+                "answer_blocks": [
+                    {
+                        "text": "invalid duplicate evidence carrier",
+                        "basis": "article",
+                        "article_scope": "evidence_bounded",
+                        "evidence_handles": [handle, handle],
+                    }
+                ],
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -752,11 +773,12 @@ def _strict_policy(
     )
 
 
-def _draft_with_year(year: str) -> AgentAnswerDraft:
+def _draft_with_year(year: str) -> AgentAnswerDraftOutput:
     return _draft(
         answer_text=f"文章报道了 {year} 年的事件。",
         handles=None,
-        response_kind="clarification",
+        response_kind="grounded_answer",
+        basis="general",
     )
 
 
@@ -923,7 +945,8 @@ async def test_t6_explicit_count_mismatch_no_longer_retries() -> None:
     )
     draft = _draft(
         answer_text="1. 第一题：文章的主旨是什么？\n2. 第二题：文章发表于哪一年？",
-        response_kind="clarification",
+        response_kind="grounded_answer",
+        basis="general",
     )
     violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
     assert any(v.kind == "explicit_count_mismatch" for v in violations)
@@ -953,7 +976,8 @@ async def test_t7_policy_violation_detail_does_not_leak_sensitive_data() -> None
     # Draft with an unsupported year (2025 not in allowset).
     draft = _draft(
         answer_text=("文章报道了 2025 年的事件。evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-        response_kind="clarification",
+        response_kind="grounded_answer",
+        basis="general",
     )
     result = await grounding_validator(ctx, draft)
     assert result is draft  # no retry
@@ -998,7 +1022,7 @@ async def test_t8_grounding_behavior_non_regression_with_policy_none() -> None:
     with pytest.raises(ModelRetry) as exc_info:
         await grounding_validator(ctx, draft)
     # Grounding error, not policy error.
-    assert "grounded_answer requires" in str(exc_info.value)
+    assert "article block requires" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

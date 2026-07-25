@@ -187,11 +187,21 @@ def _function_model(answer: str = "ok answer", handles: list[str] | None = None)
                     tool_name="final_result",
                     args=json.dumps(
                         {
-                            "answer_text": answer,
-                            "cited_evidence_handles": handles or [],
-                            # R4-A2: use "clarification" so the grounding
-                            # output_validator accepts empty-handle drafts.
-                            "response_kind": "clarification",
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": answer,
+                                    "basis": (
+                                        "article" if handles else "general"
+                                    ),
+                                    "article_scope": (
+                                        "evidence_bounded"
+                                        if handles
+                                        else None
+                                    ),
+                                    "evidence_handles": handles or [],
+                                }
+                            ],
                         }
                     ),
                     tool_call_id="final-1",
@@ -243,12 +253,13 @@ def test_progress_projector_sequence_and_mapping() -> None:
 
     phases = [p.phase for p in projected]
     activities = [p.activity for p in projected]
+    phase_activities = list(zip(phases, activities, strict=True))
     assert phases[0] == "agent_running"
     assert activities[0] == "started"
-    assert ("reading_context", "started") in list(zip(phases, activities))
-    assert ("reading_context", "completed") in list(zip(phases, activities))
-    assert ("composing_answer", "started") in list(zip(phases, activities))
-    assert ("validating_evidence", "started") in list(zip(phases, activities))
+    assert ("reading_context", "started") in phase_activities
+    assert ("reading_context", "completed") in phase_activities
+    assert ("composing_answer", "started") in phase_activities
+    assert ("validating_evidence", "started") in phase_activities
     # FinalAnswerEvent must not invent another validating started.
     validating = [
         (p.phase, p.activity)
@@ -709,11 +720,15 @@ async def test_rag_off_search_unavailable_still_completes() -> None:
                     tool_name="final_result",
                     args=json.dumps(
                         {
-                            "answer_text": "answer without rag",
-                            "cited_evidence_handles": [],
-                            # R4-A2: "clarification" passes the grounding
-                            # output_validator with empty handles.
-                            "response_kind": "clarification",
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": "answer without rag",
+                                    "basis": "general",
+                                    "article_scope": None,
+                                    "evidence_handles": [],
+                                }
+                            ],
                         }
                     ),
                     tool_call_id="final-1",

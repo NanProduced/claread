@@ -631,13 +631,21 @@ async def test_fake_rag_port_can_produce_search_hit_evidence() -> None:
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "about climate",
-                            "cited_evidence_handles": [handle] if handle else [],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                        args=json.dumps(
+                            {
+                                "response_kind": "grounded_answer",
+                                "answer_blocks": [
+                                    {
+                                        "text": "about climate",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": (
+                                            [handle] if handle else []
+                                        ),
+                                    }
+                                ],
+                            }
+                        ),
                     tool_call_id="f1",
                 )
             ]
@@ -922,13 +930,21 @@ async def test_persist_failure_after_search_hit_does_not_leak_provisional_eviden
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "about climate",
-                            "cited_evidence_handles": [handle] if handle else [],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                        args=json.dumps(
+                            {
+                                "response_kind": "grounded_answer",
+                                "answer_blocks": [
+                                    {
+                                        "text": "about climate",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": (
+                                            [handle] if handle else []
+                                        ),
+                                    }
+                                ],
+                            }
+                        ),
                     tool_call_id="f1",
                 )
             ]

@@ -44,9 +44,15 @@ from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLe
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import FenceFn, StaticGenerationFence
 from app.services.reader_record_ask.finalizer import (
-    AgentAnswerDraft,
+    AgentAnswerDraft as FinalizerAgentAnswerDraft,
+)
+from app.services.reader_record_ask.finalizer import (
     FinalizedAskResult,
     finalize_agent_answer,
+)
+from app.services.reader_record_ask.grounding_validator import (
+    AgentAnswerDraftOutput,
+    build_evidence_validation_context,
 )
 from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
@@ -77,6 +83,12 @@ from app.services.reader_record_ask.thinking_transport import (
     ThinkingObserver,
     run_agent_with_thinking_transport,
 )
+from app.services.reader_record_ask.turn_answer_policy import (
+    HostDraftingDecision,
+    HostOwnedOutcome,
+    TurnAnswerPolicy,
+    ValidatedAnswerBlocks,
+)
 from app.services.reader_record_ask.turn_coordinator import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
     HostBudgetExhausted,
@@ -88,22 +100,38 @@ from app.services.reader_record_ask.turn_coordinator import (
 class ReadingRecordAskRunResult:
     """Outcome of one independent agent run (including finalizer).
 
-    ``baseline_context`` carries the typed baseline assembly result. When
-    ``baseline_context.baseline_status != "injected"`` the run fail-closed
-    before invoking the agent: ``final_text`` is ``None``, ``finalized`` is
-    ``None`` (or unavailable), and ``agent_draft`` is ``None``.
+    ``baseline_context`` carries the typed baseline assembly result. Host-owned
+    drafting decisions and source-unavailable outcomes return before the model.
+    Successful model runs also carry immutable validated blocks; the committed
+    flat finalizer receives only its three-field compatibility projection.
     """
 
     final_text: str | None
+    turn_answer_policy: TurnAnswerPolicy | None = None
+    host_drafting_decision: HostDraftingDecision | None = None
+    host_owned_outcome: HostOwnedOutcome | None = None
+    validated_answer_blocks: ValidatedAnswerBlocks | None = None
     events: list[RuntimeEvent] = field(default_factory=list)
     read_range_calls: int = 0
     search_current_article_calls: int = 0
     evidence_observations: tuple[ServerEvidenceObservation, ...] = ()
     initial_anchor_handle: EvidenceHandleRef | None = None
-    agent_draft: AgentAnswerDraft | None = None
+    agent_draft: FinalizerAgentAnswerDraft | None = None
     finalized: FinalizedAskResult | None = None
     agent_output: Any = None
     baseline_context: BaselineAgentContext | None = None
+
+
+def _to_finalizer_draft(
+    draft: AgentAnswerDraftOutput,
+) -> FinalizerAgentAnswerDraft:
+    """Project onto the committed flat finalizer API from ``HEAD``."""
+
+    return FinalizerAgentAnswerDraft(
+        answer_text=draft.answer_text,
+        cited_evidence_handles=draft.cited_evidence_handles,
+        response_kind=draft.response_kind,
+    )
 
 
 async def run_reading_record_ask(
@@ -132,6 +160,7 @@ async def run_reading_record_ask(
     # map (pre-C2 behavior). Production wiring constructs the provider and
     # passes it in so B3 heading enrichment (§4.2) takes effect.
     map_source_material_provider: MapSourceMaterialProvider | None = None,
+    turn_answer_policy: TurnAnswerPolicy | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -173,7 +202,16 @@ async def run_reading_record_ask(
         max_search_current_article_calls=max_search_current_article_calls,
         product_search_enabled=True,
         map_source_material_provider=map_source_material_provider,
+        turn_answer_policy=turn_answer_policy,
     )
+
+    drafting_decision = coordinator.turn_answer_policy.host_drafting_decision()
+    if drafting_decision.kind != "model_draft_allowed":
+        return ReadingRecordAskRunResult(
+            final_text=None,
+            turn_answer_policy=coordinator.turn_answer_policy,
+            host_drafting_decision=drafting_decision,
+        )
 
     try:
         assembly = await coordinator.assemble_turn()
@@ -191,6 +229,8 @@ async def run_reading_record_ask(
         document_access=document_access,
         fence=active_fence,
         evidence_registry=registry,
+        turn_answer_policy=assembly.turn_answer_policy,
+        confirmed_article_scopes=assembly.confirmed_article_scopes,
         article_rag=article_rag,
         max_read_range_calls=0,
         max_search_current_article_calls=max_search_current_article_calls,
@@ -209,6 +249,20 @@ async def run_reading_record_ask(
     deps.baseline_available = baseline.is_injected
 
     if not baseline.is_injected:
+        if (
+            assembly.turn_answer_policy.citation_required
+            and assembly.turn_answer_policy.requested_citation_scope
+            == "article"
+        ):
+            return ReadingRecordAskRunResult(
+                final_text=None,
+                turn_answer_policy=assembly.turn_answer_policy,
+                host_drafting_decision=drafting_decision,
+                host_owned_outcome=(
+                    assembly.turn_answer_policy.article_source_unavailable_outcome()
+                ),
+                baseline_context=baseline,
+            )
         baseline_reason = (
             "document_unavailable"
             if baseline.baseline_status == "document_scope_unavailable"
@@ -231,6 +285,8 @@ async def run_reading_record_ask(
         )
         return ReadingRecordAskRunResult(
             final_text=None,
+            turn_answer_policy=assembly.turn_answer_policy,
+            host_drafting_decision=drafting_decision,
             events=list(deps.events),
             read_range_calls=0,
             search_current_article_calls=0,
@@ -247,6 +303,24 @@ async def run_reading_record_ask(
         )
 
     deps.answer_correctness_policy = assembly.answer_correctness_policy
+
+    if (
+        assembly.turn_answer_policy.citation_required
+        and assembly.turn_answer_policy.requested_citation_scope == "article"
+        and not any(
+            item.publicly_mappable
+            for item in build_evidence_validation_context(deps).evidence
+        )
+    ):
+        return ReadingRecordAskRunResult(
+            final_text=None,
+            turn_answer_policy=assembly.turn_answer_policy,
+            host_drafting_decision=drafting_decision,
+            host_owned_outcome=(
+                assembly.turn_answer_policy.article_source_unavailable_outcome()
+            ),
+            baseline_context=baseline,
+        )
 
     # Production prompt: exact turn_frame user surface (no re-assembly).
     prompt = build_agent_user_prompt(
@@ -270,13 +344,16 @@ async def run_reading_record_ask(
     )
     if observation is not None:
         observation.execution_stage = "agent_run_completed"
-    draft = streamed.output
-    if not isinstance(draft, AgentAnswerDraft):
-        draft = AgentAnswerDraft(
-            answer_text=str(draft),
-            cited_evidence_handles=[],
-            response_kind="grounded_answer",
-        )
+    agent_output = streamed.output
+    if not isinstance(agent_output, AgentAnswerDraftOutput):
+        raise TypeError("agent returned an invalid structured answer output")
+    validated_answer_blocks = agent_output.validated_answer_blocks
+    if (
+        agent_output.response_kind == "grounded_answer"
+        and validated_answer_blocks is None
+    ):
+        raise TypeError("grounded answer did not pass block validation")
+    draft = _to_finalizer_draft(agent_output)
 
     deps.emit_event(ComposingAnswerEvent())
     deps.emit_event(ValidatingEvidenceEvent())
@@ -305,6 +382,9 @@ async def run_reading_record_ask(
     )
     return ReadingRecordAskRunResult(
         final_text=final_text,
+        turn_answer_policy=assembly.turn_answer_policy,
+        host_drafting_decision=drafting_decision,
+        validated_answer_blocks=validated_answer_blocks,
         events=list(deps.events),
         read_range_calls=0,
         search_current_article_calls=deps.search_current_article_calls,
@@ -316,6 +396,6 @@ async def run_reading_record_ask(
         ),
         agent_draft=draft,
         finalized=finalized,
-        agent_output=draft,
+        agent_output=agent_output,
         baseline_context=baseline,
     )

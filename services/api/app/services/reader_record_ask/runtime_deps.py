@@ -25,6 +25,10 @@ from app.services.reader_record_ask.runtime_events import (
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
 )
+from app.services.reader_record_ask.turn_answer_policy import (
+    ArticleScope,
+    TurnAnswerPolicy,
+)
 
 if TYPE_CHECKING:
     from app.services.reader_record_ask.baseline_context import BaselineAgentContext
@@ -200,6 +204,8 @@ class ReaderRecordAskDeps:
     document_access: DocumentAccess
     fence: FenceFn
     evidence_registry: EvidenceRegistry
+    turn_answer_policy: TurnAnswerPolicy | None = None
+    confirmed_article_scopes: frozenset[ArticleScope] = frozenset()
     article_rag: ArticleRagSearchPort | None = None
     read_range_calls: int = 0
     max_read_range_calls: int = DEFAULT_MAX_READ_RANGE_CALLS

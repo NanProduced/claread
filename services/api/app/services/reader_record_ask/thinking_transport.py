@@ -40,7 +40,9 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_core import from_json
 
-from app.services.reader_record_ask.finalizer import AgentAnswerDraft
+from app.services.reader_record_ask.grounding_validator import (
+    AgentAnswerDraftOutput,
+)
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
@@ -118,7 +120,7 @@ class BoundedThinkingObserver:
 class StreamedAgentOutcome:
     """Result of a streamed agent run (output + safe phase events)."""
 
-    output: AgentAnswerDraft | Any
+    output: AgentAnswerDraftOutput
     phase_events: tuple[RuntimeEvent, ...] = ()
 
 
@@ -200,10 +202,10 @@ class ThinkingPartLifecycle:
 
 
 class _AnswerTextStreamer:
-    """Partial-JSON answer_text prefix streamer (R4-A6).
+    """Partial-JSON answer-block text prefix streamer (R4-A6).
 
     Accumulates streamed structured-output JSON text and extracts the
-    resolved ``answer_text`` prefix via ``pydantic_core.from_json`` with
+    resolved semantic block text via ``pydantic_core.from_json`` with
     ``allow_partial="trailing-strings"`` — no bespoke incremental JSON
     state machine, no regex. Emits only newly resolved prefix increments;
     ``_emitted_len`` is monotonically non-decreasing within one buffer.
@@ -221,7 +223,7 @@ class _AnswerTextStreamer:
         self._emitted_len = 0
 
     def feed(self, text: str) -> str | None:
-        """Append a streamed chunk; return new answer_text prefix or None."""
+        """Append a streamed chunk; return newly resolved block text."""
         if not text:
             return None
         self._buffer += text
@@ -231,9 +233,22 @@ class _AnswerTextStreamer:
             return None
         if not isinstance(parsed, dict):
             return None
-        answer = parsed.get("answer_text")
-        if not isinstance(answer, str):
-            return None
+        if parsed.get("response_kind") == "clarification":
+            clarification_text = parsed.get("clarification_text")
+            if not isinstance(clarification_text, str):
+                return None
+            answer = clarification_text
+        else:
+            blocks = parsed.get("answer_blocks")
+            if not isinstance(blocks, list):
+                return None
+            block_texts = [
+                block.get("text")
+                for block in blocks
+                if isinstance(block, dict)
+                and isinstance(block.get("text"), str)
+            ]
+            answer = "\n\n".join(block_texts)
         if len(answer) <= self._emitted_len:
             return None
         delta = answer[self._emitted_len :]
@@ -243,7 +258,7 @@ class _AnswerTextStreamer:
 
 async def run_agent_with_thinking_transport(
     *,
-    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft],
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput],
     prompt: str,
     deps: ReaderRecordAskDeps,
     thinking_observer: ThinkingObserver | None = None,
@@ -259,7 +274,7 @@ async def run_agent_with_thinking_transport(
     snapshot ThinkingPart from the completed message history.
 
     Emits only safe ``AnalysisStartedEvent`` / ``AnalysisFinishedEvent``
-    plus token-level ``AnswerDeltaEvent`` answer_text increments (R4-A6,
+    plus token-level ``AnswerDeltaEvent`` answer-block text increments (R4-A6,
     streamed TextPart content only) — never raw reasoning on the event
     sink. Tool calling, validators, and structured output use the same
     agent configuration as ``run()``.
@@ -392,9 +407,9 @@ async def run_agent_with_thinking_transport(
                 _emit_reasoning(piece)
                 continue
 
-            # R4-A6: answer_text token-level streaming. TextPart carries
-            # streamed structured-output JSON; feed content into the partial
-            # parser and emit AnswerDeltaEvent prefix increments. Fully
+            # R4-A6: answer-block text streaming. TextPart carries streamed
+            # structured-output JSON; feed content into the partial parser
+            # and emit AnswerDeltaEvent prefix increments. Fully
             # isolated from the ThinkingPart path above: no observer calls,
             # no AnalysisStarted synthesis, no shared content.
             if event_kind == "part_start" and isinstance(event.part, TextPart):
@@ -438,12 +453,8 @@ async def run_agent_with_thinking_transport(
     if final_output is None:
         raise RuntimeError("agent run produced no final output")
 
-    if not isinstance(final_output, AgentAnswerDraft):
-        final_output = AgentAnswerDraft(
-            answer_text=str(final_output),
-            cited_evidence_handles=[],
-            response_kind="grounded_answer",
-        )
+    if not isinstance(final_output, AgentAnswerDraftOutput):
+        raise TypeError("agent transport received an invalid structured output")
 
     return StreamedAgentOutcome(
         output=final_output,

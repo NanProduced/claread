@@ -205,18 +205,27 @@ def _final_result_part(
     content: str,
     handles: list[str] | None = None,
     tool_call_id: str = "final-1",
-    # R4-A2: default to "clarification" so the grounding output_validator
-    # accepts empty-handle drafts. Tests that need grounded_answer must
-    # cite real handles (validator rejects grounded_answer + empty handles).
-    response_kind: str = "clarification",
+    response_kind: str = "grounded_answer",
 ) -> ToolCallPart:
+    evidence_handles = handles or []
+    basis = "article" if evidence_handles else "general"
     return ToolCallPart(
         tool_name="final_result",
         args=json.dumps(
             {
-                "answer_text": content,
-                "cited_evidence_handles": handles or [],
                 "response_kind": response_kind,
+                "answer_blocks": [
+                    {
+                        "text": content,
+                        "basis": basis,
+                        "article_scope": (
+                            "evidence_bounded"
+                            if evidence_handles
+                            else None
+                        ),
+                        "evidence_handles": evidence_handles,
+                    }
+                ],
             }
         ),
         tool_call_id=tool_call_id,
@@ -886,7 +895,7 @@ def test_agent_explicit_retry_policy() -> None:
     agent = create_reading_record_ask_agent(_text_model("x"))
     # pydantic-ai 1.75+: retries (tools) + output_retries as separate ints.
     assert agent._max_tool_retries == DEFAULT_TOOL_RETRIES == 1
-    assert agent._max_result_retries == DEFAULT_OUTPUT_RETRIES == 2
+    assert agent._max_output_retries == DEFAULT_OUTPUT_RETRIES == 2
 
 
 @pytest.mark.asyncio
@@ -936,7 +945,8 @@ async def test_structured_output_recovers_within_output_retry_budget() -> None:
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     assert isinstance(result.agent_draft, AgentAnswerDraft)
-    assert result.agent_draft.answer_text == "Recovered structured answer."
+    assert result.agent_output is not None
+    assert result.agent_output.answer_text == "Recovered structured answer."
 
 
 @pytest.mark.asyncio
@@ -1008,7 +1018,8 @@ async def test_structured_output_success_still_runs_evidence_finalizer() -> None
     # Draft was accepted by pydantic-ai output_validator; finalizer ran and
     # resolved the cited initial_anchor handle.
     assert result.agent_draft is not None
-    assert result.agent_draft.answer_text.startswith("Looks fine")
+    assert result.agent_output is not None
+    assert result.agent_output.answer_text.startswith("Looks fine")
     kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
     assert "initial_anchor" in kinds
 
@@ -1092,9 +1103,15 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
                         tool_name="final_result",
                         args=json.dumps(
                             {
-                                "answer_text": "第一次回答",
-                                "cited_evidence_handles": [],
                                 "response_kind": "grounded_answer",
+                                "answer_blocks": [
+                                    {
+                                        "text": "第一次回答",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": [],
+                                    }
+                                ],
                             }
                         ),
                         tool_call_id="bad-grounding-1",
@@ -1114,15 +1131,10 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
         real_handle = match.group(0)
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "第二次回答已引用证据",
-                            "cited_evidence_handles": [real_handle],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                _final_result_part(
+                    content="第二次回答已引用证据",
+                    handles=[real_handle],
+                    response_kind="grounded_answer",
                     tool_call_id="ok-grounding-2",
                 )
             ]
@@ -1142,13 +1154,14 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     assert result.agent_draft is not None
-    assert result.agent_draft.answer_text == "第二次回答已引用证据"
+    assert result.agent_output is not None
+    assert result.agent_output.answer_text == "第二次回答已引用证据"
     # The resolved evidence contains the real initial_anchor handle — no
     # fabricated handle was used to bypass the registry.
     kinds = {obs.handle.kind for obs in result.finalized.resolved_evidence}
     assert "initial_anchor" in kinds
     # The cited handle on the draft matches a resolved observation handle.
-    cited = set(result.agent_draft.cited_evidence_handles)
+    cited = set(result.agent_output.cited_evidence_handles)
     resolved_ids = {
         obs.handle.handle_id for obs in result.finalized.resolved_evidence
     }
@@ -1189,13 +1202,19 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "仍然没有依据",
-                            "cited_evidence_handles": [],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                        args=json.dumps(
+                            {
+                                "response_kind": "grounded_answer",
+                                "answer_blocks": [
+                                    {
+                                        "text": "仍然没有依据",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": [],
+                                    }
+                                ],
+                            }
+                        ),
                     tool_call_id=f"bad-grounding-{calls['n']}",
                 )
             ]
@@ -1334,19 +1353,14 @@ async def test_policy_retry_then_success_via_real_seam(
         )
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
-        # The turn-specific correctness block still reaches the model.
-        assert "<answer_correctness>" in prompt_text
+        assert "<answer_correctness>" not in prompt_text
+        assert "## Turn answer policy (server-owned)" in prompt_text
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "文章报道了 2025 年的事件。",
-                            "cited_evidence_handles": [handle_match.group(0)],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                _final_result_part(
+                    content="文章报道了 2025 年的事件。",
+                    handles=[handle_match.group(0)],
+                    response_kind="grounded_answer",
                     tool_call_id=f"policy-attempt-{model_calls}",
                 )
             ]
@@ -1374,9 +1388,10 @@ async def test_policy_retry_then_success_via_real_seam(
     assert result.finalized.status == "ok"
     assert result.agent_draft is not None
     assert result.agent_draft.response_kind == "grounded_answer"
-    assert result.agent_draft.cited_evidence_handles
+    assert result.agent_output is not None
+    assert result.agent_output.cited_evidence_handles
     # Answer accepted as-is — no silent rewrite.
-    assert "2025" in result.agent_draft.answer_text
+    assert "2025" in result.agent_output.answer_text
 
 
 @pytest.mark.asyncio
@@ -1402,15 +1417,10 @@ async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
         answer = "文章提到的城市有：多伦多、安大略省、纽约州。"
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": answer,
-                            "cited_evidence_handles": [handle_match.group(0)],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                _final_result_part(
+                    content=answer,
+                    handles=[handle_match.group(0)],
+                    response_kind="grounded_answer",
                     tool_call_id=f"city-attempt-{model_calls}",
                 )
             ]
@@ -1449,7 +1459,7 @@ async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     # Answer accepted unchanged — no silent geo repair.
-    answer_text = result.agent_draft.answer_text if result.agent_draft else ""
+    answer_text = result.agent_output.answer_text if result.agent_output else ""
     assert "安大略省" in answer_text
 
 
@@ -1475,15 +1485,10 @@ async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
         answer = "文章指出有 12500 人撤离。"
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": answer,
-                            "cited_evidence_handles": [handle_match.group(0)],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                _final_result_part(
+                    content=answer,
+                    handles=[handle_match.group(0)],
+                    response_kind="grounded_answer",
                     tool_call_id=f"num-attempt-{model_calls}",
                 )
             ]
@@ -1521,7 +1526,9 @@ async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
     assert model_calls == 1
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert "12500" in (result.agent_draft.answer_text if result.agent_draft else "")
+    assert "12500" in (
+        result.agent_output.answer_text if result.agent_output else ""
+    )
 
 
 @pytest.mark.asyncio
@@ -1543,15 +1550,8 @@ async def test_policy_retry_budget_exhausted_via_real_seam() -> None:
         calls["n"] += 1
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "文章报道了 2025 年的事件。",
-                            "cited_evidence_handles": [],
-                            "response_kind": "clarification",
-                        }
-                    ),
+                _final_result_part(
+                    content="文章报道了 2025 年的事件。",
                     tool_call_id=f"policy-bad-{calls['n']}",
                 )
             ]
@@ -1732,11 +1732,10 @@ def test_t8_correctness_block_does_not_leak_sensitive_data() -> None:
     assert "2023" in block
 
 
-# T9: FunctionModel integration — first model request actually receives the
-#     <answer_correctness> block with the rendered year allowset.
+# T9: FunctionModel integration — the first request receives the structured
+#     host policy, while sample-specific correctness prose stays absent.
 @pytest.mark.asyncio
-async def test_t9_first_model_request_contains_correctness_block() -> None:
-    """The first real request receives both correctness layers."""
+async def test_t9_first_model_request_contains_structured_turn_policy() -> None:
     import re
 
     captured_prompts: list[str] = []
@@ -1772,21 +1771,22 @@ async def test_t9_first_model_request_contains_correctness_block() -> None:
 
     first_prompt = captured_prompts[0]
     first_instructions = captured_instructions[0]
-    assert "## Answer correctness policy" in first_instructions
-    assert "Do not call a tool merely" in first_instructions
-    assert first_prompt.count("<answer_correctness>") == 1
-    assert "</answer_correctness>" in first_prompt
-    assert "2023" in first_prompt
+    assert "semantic ``answer_blocks``" in first_instructions
+    assert "Do not output ``knowledge_mode``" in first_instructions
+    assert "<answer_correctness>" not in first_prompt
+    assert first_prompt.count("## Turn answer policy (server-owned)") == 1
+    assert '"article_only":false' in first_prompt
+    assert '"requested_citation_scope":"none"' in first_prompt
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     assert result.agent_draft is not None
     assert result.agent_draft.response_kind == "grounded_answer"
-    assert result.agent_draft.cited_evidence_handles
+    assert result.agent_output is not None
+    assert result.agent_output.cited_evidence_handles
 
 
-# T10: policy is built exactly once; the correctness block reaches the
-#      model request (R4-A5-6: semantic violations no longer retry, so the
-#      run completes in one model call with the block intact).
+# T10: legacy correctness policy construction remains write-once internally,
+#      but only the canonical structured TurnAnswerPolicy reaches the model.
 @pytest.mark.asyncio
 async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
     monkeypatch: pytest.MonkeyPatch,
@@ -1797,7 +1797,7 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
 
     model_calls = 0
     policy_build_calls: list[dict[str, object]] = []
-    captured_blocks: list[str] = []
+    captured_policy_sections: list[str] = []
     original_builder = turn_coord_module.build_answer_correctness_policy
 
     def counting_builder(**kwargs):
@@ -1819,27 +1819,22 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
             for message in messages
             for part in (getattr(message, "parts", []) or [])
         )
-        block_match = re.search(
-            r"<answer_correctness>.*?</answer_correctness>",
+        assert "<answer_correctness>" not in prompt_text
+        policy_match = re.search(
+            r"## Turn answer policy \(server-owned\)\n(\{[^\n]+\})",
             prompt_text,
-            re.DOTALL,
         )
-        if block_match:
-            captured_blocks.append(block_match.group(0))
+        assert policy_match is not None
+        captured_policy_sections.append(policy_match.group(1))
 
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "answer_text": "文章报道了 2025 年的事件。",
-                            "cited_evidence_handles": [handle_match.group(0)],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                _final_result_part(
+                    content="文章报道了 2025 年的事件。",
+                    handles=[handle_match.group(0)],
+                    response_kind="grounded_answer",
                     tool_call_id=f"prompt-stability-{model_calls}",
                 )
             ]
@@ -1857,14 +1852,16 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
     assert len(policy_build_calls) == 1
     # R4-A5-6: no semantic retry — exactly one model call.
     assert model_calls == 1
-    # Correctness block reached the model request.
-    assert len(captured_blocks) == 1
-    # Block contains the rendered year allowset.
-    assert "2023" in captured_blocks[0]
+    assert len(captured_policy_sections) == 1
+    assert captured_policy_sections == [
+        '{"article_only":false,"citation_required":false,'
+        '"requested_citation_scope":"none","web_capability":"unavailable"}'
+    ]
     # Run succeeded on the single call; answer not rewritten.
     assert result.finalized is not None
     assert result.finalized.status == "ok"
-    assert "2025" in result.agent_draft.answer_text
+    assert result.agent_output is not None
+    assert "2025" in result.agent_output.answer_text
 
 
 @pytest.mark.asyncio

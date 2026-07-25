@@ -135,16 +135,25 @@ def _ok_outcome(*hits: ArticleRagHitView) -> ArticleRagSearchOutcome:
 
 
 def _final_part(content: str, handles: list[str] | None = None) -> ToolCallPart:
+    evidence_handles = handles or []
+    basis = "article" if evidence_handles else "general"
     return ToolCallPart(
         tool_name="final_result",
         args=json.dumps(
             {
-                "answer_text": content,
-                "cited_evidence_handles": handles or [],
-                # R4-A2: "clarification" passes the grounding output_validator
-                # with empty handles; tests needing grounded_answer cite real
-                # handles and override this explicitly.
-                "response_kind": "clarification",
+                "response_kind": "grounded_answer",
+                "answer_blocks": [
+                    {
+                        "text": content,
+                        "basis": basis,
+                        "article_scope": (
+                            "evidence_bounded"
+                            if evidence_handles
+                            else None
+                        ),
+                        "evidence_handles": evidence_handles,
+                    }
+                ],
             }
         ),
         tool_call_id="final-1",

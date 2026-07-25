@@ -26,7 +26,9 @@ from app.services.reader_record_ask.document_access import (
     build_document_scope,
 )
 from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
-from app.services.reader_record_ask.finalizer import AgentAnswerDraft
+from app.services.reader_record_ask.grounding_validator import (
+    AgentAnswerDraftOutput,
+)
 from app.services.reader_record_ask.runtime import run_reading_record_ask
 from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
@@ -45,6 +47,31 @@ _DOC = UUID("44444444-4444-4444-4444-444444444444")
 _SHA = "b" * 64
 _SENTINEL = "SENTINEL_REASONING_PRIVATE_8a1_NEVER_USER_SURFACE"
 _ROUND2 = "ROUND2_THINKING_PART_END_ONLY"
+
+
+def _answer_payload(
+    text: str,
+    *,
+    response_kind: str = "clarification",
+) -> dict[str, object]:
+    if response_kind == "clarification":
+        return {
+            "response_kind": "clarification",
+            "clarification_text": text,
+            "answer_blocks": [],
+        }
+    return {
+        "response_kind": response_kind,
+        "clarification_text": None,
+        "answer_blocks": [
+            {
+                "text": text,
+                "basis": "general",
+                "article_scope": None,
+                "evidence_handles": [],
+            }
+        ],
+    }
 
 
 def _envelope():
@@ -90,26 +117,14 @@ def _thinking_stream_model():
     async def stream_fn(messages, info):
         yield {0: DeltaThinkingPart(content=_SENTINEL)}
         yield {0: DeltaThinkingPart(content=" more")}
-        yield json.dumps(
-            {
-                "answer_text": "Which aspect?",
-                "cited_evidence_handles": [],
-                "response_kind": "clarification",
-            }
-        )
+        yield json.dumps(_answer_payload("Which aspect?"))
 
     async def function(messages, info):
         return ModelResponse(
             parts=[
                 ThinkingPart(content=_SENTINEL + " more"),
                 TextPart(
-                    content=json.dumps(
-                        {
-                            "answer_text": "Which aspect?",
-                            "cited_evidence_handles": [],
-                            "response_kind": "clarification",
-                        }
-                    )
+                    content=json.dumps(_answer_payload("Which aspect?"))
                 ),
             ]
         )
@@ -165,21 +180,9 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
             # if we put thinking in the function response... Use stream that
             # yields a single thinking dict as complete content once.
             yield {0: DeltaThinkingPart(content=_ROUND2)}
-            yield json.dumps(
-                {
-                    "answer_text": "Which aspect?",
-                    "cited_evidence_handles": [],
-                    "response_kind": "clarification",
-                }
-            )
+            yield json.dumps(_answer_payload("Which aspect?"))
             return
-        yield json.dumps(
-            {
-                "answer_text": "Which aspect?",
-                "cited_evidence_handles": [],
-                "response_kind": "clarification",
-            }
-        )
+        yield json.dumps(_answer_payload("Which aspect?"))
 
     async def function(messages, info):
         has_tool_return = any(
@@ -202,13 +205,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
             parts=[
                 ThinkingPart(content=_ROUND2),
                 TextPart(
-                    content=json.dumps(
-                        {
-                            "answer_text": "Which aspect?",
-                            "cited_evidence_handles": [],
-                            "response_kind": "clarification",
-                        }
-                    )
+                    content=json.dumps(_answer_payload("Which aspect?"))
                 ),
             ]
         )
@@ -240,13 +237,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
         # To force PartEnd-only path we unit-test lifecycle; here ensure
         # second round content is observed at least once without dup of r1.
         yield {0: DeltaThinkingPart(content=_ROUND2)}
-        yield json.dumps(
-            {
-                "answer_text": "Which aspect?",
-                "cited_evidence_handles": [],
-                "response_kind": "clarification",
-            }
-        )
+        yield json.dumps(_answer_payload("Which aspect?"))
 
     model = FunctionModel(
         function=function,
@@ -421,15 +412,18 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
     validator_calls = {"n": 0}
 
     def _build_agent(model) -> Agent:
-        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
             model,
             deps_type=ReaderRecordAskDeps,
-            output_type=AgentAnswerDraft,
-            output_retries=2,
+            output_type=AgentAnswerDraftOutput,
+            retries={"output": 2},
         )
 
         @agent.output_validator
-        async def validator(ctx, draft: AgentAnswerDraft) -> AgentAnswerDraft:
+        async def validator(
+            ctx,
+            draft: AgentAnswerDraftOutput,
+        ) -> AgentAnswerDraftOutput:
             validator_calls["n"] += 1
             if validator_calls["n"] == 1:
                 raise ModelRetry("first draft rejected for testing")
@@ -445,22 +439,10 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
         )
         if not has_retry:
             yield {0: DeltaThinkingPart(content=_SENTINEL)}
-            yield json.dumps(
-                {
-                    "answer_text": "round1 draft",
-                    "cited_evidence_handles": [],
-                    "response_kind": "clarification",
-                }
-            )
+            yield json.dumps(_answer_payload("round1 draft"))
             return
         yield {0: DeltaThinkingPart(content=_ROUND2)}
-        yield json.dumps(
-            {
-                "answer_text": "round2 final",
-                "cited_evidence_handles": [],
-                "response_kind": "clarification",
-            }
-        )
+        yield json.dumps(_answer_payload("round2 final"))
 
     model = FunctionModel(
         stream_function=stream_fn,
@@ -523,7 +505,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
     assert _ROUND2 not in caplog.text
 
     # Sentinel never leaks into the final answer.
-    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
 
@@ -597,13 +579,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
         # Round 2 after tool-arg ModelRetry: thinking + final answer.
         # Index 0 is reused — lifecycle.reset_stream() cleared the set.
         yield {0: DeltaThinkingPart(content=_ROUND2)}
-        yield json.dumps(
-            {
-                "answer_text": "recovered after tool retry",
-                "cited_evidence_handles": [],
-                "response_kind": "clarification",
-            }
-        )
+        yield json.dumps(_answer_payload("recovered after tool retry"))
 
     model = FunctionModel(
         stream_function=stream_fn,
@@ -611,11 +587,11 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
     )
 
     def _build_agent(model) -> Agent:
-        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+        agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
             model,
             deps_type=ReaderRecordAskDeps,
-            output_type=AgentAnswerDraft,
-            output_retries=2,
+            output_type=AgentAnswerDraftOutput,
+            retries={"output": 2},
         )
 
         @agent.tool
@@ -683,7 +659,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
     assert _ROUND2 not in caplog.text
 
     # Sentinel never leaks into the final answer.
-    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
 
@@ -718,11 +694,7 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
     )
 
     _FINAL_ANSWER = json.dumps(
-        {
-            "answer_text": "final answer after tool return",
-            "cited_evidence_handles": [],
-            "response_kind": "clarification",
-        }
+        _answer_payload("final answer after tool return")
     )
 
     @dataclass
@@ -838,11 +810,11 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
 
     model = _PartEndOnlyModel()
 
-    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
         model,
         deps_type=ReaderRecordAskDeps,
-        output_type=AgentAnswerDraft,
-        output_retries=2,
+        output_type=AgentAnswerDraftOutput,
+        retries={"output": 2},
     )
 
     @agent.tool
@@ -900,27 +872,27 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
     assert _ROUND2 not in caplog.text
 
     # Sentinel never leaks into the final answer.
-    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
     assert _ROUND2 not in (outcome.output.answer_text or "")
 
 
 # ---------------------------------------------------------------------------
-# R4-A6: answer_text token-level streaming via pydantic-core partial parse.
+# R4-A6: answer-block text streaming via pydantic-core partial parse.
 #
 # FunctionModel string yields map to one TextPart streamed as
 # PartStartEvent(TextPart) + PartDeltaEvent(TextPartDelta)* +
 # PartEndEvent(TextPart). The transport feeds only TextPart content into
 # _AnswerTextStreamer (never ThinkingPart content) and emits
-# AnswerDeltaEvent carrying answer_text prefix increments only.
+# AnswerDeltaEvent carrying answer text projection increments only.
 # ---------------------------------------------------------------------------
 
 _ANSWER_JSON_CHUNKS: tuple[str, ...] = (
-    '{"',
-    'answer_text": "Hel',
+    '{"response_kind": "grounded_answer", "answer_blocks": [{"',
+    'text": "Hel',
     'lo world",',
-    '"cited_evidence_handles": [],',
-    '"response_kind": "grounded_answer"}',
+    '"basis": "general",',
+    '"article_scope": null, "evidence_handles": []}]}',
 )
 
 
@@ -955,10 +927,10 @@ async def test_answer_text_chunks_stream_as_answer_delta_events():
             yield chunk
 
     model = FunctionModel(stream_function=stream_fn)
-    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
         model,
         deps_type=ReaderRecordAskDeps,
-        output_type=AgentAnswerDraft,
+        output_type=AgentAnswerDraftOutput,
     )
     deps = _transport_deps()
 
@@ -969,18 +941,57 @@ async def test_answer_text_chunks_stream_as_answer_delta_events():
     )
 
     deltas = [e for e in deps.events if isinstance(e, AnswerDeltaEvent)]
-    # '{"' and the post-answer_text keys never resolve to new answer prefix;
+    # Structure before block text and metadata after it emit no answer prefix;
     # exactly two increments: when "Hel" resolves, then "lo world".
     assert [e.delta for e in deltas] == ["Hel", "lo world"]
     assert "".join(e.delta for e in deltas) == "Hello world"
     # Structured output still completes from the same streamed text.
-    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert outcome.output.answer_text == "Hello world"
     # phase_events mirror the sink emissions.
     phase_deltas = [
         e for e in outcome.phase_events if isinstance(e, AnswerDeltaEvent)
     ]
     assert [e.delta for e in phase_deltas] == ["Hel", "lo world"]
+
+
+@pytest.mark.asyncio
+async def test_clarification_text_streams_without_answer_blocks():
+    """Clarification uses its independent text field and carries no blocks."""
+    from pydantic_ai import Agent
+
+    from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        del messages, info
+        yield '{"response_kind":"clarification","clarification_text":"Which'
+        yield ' part?","answer_blocks":[]}'
+
+    model = FunctionModel(stream_function=stream_fn)
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
+        model,
+        deps_type=ReaderRecordAskDeps,
+        output_type=AgentAnswerDraftOutput,
+    )
+    deps = _transport_deps()
+
+    outcome = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="ambiguous question",
+        deps=deps,
+    )
+
+    deltas = [e.delta for e in deps.events if isinstance(e, AnswerDeltaEvent)]
+    assert "".join(deltas) == "Which part?"
+    assert outcome.output.response_kind == "clarification"
+    assert outcome.output.clarification_text == "Which part?"
+    assert outcome.output.answer_blocks == []
+    assert outcome.output.cited_evidence_handles == []
+    assert outcome.output.validated_answer_blocks is None
+    assert outcome.output.knowledge_mode is None
 
 
 @pytest.mark.asyncio
@@ -1002,10 +1013,10 @@ async def test_answer_delta_isolated_from_thinking_transport(caplog):
         stream_function=stream_fn,
         profile=ModelProfile(supports_thinking=True),
     )
-    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraft] = Agent(
+    agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
         model,
         deps_type=ReaderRecordAskDeps,
-        output_type=AgentAnswerDraft,
+        output_type=AgentAnswerDraftOutput,
     )
     deps = _transport_deps()
     observer = BoundedThinkingObserver(char_cap=2000)
@@ -1031,7 +1042,7 @@ async def test_answer_delta_isolated_from_thinking_transport(caplog):
     started = [e for e in deps.events if isinstance(e, AnalysisStartedEvent)]
     finished = [e for e in deps.events if isinstance(e, AnalysisFinishedEvent)]
     assert len(started) == 1 and len(finished) == 1
-    assert isinstance(outcome.output, AgentAnswerDraft)
+    assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert outcome.output.answer_text == "Hello world"
     assert _SENTINEL not in caplog.text
 
@@ -1050,28 +1061,27 @@ def test_answer_text_streamer_partial_parse_and_monotonic_emission():
         emitted_lens.append(streamer._emitted_len)
         return out
 
-    # Structure before answer_text is resolvable → no delta (partial dict
+    # Structure before a block text is resolvable → no delta (partial dict
     # parses as {} / empty prefix; nothing emitted).
-    assert track('{"') is None
-    assert track("answer_text") is None
+    assert track('{"response_kind": "grounded_answer",') is None
+    assert track('"answer_blocks": [{"') is None
+    assert track("text") is None
     assert track('": "') is None
     # First resolvable prefix emits; subsequent chunks emit increments.
     assert track("Hel") == "Hel"
     assert track('lo world",') == "lo world"
-    # Completed keys after answer_text add no answer prefix.
-    assert track('"cited_evidence_handles": [],') is None
-    assert track('"response_kind": "grounded_answer"}') is None
+    # Completed provenance keys after text add no answer prefix.
+    assert track('"basis": "general",') is None
+    assert track('"article_scope": null, "evidence_handles": []}]}') is None
 
     # _emitted_len monotonically non-decreasing — never rolls back.
     assert emitted_lens == sorted(emitted_lens)
     assert emitted_lens[-1] == len("Hello world")
     # Already-emitted prefix is never re-emitted.
-    assert track('{"answer_text": "Hello world"}') is None
-
     # reset() starts a fresh buffer (new model response after tool boundary).
     streamer.reset()
     assert streamer._emitted_len == 0
-    assert streamer.feed('{"answer_text": "x"') == "x"
+    assert streamer.feed('{"answer_blocks": [{"text": "x"') == "x"
 
     # Non-JSON prose never parses → no deltas, no exception.
     prose = _AnswerTextStreamer()

@@ -130,9 +130,9 @@ def _final_answer_model():
                 TextPart(
                     json.dumps(
                         {
-                            "answer_text": "Which aspect of the article?",
-                            "cited_evidence_handles": [],
                             "response_kind": "clarification",
+                            "clarification_text": "Which aspect of the article?",
+                            "answer_blocks": [],
                         }
                     )
                 )
@@ -145,17 +145,32 @@ def _final_answer_model():
 def _json_final(
     *,
     answer_text: str = "ok",
-    response_kind: str = "clarification",
+    response_kind: str = "grounded_answer",
     handles: list[str] | None = None,
 ) -> ModelResponse:
+    evidence_handles = handles or []
     return ModelResponse(
         parts=[
             TextPart(
                 json.dumps(
                     {
-                        "answer_text": answer_text,
-                        "cited_evidence_handles": handles or [],
                         "response_kind": response_kind,
+                        "answer_blocks": [
+                            {
+                                "text": answer_text,
+                                "basis": (
+                                    "article"
+                                    if evidence_handles
+                                    else "general"
+                                ),
+                                "article_scope": (
+                                    "evidence_bounded"
+                                    if evidence_handles
+                                    else None
+                                ),
+                                "evidence_handles": evidence_handles,
+                            }
+                        ],
                     }
                 )
             )

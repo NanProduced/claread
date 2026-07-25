@@ -1,44 +1,30 @@
-"""Pydantic AI output validator for the Reading Record Ask agent.
+"""Structured provenance output validation for Reading Record Ask.
 
-Deep module wired via the ``agent.output_validator(grounding_validator)``
-decorator seam in :func:`create_reading_record_ask_agent`. It receives
-``RunContext[ReaderRecordAskDeps]`` and the parsed ``AgentAnswerDraft``,
-enforces ``response_kind`` semantics + handle existence + duplicate
-handle rejection + evidence count limit, and raises ``ModelRetry``
-(counted against ``retries["output"]``) on correctable failures.
-
-Responsibility scope (design §5 frozen boundary, R4-A5-6):
-
-- Validator does (structural / evidence contracts only): response_kind
-  semantics, handle existence in registry, handle envelope_fingerprint
-  match (correctable), duplicate handle rejection (correctable — model
-  can remove duplicates), evidence count limit, baseline_available
-  forbids unavailable.
-- Validator does NOT: semantic answer-correctness heuristics (temporal /
-  publication-year, numeric allowset, geo province/state/region,
-  language ratio, explicit exercise-count text parsing — all migrated to
-  the prompt block + typed non-retry evaluator layer), scope identity,
-  final generation fence, stable document identity, citation/evidence
-  public projection, typed terminal mapping, silent handle
-  de-duplication. Those are non-retryable finalizer / evaluator
-  responsibilities.
-
-The validator never mutates ``draft`` and never silently truncates
-``cited_evidence_handles`` — over-limit and duplicates are always a
-``ModelRetry`` so the model can repair them.
+The model supplies semantic answer blocks. The host projects the current
+turn's registered evidence and confirmed article coverage into the canonical
+P2A policy validator, then attaches its immutable result privately. Failures
+raise ``ModelRetry``; no block is reclassified or silently repaired.
 """
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Literal
 
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
-from app.services.reader_record_ask.evidence import is_valid_evidence_handle_id
-from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
-from app.services.reader_record_ask.finalizer import AgentAnswerDraft
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
+from app.services.reader_record_ask.turn_answer_policy import (
+    AnswerBlockBasis,
+    AnswerBlockDraft,
+    ArticleScope,
+    EvidenceValidationContext,
+    KnowledgeMode,
+    ValidatedAnswerBlocks,
+    ValidatedEvidence,
+    validate_answer_blocks,
+)
 
 # Hard cap on the number of cited evidence handles per answer. The model
 # is prompted to return the MINIMAL sufficient set; exceeding this cap is
@@ -46,24 +32,146 @@ from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 # the finalizer.
 MAX_CITED_EVIDENCE_HANDLES: Final[int] = 6
 
-# Short allowlist of article-level core question shapes that MUST receive
-# ``grounded_answer`` when baseline coverage is complete. The prompt
-# contract references this list; the validator does NOT pattern-match
-# user input (no keyword routing). The list exists for prompt construction
-# and prompt-content tests.
-CORE_GROUNDED_QUESTION_HINTS: Final[tuple[str, ...]] = (
-    "这篇文章主要说了什么",
-    "概括核心观点",
-    "作者最想说明什么",
-    "文章是怎么展开论证的",
-    "基于文章出一道小练习",
-)
+_EVIDENCE_KIND_TO_SOURCE_KIND: Final[dict[str, Literal["article"]]] = {
+    "initial_anchor": "article",
+    "read_range": "article",
+    "search_hit": "article",
+    "observation": "article",
+    "article_seed": "article",
+}
+
+
+class AgentAnswerBlockOutput(BaseModel):
+    """Thin model-output adapter for one provenance-explicit answer block."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    text: str = Field(min_length=1, max_length=8_000)
+    basis: AnswerBlockBasis
+    article_scope: ArticleScope | None
+    evidence_handles: list[str] = Field(default_factory=list)
+
+    def to_policy_draft(self) -> AnswerBlockDraft:
+        """Project model syntax into the canonical P2A policy draft."""
+
+        return AnswerBlockDraft(
+            text=self.text,
+            basis=self.basis,
+            article_scope=self.article_scope,
+            evidence_handles=self.evidence_handles,
+        )
+
+
+class AgentAnswerDraftOutput(BaseModel):
+    """Model-visible answer shape; host-derived fields stay private."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    response_kind: Literal["grounded_answer", "clarification"]
+    clarification_text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=8_000,
+    )
+    answer_blocks: list[AgentAnswerBlockOutput] = Field(default_factory=list)
+    _validated_answer_blocks: ValidatedAnswerBlocks | None = PrivateAttr(
+        default=None
+    )
+
+    @model_validator(mode="after")
+    def _validate_response_kind_shape(self) -> AgentAnswerDraftOutput:
+        if self.response_kind == "clarification":
+            if self.clarification_text is None:
+                raise ValueError("clarification requires clarification_text")
+            if self.answer_blocks:
+                raise ValueError("clarification requires answer_blocks=[]")
+            return self
+
+        if self.clarification_text is not None:
+            raise ValueError("grounded_answer requires clarification_text=null")
+        if not self.answer_blocks:
+            raise ValueError("grounded_answer requires at least one answer block")
+        return self
+
+    @property
+    def validated_answer_blocks(self) -> ValidatedAnswerBlocks | None:
+        """Return host validation output; clarifications intentionally have none."""
+
+        return self._validated_answer_blocks
+
+    @property
+    def knowledge_mode(self) -> KnowledgeMode | None:
+        """Expose only the host-derived mode, never a model input field."""
+
+        validated = self._validated_answer_blocks
+        return validated.knowledge_mode if validated is not None else None
+
+    @property
+    def answer_text(self) -> str:
+        """Internal compatibility view; never accepted as model input."""
+
+        if self.response_kind == "clarification":
+            return self.clarification_text or ""
+        return "\n\n".join(block.text for block in self.answer_blocks)
+
+    @property
+    def cited_evidence_handles(self) -> list[str]:
+        """Internal compatibility view; never accepted as model input."""
+
+        return [
+            handle_id
+            for block in self.answer_blocks
+            for handle_id in block.evidence_handles
+        ]
+
+    def bind_validated_answer_blocks(
+        self,
+        validated: ValidatedAnswerBlocks,
+    ) -> None:
+        """Attach host-only validation output without changing model schema."""
+
+        if self.response_kind != "grounded_answer":
+            raise ValueError("clarification cannot bind validated answer blocks")
+        self._validated_answer_blocks = validated
+
+
+def build_evidence_validation_context(
+    deps: ReaderRecordAskDeps,
+) -> EvidenceValidationContext:
+    """Project the current registry and coverage into the canonical context."""
+
+    evidence: list[ValidatedEvidence] = []
+    for observation in deps.evidence_registry.list_observations():
+        evidence_kind = str(observation.handle.kind)
+        source_kind = _EVIDENCE_KIND_TO_SOURCE_KIND.get(evidence_kind)
+        if source_kind is None:
+            raise ValueError(
+                f"unsupported evidence kind for v1 provenance: {evidence_kind!r}"
+            )
+        evidence.append(
+            ValidatedEvidence(
+                handle_id=observation.handle.handle_id,
+                source_kind=source_kind,
+                envelope_id=observation.handle.envelope_fingerprint,
+                publicly_mappable=bool(
+                    (observation.snippet and observation.snippet.strip())
+                    or observation.unit_id
+                    or observation.anchor_segment_id
+                    or observation.rag_citation
+                ),
+            )
+        )
+    return EvidenceValidationContext(
+        envelope_id=deps.envelope.envelope_fingerprint,
+        evidence=evidence,
+        confirmed_article_scopes=deps.confirmed_article_scopes,
+    )
 
 
 async def grounding_validator(
     ctx: RunContext[ReaderRecordAskDeps],
-    draft: AgentAnswerDraft,
-) -> AgentAnswerDraft:
+    draft: AgentAnswerDraftOutput,
+) -> AgentAnswerDraftOutput:
     """Pydantic AI output validator for the Reading Record Ask agent.
 
     Called on both partial and final structured output. Partial mode only
@@ -144,8 +252,8 @@ async def grounding_validator(
 
 async def _grounding_validator_final_body(
     ctx: RunContext[ReaderRecordAskDeps],
-    draft: AgentAnswerDraft,
-) -> AgentAnswerDraft:
+    draft: AgentAnswerDraftOutput,
+) -> AgentAnswerDraftOutput:
     """Final-mode validation body. Raises ``ModelRetry`` on correctable
     failures; the caller's try/except wrapper increments the retry
     request counter.
@@ -156,159 +264,43 @@ async def _grounding_validator_final_body(
     wrapper.
     """
     response_kind = draft.response_kind
-    if response_kind not in ("grounded_answer", "clarification", "unavailable"):
+    if response_kind not in ("grounded_answer", "clarification"):
         raise ModelRetry(
-            f"response_kind must be grounded_answer|clarification|unavailable, "
+            f"response_kind must be grounded_answer|clarification, "
             f"got {response_kind!r}"
         )
 
-    registry = ctx.deps.evidence_registry
-    envelope_fingerprint = ctx.deps.envelope.envelope_fingerprint
+    policy = ctx.deps.turn_answer_policy
+    if policy is None:
+        raise ModelRetry("turn answer policy is required for output validation")
+    if policy.host_drafting_decision().kind != "model_draft_allowed":
+        raise ModelRetry("host must handle web citation request before model drafting")
+    if draft.response_kind == "clarification":
+        return draft
 
-    if response_kind == "grounded_answer":
-        _check_grounded_answer(draft, registry, envelope_fingerprint)
-    elif response_kind == "clarification":
-        # clarification allows empty handles; if handles are present they
-        # must still be valid (no fabricated citations).
-        _check_handles_valid_if_present(draft, registry, envelope_fingerprint)
-    else:  # unavailable
-        _check_unavailable(draft, ctx.deps.baseline_available)
+    try:
+        blocks = tuple(block.to_policy_draft() for block in draft.answer_blocks)
+        handle_ids = [
+            handle_id
+            for block in blocks
+            for handle_id in block.evidence_handles
+        ]
+        if len(handle_ids) > MAX_CITED_EVIDENCE_HANDLES:
+            raise ValueError(
+                f"answer may cite at most {MAX_CITED_EVIDENCE_HANDLES} evidence handles"
+            )
+        if len(handle_ids) != len(set(handle_ids)):
+            raise ValueError(
+                "remove duplicate handles; duplicate evidence handles are not allowed"
+            )
+        validated = validate_answer_blocks(
+            policy=policy,
+            blocks=blocks,
+            evidence_context=build_evidence_validation_context(ctx.deps),
+        )
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from None
 
-    # R4-A5-6: semantic answer-correctness violations (temporal /
-    # publication-year, numeric allowset, geo province/state/region,
-    # language-ratio, explicit-count text heuristics) no longer raise
-    # ModelRetry here (design §5 frozen boundary). The policy's prompt
-    # block (AnswerCorrectnessPolicy.render_prompt_block) remains the
-    # ONLY model-facing surface for these constraints; typed evaluation
-    # stays observable via AnswerCorrectnessPolicy.evaluate_draft (pure,
-    # non-retry) for the prompt/evaluator layer. Semantic quality is
-    # never repaired by silently rewriting the answer. The validator
-    # keeps ONLY structural / evidence-contract retries: response_kind
-    # structure, handle mint shape / registry existence / fingerprint /
-    # duplicates / count cap, and unavailable ↔ baseline capability.
+    draft.bind_validated_answer_blocks(validated)
 
     return draft
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers (not public — per design doc G.11)
-# ---------------------------------------------------------------------------
-
-
-def _check_grounded_answer(
-    draft: AgentAnswerDraft,
-    registry: EvidenceRegistry,
-    envelope_fingerprint: str,
-) -> None:
-    if not draft.answer_text.strip():
-        raise ModelRetry("grounded_answer requires non-empty answer_text")
-    if not draft.cited_evidence_handles:
-        raise ModelRetry(
-            "grounded_answer requires at least one cited_evidence_handle; "
-            "cite a handle from the server-registered list or call a tool"
-        )
-    if len(draft.cited_evidence_handles) > MAX_CITED_EVIDENCE_HANDLES:
-        raise ModelRetry(
-            f"grounded_answer cites {len(draft.cited_evidence_handles)} "
-            f"handles; return only the MINIMAL sufficient set (at most "
-            f"{MAX_CITED_EVIDENCE_HANDLES})"
-        )
-    _verify_handles_in_registry(draft.cited_evidence_handles, registry, envelope_fingerprint)
-
-
-def _check_handles_valid_if_present(
-    draft: AgentAnswerDraft,
-    registry: EvidenceRegistry,
-    envelope_fingerprint: str,
-) -> None:
-    if not draft.cited_evidence_handles:
-        return
-    if len(draft.cited_evidence_handles) > MAX_CITED_EVIDENCE_HANDLES:
-        raise ModelRetry(
-            f"clarification cites {len(draft.cited_evidence_handles)} "
-            f"handles; at most {MAX_CITED_EVIDENCE_HANDLES} allowed"
-        )
-    _verify_handles_in_registry(draft.cited_evidence_handles, registry, envelope_fingerprint)
-
-
-def _check_unavailable(draft: AgentAnswerDraft, baseline_available: bool) -> None:
-    if draft.cited_evidence_handles:
-        raise ModelRetry(
-            "unavailable must not cite evidence handles; either provide a "
-            "grounded_answer/clarification or omit handles"
-        )
-    if baseline_available:
-        raise ModelRetry(
-            "baseline article context is available; unavailable is not "
-            "permitted — use grounded_answer or clarification instead"
-        )
-
-
-def _verify_handles_in_registry(
-    handle_ids: list[str],
-    registry: EvidenceRegistry,
-    envelope_fingerprint: str,
-) -> None:
-    # Duplicate handles are a correctable model error — the model can
-    # simply remove the duplicates. Reject BEFORE any registry resolution
-    # so duplicates never reach the finalizer's silent de-dup path, and
-    # so the check is safe both before and after registry lookup (the
-    # helper is a pure function of the handle list).
-    _reject_duplicate_handles(handle_ids)
-
-    # Best-effort available-handle hint for retry messages. Uses the
-    # existing read-only list_handle_refs() API — no new registry state.
-    try:
-        available = tuple(ref.handle_id for ref in registry.list_handle_refs())
-    except Exception:  # noqa: BLE001 — hint must never break validation
-        available = ()
-
-    for raw_id in handle_ids:
-        if not is_valid_evidence_handle_id(raw_id):
-            raise ModelRetry(f"cited handle {raw_id!r} is not a valid mint-shaped handle id")
-        observation = registry.get(raw_id)
-        if observation is None:
-            hint = f"; available handles: {sorted(available)}" if available else ""
-            raise ModelRetry(
-                f"cited handle {raw_id!r} is not registered in this turn's evidence registry{hint}"
-            )
-        if observation.handle.envelope_fingerprint != envelope_fingerprint:
-            raise ModelRetry(
-                f"cited handle {raw_id!r} belongs to a different turn "
-                f"(envelope fingerprint mismatch)"
-            )
-
-
-def _reject_duplicate_handles(handle_ids: list[str]) -> None:
-    """Reject duplicate entries in ``cited_evidence_handles``.
-
-    Duplicate handles are a correctable model error: the model can simply
-    remove the redundant entries. Raising ``ModelRetry`` here (counted
-    against ``retries["output"]``) keeps the repair in the output
-    validator and prevents the finalizer from silently de-duplicating,
-    which would hide a citation-quality issue from the model.
-
-    The error message names the duplicated handle id (which the model
-    itself produced, so it is not server-internal data) and gives
-    actionable guidance. It never includes answer text, snippets, the
-    envelope fingerprint, or any other internal data.
-
-    This helper is a pure function of ``handle_ids`` — it does not touch
-    the registry — so it is safe to call both before and after registry
-    resolution. It is invoked once at the start of
-    ``_verify_handles_in_registry`` so both ``grounded_answer`` and
-    ``clarification`` branches are covered without duplicating logic.
-    """
-    seen: set[str] = set()
-    duplicates: set[str] = set()
-    for hid in handle_ids:
-        if hid in seen:
-            duplicates.add(hid)
-        else:
-            seen.add(hid)
-    if duplicates:
-        dup_list = ", ".join(sorted(duplicates))
-        raise ModelRetry(
-            "cited_evidence_handles contains duplicate entries; "
-            f"remove duplicate handles (duplicated: {dup_list})"
-        )
