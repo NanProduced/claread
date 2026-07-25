@@ -12,7 +12,6 @@ from uuid import UUID
 
 import pytest
 
-from app.services.reader_record_ask.agent import build_agent_user_prompt
 from app.services.reader_record_ask.article_map_model_view import (
     MAP_LABEL_HARD_CAP,
     MAP_ORDINAL_NAVIGATION_NOTE,
@@ -41,6 +40,10 @@ from app.services.reader_record_ask.tool_contracts import (
 from app.services.reader_record_ask.turn_capability_projection import (
     build_turn_capability_projection,
     mint_turn_id,
+)
+from app.services.reader_record_ask.turn_prompt import (
+    build_production_agent_user_prompt,
+    mint_turn_frame_prompt_capability,
 )
 
 _FINGERPRINT_A = "a" * 64
@@ -210,9 +213,19 @@ def test_label_not_in_projection_and_window_body_not_in_prompt() -> None:
     assert projection.article_map.present is True
     assert projection.article_map.entry_count == 1
 
-    prompt = build_agent_user_prompt(
-        user_message="问题",
-        agent_context_json="{}",
+    turn_frame = mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json="{}",
+        handles_block="",
+        baseline_is_complete=False,
+        user_question="问题",
+        budget=ModelVisibleTurnBudget(),
+        renderer=ModelViewRenderer(),
+        map_prompt=result.prompt_capability,
+        charge=False,
+    )
+    prompt = build_production_agent_user_prompt(
+        turn_frame=turn_frame,
         map_prompt=result.prompt_capability,
     )
     # The map block appears exactly once; the full multi-sentence window
@@ -243,9 +256,19 @@ def test_map_prompt_capability_brand_enforced() -> None:
     )
     with pytest.raises(TypeError):
         validate_article_map_prompt_capability(forged)
-    # None preserves the legacy layout (no map section).
-    legacy = build_agent_user_prompt(user_message="q", agent_context_json="{}")
-    assert "<untrusted_article_map>" not in legacy
+    # None preserves the plain layout (no map section).
+    plain_frame = mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json="{}",
+        handles_block="",
+        baseline_is_complete=False,
+        user_question="q",
+        budget=ModelVisibleTurnBudget(),
+        renderer=ModelViewRenderer(),
+        charge=False,
+    )
+    plain_prompt = build_production_agent_user_prompt(turn_frame=plain_frame)
+    assert "<untrusted_article_map>" not in plain_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -525,11 +548,11 @@ def test_map_module_wired_only_via_turn_coordinator() -> None:
     assert "assemble_article_map" in coord_src
 
 
-def test_agent_prompt_builder_mentions_map_only_via_capability() -> None:
-    import app.services.reader_record_ask.agent as agent_mod
+def test_prompt_builder_mentions_map_only_via_capability() -> None:
+    import app.services.reader_record_ask.turn_prompt as turn_prompt_mod
 
-    source = open(agent_mod.__file__, encoding="utf-8").read()
-    # The prompt builder is the only agent.py touchpoint: the capability
+    source = open(turn_prompt_mod.__file__, encoding="utf-8").read()
+    # The prompt builder is the only turn_prompt.py touchpoint: the capability
     # validator is imported, the assembler itself is never imported —
     # tool wiring cannot call map assembly this round.
     assert "import assemble_article_map" not in source

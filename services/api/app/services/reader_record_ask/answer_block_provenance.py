@@ -1,9 +1,12 @@
-"""Pure, server-owned provenance policy for one Reading Record Ask turn.
+"""Pure, server-owned block-level provenance validation for one Ask turn.
 
 This module deliberately does not know about agents, prompts, finalization,
-wire DTOs, persistence, or Web rendering.  A future host adapter supplies
-already-validated evidence and confirmed article coverage; this module then
-decides whether a draft is structurally legal for the turn.
+wire DTOs, persistence, Web rendering, or user intent.  The answer Agent
+owns every semantic decision (whether to expand evidence, whether to search
+the article, which basis a block uses).  The Host only verifies what is
+mechanically provable: each block's basis obeys the evidence contract,
+article scopes are backed by server-confirmed coverage, and every evidence
+handle belongs to the current turn's envelope.
 """
 
 from __future__ import annotations
@@ -19,8 +22,6 @@ ArticleScope: TypeAlias = Literal[
     "article_overview",
     "full_article",
 ]
-RequestedCitationScope: TypeAlias = Literal["none", "article", "web"]
-WebCapability: TypeAlias = Literal["unavailable", "available"]
 KnowledgeMode: TypeAlias = Literal[
     "article_grounded",
     "general_knowledge",
@@ -28,12 +29,6 @@ KnowledgeMode: TypeAlias = Literal[
     "mixed",
 ]
 EvidenceSourceKind: TypeAlias = Literal["article", "web"]
-HostDraftingDecisionKind: TypeAlias = Literal[
-    "model_draft_allowed",
-    "web_unavailable",
-    "web_not_supported_in_v1",
-]
-HostOwnedOutcomeKind: TypeAlias = Literal["article_source_unavailable"]
 
 _ARTICLE_SCOPES = frozenset(
     {
@@ -44,88 +39,7 @@ _ARTICLE_SCOPES = frozenset(
     }
 )
 _ANSWER_BLOCK_BASES = frozenset({"article", "general", "web"})
-_REQUESTED_CITATION_SCOPES = frozenset({"none", "article", "web"})
-_WEB_CAPABILITIES = frozenset({"unavailable", "available"})
 _EVIDENCE_SOURCE_KINDS = frozenset({"article", "web"})
-
-
-@dataclass(frozen=True, slots=True)
-class HostDraftingDecision:
-    """A host-only decision made before any model draft is accepted."""
-
-    kind: HostDraftingDecisionKind
-
-
-@dataclass(frozen=True, slots=True)
-class HostOwnedOutcome:
-    """A host-owned safe result marker, without public payload semantics."""
-
-    kind: HostOwnedOutcomeKind
-
-
-@dataclass(frozen=True, slots=True)
-class TurnAnswerPolicy:
-    """Immutable answer/provenance policy for one turn.
-
-    The policy separates article-only knowledge constraints from citation
-    presentation requirements.  It never authorizes Web use when the host has
-    not enabled that capability.
-    """
-
-    article_only: bool
-    citation_required: bool
-    requested_citation_scope: RequestedCitationScope
-    web_capability: WebCapability
-
-    def __post_init__(self) -> None:
-        if type(self.article_only) is not bool:
-            raise ValueError("article_only must be a bool")
-        if type(self.citation_required) is not bool:
-            raise ValueError("citation_required must be a bool")
-        if self.requested_citation_scope not in _REQUESTED_CITATION_SCOPES:
-            raise ValueError("requested_citation_scope must be none, article, or web")
-        if self.web_capability not in _WEB_CAPABILITIES:
-            raise ValueError("web_capability must be unavailable or available")
-        if not self.citation_required and self.requested_citation_scope != "none":
-            raise ValueError(
-                "citation_required=false requires requested_citation_scope=none"
-            )
-        if self.citation_required and self.requested_citation_scope == "none":
-            raise ValueError(
-                "citation_required=true requires requested_citation_scope=article or web"
-            )
-        if self.article_only and self.requested_citation_scope == "web":
-            raise ValueError("article_only does not allow requested_citation_scope=web")
-
-    def host_drafting_decision(self) -> HostDraftingDecision:
-        """Return whether the host must stop before model drafting.
-
-        A requested Web citation is not an invitation for the model to
-        substitute general knowledge: unavailable Web stays unavailable, and
-        v1 blocks even an available capability before model drafting.
-        """
-
-        if self.requested_citation_scope == "web":
-            if self.web_capability == "unavailable":
-                return HostDraftingDecision(kind="web_unavailable")
-            return HostDraftingDecision(kind="web_not_supported_in_v1")
-        return HostDraftingDecision(kind="model_draft_allowed")
-
-    def article_source_unavailable_outcome(self) -> HostOwnedOutcome:
-        """Describe the only policy state that may yield article-source absence.
-
-        The caller owns the later completed-message projection.  No model text,
-        DTO, persistence, or UI behavior is defined here.
-        """
-
-        if not (
-            self.citation_required
-            and self.requested_citation_scope == "article"
-        ):
-            raise ValueError(
-                "article_source_unavailable is only legal for an article citation request"
-            )
-        return HostOwnedOutcome(kind="article_source_unavailable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +74,7 @@ class AnswerBlockDraft:
 
 @dataclass(frozen=True, slots=True)
 class ValidatedEvidence:
-    """A host-confirmed internal evidence handle usable by the policy seam."""
+    """A host-confirmed internal evidence handle usable by the provenance seam."""
 
     handle_id: str
     source_kind: EvidenceSourceKind
@@ -230,40 +144,22 @@ class ValidatedAnswerBlocks:
 
 def validate_answer_blocks(
     *,
-    policy: TurnAnswerPolicy,
     blocks: Sequence[AnswerBlockDraft],
     evidence_context: EvidenceValidationContext,
 ) -> ValidatedAnswerBlocks:
-    """Fail closed unless every block obeys the turn's provenance policy."""
-
-    if policy.host_drafting_decision().kind != "model_draft_allowed":
-        raise ValueError("host must handle web citation request before model drafting")
+    """Fail closed unless every block obeys the turn's provenance contract."""
 
     normalized_blocks = tuple(blocks)
     if not normalized_blocks:
         raise ValueError("answer requires at least one answer block")
 
-    has_publicly_mappable_article_block = False
     for block in normalized_blocks:
-        if policy.article_only and block.basis != "article":
-            raise ValueError("article_only allows only article blocks")
-
         if block.basis == "article":
-            if _validate_article_block(block, evidence_context):
-                has_publicly_mappable_article_block = True
+            _validate_article_block(block, evidence_context)
         elif block.basis == "general":
             _validate_general_block(block)
         else:
             _validate_web_block_v1(block)
-
-    if (
-        policy.citation_required
-        and policy.requested_citation_scope == "article"
-        and not has_publicly_mappable_article_block
-    ):
-        raise ValueError(
-            "article citation request requires a publicly mappable article block"
-        )
 
     return ValidatedAnswerBlocks(
         blocks=normalized_blocks,
@@ -274,7 +170,7 @@ def validate_answer_blocks(
 def _validate_article_block(
     block: AnswerBlockDraft,
     evidence_context: EvidenceValidationContext,
-) -> bool:
+) -> None:
     if block.article_scope is None:
         raise ValueError("article block requires a non-null article_scope")
     if block.article_scope not in evidence_context.confirmed_article_scopes:
@@ -284,15 +180,12 @@ def _validate_article_block(
     if not block.evidence_handles:
         raise ValueError("article block requires at least one article evidence handle")
 
-    publicly_mappable = False
     for handle_id in block.evidence_handles:
         evidence = evidence_context.evidence_for(handle_id)
         if evidence is None:
             raise ValueError("article block references an unknown evidence handle")
         if evidence.source_kind != "article":
             raise ValueError("article block cannot use web evidence")
-        publicly_mappable = publicly_mappable or evidence.publicly_mappable
-    return publicly_mappable
 
 
 def _validate_general_block(block: AnswerBlockDraft) -> None:

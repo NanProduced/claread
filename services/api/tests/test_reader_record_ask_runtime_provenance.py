@@ -1,3 +1,11 @@
+"""Runtime provenance tests for Reading Record Ask structured answer blocks.
+
+Covers grounding validation of article / general / mixed answer blocks,
+evidence-handle binding across envelopes, knowledge_mode derivation,
+clarification output, fail-closed evidence kinds, finalizer projection,
+and the runtime's retry-budget behavior.
+"""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +21,6 @@ from pydantic_ai.models.function import FunctionModel
 
 from app.services.reader_record_ask import runtime as runtime_module
 from app.services.reader_record_ask.agent import (
-    _SYSTEM_INSTRUCTIONS,
     DEFAULT_OUTPUT_RETRIES,
 )
 from app.services.reader_record_ask.context_envelope import (
@@ -42,8 +49,6 @@ from app.services.reader_record_ask.runtime import (
     run_reading_record_ask,
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
-from app.services.reader_record_ask.turn_answer_policy import TurnAnswerPolicy
-from app.services.reader_record_ask.turn_coordinator import TurnCoordinator
 
 
 def _envelope(*, generation: int = 1) -> ReadingRecordAskContextEnvelope:
@@ -60,15 +65,6 @@ def _envelope(*, generation: int = 1) -> ReadingRecordAskContextEnvelope:
             initial_anchor=None,
             visible_range=None,
         )
-    )
-
-
-def _ordinary_policy() -> TurnAnswerPolicy:
-    return TurnAnswerPolicy(
-        article_only=False,
-        citation_required=False,
-        requested_citation_scope="none",
-        web_capability="unavailable",
     )
 
 
@@ -116,7 +112,6 @@ def _registry_with_article(
 
 def _ctx(
     *,
-    policy: TurnAnswerPolicy,
     registry: EvidenceRegistry,
     confirmed_article_scopes: frozenset[str] = frozenset(
         {"evidence_bounded"}
@@ -128,7 +123,6 @@ def _ctx(
         document_access=None,  # type: ignore[arg-type]
         fence=StaticGenerationFence(live_generation=1),
         evidence_registry=registry,
-        turn_answer_policy=policy,
         confirmed_article_scopes=confirmed_article_scopes,  # type: ignore[arg-type]
     )
     return SimpleNamespace(deps=deps, partial_output=False)
@@ -151,7 +145,6 @@ async def test_ordinary_general_only_answer_derives_general_knowledge() -> None:
 
     validated = await grounding_validator(
         _ctx(
-            policy=_ordinary_policy(),
             registry=EvidenceRegistry(envelope.envelope_fingerprint),
         ),
         draft,
@@ -177,7 +170,7 @@ async def test_ordinary_article_answer_uses_current_envelope_evidence() -> None:
     )
 
     validated = await grounding_validator(
-        _ctx(policy=_ordinary_policy(), registry=registry),
+        _ctx(registry=registry),
         draft,
     )
 
@@ -211,7 +204,7 @@ async def test_ordinary_mixed_answer_derives_mixed_mode() -> None:
     )
 
     validated = await grounding_validator(
-        _ctx(policy=_ordinary_policy(), registry=registry),
+        _ctx(registry=registry),
         draft,
     )
 
@@ -255,7 +248,6 @@ async def test_article_block_without_registered_evidence_retries(
     with pytest.raises(ModelRetry):
         await grounding_validator(
             _ctx(
-                policy=_ordinary_policy(),
                 registry=EvidenceRegistry(envelope.envelope_fingerprint),
             ),
             draft,
@@ -283,7 +275,7 @@ async def test_article_block_rejects_handle_from_another_envelope() -> None:
 
     with pytest.raises(ModelRetry, match="foreign envelope"):
         await grounding_validator(
-            _ctx(policy=_ordinary_policy(), registry=other_registry),
+            _ctx(registry=other_registry),
             draft,
         )
 
@@ -318,7 +310,6 @@ async def test_general_block_cannot_claim_article_provenance(
     with pytest.raises(ModelRetry):
         await grounding_validator(
             _ctx(
-                policy=_ordinary_policy(),
                 registry=EvidenceRegistry(envelope.envelope_fingerprint),
             ),
             AgentAnswerDraftOutput(
@@ -329,84 +320,6 @@ async def test_general_block_cannot_claim_article_provenance(
 
 
 @pytest.mark.asyncio
-async def test_article_only_rejects_general_and_mixed_answers() -> None:
-    envelope = _envelope()
-    registry, handle_id = _registry_with_article(envelope)
-    policy = TurnAnswerPolicy(
-        article_only=True,
-        citation_required=False,
-        requested_citation_scope="none",
-        web_capability="unavailable",
-    )
-    article = AgentAnswerBlockOutput(
-        text="文章事实。",
-        basis="article",
-        article_scope="evidence_bounded",
-        evidence_handles=[handle_id],
-    )
-    general = AgentAnswerBlockOutput(
-        text="通用知识。",
-        basis="general",
-        article_scope=None,
-        evidence_handles=[],
-    )
-
-    for blocks in ([general], [article, general]):
-        with pytest.raises(ModelRetry):
-            await grounding_validator(
-                _ctx(policy=policy, registry=registry),
-                AgentAnswerDraftOutput(
-                    response_kind="grounded_answer",
-                    answer_blocks=blocks,
-                ),
-            )
-
-
-@pytest.mark.asyncio
-async def test_required_article_needs_publicly_mappable_article_block() -> None:
-    envelope = _envelope()
-    registry, handle_id = _registry_with_article(envelope)
-    policy = TurnAnswerPolicy(
-        article_only=False,
-        citation_required=True,
-        requested_citation_scope="article",
-        web_capability="unavailable",
-    )
-
-    with pytest.raises(ModelRetry):
-        await grounding_validator(
-            _ctx(policy=policy, registry=registry),
-            AgentAnswerDraftOutput(
-                response_kind="grounded_answer",
-                answer_blocks=[
-                    AgentAnswerBlockOutput(
-                        text="只有通用知识。",
-                        basis="general",
-                        article_scope=None,
-                        evidence_handles=[],
-                    )
-                ],
-            ),
-        )
-
-    validated = await grounding_validator(
-        _ctx(policy=policy, registry=registry),
-        AgentAnswerDraftOutput(
-            response_kind="grounded_answer",
-            answer_blocks=[
-                AgentAnswerBlockOutput(
-                    text="可公开映射的文章结论。",
-                    basis="article",
-                    article_scope="evidence_bounded",
-                    evidence_handles=[handle_id],
-                )
-            ],
-        ),
-    )
-    assert validated.validated_answer_blocks.knowledge_mode == "article_grounded"
-
-
-@pytest.mark.asyncio
 async def test_partial_coverage_cannot_claim_full_article() -> None:
     envelope = _envelope()
     registry, handle_id = _registry_with_article(envelope)
@@ -414,7 +327,6 @@ async def test_partial_coverage_cannot_claim_full_article() -> None:
     with pytest.raises(ModelRetry, match="not confirmed by current coverage"):
         await grounding_validator(
             _ctx(
-                policy=_ordinary_policy(),
                 registry=registry,
                 confirmed_article_scopes=frozenset({"evidence_bounded"}),
             ),
@@ -428,59 +340,6 @@ async def test_partial_coverage_cannot_claim_full_article() -> None:
                         evidence_handles=[handle_id],
                     )
                 ],
-            ),
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("web_capability", "decision_kind"),
-    [
-        ("unavailable", "web_unavailable"),
-        ("available", "web_not_supported_in_v1"),
-    ],
-)
-async def test_required_web_is_rejected_even_if_validator_is_called_directly(
-    web_capability: str,
-    decision_kind: str,
-) -> None:
-    envelope = _envelope()
-    policy = TurnAnswerPolicy(
-        article_only=False,
-        citation_required=True,
-        requested_citation_scope="web",
-        web_capability=web_capability,  # type: ignore[arg-type]
-    )
-    assert policy.host_drafting_decision().kind == decision_kind
-
-    with pytest.raises(ModelRetry, match="host must handle web"):
-        await grounding_validator(
-            _ctx(
-                policy=policy,
-                registry=EvidenceRegistry(envelope.envelope_fingerprint),
-            ),
-            AgentAnswerDraftOutput(
-                response_kind="grounded_answer",
-                answer_blocks=[
-                    AgentAnswerBlockOutput(
-                        text="不能冒充网页核验的通用知识。",
-                        basis="general",
-                        article_scope=None,
-                        evidence_handles=[],
-                    )
-                ],
-            ),
-        )
-    with pytest.raises(ModelRetry, match="host must handle web"):
-        await grounding_validator(
-            _ctx(
-                policy=policy,
-                registry=EvidenceRegistry(envelope.envelope_fingerprint),
-            ),
-            AgentAnswerDraftOutput(
-                response_kind="clarification",
-                clarification_text="需要联网核验哪个事实？",
-                answer_blocks=[],
             ),
         )
 
@@ -581,7 +440,6 @@ async def test_clarification_validator_has_no_blocks_or_knowledge_mode() -> None
 
     validated = await grounding_validator(
         _ctx(
-            policy=_ordinary_policy(),
             registry=EvidenceRegistry(envelope.envelope_fingerprint),
         ),
         draft,
@@ -612,7 +470,6 @@ async def test_unknown_evidence_kind_is_rejected_fail_closed() -> None:
         list_observations=lambda: (future_observation,)
     )
     ctx = _ctx(
-        policy=_ordinary_policy(),
         registry=unknown_registry,  # type: ignore[arg-type]
     )
 
@@ -643,7 +500,7 @@ async def test_finalizer_projection_uses_head_flat_constructor_only(
     envelope = _envelope()
     registry, handle_id = _registry_with_article(envelope)
     draft = await grounding_validator(
-        _ctx(policy=_ordinary_policy(), registry=registry),
+        _ctx(registry=registry),
         AgentAnswerDraftOutput(
             response_kind="grounded_answer",
             answer_blocks=[
@@ -700,47 +557,6 @@ async def test_finalizer_projection_uses_head_flat_constructor_only(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("web_capability", "decision_kind"),
-    [
-        ("unavailable", "web_unavailable"),
-        ("available", "web_not_supported_in_v1"),
-    ],
-)
-async def test_runtime_blocks_required_web_before_model_call(
-    web_capability: str,
-    decision_kind: str,
-) -> None:
-    model_calls = 0
-
-    async def model_fn(messages, info):
-        del messages, info
-        nonlocal model_calls
-        model_calls += 1
-        raise AssertionError("required web must stop before model drafting")
-
-    policy = TurnAnswerPolicy(
-        article_only=False,
-        citation_required=True,
-        requested_citation_scope="web",
-        web_capability=web_capability,  # type: ignore[arg-type]
-    )
-    result = await run_reading_record_ask(
-        user_message="请联网核验。",
-        envelope=_envelope(),
-        document_access=None,  # type: ignore[arg-type]
-        model=FunctionModel(model_fn),
-        turn_answer_policy=policy,
-    )
-
-    assert model_calls == 0
-    assert result.turn_answer_policy is policy
-    assert result.host_drafting_decision is not None
-    assert result.host_drafting_decision.kind == decision_kind
-    assert result.validated_answer_blocks is None
-
-
-@pytest.mark.asyncio
 async def test_runtime_validates_mixed_blocks_before_finalizer_projection() -> None:
     async def model_fn(messages, info):
         del info
@@ -785,7 +601,6 @@ async def test_runtime_validates_mixed_blocks_before_finalizer_projection() -> N
         envelope=_envelope(),
         document_access=_document_access(),
         model=FunctionModel(model_fn),
-        turn_answer_policy=_ordinary_policy(),
     )
 
     assert result.validated_answer_blocks is not None
@@ -824,7 +639,6 @@ async def test_runtime_clarification_has_no_validated_blocks_or_evidence() -> No
     )
 
     assert result.final_text == "你希望了解人物身份，还是人物背景？"
-    assert result.turn_answer_policy == _ordinary_policy()
     assert result.validated_answer_blocks is None
     assert result.agent_output is not None
     assert result.agent_output.validated_answer_blocks is None
@@ -835,122 +649,6 @@ async def test_runtime_clarification_has_no_validated_blocks_or_evidence() -> No
     assert result.agent_draft.cited_evidence_handles == []
     assert result.finalized is not None
     assert result.finalized.resolved_evidence == ()
-
-
-@pytest.mark.asyncio
-async def test_runtime_default_policy_is_ordinary_only() -> None:
-    async def model_fn(messages, info):
-        del messages, info
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name="final_result",
-                    args=json.dumps(
-                        {
-                            "response_kind": "grounded_answer",
-                            "answer_blocks": [
-                                {
-                                    "text": "这是普通模式下的通用知识。",
-                                    "basis": "general",
-                                    "article_scope": None,
-                                    "evidence_handles": [],
-                                }
-                            ],
-                        },
-                        ensure_ascii=False,
-                    ),
-                    tool_call_id="ordinary-1",
-                )
-            ]
-        )
-
-    result = await run_reading_record_ask(
-        user_message="介绍一个通用概念。",
-        envelope=_envelope(),
-        document_access=_document_access(),
-        model=FunctionModel(model_fn),
-    )
-
-    assert result.turn_answer_policy == TurnAnswerPolicy(
-        article_only=False,
-        citation_required=False,
-        requested_citation_scope="none",
-        web_capability="unavailable",
-    )
-    assert result.host_drafting_decision is not None
-    assert result.host_drafting_decision.kind == "model_draft_allowed"
-    assert result.validated_answer_blocks is not None
-    assert result.validated_answer_blocks.knowledge_mode == "general_knowledge"
-
-
-@pytest.mark.asyncio
-async def test_required_article_without_source_returns_host_owned_outcome() -> None:
-    model_calls = 0
-
-    async def model_fn(messages, info):
-        del messages, info
-        nonlocal model_calls
-        model_calls += 1
-        raise AssertionError("source-unavailable path must not call the model")
-
-    access = _document_access()
-    access.raise_missing = True
-    policy = TurnAnswerPolicy(
-        article_only=False,
-        citation_required=True,
-        requested_citation_scope="article",
-        web_capability="unavailable",
-    )
-    result = await run_reading_record_ask(
-        user_message="请给出本文出处。",
-        envelope=_envelope(),
-        document_access=access,
-        model=FunctionModel(model_fn),
-        turn_answer_policy=policy,
-    )
-
-    assert model_calls == 0
-    assert result.host_owned_outcome is not None
-    assert result.host_owned_outcome.kind == "article_source_unavailable"
-    assert result.finalized is None
-    assert result.validated_answer_blocks is None
-
-
-@pytest.mark.asyncio
-async def test_turn_assembly_projects_one_structured_answer_policy() -> None:
-    policy = TurnAnswerPolicy(
-        article_only=True,
-        citation_required=True,
-        requested_citation_scope="article",
-        web_capability="unavailable",
-    )
-    coordinator = TurnCoordinator(
-        envelope=_envelope(),
-        document_access=_document_access(),
-        user_message="只根据本文回答并给出出处。",
-        system_instructions=_SYSTEM_INSTRUCTIONS,
-        turn_answer_policy=policy,
-    )
-
-    assembly = await coordinator.assemble_turn()
-
-    assert assembly.turn_answer_policy is policy
-    assert assembly.confirmed_article_scopes == frozenset(
-        {
-            "evidence_bounded",
-            "article_overview",
-            "full_article",
-        }
-    )
-    assert assembly.user_prompt.count("## Turn answer policy") == 1
-    assert (
-        '{"article_only":true,"citation_required":true,'
-        '"requested_citation_scope":"article",'
-        '"web_capability":"unavailable"}'
-    ) in assembly.user_prompt
-    assert "answer_blocks" in _SYSTEM_INSTRUCTIONS
-    assert "knowledge_mode" in _SYSTEM_INSTRUCTIONS
-    assert "which cities are mentioned" not in _SYSTEM_INSTRUCTIONS
 
 
 @pytest.mark.asyncio
@@ -984,7 +682,6 @@ async def test_online_legacy_flat_no_handle_output_uses_retry_budget() -> None:
             envelope=_envelope(),
             document_access=_document_access(),
             model=FunctionModel(model_fn),
-            turn_answer_policy=_ordinary_policy(),
         )
 
     assert model_calls == DEFAULT_OUTPUT_RETRIES + 1

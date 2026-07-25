@@ -17,19 +17,11 @@ from pydantic_ai.usage import UsageLimits
 
 from app.services.reader_record_ask.agent import (
     _SYSTEM_INSTRUCTIONS,
-    build_agent_user_prompt,
     create_reading_record_ask_agent,
 )
-from app.services.reader_record_ask.answer_correctness_policy import (
-    build_answer_correctness_policy,
+from app.services.reader_record_ask.answer_block_provenance import (
+    ValidatedAnswerBlocks,
 )
-
-# Re-export for tests that monkeypatch the policy factory on this module.
-__all__ = [
-    "ReadingRecordAskRunResult",
-    "build_answer_correctness_policy",
-    "run_reading_record_ask",
-]
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.baseline_context import BaselineAgentContext
 from app.services.reader_record_ask.context_envelope import (
@@ -50,10 +42,7 @@ from app.services.reader_record_ask.finalizer import (
     FinalizedAskResult,
     finalize_agent_answer,
 )
-from app.services.reader_record_ask.grounding_validator import (
-    AgentAnswerDraftOutput,
-    build_evidence_validation_context,
-)
+from app.services.reader_record_ask.grounding_validator import AgentAnswerDraftOutput
 from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
 )
@@ -83,33 +72,24 @@ from app.services.reader_record_ask.thinking_transport import (
     ThinkingObserver,
     run_agent_with_thinking_transport,
 )
-from app.services.reader_record_ask.turn_answer_policy import (
-    HostDraftingDecision,
-    HostOwnedOutcome,
-    TurnAnswerPolicy,
-    ValidatedAnswerBlocks,
-)
 from app.services.reader_record_ask.turn_coordinator import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
     HostBudgetExhausted,
     TurnCoordinator,
 )
+from app.services.reader_record_ask.turn_prompt import build_production_agent_user_prompt
 
 
 @dataclass(slots=True)
 class ReadingRecordAskRunResult:
     """Outcome of one independent agent run (including finalizer).
 
-    ``baseline_context`` carries the typed baseline assembly result. Host-owned
-    drafting decisions and source-unavailable outcomes return before the model.
-    Successful model runs also carry immutable validated blocks; the committed
-    flat finalizer receives only its three-field compatibility projection.
+    ``baseline_context`` carries the typed baseline assembly result. Successful
+    model runs also carry immutable validated blocks; the committed flat
+    finalizer receives only its three-field compatibility projection.
     """
 
     final_text: str | None
-    turn_answer_policy: TurnAnswerPolicy | None = None
-    host_drafting_decision: HostDraftingDecision | None = None
-    host_owned_outcome: HostOwnedOutcome | None = None
     validated_answer_blocks: ValidatedAnswerBlocks | None = None
     events: list[RuntimeEvent] = field(default_factory=list)
     read_range_calls: int = 0
@@ -125,7 +105,13 @@ class ReadingRecordAskRunResult:
 def _to_finalizer_draft(
     draft: AgentAnswerDraftOutput,
 ) -> FinalizerAgentAnswerDraft:
-    """Project onto the committed flat finalizer API from ``HEAD``."""
+    """Project onto the committed flat finalizer API from ``HEAD``.
+
+    Temporary compatibility seam: the finalizer still consumes this flat
+    three-field projection. Once the Citation/P3 line owns the finalizer it
+    will consume ``ValidatedAnswerBlocks`` directly and this projection is
+    deleted.
+    """
 
     return FinalizerAgentAnswerDraft(
         answer_text=draft.answer_text,
@@ -160,7 +146,6 @@ async def run_reading_record_ask(
     # map (pre-C2 behavior). Production wiring constructs the provider and
     # passes it in so B3 heading enrichment (§4.2) takes effect.
     map_source_material_provider: MapSourceMaterialProvider | None = None,
-    turn_answer_policy: TurnAnswerPolicy | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -202,16 +187,7 @@ async def run_reading_record_ask(
         max_search_current_article_calls=max_search_current_article_calls,
         product_search_enabled=True,
         map_source_material_provider=map_source_material_provider,
-        turn_answer_policy=turn_answer_policy,
     )
-
-    drafting_decision = coordinator.turn_answer_policy.host_drafting_decision()
-    if drafting_decision.kind != "model_draft_allowed":
-        return ReadingRecordAskRunResult(
-            final_text=None,
-            turn_answer_policy=coordinator.turn_answer_policy,
-            host_drafting_decision=drafting_decision,
-        )
 
     try:
         assembly = await coordinator.assemble_turn()
@@ -229,7 +205,6 @@ async def run_reading_record_ask(
         document_access=document_access,
         fence=active_fence,
         evidence_registry=registry,
-        turn_answer_policy=assembly.turn_answer_policy,
         confirmed_article_scopes=assembly.confirmed_article_scopes,
         article_rag=article_rag,
         max_read_range_calls=0,
@@ -246,23 +221,7 @@ async def run_reading_record_ask(
         )
     )
 
-    deps.baseline_available = baseline.is_injected
-
     if not baseline.is_injected:
-        if (
-            assembly.turn_answer_policy.citation_required
-            and assembly.turn_answer_policy.requested_citation_scope
-            == "article"
-        ):
-            return ReadingRecordAskRunResult(
-                final_text=None,
-                turn_answer_policy=assembly.turn_answer_policy,
-                host_drafting_decision=drafting_decision,
-                host_owned_outcome=(
-                    assembly.turn_answer_policy.article_source_unavailable_outcome()
-                ),
-                baseline_context=baseline,
-            )
         baseline_reason = (
             "document_unavailable"
             if baseline.baseline_status == "document_scope_unavailable"
@@ -285,8 +244,6 @@ async def run_reading_record_ask(
         )
         return ReadingRecordAskRunResult(
             final_text=None,
-            turn_answer_policy=assembly.turn_answer_policy,
-            host_drafting_decision=drafting_decision,
             events=list(deps.events),
             read_range_calls=0,
             search_current_article_calls=0,
@@ -302,28 +259,8 @@ async def run_reading_record_ask(
             baseline_context=baseline,
         )
 
-    deps.answer_correctness_policy = assembly.answer_correctness_policy
-
-    if (
-        assembly.turn_answer_policy.citation_required
-        and assembly.turn_answer_policy.requested_citation_scope == "article"
-        and not any(
-            item.publicly_mappable
-            for item in build_evidence_validation_context(deps).evidence
-        )
-    ):
-        return ReadingRecordAskRunResult(
-            final_text=None,
-            turn_answer_policy=assembly.turn_answer_policy,
-            host_drafting_decision=drafting_decision,
-            host_owned_outcome=(
-                assembly.turn_answer_policy.article_source_unavailable_outcome()
-            ),
-            baseline_context=baseline,
-        )
-
     # Production prompt: exact turn_frame user surface (no re-assembly).
-    prompt = build_agent_user_prompt(
+    prompt = build_production_agent_user_prompt(
         turn_frame=assembly.turn_frame,
         selection_prompt=assembly.selection_result.prompt_capability,
         baseline_prompt=assembly.baseline_result.prompt_capability,
@@ -382,8 +319,6 @@ async def run_reading_record_ask(
     )
     return ReadingRecordAskRunResult(
         final_text=final_text,
-        turn_answer_policy=assembly.turn_answer_policy,
-        host_drafting_decision=drafting_decision,
         validated_answer_blocks=validated_answer_blocks,
         events=list(deps.events),
         read_range_calls=0,

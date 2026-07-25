@@ -203,7 +203,6 @@ def test_user_question_is_counted_in_request_frame_cost() -> None:
         projection_json='{"can_search_article":false}',
         handles_block="",
         coverage_block="",
-        correctness_block="",
     )
     base = renderer.render_request_frame(base_parts)
 
@@ -756,7 +755,6 @@ def test_request_frame_with_projection_charges_request_frame_only() -> None:
         projection_json=renderer.render_json(projection.to_model_dict()).text,
         handles_block="## handles\nevh_test\n",
         coverage_block="## Baseline coverage\nStatus: complete.\n",
-        correctness_block="<answer_correctness/>",
     )
     rendered, ok = renderer.charge_request_frame(budget, parts)
     assert isinstance(ok, BudgetChargeOk)

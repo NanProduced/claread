@@ -17,11 +17,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from app.services.reader_record_ask.agent import (
     DEFAULT_OUTPUT_RETRIES,
     DEFAULT_TOOL_RETRIES,
-    build_agent_user_prompt,
     create_reading_record_ask_agent,
-)
-from app.services.reader_record_ask.answer_correctness_policy import (
-    build_answer_correctness_policy,
 )
 from app.services.reader_record_ask.context_envelope import (
     ENVELOPE_VERSION,
@@ -1074,8 +1070,8 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
          raises ModelRetry — counted against retries["output"].
       3. Pydantic AI feeds the retry message back and makes a SECOND model
          call. The second call extracts the real, server-registered
-         initial_anchor handle from the user prompt (where
-         build_agent_user_prompt placed it in available_evidence_handle_ids)
+         initial_anchor handle from the host-built user prompt (whose
+         handles listing carries the server-registered handle ids)
          and returns grounded_answer + [real_handle].
       4. grounding_validator passes; agent.run returns the draft.
       5. The finalizer runs and accepts the draft.
@@ -1118,8 +1114,8 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
                     )
                 ]
             )
-        # Second call: cite the real initial_anchor handle that
-        # build_agent_user_prompt placed in the prompt.
+        # Second call: cite the real initial_anchor handle that the
+        # host-built user prompt lists as a registered handle.
         import re
 
         blob = ""
@@ -1240,502 +1236,11 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
     assert "output validation" in msg or "retries" in msg or "validator" in msg
 
 
-# ---------------------------------------------------------------------------
-# R4-A4-1B sign-off: real output-validator seam integration tests for the
-# AnswerCorrectnessPolicy composition.
-#
-# These two tests drive the FULL agent.run path through
-# create_reading_record_ask_agent (which wires grounding_validator via the
-# agent.output_validator decorator seam) and run_reading_record_ask. They
-# prove that a structurally-valid draft that PASSES grounding but VIOLATES
-# the answer-correctness policy triggers ModelRetry inside the registered
-# output_validator, counted against retries["output"], producing either a
-# second model call (policy-then-success) or a finite
-# UnexpectedModelBehavior (budget exhausted).
-#
-# These tests are distinct from the R4-A2 grounding-retry sign-off above:
-# the R4-A2 tests use grounded_answer + empty handles (grounding
-# violation); these R4-A4-1B tests use clarification + empty handles
-# (grounding passes) so the retry is provably from the policy check.
-# ---------------------------------------------------------------------------
-
-# Local helper: a document scope whose first unit text contains '2023'.
-# We deliberately do NOT modify the shared _UNIT_A_TEXT / _units() /
-# _scope() fixtures — those are used by many tests that don't expect a
-# year in the chunk text. Instead we define a parallel local scope whose
-# baseline chunk text contains a year that the policy extractor
-# recognises (see _TEMPORAL_PATTERNS in answer_correctness_policy.py).
-_UNIT_WITH_YEAR_TEXT = "文章发表于 2023 年 5 月，主题是气候政策。"
-
-
-def _year_scope() -> object:
-    r"""Document scope whose first unit text contains '2023'.
-
-    Used by R4-A4-1B policy integration tests so that '2023' is in the
-    temporal_allowset but '2025' is not. The unit text deliberately
-    contains a year that the policy extractor recognises (the pattern
-    ``(?<!\d)({_YEAR})\s*年`` in ``_TEMPORAL_PATTERNS`` matches '2023 年').
-    """
-    units = [
-        ReadingUnitView(
-            unit_id="u1",
-            order_index=0,
-            text=_UNIT_WITH_YEAR_TEXT,
-            text_hash="year0011",
-            base_start_utf16=0,
-            base_end_utf16=len(_UNIT_WITH_YEAR_TEXT),
-        ),
-        ReadingUnitView(
-            unit_id="u2",
-            order_index=1,
-            text=_UNIT_B_TEXT,
-            text_hash="22222222",
-            base_start_utf16=100,
-            base_end_utf16=100 + len(_UNIT_B_TEXT),
-        ),
-        ReadingUnitView(
-            unit_id="u3",
-            order_index=2,
-            text=_UNIT_C_TEXT,
-            text_hash="33333333",
-            base_start_utf16=200,
-            base_end_utf16=200 + len(_UNIT_C_TEXT),
-        ),
-    ]
-    return build_document_scope(
-        reading_record_id=_RECORD,
-        base_id=_BASE,
-        record_generation=1,
-        units=units,
-        segments=_segments(),
-        stable_document_id=_DOC,
-        base_content_sha256=_SHA,
-    )
-
-
-def _year_access() -> InMemoryDocumentAccess:
-    return InMemoryDocumentAccess(snapshot=_year_scope())  # type: ignore[arg-type]
-
-
+# T9: FunctionModel integration — the first model request carries no legacy
+#     host policy surface (neither the structured Turn answer policy JSON
+#     nor the sample-specific correctness prose block).
 @pytest.mark.asyncio
-async def test_policy_retry_then_success_via_real_seam(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R4-A5-6: a semantic (temporal) violation is accepted WITHOUT
-    ModelRetry — the policy is still built once (prompt block), but the
-    draft passes on the first call and the answer is never rewritten."""
-    import re
-
-    from app.services.reader_record_ask import turn_coordinator as turn_coord_module
-
-    model_calls = 0
-    policy_build_calls: list[dict[str, object]] = []
-    original_builder = turn_coord_module.build_answer_correctness_policy
-
-    def counting_builder(**kwargs):
-        policy_build_calls.append(dict(kwargs))
-        return original_builder(**kwargs)
-
-    monkeypatch.setattr(
-        turn_coord_module,
-        "build_answer_correctness_policy",
-        counting_builder,
-    )
-
-    async def model_fn(messages, info: AgentInfo):
-        nonlocal model_calls
-        del info
-        model_calls += 1
-        prompt_text = "".join(
-            str(getattr(part, "content", "") or "")
-            for message in messages
-            for part in (getattr(message, "parts", []) or [])
-        )
-        handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
-        assert handle_match is not None
-        assert "<answer_correctness>" not in prompt_text
-        assert "## Turn answer policy (server-owned)" in prompt_text
-        return ModelResponse(
-            parts=[
-                _final_result_part(
-                    content="文章报道了 2025 年的事件。",
-                    handles=[handle_match.group(0)],
-                    response_kind="grounded_answer",
-                    tool_call_id=f"policy-attempt-{model_calls}",
-                )
-            ]
-        )
-
-    result = await run_reading_record_ask(
-        user_message="这篇文章主要说了什么",
-        envelope=_envelope(),
-        document_access=_year_access(),
-        model=FunctionModel(model_fn),
-        article_rag=None,
-    )
-
-    # No semantic retry: exactly one model call.
-    assert model_calls == 1
-    # Policy still built exactly once (prompt-block surface).
-    assert len(policy_build_calls) == 1
-    build_call = policy_build_calls[0]
-    assert build_call["user_message"] == "这篇文章主要说了什么"
-    assert build_call["model_visible_chunk_texts"] == (
-        "\n".join((_UNIT_WITH_YEAR_TEXT, _UNIT_B_TEXT, _UNIT_C_TEXT)),
-    )
-    assert build_call["baseline_is_complete"] is True
-    assert result.finalized is not None
-    assert result.finalized.status == "ok"
-    assert result.agent_draft is not None
-    assert result.agent_draft.response_kind == "grounded_answer"
-    assert result.agent_output is not None
-    assert result.agent_output.cited_evidence_handles
-    # Answer accepted as-is — no silent rewrite.
-    assert "2025" in result.agent_output.answer_text
-
-
-@pytest.mark.asyncio
-async def test_city_list_policy_retry_then_success_via_real_seam() -> None:
-    """R4-A5-6: city-list geo-type mix-in no longer triggers ModelRetry;
-    the draft is accepted as-is (geo quality belongs to prompt/evaluator,
-    never to silent rewriting)."""
-    import re
-
-    model_calls = 0
-
-    async def model_fn(messages, info: AgentInfo):
-        nonlocal model_calls
-        del info
-        model_calls += 1
-        prompt_text = "".join(
-            str(getattr(part, "content", "") or "")
-            for message in messages
-            for part in (getattr(message, "parts", []) or [])
-        )
-        handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
-        assert handle_match is not None
-        answer = "文章提到的城市有：多伦多、安大略省、纽约州。"
-        return ModelResponse(
-            parts=[
-                _final_result_part(
-                    content=answer,
-                    handles=[handle_match.group(0)],
-                    response_kind="grounded_answer",
-                    tool_call_id=f"city-attempt-{model_calls}",
-                )
-            ]
-        )
-
-    units = [
-        ReadingUnitView(
-            unit_id="u1",
-            order_index=0,
-            text="多伦多与芝加哥出现在正文中。",
-            text_hash="city0001",
-            base_start_utf16=0,
-            base_end_utf16=len("多伦多与芝加哥出现在正文中。"),
-        ),
-    ]
-    access = InMemoryDocumentAccess(
-        snapshot=build_document_scope(
-            reading_record_id=_RECORD,
-            base_id=_BASE,
-            record_generation=1,
-            units=units,
-            segments=(),
-            stable_document_id=_DOC,
-            base_content_sha256=_SHA,
-        )  # type: ignore[arg-type]
-    )
-    result = await run_reading_record_ask(
-        user_message="文章提到了哪些城市",
-        envelope=_envelope(),
-        document_access=access,
-        model=FunctionModel(model_fn),
-        article_rag=None,
-    )
-    # No semantic retry: exactly one model call.
-    assert model_calls == 1
-    assert result.finalized is not None
-    assert result.finalized.status == "ok"
-    # Answer accepted unchanged — no silent geo repair.
-    answer_text = result.agent_output.answer_text if result.agent_output else ""
-    assert "安大略省" in answer_text
-
-
-@pytest.mark.asyncio
-async def test_numeric_policy_retry_then_success_on_strict_main_idea() -> None:
-    """R4-A5-6: invented numbers on a strict main-idea turn no longer
-    retry — accepted as-is; numeric quality moves to prompt/evaluator."""
-    import re
-
-    model_calls = 0
-
-    async def model_fn(messages, info: AgentInfo):
-        nonlocal model_calls
-        del info
-        model_calls += 1
-        prompt_text = "".join(
-            str(getattr(part, "content", "") or "")
-            for message in messages
-            for part in (getattr(message, "parts", []) or [])
-        )
-        handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
-        assert handle_match is not None
-        answer = "文章指出有 12500 人撤离。"
-        return ModelResponse(
-            parts=[
-                _final_result_part(
-                    content=answer,
-                    handles=[handle_match.group(0)],
-                    response_kind="grounded_answer",
-                    tool_call_id=f"num-attempt-{model_calls}",
-                )
-            ]
-        )
-
-    units = [
-        ReadingUnitView(
-            unit_id="u1",
-            order_index=0,
-            text="文章讨论了野火风险，未给出具体伤亡数字。",
-            text_hash="num00001",
-            base_start_utf16=0,
-            base_end_utf16=len("文章讨论了野火风险，未给出具体伤亡数字。"),
-        ),
-    ]
-    access = InMemoryDocumentAccess(
-        snapshot=build_document_scope(
-            reading_record_id=_RECORD,
-            base_id=_BASE,
-            record_generation=1,
-            units=units,
-            segments=(),
-            stable_document_id=_DOC,
-            base_content_sha256=_SHA,
-        )  # type: ignore[arg-type]
-    )
-    result = await run_reading_record_ask(
-        user_message="这篇文章主要说了什么",
-        envelope=_envelope(),
-        document_access=access,
-        model=FunctionModel(model_fn),
-        article_rag=None,
-    )
-    # No semantic retry: exactly one model call; answer not rewritten.
-    assert model_calls == 1
-    assert result.finalized is not None
-    assert result.finalized.status == "ok"
-    assert "12500" in (
-        result.agent_output.answer_text if result.agent_output else ""
-    )
-
-
-@pytest.mark.asyncio
-async def test_policy_retry_budget_exhausted_via_real_seam() -> None:
-    """R4-A5-6: persistent semantic violations no longer consume the
-    output-retry budget at all — the draft is accepted on the first call
-    (no UnexpectedModelBehavior, no retry loop; semantic quality is a
-    prompt/evaluator concern, not a validator retry).
-
-    Every model call returns a structurally valid ``clarification`` draft
-    whose answer_text mentions ``2025 年`` (semantically invalid under the
-    strict policy). Post-migration the run must finish in exactly one
-    model call with an ``ok`` finalization.
-    """
-    calls = {"n": 0}
-
-    async def model_fn(messages, info: AgentInfo):
-        del messages, info
-        calls["n"] += 1
-        return ModelResponse(
-            parts=[
-                _final_result_part(
-                    content="文章报道了 2025 年的事件。",
-                    tool_call_id=f"policy-bad-{calls['n']}",
-                )
-            ]
-        )
-
-    result = await run_reading_record_ask(
-        user_message="这篇文章主要说了什么",
-        envelope=_envelope(),
-        document_access=_year_access(),
-        model=FunctionModel(model_fn),
-        article_rag=None,
-    )
-    # Exactly one model call — no semantic retry loop.
-    assert calls["n"] == 1
-    assert result.finalized is not None
-    assert result.finalized.status == "ok"
-
-
-# ---------------------------------------------------------------------------
-# R4-A4-1C sign-off: correctness prompt contract wiring
-#
-# These tests verify that ``build_agent_user_prompt`` accepts an optional
-# ``correctness_block`` parameter and that the runtime calls
-# ``policy.render_prompt_block()`` to produce it. The block must:
-#   - appear exactly once in the first model request;
-#   - carry only renderer-produced content (year allowset, exercise count);
-#   - not leak chunk body, user-message copy, handle IDs, identity fields,
-#     or internal policy field names;
-#   - remain stable across output retries (policy is built once, block does
-#     not drift).
-#
-# Two-layer responsibility (design §21.5):
-#   - FIXED system instruction carries the general correctness rules
-#     (untrusted input, no fabrication, strict output count).
-#   - TURN-SPECIFIC block carries only the rendered year allowset and
-#     explicit exercise count for this turn.
-#
-# Unit tests T1-T8 exercise ``build_agent_user_prompt`` + policy renderer
-# directly. Integration tests T9-T10 use FunctionModel to prove the block
-# reaches the real model request and stays stable across retry.
-# ---------------------------------------------------------------------------
-
-
-# T1: build_agent_user_prompt includes correctness block exactly once;
-#     without the block, the marker is absent.
-def test_t1_build_agent_user_prompt_includes_correctness_block_exactly_once() -> None:
-    block = "<answer_correctness>\n- Test rule.\n</answer_correctness>"
-    prompt_with_block = build_agent_user_prompt(
-        user_message="test question",
-        agent_context_json='{"test": true}',
-        correctness_block=block,
-    )
-    assert prompt_with_block.count("<answer_correctness>") == 1
-    assert prompt_with_block.count("</answer_correctness>") == 1
-    assert "Test rule." in prompt_with_block
-    assert (
-        prompt_with_block.index("## Baseline coverage")
-        < prompt_with_block.index("## Answer correctness (turn-specific rules)")
-        < prompt_with_block.index("## User question")
-    )
-
-    prompt_without_block = build_agent_user_prompt(
-        user_message="test question",
-        agent_context_json='{"test": true}',
-    )
-    assert "<answer_correctness>" not in prompt_without_block
-
-
-# T2: strict + complete + non-empty allowset: block surfaces allowed years
-#      and forbids other specific years.
-def test_t2_correctness_block_strict_complete_with_allowset() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="这篇文章主要说了什么",
-        model_visible_chunk_texts=("文章发表于 2023 年 5 月，主题是气候政策。",),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    assert "2023" in block
-    assert "Do not output any other specific year" in block
-
-
-# T3: strict + complete + empty allowset: block states the article provides
-#      no specific year.
-def test_t3_correctness_block_strict_complete_empty_allowset() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="这篇文章主要说了什么",
-        model_visible_chunk_texts=("文章讨论了气候政策，没有提及具体年份。",),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    assert "no specific year or date" in block
-    assert "do not invent one" in block
-
-
-# T4: partial baseline: temporal guard is disabled; block carries no hard
-#      year constraint.
-def test_t4_correctness_block_partial_baseline_no_year_constraint() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="这篇文章主要说了什么",
-        model_visible_chunk_texts=("文章发表于 2023 年 5 月。",),
-        baseline_is_complete=False,
-    )
-    block = policy.render_prompt_block()
-    assert "Do not output any other specific year" not in block
-    assert "no specific year or date" not in block
-
-
-# T5: non-strict question: temporal guard is disabled regardless of
-#      baseline completeness.
-def test_t5_correctness_block_non_strict_no_year_constraint() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="2025 年发生了什么？",  # not in STRICT_ARTICLE_QUESTION_FORMS
-        model_visible_chunk_texts=("文章发表于 2023 年 5 月。",),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    assert "Do not output any other specific year" not in block
-    assert "no specific year or date" not in block
-
-
-# T6: explicit one-exercise request: block surfaces "exactly 1 exercise item".
-def test_t6_correctness_block_one_exercise_request() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="帮我出一道练习题",
-        model_visible_chunk_texts=("文章内容",),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    assert "exactly 1 exercise item" in block
-
-
-# T7: indeterminate exercise count: block does not impose a specific count.
-def test_t7_correctness_block_indeterminate_count_no_exercise_constraint() -> None:
-    policy = build_answer_correctness_policy(
-        user_message="帮我出几道题",  # indeterminate count
-        model_visible_chunk_texts=("文章内容",),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    assert "exercise item" not in block
-
-
-# T8: block does not leak chunk body, user-message copy, handle IDs,
-#      identity fields, or internal policy field names. Year tokens are
-#      extracted and intentionally surfaced; everything else is stripped.
-def test_t8_correctness_block_does_not_leak_sensitive_data() -> None:
-    sensitive_chunk = (
-        "文章发表于 2023 年。SECRET_CHUNK_BODY_evh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    )
-    policy = build_answer_correctness_policy(
-        user_message="这篇文章主要说了什么",
-        model_visible_chunk_texts=(sensitive_chunk,),
-        baseline_is_complete=True,
-    )
-    block = policy.render_prompt_block()
-    # Chunk body beyond extracted years must not leak.
-    assert "SECRET_CHUNK_BODY" not in block
-    # Handle IDs must not leak.
-    assert "evh_" not in block
-    # Internal policy field names must not leak.
-    for field_name in (
-        "temporal_allowset",
-        "explicit_output",
-        "is_article_only_strict",
-        "baseline_is_complete",
-    ):
-        assert field_name not in block
-    # Identity fields must not leak.
-    for field_name in (
-        "envelope_fingerprint",
-        "reading_record_id",
-        "base_id",
-        "stable_document_id",
-        "record_generation",
-    ):
-        assert field_name not in block
-    # The extracted year IS intentionally surfaced (by design).
-    assert "2023" in block
-
-
-# T9: FunctionModel integration — the first request receives the structured
-#     host policy, while sample-specific correctness prose stays absent.
-@pytest.mark.asyncio
-async def test_t9_first_model_request_contains_structured_turn_policy() -> None:
+async def test_t9_first_model_request_has_no_host_policy_surface() -> None:
     import re
 
     captured_prompts: list[str] = []
@@ -1764,19 +1269,37 @@ async def test_t9_first_model_request_contains_structured_turn_policy() -> None:
     result = await run_reading_record_ask(
         user_message="这篇文章主要说了什么",
         envelope=_envelope(),
-        document_access=_year_access(),
+        document_access=_access(),
         model=FunctionModel(model_fn),
         article_rag=None,
     )
 
     first_prompt = captured_prompts[0]
     first_instructions = captured_instructions[0]
-    assert "semantic ``answer_blocks``" in first_instructions
+    # Current system instructions still pin the answer-block contract.
+    assert "semantic answer blocks" in first_instructions
     assert "Do not output ``knowledge_mode``" in first_instructions
+    # System instructions no longer mention any host-policy surface.
+    assert "Turn answer policy" not in first_instructions
+    assert "article_only" not in first_instructions
+    # The user prompt keeps its evidence / coverage / question surface ...
+    assert (
+        "## Server-registered evidence handles already available"
+        in first_prompt
+    )
+    assert "## Baseline coverage" in first_prompt
+    assert "## User question" in first_prompt
+    # ... but no legacy host policy / correctness sections or policy keys.
     assert "<answer_correctness>" not in first_prompt
-    assert first_prompt.count("## Turn answer policy (server-owned)") == 1
-    assert '"article_only":false' in first_prompt
-    assert '"requested_citation_scope":"none"' in first_prompt
+    assert "## Turn answer policy" not in first_prompt
+    assert "## Answer correctness" not in first_prompt
+    for legacy_key in (
+        '"article_only"',
+        '"citation_required"',
+        '"requested_citation_scope"',
+        '"web_capability"',
+    ):
+        assert legacy_key not in first_prompt
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     assert result.agent_draft is not None
@@ -1785,57 +1308,67 @@ async def test_t9_first_model_request_contains_structured_turn_policy() -> None:
     assert result.agent_output.cited_evidence_handles
 
 
-# T10: legacy correctness policy construction remains write-once internally,
-#      but only the canonical structured TurnAnswerPolicy reaches the model.
+# T10: the host-assembled user prompt is byte-stable across model calls
+#      and carries no legacy host policy / correctness content.
 @pytest.mark.asyncio
-async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_t10_user_prompt_byte_stable_across_retries() -> None:
     import re
 
-    from app.services.reader_record_ask import turn_coordinator as turn_coord_module
-
+    initial_request_texts: list[str] = []
     model_calls = 0
-    policy_build_calls: list[dict[str, object]] = []
-    captured_policy_sections: list[str] = []
-    original_builder = turn_coord_module.build_answer_correctness_policy
-
-    def counting_builder(**kwargs):
-        policy_build_calls.append(dict(kwargs))
-        return original_builder(**kwargs)
-
-    monkeypatch.setattr(
-        turn_coord_module,
-        "build_answer_correctness_policy",
-        counting_builder,
-    )
 
     async def model_fn(messages, info: AgentInfo):
         nonlocal model_calls
         del info
         model_calls += 1
+        # messages[0] is the host-assembled initial request; retries only
+        # append feedback messages, so comparing messages[0] across calls
+        # proves the assembled prompt does not drift.
+        initial_request_texts.append(
+            "".join(
+                str(getattr(part, "content", "") or "")
+                for part in (getattr(messages[0], "parts", []) or [])
+            )
+        )
         prompt_text = "".join(
             str(getattr(part, "content", "") or "")
             for message in messages
             for part in (getattr(message, "parts", []) or [])
         )
-        assert "<answer_correctness>" not in prompt_text
-        policy_match = re.search(
-            r"## Turn answer policy \(server-owned\)\n(\{[^\n]+\})",
-            prompt_text,
-        )
-        assert policy_match is not None
-        captured_policy_sections.append(policy_match.group(1))
-
+        if model_calls == 1:
+            # Structurally valid but grounding-invalid: grounded_answer
+            # with zero handles -> grounding_validator ModelRetry ->
+            # a second model call with the same initial request.
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="final_result",
+                        args=json.dumps(
+                            {
+                                "response_kind": "grounded_answer",
+                                "answer_blocks": [
+                                    {
+                                        "text": "第一次回答",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": [],
+                                    }
+                                ],
+                            }
+                        ),
+                        tool_call_id="stability-bad-1",
+                    )
+                ]
+            )
         handle_match = re.search(r"evh_[0-9a-f]{32}", prompt_text)
         assert handle_match is not None
         return ModelResponse(
             parts=[
                 _final_result_part(
-                    content="文章报道了 2025 年的事件。",
+                    content="第二次回答已引用证据",
                     handles=[handle_match.group(0)],
                     response_kind="grounded_answer",
-                    tool_call_id=f"prompt-stability-{model_calls}",
+                    tool_call_id="stability-ok-2",
                 )
             ]
         )
@@ -1843,25 +1376,31 @@ async def test_t10_policy_not_rebuilt_and_prompt_stable_across_retries(
     result = await run_reading_record_ask(
         user_message="这篇文章主要说了什么",
         envelope=_envelope(),
-        document_access=_year_access(),
+        document_access=_access(),
         model=FunctionModel(model_fn),
         article_rag=None,
     )
 
-    # Policy built exactly once (write-once convention).
-    assert len(policy_build_calls) == 1
-    # R4-A5-6: no semantic retry — exactly one model call.
-    assert model_calls == 1
-    assert len(captured_policy_sections) == 1
-    assert captured_policy_sections == [
-        '{"article_only":false,"citation_required":false,'
-        '"requested_citation_scope":"none","web_capability":"unavailable"}'
-    ]
-    # Run succeeded on the single call; answer not rewritten.
+    # The grounding retry forced exactly one extra model call; both calls
+    # saw the identical host-assembled initial request, byte for byte.
+    assert model_calls == 2
+    assert len(initial_request_texts) == 2
+    assert initial_request_texts[0]  # non-empty prompt actually assembled
+    assert initial_request_texts[0] == initial_request_texts[1]
+    for legacy_marker in (
+        "<answer_correctness>",
+        "## Turn answer policy",
+        "## Answer correctness",
+        '"article_only"',
+        '"citation_required"',
+        '"requested_citation_scope"',
+        '"web_capability"',
+    ):
+        assert legacy_marker not in initial_request_texts[0]
     assert result.finalized is not None
     assert result.finalized.status == "ok"
     assert result.agent_output is not None
-    assert "2025" in result.agent_output.answer_text
+    assert result.agent_output.answer_text == "第二次回答已引用证据"
 
 
 @pytest.mark.asyncio

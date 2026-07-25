@@ -22,7 +22,6 @@ from app.schemas.reader_record_ask_stream import (
     ReaderRecordAskCompletedDTO,
     evidence_item_from_observation,
 )
-from app.services.reader_record_ask.agent import build_agent_user_prompt
 from app.services.reader_record_ask.baseline_context import (
     _ARTICLE_SEED_SNIPPET_MAX_CHARS,
     BASELINE_INJECTION_HARD_BUDGET_CHARS,
@@ -34,6 +33,9 @@ from app.services.reader_record_ask.baseline_context import (
     format_chunk_for_prompt,
     render_baseline_block,
     render_handles_block,
+)
+from app.services.reader_record_ask.baseline_model_view import (
+    assemble_baseline_model_view,
 )
 from app.services.reader_record_ask.context_envelope import (
     EnvelopeInitialAnchor,
@@ -56,8 +58,17 @@ from app.services.reader_record_ask.history_projection import (
 from app.services.reader_record_ask.initial_anchor_evidence import (
     register_initial_anchor_evidence,
 )
+from app.services.reader_record_ask.model_view_budget import (
+    ModelViewRenderer,
+    ModelVisibleTurnBudget,
+)
 from app.services.reader_record_ask.production_stream import build_completed_dto
 from app.services.reader_record_ask.runtime import run_reading_record_ask
+from app.services.reader_record_ask.turn_prompt import (
+    build_production_agent_user_prompt,
+    mint_turn_frame_prompt_capability,
+    render_handles_listing,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (mirrors test_reader_record_ask_agent_runtime.py)
@@ -144,19 +155,32 @@ def _final_result_part(
     content: str,
     handles: list[str] | None = None,
     tool_call_id: str = "final-1",
-    # R4-A2: default to "clarification" so the grounding output_validator
-    # accepts empty-handle drafts.
     response_kind: str = "clarification",
 ) -> ToolCallPart:
+    evidence_handles = handles or []
+    if response_kind == "clarification":
+        args = {
+            "response_kind": "clarification",
+            "clarification_text": content,
+            "answer_blocks": [],
+        }
+    else:
+        args = {
+            "response_kind": "grounded_answer",
+            "answer_blocks": [
+                {
+                    "text": content,
+                    "basis": "article" if evidence_handles else "general",
+                    "article_scope": (
+                        "evidence_bounded" if evidence_handles else None
+                    ),
+                    "evidence_handles": evidence_handles,
+                }
+            ],
+        }
     return ToolCallPart(
         tool_name="final_result",
-        args=json.dumps(
-            {
-                "answer_text": content,
-                "cited_evidence_handles": handles or [],
-                "response_kind": response_kind,
-            }
-        ),
+        args=json.dumps(args),
         tool_call_id=tool_call_id,
     )
 
@@ -196,7 +220,18 @@ def _text_model(
             if match:
                 cited = [match.group(1)]
         return ModelResponse(
-            parts=[_final_result_part(content=content, handles=cited)]
+            parts=[
+                _final_result_part(
+                    content=content,
+                    handles=cited,
+                    # A cited draft must be a grounded answer block so the
+                    # finalizer resolves the cited handle; an uncited draft
+                    # stays a clarification (no evidence attached).
+                    response_kind=(
+                        "grounded_answer" if cited else "clarification"
+                    ),
+                )
+            ]
         )
 
     return FunctionModel(model_fn)
@@ -469,26 +504,39 @@ async def test_prompt_excludes_unit_base_stable_generation_fingerprint() -> None
     registry = _registry(envelope)
     register_initial_anchor_evidence(envelope=envelope, registry=registry)
 
-    assembler = BaselineContextAssembler(
-        envelope=envelope,
-        document_access=_make_access(_make_scope(units)),
+    budget = ModelVisibleTurnBudget()
+    renderer = ModelViewRenderer()
+    baseline = assemble_baseline_model_view(
+        units=units,
+        envelope_fingerprint=envelope.envelope_fingerprint,
+        budget=budget,
         registry=registry,
+        renderer=renderer,
     )
-    baseline = await assembler.assemble_baseline()
-    assert baseline.baseline_status == "injected"
+    assert baseline.is_injected
+    assert baseline.prompt_capability is not None
 
     projection = envelope.to_agent_projection()
-    prompt = build_agent_user_prompt(
-        user_message="What is this article about?",
-        agent_context_json=json.dumps(
+    turn_frame = mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json=json.dumps(
             projection.model_dump(mode="json"),
             ensure_ascii=False,
             sort_keys=True,
         ),
-        available_evidence_handle_ids=[
-            ref.handle_id for ref in registry.list_handle_refs()
-        ],
-        model_context_chunks=baseline.model_context_chunks,
+        handles_block=render_handles_listing(
+            [ref.handle_id for ref in registry.list_handle_refs()]
+        ),
+        baseline_is_complete=baseline.is_complete,
+        user_question="What is this article about?",
+        budget=budget,
+        renderer=renderer,
+        baseline_prompt=baseline.prompt_capability,
+        charge=False,
+    )
+    prompt = build_production_agent_user_prompt(
+        turn_frame=turn_frame,
+        baseline_prompt=baseline.prompt_capability,
     )
 
     baseline_start = prompt.index("## Baseline article text")
@@ -1197,8 +1245,8 @@ def _baseline_serialized_cost(baseline) -> int:
     """Compute the serialized baseline injection cost using the real renderers.
 
     Uses ``render_handles_block`` and ``render_baseline_block`` — the same
-    single source of truth that ``build_agent_user_prompt`` and
-    ``BaselineContextAssembler`` use. This is NOT a manual estimate.
+    single source of truth that ``BaselineContextAssembler`` uses for its
+    serialized-budget computation. This is NOT a manual estimate.
     """
     if not baseline.model_context_chunks:
         return 0
@@ -1206,36 +1254,6 @@ def _baseline_serialized_cost(baseline) -> int:
         len(render_handles_block(baseline.available_seed_handle_ids))
         + len(render_baseline_block(baseline.model_context_chunks))
     )
-
-
-def _measure_real_prompt_delta(
-    baseline,
-    *,
-    user_message: str = "Summarize.",
-    agent_context_json: str = '{"test": true}',
-) -> int:
-    """Measure the actual baseline injection cost through build_agent_user_prompt().
-
-    Constructs two prompts with identical user_message / agent_context_json:
-    - Base prompt: no handles, no chunks.
-    - Full prompt: with seed handles and baseline chunks.
-
-    Returns the length difference — the real serialized baseline injection
-    cost as seen by the agent.
-    """
-    base_prompt = build_agent_user_prompt(
-        user_message=user_message,
-        agent_context_json=agent_context_json,
-        available_evidence_handle_ids=(),
-        model_context_chunks=(),
-    )
-    full_prompt = build_agent_user_prompt(
-        user_message=user_message,
-        agent_context_json=agent_context_json,
-        available_evidence_handle_ids=list(baseline.available_seed_handle_ids),
-        model_context_chunks=baseline.model_context_chunks,
-    )
-    return len(full_prompt) - len(base_prompt)
 
 
 @pytest.mark.asyncio
@@ -1448,7 +1466,9 @@ async def test_every_seed_observation_snippet_within_chunk_text() -> None:
     ]
     assert len(seed_obs_list) == len(baseline.model_context_chunks)
 
-    for i, (obs, chunk) in enumerate(zip(seed_obs_list, baseline.model_context_chunks)):
+    for i, (obs, chunk) in enumerate(
+        zip(seed_obs_list, baseline.model_context_chunks, strict=True)
+    ):
         assert obs.handle.handle_id == chunk.handle_id, (
             f"observation {i} handle mismatch"
         )
@@ -1478,69 +1498,6 @@ async def test_every_seed_observation_snippet_within_chunk_text() -> None:
                     assert other_char * 10 not in snippet, (
                         f"chunk {i}: snippet contains text from chunk {j}"
                     )
-
-
-# ---------------------------------------------------------------------------
-# P0-2 final: real build_agent_user_prompt() delta must stay within budget
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_real_prompt_delta_within_hard_budget_all_scenarios() -> None:
-    """Integration test: the real build_agent_user_prompt() delta must be
-    <= BASELINE_INJECTION_HARD_BUDGET_CHARS for every pathological scenario.
-
-    This test does NOT use a manual cost estimate — it constructs two real
-    prompts (with and without baseline) through build_agent_user_prompt()
-    and measures the actual length difference. This is the definitive
-    verification that the Assembler's budget computation (which uses the
-    same renderers) matches the real prompt cost.
-
-    Scenarios:
-      A. 6000 "&" chars — 5× XML escaping inflation
-      B. 6000 "<" chars — 4× XML escaping inflation
-      C. 3001 single-char units — chunk count explosion
-      D. Near-8000 raw budget multi-unit article — normal large article
-    """
-    scenarios = [
-        ("6000 & chars (5x escaping)", "&" * 6000),
-        ("6000 < chars (4x escaping)", "<" * 6000),
-        ("3001 single-char units", None),  # special handling
-        ("near-8000 raw budget multi-unit", "A" * 4000 + "\n" + "B" * 3999),
-    ]
-
-    for name, text in scenarios:
-        if text is None:
-            # 3001 single-char units
-            units = _make_units(*[str(i % 10) for i in range(3001)])
-        else:
-            units = _make_units(text)
-
-        envelope = _make_envelope()
-        registry = _registry(envelope)
-        assembler = BaselineContextAssembler(
-            envelope=envelope,
-            document_access=_make_access(_make_scope(units)),
-            registry=registry,
-        )
-        baseline = await assembler.assemble_baseline()
-        assert baseline.baseline_status == "injected", (
-            f"{name}: baseline not injected"
-        )
-
-        # Real delta through the actual prompt builder
-        real_delta = _measure_real_prompt_delta(baseline)
-        assert real_delta <= BASELINE_INJECTION_HARD_BUDGET_CHARS, (
-            f"{name}: real prompt delta {real_delta} exceeds hard budget "
-            f"{BASELINE_INJECTION_HARD_BUDGET_CHARS}"
-        )
-
-        # The renderer-based cost must match the real delta exactly —
-        # this proves the Assembler and agent.py use the same renderers.
-        renderer_cost = _baseline_serialized_cost(baseline)
-        assert renderer_cost == real_delta, (
-            f"{name}: renderer cost {renderer_cost} != real delta {real_delta}"
-        )
 
 
 # ---------------------------------------------------------------------------

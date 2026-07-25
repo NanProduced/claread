@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from app.services.reader_record_ask.answer_correctness_policy import (
-    AnswerCorrectnessPolicy,
-)
+from app.services.reader_record_ask.answer_block_provenance import ArticleScope
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
@@ -24,10 +22,6 @@ from app.services.reader_record_ask.runtime_events import (
 )
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
-)
-from app.services.reader_record_ask.turn_answer_policy import (
-    ArticleScope,
-    TurnAnswerPolicy,
 )
 
 if TYPE_CHECKING:
@@ -204,7 +198,6 @@ class ReaderRecordAskDeps:
     document_access: DocumentAccess
     fence: FenceFn
     evidence_registry: EvidenceRegistry
-    turn_answer_policy: TurnAnswerPolicy | None = None
     confirmed_article_scopes: frozenset[ArticleScope] = frozenset()
     article_rag: ArticleRagSearchPort | None = None
     read_range_calls: int = 0
@@ -213,16 +206,6 @@ class ReaderRecordAskDeps:
     max_search_current_article_calls: int = DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS
     events: list[RuntimeEvent] = field(default_factory=list)
     event_sink: RuntimeEventSink | None = None
-    # Set by runtime after baseline assembly. The grounding output_validator
-    # reads this to decide whether ``response_kind="unavailable"`` is
-    # permitted (only allowed when baseline is NOT available). Internal-only;
-    # never serialised, never enters public DTO or persistence.
-    baseline_available: bool = False
-    # R4-A4-1B: write-once — set by runtime after baseline assembly, read
-    # only by grounding_validator. ``None`` on the fail-closed path (baseline
-    # not injected) and in tests that do not exercise the policy. Internal-only;
-    # never serialised, never enters public DTO or persistence.
-    answer_correctness_policy: AnswerCorrectnessPolicy | None = None
     # R4-A4-2R5R2 Task 1+2: internal-only observation seam. ``None`` in
     # production and in tests that do not opt into observation. When
     # non-None, the runtime writes ``baseline_context`` after assembly

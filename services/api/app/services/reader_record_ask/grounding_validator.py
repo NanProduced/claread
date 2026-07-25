@@ -2,8 +2,8 @@
 
 The model supplies semantic answer blocks. The host projects the current
 turn's registered evidence and confirmed article coverage into the canonical
-P2A policy validator, then attaches its immutable result privately. Failures
-raise ``ModelRetry``; no block is reclassified or silently repaired.
+block provenance validator, then attaches its immutable result privately.
+Failures raise ``ModelRetry``; no block is reclassified or silently repaired.
 """
 
 from __future__ import annotations
@@ -14,8 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
-from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
-from app.services.reader_record_ask.turn_answer_policy import (
+from app.services.reader_record_ask.answer_block_provenance import (
     AnswerBlockBasis,
     AnswerBlockDraft,
     ArticleScope,
@@ -25,6 +24,7 @@ from app.services.reader_record_ask.turn_answer_policy import (
     ValidatedEvidence,
     validate_answer_blocks,
 )
+from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 
 # Hard cap on the number of cited evidence handles per answer. The model
 # is prompted to return the MINIMAL sufficient set; exceeding this cap is
@@ -51,14 +51,14 @@ class AgentAnswerBlockOutput(BaseModel):
     article_scope: ArticleScope | None
     evidence_handles: list[str] = Field(default_factory=list)
 
-    def to_policy_draft(self) -> AnswerBlockDraft:
-        """Project model syntax into the canonical P2A policy draft."""
+    def to_block_draft(self) -> AnswerBlockDraft:
+        """Project model syntax into the canonical provenance block draft."""
 
         return AnswerBlockDraft(
             text=self.text,
             basis=self.basis,
             article_scope=self.article_scope,
-            evidence_handles=self.evidence_handles,
+            evidence_handles=tuple(self.evidence_handles),
         )
 
 
@@ -163,7 +163,7 @@ def build_evidence_validation_context(
         )
     return EvidenceValidationContext(
         envelope_id=deps.envelope.envelope_fingerprint,
-        evidence=evidence,
+        evidence=tuple(evidence),
         confirmed_article_scopes=deps.confirmed_article_scopes,
     )
 
@@ -230,8 +230,8 @@ async def grounding_validator(
     # R4-A4-2R5R2 Task 1: wrap ALL final-mode validation in a
     # try/except ``ModelRetry`` so we increment
     # ``output_validation_retry_requests`` on EVERY raise site —
-    # covering grounding checks, handle verification, unavailable
-    # checks, and the answer-correctness policy — without scattering
+    # covering grounding checks, handle verification, and provenance
+    # checks — without scattering
     # increments at each raise. The original exception is re-raised
     # (preserving type, message, and traceback) so pydantic-ai's retry
     # budget accounting is unaffected. This is type-based (not
@@ -270,16 +270,11 @@ async def _grounding_validator_final_body(
             f"got {response_kind!r}"
         )
 
-    policy = ctx.deps.turn_answer_policy
-    if policy is None:
-        raise ModelRetry("turn answer policy is required for output validation")
-    if policy.host_drafting_decision().kind != "model_draft_allowed":
-        raise ModelRetry("host must handle web citation request before model drafting")
     if draft.response_kind == "clarification":
         return draft
 
     try:
-        blocks = tuple(block.to_policy_draft() for block in draft.answer_blocks)
+        blocks = tuple(block.to_block_draft() for block in draft.answer_blocks)
         handle_ids = [
             handle_id
             for block in blocks
@@ -294,7 +289,6 @@ async def _grounding_validator_final_body(
                 "remove duplicate handles; duplicate evidence handles are not allowed"
             )
         validated = validate_answer_blocks(
-            policy=policy,
             blocks=blocks,
             evidence_context=build_evidence_validation_context(ctx.deps),
         )

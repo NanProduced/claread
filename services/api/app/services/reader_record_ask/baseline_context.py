@@ -1,5 +1,14 @@
 """Baseline context assembler for Reading Record Ask.
 
+Status
+------
+Legacy/offline compatibility path. The production baseline rendering and
+charging authority lives in ``baseline_model_view.py`` +
+``ModelViewRenderer`` (via the branded ``BaselinePromptCapability``).
+This module's ``BaselineContextAssembler`` and render helpers serve
+offline/test callers only; they are **not** the production prompt or
+model-view budget source of truth.
+
 Purpose
 -------
 For short articles (canonical article text ≤ ``SHORT_ARTICLE_MAX_CHARS``),
@@ -38,9 +47,10 @@ Strict invariants (R4-A1 rework)
    raw text budget: pathological inputs that inflate under XML escaping
    are deterministically truncated. The serialized cost is computed from
    the **same renderer strings** (``render_handles_block`` /
-   ``render_baseline_block``) that ``build_agent_user_prompt`` in
-   agent.py uses — single source of truth, no manual overhead constant
-   to drift.
+   ``render_baseline_block``) that this module's
+   ``BaselineContextAssembler`` uses, so the assembler's rendered text
+   and its own budget accounting cannot drift apart. Production charging
+   authority lives in ``baseline_model_view.py`` + ``ModelViewRenderer``.
 8. The number of chunks is capped by ``MAX_BASELINE_CONTEXT_CHUNKS``,
    preventing thousands of tiny units from producing thousands of
    chunks/handles.
@@ -134,13 +144,15 @@ _HANDLE_ID_LENGTH = len("evh_") + _HANDLE_ID_HEX_LEN  # 36
 # ---------------------------------------------------------------------------
 # Single source of truth for the baseline injection prompt sections.
 # ---------------------------------------------------------------------------
-# These strings are the ONLY definition of the baseline/handles section
-# text. Both build_agent_user_prompt() in agent.py (production prompt
-# rendering) and BaselineContextAssembler (serialized budget computation)
-# call render_handles_block() / render_baseline_block() below.
+# These strings are the baseline/handles section text for the
+# legacy/offline ``BaselineContextAssembler`` path only. They are NOT the
+# production prompt or model-view budget source of truth — production
+# baseline rendering and charging authority lives in
+# ``baseline_model_view.py`` + ``ModelViewRenderer``.
 #
-# Changing any string here automatically updates both the rendered prompt
-# and the budget calculation — no manual overhead constant to drift.
+# Within this module, ``BaselineContextAssembler`` calls
+# render_handles_block() / render_baseline_block() below for both prompt
+# rendering and serialized budget computation, so the two cannot drift.
 _HANDLES_BLOCK_HEADER = (
     "\n## Server-registered evidence handles already available\n"
 )
@@ -269,9 +281,11 @@ def format_chunk_for_prompt(chunk: ModelContextChunk) -> str:
 def render_handles_block(handle_ids: Sequence[str]) -> str:
     """Render the server-registered evidence handles block.
 
-    Single source of truth — used by ``build_agent_user_prompt`` in
-    agent.py and by ``BaselineContextAssembler`` for budget computation.
-    Returns empty string when no handle ids are provided.
+    Legacy/offline compatibility — used by ``BaselineContextAssembler``
+    for prompt rendering and budget computation. Production
+    rendering/charging authority lives in ``baseline_model_view.py`` +
+    ``ModelViewRenderer``. Returns empty string when no handle ids are
+    provided.
     """
     if not handle_ids:
         return ""
@@ -282,9 +296,11 @@ def render_handles_block(handle_ids: Sequence[str]) -> str:
 def render_baseline_block(chunks: Sequence[ModelContextChunk]) -> str:
     """Render the baseline article text block.
 
-    Single source of truth — used by ``build_agent_user_prompt`` in
-    agent.py and by ``BaselineContextAssembler`` for budget computation.
-    Returns empty string when no chunks are provided.
+    Legacy/offline compatibility — used by ``BaselineContextAssembler``
+    for prompt rendering and budget computation. Production
+    rendering/charging authority lives in ``baseline_model_view.py`` +
+    ``ModelViewRenderer``. Returns empty string when no chunks are
+    provided.
     """
     if not chunks:
         return ""
@@ -540,7 +556,7 @@ class BaselineContextAssembler:
         # escaped text after subtracting the exact fixed overhead (computed
         # from the real renderer strings), tag overhead, and handle listing
         # cost. No magic number — the fixed overhead is derived from the
-        # same strings that build_agent_user_prompt() renders.
+        # same strings that BaselineContextAssembler (legacy/offline) renders.
         tag_overhead = _chunk_tag_overhead_chars(0)
         handle_listing_cost = _HANDLE_ID_LENGTH  # first handle: no separator
         available_for_escaped = (

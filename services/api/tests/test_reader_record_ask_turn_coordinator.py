@@ -13,7 +13,6 @@ import pytest
 
 from app.services.reader_record_ask.agent import (
     _SYSTEM_INSTRUCTIONS,
-    build_agent_user_prompt,
 )
 from app.services.reader_record_ask.article_rag_port import (
     ArticleRagSearchOutcome,
@@ -56,6 +55,7 @@ from app.services.reader_record_ask.turn_coordinator import (
 )
 from app.services.reader_record_ask.turn_prompt import (
     account_partition_equals_first_surface,
+    build_production_agent_user_prompt,
 )
 
 _USER = UUID("11111111-1111-1111-1111-111111111111")
@@ -827,16 +827,16 @@ async def test_rag_ok_and_six_statuses():
 
 
 @pytest.mark.asyncio
-async def test_production_prompt_mode_rejects_raw_chunks():
+async def test_production_prompt_mode_is_the_only_assembly_path():
     coord = _coordinator()
     assembly = await coord.assemble_turn()
-    with pytest.raises(ValueError, match="forbids raw model_context_chunks"):
-        build_agent_user_prompt(
+    prompt = build_production_agent_user_prompt(turn_frame=assembly.turn_frame)
+    assert prompt == assembly.user_prompt
+    with pytest.raises(TypeError):
+        build_production_agent_user_prompt(  # type: ignore[call-arg]
             turn_frame=assembly.turn_frame,
             model_context_chunks=assembly.baseline_result.model_context_chunks,
         )
-    prompt = build_agent_user_prompt(turn_frame=assembly.turn_frame)
-    assert prompt == assembly.user_prompt
 
 
 @pytest.mark.asyncio

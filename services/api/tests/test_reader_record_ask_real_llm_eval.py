@@ -6735,8 +6735,9 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
     :func:`grounding_validator` via the ``agent.output_validator``
     decorator seam) and :func:`run_reading_record_ask`. The
     FunctionModel ALWAYS returns a structurally-valid but
-    grounding-INVALID draft (``grounded_answer`` with empty
-    ``cited_evidence_handles``), so the output validator raises
+    grounding-INVALID draft (``grounded_answer`` whose article block
+    cites the fabricated, unregistered handle ``evh_fabricated``), so
+    the output validator raises
     :class:`ModelRetry` on every call. After
     ``DEFAULT_OUTPUT_RETRIES + 1 == 3`` total attempts, pydantic-ai
     raises :class:`UnexpectedModelBehavior`.
@@ -6848,9 +6849,14 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
         )
     )
 
-    # FunctionModel that ALWAYS returns grounded_answer with empty
-    # handles — structurally valid but grounding-INVALID. The output
-    # validator raises ModelRetry on every call.
+    # FunctionModel that ALWAYS returns a grounded_answer whose article
+    # block cites a fabricated, unregistered handle — schema-valid under
+    # the P2C-A1 structured output contract (``AgentAnswerDraftOutput``)
+    # but grounding-INVALID. The output validator raises ModelRetry on
+    # every call. The block's ``article_scope`` is "evidence_bounded",
+    # which the real runtime always confirms (turn_coordinator), so the
+    # rejection is specifically due to the fabricated handle, not the
+    # scope.
     calls = {"n": 0}
 
     async def model_fn(messages, info: AgentInfo):
@@ -6862,9 +6868,16 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
                     tool_name="final_result",
                     args=_json.dumps(
                         {
-                            "answer_text": f"回答 attempt {calls['n']}",
-                            "cited_evidence_handles": [],
                             "response_kind": "grounded_answer",
+                            "clarification_text": None,
+                            "answer_blocks": [
+                                {
+                                    "text": f"回答 attempt {calls['n']}",
+                                    "basis": "article",
+                                    "article_scope": "evidence_bounded",
+                                    "evidence_handles": ["evh_fabricated"],
+                                }
+                            ],
                         }
                     ),
                     tool_call_id=f"bad-grounding-{calls['n']}",
@@ -7064,7 +7077,6 @@ def _build_validator_ctx_for_r5r2(
     *,
     observation: RuntimeObservation,
     partial_output: bool = False,
-    baseline_available: bool = True,
 ) -> Any:
     """Build a minimal ``RunContext``-like object for direct
     ``grounding_validator`` calls in R4-A4-2R5R2 tests.
@@ -7075,8 +7087,7 @@ def _build_validator_ctx_for_r5r2(
     validator's counter increments are observable. The validator only
     reads ``ctx.partial_output``, ``ctx.deps.evidence_registry``,
     ``ctx.deps.envelope.envelope_fingerprint``,
-    ``ctx.deps.baseline_available``,
-    ``ctx.deps.answer_correctness_policy``, and
+    ``ctx.deps.confirmed_article_scopes``, and
     ``ctx.deps.observation``.
     """
     from types import SimpleNamespace  # noqa: PLC0415
@@ -7090,9 +7101,6 @@ def _build_validator_ctx_for_r5r2(
     from app.services.reader_record_ask.fence import (  # noqa: PLC0415
         StaticGenerationFence,
     )
-    from app.services.reader_record_ask.finalizer import (  # noqa: PLC0415
-        AgentAnswerDraft,
-    )
     from app.services.reader_record_ask.grounding_validator import (  # noqa: PLC0415
         grounding_validator,
     )
@@ -7100,7 +7108,7 @@ def _build_validator_ctx_for_r5r2(
         ReaderRecordAskDeps,
     )
 
-    del grounding_validator, AgentAnswerDraft  # not used here; re-import in caller
+    del grounding_validator  # not used here; re-import in caller
 
     # Deterministic envelope fingerprint for the registry binding.
     # NOTE: build_context_envelope produces a real 64-hex fingerprint;
@@ -7127,9 +7135,11 @@ def _build_validator_ctx_for_r5r2(
         document_access=None,  # type: ignore[arg-type]
         fence=StaticGenerationFence(live_generation=1),
         evidence_registry=registry,
-        baseline_available=baseline_available,
-        answer_correctness_policy=None,
         observation=observation,
+        # P2C-A1 contract: article blocks need a confirmed scope. The
+        # real runtime always confirms at least "evidence_bounded"
+        # (turn_coordinator); mirror that minimum here.
+        confirmed_article_scopes=frozenset({"evidence_bounded"}),
     )
     return SimpleNamespace(deps=deps, partial_output=partial_output)
 
@@ -7227,10 +7237,9 @@ async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
     raised). This is the precise evidence that distinguishes "validator
     passed first try" from "validator raised ModelRetry 3 times".
     """
-    from app.services.reader_record_ask.finalizer import (  # noqa: PLC0415
-        AgentAnswerDraft,
-    )
     from app.services.reader_record_ask.grounding_validator import (  # noqa: PLC0415
+        AgentAnswerBlockOutput,
+        AgentAnswerDraftOutput,
         grounding_validator,
     )
 
@@ -7238,17 +7247,25 @@ async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
     ctx = _build_validator_ctx_for_r5r2(
         observation=observation,
         partial_output=False,
-        baseline_available=True,
     )
     # Extract the registry's valid handle for the draft.
     # ``EvidenceRegistry`` is already imported at module top (line 131).
     registry = ctx.deps.evidence_registry
     valid_handle = registry.list_handle_refs()[0].handle_id
 
-    draft = AgentAnswerDraft(
-        answer_text="grounded answer",
-        cited_evidence_handles=[valid_handle],
+    # P2C-A1 structured output contract: one article block citing the
+    # registry's real handle, with the confirmed "evidence_bounded"
+    # scope (the helper confirms it on deps).
+    draft = AgentAnswerDraftOutput(
         response_kind="grounded_answer",
+        answer_blocks=[
+            AgentAnswerBlockOutput(
+                text="grounded answer",
+                basis="article",
+                article_scope="evidence_bounded",
+                evidence_handles=[valid_handle],
+            )
+        ],
     )
     result = await grounding_validator(ctx, draft)
     assert result is draft
@@ -7392,16 +7409,26 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
         del messages, info
         calls["n"] += 1
         if calls["n"] == 1:
-            # First call: invalid draft (empty handles) → ModelRetry.
+            # First call: schema-valid but grounding-INVALID draft —
+            # an article block with NO evidence handles violates the
+            # P2C-A1 provenance contract ("article block requires at
+            # least one article evidence handle") → ModelRetry.
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name="final_result",
                         args=_json.dumps(
                             {
-                                "answer_text": "invalid attempt 1",
-                                "cited_evidence_handles": [],
                                 "response_kind": "grounded_answer",
+                                "clarification_text": None,
+                                "answer_blocks": [
+                                    {
+                                        "text": "invalid attempt 1",
+                                        "basis": "article",
+                                        "article_scope": "evidence_bounded",
+                                        "evidence_handles": [],
+                                    }
+                                ],
                             }
                         ),
                         tool_call_id="bad-grounding-1",
@@ -7411,7 +7438,8 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
         # Second call: valid draft citing a real handle from the
         # baseline. The baseline assembler registered seed handles
         # for each chunk; the first chunk's handle is the canonical
-        # valid citation.
+        # valid citation. The block's "evidence_bounded" scope is
+        # always confirmed by the real runtime (turn_coordinator).
         baseline = observation.baseline_context
         assert baseline is not None, (
             "R4-A4-2R5R2: baseline must be captured before the 2nd "
@@ -7431,9 +7459,16 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
                     tool_name="final_result",
                     args=_json.dumps(
                         {
-                            "answer_text": "valid grounded answer",
-                            "cited_evidence_handles": [valid_handles[0]],
                             "response_kind": "grounded_answer",
+                            "clarification_text": None,
+                            "answer_blocks": [
+                                {
+                                    "text": "valid grounded answer",
+                                    "basis": "article",
+                                    "article_scope": "evidence_bounded",
+                                    "evidence_handles": [valid_handles[0]],
+                                }
+                            ],
                         }
                     ),
                     tool_call_id="good-grounding-2",
@@ -8313,8 +8348,9 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
       - Real ``BudgetedUsageModel(wrapped=FunctionModel(model_fn))`` —
         the wrapper is constructed via ``super().__init__(wrapped=...)``
         which calls ``infer_model(FunctionModel(...))``.
-      - The FunctionModel ALWAYS returns ``grounded_answer`` with empty
-        ``cited_evidence_handles`` → the grounding output_validator
+      - The FunctionModel ALWAYS returns a ``grounded_answer`` whose
+        article block cites the fabricated, unregistered handle
+        ``evh_fabricated`` → the grounding output_validator
         raises ``ModelRetry`` on every call. After
         ``DEFAULT_OUTPUT_RETRIES + 1 == 3`` total attempts, pydantic-ai
         raises ``UnexpectedModelBehavior``.
@@ -8351,6 +8387,7 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
     )
     from pydantic_ai.models.function import (  # noqa: PLC0415
         AgentInfo,
+        DeltaToolCall,
         FunctionModel,
     )
 
@@ -8430,11 +8467,36 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
         )
     )
 
-    # FunctionModel that ALWAYS returns grounded_answer with empty
-    # handles — structurally valid but grounding-INVALID. The output
+    # FunctionModel that ALWAYS returns a grounded_answer whose article
+    # block cites a fabricated, unregistered handle — schema-valid under
+    # the P2C-A1 structured output contract (``AgentAnswerDraftOutput``)
+    # but grounding-INVALID. The block's "evidence_bounded" scope is
+    # always confirmed by the real runtime (turn_coordinator), so the
+    # rejection is specifically due to the fabricated handle. The output
     # validator raises ModelRetry on every call. After 3 total
     # attempts, pydantic-ai raises UnexpectedModelBehavior.
+    #
+    # NOTE: the BudgetedUsageModel wrapper makes the runtime take the
+    # streaming path (``_model_supports_request_stream`` returns True
+    # for any non-FunctionModel wrapper), so the FunctionModel needs a
+    # ``stream_function`` that streams the same final_result tool call.
     calls = {"n": 0}
+
+    def _bad_grounding_args(n: int) -> str:
+        return _json.dumps(
+            {
+                "response_kind": "grounded_answer",
+                "clarification_text": None,
+                "answer_blocks": [
+                    {
+                        "text": f"回答 attempt {n}",
+                        "basis": "article",
+                        "article_scope": "evidence_bounded",
+                        "evidence_handles": ["evh_fabricated"],
+                    }
+                ],
+            }
+        )
 
     async def model_fn(messages, info: AgentInfo):
         del messages, info
@@ -8443,22 +8505,27 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                    args=_json.dumps(
-                        {
-                            "answer_text": f"回答 attempt {calls['n']}",
-                            "cited_evidence_handles": [],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                    args=_bad_grounding_args(calls["n"]),
                     tool_call_id=f"bad-grounding-{calls['n']}",
                 )
             ]
         )
 
+    async def model_stream_fn(messages, info: AgentInfo):
+        del messages, info
+        calls["n"] += 1
+        yield {
+            0: DeltaToolCall(
+                name="final_result",
+                json_args=_bad_grounding_args(calls["n"]),
+                tool_call_id=f"bad-grounding-{calls['n']}",
+            )
+        }
+
     # Wrap the FunctionModel in a real BudgetedUsageModel. This calls
     # ``super().__init__(wrapped=...)`` → ``infer_model(FunctionModel(...))``.
     budget_model = BudgetedUsageModel(
-        wrapped=FunctionModel(model_fn),
+        wrapped=FunctionModel(model_fn, stream_function=model_stream_fn),
         max_requests=30,
         max_tokens=200_000,
     )
@@ -8601,6 +8668,7 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
     )
     from pydantic_ai.models.function import (  # noqa: PLC0415
         AgentInfo,
+        DeltaToolCall,
         FunctionModel,
     )
 
@@ -8686,11 +8754,14 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
     # the FIRST call. The handle is minted randomly by the baseline
     # assembler (secrets.token_hex(16)), so we cannot pre-compute it;
     # we regex it out of the rendered handles block.
+    #
+    # NOTE: the BudgetedUsageModel wrapper makes the runtime take the
+    # streaming path (``_model_supports_request_stream`` returns True
+    # for any non-FunctionModel wrapper), so the FunctionModel needs a
+    # ``stream_function`` that streams the same final_result tool call.
     calls = {"n": 0}
 
-    async def model_fn(messages, info: AgentInfo):
-        del info
-        calls["n"] += 1
+    def _extract_seed_handle_id(messages) -> str:
         # Extract the seed handle from the user prompt. The handles
         # block is rendered as:
         #   "## Server-registered evidence handles already available\n"
@@ -8712,21 +8783,52 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
             "handle from the user prompt. The baseline assembler MUST "
             "have rendered a handles block before the model was called."
         )
+        return handle_id
+
+    def _valid_grounding_args(handle_id: str) -> str:
+        # P2C-A1 structured output contract: one article block citing
+        # the real seed handle, with the "evidence_bounded" scope the
+        # real runtime always confirms (turn_coordinator).
+        return _json.dumps(
+            {
+                "response_kind": "grounded_answer",
+                "clarification_text": None,
+                "answer_blocks": [
+                    {
+                        "text": "valid grounded answer",
+                        "basis": "article",
+                        "article_scope": "evidence_bounded",
+                        "evidence_handles": [handle_id],
+                    }
+                ],
+            }
+        )
+
+    async def model_fn(messages, info: AgentInfo):
+        del info
+        calls["n"] += 1
         return ModelResponse(
             parts=[
                 ToolCallPart(
                     tool_name="final_result",
-                    args=_json.dumps(
-                        {
-                            "answer_text": "valid grounded answer",
-                            "cited_evidence_handles": [handle_id],
-                            "response_kind": "grounded_answer",
-                        }
-                    ),
+                    args=_valid_grounding_args(_extract_seed_handle_id(messages)),
                     tool_call_id=f"good-grounding-{calls['n']}",
                 )
             ]
         )
+
+    async def model_stream_fn(messages, info: AgentInfo):
+        del info
+        calls["n"] += 1
+        yield {
+            0: DeltaToolCall(
+                name="final_result",
+                json_args=_valid_grounding_args(
+                    _extract_seed_handle_id(messages)
+                ),
+                tool_call_id=f"good-grounding-{calls['n']}",
+            )
+        }
 
     # Build a real ValidationError to raise from the monkeypatched
     # finalizer. We construct it by triggering a real Pydantic
@@ -8759,7 +8861,7 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
     )
 
     budget_model = BudgetedUsageModel(
-        wrapped=FunctionModel(model_fn),
+        wrapped=FunctionModel(model_fn, stream_function=model_stream_fn),
         max_requests=30,
         max_tokens=200_000,
     )

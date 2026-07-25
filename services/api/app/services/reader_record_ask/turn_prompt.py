@@ -9,10 +9,8 @@ Charged characters are exactly:
 
 - system instructions;
 - projection JSON;
-- structured turn-answer policy JSON;
 - handles block;
 - coverage block;
-- optional legacy correctness block (production omits it);
 - the **full** user question (never stripped / truncated / rewritten);
 - selection / baseline / map **section chrome** (headers/footers only).
 
@@ -63,9 +61,7 @@ _TURN_FRAME_TYPE_ERROR = (
 _CONTEXT_HEADER = (
     "## Current turn context (server projection; not tool arguments)"
 )
-_ANSWER_POLICY_HEADER = "## Turn answer policy (server-owned)"
 _QUESTION_HEADER = "## User question"
-_CORRECTNESS_HEADER = "## Answer correctness (turn-specific rules)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,12 +151,10 @@ def compose_production_user_prompt(
     projection_json: str,
     handles_block: str,
     coverage_block: str,
-    correctness_block: str | None,
     user_question: str,
     selection_prompt: SelectionPromptCapability | None,
     baseline_prompt: BaselinePromptCapability | None,
     map_prompt: ArticleMapPromptCapability | None,
-    answer_policy_json: str = "{}",
 ) -> tuple[str, str, str, str]:
     """Compose the production user prompt; return bodies for equality checks.
 
@@ -169,8 +163,6 @@ def compose_production_user_prompt(
     """
     if not isinstance(user_question, str):
         raise TypeError("user_question must be str")
-    if not isinstance(answer_policy_json, str):
-        raise TypeError("answer_policy_json must be str")
 
     selection_section = ""
     selection_untrusted = ""
@@ -193,23 +185,14 @@ def compose_production_user_prompt(
         map_section = mcap.section_text
         map_untrusted = mcap.untrusted_block_text
 
-    correctness_section = (
-        f"\n{_CORRECTNESS_HEADER}\n{correctness_block}\n"
-        if correctness_block
-        else ""
-    )
-
     user_prompt = (
         f"{_CONTEXT_HEADER}\n"
         f"{projection_json}\n"
-        f"{_ANSWER_POLICY_HEADER}\n"
-        f"{answer_policy_json}\n"
         f"{handles_block}"
         f"{selection_section}"
         f"{baseline_section}"
         f"{map_section}"
         f"{coverage_block}"
-        f"{correctness_section}"
         f"{_QUESTION_HEADER}\n"
         f"{user_question}\n"
     )
@@ -241,14 +224,12 @@ def mint_turn_frame_prompt_capability(
     projection_json: str,
     handles_block: str,
     baseline_is_complete: bool,
-    correctness_block: str | None,
     user_question: str,
     budget: ModelVisibleTurnBudget,
     renderer: ModelViewRenderer,
     selection_prompt: SelectionPromptCapability | None = None,
     baseline_prompt: BaselinePromptCapability | None = None,
     map_prompt: ArticleMapPromptCapability | None = None,
-    answer_policy_json: str = "{}",
     charge: bool = True,
 ) -> TurnFramePromptCapability:
     """Compose + optionally charge the request_frame account.
@@ -268,12 +249,10 @@ def mint_turn_frame_prompt_capability(
         projection_json=projection_json,
         handles_block=handles_block,
         coverage_block=coverage_block,
-        correctness_block=correctness_block,
         user_question=user_question,
         selection_prompt=selection_prompt,
         baseline_prompt=baseline_prompt,
         map_prompt=map_prompt,
-        answer_policy_json=answer_policy_json,
     )
     trusted_user = _trusted_user_frame(
         user_prompt,

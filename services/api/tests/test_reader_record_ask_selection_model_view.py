@@ -12,9 +12,11 @@ from xml.sax.saxutils import escape as xml_escape
 
 import pytest
 
-from app.services.reader_record_ask.agent import build_agent_user_prompt
 from app.services.reader_record_ask.article_rag_port import FakeArticleRagSearchPort
-from app.services.reader_record_ask.baseline_context import ModelContextChunk
+from app.services.reader_record_ask.baseline_model_view import (
+    assemble_baseline_model_view,
+)
+from app.services.reader_record_ask.document_access import ReadingUnitView
 from app.services.reader_record_ask.evidence import (
     EvidenceHandleRef,
     ServerEvidenceObservation,
@@ -44,6 +46,11 @@ from app.services.reader_record_ask.selection_model_view import (
 )
 from app.services.reader_record_ask.turn_capability_projection import (
     build_turn_capability_projection,
+)
+from app.services.reader_record_ask.turn_prompt import (
+    build_production_agent_user_prompt,
+    mint_turn_frame_prompt_capability,
+    render_handles_listing,
 )
 
 _FINGERPRINT = "a" * 64
@@ -554,21 +561,36 @@ def test_prompt_selection_body_appears_once_via_capability() -> None:
     selection_text = "UNIQUE_SELECTION_BODY_TOKEN_7f2a"
     baseline_text = "BASELINE_BODY_TOKEN_9c1e"
     budget = _budget()
+    registry = _registry()
     result = assemble_selection_model_view(
         canonical_selected_text=selection_text,
         envelope_fingerprint=_FINGERPRINT,
         budget=budget,
-        registry=_registry(),
+        registry=registry,
     )
     assert result.prompt_capability is not None
     assert result.model_chunk is not None
     validate_selection_prompt_capability(result.prompt_capability)
 
-    baseline_chunk = ModelContextChunk(
-        handle_id="evh_" + ("cd" * 16),
-        chunk_ordinal=1,
-        text=baseline_text,
+    baseline = assemble_baseline_model_view(
+        units=(
+            ReadingUnitView(
+                unit_id="u1",
+                order_index=0,
+                text=baseline_text,
+                text_hash="bbbbbbbb",
+                base_start_utf16=0,
+                base_end_utf16=len(baseline_text),
+            ),
+        ),
+        envelope_fingerprint=_FINGERPRINT,
+        budget=budget,
+        registry=registry,
+        renderer=_renderer(),
     )
+    assert baseline.is_injected
+    assert baseline.prompt_capability is not None
+
     projection = build_turn_capability_projection(
         article_rag_port=None,
         stable_document_id=None,
@@ -582,13 +604,30 @@ def test_prompt_selection_body_appears_once_via_capability() -> None:
         turn_id="turn_prompt",
     )
     agent_json = _renderer().render_json(projection.to_model_dict()).text
-    prompt = build_agent_user_prompt(
-        user_message="what does the selection mean?",
-        agent_context_json=agent_json,
-        available_evidence_handle_ids=[result.selection.handle_id or ""],
-        model_context_chunks=[baseline_chunk],
-        baseline_is_complete=False,
+    handle_ids = [
+        handle
+        for handle in (
+            result.selection.handle_id,
+            *baseline.available_seed_handle_ids,
+        )
+        if handle
+    ]
+    turn_frame = mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json=agent_json,
+        handles_block=render_handles_listing(handle_ids),
+        baseline_is_complete=baseline.is_complete,
+        user_question="what does the selection mean?",
+        budget=budget,
+        renderer=_renderer(),
         selection_prompt=result.prompt_capability,
+        baseline_prompt=baseline.prompt_capability,
+        charge=False,
+    )
+    prompt = build_production_agent_user_prompt(
+        turn_frame=turn_frame,
+        selection_prompt=result.prompt_capability,
+        baseline_prompt=baseline.prompt_capability,
     )
     assert prompt.count(selection_text) == 1
     assert selection_text in result.prompt_capability.untrusted_block_text
@@ -607,16 +646,24 @@ def test_prompt_selection_body_appears_once_via_capability() -> None:
     assert result.prompt_capability.section_text in prompt
 
 
+def _mint_frame_with_selection_prompt(selection_prompt: object) -> None:
+    """Helper: mint a turn frame with a candidate selection prompt value."""
+    mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json="{}",
+        handles_block="",
+        baseline_is_complete=True,
+        user_question="q",
+        budget=_budget(),
+        renderer=_renderer(),
+        selection_prompt=selection_prompt,  # type: ignore[arg-type]
+        charge=False,
+    )
+
+
 def test_raw_str_selection_prompt_rejected() -> None:
     with pytest.raises(TypeError, match="SelectionPromptCapability"):
-        build_agent_user_prompt(
-            user_message="q",
-            agent_context_json="{}",
-            selection_prompt="raw injection body SECRET",  # type: ignore[arg-type]
-        )
-    # Ensure kw is not accepted as str silently via coercion — prompt build
-    # must not include the secret if somehow partial.
-    # TypeError raised before composition completes fully is enough.
+        _mint_frame_with_selection_prompt("raw injection body SECRET")
 
 
 def test_hand_forged_selection_capability_rejected() -> None:
@@ -629,32 +676,28 @@ def test_hand_forged_selection_capability_rejected() -> None:
     with pytest.raises(TypeError, match="SelectionPromptCapability"):
         validate_selection_prompt_capability(forged)
     with pytest.raises(TypeError, match="SelectionPromptCapability"):
-        build_agent_user_prompt(
-            user_message="q",
-            agent_context_json="{}",
-            selection_prompt=forged,
-        )
+        _mint_frame_with_selection_prompt(forged)
 
 
 def test_render_plain_generic_view_cannot_be_selection_prompt() -> None:
     plain = _renderer().render_plain("not a selection block")
     # Cannot pass RenderedModelView as selection_prompt.
     with pytest.raises(TypeError, match="SelectionPromptCapability"):
-        build_agent_user_prompt(
-            user_message="q",
-            agent_context_json="{}",
-            selection_prompt=plain,  # type: ignore[arg-type]
-        )
+        _mint_frame_with_selection_prompt(plain)
 
 
-def test_legacy_prompt_without_selection_capability_unchanged_shape() -> None:
-    prompt = build_agent_user_prompt(
-        user_message="q",
-        agent_context_json="{}",
-        available_evidence_handle_ids=[],
-        model_context_chunks=[],
+def test_prompt_without_selection_capability_unchanged_shape() -> None:
+    turn_frame = mint_turn_frame_prompt_capability(
+        system_instructions="",
+        projection_json="{}",
+        handles_block="",
         baseline_is_complete=True,
+        user_question="q",
+        budget=_budget(),
+        renderer=_renderer(),
+        charge=False,
     )
+    prompt = build_production_agent_user_prompt(turn_frame=turn_frame)
     assert "Untrusted article context (selection)" not in prompt
     assert "## User question" in prompt
     assert prompt.count("## Current turn context") == 1

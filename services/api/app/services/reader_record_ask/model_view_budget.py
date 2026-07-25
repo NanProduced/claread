@@ -28,7 +28,7 @@ A5-1 scope
 ----------
 Foundation modules + unit tests only. Does **not**:
 
-- replace ``build_agent_user_prompt``;
+- replace ``build_production_agent_user_prompt``;
 - switch selection injection (A5-2);
 - wire expand / map / RAG model-view into the agent loop;
 - call embedding / vector I/O;
@@ -42,7 +42,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from xml.sax.saxutils import escape as _xml_escape
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ from xml.sax.saxutils import escape as _xml_escape
 MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 24_000
 
 # R4-A5-7: request_frame must absorb full system instructions (~6.3k) plus
-# projection / handles / coverage / correctness / question / section chrome.
+# projection / handles / coverage / question / section chrome.
 # Rebalanced from the A5-1 placeholder 4k so production turns fit without
 # truncating the user question. Selection/expand/map stay at their A5-2/3/4
 # sizes so existing cost-fit tests remain valid. Sum remains 24_000.
@@ -231,7 +231,6 @@ class RequestFrameParts:
     projection_json: str
     handles_block: str = ""
     coverage_block: str = ""
-    correctness_block: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +346,7 @@ class ModelVisibleTurnBudget:
 
     def snapshot(self) -> dict[str, int]:
         """Diagnostic copy of spent-by-account (not model-visible)."""
-        return dict(self._spent)
+        return cast("dict[str, int]", dict(self._spent))
 
     def can_charge(
         self, account: BudgetAccountName, rendered: RenderedModelView
@@ -585,7 +584,7 @@ class ModelViewRenderer:
         """Compose the request_frame account content and measure its char cost.
 
         Includes canonical system instructions, projection JSON, handles,
-        coverage, correctness, and the **full** user question. Does **not**
+        coverage, and the **full** user question. Does **not**
         truncate the question; if the result exceeds
         ``RESERVE_REQUEST_FRAME``, the caller must deny via the budget
         (typed result / :class:`ModelViewBudgetError`).
@@ -605,11 +604,6 @@ class ModelViewRenderer:
             turn_sections.append(parts.handles_block.rstrip("\n"))
         if parts.coverage_block:
             turn_sections.append(parts.coverage_block.rstrip("\n"))
-        if parts.correctness_block:
-            turn_sections.append(
-                "## Answer correctness (turn-specific rules)\n"
-                + parts.correctness_block.rstrip("\n")
-            )
         turn_sections.append("## User question")
         # Never strip / truncate the user question for budget fit.
         turn_sections.append(user_question)

@@ -1,7 +1,11 @@
 """Tests for the Reading Record Ask grounding output_validator.
 
-Covers R4-A2 must-test scenarios 1–7, 11–15 (scenarios 8–10, 16 live in
-test_reader_record_ask_baseline_context.py and test_reader_record_ask_production_stream.py).
+Covers R4-A2 must-test scenarios 1–3, 5, 7, 11–13, 15, 17 (scenarios 8–10,
+16 live in test_reader_record_ask_baseline_context.py and
+test_reader_record_ask_production_stream.py). The former ``unavailable``
+scenarios (4, 6) were removed when ``response_kind="unavailable"`` and the
+host-owned outcome were deleted; the former AnswerCorrectnessPolicy tests
+(T1–T10) were removed when the correctness policy module was deleted.
 
 The validator is invoked directly with a lightweight ``RunContext`` mock
 (``SimpleNamespace``) — no LLM calls, no ``agent.run``. This keeps the
@@ -18,15 +22,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai.exceptions import ModelRetry
 
-from app.services.reader_record_ask.agent import (
-    _SYSTEM_INSTRUCTIONS,
-    _render_coverage_block,
-    build_agent_user_prompt,
-)
-from app.services.reader_record_ask.answer_correctness_policy import (
-    AnswerCorrectnessPolicy,
-    build_answer_correctness_policy,
-)
+from app.services.reader_record_ask.agent import _SYSTEM_INSTRUCTIONS
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
     VerifiedEnvelopeInput,
@@ -50,8 +46,15 @@ from app.services.reader_record_ask.grounding_validator import (
     AgentAnswerDraftOutput,
     grounding_validator,
 )
+from app.services.reader_record_ask.model_view_budget import (
+    ModelViewRenderer,
+    ModelVisibleTurnBudget,
+)
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
-from app.services.reader_record_ask.turn_answer_policy import TurnAnswerPolicy
+from app.services.reader_record_ask.turn_prompt import (
+    build_production_agent_user_prompt,
+    mint_turn_frame_prompt_capability,
+)
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -115,29 +118,21 @@ def _ctx(
     *,
     registry: EvidenceRegistry,
     envelope: ReadingRecordAskContextEnvelope,
-    baseline_available: bool = True,
     partial_output: bool = False,
-    answer_correctness_policy: AnswerCorrectnessPolicy | None = None,
 ) -> Any:
     """Build a minimal RunContext-like object for the validator.
 
-    The validator only reads ``ctx.partial_output``, ``ctx.deps.evidence_registry``,
-    ``ctx.deps.envelope.envelope_fingerprint``, ``ctx.deps.baseline_available``,
-    and ``ctx.deps.answer_correctness_policy``. A ``SimpleNamespace`` is
-    sufficient and avoids constructing a full ``RunContext`` (which requires
-    a model + usage trackers).
+    The validator only reads ``ctx.partial_output``,
+    ``ctx.deps.evidence_registry``, ``ctx.deps.envelope.envelope_fingerprint``,
+    ``ctx.deps.confirmed_article_scopes``, and ``ctx.deps.observation``.
+    A ``SimpleNamespace`` is sufficient and avoids constructing a full
+    ``RunContext`` (which requires a model + usage trackers).
     """
     deps = ReaderRecordAskDeps(
         envelope=envelope,
         document_access=None,  # type: ignore[arg-type]
         fence=StaticGenerationFence(live_generation=1),
         evidence_registry=registry,
-        turn_answer_policy=TurnAnswerPolicy(
-            article_only=False,
-            citation_required=False,
-            requested_citation_scope="none",
-            web_capability="unavailable",
-        ),
         confirmed_article_scopes=frozenset(
             {
                 "selection_bounded",
@@ -146,8 +141,6 @@ def _ctx(
                 "full_article",
             }
         ),
-        baseline_available=baseline_available,
-        answer_correctness_policy=answer_correctness_policy,
     )
     return SimpleNamespace(deps=deps, partial_output=partial_output)
 
@@ -173,11 +166,6 @@ def _draft(
         ),
         evidence_handles=evidence_handles,
     )
-    if response_kind == "unavailable":
-        return AgentAnswerDraftOutput.model_construct(
-            response_kind=response_kind,
-            answer_blocks=[block],
-        )
     if response_kind == "clarification":
         return AgentAnswerDraftOutput(
             response_kind="clarification",
@@ -190,6 +178,28 @@ def _draft(
     )
 
 
+def _production_user_prompt(*, baseline_is_complete: bool) -> str:
+    """Compose the production user prompt via the turn-frame capability."""
+    turn_frame = mint_turn_frame_prompt_capability(
+        system_instructions=_SYSTEM_INSTRUCTIONS,
+        projection_json='{"has_initial_selection": false}',
+        handles_block="",
+        baseline_is_complete=baseline_is_complete,
+        user_question="test",
+        budget=ModelVisibleTurnBudget(),
+        renderer=ModelViewRenderer(),
+        charge=False,
+    )
+    return build_production_agent_user_prompt(turn_frame=turn_frame)
+
+
+def _coverage_section(prompt: str) -> str:
+    """Extract the ``## Baseline coverage`` block from a composed prompt."""
+    start = prompt.index("## Baseline coverage")
+    end = prompt.index("## User question")
+    return prompt[start:end]
+
+
 # ---------------------------------------------------------------------------
 # Scenario 1: grounded_answer empty handles → ModelRetry
 # ---------------------------------------------------------------------------
@@ -200,14 +210,16 @@ async def test_grounded_answer_empty_handles_triggers_model_retry() -> None:
     """grounded_answer with no cited handles must ModelRetry (scenario 1)."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     draft = _draft(
         answer_text="answer without handles",
         handles=[],
         response_kind="grounded_answer",
     )
-    with pytest.raises(ModelRetry):
+    with pytest.raises(ModelRetry) as exc_info:
         await grounding_validator(ctx, draft)
+    # Grounding error from the article-block evidence contract.
+    assert "article block requires" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +232,7 @@ async def test_grounded_answer_unknown_handle_triggers_model_retry() -> None:
     """grounded_answer with a handle not in the registry must ModelRetry."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     fake_handle = "evh_" + ("ab" * 16)
     draft = _draft(
         answer_text="x",
@@ -252,7 +264,6 @@ async def test_grounded_answer_cross_registry_handle_triggers_model_retry() -> N
     ctx = _ctx(
         registry=target_registry,
         envelope=envelope,
-        baseline_available=True,
     )
     draft = _draft(
         answer_text="x",
@@ -276,7 +287,7 @@ async def test_grounded_answer_over_limit_triggers_model_retry() -> None:
         fingerprint=envelope.envelope_fingerprint,
         count=MAX_CITED_EVIDENCE_HANDLES + 2,
     )
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     all_handles = [ref.handle_id for ref in registry.list_handle_refs()]
     assert len(all_handles) == MAX_CITED_EVIDENCE_HANDLES + 2
     draft = _draft(
@@ -284,22 +295,6 @@ async def test_grounded_answer_over_limit_triggers_model_retry() -> None:
         handles=all_handles,
         response_kind="grounded_answer",
     )
-    with pytest.raises(ModelRetry):
-        await grounding_validator(ctx, draft)
-
-
-# ---------------------------------------------------------------------------
-# Scenario 4: baseline available + unavailable → ModelRetry
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_baseline_available_unavailable_triggers_model_retry() -> None:
-    """unavailable is forbidden when baseline_available=True (scenario 4)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
-    draft = _draft(answer_text="x", handles=[], response_kind="unavailable")
     with pytest.raises(ModelRetry):
         await grounding_validator(ctx, draft)
 
@@ -314,7 +309,7 @@ async def test_clarification_allows_empty_handles() -> None:
     """clarification with no handles must pass the validator (scenario 5)."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     draft = _draft(
         answer_text="Could you clarify...",
         handles=[],
@@ -350,38 +345,6 @@ def test_clarification_with_valid_handle_is_schema_invalid() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 6: unavailable with handles → ModelRetry
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_unavailable_with_handles_triggers_model_retry() -> None:
-    """unavailable must NOT carry evidence handles (scenario 6)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=False)
-    handle = registry.list_handle_refs()[0].handle_id
-    draft = _draft(
-        answer_text="x",
-        handles=[handle],
-        response_kind="unavailable",
-    )
-    with pytest.raises(ModelRetry):
-        await grounding_validator(ctx, draft)
-
-
-@pytest.mark.asyncio
-async def test_unavailable_is_host_owned_when_baseline_not_available() -> None:
-    """The model cannot emit unavailable even when baseline is unavailable."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=False)
-    draft = _draft(answer_text="x", handles=[], response_kind="unavailable")
-    with pytest.raises(ModelRetry):
-        await grounding_validator(ctx, draft)
-
-
-# ---------------------------------------------------------------------------
 # Scenario 7: validator determinism — repeated calls keep raising ModelRetry
 # ---------------------------------------------------------------------------
 
@@ -403,7 +366,7 @@ async def test_validator_is_deterministic_on_repeated_invalid_draft() -> None:
     """
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     draft = _draft(answer_text="x", handles=[], response_kind="grounded_answer")
     # Call the validator N times directly; it must raise ModelRetry every
     # time and never silently start passing. This proves the validator
@@ -425,30 +388,18 @@ def test_agent_prompt_contains_coverage_but_not_identity() -> None:
     must never appear in the coverage block. The block is the ONLY place
     coverage state is communicated to the model.
     """
-    complete_prompt = build_agent_user_prompt(
-        user_message="test",
-        agent_context_json='{"has_initial_selection": false}',
-        available_evidence_handle_ids=[],
-        model_context_chunks=[],
-        baseline_is_complete=True,
-    )
-    partial_prompt = build_agent_user_prompt(
-        user_message="test",
-        agent_context_json='{"has_initial_selection": false}',
-        available_evidence_handle_ids=[],
-        model_context_chunks=[],
-        baseline_is_complete=False,
-    )
+    complete_prompt = _production_user_prompt(baseline_is_complete=True)
+    partial_prompt = _production_user_prompt(baseline_is_complete=False)
     # Both carry a Baseline coverage section
     assert "## Baseline coverage" in complete_prompt
     assert "## Baseline coverage" in partial_prompt
     assert "Status: complete" in complete_prompt
     assert "Status: partial" in partial_prompt
     # Neither contains identity fields in the coverage block. The
-    # agent_context_json may carry envelope_fingerprint (server projection)
+    # projection JSON may carry envelope_fingerprint (server projection)
     # but the coverage block itself must not.
-    coverage_complete = _render_coverage_block(is_complete=True)
-    coverage_partial = _render_coverage_block(is_complete=False)
+    coverage_complete = _coverage_section(complete_prompt)
+    coverage_partial = _coverage_section(partial_prompt)
     forbidden = (
         "envelope_fingerprint",
         "record_id",
@@ -463,6 +414,27 @@ def test_agent_prompt_contains_coverage_but_not_identity() -> None:
         assert token not in coverage_partial, f"coverage partial leaks {token!r}"
 
 
+def test_agent_prompt_has_no_policy_or_correctness_sections() -> None:
+    """The user prompt must not carry the deleted Host policy sections.
+
+    The Turn answer policy / Answer correctness sections and their
+    serialized fields were removed with the Host intent policy; repeated
+    assembly of the same turn frame must stay byte-stable.
+    """
+    prompt = _production_user_prompt(baseline_is_complete=True)
+    assert "## Turn answer policy" not in prompt
+    assert "## Answer correctness" not in prompt
+    for token in (
+        "article_only",
+        "citation_required",
+        "requested_citation_scope",
+        "web_capability",
+    ):
+        assert token not in prompt
+    prompt_again = _production_user_prompt(baseline_is_complete=True)
+    assert prompt == prompt_again
+
+
 # ---------------------------------------------------------------------------
 # Scenario 12: partial coverage forbids exhaustive negative claims
 # ---------------------------------------------------------------------------
@@ -470,12 +442,12 @@ def test_agent_prompt_contains_coverage_but_not_identity() -> None:
 
 def test_agent_prompt_partial_forbids_exhaustive_negative_claims() -> None:
     """The partial coverage block must explicitly forbid exhaustive/negative claims."""
-    block = _render_coverage_block(is_complete=False)
+    block = _coverage_section(_production_user_prompt(baseline_is_complete=False))
     # The block must call out the forbidden claim patterns so the model
     # is instructed not to make whole-article exhaustive/negative claims
     # without expanding coverage.
     assert "exhaustive" in block.lower() or "negative" in block.lower()
-    assert "read_range" in block
+    assert "expand_evidence" in block
     assert "search_current_article" in block
 
 
@@ -493,6 +465,10 @@ def test_agent_prompt_external_knowledge_boundary_contract() -> None:
     assert "article handles to support general knowledge" in instructions
     assert "which cities are mentioned" not in instructions
     assert "knowledge_mode" in instructions
+    # The rewritten system prompt must not resurrect the deleted Host
+    # intent policy vocabulary.
+    assert "Turn answer policy" not in instructions
+    assert "article_only" not in instructions
 
 
 def test_max_cited_evidence_handles_constant_is_six() -> None:
@@ -575,7 +551,6 @@ async def test_partial_output_only_requires_response_kind_present() -> None:
     ctx = _ctx(
         registry=registry,
         envelope=envelope,
-        baseline_available=True,
         partial_output=True,
     )
     # A draft with response_kind set passes partial mode even with empty
@@ -598,7 +573,6 @@ async def test_partial_output_missing_response_kind_triggers_model_retry() -> No
     ctx = _ctx(
         registry=registry,
         envelope=envelope,
-        baseline_available=True,
         partial_output=True,
     )
     # Construct a draft-like object WITHOUT response_kind attribute.
@@ -622,7 +596,7 @@ async def test_validator_does_not_mutate_draft() -> None:
     """The validator must never silently truncate or mutate cited handles."""
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=2)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     handles = [ref.handle_id for ref in registry.list_handle_refs()]
     draft = _draft(answer_text="x", handles=handles, response_kind="grounded_answer")
     original_handles = list(draft.cited_evidence_handles)
@@ -647,7 +621,7 @@ async def test_grounded_answer_duplicate_handle_triggers_model_retry() -> None:
     """
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=2)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     handles = [ref.handle_id for ref in registry.list_handle_refs()]
     # Cite the first handle twice → duplicate.
     dup_handles = [handles[0], handles[0], handles[1]]
@@ -703,7 +677,7 @@ async def test_multiple_unique_handles_pass_without_duplicate_error() -> None:
         fingerprint=envelope.envelope_fingerprint,
         count=MAX_CITED_EVIDENCE_HANDLES,
     )
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     all_handles = [ref.handle_id for ref in registry.list_handle_refs()]
     assert len(all_handles) == MAX_CITED_EVIDENCE_HANDLES
     draft = _draft(
@@ -729,7 +703,7 @@ async def test_duplicate_check_runs_before_registry_resolution() -> None:
     envelope = _envelope()
     # Empty registry — no handles are registered.
     registry = EvidenceRegistry(envelope.envelope_fingerprint)
-    ctx = _ctx(registry=registry, envelope=envelope, baseline_available=True)
+    ctx = _ctx(registry=registry, envelope=envelope)
     fake = "evh_" + ("ab" * 16)
     draft = _draft(
         answer_text="x",
@@ -741,358 +715,3 @@ async def test_duplicate_check_runs_before_registry_resolution() -> None:
     # The duplicate error fires, NOT the "not registered" error.
     assert "remove duplicate handles" in str(exc_info.value)
     assert "not registered" not in str(exc_info.value)
-
-
-# ---------------------------------------------------------------------------
-# R4-A4-1B / R4-A5-6: AnswerCorrectnessPolicy composition tests (T1–T10)
-#
-# R4-A5-6 migrated semantic heuristics (temporal / numeric / geo /
-# language / explicit-count text parsing) OUT of the ModelRetry path:
-# these tests now verify that semantic violations no longer retry while
-# remaining observable via the typed pure evaluator
-# (policy.evaluate_draft), and that structural / evidence-contract
-# retries are unchanged. The policy is injected via
-# ``ctx.deps.answer_correctness_policy`` (write-once by runtime).
-# ---------------------------------------------------------------------------
-
-_STRICT_USER_MESSAGE = "这篇文章主要说了什么"
-_NON_STRICT_USER_MESSAGE = "结合现实解释"
-_ONE_EXERCISE_USER_MESSAGE = "基于文章出一道选择题，只允许一题"
-
-
-def _strict_policy(
-    *,
-    chunks: tuple[str, ...] = ("no year in this chunk",),
-    baseline_is_complete: bool = True,
-    user_message: str = _STRICT_USER_MESSAGE,
-) -> AnswerCorrectnessPolicy:
-    return build_answer_correctness_policy(
-        user_message=user_message,
-        model_visible_chunk_texts=chunks,
-        baseline_is_complete=baseline_is_complete,
-    )
-
-
-def _draft_with_year(year: str) -> AgentAnswerDraftOutput:
-    return _draft(
-        answer_text=f"文章报道了 {year} 年的事件。",
-        handles=None,
-        response_kind="grounded_answer",
-        basis="general",
-    )
-
-
-@pytest.mark.asyncio
-async def test_t1_policy_semantic_violation_no_longer_retries() -> None:
-    """R4-A5-6 T1: semantic (temporal) violations no longer raise
-    ModelRetry — the draft passes, and the violation stays observable
-    via the typed non-retry evaluator (policy.evaluate_draft)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(chunks=("no year in this chunk",))
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft_with_year("2025")
-    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
-    assert len(violations) == 1
-    assert violations[0].kind == "temporal_claim_unsupported"
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t2_strict_complete_unsupported_year_no_longer_retries() -> None:
-    """R4-A5-6 T2: short complete baseline + strict article question →
-    unsupported year is a typed evaluator violation, NOT a ModelRetry."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("no year in this chunk",),
-        baseline_is_complete=True,
-    )
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft_with_year("2025")
-    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
-    assert len(violations) == 1
-    assert violations[0].kind == "temporal_claim_unsupported"
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t3_article_visible_year_passes() -> None:
-    """T3: when the chunk text contains 2023 and the draft mentions 2023,
-    the temporal guard passes (year ∈ allowset). No ModelRetry from policy."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("文章发表于 2023 年 5 月。",),
-        baseline_is_complete=True,
-    )
-    assert "2023" in policy.temporal_allowset
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft_with_year("2023")
-    # Must not raise — the year is in the allowset.
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_policy_semantic_violation_after_valid_grounded_answer() -> None:
-    """R4-A5-6: a valid article_seed citation passes grounding; a semantic
-    (temporal) violation in the answer no longer retries — the draft is
-    returned unchanged (no silent rewrite either)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(
-        fingerprint=envelope.envelope_fingerprint,
-        count=1,
-    )
-    policy = _strict_policy(
-        chunks=("文章发表于 2023 年 5 月。",),
-        baseline_is_complete=True,
-    )
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    handle = registry.list_handle_refs()[0].handle_id
-    draft = _draft(
-        answer_text="文章报道了 2025 年的事件。",
-        handles=[handle],
-        response_kind="grounded_answer",
-    )
-    assert policy.evaluate_draft(draft_answer_text=draft.answer_text)
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-    assert result.answer_text == draft.answer_text  # not rewritten
-
-
-@pytest.mark.asyncio
-async def test_t4_partial_baseline_temporal_guard_fail_open() -> None:
-    """T4: baseline_is_complete=False + strict + unsupported year → no
-    policy violation (partial baseline always fail-open)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("no year in this chunk",),
-        baseline_is_complete=False,
-    )
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft_with_year("2025")
-    # Must not raise — partial baseline fail-open.
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t5_non_strict_question_fail_open() -> None:
-    """T5: non-strict question + complete baseline + unsupported year → no
-    policy violation (temporal guard disabled for non-strict)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("no year in this chunk",),
-        baseline_is_complete=True,
-        user_message=_NON_STRICT_USER_MESSAGE,
-    )
-    assert policy.is_article_only_strict is False
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft_with_year("2025")
-    # Must not raise — non-strict fail-open.
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t6_explicit_count_mismatch_no_longer_retries() -> None:
-    """R4-A5-6 T6: explicit exercise-count mismatch is a TEXT heuristic
-    (regex parse of the free answer text — AgentAnswerDraft carries no
-    typed exercise field), so it migrates out of ModelRetry to the typed
-    evaluator layer per design §5 ("count" there = handle count)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("文章正文。",),
-        baseline_is_complete=True,
-        user_message=_ONE_EXERCISE_USER_MESSAGE,
-    )
-    assert policy.explicit_output.requested_count == 1
-    assert policy.explicit_output.extraction_confidence == "high"
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    draft = _draft(
-        answer_text="1. 第一题：文章的主旨是什么？\n2. 第二题：文章发表于哪一年？",
-        response_kind="grounded_answer",
-        basis="general",
-    )
-    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
-    assert any(v.kind == "explicit_count_mismatch" for v in violations)
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t7_policy_violation_detail_does_not_leak_sensitive_data() -> None:
-    """R4-A5-6 T7: the typed evaluator detail (the observable non-retry
-    result) must not leak answer text, user question, handle ids,
-    identity, or exception text — short fixed policy constants only."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    sensitive_user_message = "这篇文章主要说了什么"
-    sensitive_chunk = "文章发表于 2023 年 5 月，作者 evh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa。"
-    policy = _strict_policy(
-        chunks=(sensitive_chunk,),
-        baseline_is_complete=True,
-        user_message=sensitive_user_message,
-    )
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=policy,
-    )
-    # Draft with an unsupported year (2025 not in allowset).
-    draft = _draft(
-        answer_text=("文章报道了 2025 年的事件。evh_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-        response_kind="grounded_answer",
-        basis="general",
-    )
-    result = await grounding_validator(ctx, draft)
-    assert result is draft  # no retry
-    violations = policy.evaluate_draft(draft_answer_text=draft.answer_text)
-    assert violations
-    detail = violations[0].detail
-    # Short and fixed.
-    assert len(detail) < 300
-    # Must not contain handle ids.
-    assert "evh_" not in detail
-    # Must not contain the user question verbatim.
-    assert sensitive_user_message not in detail
-    # Must not contain the answer text.
-    assert "2025" not in detail
-    assert "文章报道了" not in detail
-    # Must not contain exception/traceback markers.
-    assert "Exception" not in detail
-    assert "Traceback" not in detail
-    assert "Error" not in detail
-
-
-@pytest.mark.asyncio
-async def test_t8_grounding_behavior_non_regression_with_policy_none() -> None:
-    """T8: when policy is None (the default), the validator behaves exactly
-    as before — grounding checks still fire, no policy check runs. This is
-    a non-regression guard for the existing grounding contract."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    # policy=None (default) — existing grounding path must still fire.
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        baseline_available=True,
-        answer_correctness_policy=None,
-    )
-    # grounded_answer with empty handles must still ModelRetry (grounding).
-    draft = _draft(
-        answer_text="answer without handles",
-        handles=[],
-        response_kind="grounded_answer",
-    )
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    # Grounding error, not policy error.
-    assert "article block requires" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_t9_policy_none_skips_policy_path_completely() -> None:
-    """T9: when policy is None, a draft that WOULD have triggered a policy
-    violation must pass (proving the policy path is skipped entirely)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=None,
-    )
-    # This draft would fail the temporal guard IF a strict policy were
-    # injected. With policy=None it must pass.
-    draft = _draft_with_year("2025")
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-
-
-@pytest.mark.asyncio
-async def test_t10_validator_does_not_evaluate_policy() -> None:
-    """R4-A5-6 T10: semantic evaluation has left the validator entirely —
-    ``policy.evaluate_draft`` is never called by the validator, even when
-    violations exist (zero output-retry consumption for semantic issues)."""
-    envelope = _envelope()
-    registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint)
-    policy = _strict_policy(
-        chunks=("no year in this chunk",),
-        baseline_is_complete=True,
-    )
-    call_count = {"n": 0}
-    original_evaluate = policy.evaluate_draft
-
-    def counting_evaluate(*, draft_answer_text: str):
-        call_count["n"] += 1
-        return original_evaluate(draft_answer_text=draft_answer_text)
-
-    # ``AnswerCorrectnessPolicy`` is a frozen dataclass; wrap it in a
-    # small proxy that delegates evaluate_draft and exposes the attribute
-    # set the validator could (but must not) use.
-    class _CountingProxy:
-        def __init__(self, inner: AnswerCorrectnessPolicy) -> None:
-            self._inner = inner
-
-        @property
-        def temporal_allowset(self):
-            return self._inner.temporal_allowset
-
-        @property
-        def explicit_output(self):
-            return self._inner.explicit_output
-
-        @property
-        def is_article_only_strict(self):
-            return self._inner.is_article_only_strict
-
-        @property
-        def baseline_is_complete(self):
-            return self._inner.baseline_is_complete
-
-        def evaluate_draft(self, *, draft_answer_text: str):
-            return counting_evaluate(draft_answer_text=draft_answer_text)
-
-    ctx = _ctx(
-        registry=registry,
-        envelope=envelope,
-        answer_correctness_policy=_CountingProxy(policy),  # type: ignore[arg-type]
-    )
-    draft = _draft_with_year("2025")
-    result = await grounding_validator(ctx, draft)
-    assert result is draft
-    assert call_count["n"] == 0
