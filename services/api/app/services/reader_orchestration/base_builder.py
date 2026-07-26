@@ -527,9 +527,24 @@ def _build_reading_base_core(
             unit_type = "fallback"
 
         # A5: when a stable block annotation exactly matches this
-        # unit's UTF-16 range, override the heuristic unit_type with
-        # the stable block_type and project the payload onto the unit.
-        # Annotations that match no unit are silently ignored.
+        # unit's UTF-16 range, project the stable block_type and
+        # payload onto the unit. The stable block_type is stored in
+        # the separate ``stable_block_type`` column (nullable, no DB
+        # CHECK constraint) and in the snapshot payload's
+        # ``stableBlockType`` field. ``unit_type`` is only overridden
+        # for ``heading`` — the legacy CHECK constraint on
+        # ``reading_units.unit_type`` (migration 0001) allows only
+        # ``body`` / ``heading`` / ``list`` / ``quote`` / ``unknown``
+        # / ``fallback``, so new block types like ``paragraph`` /
+        # ``list_item`` / ``blockquote`` / ``table*`` / ``code_block``
+        # MUST NOT be written to ``unit_type``. ``heading`` is the
+        # one exception because (a) it is in the legacy allowed set
+        # and (b) downstream consumers (A6 semantic-outline skip
+        # decision in ``job_bootstrap.py``, feature extractor, B4
+        # outline projector) key off ``unit_type == "heading"`` to
+        # detect Markdown headings. For all other stable block types
+        # the heuristic ``unit_type`` is kept — the authoritative
+        # block type is in ``stable_block_type``.
         matched_annotation = annotations_by_range.get(
             (base_start_utf16, base_end_utf16)
         )
@@ -543,14 +558,16 @@ def _build_reading_base_core(
             stable_block_type = matched_annotation.block_type
             stable_block_id = matched_annotation.block_id
             parent_stable_block_id = matched_annotation.parent_block_id
-            unit_type = matched_annotation.block_type
+            # Only ``heading`` overrides unit_type — see comment above.
+            if matched_annotation.block_type == "heading":
+                unit_type = "heading"
             payload = matched_annotation.payload_json or {}
             heading_level = _extract_heading_level(payload)
             inline_marks = _extract_inline_marks(payload)
             table_role = _derive_table_role(matched_annotation.block_type)
-            # Re-derive the label from the new unit_type so a stable
-            # heading still produces a heading label even when the
-            # heuristic would have classified it as body.
+            # Re-derive the label so a stable heading still produces a
+            # heading label even when the heuristic would have
+            # classified it as body.
             label = _build_unit_label(block_text, unit_type)
 
         unit_text_hash = compute_text_range_hash(block_text)

@@ -2,12 +2,23 @@
 
 Tests that ``build_reading_base_from_canonical_text`` accepts an
 optional ``stable_block_annotations`` parameter and, when a unit's
-UTF-16 range exactly matches an annotation, derives ``unit_type``
-from the stable ``block_type`` instead of the legacy text heuristic.
-The matched annotation's heading level / inline marks / table role /
-parent block id are stored on the built unit and projected into the
-snapshot ``reader_source_block`` payload so the Web reading surface
-can render Markdown block structure (B2/B3/B4 dependency).
+UTF-16 range exactly matches an annotation, projects the stable
+``block_type`` into the unit's ``stable_block_type`` field and the
+snapshot ``reader_source_block`` payload. The matched annotation's
+heading level / inline marks / table role / parent block id are
+stored on the built unit and projected into the snapshot payload
+so the Web reading surface can render Markdown block structure
+(B2/B3/B4 dependency).
+
+``unit_type`` is only overridden when ``block_type == "heading"``
+— the legacy DB CHECK constraint on ``reading_units.unit_type``
+(migration 0001) allows only ``body`` / ``heading`` / ``list`` /
+``quote`` / ``unknown`` / ``fallback``, so new stable block types
+(``paragraph`` / ``list_item`` / ``blockquote`` / ``table*`` /
+``code_block``) MUST NOT be written to ``unit_type``. The
+``heading`` exception exists because downstream consumers (A6
+semantic-outline skip decision, feature extractor, B4 outline
+projector) key off ``unit_type == "heading"``.
 
 Legacy path (no annotations) MUST keep the heuristic classification
 and MUST NOT emit the new payload fields, so existing snapshots stay
@@ -98,7 +109,22 @@ def test_build_with_stable_block_annotations_sets_unit_type_from_block_type() ->
         stable_block_annotations=annotations,
     )
 
+    # ``unit_type`` mirrors the DB CHECK constraint on
+    # ``reading_units`` (migration 0001): only the 6 legacy heuristic
+    # values are accepted. Only ``heading`` overrides the heuristic
+    # (because downstream A6 skip / B4 outline key off
+    # ``unit_type == "heading"``). All other stable block types keep
+    # the heuristic ``unit_type``; the authoritative block type lives
+    # in ``stable_block_type``.
     assert [unit.unit_type for unit in result.units] == [
+        "heading",  # heading annotation overrides heuristic
+        "body",     # paragraph annotation — heuristic kept
+        "list",     # list_item annotation — heuristic kept
+        "quote",    # blockquote annotation — heuristic kept
+        "body",     # code_block annotation — heuristic kept
+    ]
+    # ``stable_block_type`` carries the authoritative stable block type.
+    assert [unit.stable_block_type for unit in result.units] == [
         "heading",
         "paragraph",
         "list_item",
@@ -390,7 +416,11 @@ def test_snapshot_navigation_unit_carries_stable_block_type_for_outline() -> Non
     )
 
     nav = snapshot.navigation.units
-    assert [n.unit_type for n in nav] == ["heading", "paragraph", "heading"]
+    # ``unit_type`` carries only legacy values (DB CHECK constraint).
+    # The paragraph annotation does NOT override unit_type — heuristic
+    # ``body`` is kept; the authoritative block type lives in
+    # ``stable_block_type``.
+    assert [n.unit_type for n in nav] == ["heading", "body", "heading"]
     # Navigation units must expose stable block type + heading level
     # for the outline projector (B4). These are optional fields that
     # default to None on legacy units.

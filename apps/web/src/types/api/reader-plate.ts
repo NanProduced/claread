@@ -21,20 +21,15 @@ export type ReaderUnitType =
   | "list"
   | "quote"
   | "unknown"
-  | "fallback"
-  // A5: stable block types that can become reading units when their
-  // canonical text offsets match a `StableBlockAnnotation`. Mirrors the
-  // backend `ReaderUnitType` Literal in
-  // `services/api/app/schemas/reader_orchestration.py`. Legacy snapshots
-  // (no annotations) only emit the 6 heuristic types above, so existing
-  // byte-for-byte consumers stay stable.
-  | "paragraph"
-  | "list_item"
-  | "blockquote"
-  | "table"
-  | "table_row"
-  | "table_cell"
-  | "code_block";
+  | "fallback";
+// ``unit_type`` mirrors the DB CHECK constraint on ``reading_units``
+// (infra/migrations/0001_initial_schema.sql): only the 6 legacy
+// heuristic values are accepted. The stable block type
+// (``paragraph`` / ``list_item`` / ``blockquote`` / ``table`` /
+// ``table_row`` / ``table_cell`` / ``code_block``) is carried by the
+// separate nullable ``stable_block_type`` field on navigation units
+// and the ``stableBlockType`` field in the snapshot payload — it
+// MUST NOT appear in ``unit_type``.
 
 export type ReaderBoundaryQuality = "normal" | "low";
 

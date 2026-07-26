@@ -94,12 +94,15 @@ VocabularyPhraseType = Literal[
 ParsedDecisionState = Literal["not_started", "partial", "parsed", "skipped", "failed"]
 AnchorSegmentType = Literal["sentence", "clause", "fallback_window"]
 ReaderBoundaryQuality = Literal["normal", "low"]
-# A5: ``unit_type`` is derived from the stable ``block_type`` when a
-# ``StableBlockAnnotation`` matches the unit's UTF-16 range. The legacy
-# heuristic types (``body`` / ``list`` / ``quote`` / ``fallback``) are
-# kept for backward compatibility; the stable block types are added so
-# the snapshot schema accepts units whose type came from
-# ``StableDocumentBlockType``.
+# ``unit_type`` mirrors the DB CHECK constraint on ``reading_units``
+# (infra/migrations/0001_initial_schema.sql): only the 6 legacy
+# heuristic values are accepted. The stable block type
+# (``paragraph`` / ``list_item`` / ``blockquote`` / ``table`` /
+# ``table_row`` / ``table_cell`` / ``code_block``) is carried by the
+# separate nullable ``stable_block_type`` column on navigation units
+# and the ``stableBlockType`` field in the snapshot payload — it MUST
+# NOT be written to ``unit_type``, or the insert violates
+# ``reading_units_unit_type_check``.
 ReaderUnitType = Literal[
     "body",
     "heading",
@@ -107,15 +110,6 @@ ReaderUnitType = Literal[
     "quote",
     "unknown",
     "fallback",
-    # A5: stable block types that can become reading units when their
-    # canonical text offsets match a ``StableBlockAnnotation``.
-    "paragraph",
-    "list_item",
-    "blockquote",
-    "table",
-    "table_row",
-    "table_cell",
-    "code_block",
 ]
 ReaderLayerTargetScope = Literal["unit", "anchor_segment", "unit_range", "record"]
 ReaderArtifactInputSourceType = Literal["file", "pdf", "image"]

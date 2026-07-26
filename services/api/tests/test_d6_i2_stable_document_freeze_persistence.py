@@ -1600,10 +1600,15 @@ class TestReadingUnitsInsert:
             assert isinstance(order_index, int)
             assert order_index >= 1
             unit_type = call.args[4]
-            # A5: when a freeze plan supplies stable block annotations,
-            # unit_type is derived from the stable ``block_type``
-            # (e.g. ``paragraph``, ``list_item``) instead of the legacy
-            # text heuristic (``body``, ``list``). Both sets are valid.
+            # ``unit_type`` mirrors the DB CHECK constraint on
+            # ``reading_units.unit_type`` (migration 0001): only the
+            # 6 legacy heuristic values are accepted. The stable block
+            # type (paragraph / list_item / blockquote / table* /
+            # code_block) is carried by the separate
+            # ``stable_block_type`` column — it MUST NOT be written to
+            # ``unit_type``. Only ``heading`` overrides the heuristic
+            # (downstream A6 skip / B4 outline key off
+            # ``unit_type == "heading"``).
             assert unit_type in (
                 "body",
                 "heading",
@@ -1611,14 +1616,6 @@ class TestReadingUnitsInsert:
                 "quote",
                 "unknown",
                 "fallback",
-                # A5 stable block types
-                "paragraph",
-                "list_item",
-                "blockquote",
-                "table",
-                "table_row",
-                "table_cell",
-                "code_block",
             )
             boundary_quality = call.args[5]
             assert boundary_quality in ("normal", "low")
@@ -1682,13 +1679,17 @@ class TestReadingUnitsInsert:
         assert bases_insert_idx < first_unit_idx
 
     def test_reading_units_with_list_type(self) -> None:
-        """A list_item block with markdown list markers should be
-        classified as unit_type='list_item' by the base builder.
+        """A list_item block with markdown list markers should keep
+        the legacy heuristic ``unit_type='list'`` (DB CHECK constraint
+        on ``reading_units.unit_type`` only allows ``body`` / ``heading``
+        / ``list`` / ``quote`` / ``unknown`` / ``fallback``), while the
+        authoritative stable block type ``list_item`` is projected to
+        the separate ``stable_block_type`` column on the navigation unit
+        and the snapshot payload's ``stableBlockType`` field.
 
-        A5: when the freeze plan supplies a stable block annotation
-        for a ``list_item`` block, the base builder derives
-        ``unit_type`` from the stable ``block_type`` (``list_item``)
-        instead of the legacy text heuristic (``list``)."""
+        A5: only ``heading`` overrides ``unit_type`` (because downstream
+        A6 skip / B4 outline key off ``unit_type == "heading"``); all
+        other stable block types keep the heuristic ``unit_type``."""
         conn = FakeConn()
         conn.queue_fetchrow(None)
         conn.set_execute_result("UPDATE stable_reading_documents", "UPDATE 0")
@@ -1699,8 +1700,10 @@ class TestReadingUnitsInsert:
             c for c in conn.execute_calls if "INSERT INTO reading_units" in c.query
         ]
         unit_types = {c.args[2]: c.args[4] for c in unit_calls}
-        # u2 is the list_item block. A5: stable block_type is "list_item".
-        assert unit_types["u2"] == "list_item"
+        # u2 is the list_item block. Heuristic ``_classify_unit_type``
+        # detects all-list-lines → ``list`` (legacy allowed value).
+        # ``unit_type`` MUST stay within the DB CHECK allowed set.
+        assert unit_types["u2"] == "list"
 
 
 class TestAnchorSegmentsInsert:
