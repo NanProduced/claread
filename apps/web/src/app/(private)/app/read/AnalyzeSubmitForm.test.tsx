@@ -41,6 +41,7 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
     focus: () => void;
     clear: () => void;
     setValue: (markdown: string) => void;
+    flush: () => string;
   };
 
   type MockProps = {
@@ -111,6 +112,8 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
               error: undefined,
             });
           },
+          // 真实组件的 flush 返回 lint/提交共用的单一 Markdown 快照。
+          flush: () => valueRef.current,
         }),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [id, onDegraded],
@@ -1006,6 +1009,384 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(source).toContain("getReaderArtifactPipelineStatusFromWeb");
     expect(source).not.toContain("submitAnalysisFromWeb");
     expect(source).not.toContain("analysis-tasks");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2R Issue C — Submit lint gate (fail-closed)
+//
+// 合同：
+//   1. 提交必须读取 editor 最新内容（getSubmitText），不依赖 debounced 父状态
+//   2. 提交前必须同步得到该最新内容对应的 lint 结果（lintMarkdownInput）
+//   3. dangerous content 不得只依赖按钮 disabled 状态
+//   4. handleSubmit 内必须再次执行 fail-closed 检查
+//   5. Ctrl/Cmd+Enter、按钮点击必须走同一检查
+//   6. 被拒绝时不得发出 fetch
+//   7. 用户看到固定、可理解的中文提示，不能直接暴露内部 parser/lint 错误
+//
+// 这些测试通过 mock textarea 模拟"父 lintResult 状态滞后"场景：
+// mock 的 onLintResult 永远报告 safe，但 handleSubmit 直接调用真实
+// lintMarkdownInput(submitText) 重新计算，从而验证 fail-closed 路径
+// 不依赖 debounced 父状态。
+// ---------------------------------------------------------------------------
+
+describe("R2R Issue C: submit lint gate (fail-closed)", () => {
+  const DANGEROUS_RAW_HTML = "Hello <script>alert(1)</script> world";
+  const DANGEROUS_UNSAFE_LINK =
+    "Click [here](javascript:alert(1)) for more";
+  const DANGEROUS_UNCLOSED_FENCE =
+    "Code example:\n```\nconst x = 1;\n// fence not closed";
+  const SAFE_TEXT = "This is a short English article for testing.";
+  const FOOTNOTE_TEXT =
+    "This article keeps a source note[^1] so the backend can route it to candidate review.\n\n[^1]: Supporting context.";
+
+  async function renderFormForLintGate() {
+    // 显式声明 fetch 签名，使 fetchMock.mock.calls[i] 携带 [input, init] 元组类型，
+    // 让测试可以安全读取 init.body 进行断言。实现体不需要参数。
+    const fetchMock = vi.fn<
+      (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    >(async () => {
+      return new Response(JSON.stringify(makeUnifiedInputStableResponse()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const renderResult = render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    return { fetchMock, renderResult };
+  }
+
+  function setTextareaValue(value: string) {
+    fireEvent.change(
+      screen.getByPlaceholderText("Paste an English article here"),
+      { target: { value } },
+    );
+  }
+
+  function clickSubmitButton() {
+    const button = screen.getByRole("button", { name: "开始透读" });
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+  }
+
+  function pressCtrlEnter() {
+    const textarea = screen.getByPlaceholderText(
+      "Paste an English article here",
+    );
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      ctrlKey: true,
+      metaKey: false,
+    });
+  }
+
+  it("blocks fetch on button click when submitText contains raw HTML", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_RAW_HTML);
+    clickSubmitButton();
+
+    // 固定、可理解的中文提示（不暴露内部 parser 错误）
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    // 被拒绝时不得发出 fetch
+    expect(fetchMock).not.toHaveBeenCalled();
+    // 不得导航
+    expect(navigationMock.push).not.toHaveBeenCalled();
+  });
+
+  it("blocks fetch on Ctrl+Enter when submitText contains raw HTML", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_RAW_HTML);
+    pressCtrlEnter();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(navigationMock.push).not.toHaveBeenCalled();
+  });
+
+  it("blocks fetch on button click when submitText contains unsafe link protocol", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_UNSAFE_LINK);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks fetch on Ctrl+Enter when submitText contains unsafe link protocol", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_UNSAFE_LINK);
+    pressCtrlEnter();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks fetch on button click when submitText contains unclosed code fence", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_UNCLOSED_FENCE);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks fetch on Ctrl+Enter when submitText contains unclosed code fence", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_UNCLOSED_FENCE);
+    pressCtrlEnter();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("safe pending content submits the latest text via button click", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(SAFE_TEXT);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_unified_1",
+      );
+    });
+
+    // 安全内容必须恰好提交一次，且提交的 body 与 latest editor 内容一致
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({
+      text: SAFE_TEXT,
+      sourceType: "pasted_text",
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+    });
+  });
+
+  it("safe pending content submits the latest text via Ctrl+Enter", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(SAFE_TEXT);
+    pressCtrlEnter();
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_unified_1",
+      );
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ text: SAFE_TEXT });
+  });
+
+  it("submits footnote warnings so the backend can route candidate review", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(FOOTNOTE_TEXT);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ text: FOOTNOTE_TEXT });
+  });
+
+  it("submit uses the single Markdown snapshot returned by flush()", async () => {
+    // Static guard for the public contract: flush() returns the exact snapshot
+    // used by lint and fetch, so a long document is not serialized twice.
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/app/(private)/app/read/AnalyzeSubmitForm.tsx",
+      ),
+      "utf-8",
+    );
+
+    expect(source).toContain(
+      "const submitText = markdownEditorRef.current?.flush() ?? text",
+    );
+    expect(source).not.toContain(
+      "markdownEditorRef.current?.flush();\n    const submitText = markdownEditorRef.current?.getSubmitText()",
+    );
+  });
+
+  it("handleSubmit uses real lintMarkdownInput(submitText), not debounced parent state", async () => {
+    // 静态契约测试：handleSubmit 内必须直接调用 lintMarkdownInput(submitText)
+    // 而不是读取 debounced 的 lintResult 状态。
+    const source = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/app/(private)/app/read/AnalyzeSubmitForm.tsx",
+      ),
+      "utf-8",
+    );
+
+    // 同步 lint gate 必须存在且基于 submitText
+    expect(source).toMatch(/lintMarkdownInput\(submitText\)/);
+    expect(source).toMatch(/freshLintResult\.hasDangerousContent/);
+  });
+
+  it("error message is a fixed Chinese string, does not leak internal parser errors", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+    setTextareaValue(DANGEROUS_RAW_HTML);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+
+    // 不得在 DOM 中暴露 raw error message 或内部 parser 错误
+    const body = document.body.textContent ?? "";
+    expect(body).not.toMatch(/Failed to fetch/i);
+    expect(body).not.toMatch(/parser/i);
+    expect(body).not.toMatch(/token/i);
+    expect(body).not.toMatch(/stack trace/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("submit succeeds when content transitions from dangerous to safe", async () => {
+    const { fetchMock } = await renderFormForLintGate();
+
+    // 先输入 dangerous
+    setTextareaValue(DANGEROUS_RAW_HTML);
+    clickSubmitButton();
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+        ),
+      ).toBeTruthy();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // 改为 safe
+    setTextareaValue(SAFE_TEXT);
+    clickSubmitButton();
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_unified_1",
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({ text: SAFE_TEXT });
+  });
+
+  it("attached file (artifact path) bypasses markdown lint gate", async () => {
+    // 附件提交链路不受 Markdown lint 影响
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/init-upload")) {
+        return jsonResponse(makeInitResponse());
+      }
+      if (url.startsWith("https://oss.example.com/")) {
+        return new Response(null, { status: 200 });
+      }
+      if (url.endsWith("/complete-upload")) {
+        return jsonResponse(makeCompleteResponse());
+      }
+      if (url.endsWith("/submit-input")) {
+        return jsonResponse(makeArtifactSubmitResponse("rec_artifact_safe"));
+      }
+      if (url.endsWith("/pipeline-status")) {
+        return jsonResponse(makePipelineStableResponse("rec_artifact_safe"));
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    const file = makeFile("article.pdf", "application/pdf");
+    const dropZone = screen.getByTestId("read-source-input");
+    fireEvent.drop(dropZone, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [file],
+        items: [{ kind: "file", type: "application/pdf" }],
+      },
+    });
+
+    // 附件就绪后点击开始透读
+    await waitFor(() => {
+      expect(screen.getByText("PDF 待提取")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
+
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_artifact_safe",
+      );
+    });
+
+    // 附件路径不应调用 reader-plate/input 端点
+    const readerPlateCalls = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === "/api/web/reader-plate/input",
+    );
+    expect(readerPlateCalls).toHaveLength(0);
   });
 });
 

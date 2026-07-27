@@ -1640,6 +1640,36 @@ function ReaderMarkdownCodeBlockComponent({
   );
 }
 
+// R2 Phase 1: code_line plugin for deserialized Markdown code blocks.
+// MarkdownPlugin.deserialize() emits `code_block` with `code_line` children
+// (one per line). Without this plugin, code_line nodes have no component
+// and render as plain text, breaking code block structure in callout /
+// sentence-analysis children that use `deserializeMarkdownToBlocks`.
+// The stable-block path (ReaderStableCodeBlockComponent) does not need
+// this — backend stores `text_content` as text nodes, not code_line elements.
+//
+// R2R Phase 4: HTML 语义修复。
+// `code_block` 组件渲染 `<pre><code>{children}</code></pre>`，`code_line`
+// 是 `<code>` 的直接子节点。`<code>` 仅接受 phrasing content，`<div>` 是
+// flow content，`<pre><code><div>…</div></code></pre>` 无效。改用 `<span>`
+// + `block` display 实现逐行换行，DOM 语义有效且不依赖 `<div>`。
+function ReaderMarkdownCodeLineComponent({
+  children,
+  attributes,
+}: PlateElementProps) {
+  return (
+    <span
+      {...attributes}
+      className={`reader-record-plate-markdown-code-line block ${
+        attributes?.className ?? ""
+      }`.trim()}
+      data-reader-record-markdown-node="code_line"
+    >
+      {children}
+    </span>
+  );
+}
+
 function ReaderMarkdownHrComponent({
   children,
   attributes,
@@ -1782,7 +1812,7 @@ function ReaderMarkdownLinkElement({
 }: PlateElementProps) {
   const url =
     typeof (element as { url?: unknown }).url === "string"
-      ? (element as { url: string }).url
+      ? ((element as { url?: unknown }).url as string)
       : "";
   const href = url.length > 0 ? url : "#";
   return (
@@ -1838,6 +1868,14 @@ const markdownElementPlugins = [
   createPlatePlugin({
     key: "pre",
     node: { isElement: true, component: ReaderMarkdownCodeBlockComponent },
+  }),
+  // R2 Phase 1: code_line element plugin — needed for deserialized code blocks.
+  // code_block's children are code_line nodes (one per line). Without this
+  // plugin, code_line elements render as plain text, breaking code block
+  // structure in callout / sentence-analysis children.
+  createPlatePlugin({
+    key: "code_line",
+    node: { isElement: true, component: ReaderMarkdownCodeLineComponent },
   }),
   createPlatePlugin({
     key: "hr",

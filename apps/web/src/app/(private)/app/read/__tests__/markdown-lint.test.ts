@@ -157,7 +157,7 @@ paragraph`;
     it("检测单个 footnote 引用 [^id]", () => {
       const md = `Some text[^1] here.`;
       const result = lintMarkdownInput(md);
-      expect(result.hasDangerousContent).toBe(true);
+      expect(result.hasDangerousContent).toBe(false);
       const fn = result.warnings.find((w) => w.kind === "footnote");
       expect(fn).toBeDefined();
       expect(fn?.count).toBe(1);

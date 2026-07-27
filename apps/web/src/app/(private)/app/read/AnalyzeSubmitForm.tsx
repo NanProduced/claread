@@ -1403,11 +1403,50 @@ export function AnalyzeSubmitForm({
       return;
     }
 
-    // C1.4: 粘贴保真提交 — 优先使用原始粘贴文本，消除 Plate serialize 往返损耗。
-    const submitText = markdownEditorRef.current?.getSubmitText() ?? text;
+    // R2R Issue C fix: 提交前 flush + 同步 lint gate（fail-closed）。
+    //
+    // 旧实现（RED）：
+    //   - 直接 getSubmitText() → fetch，不 flush
+    //     → 父状态（text/CTA/chars/hint）可能滞后于 editor
+    //   - 不做同步 lint 检查
+    //     → dangerous 内容（raw HTML / unsafe link / unclosed fence）
+    //       可在 debounce 结束前通过 Ctrl/Cmd+Enter 或按钮点击发出 fetch
+    //   - dangerous 仅依赖按钮 disabled 状态
+    //     → 快捷键路径完全绕过 lint gate
+    //
+    // 新实现（GREEN）：
+    //   1. flush() 同步 pending debounce，确保父状态与 editor 当前内容一致
+    //   2. getSubmitText() 直读 editor 最新内容（粘贴保真优先）
+    //   3. lintMarkdownInput(submitText) 同步计算最新 lint 结果
+    //      —— 不依赖 debounced `lintResult` 状态，避免 debounce 窗口内绕过
+    //   4. hasDangerousContent → setState error + setLintResult（让警告 badge
+    //      同步刷新），return，**不发 fetch**
+    //   5. 按钮点击与 Ctrl/Cmd+Enter 都通过 onSubmitRef 走同一 handleSubmit，
+    //      合同完全一致
+    //   6. 用户看到固定、可理解的中文提示，不暴露内部 parser/lint 错误
+    //
+    // 注意：提交使用的文本与 lint 检查的文本必须是同一份 submitText。
+    // 不能 lint 序列化结果却提交原始粘贴文本 —— getSubmitText() 已统一两者。
+    // flush() returns the exact snapshot used for both lint and submission,
+    // avoiding a second full-document serialization on long inputs.
+    const submitText = markdownEditorRef.current?.flush() ?? text;
     const trimmed = submitText.trim();
     if (trimmed.length === 0) {
       setState({ kind: "error", message: "请先粘贴一段需要透读的英文内容。" });
+      return;
+    }
+
+    // 同步 lint gate（fail-closed）。lintResult 状态可能因 debounce 滞后，
+    // 提交必须基于实际 submitText 重新计算。
+    const freshLintResult = lintMarkdownInput(submitText);
+    if (freshLintResult.hasDangerousContent) {
+      // 让父组件的警告 badge 同步刷新，便于用户看到具体 warning。
+      setLintResult(freshLintResult);
+      setState({
+        kind: "error",
+        message:
+          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
+      });
       return;
     }
 

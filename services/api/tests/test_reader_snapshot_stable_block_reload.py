@@ -412,3 +412,401 @@ async def test_duplicate_exact_match_is_deterministic_first_wins(
     # first-wins：原 heading block（order_index 最小）获胜，不被 paragraph 覆盖。
     assert matched[0].stable_block_type == "heading"
     assert matched[0].stable_block_id == first_heading["block_id"]
+
+
+# ===========================================================================
+# R2 Phase 4 — End-to-end structural fixtures for reload preservation.
+#
+# R1 only covered heading + paragraph + em inline mark reload. These tests
+# freeze documents containing table / code_block / thematic_break / nested
+# list structures and verify the stable block tree survives DB reload with
+# parent_block_id chain, table_role, and metadata_only routing intact.
+#
+# Architecture (from document_freeze_plan.py + repository.py):
+#   - Only `main_reading` blocks with non-empty text_content get canonical
+#     UTF-16 ranges. Structural wrappers (list / table / table_row) have
+#     text_content=None → NULL canonical range → never match a unit.
+#   - thematic_break routes to `metadata_only` → NULL canonical range →
+#     never becomes a unit.
+#   - table_cell / list_item / code_block / heading / paragraph / blockquote
+#     have text_content → canonical range → become units via exact match.
+#   - parent_stable_block_id on a unit points to the parent block_id (which
+#     may be a wrapper block that is NOT itself a unit).
+# ===========================================================================
+
+
+async def _freeze_markdown(
+    pool: asyncpg.Pool, user_id: UUID, markdown: str
+):
+    """Freeze arbitrary Markdown text and return the application result."""
+    service = StableReadyInputApplicationService(pool=pool)
+    return await service.freeze_stable_ready_input_and_load_snapshot(
+        user_id=user_id,
+        source_type="pasted_text",
+        text=markdown,
+        language="en",
+    )
+
+
+async def _load_stable_document_blocks(
+    pool: asyncpg.Pool, stable_document_id: UUID
+) -> list[asyncpg.Record]:
+    """Load the raw stable_document_blocks rows for direct tree inspection."""
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            """
+            SELECT block_id, parent_block_id, block_type, order_index,
+                   text_content, payload_json,
+                   canonical_text_start_utf16 AS start_utf16,
+                   canonical_text_end_utf16 AS end_utf16,
+                   interpretation_policy_json AS policy_json
+            FROM stable_document_blocks
+            WHERE stable_document_id = $1
+            ORDER BY order_index ASC
+            """,
+            stable_document_id,
+        )
+
+
+# R2 Phase 4 fixtures: each fixture must pass the input suitability gate
+# (>= 50 English words, >= 0.70 english_word_ratio, no table/image/
+# footnote/raw_html/math/unclosed_fence). Tables are intentionally
+# absent — they trigger `table_structure_uncertain` and require candidate
+# review (covered by test_d6_i3a_input_suitability_gate.py +
+# test_a7_candidate_routing_distribution.py, not by reload tests).
+
+R2_CODE_BLOCK_MARKDOWN = """# Code Example
+
+This section demonstrates how a fenced code block is preserved across
+the stable document freeze and reload pipeline. The prose around the
+code sample carries enough English words to pass the suitability gate,
+while the fenced block itself exercises the code_block stable block
+type with a language tag and closed fence metadata.
+
+```python
+def hello():
+    print("hi")
+```
+
+After the code block, a final paragraph ensures the document has
+multiple prose blocks. This verifies that code_block does not pollute
+the surrounding paragraph units and that its canonical range is
+independent of its neighbours.
+"""
+
+R2_THEMATIC_BREAK_MARKDOWN = """# Section One
+
+This first section introduces the document and provides enough English
+prose to satisfy the input suitability gate. The thematic break below
+must route to metadata_only, meaning it appears in stable_document_blocks
+but never becomes a reading unit. The narrative paragraphs on either side
+of the break must still survive as independent paragraph units.
+
+---
+
+# Section Two
+
+The second section continues after the thematic break. The break itself
+is a structural separator, not narrative content, so the reload path
+must not project it onto any reading unit. Both headings and both
+paragraphs should survive reload with their stable block metadata.
+"""
+
+R2_NESTED_LIST_MARKDOWN = """# Nested List Document
+
+This document exercises a three-level nested list structure to verify
+that parent_block_id chains survive the stable document freeze and
+reload pipeline. The prose introduction carries enough English words
+to pass the suitability gate, while the nested list below exercises
+list wrapper blocks and list_item blocks at multiple depths.
+
+- Level one unordered item alpha with enough text to be meaningful
+  - Level two unordered item beta nested under alpha
+    - Level three unordered item gamma nested under beta
+  1. Level two ordered item delta with its own nested child
+     1. Level three ordered item epsilon nested under delta
+- Level one unordered item zeta closes the top-level list
+
+After the list, a final paragraph ensures the document has trailing
+prose context. This verifies that list wrappers do not pollute the
+surrounding paragraph units and that the parent chain is preserved.
+"""
+
+
+async def test_code_block_survives_reload(reload_env: asyncpg.Pool) -> None:
+    """R2 Phase 4: Fenced code block survives DB reload with language intact.
+
+    code_block is main_reading with text_content → non-NULL canonical
+    range → becomes a unit. payload_json.language is preserved in the
+    stable_document_blocks row (not projected onto BuiltReadingUnit, but
+    the block_id + stable_block_type are).
+    """
+    pool = reload_env
+    user_id = await _insert_user(pool)
+    result = await _freeze_markdown(pool, user_id, R2_CODE_BLOCK_MARKDOWN)
+    record_id = result.reading_record_id
+
+    blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
+    code_blocks = [b for b in blocks if b["block_type"] == "code_block"]
+    assert len(code_blocks) == 1, "expected exactly 1 code_block"
+
+    code_block = code_blocks[0]
+    # code_block has text_content → non-NULL canonical range.
+    assert code_block["start_utf16"] is not None
+    assert code_block["end_utf16"] is not None
+    assert code_block["start_utf16"] < code_block["end_utf16"]
+    # payload_json preserves language.
+    payload = code_block["payload_json"]
+    assert isinstance(payload, dict)
+    assert payload.get("language") == "python"
+    assert payload.get("fenced") is True
+    assert payload.get("closed") is True
+    # text_content preserves the code (newlines included).
+    assert "def hello():" in code_block["text_content"]
+    assert 'print("hi")' in code_block["text_content"]
+
+    # Reload: code_block unit exists with stable_block_type="code_block".
+    facts = await _load_facts(pool, record_id, user_id)
+    code_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "code_block"
+    ]
+    assert len(code_units) == 1, (
+        f"expected 1 code_block unit after reload, got {len(code_units)}"
+    )
+    code_unit = code_units[0]
+    assert code_unit.stable_block_id == code_block["block_id"]
+    assert code_unit.parent_stable_block_id is None  # top-level block
+    # Unit text round-trips the code content.
+    assert "def hello():" in code_unit.text
+    assert 'print("hi")' in code_unit.text
+
+    # Fresh vs reloaded snapshot equivalence for code_block.
+    fresh_blocks = _source_blocks_by_unit(result.snapshot)
+    reloaded_blocks = _source_blocks_by_unit(
+        await _load_snapshot(pool, record_id, user_id)
+    )
+    fresh_code = [
+        f for f in fresh_blocks.values()
+        if f.get("stableBlockType") == "code_block"
+    ]
+    reloaded_code = [
+        f for f in reloaded_blocks.values()
+        if f.get("stableBlockType") == "code_block"
+    ]
+    assert len(fresh_code) == 1
+    assert len(reloaded_code) == 1
+    assert fresh_code[0] == reloaded_code[0]
+
+
+async def test_thematic_break_routes_to_metadata_only_no_unit(
+    reload_env: asyncpg.Pool,
+) -> None:
+    """R2 Phase 4: thematic_break routes to metadata_only, never becomes a unit.
+
+    thematic_break has text_content=None and default_route="metadata_only"
+    → NULL canonical range → cannot match any unit. The block exists in
+    stable_document_blocks (preserving structural truth) but is invisible
+    to the reading-units layer.
+    """
+    pool = reload_env
+    user_id = await _insert_user(pool)
+    result = await _freeze_markdown(pool, user_id, R2_THEMATIC_BREAK_MARKDOWN)
+    record_id = result.reading_record_id
+
+    blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
+    hr_blocks = [b for b in blocks if b["block_type"] == "thematic_break"]
+    assert len(hr_blocks) == 1, "expected exactly 1 thematic_break block"
+
+    hr_block = hr_blocks[0]
+    # metadata_only route → NULL canonical range.
+    assert hr_block["start_utf16"] is None
+    assert hr_block["end_utf16"] is None
+    # text_content is None (thematic break carries no narrative text).
+    assert hr_block["text_content"] is None
+    # interpretation_policy.default_route == "metadata_only".
+    policy = hr_block["policy_json"]
+    if isinstance(policy, dict):
+        assert policy.get("default_route") == "metadata_only"
+    elif isinstance(policy, str):
+        import json
+        policy_dict = json.loads(policy)
+        assert policy_dict.get("default_route") == "metadata_only"
+
+    # Reload: NO unit has stable_block_type="thematic_break".
+    facts = await _load_facts(pool, record_id, user_id)
+    hr_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "thematic_break"
+    ]
+    assert hr_units == [], (
+        "thematic_break must not become a unit (metadata_only, NULL range)"
+    )
+
+    # The document still has heading + paragraph units (narrative survives).
+    heading_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "heading"
+    ]
+    assert len(heading_units) == 2, "expected 2 heading units (Section One + Two)"
+    paragraph_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "paragraph"
+    ]
+    assert len(paragraph_units) == 2, "expected 2 paragraph units"
+
+    # Snapshot projection: no thematic_break in reader_source_block nodes.
+    snapshot = await _load_snapshot(pool, record_id, user_id)
+    snapshot_blocks = _source_blocks_by_unit(snapshot)
+    hr_snapshot = [
+        f for f in snapshot_blocks.values()
+        if f.get("stableBlockType") == "thematic_break"
+    ]
+    assert hr_snapshot == [], "thematic_break must not appear in snapshot blocks"
+
+
+async def test_nested_list_parent_chain_survives_reload(
+    reload_env: asyncpg.Pool,
+) -> None:
+    """R2 Phase 4: 3-level nested list parent_block_id chain survives reload.
+
+    list (wrapper, NULL range) → list_item (text, range) → nested list
+    (wrapper, NULL range) → nested list_item (text, range). The
+    parent_stable_block_id on a list_item unit points to its parent list
+    block, which is NOT itself a unit. The chain depth=0→1→2 survives.
+    """
+    pool = reload_env
+    user_id = await _insert_user(pool)
+    result = await _freeze_markdown(pool, user_id, R2_NESTED_LIST_MARKDOWN)
+    record_id = result.reading_record_id
+
+    blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
+    block_by_id = {b["block_id"]: b for b in blocks}
+
+    list_blocks = [b for b in blocks if b["block_type"] == "list"]
+    list_item_blocks = [b for b in blocks if b["block_type"] == "list_item"]
+    # From nested_list fixture: 5 list wrappers (top-level ul, nested ul
+    # under alpha, nested ul under beta, nested ol under alpha, nested ol
+    # under delta) + 6 list_items (alpha, beta, gamma, delta, epsilon, zeta).
+    assert len(list_blocks) == 5, (
+        f"expected 5 list wrapper blocks, got {len(list_blocks)}"
+    )
+    assert len(list_item_blocks) == 6, (
+        f"expected 6 list_item blocks, got {len(list_item_blocks)}"
+    )
+
+    # list wrappers: NULL canonical range (text_content=None).
+    for list_block in list_blocks:
+        assert list_block["start_utf16"] is None
+        assert list_block["end_utf16"] is None
+        assert list_block["text_content"] is None
+
+    # list_item blocks: non-NULL canonical range.
+    for item_block in list_item_blocks:
+        assert item_block["start_utf16"] is not None
+        assert item_block["end_utf16"] is not None
+        assert item_block["start_utf16"] < item_block["end_utf16"]
+        parent_id = item_block["parent_block_id"]
+        assert parent_id is not None
+        parent = block_by_id[parent_id]
+        assert parent["block_type"] == "list"
+
+    # Verify depth chain: at least one list_item at depth 2 exists with
+    # parent_block_id → list (depth 2) → parent_block_id → list_item
+    # (depth 1) → parent_block_id → list (depth 1) → parent_block_id →
+    # list_item (depth 0) → parent_block_id → list (depth 0).
+    # The parser tracks list.depth and list_item.depth at the same
+    # nesting level (a depth-N list_item is a direct child of a depth-N
+    # list, not depth-N-1).
+    depth_2_items = [
+        b for b in list_item_blocks
+        if isinstance(b["payload_json"], dict)
+        and b["payload_json"].get("depth") == 2
+    ]
+    assert len(depth_2_items) >= 1, "expected at least 1 depth-2 list_item"
+
+    for item in depth_2_items:
+        # depth-2 item → parent list (depth 2)
+        parent_list_id = item["parent_block_id"]
+        parent_list = block_by_id[parent_list_id]
+        parent_list_payload = parent_list["payload_json"]
+        if isinstance(parent_list_payload, dict):
+            assert parent_list_payload.get("depth") == 2
+        # parent list (depth 2) → its parent list_item (depth 1)
+        grandparent_item_id = parent_list["parent_block_id"]
+        assert grandparent_item_id is not None
+        grandparent_item = block_by_id[grandparent_item_id]
+        assert grandparent_item["block_type"] == "list_item"
+        grandparent_payload = grandparent_item["payload_json"]
+        if isinstance(grandparent_payload, dict):
+            assert grandparent_payload.get("depth") == 1
+        # grandparent list_item (depth 1) → parent list (depth 1)
+        great_grand_list_id = grandparent_item["parent_block_id"]
+        assert great_grand_list_id is not None
+        great_grand_list = block_by_id[great_grand_list_id]
+        assert great_grand_list["block_type"] == "list"
+        great_grand_payload = great_grand_list["payload_json"]
+        if isinstance(great_grand_payload, dict):
+            assert great_grand_payload.get("depth") == 1
+        # great-grand list (depth 1) → its parent list_item (depth 0)
+        great_great_item_id = great_grand_list["parent_block_id"]
+        assert great_great_item_id is not None
+        great_great_item = block_by_id[great_great_item_id]
+        assert great_great_item["block_type"] == "list_item"
+        great_great_payload = great_great_item["payload_json"]
+        if isinstance(great_great_payload, dict):
+            assert great_great_payload.get("depth") == 0
+
+    # Reload: list_item units carry correct parent_stable_block_id chain.
+    facts = await _load_facts(pool, record_id, user_id)
+    list_item_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "list_item"
+    ]
+    assert len(list_item_units) == 6, (
+        f"expected 6 list_item units after reload, got {len(list_item_units)}"
+    )
+
+    # Every list_item unit's parent_stable_block_id points to a list block
+    # (which is NOT itself a unit).
+    for unit in list_item_units:
+        assert unit.parent_stable_block_id is not None
+        parent_block = block_by_id[unit.parent_stable_block_id]
+        assert parent_block["block_type"] == "list"
+
+    # No unit should have stable_block_type="list" — wrappers have NULL range.
+    list_units = [
+        u for u in facts.build_result.units
+        if u.stable_block_type == "list"
+    ]
+    assert list_units == [], (
+        "list wrapper blocks must not become units (NULL canonical range)"
+    )
+
+    # Fresh vs reloaded snapshot equivalence for list_item fields.
+    # Multiple list_items can share the same parent (siblings), so we
+    # compare sorted multisets of stable field dicts instead of keying
+    # by parent. The stable fields (block_type, parent, depth via
+    # payload) must round-trip exactly.
+    fresh_blocks = _source_blocks_by_unit(result.snapshot)
+    reloaded_blocks = _source_blocks_by_unit(
+        await _load_snapshot(pool, record_id, user_id)
+    )
+    fresh_items = [
+        f for f in fresh_blocks.values()
+        if f.get("stableBlockType") == "list_item"
+    ]
+    reloaded_items = [
+        f for f in reloaded_blocks.values()
+        if f.get("stableBlockType") == "list_item"
+    ]
+    assert len(fresh_items) == 6
+    assert len(reloaded_items) == 6
+    # Sort by stableBlockId to get deterministic ordering for comparison.
+    # The stableBlockId must round-trip exactly (same block_id in DB).
+    fresh_sorted = sorted(fresh_items, key=lambda f: f.get("stableBlockId") or "")
+    reloaded_sorted = sorted(reloaded_items, key=lambda f: f.get("stableBlockId") or "")
+    assert fresh_sorted == reloaded_sorted, (
+        f"fresh list_item stable fields != reloaded:\n"
+        f"fresh={fresh_sorted}\nreloaded={reloaded_sorted}"
+    )

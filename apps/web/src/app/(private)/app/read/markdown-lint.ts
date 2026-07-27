@@ -166,7 +166,13 @@ export function lintMarkdownInput(text: string): MarkdownLintResult {
 
   return {
     warnings,
-    hasDangerousContent: warnings.length > 0,
+    // Footnotes are structurally lossy today, but they are not unsafe.
+    // Keep the warning visible and let the backend route the document to
+    // Candidate Review. Only diagnostics that must never be submitted are
+    // blocking at the Web boundary.
+    hasDangerousContent: warnings.some(
+      (warning) => warning.kind !== "footnote",
+    ),
   };
 }
 

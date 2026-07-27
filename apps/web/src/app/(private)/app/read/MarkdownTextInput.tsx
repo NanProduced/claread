@@ -82,7 +82,7 @@ import {
   type PlateEditor,
   usePlateEditor,
 } from "platejs/react";
-import type { Descendant, Value } from "platejs";
+import type { Value } from "platejs";
 
 import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
 import {
@@ -174,7 +174,14 @@ function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
 }
 
 function MarkdownCodeLine({ children, attributes }: PlateElementProps) {
-  return <div {...attributes}>{children}</div>;
+  // R2R Phase 4: `<code>` 仅接受 phrasing content，`<div>` 是 flow content，
+  // `<pre><code><div>…</div></code></pre>` 无效。改用 `<span>` + `block`
+  // display 实现逐行换行，DOM 语义有效且不依赖 `<div>`。
+  return (
+    <span {...attributes} className="block">
+      {children}
+    </span>
+  );
 }
 
 function MarkdownHr({ children, attributes }: PlateElementProps) {
@@ -324,6 +331,9 @@ export interface MarkdownTextInputHandle {
    *
    * 若用户粘贴后未编辑（dirty=false 且有 lastPastedText），返回原始粘贴文本，
    * 消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
+   *
+   * R2 Phase 2: 始终直接读 editor，不依赖 debounced 父状态，
+   * 因此 submit 不会拿到陈旧 text。
    */
   getSubmitText: () => string;
   /** 序列化当前编辑器内容为 Markdown 字符串 */
@@ -334,6 +344,10 @@ export interface MarkdownTextInputHandle {
   clear: () => void;
   /** 用 Markdown 字符串重置编辑器内容（R1 起会触发 onChange，父状态随之同步） */
   setValue: (markdown: string) => void;
+  /**
+   * 同步吸收 pending debounce，并返回 lint/提交共用的 Markdown 快照。
+   */
+  flush: () => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,20 +398,26 @@ export const MarkdownTextInput = forwardRef<
   { initialValue, onChange, onSubmit, onLintResult, onDegraded, className, id, ariaLabelledBy, ariaDescribedBy },
   ref,
 ) {
-  // C1.3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
+  // C1.3 + R2 Phase 3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
   // 并通过 onDegraded 回调通知父组件显示可见降级提示。
-  // useState initializer 不能有副作用，先把结果存 ref，mount effect 中回调。
-  const initialResultRef = useRef<DeserializeMarkdownResult | null>(null);
-  const [initialBlocks] = useState<Descendant[]>(() => {
-    const result = deserializeMarkdownToBlocksWithStatus(initialValue ?? "");
-    initialResultRef.current = result;
-    return result.blocks;
-  });
+  //
+  // 修复 refs-during-render：原实现把 deserialize 结果写入 `initialResultRef`
+  // 在 useState initializer（render 阶段）中，违反 React 19 render 纯粹性。
+  // R2 改为：deserialize 结果直接作为 useState 状态（initializer 仍是纯计算，
+  // 不写任何 ref），mount effect 通过闭包读取 stable 状态并通知父组件。
+  //
+  // Strict Mode 安全：React 18+ StrictMode 会模拟 unmount-remount，但 refs
+  // 在该过程中保留。`initialDegradedNotifiedRef` 防止重复触发 `onDegraded`
+  // 导致父组件重复显示可见错误提示。
+  const [initialResult] = useState<DeserializeMarkdownResult>(
+    () => deserializeMarkdownToBlocksWithStatus(initialValue ?? ""),
+  );
+  const initialDegradedNotifiedRef = useRef(false);
 
   const editor = usePlateEditor(
     {
       plugins: markdownTextInputPlugins,
-      value: initialBlocks as never[],
+      value: initialResult.blocks as never[],
     },
     [],
   );
@@ -422,13 +442,13 @@ export const MarkdownTextInput = forwardRef<
   }, [onDegraded]);
 
   // C1.3: 挂载时通知父组件初始 deserialize 状态（仅一次）。
+  // R2 Phase 3: 改用 stable 状态 + 通知 ref，避免 render 阶段写 ref 与
+  // Strict Mode 下的重复可见错误提示。
   useEffect(() => {
-    const result = initialResultRef.current;
-    if (result) {
-      initialResultRef.current = null;
-      onDegradedRef.current?.(result);
-    }
-  }, []);
+    if (initialDegradedNotifiedRef.current) return;
+    initialDegradedNotifiedRef.current = true;
+    onDegradedRef.current?.(initialResult);
+  }, [initialResult]);
 
   // C1.4 / R1: 粘贴保真状态。
   // - lastPastedTextRef: 用户最后一次"整篇粘贴"的原始文本（编辑器为空时粘贴）。
@@ -493,6 +513,78 @@ export const MarkdownTextInput = forwardRef<
     return md.trim().length === 0 ? "" : md;
   }, []);
 
+  const readSubmitMarkdown = useCallback((): string => {
+    if (!dirtyRef.current && lastPastedTextRef.current) {
+      return lastPastedTextRef.current;
+    }
+    return serializeCurrentMarkdown(editor);
+  }, [editor, serializeCurrentMarkdown]);
+
+  // -------------------------------------------------------------------------
+  // R2 Phase 2: 分层状态流 —— serialize + lint 调度
+  //
+  // 旧实现每次 onChange 都同步执行 `serializeCurrentMarkdown(editor)` +
+  // `lintMarkdownInput(md)` + `onChange(md)`，长文输入（30k–50k 字符）下
+  // 每次按键都会触发整文档处理，导致输入卡顿。
+  //
+  // R2 分层调度合同：
+  // 1. 轻/重分离：空/非空、CTA、placeholder 等父状态通过 `onChange` 同步刷新；
+  //    serialize/lint 的结果同样通过 `onChange`/`onLintResult` 回调，但合并
+  //    调度：debounce 窗口内多次 edit 最多执行一次回调。
+  // 2. 空态立即 flush：editor 由非空变空（或反之）属于"语义边界转换"，
+  //    立即同步回调，避免 CTA/placeholder 长时间显示陈旧态。
+  // 3. submit 不依赖父状态：`getSubmitText()` 始终直接读取 editor 内容，
+  //    不读取 debounced 值，因此 submit 不会拿到陈旧 text。`flush()` 用于
+  //    提交或测试场景显式同步父状态。
+  // 4. clear/setValue 取消旧任务并立即 fire：避免 stale debounce 把旧内容
+  //    写回父状态；同时保证 programmatic 状态变更后父状态与 editor 一致。
+  // 5. unmount 取消 pending：避免回调在组件卸载后写入陈旧状态。
+  // 6. dedup：相同 md 不重复触发回调（parent state setter 对相同值本身是
+  //    no-op，dedup 避免冗余 lint 计算）。
+  // -------------------------------------------------------------------------
+  const SERIALIZE_DEBOUNCE_MS = 150;
+  const serializeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentMdRef = useRef<string>("");
+
+  const fireSerializeCallbacks = useCallback((md: string) => {
+    // dedup：相同 md 不重复触发回调。parent 的 setText 是 no-op，且 lint
+    // 结果对相同 md 必然相同，重复调用只会浪费主线程时间。
+    if (md === lastSentMdRef.current) return;
+    lastSentMdRef.current = md;
+    onChangeRef.current(md);
+    const lintCallback = onLintResultRef.current;
+    if (lintCallback) {
+      lintCallback(lintMarkdownInput(md));
+    }
+  }, []);
+
+  const cancelPendingSerialize = useCallback(() => {
+    if (serializeTimerRef.current) {
+      clearTimeout(serializeTimerRef.current);
+      serializeTimerRef.current = null;
+    }
+  }, []);
+
+  // Flush returns the exact Markdown snapshot that callers should submit and
+  // lint. This avoids serializing a long document once in flush() and again
+  // in getSubmitText(), while preserving the untouched raw-paste payload.
+  const flushSerialize = useCallback((): string => {
+    if (serializeTimerRef.current) {
+      clearTimeout(serializeTimerRef.current);
+      serializeTimerRef.current = null;
+    }
+    const md = readSubmitMarkdown();
+    fireSerializeCallbacks(md);
+    return md;
+  }, [fireSerializeCallbacks, readSubmitMarkdown]);
+
+  // R2 Phase 2: unmount 必须取消 pending，避免回调写入已卸载组件的父状态。
+  useEffect(() => {
+    return () => {
+      cancelPendingSerialize();
+    };
+  }, [cancelPendingSerialize]);
+
   /**
    * R1：粘贴保真窗口的记录侧。
    * 仅当编辑器当前"实质为空"（整篇粘贴场景）时记录原始文本并开窗；
@@ -521,12 +613,10 @@ export const MarkdownTextInput = forwardRef<
     ref,
     () => ({
       // C1.4: 粘贴保真 — 未编辑时返回原始粘贴文本，消除 serialize 往返损耗。
+      // R2 Phase 2: 不依赖 debounced 父状态，始终直接读 editor。
       getSubmitText: () => {
         if (!editor) return "";
-        if (!dirtyRef.current && lastPastedTextRef.current) {
-          return lastPastedTextRef.current;
-        }
-        return serializeCurrentMarkdown(editor);
+        return readSubmitMarkdown();
       },
       getMarkdown: () => {
         if (!editor) return "";
@@ -536,16 +626,27 @@ export const MarkdownTextInput = forwardRef<
         if (!editor) return;
         editor.tf.focus();
       },
+      // 同步 pending 状态，并返回 lint/提交共用的单一 Markdown 快照。
+      flush: () => {
+        if (!editor) return "";
+        return flushSerialize();
+      },
       clear: () => {
         if (!editor) return;
+        // R2 Phase 2: 取消 pending debounce（避免 stale 内容写回父状态），
+        // 然后同步 fire 空态回调，保证父状态立即与 editor 一致。
+        cancelPendingSerialize();
         editor.tf.setValue([]);
         // C1.4: 清空时重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
         endPasteWindow();
+        fireSerializeCallbacks("");
       },
       setValue: (markdown: string) => {
         if (!editor) return;
+        // R2 Phase 2: 取消 pending debounce，避免 stale 内容覆盖新值。
+        cancelPendingSerialize();
         // C1.3: setValue 使用带状态 deserialize，失败时通知父组件。
         const result = deserializeMarkdownToBlocksWithStatus(markdown);
         editor.tf.setValue(result.blocks as never[]);
@@ -554,9 +655,21 @@ export const MarkdownTextInput = forwardRef<
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
         endPasteWindow();
+        // R2 Phase 2: 同步 fire 新值回调，保证父状态与 editor 一致。
+        // Plate onChange 可能在 passive effect 中再次触发 handleEditorChange,
+        // dedup（lastSentMdRef）会吸收那次重复回调。
+        fireSerializeCallbacks(serializeCurrentMarkdown(editor));
       },
     }),
-    [editor, endPasteWindow, serializeCurrentMarkdown],
+    [
+      editor,
+      endPasteWindow,
+      serializeCurrentMarkdown,
+      readSubmitMarkdown,
+      cancelPendingSerialize,
+      flushSerialize,
+      fireSerializeCallbacks,
+    ],
   );
 
   if (!editor) {
@@ -564,11 +677,18 @@ export const MarkdownTextInput = forwardRef<
   }
 
 
-  // R1：editor 级 value lifecycle。
-  // - value 引用未变（仅 selection 变化）时直接跳过，避免每次光标移动
-  //   都执行整文档序列化与 lint。
-  // - 粘贴窗口内（pendingPasteRef）的变更是粘贴派生：消费挂起旗并延长
-  //   静默窗口，不置 dirty，保留 C1.4 粘贴保真。
+  // R2R Issue A fix: 轻/重状态分离。
+  // 旧实现（RED）：每次 handleEditorChange 都调用 serializeCurrentMarkdown，
+  //   150ms debounce 只延后 lint 和回调，没有完成"长文输入硬化"。
+  //   30k+ 长文下每次按键都执行整篇 Plate → Markdown 序列化。
+  // 新实现（GREEN）：
+  //   - 轻状态（empty/non-empty）：用 hasTextContent(children) 判断，
+  //     不依赖完整 serialize。空↔非空边界转换立即 fire（serialize 此时
+  //     代价低，因为一侧为空）。
+  //   - 重状态（serialize + lint）：debounce 窗口内最多执行一次。
+  //     timer 回调里新鲜 serialize，不存储陈旧 md。
+  //   - selection-only change（value 引用未变）：直接跳过，0 次 serialize。
+  //   - 粘贴窗口内的变更：消费挂起旗、延长静默窗口，不置 dirty。
   const handleEditorChange = ({
     editor: changedEditor,
     value,
@@ -577,6 +697,7 @@ export const MarkdownTextInput = forwardRef<
     value: Value;
   }) => {
     if (value === lastValueRef.current) {
+      // selection-only change：不触发 serialize 或 lint。
       return;
     }
     lastValueRef.current = value;
@@ -587,12 +708,30 @@ export const MarkdownTextInput = forwardRef<
       dirtyRef.current = true;
       lastPastedTextRef.current = null;
     }
-    const md = serializeCurrentMarkdown(changedEditor);
-    onChangeRef.current(md);
-    // Phase 1 / P0: 输入端预警 lint（非阻塞，后端仍是 fail-closed 单一真相源）
-    const lintCallback = onLintResultRef.current;
-    if (lintCallback) {
-      lintCallback(lintMarkdownInput(md));
+    // 轻状态判断：基于 editor.children 文本语义，不执行完整 Markdown serialize。
+    const isEmpty = !hasTextContent(changedEditor.children);
+    const wasEmpty = lastSentMdRef.current.length === 0;
+    const isEmptyTransition = wasEmpty !== isEmpty;
+    if (isEmptyTransition) {
+      // 空↔非空转换属于语义边界：立即 serialize + fire 让 CTA/placeholder
+      // 同步刷新。此时 serialize 代价低（一侧为空）。
+      cancelPendingSerialize();
+      const md = serializeCurrentMarkdown(changedEditor);
+      fireSerializeCallbacks(md);
+    } else {
+      // 普通编辑（非空→非空 或 空→空）：合并调度。
+      // 不在 handleEditorChange 中 serialize —— 把 serialize 延后到
+      // timer 回调，debounce 窗口内多次 edit 最多执行一次 serialize。
+      if (serializeTimerRef.current) {
+        clearTimeout(serializeTimerRef.current);
+      }
+      serializeTimerRef.current = setTimeout(() => {
+        serializeTimerRef.current = null;
+        // 新鲜 serialize：读取 editor 当前最新内容。
+        // editor 是 stable 引用，timer 回调执行时内容已是最新的。
+        const md = serializeCurrentMarkdown(editor);
+        fireSerializeCallbacks(md);
+      }, SERIALIZE_DEBOUNCE_MS);
     }
   };
 

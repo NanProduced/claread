@@ -274,37 +274,254 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
     });
 
     it("degraded error string falls back to String(error) for non-Error throws", async () => {
-      vi.resetModules();
-      vi.doMock("platejs/react", () => ({
-        createPlateEditor: () => ({
-          getApi: () => ({
-            markdown: {
-              deserialize: () => {
-                // 非 Error 对象：String("string error") → "string error"
-                throw "string error";
-              },
-            },
-          }),
-          api: {
-            markdown: {
-              deserializeInline: () => {
-                throw "string error";
-              },
+    vi.resetModules();
+    vi.doMock("platejs/react", () => ({
+      createPlateEditor: () => ({
+        getApi: () => ({
+          markdown: {
+            deserialize: () => {
+              // 非 Error 对象：String("string error") → "string error"
+              throw "string error";
             },
           },
         }),
-      }));
+        api: {
+          markdown: {
+            deserializeInline: () => {
+              throw "string error";
+            },
+          },
+        },
+      }),
+    }));
 
-      const { deserializeMarkdownToBlocksWithStatus: degradedDeserialize } =
-        await import("./deserialize");
+    const { deserializeMarkdownToBlocksWithStatus: degradedDeserialize } =
+      await import("./deserialize");
 
-      const result = degradedDeserialize("### broken");
+    const result = degradedDeserialize("### broken");
 
-      expect(result.status).toBe("degraded");
-      expect(result.error).toBe("string error");
+    expect(result.status).toBe("degraded");
+    expect(result.error).toBe("string error");
 
-      vi.doUnmock("platejs/react");
-      vi.resetModules();
+    vi.doUnmock("platejs/react");
+    vi.resetModules();
+  });
+  });
+});
+
+// ===========================================================================
+// R2 Phase 4 — Web-side structural fixtures (deserialize equivalence).
+//
+// These fixtures mirror the backend Phase 4 reload tests in
+// `services/api/tests/test_reader_snapshot_stable_block_reload.py` for
+// `code_block` / `thematic_break` / `nested_list`. The web side verifies
+// that Plate + MarkdownKit (remark-gfm) deserializes the same Markdown
+// inputs into structurally equivalent Plate node trees, so the
+// Markdown → Plate → Submit → Backend → Stable Document → Reload →
+// Snapshot → Web projection chain stays structurally consistent.
+//
+// Tables are intentionally NOT covered by reload tests on the backend
+// (the input suitability gate routes tables to candidate review), but
+// the web deserializer must still produce a correct Plate table tree
+// so the input page can render pasted tables WYSIWYG before submit.
+// ===========================================================================
+
+describe("R2 Phase 4: structural fixtures (deserialize equivalence)", () => {
+  describe("fenced code block with language", () => {
+    it("deserializes ```python fence into code_block with code_line children", () => {
+      const md = "```python\ndef hello():\n    print(\"hi\")\n```\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const blocks = result.blocks;
+      // At least one code_block node with code_line children.
+      const codeBlocks = blocks.filter((b) => (b as { type?: string }).type === "code_block");
+      expect(codeBlocks.length).toBe(1);
+      const codeBlock = codeBlocks[0] as {
+        type: string;
+        children?: Array<{ type?: string; children?: Array<{ text?: string }> }>;
+      };
+      // code_block contains code_line children preserving the source lines.
+      const codeLines = (codeBlock.children ?? []).filter(
+        (c) => c.type === "code_line",
+      );
+      expect(codeLines.length).toBe(2);
+      // text content survives as plain text inside code_line leaves.
+      const lineTexts = codeLines
+        .flatMap((c) => (c.children ?? []).map((leaf) => leaf.text ?? ""))
+        .join("\n");
+      expect(lineTexts).toContain("def hello():");
+      expect(lineTexts).toContain('print("hi")');
+    });
+
+    it("deserializes indented code block (no language) as code_block", () => {
+      // 4-space indented code block (CommonMark) — no fence, no language.
+      const md = "    plain code line\n    another line\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const codeBlocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "code_block",
+      );
+      // remark-gfm treats indented code as code_block (no language tag).
+      expect(codeBlocks.length).toBe(1);
+    });
+  });
+
+  describe("thematic break (hr)", () => {
+    it("deserializes --- into hr block", () => {
+      const md = "# Section One\n\n---\n\n# Section Two\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const hrBlocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "hr",
+      );
+      expect(hrBlocks.length).toBe(1);
+      // Surrounding headings survive as h1 nodes.
+      const h1Blocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "h1",
+      );
+      expect(h1Blocks.length).toBe(2);
+    });
+
+    it("deserializes *** and ___ as hr (CommonMark variants)", () => {
+      const md = "# A\n\n***\n\n# B\n\n___\n\n# C\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const hrBlocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "hr",
+      );
+      // Three hr variants (---, ***, ___) all deserialize to hr.
+      expect(hrBlocks.length).toBe(2);
+    });
+  });
+
+  describe("GFM table", () => {
+    it("deserializes 2x2 table into table / tr / th / td nodes", () => {
+      const md = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const blocks = result.blocks;
+      const tableBlocks = blocks.filter(
+        (b) => (b as { type?: string }).type === "table",
+      );
+      expect(tableBlocks.length).toBe(1);
+      const table = tableBlocks[0] as {
+        type: string;
+        children?: Array<{ type?: string }>;
+      };
+      // Table contains 3 rows: 1 header + 2 body rows.
+      const rows = (table.children ?? []).filter((c) => c.type === "tr");
+      expect(rows.length).toBe(3);
+    });
+
+    it("deserializes single-row table (header only) without crashing", () => {
+      const md = "| Header |\n| --- |\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const tableBlocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "table",
+      );
+      expect(tableBlocks.length).toBe(1);
+    });
+  });
+
+  describe("nested list structure", () => {
+    it("deserializes 3-level nested unordered list preserving depth", () => {
+      const md = [
+        "- Level one item alpha",
+        "  - Level two item beta",
+        "    - Level three item gamma",
+        "- Level one item delta",
+      ].join("\n");
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      // At least 2 top-level ul containers (alpha's branch + delta).
+      const ulBlocks = result.blocks.filter(
+        (b) => (b as { type?: string }).type === "ul",
+      );
+      expect(ulBlocks.length).toBeGreaterThanOrEqual(1);
+      // Walk the tree: at least one nested ul exists as a child of a li.
+      let nestedUlCount = 0;
+      let maxDepth = 0;
+      const walk = (node: unknown, depth: number) => {
+        if (!node || typeof node !== "object") return;
+        const n = node as { type?: string; children?: unknown[] };
+        if (n.type === "ul") {
+          maxDepth = Math.max(maxDepth, depth);
+          if (depth > 0) nestedUlCount += 1;
+        }
+        if (Array.isArray(n.children)) {
+          for (const child of n.children) walk(child, n.type === "ul" ? depth + 1 : depth);
+        }
+      };
+      walk({ type: "root", children: result.blocks }, -1);
+      expect(nestedUlCount).toBeGreaterThanOrEqual(1);
+      // Walk semantics: root at depth -1, top-level ul at depth -1 (counted
+      // as 0), nested ul at depth 0, doubly-nested ul at depth 1. A 3-level
+      // list therefore reaches maxDepth >= 1 (one ul nested inside another
+      // ul). This is the structural signal that nesting survives the
+      // remark-gfm → Plate tree conversion.
+      expect(maxDepth).toBeGreaterThanOrEqual(1);
+    });
+
+    it("deserializes mixed ordered + unordered nested list", () => {
+      const md = [
+        "1. Ordered top",
+        "   - Unordered nested",
+        "2. Ordered sibling",
+      ].join("\n");
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      // Both ol and ul container types are present.
+      const hasOl = result.blocks.some(
+        (b) => (b as { type?: string }).type === "ol",
+      );
+      // remark-gfm may flatten mixed lists into a single ol with nested ul,
+      // so hasOl is required; hasUl may appear as a nested child rather than
+      // a top-level block. Walk to verify nested ul exists.
+      expect(hasOl).toBe(true);
+      let foundNestedUl = false;
+      const walk = (node: unknown) => {
+        if (!node || typeof node !== "object") return;
+        const n = node as { type?: string; children?: unknown[] };
+        if (n.type === "ul") foundNestedUl = true;
+        if (Array.isArray(n.children)) {
+          for (const child of n.children) walk(child);
+        }
+      };
+      walk({ type: "root", children: result.blocks });
+      expect(foundNestedUl).toBe(true);
+    });
+  });
+
+  describe("round-trip preservation (deserialize → blocks carry structure)", () => {
+    it("heading levels h1-h3 round-trip through deserialize", () => {
+      const md = "# H1\n\n## H2\n\n### H3\n";
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const types = result.blocks.map((b) => (b as { type?: string }).type);
+      expect(types).toContain("h1");
+      expect(types).toContain("h2");
+      expect(types).toContain("h3");
+    });
+
+    it("blockquote paragraph and list coexist without structural loss", () => {
+      const md = [
+        "# Title",
+        "",
+        "> Quoted text here.",
+        "",
+        "- List item one",
+        "- List item two",
+        "",
+        "Final paragraph.",
+      ].join("\n");
+      const result = deserializeMarkdownToBlocksWithStatus(md);
+      expect(result.status).toBe("success");
+      const types = result.blocks.map((b) => (b as { type?: string }).type);
+      expect(types).toContain("h1");
+      expect(types).toContain("blockquote");
+      expect(types).toContain("ul");
+      expect(types).toContain("p");
     });
   });
 });
