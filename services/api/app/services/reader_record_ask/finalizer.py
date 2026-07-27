@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.reader_record_ask.answer_block_provenance import (
     KnowledgeMode,
@@ -26,6 +26,16 @@ from app.services.reader_record_ask.evidence import (
 )
 from app.services.reader_record_ask.evidence_registry import EvidenceRegistry
 from app.services.reader_record_ask.fence import FenceFn, run_fence
+from app.services.reader_record_ask.web_evidence_registry import WebEvidenceRegistry
+from app.services.reader_record_ask.web_search_contracts import (
+    WEB_DESCRIPTION_MAX_LEN,
+    WEB_TITLE_MAX_LEN,
+    WEB_URL_MAX_LEN,
+    PublicWebSearchSummary,
+    WebEvidence,
+    WebSearchOutcome,
+    canonicalize_url,
+)
 
 # Internal-only finalize status. Wire FinalStatus lives in
 # reader_record_ask_stream.py. ``unavailable`` is internal and is mapped by
@@ -62,13 +72,74 @@ class PublicAnswerBlock(BaseModel):
 
 
 class PublicCitation(BaseModel):
-    """Message-local public citation (no internal handles or locator blobs)."""
+    """Message-local public citation (no internal handles or locator blobs).
+
+    Web citations carry ``url`` / ``title`` / ``description`` instead of
+    a snippet; article citations carry an optional ``snippet``. The
+    discriminator is ``source_kind``. Web fields are optional so article
+    citations do not need to populate them, but web citations must
+    populate ``url`` and ``title`` (architecture brief §5).
+
+    ASK-WEB-G1-R3: this is the single canonical public citation contract.
+    The previous ``PublicWebCitation`` class in ``web_search_contracts``
+    has been removed — it duplicated a subset of this contract with
+    identical field validation. Web citations must carry a canonical URL
+    (validated at the contract layer via :func:`canonicalize_url`) and a
+    non-empty title. Title fallback to ``display_domain`` is applied by
+    the production finalizer before constructing the citation — the
+    contract itself does not derive fallbacks.
+
+    Public JSON never carries: ``evh_`` handles, ``handle_id``, envelope
+    or source fingerprint, ``provider_result_ref``, ``query`` / ``rank``
+    / ``score`` / raw payload.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     citation_id: str = Field(min_length=1, max_length=32)
     source_kind: Literal["article", "web"]
     snippet: str | None = None
+    # Web-specific fields (G0-b3). Required when ``source_kind="web"``;
+    # ignored for article citations. v1 exposes only url / title /
+    # description — no provider, query, rank, score, or internal handle.
+    url: str | None = Field(default=None, max_length=WEB_URL_MAX_LEN)
+    title: str | None = Field(default=None, max_length=WEB_TITLE_MAX_LEN)
+    description: str | None = Field(
+        default=None, max_length=WEB_DESCRIPTION_MAX_LEN
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _validate_canonical_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        canonical = canonicalize_url(value)
+        if canonical != value:
+            raise ValueError(
+                "url must already be in canonical form; route provider URLs "
+                "through canonicalize_url()"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_web_citation_fields(self) -> PublicCitation:
+        if self.source_kind == "web":
+            if self.url is None:
+                raise ValueError("web citation requires url")
+            if self.title is None or not self.title.strip():
+                raise ValueError("web citation requires a non-empty title")
+            if self.snippet is not None:
+                raise ValueError("web citation must not carry an article snippet")
+        else:
+            if self.url is not None:
+                raise ValueError("article citation must not carry url")
+            if self.title is not None:
+                raise ValueError("article citation must not carry title")
+            if self.description is not None:
+                raise ValueError(
+                    "article citation must not carry description"
+                )
+        return self
 
 
 class InternalCitationBinding(BaseModel):
@@ -80,6 +151,12 @@ class InternalCitationBinding(BaseModel):
     handle_id: str
     source_kind: Literal["article", "web"]
     snippet: str | None = None
+    # Web-specific binding material (internal-only; never on public DTO).
+    canonical_url: str | None = None
+    web_title: str | None = None
+    web_description: str | None = None
+    retrieved_at: str | None = None
+    source_fingerprint: str | None = None
     unit_id: str | None = None
     anchor_segment_id: str | None = None
     kind: str
@@ -106,6 +183,11 @@ class FinalizedAskResult(BaseModel):
     reason: str | None = None
     envelope_fingerprint: str
     response_kind: ResponseKind | None = None
+    # Turn-level web search outcome summary (G0-b3). ``None`` means
+    # search was not invoked this turn. Set on every grounded_answer
+    # finalize path; ``None`` on clarification / source_unavailable /
+    # unavailable terminals.
+    web_search_summary: PublicWebSearchSummary | None = None
 
 
 def _binding_from_observation(
@@ -127,6 +209,37 @@ def _binding_from_observation(
     )
 
 
+def _binding_from_web_evidence(
+    *,
+    citation_id: str,
+    web_evidence: WebEvidence,
+) -> InternalCitationBinding:
+    """Build an internal-only citation binding from one web evidence entry.
+
+    Web bindings carry ``canonical_url`` / ``web_title`` /
+    ``web_description`` / ``retrieved_at`` / ``source_fingerprint`` so
+    server-side audit / navigation can re-verify identity without
+    re-trusting provider text. These fields never appear on the public
+    citation DTO.
+    """
+    return InternalCitationBinding(
+        citation_id=citation_id,
+        handle_id=web_evidence.internal_handle_id,
+        source_kind="web",
+        snippet=None,
+        canonical_url=web_evidence.canonical_url,
+        web_title=web_evidence.title,
+        web_description=web_evidence.description,
+        retrieved_at=web_evidence.retrieved_at,
+        source_fingerprint=web_evidence.source_fingerprint,
+        unit_id=None,
+        anchor_segment_id=None,
+        kind="web",
+        source_tool="search_web",
+        rag_citation=None,
+    )
+
+
 async def finalize_agent_answer(
     *,
     envelope: ReadingRecordAskContextEnvelope,
@@ -135,6 +248,8 @@ async def finalize_agent_answer(
     response_kind: ResponseKind,
     validated_answer_blocks: ValidatedAnswerBlocks | None = None,
     clarification_text: str | None = None,
+    web_evidence_registry: WebEvidenceRegistry | None = None,
+    web_search_outcome: WebSearchOutcome | None = None,
 ) -> FinalizedAskResult:
     """Finalize validated blocks into a fence-checked, handle-resolved result.
 
@@ -146,6 +261,15 @@ async def finalize_agent_answer(
       the output validator; this path fails closed without silent repair.
     - ``source_unavailable`` → ok completed projection with host-owned copy.
     - ``unavailable`` → internal terminal mapped by production_stream.
+    - Web blocks (G0-b3): when ``web_evidence_registry`` is provided,
+      web-block handles are resolved against it and emitted as
+      ``source_kind="web"`` :class:`PublicCitation` entries with
+      url/title/description from :class:`WebEvidence`. When it is
+      ``None``, any web block fails closed as ``invalid_citations``.
+    - ``web_search_summary`` is set on the grounded_answer path only when
+      ``web_search_outcome`` is non-``None`` (search was invoked). It
+      counts only message-local web citations actually attached to the
+      answer — not the raw provider result count.
     """
     fp = envelope.envelope_fingerprint
 
@@ -153,6 +277,18 @@ async def finalize_agent_answer(
         return FinalizedAskResult(
             status="invalid_citations",
             reason="evidence registry is not bound to this envelope",
+            envelope_fingerprint=fp,
+            response_kind=response_kind,
+        )
+
+    # Defense-in-depth: web registry must be bound to the same envelope.
+    if (
+        web_evidence_registry is not None
+        and web_evidence_registry.envelope_fingerprint != fp
+    ):
+        return FinalizedAskResult(
+            status="invalid_citations",
+            reason="web evidence registry is not bound to this envelope",
             envelope_fingerprint=fp,
             response_kind=response_kind,
         )
@@ -240,6 +376,16 @@ async def finalize_agent_answer(
             response_kind=response_kind,
         )
 
+    # Defense-in-depth: web blocks require a web evidence registry.
+    has_web_blocks = any(block.basis == "web" for block in validated_answer_blocks.blocks)
+    if has_web_blocks and web_evidence_registry is None:
+        return FinalizedAskResult(
+            status="invalid_citations",
+            reason="web answer blocks require a web evidence registry",
+            envelope_fingerprint=fp,
+            response_kind=response_kind,
+        )
+
     # First-seen handle order across blocks → stable c1, c2, …
     handle_to_citation: dict[str, str] = {}
     ordered_handles: list[str] = []
@@ -252,6 +398,7 @@ async def finalize_agent_answer(
             ordered_handles.append(handle_id)
 
     resolved_observations: list[ServerEvidenceObservation] = []
+    resolved_web_evidence: list[WebEvidence] = []
     rejected: list[str] = []
     for raw_id in ordered_handles:
         if not is_valid_evidence_handle_id(raw_id):
@@ -263,14 +410,28 @@ async def finalize_agent_answer(
             rejected.append(raw_id)
             continue
 
+        # Article registry first (the common path).
         observation = registry.get(raw_id)
-        if observation is None:
-            rejected.append(raw_id)
+        if observation is not None:
+            if observation.handle.envelope_fingerprint != fp:
+                rejected.append(raw_id)
+                continue
+            resolved_observations.append(observation)
             continue
-        if observation.handle.envelope_fingerprint != fp:
-            rejected.append(raw_id)
-            continue
-        resolved_observations.append(observation)
+
+        # Web registry fallback (G0-b3).
+        if web_evidence_registry is not None:
+            try:
+                web_ev = web_evidence_registry.get(raw_id)
+            except ValueError:
+                # source_fingerprint mismatch — fail closed.
+                rejected.append(raw_id)
+                continue
+            if web_ev is not None:
+                resolved_web_evidence.append(web_ev)
+                continue
+
+        rejected.append(raw_id)
 
     if rejected:
         return FinalizedAskResult(
@@ -287,24 +448,53 @@ async def finalize_agent_answer(
     obs_by_handle = {
         obs.handle.handle_id: obs for obs in resolved_observations
     }
+    web_by_handle = {
+        ev.internal_handle_id: ev for ev in resolved_web_evidence
+    }
     public_citations: list[PublicCitation] = []
     bindings: list[InternalCitationBinding] = []
     for handle_id in ordered_handles:
         citation_id = handle_to_citation[handle_id]
-        observation = obs_by_handle[handle_id]
-        public_citations.append(
-            PublicCitation(
-                citation_id=citation_id,
-                source_kind="article",
-                snippet=observation.snippet,
+        if handle_id in obs_by_handle:
+            observation = obs_by_handle[handle_id]
+            public_citations.append(
+                PublicCitation(
+                    citation_id=citation_id,
+                    source_kind="article",
+                    snippet=observation.snippet,
+                )
             )
-        )
-        bindings.append(
-            _binding_from_observation(
-                citation_id=citation_id,
-                observation=observation,
+            bindings.append(
+                _binding_from_observation(
+                    citation_id=citation_id,
+                    observation=observation,
+                )
             )
-        )
+        else:
+            web_ev = web_by_handle[handle_id]
+            # ASK-WEB-G1-R2: provider may not supply a title. The single
+            # canonical production fallback is the WebEvidence's
+            # ``display_domain`` (already extracted from the canonical URL
+            # at registration time). Tests must NOT manually patch the
+            # title to satisfy the contract — the finalizer is the only
+            # place where this fallback is applied.
+            web_title = web_ev.title or web_ev.display_domain
+            public_citations.append(
+                PublicCitation(
+                    citation_id=citation_id,
+                    source_kind="web",
+                    snippet=None,
+                    url=web_ev.canonical_url,
+                    title=web_title,
+                    description=web_ev.description,
+                )
+            )
+            bindings.append(
+                _binding_from_web_evidence(
+                    citation_id=citation_id,
+                    web_evidence=web_ev,
+                )
+            )
 
     public_blocks: list[PublicAnswerBlock] = []
     for block in validated_answer_blocks.blocks:
@@ -313,22 +503,16 @@ async def finalize_agent_answer(
                 PublicAnswerBlock(text=block.text, citation_ids=[])
             )
             continue
-        if block.basis == "web":
-            # Defense-in-depth: provenance validator rejects web in v1.
-            return FinalizedAskResult(
-                status="invalid_citations",
-                reason="web answer blocks are not supported in v1",
-                envelope_fingerprint=fp,
-                response_kind=response_kind,
-            )
-        # article
+        # article + web share the same citation-id mapping flow.
         citation_ids = [
-            handle_to_citation[h] for h in block.evidence_handles if h in handle_to_citation
+            handle_to_citation[h]
+            for h in block.evidence_handles
+            if h in handle_to_citation
         ]
         if len(citation_ids) != len(block.evidence_handles):
             return FinalizedAskResult(
                 status="invalid_citations",
-                reason="article block evidence handles failed public citation mapping",
+                reason="answer block evidence handles failed public citation mapping",
                 envelope_fingerprint=fp,
                 response_kind=response_kind,
             )
@@ -337,6 +521,20 @@ async def finalize_agent_answer(
         )
 
     answer_text = "\n\n".join(block.text for block in public_blocks)
+
+    # G0-b3: build the turn-level web search summary. ``None`` when the
+    # search was not invoked this turn (no outcome supplied). The cited
+    # count is the number of message-local public web citations actually
+    # attached to the answer — not the raw provider result count.
+    web_search_summary: PublicWebSearchSummary | None = None
+    if web_search_outcome is not None:
+        cited_web_count = sum(
+            1 for c in public_citations if c.source_kind == "web"
+        )
+        web_search_summary = PublicWebSearchSummary(
+            outcome=web_search_outcome,
+            cited_source_count=cited_web_count,
+        )
 
     return FinalizedAskResult(
         status="ok",
@@ -350,4 +548,5 @@ async def finalize_agent_answer(
         rejected_handles=(),
         envelope_fingerprint=fp,
         response_kind=response_kind,
+        web_search_summary=web_search_summary,
     )

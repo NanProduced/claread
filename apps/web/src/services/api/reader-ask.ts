@@ -15,6 +15,7 @@ import type {
   ReaderAskThreadDetailDto,
   ReaderAskThreadListResponseDto,
   ReaderAskThreadSummaryDto,
+  WebSearchModeDto,
 } from "@/types/api/reader-ask";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
@@ -35,6 +36,13 @@ interface ReaderRecordAskMessageRequestDto {
   entry_action?: ReaderAskEntryActionDto | null;
   model?: string | null;
   anchor?: Record<string, unknown> | null;
+  /**
+   * User-visible web search request mode (mirrors backend `WebSearchMode`).
+   * Forwarded to the Reading Record Ask upstream so the host can decide
+   * whether to mount the `search_web` capability for this turn. `allowed`
+   * only grants turn capability; it never forces a search.
+   */
+  web_search_mode?: WebSearchModeDto;
 }
 
 function readingRecordAskPath(recordId: string, suffix = ""): string {
@@ -63,6 +71,10 @@ function toReadingRecordAskMessageRequest(
     entry_action: body.entry_action ?? null,
     model: body.model ?? null,
     anchor: readingRecordAnchorFromAttachments(body.attachments),
+    // Forward the user-visible web search request mode so the host can
+    // mount the `search_web` capability for this turn. Default to `disabled`
+    // when omitted — `allowed` only grants capability, never forces a search.
+    web_search_mode: body.web_search_mode ?? "disabled",
   };
 }
 

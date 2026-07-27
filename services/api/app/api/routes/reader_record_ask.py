@@ -290,6 +290,7 @@ async def retry_reading_record_ask_message(
         user_id=UUID(current_user.user_id),
         reading_record_id=reading_record_id,
         thread_id=thread_id,
+        message_id=message_id,
     )
     return _streaming_response(
         rr_ask_svc.retry_reading_record_ask_message(

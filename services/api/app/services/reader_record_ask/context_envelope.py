@@ -21,6 +21,17 @@ Two projections
    Authorization fields (``user_id``, record/base/generation, stable document,
    RAG substrate, source scope) are **absent** so the model cannot resubmit
    or override them as tool parameters.
+
+Web search mode (G0-b5)
+-----------------------
+The envelope carries the user-visible ``web_search_mode`` request toggle
+(``disabled`` | ``allowed``). ``allowed`` only grants turn capability; it
+never forces a search and never implies provider readiness. The mode is
+fingerprint-stable so retry / replay observes the same toggle. Capability
+readiness (whether the resolved provider/protocol actually supports search
+this turn) is **not** part of the envelope — it lives in
+:class:`ResolvedWebSearchCapability` and may change across retry without
+rewriting the fence identity.
 """
 
 from __future__ import annotations
@@ -31,6 +42,8 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.reader_record_ask.web_search_contracts import WebSearchMode
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -180,6 +193,13 @@ class EnvelopeCapabilityState(BaseModel):
     # Article RAG substrate readiness is intentionally not decided here;
     # leave a explicit flag so later wiring does not invent substrate ids.
     article_rag_ready: bool = False
+    # User-visible web search request toggle (G0-b5). ``allowed`` only
+    # grants turn capability; provider/protocol readiness is resolved
+    # separately by :class:`ResolvedWebSearchCapability` and is not part
+    # of the envelope. The model never reads this flag directly — the
+    # runtime mounts the ``search_web`` tool only when the resolved
+    # capability has ``enabled_for_turn=True``.
+    web_search_mode: WebSearchMode = "disabled"
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +267,11 @@ class ReadingRecordAskContextEnvelope(BaseModel):
             can_search_current_article=self.capabilities.can_search_current_article,
             article_rag_ready=self.capabilities.article_rag_ready,
             readiness_state=self.capabilities.readiness_state,
+            # G0-b5: surface only the request toggle, never provider/protocol.
+            # The runtime still gates tool mounting on the resolved
+            # capability's ``enabled_for_turn``; this flag tells the model
+            # the user *allowed* web search this turn (never forces a call).
+            web_search_allowed=self.capabilities.web_search_mode == "allowed",
         )
 
 
@@ -292,6 +317,12 @@ class ReadingRecordAskAgentContextProjection(BaseModel):
     can_search_current_article: bool
     article_rag_ready: bool
     readiness_state: str
+    # G0-b5: surfacing only the user-visible request toggle (never the
+    # provider/protocol readiness state). The runtime still gates tool
+    # mounting on the resolved capability's ``enabled_for_turn``; this
+    # flag tells the model the user *allowed* web search this turn
+    # (never forces a call).
+    web_search_allowed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +358,14 @@ class VerifiedEnvelopeInput(BaseModel):
     can_read_range: bool = True
     can_search_current_article: bool = True
     article_rag_ready: bool = False
+    # G0-b5: user-visible web search request toggle. ``disabled`` is the
+    # safe default — capability is not granted unless the request
+    # explicitly sets ``allowed``. This is the request-mode only; provider
+    # / protocol readiness is resolved separately by
+    # :class:`ResolvedWebSearchCapability` and is NOT part of the
+    # envelope. The mode enters the fingerprint so retry / replay
+    # observes the same toggle.
+    web_search_mode: WebSearchMode = "disabled"
 
 
 # ---------------------------------------------------------------------------
@@ -355,12 +394,19 @@ def compute_envelope_fingerprint(
     base_content_sha256: str | None,
     initial_anchor: EnvelopeInitialAnchor | None,
     visible_range: EnvelopeVisibleRange | None,
+    web_search_mode: WebSearchMode = "disabled",
 ) -> str:
     """Deterministic SHA-256 hex fingerprint for persistence / generation fence.
 
     Capability product states are intentionally excluded so a readiness
     transition alone does not rewrite the fence identity of a turn that
     already started under a fixed document/base/generation/anchor.
+
+    ``web_search_mode`` is the user-visible *request* toggle (not a
+    capability readiness state) and IS part of the fence identity so
+    retry / replay observes the same toggle. Provider / protocol
+    readiness (:class:`ResolvedWebSearchCapability`) is excluded — it
+    may change across retry without rewriting the fence identity.
     """
     payload: dict[str, Any] = {
         "envelope_version": envelope_version,
@@ -378,6 +424,7 @@ def compute_envelope_fingerprint(
         "visible_range": (
             visible_range.model_dump(mode="json") if visible_range is not None else None
         ),
+        "web_search_mode": web_search_mode,
     }
     return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
@@ -397,6 +444,7 @@ def build_context_envelope(verified: VerifiedEnvelopeInput) -> ReadingRecordAskC
         base_content_sha256=verified.base_content_sha256,
         initial_anchor=verified.initial_anchor,
         visible_range=verified.visible_range,
+        web_search_mode=verified.web_search_mode,
     )
     capabilities = EnvelopeCapabilityState(
         product_state=verified.product_state,
@@ -406,6 +454,7 @@ def build_context_envelope(verified: VerifiedEnvelopeInput) -> ReadingRecordAskC
         can_read_range=verified.can_read_range,
         can_search_current_article=verified.can_search_current_article,
         article_rag_ready=verified.article_rag_ready,
+        web_search_mode=verified.web_search_mode,
     )
     return ReadingRecordAskContextEnvelope(
         envelope_version=ENVELOPE_VERSION,

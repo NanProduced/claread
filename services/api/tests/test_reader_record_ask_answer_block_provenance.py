@@ -59,12 +59,26 @@ def _general_block(*, handles: tuple[str, ...] = ()) -> AnswerBlockDraft:
     )
 
 
-def _web_block() -> AnswerBlockDraft:
+def _web_block(*, handles: tuple[str, ...] = ("evh_web",)) -> AnswerBlockDraft:
     return AnswerBlockDraft(
         text="实时网页结论。",
         basis="web",
         article_scope=None,
-        evidence_handles=("evh_web",),
+        evidence_handles=handles,
+    )
+
+
+def _web_evidence(
+    *,
+    handle_id: str = "evh_web",
+    envelope_id: str = "turn-current",
+    publicly_mappable: bool = True,
+) -> ValidatedEvidence:
+    return ValidatedEvidence(
+        handle_id=handle_id,
+        source_kind="web",
+        envelope_id=envelope_id,
+        publicly_mappable=publicly_mappable,
     )
 
 
@@ -145,12 +159,50 @@ def test_article_block_cannot_use_web_evidence() -> None:
         )
 
 
-def test_web_block_is_rejected_in_v1() -> None:
-    with pytest.raises(ValueError, match="v1"):
+def test_web_block_without_evidence_handle_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one web evidence handle"):
         validate_answer_blocks(
-            blocks=(_web_block(),),
-            evidence_context=_context(),
+            blocks=(_web_block(handles=()),),
+            evidence_context=_context(_web_evidence()),
         )
+
+
+def test_web_block_with_unknown_handle_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown evidence handle"):
+        validate_answer_blocks(
+            blocks=(_web_block(handles=("evh_fabricated",)),),
+            evidence_context=_context(_web_evidence()),
+        )
+
+
+def test_web_block_cannot_use_article_evidence() -> None:
+    with pytest.raises(ValueError, match="non-web evidence"):
+        validate_answer_blocks(
+            blocks=(_web_block(handles=("evh_article",)),),
+            evidence_context=_context(_article_evidence()),
+        )
+
+
+def test_web_block_requires_null_article_scope() -> None:
+    draft = AnswerBlockDraft(
+        text="实时网页结论。",
+        basis="web",
+        article_scope="evidence_bounded",
+        evidence_handles=("evh_web",),
+    )
+    with pytest.raises(ValueError, match="article_scope=null"):
+        validate_answer_blocks(
+            blocks=(draft,),
+            evidence_context=_context(_web_evidence()),
+        )
+
+
+def test_web_block_with_current_turn_web_evidence_is_valid() -> None:
+    result = validate_answer_blocks(
+        blocks=(_web_block(),),
+        evidence_context=_context(_web_evidence()),
+    )
+    assert result.knowledge_mode == "web_grounded"
 
 
 def test_article_scope_requires_host_confirmed_coverage() -> None:

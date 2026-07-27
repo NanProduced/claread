@@ -765,6 +765,15 @@ class ReaderAskSelectedModel(BaseModel):
     model_name: str | None = None
     replan_model_name: str | None = None
     price_multiplier: float = 1.0
+    # ASK-WEB-G1-R2: server-declared Web Search capability for this model
+    # option. ``"available"`` only when a real provider is wired via
+    # ``settings.reader_record_ask_web_search_provider`` — never inferred
+    # from the request toggle or scope. The frontend gates Search toggle
+    # visibility/enablement on this signal (in addition to the page
+    # scope), so the user cannot request a capability the host has not
+    # declared. Default ``"unavailable"`` is fail-closed for legacy
+    # clients that do not populate the field.
+    web_search_capability: Literal["unavailable", "available"] = "unavailable"
 
 
 class ReaderAskModelOptionSummary(ReaderAskSelectedModel):
@@ -875,6 +884,11 @@ class ReaderRecordAskMessageRequest(BaseModel):
     entry_action: ReaderAskEntryAction = "ask_about_this"
     anchor: ReaderAskReadingRecordAnchor | None = None
     model: str | None = None
+    # User-visible Web Search authorization (G1-R1). ``allowed`` only grants
+    # turn capability; it never forces a search. The agent decides whether
+    # to invoke ``search_web``; Retry replays the original turn's mode
+    # instead of re-reading current UI state.
+    web_search_mode: Literal["disabled", "allowed"] = "disabled"
 
 
 class ReaderRecordAskActionConfirmRequest(BaseModel):

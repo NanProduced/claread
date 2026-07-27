@@ -152,11 +152,13 @@ import type {
   ReaderAskToolTraceEntryDto,
   ReaderAskFollowUpSuggestionDto,
   ReaderAskUiMessageDto,
+  WebSearchModeDto,
 } from "@/types/api/reader-ask";
 import {
   isReaderAskAgenticAnswerBlockList,
   isReaderAskAgenticCitationList,
   isReaderAskAgenticFinalStatus,
+  isReaderAskWebSearchSummary,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
   type ReaderAskAgenticAnswerBlockDto,
 } from "@/types/api/reader-ask";
@@ -168,6 +170,7 @@ import {
   projectAgenticCitationsForDisplay,
   type AgenticCitationDisplayItem,
 } from "./ask/agentic-evidence";
+import { AgenticWebSources } from "./ask/agentic-web-sources";
 import {
   agenticActivityAriaLabel,
   createIdleAgenticActivityState,
@@ -868,6 +871,8 @@ export function createSseMessageHandler(
           agentic_answer_blocks: payload.answer_blocks ?? null,
           // Finalizer-minted public citations for InlineCitation only.
           agentic_citations: payload.citations ?? null,
+          // Turn-level web search summary (null when search not invoked).
+          agentic_web_search: payload.web_search ?? null,
         };
       }),
     true);
@@ -1937,6 +1942,9 @@ function normalizeReaderAskMessages(
         // Clear any accidental agentic UI state from a prior session.
         agentic_evidence: null,
         agentic_evidence_scope: null,
+        // Legacy never carries a web-search summary; clear to prevent a stale
+        // summary leaking in from a prior agentic session on the same message id.
+        agentic_web_search: null,
       } as ReaderAskUiMessageDto;
     }
 
@@ -1951,16 +1959,27 @@ function normalizeReaderAskMessages(
     const agenticCitations = isReaderAskAgenticCitationList(message.agentic_citations)
       ? message.agentic_citations
       : null;
+    // Validate the web-search summary with the same guard as the hot SSE path.
+    // Malformed summaries must be coerced to null rather than half-accepted.
+    const agenticWebSearch = isReaderAskWebSearchSummary(
+      uiState.agentic_web_search,
+    )
+      ? (uiState.agentic_web_search ?? null)
+      : null;
     const finalStatus = isReaderAskAgenticFinalStatus(message.final_status)
       ? message.final_status
       : null;
 
-    // Non-ok terminals never keep citations (matches hot applyAgenticTerminal).
+    // Non-ok terminals never keep citations or web-search summary (matches
+    // hot applyAgenticTerminal — a terminal turn did not produce a completed
+    // answer, so any persisted web_search would be a forgery).
     let finalAnswerBlocks = agenticAnswerBlocks;
     let finalCitations = agenticCitations;
+    let finalWebSearch = agenticWebSearch;
     if (finalStatus != null && finalStatus !== "ok") {
       finalAnswerBlocks = null;
       finalCitations = null;
+      finalWebSearch = null;
     }
 
     return {
@@ -1974,6 +1993,7 @@ function normalizeReaderAskMessages(
       agentic_evidence_scope: null,
       agentic_answer_blocks: finalAnswerBlocks,
       agentic_citations: finalCitations,
+      agentic_web_search: finalWebSearch,
       // Agentic path must not carry legacy article_rag sidecar.
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
@@ -3219,6 +3239,10 @@ function MessageBubble({
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
   const hasAnswerContent = Boolean(message.content_md?.trim());
   const hasAgenticAnswerBlocks = (message.agentic_answer_blocks ?? []).length > 0;
+  // Project citations once for both InlineCitation (article) and WebSources (web).
+  const agenticCitationItems = hasAgenticAnswerBlocks
+    ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
+    : [];
 
   return (
     <div
@@ -3268,9 +3292,7 @@ function MessageBubble({
                         {hasAgenticAnswerBlocks ? (
                           <AgenticAnswerBlocks
                             blocks={message.agentic_answer_blocks ?? []}
-                            citations={projectAgenticCitationsForDisplay(
-                              message.agentic_citations ?? [],
-                            )}
+                            citations={agenticCitationItems}
                           />
                         ) : hasAnswerContent ? (
                           <MessageResponse
@@ -3283,6 +3305,12 @@ function MessageBubble({
                           <SystemMessage variant="warning">
                             {interruptedBubbleMessage(message.final_status)}
                           </SystemMessage>
+                        ) : null}
+                        {hasAgenticAnswerBlocks ? (
+                          <AgenticWebSources
+                            citations={agenticCitationItems}
+                            webSearchSummary={message.agentic_web_search ?? null}
+                          />
                         ) : null}
                       </div>
                     }
@@ -3661,6 +3689,7 @@ export function AiWorkspacePanel({
   const [modelOptions, setModelOptions] = useState<ReaderAskModelOptionSummaryDto[]>([]);
   const [defaultModelKey, setDefaultModelKey] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchModeDto>("disabled");
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
   const [, setModelOptionsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -3727,6 +3756,15 @@ export function AiWorkspacePanel({
     return selectedModelKey ?? threadKey ?? defaultModelKey ?? null;
   })();
   const selectedModelOption = findModelOptionSummary(modelOptions, effectiveSelectedModelKey);
+  // ASK-WEB-G1-R2: server-declared Web Search capability for the current
+  // model option. ``available`` only when a real provider is wired via
+  // ``settings.reader_record_ask_web_search_provider``. The Search toggle
+  // is visible/enabled only when the host has declared this capability —
+  // never inferred from the request toggle or page scope alone. Defaults
+  // to ``"unavailable"`` when the field is absent (legacy backend /
+  // model option not yet loaded) — fail-closed: toggle hidden.
+  const webSearchCapabilityAvailable =
+    selectedModelOption?.web_search_capability === "available";
   const selectedModelSummary =
     toSelectedModelSummary(selectedModelOption) ??
     activeThread?.selected_model ??
@@ -3793,6 +3831,20 @@ export function AiWorkspacePanel({
       }
     }
   }, [provenanceSignature, provenanceJoinedParts]);
+
+  // ASK-WEB-G1-R2: reset the user-visible web search toggle to
+  // ``"disabled"`` when the currently selected model option does not
+  // declare web search capability. This prevents a stale ``"allowed"``
+  // state from leaking into a subsequent send when the user switches to
+  // a model whose provider is not wired for web search. The toggle is
+  // already hidden by the capability gate, but the internal state must
+  // also be reset so the request body never carries ``allowed`` for
+  // a model that cannot execute it — fail-closed by construction.
+  useEffect(() => {
+    if (!webSearchCapabilityAvailable && webSearchMode === "allowed") {
+      setWebSearchMode("disabled");
+    }
+  }, [webSearchCapabilityAvailable, webSearchMode]);
 
   useEffect(() => {
     if (explicitSurfaceSwitchRef.current !== surface) {
@@ -4322,6 +4374,11 @@ export function AiWorkspacePanel({
       regenerate_preview: false,
       usage_event_id: null,
       article_rag: null,
+      // Record the user's web search request mode at send time so the
+      // backend can persist it as message metadata and replay the original
+      // turn capability on retry (server-side source of truth). Absent on
+      // cold history; retry resolves the mode from persisted metadata only.
+      web_search_mode: webSearchMode,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -4396,6 +4453,7 @@ export function AiWorkspacePanel({
         attachments: usedAttachments.map(serializeAttachment),
         entry_action: entryAction,
         model: effectiveSelectedModelKey,
+        web_search_mode: webSearchMode,
       };
       const response = await fetch(scopedReaderAskUrl(`/api/web/reader-ask/threads/${threadId}/messages/stream`), {
         method: "POST",
@@ -4480,9 +4538,20 @@ export function AiWorkspacePanel({
       return;
     }
     // Preserve original content so we can restore it if retry fails
-    const originalContentMd = messages.find((m) => m.id === messageId)?.content_md ?? "";
-    const originalReasoningMd = messages.find((m) => m.id === messageId)?.reasoning_md ?? "";
-    const originalReasoningStatus = messages.find((m) => m.id === messageId)?.reasoning_status ?? "idle";
+    const originalMessage = messages.find((m) => m.id === messageId);
+    const originalContentMd = originalMessage?.content_md ?? "";
+    const originalReasoningMd = originalMessage?.reasoning_md ?? "";
+    const originalReasoningStatus = originalMessage?.reasoning_status ?? "idle";
+
+    // ASK-WEB-G1-R3: Retry body must NOT carry `web_search_mode`. The FastAPI
+    // Retry schema is `extra="forbid"` with only `model` accepted; sending
+    // `web_search_mode` would 422. The backend replays the persisted mode
+    // from the original user message metadata (server-side source of truth),
+    // after verifying message/thread/record/user ownership. We no longer
+    // infer the original mode from `agentic_web_search` either — that
+    // heuristic was wrong when capability was allowed but the agent never
+    // invoked Search.
+
     setSending(true);
     setErrorMessage(null);
     setSupplementNotice(null);
@@ -4537,7 +4606,12 @@ export function AiWorkspacePanel({
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ model: effectiveSelectedModelKey }),
+          // ASK-WEB-G1-R3: only `model` is sent. The backend replays the
+          // persisted `web_search_mode` from the original user message
+          // metadata after ownership verification — no client input.
+          body: JSON.stringify({
+            model: effectiveSelectedModelKey,
+          }),
           signal: controller.signal,
         },
       );
@@ -4866,6 +4940,25 @@ export function AiWorkspacePanel({
         onModelChange={(value) => setSelectedModelKey(value)}
         onTextareaFocus={onComposerTextareaFocus}
         onTextareaBlur={onComposerTextareaBlur}
+        // ASK-WEB-G1-R2: gate the Search toggle by the server-declared
+        // capability for the current model option, not by page scope alone.
+        // ``isReadingRecordScope`` is a page condition; the actual
+        // capability is declared by the host via the model option's
+        // ``web_search_capability`` field. When the host has not declared
+        // the capability (or no model option is selected), both props are
+        // undefined so AskComposer hides the toggle entirely (no no-op
+        // control per product rule). When sending, AskComposer disables
+        // the toggle independently — we do not duplicate that here.
+        webSearchMode={
+          isReadingRecordScope && webSearchCapabilityAvailable
+            ? webSearchMode
+            : undefined
+        }
+        onWebSearchModeChange={
+          isReadingRecordScope && webSearchCapabilityAvailable
+            ? setWebSearchMode
+            : undefined
+        }
       />
     </aside>
   );

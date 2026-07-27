@@ -159,7 +159,7 @@ def validate_answer_blocks(
         elif block.basis == "general":
             _validate_general_block(block)
         else:
-            _validate_web_block_v1(block)
+            _validate_web_block(block, evidence_context)
 
     return ValidatedAnswerBlocks(
         blocks=normalized_blocks,
@@ -195,9 +195,30 @@ def _validate_general_block(block: AnswerBlockDraft) -> None:
         raise ValueError("general block cannot carry evidence handles")
 
 
-def _validate_web_block_v1(block: AnswerBlockDraft) -> None:
-    del block
-    raise ValueError("web answer blocks are not supported in v1")
+def _validate_web_block(
+    block: AnswerBlockDraft,
+    evidence_context: EvidenceValidationContext,
+) -> None:
+    """Mechanically validate a ``basis=web`` block (G0-b4).
+
+    Rules (Ask Claread Web Search architecture brief §4.4):
+
+    - ``article_scope`` must be ``None`` (web evidence is not article-scoped).
+    - At least one evidence handle is required.
+    - Every cited handle must resolve to a current-turn
+      :class:`ValidatedEvidence` with ``source_kind="web"``. Article
+      and general evidence cannot be borrowed to support a web block.
+    """
+    if block.article_scope is not None:
+        raise ValueError("web block requires article_scope=null")
+    if not block.evidence_handles:
+        raise ValueError("web block requires at least one web evidence handle")
+    for handle_id in block.evidence_handles:
+        evidence = evidence_context.evidence_for(handle_id)
+        if evidence is None:
+            raise ValueError("web block references an unknown evidence handle")
+        if evidence.source_kind != "web":
+            raise ValueError("web block cannot use non-web evidence")
 
 
 def _derive_knowledge_mode(blocks: tuple[AnswerBlockDraft, ...]) -> KnowledgeMode:

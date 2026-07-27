@@ -396,6 +396,13 @@ class ReaderRecordAskRepository:
         this thread, is not role='assistant', or no preceding user message
         is found.
 
+        ASK-WEB-G1-R2: the user message dict now carries
+        ``metadata_json`` (parsed dict, never ``None``) so the retry path
+        can replay the original turn's ``web_search_mode`` without
+        re-deciding it from the current UI toggle. Legacy rows with
+        ``metadata_json IS NULL`` surface as ``{}`` — the caller treats
+        absent ``web_search_mode`` as ``"disabled"`` (fail-closed).
+
         Ownership of the thread is enforced by the caller via ``get_thread``
         before this method is invoked; this method only reads message rows
         scoped by ``thread_id``.
@@ -417,7 +424,8 @@ class ReaderRecordAskRepository:
                 return None, None
             user_row = await conn.fetchrow(
                 """
-                SELECT id, thread_id, role, status, content_md, created_at
+                SELECT id, thread_id, role, status, content_md, created_at,
+                       metadata_json
                 FROM reader_ask_messages
                 WHERE thread_id = $1
                   AND role = 'user'
@@ -437,12 +445,20 @@ class ReaderRecordAskRepository:
         }
         if user_row is None:
             return assistant_msg, None
+        # ``metadata_json`` is NULLABLE in the DB schema; normalise to
+        # an empty dict so callers can safely ``.get()`` any key. The
+        # retry path looks up ``web_search_mode`` here.
+        raw_metadata = user_row.get("metadata_json")
+        user_metadata: dict[str, Any] = (
+            dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        )
         user_msg = {
             "id": str(user_row["id"]),
             "thread_id": str(user_row["thread_id"]),
             "role": user_row["role"],
             "status": user_row["status"],
             "content_md": user_row["content_md"],
+            "metadata_json": user_metadata,
         }
         return assistant_msg, user_msg
 

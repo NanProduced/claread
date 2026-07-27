@@ -24,6 +24,9 @@ from app.services.reader_record_ask.finalizer import (
     PublicAnswerBlock,
     PublicCitation,
 )
+from app.services.reader_record_ask.web_search_contracts import (
+    PublicWebSearchSummary,
+)
 
 # Historical wire identity retained for cold-load legacy degradation only.
 EXECUTION_VERSION_AGENTIC_V1 = "reader_record_ask_agentic_v1"
@@ -60,6 +63,7 @@ ProgressPhase = Literal[
     "agent_running",
     "reading_context",
     "searching_article",
+    "searching_web",
     "composing_answer",
     "validating_evidence",
 ]
@@ -74,6 +78,7 @@ ProgressActivity = Literal[
 ProgressToolName = Literal[
     "read_range",
     "search_current_article",
+    "search_web",
 ]
 
 ProgressStatus = Literal[
@@ -226,6 +231,11 @@ class ReaderRecordAskCompletedDTO(BaseModel):
     citations: list[PublicCitation] = Field(default_factory=list)
     knowledge_mode: KnowledgeModePublic | None = None
     source_status: SourceStatusPublic | None = None
+    # Web search outcome summary. ``None`` = search not invoked this turn.
+    # Mutually independent from ``citations``: a turn may complete web
+    # search with no_results (summary set, no web citations) or may have
+    # web citations (summary outcome=completed with cited_source_count>0).
+    web_search: PublicWebSearchSummary | None = None
     message_id: str
     thread_id: str
     turn_run_id: str
@@ -261,6 +271,13 @@ class ReaderRecordAskRunStartedDTO(BaseModel):
     thread_id: str
     turn_run_id: str
     has_initial_selection: bool
+    # ASK-WEB-G1-R2: echoes the **resolved** web search capability mode
+    # (not the raw request toggle). ``allowed`` only when a real provider
+    # was wired and ``enabled_for_turn=True`` at send time — the frontend
+    # gates Search toggle visibility/enablement on this signal, not on
+    # ``isReadingRecordScope`` alone. ``disabled`` is the fail-closed
+    # default for legacy streams that do not emit the field.
+    web_search_mode: Literal["disabled", "allowed"] = "disabled"
 
 
 class ReaderRecordAskProgressDTO(BaseModel):
@@ -406,6 +423,10 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     agentic_citations: list[PublicCitation] | None = None
     knowledge_mode: KnowledgeModePublic | None = None
     source_status: SourceStatusPublic | None = None
+    # Agentic v2 web search summary. Null on terminals / legacy / turns
+    # where web search was not invoked. Cold history replays the same
+    # shape as hot SSE for "search happened but no cited source".
+    agentic_web_search: PublicWebSearchSummary | None = None
     # Old flat/v1 rows that only retain answer text.
     legacy_classification: LegacyClassification | None = None
     created_at: str

@@ -232,3 +232,194 @@ describe("reduceAgenticActivityEvent", () => {
     expect(state.currentSummary).toBe("正在读取文章上下文");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ASK-WEB-G0/G1: searching_web phase + search_web tool projection
+//
+// The web search phase and tool are user-visible progress signals. They must
+// be accepted by the reducer (whitelisted in PHASES / TOOLS) and projected
+// like any other phase/tool — no special handling, no internal data leak.
+// ---------------------------------------------------------------------------
+
+describe("reduceAgenticActivityEvent — searching_web phase + search_web tool (ASK-WEB-G0/G1)", () => {
+  it("accepts searching_web as a valid phase", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    expect(state.lastSequence).toBe(1);
+    expect(state.currentPhase).toBe("searching_web");
+    expect(state.currentSummary).toBe("正在联网搜索");
+    expect(state.currentToolName).toBe("search_web");
+    expect(state.currentStatus).toBe("running");
+    expect(isAgenticActivityVisible(state)).toBe(true);
+  });
+
+  it("accepts search_web as a valid tool_name", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    expect(state.currentToolName).toBe("search_web");
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0].toolName).toBe("search_web");
+  });
+
+  it("completes a searching_web step without leaving the running state", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "已检索网页来源", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        duration_ms: 240,
+      }),
+    );
+    expect(state.status).toBe("running");
+    expect(state.currentActivity).toBe("completed");
+    expect(state.currentStatus).toBe("ok");
+    expect(state.currentDurationMs).toBe(240);
+    expect(state.currentToolName).toBe("search_web");
+  });
+
+  it("marks the activity as degraded when searching_web returns unavailable", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "网页搜索暂不可用", {
+        activity: "unavailable",
+        tool_name: "search_web",
+        status: "unavailable",
+      }),
+    );
+    expect(state.status).toBe("degraded");
+    expect(state.hasUnavailable).toBe(true);
+    expect(isAgenticActivityVisible(state)).toBe(true);
+  });
+
+  it("treats search_web tool-level failure as non-terminal (agent may continue)", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "网页搜索失败", {
+        activity: "failed",
+        tool_name: "search_web",
+        status: "failed",
+      }),
+    );
+    // Tool-level failure does not flip the whole turn to failed — agent
+    // may still compose an answer from article context.
+    expect(state.status).toBe("running");
+    expect(state.currentActivity).toBe("failed");
+    expect(state.currentStatus).toBe("failed");
+  });
+
+  it("transitions from searching_web to composing_answer", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "composing_answer", "正在组织回答"),
+    );
+    expect(state.currentPhase).toBe("composing_answer");
+    expect(state.currentToolName).toBeNull();
+    expect(state.steps).toHaveLength(2);
+    expect(state.steps[0].phase).toBe("searching_web");
+    expect(state.steps[1].phase).toBe("composing_answer");
+  });
+
+  it("never keeps internal-looking fields from a search_web payload", () => {
+    let state = runningState();
+    const dirtyPayload = {
+      execution_version: "reader_record_ask_agentic_v2",
+      sequence: 1,
+      phase: "searching_web",
+      summary: "正在联网搜索",
+      activity: "started",
+      tool_name: "search_web",
+      query: "SECRET_WEB_QUERY",
+      provider: "SECRET_PROVIDER",
+      result_count: 99,
+      handle_id: "WEB_HANDLE",
+    } as Record<string, unknown>;
+    state = reduceAgenticActivityEvent(state, {
+      type: "progress",
+      payload: dirtyPayload,
+    });
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toContain("SECRET_WEB_QUERY");
+    expect(serialized).not.toContain("SECRET_PROVIDER");
+    expect(serialized).not.toContain("result_count");
+    expect(serialized).not.toContain("WEB_HANDLE");
+    expect(state.currentSummary).toBe("正在联网搜索");
+    expect(state.currentToolName).toBe("search_web");
+  });
+
+  it("rejects unknown tool_name even when phase is searching_web", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_the_internet",
+        status: "running",
+      }),
+    );
+    // Phase accepted, but unknown tool_name coerced to null.
+    expect(state.currentPhase).toBe("searching_web");
+    expect(state.currentToolName).toBeNull();
+  });
+
+  it("accepts searching_web without a tool_name (tool-less progress)", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索"),
+    );
+    expect(state.currentPhase).toBe("searching_web");
+    expect(state.currentToolName).toBeNull();
+    expect(state.currentActivity).toBe("started");
+  });
+});

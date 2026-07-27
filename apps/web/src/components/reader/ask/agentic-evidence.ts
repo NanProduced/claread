@@ -42,13 +42,26 @@ export interface AgenticEvidenceDisplayItem {
 
 /**
  * Public citation display item — no internal handles.
- * Consumed by InlineCitation hover cards.
+ * Consumed by InlineCitation hover cards (article citations) and
+ * WebSources list (web citations).
+ *
+ * For `sourceKind === "web"`, `url` / `sourceTitle` / `description`
+ * carry the provider-supplied web metadata (re-canonicalized by the
+ * backend). `title` remains the stable Chinese label ("网络来源").
  */
 export interface AgenticCitationDisplayItem {
   citationId: string;
   sourceKind: ReaderAskAgenticCitationDto["source_kind"];
+  /** Stable Chinese label for the citation source type. */
   title: string;
+  /** Safe original snippet; empty string when absent. */
   snippet: string;
+  /** Web citation URL (only for source_kind === "web"); null otherwise. */
+  url: string | null;
+  /** Web page title from the source (only for source_kind === "web"); null otherwise. */
+  sourceTitle: string | null;
+  /** Web page description (only for source_kind === "web"); null otherwise. */
+  description: string | null;
 }
 
 const EVIDENCE_KIND_TITLES: Record<ReaderAskAgenticEvidenceKindDto, string> = {
@@ -138,19 +151,31 @@ export function projectAgenticEvidenceForDisplay(
 }
 
 /**
- * Project public citations for InlineCitation. No handle join.
+ * Project public citations for InlineCitation (article) and WebSources (web).
+ * No handle join. Web citations carry url / sourceTitle / description;
+ * article citations always have null for those fields.
  */
 export function projectAgenticCitationsForDisplay(
   citations: readonly ReaderAskAgenticCitationDto[],
 ): AgenticCitationDisplayItem[] {
-  return citations.map((citation) => ({
-    citationId: citation.citation_id,
-    sourceKind: citation.source_kind,
-    title:
-      citation.source_kind === "article" ? "文章依据" : "网络来源",
-    snippet:
+  return citations.map((citation) => {
+    const isWeb = citation.source_kind === "web";
+    const snippet =
       typeof citation.snippet === "string" && citation.snippet.length > 0
         ? citation.snippet
-        : "",
-  }));
+        : "";
+    return {
+      citationId: citation.citation_id,
+      sourceKind: citation.source_kind,
+      title: isWeb ? "网络来源" : "文章依据",
+      snippet,
+      url: isWeb && typeof citation.url === "string" ? citation.url : null,
+      sourceTitle:
+        isWeb && typeof citation.title === "string" ? citation.title : null,
+      description:
+        isWeb && typeof citation.description === "string"
+          ? citation.description
+          : null,
+    };
+  });
 }

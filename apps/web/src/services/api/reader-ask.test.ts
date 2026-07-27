@@ -134,6 +134,10 @@ describe("reader-ask API transport", () => {
       content: "Explain this selection",
       entry_action: "explain_this",
       model: "ask-fast",
+      // ASK-WEB-G1-R2: reader-ask transport always forwards a typed
+      // web_search_mode so the host can decide capability without
+      // guessing. Default is "disabled" when the caller omits it.
+      web_search_mode: "disabled",
       anchor: {
         record_id: "reading-record-1",
         base_id: "base-1",

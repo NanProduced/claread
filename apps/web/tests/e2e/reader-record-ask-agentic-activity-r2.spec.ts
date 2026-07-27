@@ -66,6 +66,10 @@ function agenticCompletedPayload(answerText: string) {
     citations: [],
     knowledge_mode: null,
     source_status: null,
+    // Required key (may be null) — mirrors backend
+    // ReaderRecordAskCompletedDTO.web_search. The v2 completed guard
+    // rejects payloads missing this field.
+    web_search: null,
     message_id: MESSAGE_ID,
     thread_id: THREAD_ID,
     turn_run_id: TURN_RUN_ID,

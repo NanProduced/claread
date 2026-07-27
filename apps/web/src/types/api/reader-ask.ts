@@ -545,6 +545,21 @@ export interface ReaderAskMessageUiStateDto {
    * Article Sources list is not used for v2 article evidence.
    */
   agentic_citations?: ReaderAskAgenticCitationDto[] | null;
+  /**
+   * Turn-level web search summary (mirrors backend
+   * `ReaderRecordAskCompletedDTO.web_search`). Hot SSE and cold history
+   * both populate this for completed agentic turns. `null` / missing
+   * means web search was not invoked this turn. Used by WebSources.
+   */
+  agentic_web_search?: ReaderAskWebSearchSummaryDto | null;
+  /**
+   * Frontend-only record of the user's web search request mode for this
+   * turn. Set on the user message at send time so retry can replay the
+   * original turn capability (not the current UI toggle state). Absent
+   * on cold history (backend does not echo the request mode back); retry
+   * falls back to inferring from `agentic_web_search` when missing.
+   */
+  web_search_mode?: WebSearchModeDto | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -576,6 +591,15 @@ export interface ReaderAskSelectedModelDto {
   model_name?: string | null;
   replan_model_name?: string | null;
   price_multiplier: number;
+  /**
+   * ASK-WEB-G1-R2: server-declared Web Search capability for this model
+   * option. ``"available"`` only when a real provider is wired via
+   * ``settings.reader_record_ask_web_search_provider``. The frontend
+   * gates Search toggle visibility on this signal (in addition to the
+   * page scope). Optional on the wire for backward compat with legacy
+   * backends — defaults to ``"unavailable"`` when absent (fail-closed).
+   */
+  web_search_capability?: "unavailable" | "available";
 }
 
 export interface ReaderAskModelOptionSummaryDto extends ReaderAskSelectedModelDto {
@@ -653,10 +677,22 @@ export interface ReaderAskMessageStreamRequestDto {
   attachments: ReaderAskAttachmentDto[];
   entry_action: ReaderAskEntryActionDto;
   model?: string | null;
+  /**
+   * User-visible web search request mode (mirrors backend `WebSearchMode`).
+   * `allowed` only grants turn capability; it never forces a search.
+   * Omitted / `disabled` means web search is not requested this turn.
+   */
+  web_search_mode?: WebSearchModeDto;
 }
 
 export interface ReaderAskMessageRetryRequestDto {
   model?: string | null;
+  // ASK-WEB-G1-R3: ``web_search_mode`` is intentionally absent. The
+  // FastAPI ``ReaderAskMessageRetryRequest`` schema is ``extra="forbid"``
+  // and only accepts ``model``; sending ``web_search_mode`` would 422.
+  // The backend replays the persisted mode from the original user
+  // message metadata after verifying message/thread/record/user
+  // ownership — there is no client input for retry capability.
 }
 
 export interface ReaderAskActionConfirmRequestDto {
@@ -789,6 +825,15 @@ export interface ReaderAskAgenticCitationDto {
   citation_id: string;
   source_kind: "article" | "web";
   snippet?: string | null;
+  /**
+   * Web-specific fields (mirrors backend `PublicCitation`). Required when
+   * `source_kind === "web"`; ignored for article citations. v1 exposes only
+   * url / title / optional description — no provider, query, rank, score,
+   * or internal handle.
+   */
+  url?: string | null;
+  title?: string | null;
+  description?: string | null;
 }
 
 export interface ReaderAskAgenticAnswerBlockDto {
@@ -807,6 +852,36 @@ export type ReaderAskAgenticSourceStatusDto = "article_source_unavailable";
 export type ReaderAskAgenticLegacyClassificationDto = "legacy_unclassified";
 
 /**
+ * User-visible web search request mode (mirrors backend `WebSearchMode`).
+ * `allowed` only grants turn capability; it never forces a search.
+ */
+export type WebSearchModeDto = "disabled" | "allowed";
+
+/**
+ * Closed outcome set for web search (mirrors backend `WebSearchOutcome`).
+ * Used by both the fake-provider vertical slice and future real adapters.
+ */
+export type WebSearchOutcomeDto =
+  | "completed"
+  | "no_results"
+  | "unavailable"
+  | "failed";
+
+/**
+ * Turn-level web search outcome summary (mirrors backend
+ * `PublicWebSearchSummary`). Carried on the completed DTO so hot SSE, DB
+ * persistence, and cold history replay all observe the same state.
+ *
+ * `cited_source_count` counts message-local public web citations that
+ * were actually attached to the answer — never the raw provider result
+ * count.
+ */
+export interface ReaderAskWebSearchSummaryDto {
+  outcome: WebSearchOutcomeDto;
+  cited_source_count: number;
+}
+
+/**
  * Agentic `message.completed` payload. Only emitted for final_status=ok.
  * Public surface is no-evh: no handles, fingerprints, or raw evidence.
  * answer_blocks / citations are required arrays (may be empty for
@@ -820,6 +895,15 @@ export interface ReaderAskAgenticCompletedPayloadDto {
   citations: ReaderAskAgenticCitationDto[];
   knowledge_mode: ReaderAskAgenticKnowledgeModeDto | null;
   source_status: ReaderAskAgenticSourceStatusDto | null;
+  /**
+   * Turn-level web search outcome summary (mirrors backend
+   * `ReaderRecordAskCompletedDTO.web_search`). `null` means search was
+   * not invoked this turn. Mutually independent from `citations`: a turn
+   * may complete web search with no_results (summary set, no web
+   * citations) or may have web citations (summary outcome=completed with
+   * cited_source_count > 0).
+   */
+  web_search: ReaderAskWebSearchSummaryDto | null;
   message_id: string;
   thread_id: string;
   turn_run_id: string;
@@ -851,6 +935,16 @@ export interface ReaderAskAgenticRunStartedPayloadDto {
   thread_id: string;
   turn_run_id: string;
   has_initial_selection: boolean;
+  /**
+   * ASK-WEB-G1-R2: echoes the **resolved** web search capability mode
+   * (not the raw request toggle). ``allowed`` only when a real provider
+   * was wired and ``enabled_for_turn=True`` at send time. The frontend
+   * gates Search toggle visibility/enablement on this signal, not on
+   * ``isReadingRecordScope`` alone. Optional on the wire for backward
+   * compat with legacy streams — defaults to ``"disabled"`` when
+   * absent (fail-closed: Search toggle not visible).
+   */
+  web_search_mode?: WebSearchModeDto;
 }
 
 /** Safe progress signal (no raw document text / tool args). */
@@ -1180,14 +1274,40 @@ export function isReaderAskAgenticCitationList(
       return false;
     }
     const citation = item as Record<string, unknown>;
-    return (
-      typeof citation.citation_id === "string" &&
-      (citation.source_kind === "article" || citation.source_kind === "web") &&
-      (citation.snippet == null || typeof citation.snippet === "string") &&
-      !("handle_id" in citation) &&
-      !("rag_navigation" in citation) &&
-      !("web_snapshot" in citation)
-    );
+    if (
+      typeof citation.citation_id !== "string" ||
+      (citation.source_kind !== "article" && citation.source_kind !== "web") ||
+      (citation.snippet != null && typeof citation.snippet !== "string") ||
+      (citation.url != null && typeof citation.url !== "string") ||
+      (citation.title != null && typeof citation.title !== "string") ||
+      (citation.description != null && typeof citation.description !== "string") ||
+      "handle_id" in citation ||
+      "rag_navigation" in citation ||
+      "web_snapshot" in citation
+    ) {
+      return false;
+    }
+    // Web citations must carry url + title (mirrors backend PublicCitation
+    // validator). Article citations must not carry url/title/description.
+    if (citation.source_kind === "web") {
+      if (
+        typeof citation.url !== "string" ||
+        citation.url.length === 0 ||
+        typeof citation.title !== "string" ||
+        citation.title.length === 0
+      ) {
+        return false;
+      }
+    } else {
+      if (
+        citation.url != null ||
+        citation.title != null ||
+        citation.description != null
+      ) {
+        return false;
+      }
+    }
+    return true;
   });
 }
 
@@ -1201,6 +1321,38 @@ const READER_ASK_AGENTIC_KNOWLEDGE_MODES = new Set<string>([
 const READER_ASK_AGENTIC_SOURCE_STATUSES = new Set<string>([
   "article_source_unavailable",
 ]);
+
+const READER_ASK_WEB_SEARCH_OUTCOMES = new Set<string>([
+  "completed",
+  "no_results",
+  "unavailable",
+  "failed",
+]);
+
+/**
+ * Validate the turn-level web search summary (mirrors backend
+ * `PublicWebSearchSummary`). `null` means search was not invoked this
+ * turn. Object form requires a closed `outcome` and a non-negative
+ * integer `cited_source_count`.
+ */
+export function isReaderAskWebSearchSummary(
+  value: unknown,
+): value is ReaderAskWebSearchSummaryDto | null {
+  if (value === null) {
+    return true;
+  }
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const summary = value as Record<string, unknown>;
+  return (
+    typeof summary.outcome === "string" &&
+    READER_ASK_WEB_SEARCH_OUTCOMES.has(summary.outcome) &&
+    typeof summary.cited_source_count === "number" &&
+    Number.isInteger(summary.cited_source_count) &&
+    summary.cited_source_count >= 0
+  );
+}
 
 export function isReaderAskAgenticCompletedPayload(
   data: unknown,
@@ -1254,6 +1406,14 @@ export function isReaderAskAgenticCompletedPayload(
   ) {
     return false;
   }
+  // web_search: null or valid summary (mirrors backend
+  // ReaderRecordAskCompletedDTO.web_search). Required key (may be null).
+  if (
+    !("web_search" in payload) ||
+    !isReaderAskWebSearchSummary(payload.web_search)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -1283,12 +1443,22 @@ export function isReaderAskAgenticRunStartedPayload(
     return false;
   }
   const payload = data as Record<string, unknown>;
+  // ASK-WEB-G1-R2: ``web_search_mode`` is optional on the wire for
+  // backward compat with legacy streams. When present, it must be one
+  // of the typed values; absence is treated as ``"disabled"`` (fail-
+  // closed) by the consumer. The field is the **resolved** capability
+  // signal — never the raw request toggle.
+  const webSearchModeOk =
+    !("web_search_mode" in payload) ||
+    payload.web_search_mode === "disabled" ||
+    payload.web_search_mode === "allowed";
   return (
     payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
     typeof payload.message_id === "string" &&
     typeof payload.thread_id === "string" &&
     typeof payload.turn_run_id === "string" &&
     typeof payload.has_initial_selection === "boolean" &&
+    webSearchModeOk &&
     !("envelope_fingerprint" in payload)
   );
 }

@@ -34,8 +34,17 @@ from app.services.reader_record_ask.execution_config import (
     ReaderRecordAskExecutionUnavailable,
     resolve_reader_record_ask_execution,
 )
+from app.services.reader_record_ask.repository import ReaderRecordAskRepository
+from app.services.reader_record_ask.web_search_contracts import WebSearchMode
 
 logger = logging.getLogger(__name__)
+
+
+# Default replayed web search mode when the persisted user message metadata
+# does not carry ``web_search_mode`` (legacy rows persisted before ASK-WEB-G1-R2).
+# Fail-closed: never silently grant a capability the original turn did not
+# explicitly record as ``allowed``.
+_DEFAULT_REPLAY_WEB_SEARCH_MODE: WebSearchMode = "disabled"
 
 
 # Retry mode determined during preflight. ``"agentic"`` → use the
@@ -247,7 +256,11 @@ async def reset_reading_record_ask_thread(
     )
 
 
-async def _resolve_agentic_execution(option) -> ReaderRecordAskExecutionConfig:
+async def _resolve_agentic_execution(
+    option,
+    *,
+    web_search_mode: str = "disabled",
+) -> ReaderRecordAskExecutionConfig:
     """Compile a persisted option into a unified execution config.
 
     ASK-M1: replaces the old ``_build_agentic_model_for_option``. Both
@@ -255,9 +268,18 @@ async def _resolve_agentic_execution(option) -> ReaderRecordAskExecutionConfig:
     single source of truth for the model, the provider completion cap,
     and the host usage limit. Fail-closed: raises a typed 503 — never
     silently substitutes the global default model.
+
+    ASK-WEB-G1-R1: ``web_search_mode`` is the user-visible request
+    toggle propagated from :attr:`ReaderRecordAskMessageRequest.web_search_mode`.
+    The resolver translates it into a :class:`ResolvedWebSearchCapability`
+    attached to the returned config so the runtime can mount the
+    ``search_web`` tool and inject the :class:`WebSearchBackend` port.
     """
     try:
-        return resolve_reader_record_ask_execution(option)
+        return resolve_reader_record_ask_execution(
+            option,
+            web_search_mode=web_search_mode,  # type: ignore[arg-type]
+        )
     except ReaderRecordAskExecutionUnavailable as exc:
         logger.warning(
             "agentic_execution_unavailable code=model_unconfigured "
@@ -313,7 +335,10 @@ async def prepare_reading_record_ask_message(
         requested_key=request.model,
         reading_record_id=parsed_record_id,
     )
-    execution = await _resolve_agentic_execution(option)
+    execution = await _resolve_agentic_execution(
+        option,
+        web_search_mode=request.web_search_mode,
+    )
     return parsed_record_id, resolved_thread_id, execution
 
 
@@ -348,6 +373,14 @@ async def _stream_legacy_or_agentic(
     model = execution.model if execution is not None else None
     model_settings = execution.model_settings() if execution is not None else None
     usage_limits = execution.usage_limits if execution is not None else None
+    # ASK-WEB-G1-R1: forward the resolved web search capability so the
+    # production stream can auto-wire the FakeWebSearchBackend + a fresh
+    # WebEvidenceRegistry bound to the envelope fingerprint. When
+    # ``web_search_mode="disabled"`` (or unset) the resolver returns
+    # ``None`` and the runtime must NOT mount the ``search_web`` tool.
+    web_search_capability = (
+        execution.web_search_capability if execution is not None else None
+    )
 
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
@@ -361,6 +394,7 @@ async def _stream_legacy_or_agentic(
         model=model,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        web_search_capability=web_search_capability,
     ):
         yield chunk
 
@@ -420,6 +454,7 @@ async def prepare_reading_record_ask_retry(
     user_id: UUID,
     reading_record_id: str,
     thread_id: UUID,
+    message_id: UUID | None = None,
 ) -> RetryPreparedResult:
     """Retry preflight — runs before the StreamingResponse starts.
 
@@ -437,6 +472,19 @@ async def prepare_reading_record_ask_retry(
     Legacy retry keeps the original ``stream_service.retry_thread_message``
     behavior, but ``mode`` is fixed here so the generator cannot drift
     branches after the response has started.
+
+    ASK-WEB-G1-R2: when ``message_id`` is provided, the preflight loads
+    the persisted user message metadata and replays the original turn's
+    ``web_search_mode`` (the **resolved** value persisted at send time,
+    not the raw request toggle). This is the single source of truth for
+    retry capability — the runtime must NOT fall back to the current UI
+    toggle. If the persisted metadata does not carry ``web_search_mode``
+    (legacy rows persisted before G1-R2), the replay defaults to
+    ``"disabled"`` (fail-closed). When the persisted mode is
+    ``"allowed"`` but the provider is no longer wired (or the resolver
+    returns ``enabled_for_turn=False`` for any reason), the resolver
+    returns a typed unavailable capability — retry never silently
+    switches to a fake backend or another provider.
     """
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
     if not get_settings().reader_record_ask_agentic_enabled:
@@ -464,12 +512,160 @@ async def prepare_reading_record_ask_retry(
         requested_key=None,
         reading_record_id=parsed_record_id,
     )
-    execution = await _resolve_agentic_execution(option)
+
+    # ASK-WEB-G1-R2: replay the original turn's persisted
+    # ``web_search_mode`` so retry uses the same capability truth as
+    # the original send. The persisted value is the **resolved** mode
+    # (``allowed`` only when a real provider was wired and
+    # ``enabled_for_turn=True`` at send time), not the raw UI toggle.
+    # When ``message_id`` is None (defensive — caller did not supply
+    # the retry target) or the metadata has no ``web_search_mode``
+    # (legacy row), the replay defaults to ``"disabled"`` fail-closed.
+    replayed_web_search_mode: WebSearchMode = _DEFAULT_REPLAY_WEB_SEARCH_MODE
+    if message_id is not None:
+        replayed_web_search_mode = await _load_replayed_web_search_mode(
+            thread_id=thread_id,
+            message_id=message_id,
+        )
+
+    execution = await _resolve_agentic_execution(
+        option,
+        web_search_mode=replayed_web_search_mode,
+    )
+    if replayed_web_search_mode == "allowed":
+        capability = execution.web_search_capability
+        if capability is None or not capability.enabled_for_turn:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "web_search_replay_unavailable",
+                    "message": "Web Search is no longer available for this retry.",
+                },
+            )
     return RetryPreparedResult(
         reading_record_id=parsed_record_id,
         mode="agentic",
         facts=facts,
         execution=execution,
+    )
+
+
+async def _load_replayed_web_search_mode(
+    *,
+    thread_id: UUID,
+    message_id: UUID,
+) -> WebSearchMode:
+    """Load the persisted ``web_search_mode`` for retry replay.
+
+    Reads the assistant message identified by ``message_id`` and its
+    closest preceding user message, then extracts the ``web_search_mode``
+    field from the user message's persisted metadata.
+
+    ASK-WEB-G1-R3 fail-closed contract
+    ----------------------------------
+    Per the R3 spec, retry must only trust server-side persisted facts.
+    The previous implementation silently degraded every error case to
+    ``"disabled"``, which let ownership mismatches and DB failures start
+    a generator with the wrong capability truth. The new contract is:
+
+    - Assistant message not found in this thread → ``HTTPException(404)``
+      (typed not-found — message/thread ownership mismatch).
+    - No preceding user message → ``HTTPException(404)`` (typed
+      not-found — cannot replay a turn without the originating user
+      message).
+    - User message metadata is missing the ``web_search_mode`` key
+      (legacy rows persisted before ASK-WEB-G1-R2) → ``"disabled"``
+      (compatible — legacy rows never recorded a capability).
+    - User message metadata is not a mapping → ``HTTPException(503)``
+      (malformed persisted state, not a legacy row).
+    - Persisted value is ``"allowed"`` → ``"allowed"`` (the resolver
+      will separately enforce adapter readiness; the retry preflight
+      returns typed 503 if the adapter is no longer wired).
+    - Persisted value is ``"disabled"`` → ``"disabled"``.
+    - Persisted value is present but not one of
+      ``{"disabled", "allowed"}`` → ``HTTPException(503)`` (typed
+      preflight unavailable — illegal metadata, never silently
+      degraded to ``"disabled"``).
+    - Any DB error → ``HTTPException(503)`` (typed preflight
+      unavailable — DB failures must not start a generator with an
+      unverified capability truth).
+
+    The returned value is fed into :func:`resolve_web_search_capability`
+    by the caller; if the provider is no longer wired, the resolver
+    returns a typed unavailable capability (``enabled_for_turn=False``).
+    """
+    try:
+        repo = ReaderRecordAskRepository()
+        assistant_msg, user_msg = await repo.get_assistant_message_with_preceding_user_message(
+            thread_id=thread_id,
+            message_id=message_id,
+        )
+    except Exception:  # noqa: BLE001 — fail-closed, no leakage
+        logger.warning(
+            "retry_replay_web_search_mode_failed code=db_read_failed "
+            "thread_id=%s message_id=%s",
+            thread_id,
+            message_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "retry_replay_unavailable",
+                "message": "Retry is temporarily unavailable.",
+            },
+        ) from None
+
+    if assistant_msg is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "retry_message_not_found",
+                "message": "Retried message was not found in this thread.",
+            },
+        )
+    if user_msg is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "retry_preceding_user_message_not_found",
+                "message": "Could not locate the original user message for retry.",
+            },
+        )
+
+    metadata = user_msg["metadata_json"] if "metadata_json" in user_msg else {}
+    if not isinstance(metadata, dict):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "retry_replay_unavailable",
+                "message": "Retry is temporarily unavailable.",
+            },
+        )
+
+    raw_mode = metadata.get("web_search_mode")
+    if raw_mode == "allowed":
+        return "allowed"
+    if raw_mode == "disabled":
+        return "disabled"
+    if raw_mode is None:
+        # Legacy row persisted before ASK-WEB-G1-R2 — no
+        # ``web_search_mode`` key. Compatible: default to ``"disabled"``.
+        return _DEFAULT_REPLAY_WEB_SEARCH_MODE
+    # Persisted value is present but illegal — fail-closed with a typed
+    # 503 so the generator never starts with an unverified capability.
+    logger.warning(
+        "retry_replay_web_search_mode_failed code=illegal_metadata_value "
+        "thread_id=%s message_id=%s raw_mode=%r",
+        thread_id,
+        message_id,
+        raw_mode if isinstance(raw_mode, str) else type(raw_mode).__name__,
+    )
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "retry_replay_unavailable",
+            "message": "Retry is temporarily unavailable.",
+        },
     )
 
 
@@ -496,6 +692,7 @@ async def retry_reading_record_ask_message(
             user_id=user_id,
             reading_record_id=reading_record_id,
             thread_id=thread_id,
+            message_id=message_id,
         )
     parsed_record_id = prepared.reading_record_id
 
@@ -527,6 +724,11 @@ async def retry_reading_record_ask_message(
         model=execution.model,
         model_settings=execution.model_settings(),
         usage_limits=execution.usage_limits,
+        # ASK-WEB-G1-R1: forward the resolved web search capability so
+        # retry uses the same execution truth as the original send. When
+        # ``None`` (capability not granted on the original turn) the
+        # runtime must NOT mount the ``search_web`` tool on retry.
+        web_search_capability=execution.web_search_capability,
     ):
         yield chunk
 

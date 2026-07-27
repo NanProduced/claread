@@ -484,6 +484,10 @@ class TestReaderRecordAskService:
         request.content = "summarize"
         request.entry_action = "ask_about_this"
         request.model = None
+        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # config resolver. Set an explicit value so the assertion can
+        # verify it is plumbed through.
+        request.web_search_mode = "disabled"
 
         flash_option = MagicMock()
         flash_option.key = "deepseek-v4-flash"
@@ -548,7 +552,11 @@ class TestReaderRecordAskService:
         mock_legacy.assert_not_called()
         mock_resolve.assert_awaited_once()
         assert mock_resolve.await_args.kwargs["requested_key"] is None
-        mock_resolve_exec.assert_called_once_with(flash_option)
+        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # config resolver alongside the resolved model option.
+        mock_resolve_exec.assert_called_once_with(
+            flash_option, web_search_mode="disabled"
+        )
         assert captured["model"] is flash_model
 
     @pytest.mark.asyncio
@@ -633,6 +641,10 @@ class TestReaderRecordAskService:
         request.content = "deep analysis"
         request.entry_action = "ask_about_this"
         request.model = "deepseek-pro"
+        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # config resolver. Set an explicit value so the assertion can
+        # verify it is plumbed through.
+        request.web_search_mode = "disabled"
 
         pro_option = MagicMock()
         pro_option.key = "deepseek-pro"
@@ -687,7 +699,11 @@ class TestReaderRecordAskService:
 
         assert chunks
         assert mock_resolve.await_args.kwargs["requested_key"] == "deepseek-pro"
-        mock_resolve_exec.assert_called_once_with(pro_option)
+        # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
+        # config resolver alongside the resolved model option.
+        mock_resolve_exec.assert_called_once_with(
+            pro_option, web_search_mode="disabled"
+        )
         assert captured["model"] is pro_model
 
     @pytest.mark.asyncio

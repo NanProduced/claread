@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   isReaderAskAgenticEvidenceItem,
+  type ReaderAskAgenticCitationDto,
   type ReaderAskAgenticEvidenceItemDto,
 } from "@/types/api/reader-ask";
 import {
+  projectAgenticCitationsForDisplay,
   projectAgenticEvidenceForDisplay,
+  type AgenticCitationDisplayItem,
   type AgenticEvidenceDisplayItem,
 } from "./agentic-evidence";
 
@@ -820,5 +823,266 @@ describe("agentic evidence legal-map — guard and projection integration (R4-A1
       // All observation items have null ragNavigation.
       expect(projected.every((p) => p.ragNavigation === null)).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-WEB-G0/G1: projectAgenticCitationsForDisplay — web citation projection
+//
+// Verifies that public citations split correctly by source_kind:
+//   - article citations: title="文章依据", url/sourceTitle/description=null
+//   - web citations: title="网络来源", url/sourceTitle/description populated
+// Snippet is always coerced to "" when missing/empty/non-string. Order is
+// preserved. The projection must not invent fields or mutate the input.
+// ---------------------------------------------------------------------------
+
+describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB-G0/G1)", () => {
+  it("projects an article citation with article-stable title and null web fields", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      {
+        citation_id: "c1",
+        source_kind: "article",
+        snippet: "paragraph body",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]).toEqual({
+      citationId: "c1",
+      sourceKind: "article",
+      title: "文章依据",
+      snippet: "paragraph body",
+      url: null,
+      sourceTitle: null,
+      description: null,
+    });
+  });
+
+  it("projects a web citation with web-stable title and url/sourceTitle/description", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      {
+        citation_id: "c2",
+        source_kind: "web",
+        snippet: "web snippet text",
+        url: "https://example.com/page",
+        title: "Example Page Title",
+        description: "A short description of the page.",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]).toEqual({
+      citationId: "c2",
+      sourceKind: "web",
+      title: "网络来源",
+      snippet: "web snippet text",
+      url: "https://example.com/page",
+      sourceTitle: "Example Page Title",
+      description: "A short description of the page.",
+    });
+  });
+
+  it("coerces missing snippet to empty string for both source kinds", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      { citation_id: "c1", source_kind: "article" },
+      {
+        citation_id: "c2",
+        source_kind: "web",
+        url: "https://example.com/x",
+        title: "Title",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected[0].snippet).toBe("");
+    expect(projected[1].snippet).toBe("");
+  });
+
+  it("coerces empty-string snippet to empty string", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      { citation_id: "c1", source_kind: "article", snippet: "" },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected[0].snippet).toBe("");
+  });
+
+  it("coerces null snippet to empty string", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      { citation_id: "c1", source_kind: "article", snippet: null },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected[0].snippet).toBe("");
+  });
+
+  it("coerces null url/title/description to null for web citations", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      {
+        citation_id: "c1",
+        source_kind: "web",
+        snippet: "snippet",
+        url: null,
+        title: null,
+        description: null,
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected[0]).toEqual({
+      citationId: "c1",
+      sourceKind: "web",
+      title: "网络来源",
+      snippet: "snippet",
+      url: null,
+      sourceTitle: null,
+      description: null,
+    });
+  });
+
+  it("forces url/sourceTitle/description to null for article citations even if present on input", () => {
+    // The guard upstream rejects this, but the projection is defensive —
+    // article citations must never expose web fields to the UI.
+    const input = [
+      {
+        citation_id: "c1",
+        source_kind: "article" as const,
+        snippet: "snippet",
+        url: "https://should-not-appear.example",
+        title: "Should Not Appear",
+        description: "Should not appear either",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected[0].url).toBeNull();
+    expect(projected[0].sourceTitle).toBeNull();
+    expect(projected[0].description).toBeNull();
+  });
+
+  it("preserves mixed article + web citation order", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      { citation_id: "c1", source_kind: "article", snippet: "art1" },
+      {
+        citation_id: "c2",
+        source_kind: "web",
+        snippet: "web1",
+        url: "https://a.example",
+        title: "A",
+      },
+      { citation_id: "c3", source_kind: "article", snippet: "art2" },
+      {
+        citation_id: "c4",
+        source_kind: "web",
+        snippet: "web2",
+        url: "https://b.example",
+        title: "B",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(projected.map((p) => p.citationId)).toEqual([
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+    ]);
+    expect(projected.map((p) => p.sourceKind)).toEqual([
+      "article",
+      "web",
+      "article",
+      "web",
+    ]);
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(projectAgenticCitationsForDisplay([])).toEqual([]);
+  });
+
+  it("does not mutate the input DTO", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      {
+        citation_id: "c1",
+        source_kind: "web",
+        snippet: "original",
+        url: "https://example.com",
+        title: "Original Title",
+        description: "Original desc",
+      },
+    ];
+    const before = JSON.parse(JSON.stringify(input)) as typeof input;
+    const projected = projectAgenticCitationsForDisplay(input);
+    // Mutate the projection — input must be untouched.
+    projected[0].snippet = "tampered";
+    projected[0].url = "tampered";
+    projected[0].sourceTitle = "tampered";
+    projected[0].description = "tampered";
+    expect(input).toEqual(before);
+  });
+
+  it("omits internal/debug fields from the projected output", () => {
+    // The DTO type does not allow these, but defensively verify they never
+    // appear in the projection even if a caller sneaks them in via casts.
+    const input = [
+      {
+        citation_id: "c1",
+        source_kind: "web" as const,
+        snippet: "snippet",
+        url: "https://example.com",
+        title: "Title",
+        description: "desc",
+        // Forbidden extras:
+        handle_id: "HANDLE",
+        rag_navigation: { foo: "bar" },
+        web_snapshot: { baz: "qux" },
+        provider: "SECRET_PROVIDER",
+        query: "SECRET_QUERY",
+        rank: 1,
+        score: 0.9,
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(
+      input as unknown as ReaderAskAgenticCitationDto[],
+    );
+    const serialized = JSON.stringify(projected);
+    expect(serialized).not.toContain("handle_id");
+    expect(serialized).not.toContain("HANDLE");
+    expect(serialized).not.toContain("rag_navigation");
+    expect(serialized).not.toContain("web_snapshot");
+    expect(serialized).not.toContain("provider");
+    expect(serialized).not.toContain("SECRET_PROVIDER");
+    expect(serialized).not.toContain("SECRET_QUERY");
+    expect(serialized).not.toContain("rank");
+    expect(serialized).not.toContain("score");
+  });
+
+  it("projects the AgenticCitationDisplayItem shape exactly", () => {
+    const input: ReaderAskAgenticCitationDto[] = [
+      {
+        citation_id: "c1",
+        source_kind: "web",
+        snippet: "snippet",
+        url: "https://example.com",
+        title: "Title",
+        description: "desc",
+      },
+    ];
+    const projected = projectAgenticCitationsForDisplay(input);
+    expect(Object.keys(projected[0]).sort()).toEqual(
+      [
+        "citationId",
+        "description",
+        "snippet",
+        "sourceKind",
+        "sourceTitle",
+        "title",
+        "url",
+      ].sort(),
+    );
+  });
+
+  it("type-checks: AgenticCitationDisplayItem is the projected type", () => {
+    // Compile-time assertion: the projected array must be assignable to
+    // AgenticCitationDisplayItem[]. If the projection shape drifts, this
+    // test fails to compile.
+    const projected: AgenticCitationDisplayItem[] =
+      projectAgenticCitationsForDisplay([
+        { citation_id: "c1", source_kind: "article", snippet: "s" },
+      ]);
+    expect(projected.length).toBe(1);
   });
 });

@@ -182,6 +182,65 @@ class RunFinishedEvent(BaseModel):
     read_range_calls: int
     evidence_count: int
     search_current_article_calls: int = 0
+    # G1-b5: web search call count (host-owned; never model-supplied).
+    # Mirrors ``search_current_article_calls`` semantics so observers
+    # can audit the per-turn web search budget. ``0`` when the
+    # capability was not enabled or no call was made.
+    web_search_calls: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Web search typed events (G1)
+# ---------------------------------------------------------------------------
+#
+# These mirror ``ToolCallEvent`` / ``ToolResultEvent`` but carry a
+# typed ``tool_name="search_web"`` discriminator plus web-specific
+# status / outcome fields. They never carry query text, snippets,
+# provider payloads, or reasoning — privacy-safe projection only.
+# Production stream projects ``searching_web`` progress phase from
+# ``WebSearchCallEvent`` and ``ok``/``unavailable``/``failed`` activity
+# from ``WebSearchResultEvent``.
+
+
+class WebSearchCallEvent(BaseModel):
+    """Internal signal: agent invoked ``search_web`` (G1).
+
+    Carries only identity-free metadata. ``query`` is intentionally
+    absent — the model-supplied query text is untrusted content and
+    must never appear in observability events. Production stream
+    projects a generic ``searching_web`` progress phase only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["web_search_call"] = "web_search_call"
+    # Sequence of the call within the turn (1-based). Lets observers
+    # order multiple search calls without exposing the query text.
+    call_sequence: int = Field(ge=1)
+
+
+class WebSearchResultEvent(BaseModel):
+    """Internal signal: ``search_web`` returned (G1).
+
+    Carries only the typed outcome and the count of registered
+    :class:`WebEvidence` entries (opaque handles). Never carries the
+    raw provider result count, scores, URLs, titles, descriptions, or
+    any provider payload. Production stream projects
+    ``ok`` / ``unavailable`` / ``failed`` activity only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["web_search_result"] = "web_search_result"
+    call_sequence: int = Field(ge=1)
+    # Mirrors :data:`WebSearchOutcome` (completed | no_results |
+    # unavailable | failed). The host translates the port outcome to
+    # this public set before emitting the event.
+    outcome: Literal["completed", "no_results", "unavailable", "failed"]
+    # Count of host-minted :class:`WebEvidence` entries from this call.
+    # Always 0 for ``no_results`` / ``unavailable`` / ``failed``.
+    registered_evidence_count: int = Field(default=0, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)
 
 
 RuntimeEvent = (
@@ -198,4 +257,6 @@ RuntimeEvent = (
     | AgenticReasoningStartedEvent
     | AgenticReasoningDeltaEvent
     | AgenticReasoningCompletedEvent
+    | WebSearchCallEvent
+    | WebSearchResultEvent
 )

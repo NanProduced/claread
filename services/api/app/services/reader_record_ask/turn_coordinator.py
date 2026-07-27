@@ -5,6 +5,7 @@ Narrow public surface
 - :meth:`TurnCoordinator.assemble_turn` → :class:`TurnAssembly`
 - :meth:`TurnCoordinator.expand_evidence` → :class:`MeteredToolReturn`
 - :meth:`TurnCoordinator.search_current_article` → :class:`MeteredToolReturn`
+- :meth:`TurnCoordinator.search_web` → :class:`MeteredToolReturn`
 
 Owns registry, six-account budget, renderer, fence, pointer ledger,
 selection expansion session, map expander, RAG identity, and search
@@ -15,10 +16,13 @@ committed and is never refunded because the model already saw content.
 
 from __future__ import annotations
 
+import datetime as _datetime
 import json
+import secrets as _secrets
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from xml.sax.saxutils import escape as _xml_escape_web
 
 if TYPE_CHECKING:
     # Avoid a circular import at module load time:
@@ -103,6 +107,24 @@ from app.services.reader_record_ask.turn_prompt import (
     mint_turn_frame_prompt_capability,
     render_handles_listing,
 )
+from app.services.reader_record_ask.web_evidence_registry import (
+    WebEvidenceRegistry,
+)
+from app.services.reader_record_ask.web_search_contracts import (
+    WEB_MAX_CALLS_PER_TURN,
+    WEB_MAX_RESULTS_PER_CALL,
+    WEB_QUERY_MAX_LEN,
+    ResolvedWebSearchCapability,
+    WebEvidence,
+    WebSearchOutcome,
+    canonicalize_url,
+    compute_web_source_fingerprint,
+    display_domain_from_canonical_url,
+)
+from app.services.reader_record_ask.web_search_port import (
+    WebSearchBackend,
+    WebSearchResult,
+)
 
 # Default search call limit (mirrors legacy executor).
 DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS = 1
@@ -114,6 +136,13 @@ _MAX_MAP_ENTRY_SOURCES = 32
 # Provider already caps at 8 per the frozen contract; this is a defensive
 # cap that enforces the invariant if the contract is ever violated.
 _MAX_DESCRIPTOR_MAP_ENTRY_SOURCES = 8
+
+# G1-b5: default web search call limit. Mirrors the G0/G1 capability
+# resolver default (1). The actual limit comes from the resolved
+# capability's ``max_calls`` field; this constant is only used when the
+# coordinator is constructed without an explicit ``max_web_search_calls``
+# AND the capability is unavailable (defensive fail-soft path).
+_DEFAULT_MAX_WEB_SEARCH_CALLS: int = 1
 
 
 class HostBudgetExhausted(Exception):
@@ -196,6 +225,10 @@ class TurnCoordinator:
         max_search_current_article_calls: int = (DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS),
         product_search_enabled: bool = True,
         map_source_material_provider: MapSourceMaterialProvider | None = None,
+        web_search_capability: ResolvedWebSearchCapability | None = None,
+        web_search_backend: WebSearchBackend | None = None,
+        web_evidence_registry: WebEvidenceRegistry | None = None,
+        max_web_search_calls: int | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
@@ -229,8 +262,44 @@ class TurnCoordinator:
         # outer transaction.
         self._map_source_material_provider = map_source_material_provider
 
+        # G1-b5: web search capability + port + registry. The capability
+        # is the server-owned execution truth — when ``None`` the
+        # ``search_web`` tool must NOT be mounted (handled by the agent
+        # registration seam). The backend port is provider-neutral;
+        # ``None`` means fail-soft even when ``enabled_for_turn=True``
+        # (defensive — the tool returns ``unavailable``). The registry
+        # is bound to the same envelope fingerprint as the article
+        # evidence registry.
+        self.web_search_capability = web_search_capability
+        self.web_search_backend = web_search_backend
+        if web_evidence_registry is not None:
+            if web_evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
+                raise ValueError(
+                    "web_evidence_registry envelope_fingerprint does not match the turn envelope"
+                )
+            self.web_evidence_registry = web_evidence_registry
+        else:
+            self.web_evidence_registry = WebEvidenceRegistry(
+                envelope.envelope_fingerprint
+            )
+        # Effective max-calls: explicit override → capability → default.
+        if max_web_search_calls is not None:
+            self.max_web_search_calls = max(
+                1, min(int(max_web_search_calls), WEB_MAX_CALLS_PER_TURN)
+            )
+        elif web_search_capability is not None:
+            self.max_web_search_calls = max(
+                1, min(web_search_capability.max_calls, WEB_MAX_CALLS_PER_TURN)
+            )
+        else:
+            self.max_web_search_calls = _DEFAULT_MAX_WEB_SEARCH_CALLS
+
         self.turn_id: str = mint_turn_id()
         self.search_current_article_calls: int = 0
+        self.web_search_calls: int = 0
+        # G1-b5: last translated public outcome for ``web_search_outcome``
+        # property / finalizer. ``None`` until the first call sets it.
+        self._last_web_search_outcome: WebSearchOutcome | None = None
         self._selection_session: EvidenceExpansionSession | None = None
         self._map_expander: ArticleMapExpander | None = None
         self._assembled = False
@@ -907,6 +976,342 @@ class TurnCoordinator:
             duration_ms=duration_ms,
         )
 
+    # ------------------------------------------------------------------
+    # Public: tools — web search (G1-b5)
+    # ------------------------------------------------------------------
+
+    async def search_web(
+        self,
+        query: str,
+        max_results: int | None = None,
+    ) -> MeteredToolReturn:
+        """Provider-neutral web search via :class:`WebSearchBackend` port.
+
+        Mirrors :meth:`search_current_article` discipline:
+
+        - pre-call fence (fail-soft ``unavailable`` on stale envelope);
+        - call-limit consumption (even on fence failure after the call
+          is made);
+        - host re-canonicalizes provider URLs and recomputes
+          :class:`WebEvidence.source_fingerprint` before any host-side
+          registry mutation;
+        - metered budget charge via the ``rag`` account (web evidence
+          shares the existing model-visible budget pool);
+        - host-only ``budget_exhausted`` abort when even a minimal safe
+          view cannot be charged.
+
+        ``query`` is clamped to :data:`WEB_QUERY_MAX_LEN` before the
+        port call. ``max_results`` is clamped to the resolved
+        capability's ``max_results_per_call`` (or
+        :data:`WEB_MAX_RESULTS_PER_CALL` when capability is ``None``).
+
+        Fail-soft safe views (``unavailable`` / ``failed`` / ``empty``)
+        carry no evidence handles and no web source blocks.
+        """
+        started = time.perf_counter()
+
+        # Clamp query length BEFORE any port call (defensive fail-soft).
+        if not isinstance(query, str):
+            query = ""
+        clamped_query = query[:WEB_QUERY_MAX_LEN] if query else ""
+
+        # Resolve effective max_results from capability / default.
+        if max_results is not None:
+            effective_max_results = max(
+                1, min(int(max_results), WEB_MAX_RESULTS_PER_CALL)
+            )
+        elif self.web_search_capability is not None:
+            effective_max_results = max(
+                1,
+                min(
+                    self.web_search_capability.max_results_per_call,
+                    WEB_MAX_RESULTS_PER_CALL,
+                ),
+            )
+        else:
+            effective_max_results = WEB_MAX_RESULTS_PER_CALL
+
+        # Call-limit (consume even on fence failure after the call is made).
+        if self.web_search_calls >= self.max_web_search_calls:
+            self._last_web_search_outcome = "unavailable"
+            return await self._web_safe_unavailable(
+                started=started,
+                detail="call_limit",
+            )
+
+        # Pre-generation fence.
+        fence_result = await self._run_fence()
+        if not fence_result.ok:
+            self._last_web_search_outcome = "unavailable"
+            return await self._web_safe_unavailable(
+                started=started, detail="fence_pre"
+            )
+
+        # Capability not enabled OR backend port None → no I/O.
+        if (
+            self.web_search_capability is None
+            or not self.web_search_capability.enabled_for_turn
+            or self.web_search_backend is None
+        ):
+            self.web_search_calls += 1
+            self._last_web_search_outcome = "unavailable"
+            return await self._web_safe_unavailable(
+                started=started, detail="capability_or_backend_missing"
+            )
+
+        # Backend port call (provider-neutral). The host re-canonicalizes
+        # every URL and recomputes source_fingerprint AFTER the call.
+        outcome: WebSearchResult
+        try:
+            outcome = await self.web_search_backend.search_web(
+                query=clamped_query,
+                max_results=effective_max_results,
+            )
+        except Exception:
+            # Provider raised — fail-soft safe view; never ModelRetry.
+            self.web_search_calls += 1
+            self._last_web_search_outcome = "failed"
+            return await self._web_safe_unavailable(
+                started=started, detail="backend_exception"
+            )
+        self.web_search_calls += 1
+
+        # Post-generation fence.
+        fence_after = await self._run_fence()
+        if not fence_after.ok:
+            self._last_web_search_outcome = "unavailable"
+            return await self._web_safe_unavailable(
+                started=started, detail="fence_post"
+            )
+
+        # Translate port outcome → host model view + evidence registration.
+        return await self._register_web_search_outcome(
+            outcome=outcome,
+            started=started,
+        )
+
+    async def _register_web_search_outcome(
+        self,
+        *,
+        outcome: WebSearchResult,
+        started: float,
+    ) -> MeteredToolReturn:
+        """Translate a port outcome into a metered tool view + registry.
+
+        Host-side invariants enforced here:
+
+        - Every URL is re-canonicalized via :func:`canonicalize_url`
+          before :class:`WebEvidence` construction. A URL that fails
+          canonicalization is dropped (the hit is not registered).
+        - :func:`compute_web_source_fingerprint` is recomputed from the
+          canonical URL + a server-recorded ``retrieved_at`` — never
+          from provider-supplied text. The fingerprint is verified by
+          the :class:`WebEvidence` model validator.
+        - ``internal_handle_id`` is server-minted (``evh_<32 hex>``)
+          and never derived from provider text.
+        """
+        from app.services.reader_record_ask.tool_contracts import (
+            SearchWebToolView,
+        )
+
+        # Map port outcome to public outcome + tool status.
+        if outcome.status == "unavailable":
+            self._last_web_search_outcome = "unavailable"
+            return await self._web_safe_unavailable(
+                started=started,
+                detail=outcome.detail_code or "port_unavailable",
+            )
+        if outcome.status == "failed":
+            self._last_web_search_outcome = "failed"
+            return await self._web_safe_unavailable(
+                started=started,
+                detail=outcome.detail_code or "port_failed",
+                tool_status="failed",
+            )
+        # ``ok`` with zero hits and ``empty`` both map to ``no_results``.
+        if outcome.status == "empty" or (
+            outcome.status == "ok" and not outcome.hits
+        ):
+            self._last_web_search_outcome = "no_results"
+            return await self._web_emit_empty_view(started=started)
+
+        # ``ok`` with hits → register evidence + emit ok view.
+        assert outcome.status == "ok" and outcome.hits
+
+        retrieved_at = _web_retrieved_at_iso()
+        handle_ids: list[str] = []
+        web_source_blocks: list[str] = []
+        for hit in outcome.hits:
+            try:
+                canonical = canonicalize_url(hit.raw_url)
+            except (ValueError, TypeError):
+                # Drop malformed / disallowed scheme hits silently —
+                # never raise from provider text.
+                continue
+            source_fingerprint = compute_web_source_fingerprint(
+                canonical_url=canonical,
+                retrieved_at=retrieved_at,
+            )
+            display_domain = display_domain_from_canonical_url(canonical)
+            if not display_domain:
+                continue
+            handle_id = _mint_web_evidence_handle_id()
+            try:
+                evidence = WebEvidence(
+                    internal_handle_id=handle_id,
+                    canonical_url=canonical,
+                    display_domain=display_domain,
+                    title=hit.title or None,
+                    description=hit.description or None,
+                    retrieved_at=retrieved_at,
+                    provider_result_ref=hit.provider_result_ref,
+                    source_fingerprint=source_fingerprint,
+                )
+            except (ValueError, TypeError):
+                # Drop malformed hits — never raise from provider text.
+                continue
+            try:
+                self.web_evidence_registry.register(evidence)
+            except ValueError:
+                # Duplicate handle id (defensive — should not happen with
+                # a fresh mint) — drop the hit silently.
+                continue
+            handle_ids.append(handle_id)
+            web_source_blocks.append(
+                _render_web_source_block(
+                    canonical_url=canonical,
+                    title=hit.title or "",
+                    description=hit.description or "",
+                )
+            )
+
+        if not handle_ids:
+            # All hits dropped (URL canonicalization / fingerprint /
+            # registry rejection) — surface ``no_results`` to the model.
+            self._last_web_search_outcome = "no_results"
+            return await self._web_emit_empty_view(started=started)
+
+        self._last_web_search_outcome = "completed"
+        tool_view = SearchWebToolView(
+            status="ok",
+            summary=(
+                f"Web search returned {len(handle_ids)} "
+                f"source{'s' if len(handle_ids) != 1 else ''}."
+            ),
+            evidence_handles=[
+                {"handle_id": handle_id} for handle_id in handle_ids
+            ],
+            web_source_blocks=tuple(web_source_blocks),
+        )
+        rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
+        if not self.budget.can_charge("rag", rendered):
+            # Budget exhausted after registry mutation. The host cannot
+            # roll back registry entries (the model already saw content
+            # in prior tool calls). Abort the agent — the finalizer
+            # ignores unbound web handles.
+            return MeteredToolReturn(
+                text="",
+                status="budget_exhausted",
+                summary="",
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                host_budget_abort=True,
+            )
+        self.budget.charge("rag", rendered)
+        return MeteredToolReturn(
+            text=rendered.text,
+            status="ok",
+            summary=tool_view.summary,
+            evidence_handle_ids=tuple(handle_ids),
+            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+        )
+
+    async def _web_safe_unavailable(
+        self,
+        *,
+        started: float,
+        detail: str,
+        tool_status: str = "unavailable",
+    ) -> MeteredToolReturn:
+        """Emit a fail-soft web search safe view with no handles / blocks."""
+        from app.services.reader_record_ask.tool_contracts import (
+            SearchWebToolView,
+        )
+
+        summary = "Web search is unavailable for this turn."
+        tool_view = SearchWebToolView(
+            status=tool_status,  # type: ignore[arg-type]
+            summary=summary,
+        )
+        rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
+        if not self.budget.can_charge("rag", rendered):
+            return MeteredToolReturn(
+                text="",
+                status="budget_exhausted",
+                summary="",
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                host_budget_abort=True,
+            )
+        self.budget.charge("rag", rendered)
+        return MeteredToolReturn(
+            text=rendered.text,
+            status=tool_status,
+            summary=summary,
+            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+        )
+
+    async def _web_emit_empty_view(self, *, started: float) -> MeteredToolReturn:
+        """Emit a no-results web search view (no handles / blocks)."""
+        from app.services.reader_record_ask.tool_contracts import (
+            SearchWebToolView,
+        )
+
+        summary = "Web search returned no results."
+        tool_view = SearchWebToolView(
+            status="empty",
+            summary=summary,
+        )
+        rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
+        if not self.budget.can_charge("rag", rendered):
+            return MeteredToolReturn(
+                text="",
+                status="budget_exhausted",
+                summary="",
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                host_budget_abort=True,
+            )
+        self.budget.charge("rag", rendered)
+        return MeteredToolReturn(
+            text=rendered.text,
+            status="empty",
+            summary=summary,
+            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+        )
+
+    @property
+    def web_search_outcome(self) -> WebSearchOutcome | None:
+        """Translate the per-turn web search state into a public outcome.
+
+        - ``None`` when ``search_web`` was never invoked this turn (no
+          capability, or capability enabled but no call made).
+        - ``completed`` when at least one call returned hits (even if
+          some hits were dropped on canonicalization).
+        - ``no_results`` when at least one call returned ``empty`` /
+          ``ok`` with zero hits, and no call returned hits.
+        - ``unavailable`` when every call returned ``unavailable``.
+        - ``failed`` when every call returned ``failed``.
+
+        The finalizer reads this to set ``web_search_summary`` on the
+        completed DTO. Mixing outcomes within a turn is conservative:
+        ``completed`` wins over ``no_results`` wins over ``unavailable``
+        wins over ``failed``.
+        """
+        if self.web_search_calls == 0:
+            return None
+        # Single-call vertical slice (G1): outcome is the last call's
+        # translated outcome. Multi-call mixing priority is reserved for
+        # G2+ when ``WEB_MAX_CALLS_PER_TURN`` > 1 is actually exercised.
+        return self._last_web_search_outcome
+
     async def _rag_safe_unavailable(self, *, started: float, detail: str) -> MeteredToolReturn:
         from app.services.reader_record_ask.article_rag_port import (
             ArticleRagSearchOutcome,
@@ -993,6 +1398,69 @@ class TurnCoordinator:
         except Exception:  # noqa: BLE001
             pass
         return "ok"
+
+
+# ---------------------------------------------------------------------------
+# G1-b5 module-private web search helpers
+# ---------------------------------------------------------------------------
+#
+# Server-only utilities for the ``search_web`` tool path. Kept at module
+# scope so they can be patched in tests (e.g. deterministic handle ids /
+# timestamps) without exposing them on the coordinator's public surface.
+
+
+def _mint_web_evidence_handle_id() -> str:
+    """Mint a fresh ``evh_<32 hex>`` handle id for one web evidence entry.
+
+    Uses :func:`secrets.token_hex` so the handle is cryptographically
+    random and unpredictable — provider text can never influence the id.
+    """
+    return f"evh_{_secrets.token_hex(16)}"
+
+
+def _web_retrieved_at_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string.
+
+    Used as the server-recorded ``retrieved_at`` timestamp on
+    :class:`WebEvidence`. The host owns this timestamp — never the
+    provider — so :func:`compute_web_source_fingerprint` is stable
+    across provider text drift.
+    """
+    return (
+        _datetime.datetime.now(_datetime.UTC)
+        .replace(microsecond=0)
+        .isoformat()
+    )
+
+
+def _render_web_source_block(
+    *,
+    canonical_url: str,
+    title: str,
+    description: str,
+) -> str:
+    """Render one ``<untrusted_web_source>`` XML block for the model view.
+
+    Mirrors the article ``<untrusted_article_text>`` discipline: every
+    field is XML-escaped so provider text cannot inject markup. The
+    block is the *only* place the model sees web source text — it never
+    sees ``provider_result_ref`` or raw provider payload.
+    """
+    title_attr = _xml_escape_web(title, {'"': "&quot;"}) if title else ""
+    desc_attr = (
+        _xml_escape_web(description, {'"': "&quot;"}) if description else ""
+    )
+    url_attr = _xml_escape_web(canonical_url, {'"': "&quot;"})
+    parts = [
+        '<untrusted_web_source role="search_web"',
+        f' url="{url_attr}"',
+    ]
+    if title_attr:
+        parts.append(f' title="{title_attr}"')
+    if desc_attr:
+        parts.append(f' description="{desc_attr}"')
+    parts.append("/>")
+    return "".join(parts)
 
 
 __all__ = [

@@ -23,10 +23,18 @@ from app.services.reader_record_ask.runtime_events import (
 from app.services.reader_record_ask.search_current_article_executor import (
     DEFAULT_MAX_SEARCH_CURRENT_ARTICLE_CALLS,
 )
+from app.services.reader_record_ask.web_search_contracts import (
+    WEB_MAX_CALLS_PER_TURN,
+    ResolvedWebSearchCapability,
+)
+from app.services.reader_record_ask.web_search_port import WebSearchBackend
 
 if TYPE_CHECKING:
     from app.services.reader_record_ask.baseline_context import BaselineAgentContext
     from app.services.reader_record_ask.turn_coordinator import TurnCoordinator
+    from app.services.reader_record_ask.web_evidence_registry import (
+        WebEvidenceRegistry,
+    )
 
 # R4-A4-2R5R3 Issue #1: typed execution-stage evidence. This Literal is
 # the single source of truth for the runtime's execution-stage state
@@ -219,6 +227,22 @@ class ReaderRecordAskDeps:
     # R4-A5-7: production turn coordinator (expand / RAG tool paths).
     # ``None`` only for legacy offline tests that never call tools.
     turn_coordinator: TurnCoordinator | None = None
+    # G0-b7: web search capability + port + registry + call counter.
+    # ``web_search_capability`` is the resolved execution truth for one
+    # turn; the runtime reads ``enabled_for_turn`` to decide whether to
+    # mount the ``search_web`` tool (G1-b4). The model never reads this.
+    # ``web_search_backend`` is the provider-neutral port; ``None`` means
+    # the capability is disabled even when ``enabled_for_turn=True``
+    # (defensive fail-soft — the search_web tool returns ``unavailable``).
+    # ``web_evidence_registry`` is the in-turn web evidence registry
+    # used by the finalizer (G0-b3) to resolve web handles to public
+    # citations. ``web_search_calls`` / ``max_web_search_calls`` mirror
+    # the RAG call counters for observability / RunFinishedEvent.
+    web_search_capability: ResolvedWebSearchCapability | None = None
+    web_search_backend: WebSearchBackend | None = None
+    web_evidence_registry: WebEvidenceRegistry | None = None
+    web_search_calls: int = 0
+    max_web_search_calls: int = WEB_MAX_CALLS_PER_TURN
 
     def emit_event(self, event: RuntimeEvent) -> None:
         """Append an internal event and optionally notify a live sink.

@@ -11,6 +11,7 @@ export type AgenticActivityPhase =
   | "agent_running"
   | "reading_context"
   | "searching_article"
+  | "searching_web"
   | "composing_answer"
   | "validating_evidence";
 
@@ -30,7 +31,8 @@ export type AgenticActivityStatus =
 
 export type AgenticActivityToolName =
   | "read_range"
-  | "search_current_article";
+  | "search_current_article"
+  | "search_web";
 
 export type AgenticActivityStep = {
   sequence: number;
@@ -90,6 +92,7 @@ const PHASES = new Set<AgenticActivityPhase>([
   "agent_running",
   "reading_context",
   "searching_article",
+  "searching_web",
   "composing_answer",
   "validating_evidence",
 ]);
@@ -104,6 +107,7 @@ const ACTIVITIES = new Set<AgenticActivityKind>([
 const TOOLS = new Set<AgenticActivityToolName>([
   "read_range",
   "search_current_article",
+  "search_web",
 ]);
 
 const STEP_STATUSES = new Set<NonNullable<AgenticActivityStep["status"]>>([

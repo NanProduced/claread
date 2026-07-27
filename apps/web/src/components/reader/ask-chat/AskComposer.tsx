@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Globe } from "lucide-react";
 import {
   PromptInput,
   PromptInputActionMenu,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { SystemMessage } from "@/components/ui/system-message";
 import { userFacingErrorMessage } from "../ask/ask-error-messages";
+import type { WebSearchModeDto } from "@/types/api/reader-ask";
 
 type AskComposerProps = {
   onSubmit: (value: string) => void | Promise<void>;
@@ -42,6 +44,13 @@ type AskComposerProps = {
   onTextareaBlur?: () => void;
   /** Called when the user clicks the stop button while generating. */
   onStop?: () => void;
+  /**
+   * User-visible web search request mode (mirrors backend WebSearchMode).
+   * `allowed` only grants turn capability; it never forces a search.
+   * Undefined when the host does not support web search.
+   */
+  webSearchMode?: WebSearchModeDto;
+  onWebSearchModeChange?: (mode: WebSearchModeDto) => void;
 };
 
 function AskComposerSurface({
@@ -60,6 +69,8 @@ function AskComposerSurface({
   onTextareaFocus,
   onTextareaBlur,
   onStop,
+  webSearchMode,
+  onWebSearchModeChange,
 }: Omit<AskComposerProps, "errorMessage">) {
   const { textInput } = usePromptInputController();
   const canSend = textInput.value.trim().length > 0 && !sending;
@@ -67,6 +78,8 @@ function AskComposerSurface({
   // When generating, the submit button becomes a stop button and must NOT
   // be disabled — otherwise the user cannot click it to abort the stream.
   const submitDisabled = sending ? false : !canSend;
+  const webSearchEnabled = webSearchMode === "allowed";
+  const webSearchSupported = onWebSearchModeChange != null;
 
   return (
     <PromptInput
@@ -113,6 +126,33 @@ function AskComposerSurface({
                 {actionMenu}
               </PromptInputActionMenuContent>
             </PromptInputActionMenu>
+          ) : null}
+          {webSearchSupported ? (
+            <button
+              type="button"
+              aria-label="联网搜索"
+              aria-pressed={webSearchEnabled}
+              data-testid="ask-composer-web-search-toggle"
+              data-state={webSearchEnabled ? "on" : "off"}
+              disabled={sending}
+              onClick={() =>
+                onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
+              }
+              className="inline-flex h-7 items-center gap-1 rounded-md border-transparent px-1.5 text-xs font-normal shadow-none transition-colors focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3"
+              style={
+                webSearchEnabled
+                  ? {
+                      backgroundColor: "hsl(var(--primary) / 0.1)",
+                      color: "hsl(var(--primary))",
+                    }
+                  : {
+                      color: "hsl(var(--muted-foreground) / 0.7)",
+                    }
+              }
+            >
+              <Globe aria-hidden="true" />
+              <span>联网搜索</span>
+            </button>
           ) : null}
         </PromptInputTools>
         <PromptInputTools className="justify-end">
@@ -167,6 +207,8 @@ export function AskComposer({
   onTextareaFocus,
   onTextareaBlur,
   onStop,
+  webSearchMode,
+  onWebSearchModeChange,
 }: AskComposerProps) {
   const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
 
@@ -195,6 +237,8 @@ export function AskComposer({
           onTextareaFocus={onTextareaFocus}
           onTextareaBlur={onTextareaBlur}
           onStop={onStop}
+          webSearchMode={webSearchMode}
+          onWebSearchModeChange={onWebSearchModeChange}
         />
       </PromptInputProvider>
     </div>

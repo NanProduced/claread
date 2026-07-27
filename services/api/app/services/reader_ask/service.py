@@ -2850,6 +2850,22 @@ def _build_evidence_items(
 def _selected_model_payload(
     option: model_options_svc.ResolvedReaderAskModelOption,
 ) -> dict[str, Any]:
+    # ASK-WEB-G1-R3: project the server-declared Web Search capability
+    # for this model option. ``available`` requires a real, registered
+    # adapter for the current model's provider — not merely a non-empty
+    # ``settings.reader_record_ask_web_search_provider`` string.
+    #
+    # Until a real ``WebSearchBackend`` adapter is implemented and
+    # registered in the production adapter registry (G2+), every
+    # production model option must return ``web_search_capability=
+    # "unavailable"``. A non-empty settings string alone does NOT
+    # constitute a capability — the runtime would mount ``search_web``
+    # with no executable backend, producing a "假可用" (fake-available)
+    # capability that misleads the UI and RunStarted metadata.
+    #
+    # Tests may inject a FakeWebSearchBackend + test-only capability to
+    # prove the closed loop; this production path stays unavailable.
+    web_search_capability: Literal["unavailable", "available"] = "unavailable"
     return ReaderAskSelectedModel(
         key=option.key,
         label=option.label,
@@ -2857,6 +2873,7 @@ def _selected_model_payload(
         model_name=option.main_model_name,
         replan_model_name=option.replan_model_name,
         price_multiplier=option.billing.price_multiplier,
+        web_search_capability=web_search_capability,
     ).model_dump(mode="json")
 
 

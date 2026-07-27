@@ -90,6 +90,7 @@ def _make_execution_config(
     model: object,
     max_output_tokens: int = 3200,
     max_turn_output_tokens: int = 9600,
+    web_search_capability=None,
 ):
     """Build a real ReaderRecordAskExecutionConfig for service-layer tests.
 
@@ -118,6 +119,7 @@ def _make_execution_config(
             max_turn_output_tokens=max_turn_output_tokens,
             prompt_buffer_tokens=800,
         ),
+        web_search_capability=web_search_capability,
     )
 
 
@@ -3023,30 +3025,38 @@ async def test_retry_service_flag_on_uses_agentic_path() -> None:
                                 return_value=repo,
                             ):
                                 with patch(
-                                    "app.services.reader_record_ask.production_stream.resolve_agentic_model",
-                                    return_value=_function_model("agentic retry answer"),
+                                    # ASK-WEB-G1-R3: preflight _load_replayed_web_search_mode
+                                    # constructs its own repo in service.py — patch the
+                                    # symbol in the service namespace so the test's fake
+                                    # repo is used for the persisted-metadata replay.
+                                    "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+                                    return_value=repo,
                                 ):
                                     with patch(
-                                        "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
-                                        new_callable=AsyncMock,
-                                        return_value=_DOC,
+                                        "app.services.reader_record_ask.production_stream.resolve_agentic_model",
+                                        return_value=_function_model("agentic retry answer"),
                                     ):
-                                        from app.schemas.reader_ask import (
-                                            ReaderAskMessageRetryRequest,
-                                        )
-                                        from app.services.reader_record_ask import (
-                                            service as svc,
-                                        )
-
-                                        chunks = []
-                                        async for c in svc.retry_reading_record_ask_message(
-                                            user_id=_USER,
-                                            reading_record_id=str(_RECORD),
-                                            thread_id=_THREAD,
-                                            message_id=existing_assistant_id,
-                                            request=ReaderAskMessageRetryRequest(),
+                                        with patch(
+                                            "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+                                            new_callable=AsyncMock,
+                                            return_value=_DOC,
                                         ):
-                                            chunks.append(c)
+                                            from app.schemas.reader_ask import (
+                                                ReaderAskMessageRetryRequest,
+                                            )
+                                            from app.services.reader_record_ask import (
+                                                service as svc,
+                                            )
+
+                                            chunks = []
+                                            async for c in svc.retry_reading_record_ask_message(
+                                                user_id=_USER,
+                                                reading_record_id=str(_RECORD),
+                                                thread_id=_THREAD,
+                                                message_id=existing_assistant_id,
+                                                request=ReaderAskMessageRetryRequest(),
+                                            ):
+                                                chunks.append(c)
                 # Legacy retry never called.
                 assert mock_legacy.call_count == 0
                 events = _parse_sse(chunks)
@@ -3059,3 +3069,369 @@ async def test_retry_service_flag_on_uses_agentic_path() -> None:
                 # Assistant message was reset via agentic path.
                 assert repo.reset_calls == [existing_assistant_id]
     _clear_settings_cache()
+
+
+# ---------------------------------------------------------------------------
+# ASK-WEB-G1-R3: Retry must replay persisted web_search_mode from the
+# original user message metadata (server-side source of truth). The
+# preflight ``_load_replayed_web_search_mode`` runs BEFORE the
+# StreamingResponse starts, so DB failures / illegal metadata /
+# ownership mismatches surface as typed HTTP errors (404 / 503) — the
+# generator never starts with an unverified capability truth.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_loads_allowed_metadata() -> None:
+    """When the persisted user message carries ``web_search_mode="allowed"``,
+    ``_load_replayed_web_search_mode`` returns ``"allowed"``. The caller
+    then feeds this into ``resolve_web_search_capability``; if the
+    adapter is no longer ready, the resolver separately returns a typed
+    unavailable capability.
+    """
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": {"web_search_mode": "allowed"},
+    }
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        mode = await _load_replayed_web_search_mode(
+            thread_id=_THREAD,
+            message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        )
+    assert mode == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_allowed_requires_ready_adapter_before_stream() -> None:
+    """Persisted Search permission cannot silently degrade on retry."""
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        prepare_reading_record_ask_retry,
+    )
+    from app.services.reader_record_ask.web_search_contracts import (
+        ResolvedWebSearchCapability,
+    )
+
+    unavailable_capability = ResolvedWebSearchCapability(
+        enabled_for_turn=False,
+        provider="unwired",
+        protocol="fake",
+        execution_mode="host_function",
+        decision_mode="agent_auto",
+        max_calls=1,
+        max_results_per_call=3,
+        policy_version="reader_record_ask_web_search_v1",
+    )
+    execution = _make_execution_config(
+        option_key="ask-fast",
+        model=object(),
+        web_search_capability=unavailable_capability,
+    )
+    option = MagicMock(key="ask-fast")
+
+    with (
+        patch("app.services.reader_record_ask.service.get_settings") as settings,
+        patch(
+            "app.services.reader_record_ask.service._load_snapshot_facts_raw",
+            new_callable=AsyncMock,
+            return_value=MagicMock(record=MagicMock(title="Test")),
+        ),
+        patch(
+            "app.services.reader_record_ask.service.thread_service.resolve_and_persist_thread_model_option",
+            new_callable=AsyncMock,
+            return_value=option,
+        ),
+        patch(
+            "app.services.reader_record_ask.service._load_replayed_web_search_mode",
+            new_callable=AsyncMock,
+            return_value="allowed",
+        ),
+        patch(
+            "app.services.reader_record_ask.service._resolve_agentic_execution",
+            new_callable=AsyncMock,
+            return_value=execution,
+        ),
+    ):
+        settings.return_value.reader_record_ask_agentic_enabled = True
+        with pytest.raises(HTTPException) as exc_info:
+            await prepare_reading_record_ask_retry(
+                user_id=_USER,
+                reading_record_id=str(_RECORD),
+                thread_id=_THREAD,
+                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "web_search_replay_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_loads_disabled_metadata() -> None:
+    """When the persisted user message carries ``web_search_mode="disabled"``,
+    ``_load_replayed_web_search_mode`` returns ``"disabled"``.
+    """
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": {"web_search_mode": "disabled"},
+    }
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        mode = await _load_replayed_web_search_mode(
+            thread_id=_THREAD,
+            message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        )
+    assert mode == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_legacy_metadata_defaults_disabled() -> None:
+    """When the persisted user message metadata has no ``web_search_mode``
+    key (legacy rows persisted before ASK-WEB-G1-R2), the replay
+    defaults to ``"disabled"`` — fail-closed compatible.
+    """
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": {},  # legacy — no web_search_mode key
+    }
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        mode = await _load_replayed_web_search_mode(
+            thread_id=_THREAD,
+            message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+        )
+    assert mode == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_db_failure_raises_503_no_generator() -> None:
+    """When the repo lookup raises a DB error, the preflight must
+    fail-closed with HTTP 503 — the generator never starts with an
+    unverified capability truth.
+    """
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+
+    async def _failing_lookup(*args, **kwargs):
+        raise RuntimeError("simulated DB connection lost")
+
+    repo.get_assistant_message_with_preceding_user_message = _failing_lookup  # type: ignore[assignment]
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _load_replayed_web_search_mode(
+                thread_id=_THREAD,
+                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            )
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "retry_replay_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_illegal_metadata_raises_503_no_generator() -> None:
+    """When the persisted ``web_search_mode`` is present but not one of
+    ``{"disabled", "allowed"}``, the preflight must fail-closed with
+    HTTP 503 — illegal metadata never silently degrades to disabled.
+    """
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": {"web_search_mode": "bogus-mode"},
+    }
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _load_replayed_web_search_mode(
+                thread_id=_THREAD,
+                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            )
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "retry_replay_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_missing_assistant_returns_404() -> None:
+    """When the retried message_id does not resolve to an assistant
+    message in this thread, the preflight must fail-closed with HTTP 404
+    — typed not-found, never silently degraded to disabled.
+    """
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    # retry_assistant stays None → lookup returns (None, None).
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _load_replayed_web_search_mode(
+                thread_id=_THREAD,
+                message_id=UUID("deadbeef-dead-beef-dead-beefdeadbeef"),
+            )
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["code"] == "retry_message_not_found"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_missing_preceding_user_returns_404() -> None:
+    """When the assistant message exists but no preceding user message
+    is found, the preflight must fail-closed with HTTP 404 — typed
+    not-found, never silently degraded to disabled.
+    """
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    # retry_user stays None → no preceding user message.
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _load_replayed_web_search_mode(
+                thread_id=_THREAD,
+                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            )
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail["code"] == "retry_preceding_user_message_not_found"
+
+
+@pytest.mark.asyncio
+async def test_retry_replay_non_dict_metadata_raises_503() -> None:
+    """Malformed persisted metadata fails before a retry stream starts."""
+    from fastapi import HTTPException
+
+    from app.services.reader_record_ask.service import (
+        _load_replayed_web_search_mode,
+    )
+
+    repo = _FakeRepo()
+    repo.retry_assistant = {
+        "id": str(UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old answer",
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": None,  # non-dict — production normalises NULL → {}
+    }
+
+    with patch(
+        "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+        return_value=repo,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await _load_replayed_web_search_mode(
+                thread_id=_THREAD,
+                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            )
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "retry_replay_unavailable"

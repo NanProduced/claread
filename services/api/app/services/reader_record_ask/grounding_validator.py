@@ -155,9 +155,22 @@ class AgentAnswerDraftOutput(BaseModel):
 def build_evidence_validation_context(
     deps: ReaderRecordAskDeps,
 ) -> EvidenceValidationContext:
-    """Project the current registry and coverage into the canonical context."""
+    """Project the current article + web registries into the canonical context.
+
+    ASK-WEB-G1-R2: the context now includes both article evidence (from
+    :attr:`ReaderRecordAskDeps.evidence_registry`) and web evidence (from
+    :attr:`ReaderRecordAskDeps.web_evidence_registry`). Each evidence kind
+    is projected with its own ``source_kind`` so the block provenance
+    validator can enforce ``basis=article`` vs ``basis=web`` separation.
+
+    Cross-registry borrowing is structurally impossible because each
+    registry is bound to the current envelope fingerprint and the
+    :class:`EvidenceValidationContext` post-init rejects foreign
+    envelope ids.
+    """
 
     evidence: list[ValidatedEvidence] = []
+    # Article evidence — same projection as G0.
     for observation in deps.evidence_registry.list_observations():
         evidence_kind = str(observation.handle.kind)
         source_kind = _EVIDENCE_KIND_TO_SOURCE_KIND.get(evidence_kind)
@@ -178,6 +191,20 @@ def build_evidence_validation_context(
                 ),
             )
         )
+    # Web evidence — project each registered WebEvidence with source_kind="web".
+    # The web registry is bound to the same envelope fingerprint as the
+    # article registry; the EvidenceValidationContext post-init verifies
+    # every entry carries the same envelope id.
+    if deps.web_evidence_registry is not None:
+        for web_ev in deps.web_evidence_registry.list_evidence():
+            evidence.append(
+                ValidatedEvidence(
+                    handle_id=web_ev.internal_handle_id,
+                    source_kind="web",
+                    envelope_id=deps.web_evidence_registry.envelope_fingerprint,
+                    publicly_mappable=True,
+                )
+            )
     return EvidenceValidationContext(
         envelope_id=deps.envelope.envelope_fingerprint,
         evidence=tuple(evidence),

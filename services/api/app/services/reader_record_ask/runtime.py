@@ -76,6 +76,14 @@ from app.services.reader_record_ask.turn_coordinator import (
     TurnCoordinator,
 )
 from app.services.reader_record_ask.turn_prompt import build_production_agent_user_prompt
+from app.services.reader_record_ask.web_evidence_registry import (
+    WebEvidenceRegistry,
+)
+from app.services.reader_record_ask.web_search_contracts import (
+    ResolvedWebSearchCapability,
+    WebSearchOutcome,
+)
+from app.services.reader_record_ask.web_search_port import WebSearchBackend
 
 
 @dataclass(slots=True)
@@ -85,6 +93,10 @@ class ReadingRecordAskRunResult:
     ``baseline_context`` carries the typed baseline assembly result. Successful
     grounded runs carry immutable validated blocks that the finalizer consumes
     directly (no flat compatibility projection).
+
+    ASK-WEB-G1-R1: ``web_search_calls`` mirrors
+    :attr:`ReaderRecordAskDeps.web_search_calls` so production_stream can
+    surface the per-turn web search budget in observability / logs.
     """
 
     final_text: str | None
@@ -98,6 +110,9 @@ class ReadingRecordAskRunResult:
     finalized: FinalizedAskResult | None = None
     agent_output: Any = None
     baseline_context: BaselineAgentContext | None = None
+    # G1-b5: per-turn web search call count (host-owned; never model-supplied).
+    # ``0`` when the capability was not enabled or no call was made.
+    web_search_calls: int = 0
 
 
 async def run_reading_record_ask(
@@ -126,6 +141,18 @@ async def run_reading_record_ask(
     # map (pre-C2 behavior). Production wiring constructs the provider and
     # passes it in so B3 heading enrichment (§4.2) takes effect.
     map_source_material_provider: MapSourceMaterialProvider | None = None,
+    # ASK-WEB-G1-R1: web search capability + port + registry. The
+    # capability is the server-owned execution truth — when ``None`` the
+    # ``search_web`` tool must NOT be mounted. The backend port is
+    # provider-neutral; ``None`` means fail-soft even when
+    # ``enabled_for_turn=True`` (the tool returns ``unavailable``).
+    # The registry is bound to the same envelope fingerprint as the
+    # article evidence registry; when ``None`` the coordinator builds a
+    # fresh one bound to the envelope. Production callers pass all three
+    # so retry reuses the same capability / port identity as send.
+    web_search_capability: ResolvedWebSearchCapability | None = None,
+    web_search_backend: WebSearchBackend | None = None,
+    web_evidence_registry: WebEvidenceRegistry | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -140,6 +167,16 @@ async def run_reading_record_ask(
       be emitted; raw reasoning never enters SSE/DTO/DB.
 
     ``event_sink`` / ``observation`` semantics match the prior runtime.
+
+    ASK-WEB-G1-R1: ``web_search_capability`` is the resolved execution
+    truth for one turn; the runtime reads ``enabled_for_turn`` to decide
+    whether to mount the ``search_web`` tool (G1-b4). The capability
+    never enters the model surface — only the mounted tool does.
+    ``web_search_backend`` is the provider-neutral port; ``None`` means
+    fail-soft (the ``search_web`` tool returns ``unavailable`` even when
+    ``enabled_for_turn=True``). ``web_evidence_registry`` is the in-turn
+    web evidence registry used by the finalizer (G0-b3) to resolve web
+    handles to public citations.
     """
     del max_read_range_calls  # production no longer registers read_range
 
@@ -167,6 +204,9 @@ async def run_reading_record_ask(
         max_search_current_article_calls=max_search_current_article_calls,
         product_search_enabled=True,
         map_source_material_provider=map_source_material_provider,
+        web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
+        web_evidence_registry=web_evidence_registry,
     )
 
     try:
@@ -180,6 +220,14 @@ async def run_reading_record_ask(
         observation.baseline_context = baseline
 
     registry = coordinator.registry
+    # G1-b5: web search execution truth propagated into the deps so the
+    # ``search_web`` tool (when mounted) can read the capability / port /
+    # registry through the coordinator + deps seam. The capability never
+    # enters the model surface — only the mounted tool does.
+    web_search_enabled_for_turn = (
+        web_search_capability is not None
+        and web_search_capability.enabled_for_turn
+    )
     deps = ReaderRecordAskDeps(
         envelope=envelope,
         document_access=document_access,
@@ -192,6 +240,10 @@ async def run_reading_record_ask(
         event_sink=event_sink,
         observation=observation,
         turn_coordinator=coordinator,
+        web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
+        web_evidence_registry=coordinator.web_evidence_registry,
+        max_web_search_calls=coordinator.max_web_search_calls,
     )
 
     deps.emit_event(
@@ -220,6 +272,7 @@ async def run_reading_record_ask(
                 read_range_calls=0,
                 evidence_count=len(registry),
                 search_current_article_calls=0,
+                web_search_calls=0,
             )
         )
         return ReadingRecordAskRunResult(
@@ -237,6 +290,7 @@ async def run_reading_record_ask(
             finalized=finalized,
             agent_output=None,
             baseline_context=baseline,
+            web_search_calls=0,
         )
 
     # Production prompt: exact turn_frame user surface (no re-assembly).
@@ -247,7 +301,12 @@ async def run_reading_record_ask(
         map_prompt=assembly.map_result.prompt_capability,
     )
 
-    agent = create_reading_record_ask_agent(model)
+    # G1-b4: conditionally mount the ``search_web`` tool. The flag is
+    # the resolved execution truth — never the request toggle directly.
+    agent = create_reading_record_ask_agent(
+        model,
+        web_search_enabled=web_search_enabled_for_turn,
+    )
     if observation is not None:
         observation.execution_stage = "agent_run"
     streamed = await run_agent_with_thinking_transport(
@@ -278,6 +337,11 @@ async def run_reading_record_ask(
 
     if observation is not None:
         observation.execution_stage = "finalizer"
+    # G1-b5: propagate the in-turn web evidence registry + outcome to the
+    # finalizer so web-block handles can be resolved and the completed DTO
+    # can carry the turn-level web search summary. The outcome is the
+    # coordinator's last translated public outcome (``None`` when the
+    # tool was never invoked).
     finalized = await finalize_agent_answer(
         envelope=envelope,
         registry=registry,
@@ -285,6 +349,8 @@ async def run_reading_record_ask(
         response_kind=finalizer_kind,
         validated_answer_blocks=validated_answer_blocks,
         clarification_text=agent_output.clarification_text,
+        web_evidence_registry=coordinator.web_evidence_registry,
+        web_search_outcome=coordinator.web_search_outcome,
     )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
@@ -298,6 +364,7 @@ async def run_reading_record_ask(
             read_range_calls=0,
             evidence_count=len(registry),
             search_current_article_calls=deps.search_current_article_calls,
+            web_search_calls=deps.web_search_calls,
         )
     )
     return ReadingRecordAskRunResult(
@@ -316,4 +383,5 @@ async def run_reading_record_ask(
         finalized=finalized,
         agent_output=agent_output,
         baseline_context=baseline,
+        web_search_calls=deps.web_search_calls,
     )

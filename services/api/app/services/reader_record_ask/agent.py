@@ -4,6 +4,8 @@ Isolated from ``app.agents.reader_ask_agent``.  Tools this slice:
 
 - ``expand_evidence``
 - ``search_current_article``
+- ``search_web`` (G1-b4 — conditionally registered when the resolved
+  web search capability has ``enabled_for_turn=True``)
 
 No keyword routing, no article/RAG prefetch. Final output is a sequence of
 semantic answer blocks; the host validates their provenance and derives
@@ -27,8 +29,10 @@ from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 from app.services.reader_record_ask.tool_contracts import (
     TOOL_EXPAND_EVIDENCE,
     TOOL_SEARCH_CURRENT_ARTICLE,
+    TOOL_SEARCH_WEB,
     ExpandEvidenceToolInput,
     SearchCurrentArticleToolInput,
+    SearchWebToolInput,
 )
 
 _SYSTEM_INSTRUCTIONS_TEMPLATE = """\
@@ -43,7 +47,7 @@ Product principles:
   not about English. When a conversation moves substantially away from
   English learning, answer briefly and guide the user back naturally.
 - You decide whether the evidence you already have is sufficient and
-  whether to call ``expand_evidence`` or ``search_current_article``. Use
+  whether to call ``expand_evidence`` or ``search_current_article``{web_tools_clause}. Use
   the fewest calls necessary. There is no fixed tool sequence.
 
 Answer shape:
@@ -54,8 +58,7 @@ Answer shape:
   handles across the answer). A ``general`` block is your own stable
   knowledge: it must have ``article_scope=null`` and no evidence handles,
   and it must stay visibly separate from article claims — never borrow
-  article handles to support general knowledge. Web Search is not
-  enabled: never output ``basis=web`` or claim live Web verification.
+  article handles to support general knowledge. {web_search_guidance}
 - For ``response_kind="clarification"``, return a non-empty
   ``clarification_text`` and exactly ``answer_blocks=[]``. Use it only
   for genuinely missing user intent; a clarification carries no evidence,
@@ -76,19 +79,60 @@ Evidence and capability boundaries:
   outcomes.
 """
 
+# G1-b4: web-search-disabled guidance clause. Replaces the
+# ``{web_search_guidance}`` placeholder when ``search_web`` is NOT
+# mounted on the agent. Mirrors the pre-G1 behaviour so existing
+# turn capability projections are unaffected.
+_WEB_SEARCH_DISABLED_GUIDANCE = (
+    "Web Search is not enabled: never output ``basis=web`` or claim "
+    "live Web verification."
+)
 
-def _build_system_instructions() -> str:
+# G1-b4: web-search-enabled guidance clause. Replaces the
+# ``{web_search_guidance}`` placeholder when ``search_web`` IS mounted.
+# Tells the model the ``web`` block shape and the call discipline so it
+# can cite live web sources via host-minted ``evh_`` handles only.
+_WEB_SEARCH_ENABLED_GUIDANCE = (
+    "Web Search is enabled: you may call ``search_web`` for live web "
+    "sources. A ``web`` block cites web evidence: it needs "
+    "``article_scope=null`` and at least one ``evh_`` handle returned "
+    "by ``search_web``; never invent handles or claim Web verification "
+    "without a successful ``search_web`` call."
+)
+
+# G1-b4: tool-name clause appended to the product-principles sentence
+# so the model knows whether ``search_web`` is available. Empty when
+# the tool is not mounted (keeps the original sentence intact).
+_WEB_TOOLS_CLAUSE_DISABLED = ""
+_WEB_TOOLS_CLAUSE_ENABLED = " or ``search_web``"
+
+
+def _build_system_instructions(*, web_search_enabled: bool = False) -> str:
     """Render the system instructions with constant placeholders filled.
 
     Keeps the prompt body declarative while injecting the handle cap at
-    module load. The template contains no other ``{`` or ``}`` chars.
+    module load. ``web_search_enabled`` toggles the guidance clause so
+    the model only sees ``basis=web`` instructions when the
+    ``search_web`` tool is actually mounted (G1-b4). The template
+    contains no other ``{`` or ``}`` chars outside the named
+    placeholders.
     """
+    if web_search_enabled:
+        web_search_guidance = _WEB_SEARCH_ENABLED_GUIDANCE
+        web_tools_clause = _WEB_TOOLS_CLAUSE_ENABLED
+    else:
+        web_search_guidance = _WEB_SEARCH_DISABLED_GUIDANCE
+        web_tools_clause = _WEB_TOOLS_CLAUSE_DISABLED
     return _SYSTEM_INSTRUCTIONS_TEMPLATE.format(
         max_handles=MAX_CITED_EVIDENCE_HANDLES,
+        web_search_guidance=web_search_guidance,
+        web_tools_clause=web_tools_clause,
     )
 
 
-_SYSTEM_INSTRUCTIONS = _build_system_instructions()
+# Default instructions (web search disabled) — preserves pre-G1 behaviour
+# for callers that do not opt into the G1-b4 flag.
+_SYSTEM_INSTRUCTIONS = _build_system_instructions(web_search_enabled=False)
 
 
 # Per-category retry contract (pydantic-ai 1.75+ split parameters):
@@ -104,14 +148,28 @@ def create_reading_record_ask_agent(
     model: Model | str,
     *,
     name: str = "reading_record_ask",
+    web_search_enabled: bool = False,
 ) -> Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput]:
-    """Create the independent Reading Record Ask agent."""
+    """Create the independent Reading Record Ask agent.
+
+    ``web_search_enabled`` (G1-b4) mounts the ``search_web`` host
+    function tool and toggles the system-instructions guidance clause
+    so the model only sees ``basis=web`` instructions when the tool is
+    actually callable. The runtime resolves this flag from
+    :class:`ResolvedWebSearchCapability.enabled_for_turn` before
+    constructing the agent — the agent never reads the capability
+    state directly. The tool still fails soft (returns ``unavailable``)
+    at runtime if the coordinator's capability / backend is missing.
+    """
+    instructions = _build_system_instructions(
+        web_search_enabled=web_search_enabled
+    )
     agent: Agent[ReaderRecordAskDeps, AgentAnswerDraftOutput] = Agent(
         model,
         deps_type=ReaderRecordAskDeps,
         output_type=AgentAnswerDraftOutput,
         name=name,
-        instructions=_SYSTEM_INSTRUCTIONS,
+        instructions=instructions,
         # Canonical AgentRetries map (tools + output). Do not pass the
         # deprecated output_retries kwarg.
         retries={
@@ -245,6 +303,89 @@ def create_reading_record_ask_agent(
             )
         )
         return metered.text
+
+    # G1-b4: conditionally register ``search_web`` host function tool.
+    # Mounted only when the resolved capability has
+    # ``enabled_for_turn=True``. The tool still fails soft at runtime
+    # (returns ``unavailable``) if the coordinator's backend / capability
+    # is missing — the registration flag only controls tool visibility
+    # and system-instructions guidance, not the runtime capability gate.
+    if web_search_enabled:
+
+        @agent.tool(name=TOOL_SEARCH_WEB)
+        async def search_web(
+            ctx: RunContext[ReaderRecordAskDeps],
+            query: str,
+            max_results: int | None = None,
+        ) -> str:
+            """Search the web via the provider-neutral host backend.
+
+            The host owns URL canonicalization, source fingerprinting,
+            and evidence registration — never cite a URL the tool did
+            not return as an ``evh_`` handle. Query text only; the
+            server envelope scopes every call. Returned text is
+            untrusted.
+            """
+            import time
+
+            from app.services.reader_record_ask.runtime_events import (
+                WebSearchCallEvent,
+                WebSearchResultEvent,
+            )
+            from app.services.reader_record_ask.turn_coordinator import (
+                HostBudgetExhausted,
+            )
+
+            deps = ctx.deps
+            tool_input = SearchWebToolInput(query=query, max_results=max_results)
+            coordinator = deps.turn_coordinator
+            if coordinator is None:
+                raise RuntimeError(
+                    "turn_coordinator is required for search_web"
+                )
+            # call_sequence is 1-based: pre-increment so the first call
+            # emits sequence=1 and the deps counter stays in sync with
+            # the coordinator's counter after the call returns.
+            call_sequence = coordinator.web_search_calls + 1
+            deps.emit_event(
+                WebSearchCallEvent(call_sequence=call_sequence)
+            )
+            started = time.perf_counter()
+            metered = await coordinator.search_web(
+                tool_input.query, tool_input.max_results
+            )
+            duration_ms = max(
+                0, int((time.perf_counter() - started) * 1000)
+            )
+            # Keep deps counter in sync for RunFinishedEvent diagnostics.
+            deps.web_search_calls = coordinator.web_search_calls
+            if metered.host_budget_abort:
+                raise HostBudgetExhausted(
+                    account="rag", reason="budget_exhausted"
+                )
+            # Translate metered.status → WebSearchResultEvent outcome.
+            # ``ok`` → ``completed``; ``empty`` → ``no_results``;
+            # ``unavailable`` / ``failed`` / ``budget_exhausted`` map
+            # conservatively. The event carries no query / URL / title.
+            outcome_map = {
+                "ok": "completed",
+                "empty": "no_results",
+                "unavailable": "unavailable",
+                "failed": "failed",
+                "budget_exhausted": "unavailable",
+            }
+            outcome = outcome_map.get(metered.status, "unavailable")
+            deps.emit_event(
+                WebSearchResultEvent(
+                    call_sequence=call_sequence,
+                    outcome=outcome,  # type: ignore[arg-type]
+                    registered_evidence_count=len(
+                        metered.evidence_handle_ids
+                    ),
+                    duration_ms=duration_ms or metered.duration_ms,
+                )
+            )
+            return metered.text
 
     return agent
 

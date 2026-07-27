@@ -362,11 +362,24 @@ def project_agentic_history_message(
                 "agentic_answer_blocks": [
                     block.model_dump(mode="json") for block in completed.answer_blocks
                 ],
+                # G0-b3: exclude_none so article citations keep their
+                # pre-web shape (no url/title/description=None keys) while
+                # web citations drop snippet=None. Web fields are only
+                # present when source_kind="web".
                 "agentic_citations": [
-                    citation.model_dump(mode="json") for citation in completed.citations
+                    citation.model_dump(mode="json", exclude_none=True)
+                    for citation in completed.citations
                 ],
                 "knowledge_mode": completed.knowledge_mode,
                 "source_status": completed.source_status,
+                # G0-b3: project web search summary for cold history
+                # replay parity with hot SSE. None when web search was
+                # not invoked this turn.
+                "agentic_web_search": (
+                    completed.web_search.model_dump(mode="json")
+                    if completed.web_search is not None
+                    else None
+                ),
                 "legacy_classification": None,
             }
 

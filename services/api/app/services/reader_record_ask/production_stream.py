@@ -79,6 +79,8 @@ from app.services.reader_record_ask.runtime_events import (
     ToolCallEvent,
     ToolResultEvent,
     ValidatingEvidenceEvent,
+    WebSearchCallEvent,
+    WebSearchResultEvent,
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
@@ -98,8 +100,17 @@ from app.services.reader_record_ask.tool_contracts import (
     TOOL_EXPAND_EVIDENCE,
     TOOL_READ_RANGE,
     TOOL_SEARCH_CURRENT_ARTICLE,
+    TOOL_SEARCH_WEB,
 )
 from app.services.reader_record_ask.turn_coordinator import HostBudgetExhausted
+from app.services.reader_record_ask.web_evidence_registry import WebEvidenceRegistry
+from app.services.reader_record_ask.web_search_contracts import (
+    ResolvedWebSearchCapability,
+    WebSearchMode,
+)
+from app.services.reader_record_ask.web_search_port import (
+    WebSearchBackend,
+)
 
 RunFn = Callable[..., Any]
 
@@ -132,8 +143,10 @@ _AGENT_DONE = object()
 
 # Public tools that may project named progress. expand_evidence is
 # deliberately **not** public — it maps to generic agent_running only.
+# ASK-WEB-G1-R1: ``TOOL_SEARCH_WEB`` is public so the projector emits
+# ``searching_web`` phase + ``search_web`` tool_name progress events.
 _PUBLIC_TOOL_NAMES: frozenset[str] = frozenset(
-    {TOOL_READ_RANGE, TOOL_SEARCH_CURRENT_ARTICLE}
+    {TOOL_READ_RANGE, TOOL_SEARCH_CURRENT_ARTICLE, TOOL_SEARCH_WEB}
 )
 
 _TOOL_RESULT_ACTIVITY: dict[str, ProgressActivity] = {
@@ -341,12 +354,18 @@ def build_completed_dto(
     # Validate restricted evidence invariants before emitting public ok.
     build_restricted_evidence_json(run_result=run_result, envelope=envelope)
     finalized = run_result.finalized
+    # ASK-WEB-G1-R1: surface the turn-level web search summary on the
+    # public completed DTO. ``None`` means search was not invoked this
+    # turn (capability disabled / agent did not call ``search_web``).
+    # The summary counts only message-local web citations actually
+    # attached to the answer — never the raw provider result count.
     return ReaderRecordAskCompletedDTO(
         answer_text=run_result.final_text,
         answer_blocks=list(finalized.answer_blocks),
         citations=list(finalized.public_citations),
         knowledge_mode=finalized.knowledge_mode,
         source_status=finalized.source_status,
+        web_search=finalized.web_search_summary,
         message_id=message_id,
         thread_id=thread_id,
         turn_run_id=turn_run_id,
@@ -393,6 +412,11 @@ class _ProgressProjector:
         self.time_to_first_activity_ms: int | None = None
         self.read_range_calls = 0
         self.search_current_article_calls = 0
+        # ASK-WEB-G1-R1: per-turn web search call counter (host-owned).
+        # Mirrors ``read_range_calls`` / ``search_current_article_calls``
+        # so observers can audit the per-turn web search budget without
+        # touching the agent's tool surface.
+        self.web_search_calls = 0
         self._agent_started_emitted = False
 
     def _elapsed_ms(self) -> int:
@@ -612,6 +636,63 @@ class _ProgressProjector:
             )
             return out
 
+        # ASK-WEB-G1-R1: Web Search call/result projection. The agent
+        # emits ``WebSearchCallEvent`` when it invokes ``search_web``
+        # and ``WebSearchResultEvent`` when the host returns. Neither
+        # carries the query text, URLs, or provider payload — only the
+        # call sequence + typed outcome. The projector maps them to the
+        # ``searching_web`` phase with ``search_web`` tool_name.
+        if isinstance(event, WebSearchCallEvent):
+            self.web_search_calls += 1
+            started = self.ensure_agent_started()
+            if started is not None:
+                out.append(started)
+            out.append(
+                self._next(
+                    phase="searching_web",
+                    activity="started",
+                    summary="正在搜索网页",
+                    tool_name="search_web",
+                    status="running",
+                )
+            )
+            return out
+
+        if isinstance(event, WebSearchResultEvent):
+            # Translate outcome → public activity / status / summary.
+            # ``completed`` / ``no_results`` → completed activity, ok status.
+            # ``unavailable`` → unavailable activity, unavailable status.
+            # ``failed`` → failed activity, failed status.
+            outcome = event.outcome
+            activity: ProgressActivity = (
+                "completed"
+                if outcome in ("completed", "no_results")
+                else outcome  # type: ignore[assignment]
+            )
+            summary = {
+                "completed": "已完成网页搜索",
+                "no_results": "未找到相关网页结果",
+                "unavailable": "网页搜索暂不可用",
+                "failed": "网页搜索失败",
+            }.get(outcome, "网页搜索未知状态")
+            status: ProgressStatus = {
+                "completed": "ok",
+                "no_results": "ok",
+                "unavailable": "unavailable",
+                "failed": "failed",
+            }.get(outcome, "failed")  # type: ignore[assignment]
+            out.append(
+                self._next(
+                    phase="searching_web",
+                    activity=activity,
+                    summary=summary,
+                    tool_name="search_web",
+                    status=status,
+                    duration_ms=event.duration_ms,
+                )
+            )
+            return out
+
         if isinstance(event, ValidatingEvidenceEvent):
             out.append(
                 self._next(
@@ -668,6 +749,16 @@ async def _run_agentic_turn(
     pointer_ledger: ExpansionPointerLedger | None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
+    # ASK-WEB-G1-R1: web search capability + port + registry. The
+    # capability is the server-owned execution truth — when ``None`` the
+    # runtime must NOT mount the ``search_web`` tool. The backend port
+    # is provider-neutral; ``None`` means fail-soft even when
+    # ``enabled_for_turn=True``. The registry is bound to the same
+    # envelope fingerprint as the article evidence registry; when
+    # ``None`` the coordinator builds a fresh one bound to the envelope.
+    web_search_capability: ResolvedWebSearchCapability | None = None,
+    web_search_backend: WebSearchBackend | None = None,
+    web_evidence_registry: WebEvidenceRegistry | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -686,6 +777,12 @@ async def _run_agentic_turn(
     ASK-M1: ``model_settings`` / ``usage_limits`` forward the resolved
     product budget into ``run_reading_record_ask`` (and from there into
     PydanticAI ``agent.run``). Both default to ``None``.
+
+    ASK-WEB-G1-R1: ``web_search_capability`` / ``web_search_backend`` /
+    ``web_evidence_registry`` forward the resolved execution truth into
+    ``run_reading_record_ask`` so the runtime can mount the
+    ``search_web`` tool and inject the :class:`WebSearchBackend` port.
+    All three default to ``None`` (capability not granted).
     """
     run_agent = run_fn or run_reading_record_ask
     turn_run_id = UUID(turn["id"])
@@ -756,6 +853,9 @@ async def _run_agentic_turn(
             model_settings=model_settings,
             usage_limits=usage_limits,
             thinking_observer=reasoning_projector,
+            web_search_capability=web_search_capability,
+            web_search_backend=web_search_backend,
+            web_evidence_registry=web_evidence_registry,
         )
     )
 
@@ -803,7 +903,9 @@ async def _run_agentic_turn(
                 | ComposingAnswerEvent
                 | ValidatingEvidenceEvent
                 | FinalAnswerEvent
-                | RunFinishedEvent,
+                | RunFinishedEvent
+                | WebSearchCallEvent
+                | WebSearchResultEvent,
             ):
                 # Only project known runtime events; never dump raw objects.
                 continue
@@ -852,7 +954,9 @@ async def _run_agentic_turn(
                 | ComposingAnswerEvent
                 | ValidatingEvidenceEvent
                 | FinalAnswerEvent
-                | RunFinishedEvent,
+                | RunFinishedEvent
+                | WebSearchCallEvent
+                | WebSearchResultEvent,
             ):
                 if isinstance(item, AnswerDeltaEvent):
                     # R4-A6: token-level answer_text increment (drain path).
@@ -1332,6 +1436,18 @@ async def stream_agentic_thread_message(
     retry_message_id: UUID | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
+    # ASK-WEB-G1-R1: web search capability resolved from the request
+    # toggle (``web_search_mode``). When ``None`` (capability not
+    # granted / ``web_search_mode="disabled"``) the runtime must NOT
+    # mount the ``search_web`` tool. When non-None and
+    # ``enabled_for_turn=True``, the helper auto-wires a
+    # :class:`FakeWebSearchBackend` (G1 vertical slice) and a fresh
+    # :class:`WebEvidenceRegistry` bound to the envelope fingerprint
+    # unless explicit overrides are supplied. Real provider transports
+    # land in G2+ and replace the auto-wired fake.
+    web_search_capability: ResolvedWebSearchCapability | None = None,
+    web_search_backend: WebSearchBackend | None = None,
+    web_evidence_registry: WebEvidenceRegistry | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -1433,6 +1549,39 @@ async def stream_agentic_thread_message(
             plan_service=ArticleRagIndexPlanService()
         )
 
+    # ASK-WEB-G1-R2: NEVER auto-inject FakeWebSearchBackend on the
+    # production path. The fake backend is test-only; production code
+    # must never import, construct, or default-select it. When the
+    # capability is granted (``enabled_for_turn=True``) but no explicit
+    # backend was injected, the runtime mounts the ``search_web`` tool
+    # but the tool returns ``unavailable`` on every call — fail-closed
+    # by construction. Tests inject scripted fakes directly via the
+    # ``web_search_backend`` parameter.
+    #
+    # The WebEvidenceRegistry is always safe to auto-wire because it
+    # is a pure host-side data structure (no provider I/O). It is bound
+    # to the envelope fingerprint so web evidence cannot be reused
+    # across envelopes (defense-in-depth against cross-turn leakage).
+    wired_web_search_backend: WebSearchBackend | None = web_search_backend
+    wired_web_evidence_registry: WebEvidenceRegistry | None = web_evidence_registry
+    if (
+        web_search_capability is not None
+        and web_search_capability.enabled_for_turn
+        and wired_web_evidence_registry is None
+    ):
+        wired_web_evidence_registry = WebEvidenceRegistry(
+            envelope_fingerprint=envelope.envelope_fingerprint,
+        )
+    effective_web_search_capability = (
+        web_search_capability
+        if (
+            web_search_capability is not None
+            and web_search_capability.enabled_for_turn
+            and wired_web_search_backend is not None
+        )
+        else None
+    )
+
     if retry_message_id is not None:
         # Retry mode: reset the existing assistant message and reuse the
         # preceding user message's content.  No new user message is created.
@@ -1461,12 +1610,36 @@ async def stream_agentic_thread_message(
         # Use the original user message text as agent input.
         content = existing_user["content_md"] or ""
     else:
+        # ASK-WEB-G1-R2: persist the resolved web search capability mode
+        # (``allowed`` / ``disabled``) on the user message so the retry
+        # path can replay the original turn's capability without re-
+        # deciding it from the current UI toggle. The persisted value
+        # reflects the **actual** capability granted by the server, not
+        # the raw request value — when the resolver returns ``None`` or
+        # ``enabled_for_turn=False`` (e.g. provider not wired), the
+        # persisted mode is ``disabled`` even if the user toggled the
+        # UI to "allowed". This is the single source of truth for retry
+        # replay; the runtime must NOT fall back to the current UI
+        # toggle when this field is present.
+        #
+        # ASK-WEB-G1-R3: ``allowed`` is only persisted when a real
+        # backend was actually wired this turn. Without a backend, the
+        # capability cannot execute, so retry replay must NOT inherit a
+        # "假可用" (fake-available) mode — fail-closed to ``disabled``.
+        persisted_web_search_mode: WebSearchMode = (
+            "allowed"
+            if effective_web_search_capability is not None
+            else "disabled"
+        )
         user_msg = await repo.create_message(
             thread_id=thread_id,
             role="user",
             status="completed",
             content_md=content,
-            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V2},
+            metadata={
+                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                "web_search_mode": persisted_web_search_mode,
+            },
         )
         assistant_msg = await repo.create_message(
             thread_id=thread_id,
@@ -1504,6 +1677,23 @@ async def stream_agentic_thread_message(
         thread_id=str(thread_id),
         turn_run_id=turn["id"],
         has_initial_selection=envelope.initial_anchor is not None,
+        # ASK-WEB-G1-R1: echo the resolved capability mode so the
+        # frontend can render the Search toggle in the correct state.
+        # ``allowed`` only means the capability is mounted; the agent
+        # may still choose not to search.
+        #
+        # ASK-WEB-G1-R3: ``allowed`` must only be echoed when a real
+        # executable ``WebSearchBackend`` is wired this turn. Even when
+        # the capability resolver returned ``enabled_for_turn=True``,
+        # missing backend means the ``search_web`` tool would be a
+        # "假可用" (fake-available) capability — the runtime must
+        # fail-closed to ``disabled`` so the UI/RunStarted never
+        # advertises a capability that cannot execute.
+        web_search_mode=(
+            "allowed"
+            if effective_web_search_capability is not None
+            else "disabled"
+        ),
     )
     yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
 
@@ -1522,6 +1712,9 @@ async def stream_agentic_thread_message(
         pointer_ledger=pointer_ledger,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        web_search_capability=effective_web_search_capability,
+        web_search_backend=wired_web_search_backend,
+        web_evidence_registry=wired_web_evidence_registry,
     ):
         yield chunk
 
@@ -1542,6 +1735,15 @@ async def retry_agentic_thread_message(
     pointer_ledger: ExpansionPointerLedger | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
+    # ASK-WEB-G1-R1: retry must receive the same resolved web search
+    # capability as the original send (callers resolve via
+    # ``resolve_reader_record_ask_execution`` before calling). When
+    # ``None`` the runtime must NOT mount the ``search_web`` tool —
+    # retry must never silently grant a capability the user did not
+    # enable on the original turn.
+    web_search_capability: ResolvedWebSearchCapability | None = None,
+    web_search_backend: WebSearchBackend | None = None,
+    web_evidence_registry: WebEvidenceRegistry | None = None,
 ) -> AsyncIterator[str]:
     """Retry an existing assistant message via the agentic path.
 
@@ -1559,6 +1761,12 @@ async def retry_agentic_thread_message(
     product budget. Retry must receive the same execution config as the
     original send — callers resolve via
     :func:`resolve_reader_record_ask_execution` before calling.
+
+    ASK-WEB-G1-R1: ``web_search_capability`` / ``web_search_backend`` /
+    ``web_evidence_registry`` forward the resolved web search truth. Retry
+    must not silently grant a capability the user did not enable on the
+    original turn — callers must pass the same capability (or ``None``)
+    resolved from the persisted execution snapshot.
     """
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
@@ -1579,6 +1787,9 @@ async def retry_agentic_thread_message(
         retry_message_id=message_id,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
+        web_evidence_registry=web_evidence_registry,
     ):
         yield chunk
     return

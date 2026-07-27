@@ -4,6 +4,7 @@ Tools covered (schema only; **no executors** in this slice):
 
 - ``read_range``
 - ``search_current_article``
+- ``search_web`` (G1-b3 — provider-neutral web search)
 
 Model-facing tool inputs must only carry business parameters (query,
 limited locator).  Authorization fields (``user_id``, record/base/
@@ -28,6 +29,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.services.reader_record_ask.context_envelope import SERVER_OWNED_SCOPE_FIELDS
 from app.services.reader_record_ask.evidence import EvidenceHandleRef
+from app.services.reader_record_ask.web_search_contracts import (
+    WEB_MAX_RESULTS_PER_CALL,
+    WEB_QUERY_MAX_LEN,
+)
 
 # ---------------------------------------------------------------------------
 # Tool names
@@ -38,12 +43,18 @@ TOOL_SEARCH_CURRENT_ARTICLE: Literal["search_current_article"] = (
     "search_current_article"
 )
 TOOL_EXPAND_EVIDENCE: Literal["expand_evidence"] = "expand_evidence"
+# G1-b3: provider-neutral web search tool (host-owned function tool).
+# Mounted only when :attr:`ResolvedWebSearchCapability.enabled_for_turn`
+# is True (the runtime decides; the model never reads capability state).
+TOOL_SEARCH_WEB: Literal["search_web"] = "search_web"
 
 # Production agent tools (R4-A5-7): expand_evidence + search_current_article.
 # ``read_range`` remains as a legacy contract name for offline schemas only.
+# G1-b4: ``search_web`` is conditionally registered when the resolved
+# web search capability has ``enabled_for_turn=True``.
 ReaderRecordAskReadToolName = Literal["read_range", "search_current_article"]
 ReaderRecordAskProductionToolName = Literal[
-    "expand_evidence", "search_current_article"
+    "expand_evidence", "search_current_article", "search_web"
 ]
 
 # Offsets on read locators are always unit-/segment-local UTF-16 code units.
@@ -519,5 +530,114 @@ class RagSearchToolView(BaseModel):
             if self.next_actions:
                 raise ValueError(
                     "non-ok rag tool-view must not carry next_actions"
+                )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Web search tool schema (G1-b3; isolated — wired by G1-b4 agent registration)
+# ---------------------------------------------------------------------------
+#
+# Mirrors the RAG tool-view discipline: no free-form ``payloads``, no
+# provider identity, no scores/rank, no raw URLs in sidecar. Web source
+# text (URL / title / description) appears only inside
+# ``web_source_blocks`` as renderer-minted
+# ``<untrusted_web_source role="search_web">`` XML blocks; the model
+# only receives opaque ``evh_`` handles for citation.
+
+WebSearchToolStatus = Literal[
+    # Success path with at least one registered web evidence handle.
+    "ok",
+    # Provider explicitly returned zero results for the query.
+    "empty",
+    # Provider / capability not available (port None, call-limit hit,
+    # fence failure, fake-empty-script). Fail-soft safe view.
+    "unavailable",
+    # Provider call raised or returned a malformed payload. Fail-soft.
+    "failed",
+]
+
+
+class SearchWebToolInput(BaseModel):
+    """Model-facing input for the ``search_web`` host function tool.
+
+    The model supplies only the query (and optional result cap). All
+    server-owned scope (envelope / record / base / generation / user /
+    tenant / capability state) is taken from :class:`ReaderRecordAskDeps`
+    and never from this input.
+
+    ``query`` is bounded by :data:`WEB_QUERY_MAX_LEN`. The turn
+    coordinator clamps / rejects over-length queries *before* calling
+    the backend port. ``max_results`` is bounded by
+    :data:`WEB_MAX_RESULTS_PER_CALL`; the coordinator clamps to the
+    resolved capability's ``max_results_per_call`` if larger.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    query: str = Field(min_length=1, max_length=WEB_QUERY_MAX_LEN)
+    max_results: int | None = Field(default=None, ge=1, le=WEB_MAX_RESULTS_PER_CALL)
+
+
+class SearchWebToolView(BaseModel):
+    """Narrow model-visible tool-view for ``search_web``.
+
+    Field discipline mirrors :class:`RagSearchToolView`: no free-form
+    ``payloads``, no provider identity, no scores/rank, no raw URLs in
+    sidecar. Web source text (canonical URL / title / description) is
+    renderer-minted as ``<untrusted_web_source role="search_web">``
+    XML blocks; the model only receives opaque ``evh_`` handles.
+
+    ``status="ok"`` requires aligned 1:1 ``evidence_handles`` and
+    ``web_source_blocks`` (one block per cited web source). The host
+    always re-canonicalizes provider URLs before emitting the block, so
+    the model never sees the raw provider URL field.
+
+    Fail-soft safe views (``empty`` / ``unavailable`` / ``failed``)
+    carry no handles, no blocks, no actions — the agent gets a typed
+    status + bounded summary only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: WebSearchToolStatus
+    summary: str = Field(min_length=1, max_length=400)
+    next_actions: tuple[str, ...] = ()
+    # Opaque server-minted evidence handles (citeable) — ok only.
+    evidence_handles: tuple[EvidenceHandleRef, ...] = ()
+    # Renderer-minted untrusted XML blocks — ok only; one per handle.
+    # Each block carries the canonical URL, title, and optional
+    # description as escaped XML text; the model never sees raw
+    # provider payload or provider_result_ref.
+    web_source_blocks: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_status_field_coupling(self) -> SearchWebToolView:
+        if self.status == "ok":
+            if not self.evidence_handles:
+                raise ValueError(
+                    "ok web tool-view requires evidence_handles"
+                )
+            if not self.web_source_blocks:
+                raise ValueError(
+                    "ok web tool-view requires web_source_blocks"
+                )
+            if len(self.evidence_handles) != len(self.web_source_blocks):
+                raise ValueError(
+                    "web tool-view handles and blocks must align 1:1"
+                )
+        else:
+            # Fail-soft safe views: no handles, no blocks, no actions.
+            if self.evidence_handles:
+                raise ValueError(
+                    "non-ok web tool-view must not carry evidence_handles"
+                )
+            if self.web_source_blocks:
+                raise ValueError(
+                    "non-ok web tool-view must not carry web_source_blocks"
+                )
+            if self.next_actions:
+                raise ValueError(
+                    "non-ok web tool-view must not carry next_actions"
                 )
         return self
