@@ -1567,3 +1567,191 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R1: stable paragraph inline marks must survive snapshot → document
+// projection. Before R1, `stableBlockType === "paragraph"` was NOT in
+// STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION and the stable builder had no
+// `case "paragraph"`, so paragraph units always took the legacy path and
+// silently dropped inlineMarks (emphasis rendered as plain text even though
+// the snapshot carried the marks).
+// ---------------------------------------------------------------------------
+
+describe("R1 stable paragraph inline marks projection", () => {
+  const EM_TEXT = "How we will roll this out safely.";
+  const EM_END = EM_TEXT.length;
+
+  function makeStableParagraphSnapshot(): ReaderPlateSnapshotDto {
+    const textHash = computeUtf16FNV1a(EM_TEXT);
+    return {
+      schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
+      snapshot_id: "snapshot_r1",
+      snapshot_taken_at: "2026-07-26T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_r1",
+      record: {
+        title: "R1 Inline Marks Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-07-26T00:00:00Z",
+        source_type: "plain_text",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: "base_r1",
+        content_sha256: "a".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: EM_END,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: {
+        units: [
+          {
+            unit_id: "u2",
+            order_index: 1,
+            unit_type: "body",
+            boundary_quality: "normal",
+            label: null,
+            base_start_utf16: 0,
+            base_end_utf16: EM_END,
+            text_hash: textHash,
+            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+            stable_block_type: "paragraph",
+            heading_level: null,
+          },
+        ],
+      },
+      anchor_segments: [
+        {
+          anchor_segment_id: "seg_r1",
+          sentence_id: "sent_r1",
+          paragraph_id: "u2",
+          unit_id: "u2",
+          order_index: 1,
+          unit_order_index: 1,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: EM_END,
+          unit_start_utf16: 0,
+          unit_end_utf16: EM_END,
+          text_hash: textHash,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        },
+      ],
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: [
+        {
+          type: "reader_unit",
+          owner: "stable",
+          base_id: "base_r1",
+          unit_id: "u2",
+          order_index: 1,
+          unit_type: "body",
+          boundary_quality: "normal",
+          base_start_utf16: 0,
+          base_end_utf16: EM_END,
+          text_hash: textHash,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              type: "reader_source_block",
+              owner: "stable",
+              base_id: "base_r1",
+              unit_id: "u2",
+              base_start_utf16: 0,
+              base_end_utf16: EM_END,
+              stableBlockType: "paragraph",
+              stableBlockId: "b2",
+              headingLevel: null,
+              inlineMarks: [{ type: "em", start: 0, end: EM_END }],
+              tableRole: null,
+              parentStableBlockId: null,
+              children: [
+                {
+                  type: "reader_anchor_segment",
+                  owner: "stable",
+                  base_id: "base_r1",
+                  unit_id: "u2",
+                  anchor_segment_id: "seg_r1",
+                  sentence_id: "sent_r1",
+                  segment_type: "sentence",
+                  boundary_quality: "normal",
+                  base_start_utf16: 0,
+                  base_end_utf16: EM_END,
+                  unit_start_utf16: 0,
+                  unit_end_utf16: EM_END,
+                  text_hash: textHash,
+                  hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                  children: [
+                    {
+                      text: EM_TEXT,
+                      owner: "stable",
+                      lock_source: true,
+                      source_role: "segment_text",
+                      base_start_utf16: 0,
+                      base_end_utf16: EM_END,
+                      anchor_segment_id: "seg_r1",
+                      segment_start_utf16: 0,
+                      segment_end_utf16: EM_END,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("projects paragraph stable block inlineMarks onto text leaves", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeStableParagraphSnapshot(),
+    );
+    const paragraph = document.children.find(
+      (child) => child.type === "paragraph",
+    );
+    expect(paragraph).toBeTruthy();
+    if (!paragraph || paragraph.type !== "paragraph") return;
+
+    const marks = paragraph.children.flatMap(
+      (leaf) => leaf.inlineMarks ?? [],
+    );
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.kind).toBe("em");
+    expect(marks[0]?.start).toBe(0);
+    expect(marks[0]?.end).toBe(EM_END);
+  });
+
+  it("keeps paragraph block anchor data intact on the stable path", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeStableParagraphSnapshot(),
+    );
+    const paragraph = document.children.find(
+      (child) => child.type === "paragraph",
+    );
+    if (!paragraph || paragraph.type !== "paragraph") {
+      throw new Error("paragraph block missing");
+    }
+    // Selection / mark anchoring contract must survive the stable path.
+    expect(paragraph.data.anchorSegmentId).toBe("seg_r1");
+    expect(paragraph.data.unitId).toBe("u2");
+    expect(paragraph.data.baseRange.startUtf16).toBe(0);
+    expect(paragraph.data.baseRange.endUtf16).toBe(EM_END);
+    expect(paragraph.data.textHash).toBeTruthy();
+  });
+});

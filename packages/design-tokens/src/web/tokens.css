@@ -339,6 +339,8 @@
   --cl-color-secondary: #262626;
   --cl-color-secondary-foreground: #e8e8e8;
   --cl-color-destructive-foreground: #fef2f2;
+  --feedback-error: #fb7185;
+  --feedback-warning: #f6c453;
 
   --cl-color-muted: var(--cl-color-app-surface-raised);
   --ink-soft: color-mix(in srgb, var(--app-ink) 92%, black);
@@ -398,5 +400,5 @@
   --interactive-active: var(--app-segmented-active-surface);
   --interactive-quiet-hover: var(--app-control-quiet);
   --feedback-success-soft: color-mix(in srgb, var(--structure-green) 22%, var(--web-canvas));
-  --feedback-warning-soft: color-mix(in srgb, var(--vocab-amber) 22%, var(--web-canvas));
+  --feedback-warning-soft: color-mix(in srgb, var(--feedback-warning) 22%, var(--web-canvas));
 }

@@ -16,6 +16,14 @@
  *   覆盖范围：heading/list/table/code/blockquote/thematic_break 段级 +
  *   emphasis/strong/strikethrough/inline_code/link 行内 + paragraph/text 基础。
  *   未知节点会被 remark-stringify / plate-mdast deserializer 丢弃并降级。
+ *
+ *   R1：`allowedNodes` 在 **serialize 方向按 Plate 节点的原始 type 过滤**
+ *   （`@platejs/markdown` 的 shouldIncludeNode 检查 `node.type`），因此
+ *   除了泛型键（`heading` / `list`，服务 deserialize 方向的 mdast 类型名），
+ *   还必须列出编辑器实际使用的具体节点 type（`h1`–`h6` / `ul` / `ol`），
+ *   否则标题与列表在 serialize 往返中被静默丢弃（已验证：编辑后提交载荷
+ *   失去全部 heading）。这不是扩展支持矩阵，而是让 serialize 与已声明的
+ *   安全子集一致。
  * - `remarkStringifyOptions` 显式锁定序列化风格（值为单字符，remark-stringify
  *   自动重复为完整 marker）：
  *   - `bullet: "-"` 与项目粘贴入口的 `- item` 风格一致；
@@ -56,9 +64,19 @@ const ALLOWED_MARKDOWN_NODES = [
   "p",
   "text",
   "heading",
+  // R1：serialize 方向按原始 node.type 过滤，必须列出具体标题 type。
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
   // 段级容器
   "blockquote",
   "list",
+  // R1：同上，列表容器原始 type（classic ul/ol → mdast list）。
+  "ul",
+  "ol",
   "li",
   "lic",
   // 代码与分隔

@@ -383,10 +383,10 @@ function ApertureCornerSubmitButton({
   return (
     <Button
       variant="primary-ink"
-      className={cn("aperture-corner-cta group/aperture font-sans", isReady && "aperture-corner-cta--ready")}
+      className={cn("aperture-corner-cta group/aperture font-sans disabled:cursor-not-allowed", isReady && "aperture-corner-cta--ready")}
       data-pending={isPending ? "true" : "false"}
       data-ready={isReady ? "true" : "false"}
-      disabled={isPending}
+      disabled={isPending || !isReady}
       onClick={onClick}
     >
       <span className="aperture-corner-cta__mark" aria-hidden="true">
@@ -1509,9 +1509,12 @@ export function AnalyzeSubmitForm({
         tabIndex={-1}
       />
       <div className="flex min-h-0 flex-1 flex-col">
-        <label htmlFor="analysis-text" className="sr-only">
+        <label htmlFor="analysis-text" id="analysis-text-label" className="sr-only">
           在此贴入或导入英文文章
         </label>
+        <span id="analysis-text-hint" className="sr-only">
+          支持标题、强调、列表、引用、代码块等 Markdown 结构；按 Ctrl+Enter 提交。
+        </span>
 
         <div
           data-testid="read-source-input"
@@ -1541,7 +1544,7 @@ export function AnalyzeSubmitForm({
           ) : null}
 
           {!isWaiting && !attachedSource && !text.trim() ? (
-            <div className="pointer-events-none absolute left-16 top-9 z-10 max-w-[26rem] xl:left-24 xl:top-11">
+            <div aria-hidden="true" className="pointer-events-none absolute left-16 top-9 z-10 max-w-[26rem] xl:left-24 xl:top-11">
               <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
                 Paste an English article here
               </p>
@@ -1581,6 +1584,8 @@ export function AnalyzeSubmitForm({
             <MarkdownTextInput
               ref={markdownEditorRef}
               id="analysis-text"
+              ariaLabelledBy="analysis-text-label"
+              ariaDescribedBy="analysis-text-hint"
               initialValue={text}
               onChange={(markdown) => {
                 setText(markdown);
@@ -1601,7 +1606,7 @@ export function AnalyzeSubmitForm({
             />
           )}
 
-          {!isWaiting && !attachedSource && text.length > 0 && (
+          {!isWaiting && !attachedSource && text.trim().length > 0 && (
             <button
               type="button"
               className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full text-subtle transition-colors hover:bg-surface/70 hover:text-ink focus-ring"
@@ -1624,49 +1629,53 @@ export function AnalyzeSubmitForm({
                 messagePrefix={waitingMessagePrefix}
               />
             ) : (
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans">
-                  {!attachedSource ? (
-                    <button
-                      type="button"
-                      className="focus-ring group/source inline-flex min-h-9 items-center gap-2 px-0 text-[0.78rem] font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
-                      onClick={openFilePicker}
-                    >
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
-                        <FileUp aria-hidden className="h-3.5 w-3.5" />
-                      </span>
-                      <span>上传文件</span>
-                    </button>
-                  ) : (
-                    <div className="inline-flex min-h-9 items-center gap-2 text-[0.78rem] font-semibold text-ink">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink">
-                        <FileCheck2 aria-hidden className="h-3.5 w-3.5" />
-                      </span>
-                      <span>文件来源已就绪</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
-                  <Popover>
-                    <PopoverTrigger asChild>
+              <div className="grid gap-3">
+                <div
+                  data-testid="read-source-primary-actions"
+                  className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex min-w-0 shrink-0 items-center font-sans">
+                    {!attachedSource ? (
                       <button
                         type="button"
-                        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-surface/46 hover:text-ink data-[state=open]:bg-surface/60 data-[state=open]:text-ink"
+                        className="focus-ring group/source inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap px-0 text-[0.78rem] font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
+                        onClick={openFilePicker}
                       >
-                        <span>
-                          模式：{selectedGoalLabel}
-                          {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
+                          <FileUp aria-hidden className="h-3.5 w-3.5" />
                         </span>
-                        <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+                        <span>上传文件</span>
                       </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="end"
-                      side="top"
-                      sideOffset={14}
-                      className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-surface p-4 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
-                    >
+                    ) : (
+                      <div className="inline-flex min-h-9 items-center gap-2 text-[0.78rem] font-semibold text-ink">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink">
+                          <FileCheck2 aria-hidden className="h-3.5 w-3.5" />
+                        </span>
+                        <span>文件来源已就绪</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex min-w-0 flex-col items-stretch gap-2 sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-surface/46 hover:text-ink data-[state=open]:bg-surface/60 data-[state=open]:text-ink"
+                        >
+                          <span>
+                            模式：{selectedGoalLabel}
+                            {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
+                          </span>
+                          <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="end"
+                        side="top"
+                        sideOffset={14}
+                        className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-surface p-4 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
+                      >
                       <div className="flex items-center justify-between gap-4 px-1.5 pb-2 font-sans">
                         <p className="text-[0.85rem] font-semibold tracking-tight text-ink">透读模式</p>
                         <span className="max-w-[14rem] truncate text-right text-[0.72rem] font-medium tracking-tight text-muted-foreground">
@@ -1709,53 +1718,64 @@ export function AnalyzeSubmitForm({
                           ))}
                         </div>
                       </div>
-                    </PopoverContent>
-                  </Popover>
+                      </PopoverContent>
+                    </Popover>
 
-                  {!attachedSource && text.length > 0 ? (
-                    <span className="self-center font-sans text-[0.72rem] font-medium text-subtle">
-                      {text.trim().length.toLocaleString("en-US")} chars
-                    </span>
-                  ) : null}
-
-                  {hasMarkdownMarkers ? (
-                    <span
-                      data-testid="read-source-markdown-hint"
-                      className="self-center rounded-[6px] border border-lens-blue/24 bg-lens-blue-soft/50 px-2 py-1 font-sans text-[0.7rem] font-medium text-lens-blue"
-                      title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
-                    >
-                      将作为 Markdown 解析
-                    </span>
-                  ) : null}
-
-                  {!attachedSource && lintResult.hasDangerousContent ? (
-                    <span
-                      data-testid="read-source-lint-warning"
-                      className="self-center inline-flex items-center gap-1.5 rounded-[6px] border border-amber-400/60 bg-amber-50 px-2 py-1 font-sans text-[0.7rem] font-medium text-amber-800"
-                      title={summarizeLintWarnings(lintResult.warnings)}
-                    >
-                      <AlertTriangle aria-hidden className="h-3 w-3" />
-                      {summarizeLintWarnings(lintResult.warnings)}
-                    </span>
-                  ) : null}
-
-                  {!attachedSource && degradedMessage ? (
-                    <span
-                      data-testid="read-source-degraded-hint"
-                      className="self-center inline-flex items-center gap-1.5 rounded-[6px] border border-amber-400/60 bg-amber-50 px-2 py-1 font-sans text-[0.7rem] font-medium text-amber-800"
-                      title={degradedMessage}
-                    >
-                      <AlertTriangle aria-hidden className="h-3 w-3" />
-                      {degradedMessage}
-                    </span>
-                  ) : null}
-
-                  <ApertureCornerSubmitButton
-                    isPending={isSubmitting}
-                    isReady={isReadyToSubmit}
-                    onClick={handleSubmit}
-                  />
+                    <ApertureCornerSubmitButton
+                      isPending={isSubmitting}
+                      isReady={isReadyToSubmit}
+                      onClick={handleSubmit}
+                    />
+                  </div>
                 </div>
+
+                {(!attachedSource && text.trim().length > 0) ||
+                hasMarkdownMarkers ||
+                (!attachedSource && lintResult.hasDangerousContent) ||
+                (!attachedSource && degradedMessage) ? (
+                  <div
+                    data-testid="read-source-status-row"
+                    className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans sm:justify-end"
+                  >
+                    {!attachedSource && text.trim().length > 0 ? (
+                      <span className="font-sans text-[0.72rem] font-medium text-subtle">
+                        {text.trim().length.toLocaleString("en-US")} chars
+                      </span>
+                    ) : null}
+
+                    {hasMarkdownMarkers ? (
+                      <span
+                        data-testid="read-source-markdown-hint"
+                        className="rounded-[6px] border border-lens-blue/24 bg-lens-blue-soft/50 px-2 py-1 font-sans text-[0.7rem] font-medium text-lens-blue"
+                        title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
+                      >
+                        将作为 Markdown 解析
+                      </span>
+                    ) : null}
+
+                    {!attachedSource && lintResult.hasDangerousContent ? (
+                      <span
+                        data-testid="read-source-lint-warning"
+                        className="inline-flex items-center gap-1.5 rounded-[6px] border border-feedback-warning/40 bg-feedback-warning-soft px-2 py-1 font-sans text-[0.7rem] font-semibold text-feedback-warning"
+                        title={summarizeLintWarnings(lintResult.warnings)}
+                      >
+                        <AlertTriangle aria-hidden className="h-3 w-3" />
+                        {summarizeLintWarnings(lintResult.warnings)}
+                      </span>
+                    ) : null}
+
+                    {!attachedSource && degradedMessage ? (
+                      <span
+                        data-testid="read-source-degraded-hint"
+                        className="inline-flex items-center gap-1.5 rounded-[6px] border border-feedback-warning/40 bg-feedback-warning-soft px-2 py-1 font-sans text-[0.7rem] font-semibold text-feedback-warning"
+                        title={degradedMessage}
+                      >
+                        <AlertTriangle aria-hidden className="h-3 w-3" />
+                        {degradedMessage}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -1765,7 +1785,7 @@ export function AnalyzeSubmitForm({
       {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
         <div
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
-            state.kind === "error" ? "text-red-700" : "text-lens-blue"
+            state.kind === "error" ? "text-feedback-error" : "text-lens-blue"
           }`}
         >
           {state.message}
@@ -1867,7 +1887,7 @@ export function AnalyzeSubmitForm({
         <section
           role="status"
           aria-live="polite"
-          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-feedback-error lg:mx-12"
         >
           <p className="font-semibold">这次没法直接开始透读</p>
           {state.reasons.length > 0 ? (
@@ -1904,7 +1924,7 @@ export function AnalyzeSubmitForm({
         <section
           role="status"
           aria-live="polite"
-          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-feedback-error lg:mx-12"
         >
           <p className="font-semibold">{state.message}</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -1924,7 +1944,7 @@ export function AnalyzeSubmitForm({
         <section
           role="status"
           aria-live="polite"
-          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-feedback-error lg:mx-12"
         >
           <p className="font-semibold">{state.message}</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -1944,7 +1964,7 @@ export function AnalyzeSubmitForm({
         <section
           role="status"
           aria-live="polite"
-          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-red-700 lg:mx-12"
+          className="mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 font-sans text-[0.82rem] font-medium text-feedback-error lg:mx-12"
         >
           <p className="font-semibold">{state.message}</p>
           <div className="mt-3 flex flex-wrap gap-2">

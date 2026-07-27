@@ -1384,6 +1384,12 @@ function buildParagraphBlock(
 
 /** Recognized stable block types that map to a non-paragraph Plate block. */
 const STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION: ReadonlySet<string> = new Set([
+  // R1: `paragraph` must take the stable projection path too — otherwise
+  // paragraph units fall through to the legacy builder, which does not
+  // receive the source block and silently drops inlineMarks (emphasis /
+  // strong / code / strikethrough / link degrade to plain text even when
+  // the snapshot carries the marks).
+  "paragraph",
   "heading",
   "code_block",
   "blockquote",
@@ -1506,6 +1512,40 @@ function buildStableBlockForSourceSpan(
   const primaryAnchor = anchorSegments[0];
 
   switch (stableType) {
+    case "paragraph": {
+      // R1: stable paragraph — reuse the source-block-mapped `children`
+      // (inline marks applied) with the full paragraph data shape so
+      // selection, vocabulary marks and grammar marks keep working exactly
+      // as on the legacy path.
+      const terminalAnchor = anchorSegments[anchorSegments.length - 1];
+      return {
+        type: "paragraph",
+        id: `paragraph:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data: {
+          anchorSegmentId: primaryAnchor.anchor_segment_id,
+          coveredAnchorSegmentIds: anchorSegments.map(
+            (segment) => segment.anchor_segment_id,
+          ),
+          sentenceId: primaryAnchor.sentence_id,
+          unitId: primaryAnchor.unit_id,
+          isUnitStart: options.isUnitStart || undefined,
+          baseId: primaryAnchor.base_id,
+          baseRange: range(
+            primaryAnchor.base_start_utf16,
+            terminalAnchor.base_end_utf16,
+          ),
+          unitRange: range(
+            primaryAnchor.unit_start_utf16,
+            terminalAnchor.unit_end_utf16,
+          ),
+          textHash: primaryAnchor.text_hash,
+          hashAlgorithm: primaryAnchor.hash_algorithm,
+          segmentType: primaryAnchor.segment_type,
+          boundaryQuality: primaryAnchor.boundary_quality,
+        },
+      };
+    }
     case "heading":
       return {
         type: "heading",

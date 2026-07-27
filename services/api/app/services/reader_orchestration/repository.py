@@ -43,6 +43,13 @@ from .base_builder import (
     NavigationUnitFact,
     ReadingBaseBuildResult,
     StableReadingBase,
+    # R1: shared stable-block payload projection helpers — the reload path
+    # must project exactly the same heading level / inline marks / table
+    # role semantics as the in-memory build path (single source of truth;
+    # no second projection implementation).
+    _derive_table_role,
+    _extract_heading_level,
+    _extract_inline_marks,
     validate_reading_base_build_result,
 )
 from .span_recorder import parse_trace_id_from_envelope
@@ -1154,6 +1161,48 @@ class ReaderOrchestrationRepository:
             title_snapshot=str(title_snapshot) if title_snapshot is not None else None,
         )
 
+        # R1: project the active Stable Reading Document's blocks back onto
+        # reading units by EXACT canonical UTF-16 range equality. The stable
+        # document is the single structural truth — reading_units carry no
+        # stable block columns, so a reload must re-derive stable metadata
+        # from the same generation's active document or fail soft to the
+        # legacy paragraph shape. Range fence: same reading_record_id AND
+        # record_generation AND status='active' (one active document per
+        # record/generation by constraint). Duplicate exact matches are
+        # deterministic: lowest order_index wins (first-wins via setdefault),
+        # mirroring base_builder's ``annotations_by_range`` build semantics.
+        stable_block_rows = await conn.fetch(
+            """
+            SELECT b.block_id, b.parent_block_id, b.block_type,
+                   b.payload_json,
+                   b.canonical_text_start_utf16 AS block_start_utf16,
+                   b.canonical_text_end_utf16 AS block_end_utf16
+            FROM stable_reading_documents d
+            JOIN stable_document_blocks b
+              ON b.stable_document_id = d.id
+            WHERE d.reading_record_id = $1
+              AND d.record_generation = $2
+              AND d.status = 'active'
+              AND b.canonical_text_start_utf16 IS NOT NULL
+              AND b.canonical_text_end_utf16 IS NOT NULL
+            ORDER BY b.order_index ASC
+            """,
+            record_id,
+            record_generation,
+        )
+        stable_annotations_by_range: dict[tuple[int, int], Any] = {}
+        for block_row in stable_block_rows:
+            block_start = int(block_row["block_start_utf16"])
+            block_end = int(block_row["block_end_utf16"])
+            if block_start >= block_end:
+                # Invalid range can never match a unit (units always have
+                # base_end > base_start); skip silently, matching the build
+                # path's defensive skip.
+                continue
+            stable_annotations_by_range.setdefault(
+                (block_start, block_end), block_row
+            )
+
         units: list[BuiltReadingUnit] = []
         navigation_units: list[NavigationUnitFact] = []
         for row in unit_rows:
@@ -1179,6 +1228,34 @@ class ReaderOrchestrationRepository:
             label = navigation_item.get("label")
             label_text = label if isinstance(label, str) else None
 
+            # R1: project stable block metadata from the active Stable
+            # Document when this unit's base range EXACTLY matches a block's
+            # canonical range. ``unit_type`` / ``label`` are NOT overridden
+            # here: they are the persisted legacy truth (the heading override
+            # happened at freeze time and is stored in reading_units /
+            # navigation_json). Only the stable-only fields are re-derived,
+            # each from its authoritative source — no second canonical truth.
+            matched_block = stable_annotations_by_range.get(
+                (int(row["base_start_utf16"]), int(row["base_end_utf16"]))
+            )
+            stable_block_type: str | None = None
+            stable_block_id: str | None = None
+            heading_level: int | None = None
+            inline_marks: tuple[dict[str, Any], ...] = ()
+            table_role: str | None = None
+            parent_stable_block_id: str | None = None
+            if matched_block is not None:
+                stable_block_type = str(matched_block["block_type"])
+                stable_block_id = str(matched_block["block_id"])
+                parent_block_id = matched_block["parent_block_id"]
+                parent_stable_block_id = (
+                    str(parent_block_id) if parent_block_id is not None else None
+                )
+                block_payload = ensure_json_object(matched_block["payload_json"])
+                heading_level = _extract_heading_level(block_payload)
+                inline_marks = _extract_inline_marks(block_payload)
+                table_role = _derive_table_role(stable_block_type)
+
             units.append(
                 BuiltReadingUnit(
                     reading_record_id=str(record_id),
@@ -1192,6 +1269,12 @@ class ReaderOrchestrationRepository:
                     text_hash=str(row["text_hash"]),
                     text=unit_text,
                     label=label_text,
+                    stable_block_type=stable_block_type,
+                    stable_block_id=stable_block_id,
+                    heading_level=heading_level,
+                    inline_marks=inline_marks,
+                    table_role=table_role,
+                    parent_stable_block_id=parent_stable_block_id,
                 )
             )
             navigation_units.append(
@@ -1203,6 +1286,8 @@ class ReaderOrchestrationRepository:
                     label=label_text,
                     base_start_utf16=int(row["base_start_utf16"]),
                     base_end_utf16=int(row["base_end_utf16"]),
+                    stable_block_type=stable_block_type,
+                    heading_level=heading_level,
                 )
             )
 

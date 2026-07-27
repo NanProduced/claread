@@ -9,11 +9,17 @@
  *
  * 数据模型：
  * - 编辑器内部维护 Markdown AST（非受控）。
- * - onChange 时通过 MarkdownPlugin.serialize() 序列化为 Markdown 字符串，
- *   回调通知父组件，父组件据此同步 text 状态（用于 isReadyToSubmit、
- *   charCount、detectMarkdownMarkers、提交）。
- * - 外部恢复/清空通过 ref handle 的 setValue/clear 操作 editor
- *   （programmatic，不会触发 onChange，需父组件同步 setText）。
+ * - R1：value lifecycle 由 `<Plate onChange>`（editor 级、同步）统一驱动。
+ *   不再使用 PlateContent 的 DOM onChange —— Slate 拦截所有 beforeinput
+ *   （insertText / insertFromPaste）并 preventDefault，React 合成 change
+ *   事件从不触发，旧实现导致用户输入/粘贴后父状态永远为空（placeholder
+ *   覆盖内容、CTA 未就绪）。editor 级 onChange 覆盖键入、粘贴与程序化
+ *   setValue/clear；仅 selection 变化（value 引用不变）直接跳过序列化。
+ *   序列化结果去重后回调父组件，父组件据此同步 text 状态（用于
+ *   isReadyToSubmit、charCount、detectMarkdownMarkers、提交）。
+ * - 外部恢复/清空通过 ref handle 的 setValue/clear 操作 editor；
+ *   R1 起这些程序化变更同样触发 onChange，父页面状态与编辑器始终一致，
+ *   不存在两套真相。父组件不会把 text 写回编辑器，因此没有循环。
  *
  * 提交：Cmd/Ctrl+Enter 拦截触发 onSubmit 回调。
  *
@@ -28,8 +34,12 @@
  *   已按纯文本处理"提示态，禁止原始标记静默上屏。
  *
  * C1.4 粘贴保真提交：
- * - onPaste 记录用户原始粘贴文本与 dirty=false。
- * - 用户后续编辑（非粘贴触发的 onChange）将 dirty 置 true。
+ * - onPaste 记录用户原始粘贴文本、dirty=false，并挂起粘贴批次标记。
+ * - 粘贴派生的 editor 变更（R1 起经 editor 级 onChange 到达）消费挂起
+ *   标记并延长静默窗口，不置 dirty；窗口内无后续变更视为批次结束。
+ *   不再依赖"定时器复位 isPasting"——Plate v53 的 onChange 在 effect
+ *   时机触发，时序上必然晚于 setTimeout(0)，旧模型会把粘贴变更稳定地
+ *   误判为用户编辑。
  * - `getSubmitText()` 在 `!dirty && lastPastedText` 时返回原始粘贴文本，
  *   消除 Plate serialize 往返损耗；编辑后返回 serialize 结果。
  * - 上传 `.md` 路径不经过本组件，维持直接提交文件内容不变。
@@ -54,6 +64,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -68,9 +79,10 @@ import {
   type PlateLeafProps,
   Plate,
   PlateContent,
+  type PlateEditor,
   usePlateEditor,
 } from "platejs/react";
-import type { Descendant } from "platejs";
+import type { Descendant, Value } from "platejs";
 
 import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
 import {
@@ -277,6 +289,31 @@ const markdownTextInputPlugins = [
   createPlatePlugin({ key: "strikethrough", node: { isLeaf: true, component: MarkdownStrikethroughLeaf } }),
 ];
 
+// R1：粘贴静默窗口时长（毫秒）。
+// - BEFORE_CHANGE：粘贴事件记录后先开 300ms 窗口等粘贴派生变更到达
+//   （Plate v53 的 onChange 走 React passive effect，必然晚于 0ms 宏任务；
+//   浏览器中粘贴插入在事件内同步完成，远早于 300ms）。窗口到期仍无
+//   变更视为被拒绝的粘贴，强制收口并放弃保真。
+// - AFTER_CHANGE：见到粘贴派生变更后改为 0ms 窗口，窗口内无后续变更
+//   即视为批次结束（Slate 多次 normalize 的后续变更会持续重置窗口）。
+const PASTE_QUIET_AFTER_CHANGE_MS = 0;
+const PASTE_QUIET_BEFORE_CHANGE_MS = 300;
+
+function hasTextContent(nodes: unknown[]): boolean {
+  return nodes.some((node) => {
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    if ("text" in node) {
+      return typeof node.text === "string" && node.text.length > 0;
+    }
+    if ("children" in node && Array.isArray(node.children)) {
+      return hasTextContent(node.children);
+    }
+    return false;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Ref handle：暴露给父组件用于提交/清空/恢复/聚焦
 // ---------------------------------------------------------------------------
@@ -293,9 +330,9 @@ export interface MarkdownTextInputHandle {
   getMarkdown: () => string;
   /** 聚焦编辑器 */
   focus: () => void;
-  /** 清空编辑器（programmatic，不触发 onChange） */
+  /** 清空编辑器（R1 起会触发 onChange，父状态随之复位） */
   clear: () => void;
-  /** 用 Markdown 字符串重置编辑器内容（programmatic，不触发 onChange） */
+  /** 用 Markdown 字符串重置编辑器内容（R1 起会触发 onChange，父状态随之同步） */
   setValue: (markdown: string) => void;
 }
 
@@ -329,13 +366,22 @@ export interface MarkdownTextInputProps {
   /** 透传给 Editor 的 className */
   className?: string;
   id?: string;
+  /**
+   * R1：contenteditable 不是 labelable 元素，`<label for>` 不能可靠命名它。
+   * 父组件应提供可见/程序化标签元素的 id，这里透传为 aria-labelledby。
+   */
+  ariaLabelledBy?: string;
+  /**
+   * R1：程序化帮助关系 id（如输入提示），透传为 aria-describedby。
+   */
+  ariaDescribedBy?: string;
 }
 
 export const MarkdownTextInput = forwardRef<
   MarkdownTextInputHandle,
   MarkdownTextInputProps
 >(function MarkdownTextInput(
-  { initialValue, onChange, onSubmit, onLintResult, onDegraded, className, id },
+  { initialValue, onChange, onSubmit, onLintResult, onDegraded, className, id, ariaLabelledBy, ariaDescribedBy },
   ref,
 ) {
   // C1.3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
@@ -384,13 +430,92 @@ export const MarkdownTextInput = forwardRef<
     }
   }, []);
 
-  // C1.4: 粘贴保真状态。
+  // C1.4 / R1: 粘贴保真状态。
   // - lastPastedTextRef: 用户最后一次"整篇粘贴"的原始文本（编辑器为空时粘贴）。
   // - dirtyRef: 用户是否在粘贴后进行了非粘贴编辑。
-  // - isPastingRef: 标记当前 onChange 批次是否由粘贴触发（Slate 可能多次 normalize）。
+  // - pendingPasteRef: 是否存在尚未结束粘贴批次的挂起粘贴。Plate v53 的
+  //   editor 级 onChange 在 React effect 时机异步触发，早于任何
+  //   setTimeout(0) 宏任务复位——因此不能用"先置旗、定时复位"的时序模型
+  //   （会稳定地把粘贴变更误判为用户编辑）。改为：粘贴挂起旗在粘贴派生
+  //   变更到达时被消费并延长静默窗口；静默窗口（一个宏任务内再无变更）
+  //   结束后才视为粘贴批次完成。真实用户的下一次输入永远发生在窗口之外。
   const lastPastedTextRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
-  const isPastingRef = useRef(false);
+  const pendingPasteRef = useRef(false);
+  const pasteChangeSeenRef = useRef(false);
+  const pasteQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // R1：上一次处理过的 editor value 引用，用于跳过仅 selection 变化。
+  const lastValueRef = useRef<Value | null>(null);
+
+  const armPasteQuietReset = useCallback((interval: number) => {
+    if (pasteQuietTimerRef.current) {
+      clearTimeout(pasteQuietTimerRef.current);
+    }
+    pasteQuietTimerRef.current = setTimeout(() => {
+      pasteQuietTimerRef.current = null;
+      if (pasteChangeSeenRef.current) {
+        // 粘贴批次完成（见到过粘贴派生变更且窗口内无后续变更）。
+        pendingPasteRef.current = false;
+      } else {
+        // 粘贴始终没产生变更（被拒绝的粘贴）：强制收口并放弃保真，
+        // 避免把之后的用户编辑误判为粘贴派生。
+        pendingPasteRef.current = false;
+        lastPastedTextRef.current = null;
+      }
+    }, interval);
+  }, []);
+
+  const endPasteWindow = useCallback(() => {
+    pendingPasteRef.current = false;
+    pasteChangeSeenRef.current = false;
+    if (pasteQuietTimerRef.current) {
+      clearTimeout(pasteQuietTimerRef.current);
+      pasteQuietTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pasteQuietTimerRef.current) {
+        clearTimeout(pasteQuietTimerRef.current);
+      }
+    };
+  }, []);
+
+  // R1：@platejs/markdown serialize 会为空文本节点输出 U+200B 零宽空格。
+  // 必须用编辑器语义判断空状态，不能全文 replace U+200B：真实正文可能
+  // 合法携带零宽空格，删除它会改变 canonical text 与 UTF-16 offset。
+  const serializeCurrentMarkdown = useCallback((target: PlateEditor): string => {
+    if (!hasTextContent(target.children)) {
+      return "";
+    }
+    const md = target.getApi(MarkdownPlugin).markdown.serialize();
+    return md.trim().length === 0 ? "" : md;
+  }, []);
+
+  /**
+   * R1：粘贴保真窗口的记录侧。
+   * 仅当编辑器当前"实质为空"（整篇粘贴场景）时记录原始文本并开窗；
+   * 增量粘贴（非空编辑器）视为编辑，关闭保真。
+   */
+  const recordPasteText = useCallback((clipboardText: string) => {
+    if (!clipboardText.trim()) {
+      return;
+    }
+    const isEmpty = !hasTextContent(editor.children);
+    if (isEmpty) {
+      lastPastedTextRef.current = clipboardText;
+      dirtyRef.current = false;
+      pendingPasteRef.current = true;
+      pasteChangeSeenRef.current = false;
+      armPasteQuietReset(PASTE_QUIET_BEFORE_CHANGE_MS);
+    } else {
+      // 粘贴到非空编辑器 → 视为编辑，不再保真
+      dirtyRef.current = true;
+      lastPastedTextRef.current = null;
+      endPasteWindow();
+    }
+  }, [editor, armPasteQuietReset, endPasteWindow]);
 
   useImperativeHandle(
     ref,
@@ -401,11 +526,11 @@ export const MarkdownTextInput = forwardRef<
         if (!dirtyRef.current && lastPastedTextRef.current) {
           return lastPastedTextRef.current;
         }
-        return editor.getApi(MarkdownPlugin).markdown.serialize();
+        return serializeCurrentMarkdown(editor);
       },
       getMarkdown: () => {
         if (!editor) return "";
-        return editor.getApi(MarkdownPlugin).markdown.serialize();
+        return serializeCurrentMarkdown(editor);
       },
       focus: () => {
         if (!editor) return;
@@ -417,6 +542,7 @@ export const MarkdownTextInput = forwardRef<
         // C1.4: 清空时重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
+        endPasteWindow();
       },
       setValue: (markdown: string) => {
         if (!editor) return;
@@ -427,23 +553,41 @@ export const MarkdownTextInput = forwardRef<
         // C1.4: programmatic setValue 重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
+        endPasteWindow();
       },
     }),
-    [editor],
+    [editor, endPasteWindow, serializeCurrentMarkdown],
   );
 
   if (!editor) {
     return null;
   }
 
-  const handleChange = () => {
-    // C1.4: 区分粘贴触发的 onChange 与用户编辑触发的 onChange。
-    // 粘贴触发的 onChange 不置 dirty（保留保真）；用户编辑置 dirty 并清除 pastedText。
-    if (!isPastingRef.current) {
+
+  // R1：editor 级 value lifecycle。
+  // - value 引用未变（仅 selection 变化）时直接跳过，避免每次光标移动
+  //   都执行整文档序列化与 lint。
+  // - 粘贴窗口内（pendingPasteRef）的变更是粘贴派生：消费挂起旗并延长
+  //   静默窗口，不置 dirty，保留 C1.4 粘贴保真。
+  const handleEditorChange = ({
+    editor: changedEditor,
+    value,
+  }: {
+    editor: PlateEditor;
+    value: Value;
+  }) => {
+    if (value === lastValueRef.current) {
+      return;
+    }
+    lastValueRef.current = value;
+    if (pendingPasteRef.current) {
+      pasteChangeSeenRef.current = true;
+      armPasteQuietReset(PASTE_QUIET_AFTER_CHANGE_MS);
+    } else {
       dirtyRef.current = true;
       lastPastedTextRef.current = null;
     }
-    const md = editor.getApi(MarkdownPlugin).markdown.serialize();
+    const md = serializeCurrentMarkdown(changedEditor);
     onChangeRef.current(md);
     // Phase 1 / P0: 输入端预警 lint（非阻塞，后端仍是 fail-closed 单一真相源）
     const lintCallback = onLintResultRef.current;
@@ -452,35 +596,10 @@ export const MarkdownTextInput = forwardRef<
     }
   };
 
+
   const handlePaste = (event: ClipboardEvent) => {
     // C1.4: 记录用户原始粘贴文本，用于提交保真。
-    // 仅当编辑器当前为空（整篇粘贴场景）时记录；增量粘贴视为编辑。
-    const clipboardText = event.clipboardData?.getData("text/plain") ?? "";
-    if (!clipboardText.trim()) {
-      return;
-    }
-    // 检查编辑器是否"实质为空"：0 或 1 个段落且无文本内容
-    const children = editor.children as Array<{
-      children?: Array<{ text?: string }>;
-    }>;
-    const isEmpty =
-      children.length === 0 ||
-      (children.length === 1 &&
-        (children[0]?.children ?? []).every((c) => !c.text?.trim()));
-    if (isEmpty) {
-      lastPastedTextRef.current = clipboardText;
-      dirtyRef.current = false;
-    } else {
-      // 粘贴到非空编辑器 → 视为编辑，不再保真
-      dirtyRef.current = true;
-      lastPastedTextRef.current = null;
-    }
-    isPastingRef.current = true;
-    // C1.4: 延迟重置 isPasting，确保 Slate paste 同步批次内所有 onChange
-    // 都被视为粘贴触发（Slate 可能多次 normalize → 多次 onChange）。
-    setTimeout(() => {
-      isPastingRef.current = false;
-    }, 0);
+    recordPasteText(event.clipboardData?.getData("text/plain") ?? "");
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -491,16 +610,17 @@ export const MarkdownTextInput = forwardRef<
   };
 
   return (
-    <Plate editor={editor}>
+    <Plate editor={editor} onChange={handleEditorChange}>
       <PlateContent
         id={id}
+        aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
         className={cn(
           "min-h-0 flex-1 resize-none overflow-y-auto bg-transparent",
           "whitespace-pre-wrap break-words outline-none",
           "[&_strong]:font-bold",
           className,
         )}
-        onChange={handleChange}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
       />
