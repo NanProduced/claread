@@ -14,6 +14,7 @@ from app.contracts.annotation import (
 )
 from app.schemas.reader_documents import CandidateReadingDocumentStatus
 from app.schemas.reader_input_adapter import (
+    AdaptationRecord,
     InputAdapterSourceType,
     SourceArtifactKind,
     SourceArtifactStatus,
@@ -1276,6 +1277,131 @@ class ReaderCandidateDocumentNotFoundResponseDto(BaseModel):
     message: str = Field(min_length=1)
 
 
+# ---------------------------------------------------------------------------
+# L2 — Confirmed Source 端点 DTO（migration 0025 / 设计文档 §4）
+# ---------------------------------------------------------------------------
+
+# 客户端可写的编辑来源；'initial' / 'extraction' 由服务端写入。
+ReaderConfirmedSourceEditSource = Literal[
+    "wysiwyg",
+    "source_mode",
+    "content_check",
+]
+
+
+class ReaderConfirmedSourceCandidateSummary(BaseModel):
+    """当前 generation 最新 ready candidate 的摘要（安全投影，不含
+    blocks_json / source_refs_json / quality_json）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_document_id: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    canonical_text_preview: str = ""
+
+
+class ReaderConfirmedSourceGetResponse(BaseModel):
+    """200 for GET /records/{record_id}/confirmed-source（draft 读取 /
+    resume 入口；该端点是编辑入口，返回正文）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    source_document_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    revision: int = Field(ge=1)
+    status: Literal["draft"] = "draft"
+    markdown_text: str = Field(min_length=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    edit_source: str = Field(min_length=1)
+    updated_at: datetime
+    candidate: ReaderConfirmedSourceCandidateSummary | None = None
+    # L2 联调（additive，默认值向后兼容）：Content Check 首载/刷新
+    # 恢复所需的三级分类信息，与 PUT 响应语义一致——来自最新 ready
+    # candidate 的 quality_json（_candidate_quality_json 超集）；
+    # 无 candidate 时 {} / []。
+    quality: dict[str, Any] = Field(default_factory=dict)
+    adaptation_notice: list[AdaptationRecord] = Field(default_factory=list)
+    content_check: list[AdaptationRecord] = Field(default_factory=list)
+
+
+class ReaderConfirmedSourceUpdateRequest(BaseModel):
+    """PUT /records/{record_id}/confirmed-source 请求体：整篇更新 +
+    reparse（revision 乐观并发）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    markdown_text: str = Field(min_length=1)
+    edit_source: ReaderConfirmedSourceEditSource = "wysiwyg"
+
+
+class ReaderConfirmedSourceUpdateResponse(BaseModel):
+    """200 for PUT /records/{record_id}/confirmed-source。
+
+    - outcome=candidate_document_required：返回新 ready candidate；
+    - outcome=stable_document_ready：镜像 submit 自动 freeze（Q2），
+      同事务冻结 source，附 snapshot；
+    - outcome=input_rejected_or_action_required：source 已保存为
+      draft，无 candidate。
+    ``quality`` 为 ``_candidate_quality_json`` 超集；
+    ``adaptation_notice`` / ``content_check`` 为 L1 三级分类输出。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[True] = True
+    revision: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # idempotent_noop：同 hash 幂等重试（revision 不变、不 supersede）。
+    outcome: Literal[
+        "stable_document_ready",
+        "candidate_document_required",
+        "input_rejected_or_action_required",
+        "idempotent_noop",
+    ]
+    candidate: ReaderConfirmedSourceCandidateSummary | None = None
+    quality: dict[str, Any] = Field(default_factory=dict)
+    adaptation_notice: list[AdaptationRecord] = Field(default_factory=list)
+    content_check: list[AdaptationRecord] = Field(default_factory=list)
+    snapshot: ReaderPlateSnapshot | None = None
+
+
+ReaderConfirmedSourceConflictCode = Literal[
+    "record_state_advanced",
+    "source_frozen",
+    "stale_source_revision",
+    "stale_candidate_revision",
+]
+
+ReaderConfirmedSourceConflictResolution = Literal[
+    "open_reader",
+    "reload",
+    "return_to_library",
+]
+
+
+class ReaderConfirmedSourceConflictResponse(BaseModel):
+    """409 response body for confirmed-source endpoints（root-level
+    错误合同：ok / code / resolution / message）。
+
+    - record_state_advanced + open_reader：record 已推进到可读态；
+    - source_frozen + open_reader：source 已冻结，不可再编辑；
+    - stale_source_revision + reload：expected_revision 过期，客户端
+      重取 GET 后重放编辑（服务端不覆盖较新草稿）；
+    - stale_candidate_revision + reload：confirm 的 candidate 引用
+      过期 source revision，重取 confirmed-source 获得新 candidate。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: Literal[False] = False
+    code: ReaderConfirmedSourceConflictCode
+    resolution: ReaderConfirmedSourceConflictResolution
+    message: str = Field(min_length=1)
+    current_revision: int | None = None
+
+
 class ReaderStableDocumentBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1485,6 +1611,9 @@ class ReaderArtifactPipelineOriginalInputSummary(BaseModel):
     input_type: str = Field(min_length=1)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     has_source_text: bool
+    # L2 (Q5)：confirmed source 行存在性；has_source_text 对 legacy
+    # 记录保留原义（新输入恒 false）。
+    has_confirmed_source: bool = False
     extraction_status: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -38,6 +38,8 @@ import {
   type PendingCandidate,
 } from "./pending-candidate";
 import { CandidateConfirmDialog } from "./CandidateConfirmDialog";
+import { ContentCheckPanel } from "./ContentCheckPanel";
+import { useReadPageUi } from "./read-page-ui";
 import {
   MarkdownTextInput,
   type MarkdownTextInputHandle,
@@ -63,6 +65,19 @@ type SubmitState =
   | {
       kind: "candidate";
       candidate: PendingCandidate;
+    }
+  | {
+      /**
+       * L2 同页 Content Check（替代候选确认模态的默认流程）。
+       * fallbackCandidate 用于该 record 无 Confirmed Source 行（L2 前存量
+       * 记录）时回退旧 CandidateConfirmDialog 流程。
+       */
+      kind: "content-check";
+      recordId: string;
+      filename: string | null;
+      inputSnapshot: string | null;
+      origin: "submit" | "resume";
+      fallbackCandidate: PendingCandidate | null;
     }
   | {
       kind: "rejected";
@@ -118,6 +133,7 @@ const SOURCE_ACCEPT = ".pdf,.txt,.md,.markdown,image/png,image/jpeg,image/jpg,im
 const SUPPORTED_SOURCE_FORMATS = "PDF / Markdown / TXT / PNG / JPG / WEBP / GIF";
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const POLL_INTERVAL_MS = 3000;
+const CLIENT_MARKDOWN_LINT_EXTENSIONS = new Set(["txt", "md", "markdown"]);
 const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
@@ -300,6 +316,10 @@ function validateSourceFile(file: File):
   }
 
   return { ok: true, descriptor };
+}
+
+function shouldLintSourceFileInBrowser(file: File): boolean {
+  return CLIENT_MARKDOWN_LINT_EXTENSIONS.has(sourceFileExtension(file.name));
 }
 
 function hasFileTransfer(dataTransfer: DataTransfer): boolean {
@@ -878,6 +898,14 @@ export function AnalyzeSubmitForm({
     [attachedSource, text],
   );
 
+  // L2/L3：编辑器有内容（或进入 Content Check）后收起 Hero，编辑器成首屏主任务。
+  const { setHasContent } = useReadPageUi();
+  useEffect(() => {
+    setHasContent(
+      Boolean(attachedSource) || text.trim().length > 0 || state.kind === "content-check",
+    );
+  }, [attachedSource, text, state.kind, setHasContent]);
+
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const resumeRecordId = searchParams.get("resume_candidate")?.trim() ?? "";
@@ -893,11 +921,17 @@ export function AnalyzeSubmitForm({
         const snapshot = pending.inputSnapshot ?? "";
         setText(snapshot);
         markdownEditorRef.current?.setValue(snapshot);
+        // 刷新恢复：默认走 L2 Content Check（GET confirmed-source 拿
+        // draft + 最新 candidate）；存量记录无 source 行时由面板回退旧
+        // 候选确认模态。
         setState({
-          kind: "candidate",
-          candidate: pending,
+          kind: "content-check",
+          recordId: pending.readingRecordId,
+          filename: pending.filename ?? null,
+          inputSnapshot: pending.inputSnapshot ?? null,
+          origin: "submit",
+          fallbackCandidate: pending,
         });
-        setCandidateDialogOpen(true);
       }
     }, 0);
 
@@ -1176,18 +1210,15 @@ export function AnalyzeSubmitForm({
         filename: currentFilename,
         canonicalTextPreview: status.candidate_document?.canonical_text_preview ?? null,
       });
-      if (saved) {
-        setState({
-          kind: "candidate",
-          candidate: saved,
-        });
-        setCandidateDialogOpen(true);
-      } else {
-        setState({
-          kind: "error",
-          message: "已生成候选文档，但本地暂存失败，请稍后再试。",
-        });
-      }
+      // L2 默认流程：同页 Content Check；存量记录由面板回退旧模态。
+      setState({
+        kind: "content-check",
+        recordId: readingRecordId,
+        filename: currentFilename,
+        inputSnapshot: null,
+        origin: "submit",
+        fallbackCandidate: saved,
+      });
       return;
     }
 
@@ -1324,6 +1355,54 @@ export function AnalyzeSubmitForm({
   }
 
   async function runResumeFlow(recordId: string) {
+    // L2：resume 入口改为 GET confirmed-source（draft + 最新 candidate，
+    // 设计 §4.1）。404（L2 前存量记录无 source 行）回退旧
+    // candidate-document 流；record_state_advanced 直接打开 Reader。
+    try {
+      const sourceResponse = await fetch(
+        `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/confirmed-source`,
+        { method: "GET" },
+      );
+      const sourcePayload = (await sourceResponse.json()) as {
+        ok: boolean;
+        status?: number;
+        code?: string;
+        message?: string;
+      };
+      if (sourcePayload.ok) {
+        setState({
+          kind: "content-check",
+          recordId,
+          filename: null,
+          inputSnapshot: null,
+          origin: "resume",
+          fallbackCandidate: null,
+        });
+        return;
+      }
+      if (sourcePayload.code === "candidate_conflict_open_reader") {
+        router.push(appReadingRecordRoute(recordId));
+        return;
+      }
+      if (sourcePayload.status !== 404 && sourcePayload.code !== "confirmed_source_not_found") {
+        setState({
+          kind: "resume-failed",
+          recordId,
+          message: sourcePayload.message?.trim() || "加载失败，请稍后重试。",
+        });
+        return;
+      }
+      // 404：走下方旧 candidate-document 恢复流。
+    } catch {
+      // 网络异常不是 404：不穿透到旧端点（会掩盖真实故障），直接呈现可重试失败。
+      setState({
+        kind: "resume-failed",
+        recordId,
+        message: "加载失败，请稍后重试。",
+      });
+      return;
+    }
+
     try {
       const response = await fetch(
         `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/candidate-document`,
@@ -1399,34 +1478,35 @@ export function AnalyzeSubmitForm({
     }
 
     if (attachedSource) {
+      // 客户端 Markdown lint 只读取明确的文本源。PDF/图片由服务端提取后
+      // 进行权威归一化，不能为了提示 badge 把最高 25 MB 的二进制附件
+      // 解码成字符串并在主线程执行整篇正则扫描。
+      if (shouldLintSourceFileInBrowser(attachedSource.file)) {
+        try {
+          const fileText = await attachedSource.file.text();
+          setLintResult(lintMarkdownInput(fileText));
+        } catch {
+          // 文本文件读取失败不阻断上传流程。
+        }
+      }
       await startArtifactFlow(attachedSource.file);
       return;
     }
 
-    // R2R Issue C fix: 提交前 flush + 同步 lint gate（fail-closed）。
+    // 阶段 3：提交前 flush + 非阻断 lint 提示（fail-closed 已撤销）。
     //
-    // 旧实现（RED）：
-    //   - 直接 getSubmitText() → fetch，不 flush
-    //     → 父状态（text/CTA/chars/hint）可能滞后于 editor
-    //   - 不做同步 lint 检查
-    //     → dangerous 内容（raw HTML / unsafe link / unclosed fence）
-    //       可在 debounce 结束前通过 Ctrl/Cmd+Enter 或按钮点击发出 fetch
-    //   - dangerous 仅依赖按钮 disabled 状态
-    //     → 快捷键路径完全绕过 lint gate
-    //
-    // 新实现（GREEN）：
+    // 语义（新合同）：
     //   1. flush() 同步 pending debounce，确保父状态与 editor 当前内容一致
     //   2. getSubmitText() 直读 editor 最新内容（粘贴保真优先）
-    //   3. lintMarkdownInput(submitText) 同步计算最新 lint 结果
-    //      —— 不依赖 debounced `lintResult` 状态，避免 debounce 窗口内绕过
-    //   4. hasDangerousContent → setState error + setLintResult（让警告 badge
-    //      同步刷新），return，**不发 fetch**
-    //   5. 按钮点击与 Ctrl/Cmd+Enter 都通过 onSubmitRef 走同一 handleSubmit，
-    //      合同完全一致
-    //   6. 用户看到固定、可理解的中文提示，不暴露内部 parser/lint 错误
+    //   3. lintMarkdownInput(submitText) 同步计算最新 lint 结果并刷新
+    //      警告 badge —— 纯 UX 提示，**不阻断提交**；后端 parser/gate
+    //      是安全判定的单一真相源（三级分类 silent / adaptation_notice /
+    //      content_check），普通链接、安全可清洗 HTML、vector<T> 等
+    //      由服务端权威清洗并路由
+    //   4. 按钮点击与 Ctrl/Cmd+Enter 都通过 onSubmitRef 走同一
+    //      handleSubmit，合同完全一致
     //
     // 注意：提交使用的文本与 lint 检查的文本必须是同一份 submitText。
-    // 不能 lint 序列化结果却提交原始粘贴文本 —— getSubmitText() 已统一两者。
     // flush() returns the exact snapshot used for both lint and submission,
     // avoiding a second full-document serialization on long inputs.
     const submitText = markdownEditorRef.current?.flush() ?? text;
@@ -1436,19 +1516,9 @@ export function AnalyzeSubmitForm({
       return;
     }
 
-    // 同步 lint gate（fail-closed）。lintResult 状态可能因 debounce 滞后，
-    // 提交必须基于实际 submitText 重新计算。
-    const freshLintResult = lintMarkdownInput(submitText);
-    if (freshLintResult.hasDangerousContent) {
-      // 让父组件的警告 badge 同步刷新，便于用户看到具体 warning。
-      setLintResult(freshLintResult);
-      setState({
-        kind: "error",
-        message:
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-      });
-      return;
-    }
+    // 非阻断 lint：lintResult 状态可能因 debounce 滞后，提交前基于实际
+    // submitText 重新计算并刷新 badge；不阻断、服务端权威清洗。
+    setLintResult(lintMarkdownInput(submitText));
 
     setState({ kind: "pending", message: "正在提交透读任务..." });
 
@@ -1492,18 +1562,17 @@ export function AnalyzeSubmitForm({
             originalInputId: payload.original_input_id,
             inputSnapshot: trimmed,
           });
-          if (pending) {
-            setState({
-              kind: "candidate",
-              candidate: pending,
-            });
-            setCandidateDialogOpen(true);
-          } else {
-            setState({
-              kind: "error",
-              message: "已生成候选文档，但本地暂存失败，请稍后再试。",
-            });
-          }
+          // L2 默认流程：同页 Content Check（GET confirmed-source 加载草稿）。
+          // 存量记录无 source 行时面板回退旧候选确认模态；pending 保存失败
+          // 不阻断——草稿在服务端，稍后处理/刷新恢复仅依赖 localStorage。
+          setState({
+            kind: "content-check",
+            recordId: payload.reading_record_id,
+            filename: null,
+            inputSnapshot: trimmed,
+            origin: "submit",
+            fallbackCandidate: pending,
+          });
           return;
         }
         case "input_rejected_or_action_required": {
@@ -1555,6 +1624,53 @@ export function AnalyzeSubmitForm({
           支持标题、强调、列表、引用、代码块等 Markdown 结构；按 Ctrl+Enter 提交。
         </span>
 
+        {state.kind === "content-check" ? (
+          <ContentCheckPanel
+            recordId={state.recordId}
+            filename={state.filename}
+            origin={state.origin}
+            onOpenReader={(recordId) => {
+              clearPendingCandidate();
+              router.push(appReadingRecordRoute(recordId) as Route);
+            }}
+            onConfirmed={(recordId) => {
+              clearPendingCandidate();
+              router.push(appReadingRecordRoute(recordId) as Route);
+            }}
+            onLegacyFallback={() => {
+              if (state.fallbackCandidate) {
+                setState({ kind: "candidate", candidate: state.fallbackCandidate });
+                setCandidateDialogOpen(true);
+              } else {
+                setState({
+                  kind: "resume-not-found",
+                  recordId: state.recordId,
+                  message: "未找到可继续确认的内容。",
+                });
+              }
+            }}
+            onBackToInput={(markdown) => {
+              clearPendingCandidate();
+              setText(markdown);
+              markdownEditorRef.current?.setValue(markdown);
+              setCurrentAttachedSource(null);
+              setState({ kind: "idle" });
+            }}
+            onDefer={(info) => {
+              if (info.candidateDocumentId) {
+                savePendingCandidate({
+                  readingRecordId: info.recordId,
+                  candidateDocumentId: info.candidateDocumentId,
+                  originalInputId: null,
+                  inputSnapshot: state.inputSnapshot,
+                  filename: state.filename,
+                  canonicalTextPreview: info.canonicalTextPreview,
+                });
+              }
+              setState({ kind: "idle" });
+            }}
+          />
+        ) : (
         <div
           data-testid="read-source-input"
           onDragEnter={handleDragEnter}
@@ -1562,7 +1678,7 @@ export function AnalyzeSubmitForm({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "group/manuscript relative flex min-h-[22rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:shadow-[var(--app-panel-shadow-quiet)] lg:min-h-[31rem] lg:shrink 2xl:min-h-[34rem]",
+            "group/manuscript relative flex min-h-[24rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:bg-surface/58 focus-within:shadow-[var(--app-panel-shadow-quiet)] focus-within:ring-lens-blue/28 lg:min-h-[32rem] lg:shrink 2xl:min-h-[36rem]",
             isDragActive && "bg-lens-blue-soft/40 ring-lens-blue/34 shadow-[var(--app-panel-shadow-quiet)]",
           )}
         >
@@ -1578,12 +1694,12 @@ export function AnalyzeSubmitForm({
           {!attachedSource ? (
             <>
               <div className="pointer-events-none absolute left-4 top-5 h-[calc(100%-2.5rem)] w-px bg-hairline/75 transition-colors duration-300 group-focus-within/manuscript:bg-lens-blue/28 xl:left-5" />
-              <div className="pointer-events-none absolute left-12 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 xl:left-16" />
+              <div className="pointer-events-none absolute left-8 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 sm:left-12 xl:left-14" />
             </>
           ) : null}
 
           {!isWaiting && !attachedSource && !text.trim() ? (
-            <div aria-hidden="true" className="pointer-events-none absolute left-16 top-9 z-10 max-w-[26rem] xl:left-24 xl:top-11">
+            <div aria-hidden="true" className="pointer-events-none absolute left-10 top-8 z-10 max-w-[26rem] sm:left-14 xl:left-16 xl:top-10">
               <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
                 Paste an English article here
               </p>
@@ -1641,7 +1757,7 @@ export function AnalyzeSubmitForm({
                 }
               }}
               onSubmit={() => void handleSubmit()}
-              className="relative z-10 px-16 py-10 font-reading text-[1.08rem] leading-[2.08] text-ink placeholder:text-transparent sm:text-[1.18rem] xl:px-24 xl:py-12 xl:text-[1.24rem] selection:bg-lens-blue/15 selection:text-ink"
+              className="relative z-10 px-10 py-8 font-reading text-[1.08rem] leading-[1.9] text-ink placeholder:text-transparent sm:px-14 sm:text-[1.14rem] xl:px-16 xl:py-10 xl:text-[1.17rem] selection:bg-lens-blue/15 selection:text-ink"
             />
           )}
 
@@ -1668,12 +1784,11 @@ export function AnalyzeSubmitForm({
                 messagePrefix={waitingMessagePrefix}
               />
             ) : (
-              <div className="grid gap-3">
-                <div
-                  data-testid="read-source-primary-actions"
-                  className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex min-w-0 shrink-0 items-center font-sans">
+              <div
+                data-testid="read-source-primary-actions"
+                className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 font-sans">
                     {!attachedSource ? (
                       <button
                         type="button"
@@ -1693,6 +1808,50 @@ export function AnalyzeSubmitForm({
                         <span>文件来源已就绪</span>
                       </div>
                     )}
+
+                    {/* L2/L3：字数 / 格式识别 / 预警与 CTA 整合到单一 footer status rail。 */}
+                    <div
+                      data-testid="read-source-status-row"
+                      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
+                    >
+                      {!attachedSource && text.trim().length > 0 ? (
+                        <span className="font-sans text-[0.72rem] font-medium text-subtle">
+                          {text.trim().length.toLocaleString("en-US")} chars
+                        </span>
+                      ) : null}
+
+                      {hasMarkdownMarkers ? (
+                        <span
+                          data-testid="read-source-markdown-hint"
+                          className="font-sans text-[0.72rem] font-medium text-lens-blue"
+                          title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
+                        >
+                          将作为 Markdown 解析
+                        </span>
+                      ) : null}
+
+                      {lintResult.hasDangerousContent ? (
+                        <span
+                          data-testid="read-source-lint-warning"
+                          className="inline-flex items-center gap-1 font-sans text-[0.72rem] font-semibold text-feedback-warning"
+                          title={summarizeLintWarnings(lintResult.warnings)}
+                        >
+                          <AlertTriangle aria-hidden className="h-3 w-3" />
+                          {summarizeLintWarnings(lintResult.warnings)}
+                        </span>
+                      ) : null}
+
+                      {!attachedSource && degradedMessage ? (
+                        <span
+                          data-testid="read-source-degraded-hint"
+                          className="inline-flex items-center gap-1 font-sans text-[0.72rem] font-semibold text-feedback-warning"
+                          title={degradedMessage}
+                        >
+                          <AlertTriangle aria-hidden className="h-3 w-3" />
+                          {degradedMessage}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="flex min-w-0 flex-col items-stretch gap-2 sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
@@ -1766,62 +1925,14 @@ export function AnalyzeSubmitForm({
                       onClick={handleSubmit}
                     />
                   </div>
-                </div>
-
-                {(!attachedSource && text.trim().length > 0) ||
-                hasMarkdownMarkers ||
-                (!attachedSource && lintResult.hasDangerousContent) ||
-                (!attachedSource && degradedMessage) ? (
-                  <div
-                    data-testid="read-source-status-row"
-                    className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 font-sans sm:justify-end"
-                  >
-                    {!attachedSource && text.trim().length > 0 ? (
-                      <span className="font-sans text-[0.72rem] font-medium text-subtle">
-                        {text.trim().length.toLocaleString("en-US")} chars
-                      </span>
-                    ) : null}
-
-                    {hasMarkdownMarkers ? (
-                      <span
-                        data-testid="read-source-markdown-hint"
-                        className="rounded-[6px] border border-lens-blue/24 bg-lens-blue-soft/50 px-2 py-1 font-sans text-[0.7rem] font-medium text-lens-blue"
-                        title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
-                      >
-                        将作为 Markdown 解析
-                      </span>
-                    ) : null}
-
-                    {!attachedSource && lintResult.hasDangerousContent ? (
-                      <span
-                        data-testid="read-source-lint-warning"
-                        className="inline-flex items-center gap-1.5 rounded-[6px] border border-feedback-warning/40 bg-feedback-warning-soft px-2 py-1 font-sans text-[0.7rem] font-semibold text-feedback-warning"
-                        title={summarizeLintWarnings(lintResult.warnings)}
-                      >
-                        <AlertTriangle aria-hidden className="h-3 w-3" />
-                        {summarizeLintWarnings(lintResult.warnings)}
-                      </span>
-                    ) : null}
-
-                    {!attachedSource && degradedMessage ? (
-                      <span
-                        data-testid="read-source-degraded-hint"
-                        className="inline-flex items-center gap-1.5 rounded-[6px] border border-feedback-warning/40 bg-feedback-warning-soft px-2 py-1 font-sans text-[0.7rem] font-semibold text-feedback-warning"
-                        title={degradedMessage}
-                      >
-                        <AlertTriangle aria-hidden className="h-3 w-3" />
-                        {degradedMessage}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
             )}
           </div>
         </div>
+        )}
       </div>
 
-      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
+      {state.kind !== "idle" && !isWaiting && state.kind !== "candidate" && state.kind !== "content-check" && state.kind !== "rejected" && state.kind !== "resume-not-found" && state.kind !== "resume-return-to-library" && state.kind !== "resume-failed" ? (
         <div
           className={`mt-4 shrink-0 rounded-[14px] border border-hairline/70 bg-surface/42 px-4 py-3 text-[0.82rem] font-medium lg:mx-12 ${
             state.kind === "error" ? "text-feedback-error" : "text-lens-blue"

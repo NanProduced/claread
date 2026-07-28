@@ -93,7 +93,35 @@ class _FakeConn:
                 self._log.append("insert_reading_record")
             elif "INSERT INTO original_inputs" in query:
                 self._log.append("insert_original_input")
+            elif "UPDATE confirmed_source_documents" in query:
+                self._log.append("freeze_confirmed_source")
+        if "UPDATE confirmed_source_documents" in query:
+            # freeze_confirmed_source expects exactly "UPDATE 1".
+            return "UPDATE 1"
         return "INSERT 0 1"
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
+        self.calls.append(_RecordedCall("fetchrow", query, args))
+        if self._log is not None and "INSERT INTO confirmed_source_documents" in query:
+            self._log.append("insert_confirmed_source")
+        # L2: insert_confirmed_source uses INSERT ... RETURNING via
+        # fetchrow; synthesize the inserted row from the query args
+        # (id, record_id, user_id, generation, original_input_id,
+        # markdown_text, content_sha256, edit_source, now).
+        if "INSERT INTO confirmed_source_documents" in query:
+            return {
+                "id": args[0],
+                "reading_record_id": args[1],
+                "user_id": args[2],
+                "record_generation": args[3],
+                "original_input_id": args[4],
+                "markdown_text": args[5],
+                "revision": 1,
+                "content_sha256": args[6],
+                "status": "draft",
+                "edit_source": args[7],
+            }
+        return None
 
     def is_in_transaction(self) -> bool:
         return self._in_transaction
@@ -375,7 +403,9 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
     assert log == [
         "insert_reading_record",
         "insert_original_input",
+        "insert_confirmed_source",
         "persist_freeze",
+        "freeze_confirmed_source",
         "set_active_base",
         "publish_event",
         "transaction_committed",
@@ -419,6 +449,8 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
             "outcome": "stable_document_ready",
             "flags": [],
             "reasons": captured["plan"].stable_document.source_profile_json["suitability"]["reasons"],
+            # L1: three-level adaptation records (none for this plain input).
+            "adaptations": [],
         },
         # T1/T5 — plain text path has no structured-source parser, so
         # parser_identity must be explicitly None (not omitted) to
@@ -437,7 +469,7 @@ def test_happy_path_pasted_text_persists_marks_event_and_loads_snapshot() -> Non
     assert "candidate_document_id" not in captured
 
 
-def test_happy_path_simple_markdown_uses_heading_title_and_excludes_code_from_canonical() -> None:
+def test_happy_path_simple_markdown_uses_heading_title_and_includes_code_in_canonical() -> None:
     conn = _FakeConn()
     service = _build_service(conn)
     captured: dict[str, Any] = {}
@@ -496,7 +528,10 @@ The closing paragraph explains how the revised decision was communicated to loca
     assert "Weekly Review" in plan.canonical_text
     assert "Readers compare background evidence before revising a public plan in writing." in plan.canonical_text
     assert "The closing paragraph explains how the revised decision was communicated to local readers." in plan.canonical_text
-    assert "return a + b" not in plan.canonical_text
+    # D2 (e9678eba): code_block defaults to main_reading — code is
+    # first-class reading content and enters canonical text; only the
+    # fence markers are stripped.
+    assert "return a + b" in plan.canonical_text
     assert "```python" not in plan.canonical_text
     assert "---" not in plan.canonical_text
 
@@ -526,7 +561,9 @@ The closing paragraph explains how the revised decision was communicated to loca
         (
             "markdown_file",
             "report.md",
-            f"{_english_paragraph()}\n\n| City | Cost |\n| --- | --- |\n| A | 10 |",
+            # L1: deterministic tables are stable-ready; an extra raw
+            # cell (column mismatch) keeps this a non-stable outcome.
+            f"{_english_paragraph()}\n\n| City | Cost |\n| --- | --- |\n| A | 10 | 99 |",
         ),
     ],
 )

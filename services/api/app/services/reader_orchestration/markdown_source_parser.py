@@ -15,17 +15,24 @@ Scope:
     are flattened into parent block text_content.
   * Link safety: protocol whitelist (http/https/mailto); unsafe
     protocols stripped, link text preserved, recorded in
-    payload_json.stripped_links.
-  * Raw HTML: html_block aggregated, inline HTML stripped, fail-closed
-    to candidate_document_required.
-  * Diagnostics: structured warnings + unsupported + outcome per
-    CONTRACT.md Clause 5.
+    payload_json.stripped_links (adaptation_notice; document continues).
+  * Raw HTML: html_block aggregated, inline HTML stripped, executable
+    structure never survives into text (adaptation_notice; document
+    continues). Bare unknown tags (``vector<T>`` / ``<name>``) are
+    plain-text placeholders and preserved verbatim.
+  * Tables: deterministic GFM tables (one header row, consistent raw
+    cell counts) freeze as stable; structure-uncertain tables route to
+    content check.
+  * Diagnostics: structured warnings with a three-level classification
+    (silent / adaptation_notice / content_check) + unsupported +
+    classification-driven outcome per CONTRACT.md Clause 5.
 
 Hard constraints (per Structured Source Contract CONTRACT.md):
   * Legacy regex normalizer (NORMALIZER_VERSION) is NOT touched here;
     the normalizer module wires this adapter in M1.
-  * Raw HTML / unsafe links / unclosed fences are fail-closed →
-    candidate_document_required.
+  * Content-check conditions (unclosed fences, footnote reference loss,
+    table structure uncertainty, missing source ranges) are fail-closed
+    → candidate_document_required.
 """
 
 from __future__ import annotations
@@ -55,9 +62,30 @@ PROFILE = "commonmark_gfm_v1"
 
 SAFE_LINK_PROTOCOLS = frozenset({"http", "https", "mailto"})
 
+# ---------------------------------------------------------------------------
+# Authoritative Normalization 三级分类（L1）
+#
+# Every parser diagnostic is classified into exactly one bucket:
+#   * ``silent``            — deterministic, meaning-preserving normalization;
+#                             invisible to the user.
+#   * ``adaptation_notice`` — content was cleaned / safely downgraded but the
+#                             document continues; surfaced as a non-blocking
+#                             notice.
+#   * ``content_check``     — content, boundaries or meaning may change; the
+#                             document routes to candidate review.
+# The parser outcome follows the classification: any ``content_check``
+# warning forces ``candidate_document_required``; ``silent`` and
+# ``adaptation_notice`` warnings never do.
+# ---------------------------------------------------------------------------
+
+CLASSIFICATION_SILENT = "silent"
+CLASSIFICATION_ADAPTATION_NOTICE = "adaptation_notice"
+CLASSIFICATION_CONTENT_CHECK = "content_check"
+
 # Diagnostic messages (Clause 5 — closed set, fixed text).
 _MSG_RAW_HTML_BLOCK = (
-    "Raw HTML block detected; stored as text but requires candidate review."
+    "Raw HTML block detected; executable structure removed, text preserved "
+    "as a plain paragraph."
 )
 _MSG_INLINE_HTML = "Inline HTML tag stripped from paragraph text."
 _MSG_UNSAFE_LINK = (
@@ -65,14 +93,15 @@ _MSG_UNSAFE_LINK = (
     "from paragraph text; link text preserved."
 )
 _MSG_FOOTNOTE_REF = (
-    "Footnote reference encountered; footnote plugin not enabled in first phase."
+    "Footnote reference encountered; the reference marker is dropped from "
+    "body text while the definition is captured as a footnote block."
 )
 _MSG_UNCLOSED_FENCE = (
     "Fenced code block is missing its closing fence; captured as code_block "
     "but requires candidate review for boundary correctness."
 )
 _MSG_STRIKETHROUGH = (
-    "Strikethrough syntax used; requires GFM strikethrough plugin."
+    "Strikethrough syntax captured as plain text; rendering is preserved."
 )
 _MSG_MERMAID = (
     "Mermaid code block is stored as static text; diagram is not "
@@ -85,6 +114,10 @@ _MSG_CODE_DOMINANT = (
 _MSG_MISSING_SOURCE_RANGE = (
     "Parser token missing source range; requires candidate review for "
     "boundary correctness."
+)
+_MSG_TABLE_STRUCTURE_UNCERTAIN = (
+    "Table row/column structure does not match the header definition; "
+    "cells would be dropped or padded during deterministic normalization."
 )
 _MSG_UNSUP_RAW_HTML = (
     "Raw HTML is not a first-class block type in the first phase; text is "
@@ -147,11 +180,13 @@ class ParsedBlock:
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticWarning:
-    """Structured warning (Clause 5)."""
+    """Structured warning (Clause 5 + L1 three-level classification)."""
 
     code: str
     message: str
     blocks_freeze: bool
+    # silent | adaptation_notice | content_check (see module constants).
+    classification: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,9 +278,15 @@ def _extract_inline_text(token: Token) -> str:
             "strong_open", "strong_close",
             "s_open", "s_close",
             "del_open", "del_close",
-            "html_inline",
             "footnote_ref",
         ):
+            continue
+        elif child.type == "html_inline":
+            # Non-HTML placeholders (vector<T> / <name>) are literal text
+            # and must survive every flattening path, including the
+            # html_block aggregation path.
+            if _is_non_html_placeholder(child.content):
+                parts.append(child.content)
             continue
         elif child.type == "image":
             parts.append(child.content)
@@ -620,9 +661,16 @@ def _process_inline_with_marks(
                     )
                     break
         elif ctype == "html_inline":
-            has_inline_html = True
-            # Skip from text (A3: no rescue merge).
-            continue
+            if _is_non_html_placeholder(child.content):
+                # vector<T> / <name> style placeholders are plain text,
+                # not HTML: preserve verbatim, no diagnostic.
+                _append_text(child.content)
+                if open_link is not None:
+                    open_link["label_parts"].append(child.content)
+            else:
+                has_inline_html = True
+                # Skip from text (A3: no rescue merge).
+                continue
         elif ctype == "image":
             _append_text(child.content)
             if open_link is not None:
@@ -656,6 +704,127 @@ def _has_footnote_ref(token: Token) -> bool:
 def _strip_html_tags(content: str) -> str:
     """Naive HTML tag stripping for raw html_block text extraction."""
     return re.sub(r"<[^>]+>", "", content).strip()
+
+
+# Known HTML tag names (WHATWG standard elements). A bare inline tag whose
+# name is NOT in this set (``<T>``, ``<name>``) is treated as plain-text
+# placeholder content (``vector<T>``, template arguments), not as HTML —
+# it is preserved verbatim and never triggers an inline_html diagnostic.
+_KNOWN_HTML_TAGS = frozenset(
+    {
+        "a", "abbr", "address", "area", "article", "aside", "audio",
+        "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button",
+        "canvas", "caption", "cite", "code", "col", "colgroup",
+        "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div",
+        "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure",
+        "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+        "header", "hgroup", "hr", "html", "i", "iframe", "img", "input",
+        "ins", "kbd", "label", "legend", "li", "link", "main", "map",
+        "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol",
+        "optgroup", "option", "output", "p", "picture", "pre", "progress",
+        "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section",
+        "select", "slot", "small", "source", "span", "strong", "style",
+        "sub", "summary", "sup", "svg", "table", "tbody", "td", "template",
+        "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track",
+        "u", "ul", "var", "video", "wbr",
+    }
+)
+
+_HTML_INLINE_TAG_PATTERN = re.compile(
+    r"^</?([A-Za-z][A-Za-z0-9-]*)((?:\s[^<>]*)?)\s*/?>$"
+)
+
+
+def _is_non_html_placeholder(content: str) -> bool:
+    """Return True when an ``html_inline`` token is actually plain text.
+
+    markdown-it-py parses any syntactically valid tag as ``html_inline``,
+    including placeholders like ``<T>`` in ``vector<T>`` or ``<name>`` in
+    prose. A *bare* tag (no attributes, not self-closing) whose name is
+    not a known HTML element is preserved as literal text. Known tags,
+    tags with attributes (``<img onerror=...>``), comments and doctype
+    declarations stay on the strip-and-flag path (fail-safe).
+    """
+    match = _HTML_INLINE_TAG_PATTERN.match(content.strip())
+    if match is None:
+        return False
+    if match.group(2):
+        # Attributes present — real HTML, strip it.
+        return False
+    return match.group(1).lower() not in _KNOWN_HTML_TAGS
+
+
+def _count_raw_table_cells(lines: list[str], line_1based: int) -> int | None:
+    """Count raw ``|``-separated cells on a 1-based source line.
+
+    Returns ``None`` when the line cannot be interpreted as a table row
+    (out of range / no pipe). Unescaped pipes split cells; ``\\|`` is an
+    escaped literal pipe and does not split.
+    """
+    if line_1based < 1 or line_1based > len(lines):
+        return None
+    line = lines[line_1based - 1].strip()
+    if "|" not in line:
+        return None
+    if line.startswith("|"):
+        line = line[1:]
+    if line.endswith("|"):
+        line = line[:-1]
+    return len(re.split(r"(?<!\\)\|", line))
+
+
+def _audit_table_structure(blocks: list[ParsedBlock], source: str) -> bool:
+    """Detect tables whose raw row/column structure markdown-it normalized.
+
+    markdown-it silently pads missing cells and drops extra cells in body
+    rows. A table is deterministic (safe to freeze as stable) iff it has
+    exactly one header row and every row's raw cell count equals the
+    header column count. Anything else is structure-uncertain: the table
+    payload is stamped with ``structure_uncertain: True`` and the document
+    routes to content check.
+
+    Every table payload also gains ``header_rows`` (0 or 1 for GFM), so
+    downstream consumers never re-derive header semantics from raw text.
+    """
+    lines = source.split("\n")
+    children_by_parent: dict[str, list[ParsedBlock]] = {}
+    for block in blocks:
+        if block.parent_block_id:
+            children_by_parent.setdefault(block.parent_block_id, []).append(block)
+
+    any_uncertain = False
+    for table in blocks:
+        if table.block_type != "table":
+            continue
+        rows = [
+            b
+            for b in children_by_parent.get(table.block_id, [])
+            if b.block_type == "table_row"
+        ]
+        header_rows = sum(
+            1 for row in rows if row.payload_json.get("is_header") is True
+        )
+        table.payload_json["header_rows"] = header_rows
+        column_count = int(table.payload_json.get("column_count") or 0)
+        uncertain = header_rows != 1
+        for row in rows:
+            cells = [
+                b
+                for b in children_by_parent.get(row.block_id, [])
+                if b.block_type == "table_cell"
+            ]
+            if len(cells) != column_count:
+                uncertain = True
+                continue
+            raw_count = _count_raw_table_cells(
+                lines, row.source_range.line_start
+            )
+            if raw_count is not None and raw_count != column_count:
+                uncertain = True
+        if uncertain:
+            table.payload_json["structure_uncertain"] = True
+            any_uncertain = True
+    return any_uncertain
 
 
 def _extract_alignment(token: Token) -> str:
@@ -808,6 +977,11 @@ class MarkdownSourceParser:
                         while k < len(tokens) and tokens[k].type != "paragraph_close":
                             if tokens[k].type == "inline":
                                 agg_texts.append(_extract_inline_text(tokens[k]))
+                                # L1: inline HTML inside a paragraph absorbed
+                                # by the html_block aggregation must still be
+                                # diagnosed (it is stripped, not executed).
+                                if _has_inline_html(tokens[k]):
+                                    flags.has_inline_html = True
                             k += 1
                         if t.map:
                             agg_end_map = t.map
@@ -1115,9 +1289,11 @@ class MarkdownSourceParser:
                         has_inline_html,
                         starts_with_html_inline,
                     ) = _process_paragraph_inline(inline_token)
-                    # Strip any remaining HTML tags from text (from html_inline
-                    # tokens that survived link extraction).
-                    para_text = re.sub(r"<[^>]+>", "", para_text)
+                    # html_inline tokens never contribute raw tag text to
+                    # para_text (they are either stripped or, for non-HTML
+                    # placeholders like vector<T>, preserved verbatim as
+                    # intentional literal text), so no regex tag-stripping
+                    # post-pass is applied here.
                     # A3: html_inline is always flagged when present (no
                     # "rescue" merge — link safety is single-point).
                     if has_inline_html:
@@ -1380,12 +1556,18 @@ class MarkdownSourceParser:
         # Unclosed fence detection moved to pre-scan (before token loop)
         # so fence blocks can reference flags.has_unclosed_fence.
 
+        # L1: audit table structure (header rows / raw cell counts) and
+        # stamp header_rows + structure_uncertain onto table payloads.
+        if _audit_table_structure(blocks, normalized):
+            flags.has_table_structure_uncertain = True
+
         if flags.has_raw_html:
             warnings.append(
                 DiagnosticWarning(
                     code="raw_html_block",
                     message=_MSG_RAW_HTML_BLOCK,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_ADAPTATION_NOTICE,
                 )
             )
             unsupported.append(
@@ -1401,6 +1583,7 @@ class MarkdownSourceParser:
                     code="inline_html",
                     message=_MSG_INLINE_HTML,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_ADAPTATION_NOTICE,
                 )
             )
 
@@ -1410,6 +1593,7 @@ class MarkdownSourceParser:
                     code="unsafe_link_protocol",
                     message=_MSG_UNSAFE_LINK,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_ADAPTATION_NOTICE,
                 )
             )
             unsupported.append(
@@ -1425,6 +1609,7 @@ class MarkdownSourceParser:
                     code="footnote_reference",
                     message=_MSG_FOOTNOTE_REF,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
                 )
             )
             unsupported.append(
@@ -1440,6 +1625,17 @@ class MarkdownSourceParser:
                     code="has_unclosed_fence",
                     message=_MSG_UNCLOSED_FENCE,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
+                )
+            )
+
+        if flags.has_table_structure_uncertain:
+            warnings.append(
+                DiagnosticWarning(
+                    code="table_structure_uncertain",
+                    message=_MSG_TABLE_STRUCTURE_UNCERTAIN,
+                    blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
                 )
             )
 
@@ -1449,6 +1645,7 @@ class MarkdownSourceParser:
                     code="missing_source_range",
                     message=_MSG_MISSING_SOURCE_RANGE,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
                 )
             )
 
@@ -1458,6 +1655,7 @@ class MarkdownSourceParser:
                     code="strikethrough_extension",
                     message=_MSG_STRIKETHROUGH,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_SILENT,
                 )
             )
 
@@ -1471,15 +1669,20 @@ class MarkdownSourceParser:
                             code="mermaid_static_only",
                             message=_MSG_MERMAID,
                             blocks_freeze=False,
+                            classification=CLASSIFICATION_ADAPTATION_NOTICE,
                         )
                     )
                     break
 
-        # --- Outcome determination ---
+        # --- Outcome determination (L1 classification-driven) ---
         has_narrative = any(
             b.block_type in _NARRATIVE_BLOCK_TYPES for b in blocks
         )
         has_code = any(b.block_type == "code_block" for b in blocks)
+        has_content_check = any(
+            warning.classification == CLASSIFICATION_CONTENT_CHECK
+            for warning in warnings
+        )
 
         if not has_narrative and has_code:
             warnings.append(
@@ -1487,17 +1690,11 @@ class MarkdownSourceParser:
                     code="code_dominant",
                     message=_MSG_CODE_DOMINANT,
                     blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
                 )
             )
             outcome = "input_rejected_or_action_required"
-        elif (
-            flags.has_raw_html
-            or flags.has_unsafe_link
-            or flags.has_footnote_ref
-            or flags.has_unclosed_fence
-            or flags.has_inline_html
-            or flags.has_missing_source_range
-        ):
+        elif has_content_check:
             outcome = "candidate_document_required"
         else:
             outcome = "stable_document_ready"
@@ -1527,3 +1724,4 @@ class _DiagnosticFlags:
     has_unclosed_fence: bool = False
     has_strikethrough: bool = False
     has_missing_source_range: bool = False
+    has_table_structure_uncertain: bool = False

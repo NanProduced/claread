@@ -80,20 +80,54 @@ function getSubmitButton(): HTMLButtonElement {
 
 /**
  * 通过真实组件路径把结构化 Markdown 注入真实编辑器：
- * localStorage candidate → 恢复对话框 → 「重新提交」(onRestart) →
- * setText(snapshot) + editor.setValue(snapshot)。
+ * localStorage candidate → L2 Content Check（mock GET confirmed-source）→
+ * 「返回修改」→ setText(draft) + editor.setValue(draft)。
  */
-async function enterMarkdownViaRecoveryFlow(markdown: string) {
+async function enterMarkdownViaRecoveryFlow(
+  markdown: string,
+  onFetch?: (url: string, init?: RequestInit) => Response | null,
+) {
   seedPendingCandidate(markdown);
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/confirmed-source")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          source_document_id: "cs_r1",
+          record_generation: 1,
+          revision: 1,
+          status: "draft",
+          markdown_text: markdown,
+          content_sha256: "a".repeat(64),
+          edit_source: "initial",
+          updated_at: "2026-07-28T00:00:00.000Z",
+          candidate: {
+            candidate_document_id: "cand_r1_reedit",
+            status: "ready",
+            canonical_text_preview: "",
+          },
+          quality: null,
+          adaptation_notice: [],
+          content_check: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    const delegated = onFetch?.(url, init) ?? null;
+    if (delegated) return delegated;
+    throw new Error(`Unexpected fetch ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
   renderForm();
   await waitFor(() => {
-    expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+    expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
   });
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "重新提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
   });
   await waitFor(() => {
-    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
+    expect(screen.queryByTestId("content-check-panel")).toBeNull();
   });
 }
 
@@ -174,8 +208,8 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   });
 
   it("submits structured content from the real editor to the unified endpoint", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/web/reader-plate/input");
+    const submitMock = vi.fn((url: string, init?: RequestInit) => {
+      expect(url).toBe("/api/web/reader-plate/input");
       const sent = JSON.parse(String(init?.body)) as { text: string };
       expect(sent.text).toContain("## 6. Implementation Plan");
       return new Response(
@@ -189,9 +223,8 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
         { status: 200, headers: { "content-type": "application/json" } },
       );
     });
-    vi.stubGlobal("fetch", fetchMock);
 
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
+    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN, submitMock);
     await waitFor(() => {
       expect(getSubmitButton().getAttribute("data-ready")).toBe("true");
     });
@@ -204,8 +237,8 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
       expect(navigationMock.push).toHaveBeenCalledWith("/app/reader-record/rec_r1_submit");
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { text: string };
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(submitMock.mock.calls[0][1]?.body)) as { text: string };
     // 提交载荷保留标题结构（不压平为纯文本）。
     expect(body.text).toContain("## 6. Implementation Plan");
     expect(body.text).toContain("### Step 1: Streamline Server Deployment Architecture");

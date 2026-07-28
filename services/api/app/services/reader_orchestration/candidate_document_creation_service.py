@@ -9,7 +9,11 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database.json_compat import jsonb_param
-from app.schemas.reader_documents import CandidateReadingDocumentStatus, StableDocumentBlock
+from app.schemas.reader_documents import (
+    CandidateReadingDocumentStatus,
+    ConfirmedSourceDocument,
+    StableDocumentBlock,
+)
 from app.schemas.reader_input_adapter import (
     InputAdapterSourceType,
     InputSuitabilityRequest,
@@ -20,6 +24,13 @@ from app.schemas.reader_orchestration import (
     DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
     ReaderOrchestrationReadingGoal,
     ReaderOrchestrationReadingVariant,
+)
+from app.services.reader_orchestration.confirmed_source_repository import (
+    candidate_confirmed_source_refs,
+    insert_confirmed_source,
+)
+from app.services.reader_orchestration.input_format import (
+    detect_input_format,
 )
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
@@ -125,6 +136,12 @@ class CandidateDocumentCreationService:
         created_at = now or datetime.now(UTC)
         language_value = (language or "en").strip() or "en"
         source_metadata_value = dict(source_metadata or {})
+        # L2/A4 — 每请求只解析一次：当调用方未提供 preparsed 时，在
+        # 这里解析一次并同时喂给 gate 与 candidate 块构造。格式检测
+        # （detected_format）也由这同一份 MarkdownParseResult 决定，
+        # 禁止再按 source_type 决定是否保留结构。
+        if preparsed is None:
+            preparsed = _MARKDOWN_PARSER.parse(_normalize_source_text(text))
         pool = self._get_pool()
 
         record_id: UUID | None = None
@@ -212,6 +229,22 @@ class CandidateDocumentCreationService:
                             source_metadata=source_metadata_value,
                             created_at=created_at,
                         )
+                        # L2：同一事务内、在 candidate insert 之前插入
+                        # Confirmed Source 行（revision=1, edit_source=
+                        # 'initial'）。正文为 _normalize_source_text 后
+                        # 的文本，与 blocks/reparse 输入严格同源；
+                        # original_inputs.source_text 恒 NULL。
+                        confirmed_source = await insert_confirmed_source(
+                            conn,
+                            source_document_id=uuid4(),
+                            record_id=record_id,
+                            user_id=user_id,
+                            generation=1,
+                            original_input_id=original_input_id,
+                            markdown_text=_normalize_source_text(text),
+                            edit_source="initial",
+                            now=created_at,
+                        )
                         # Lock the parent reading_records row (FOR UPDATE)
                         # and validate generation=1. The lock is held for
                         # the rest of the transaction, serializing
@@ -265,6 +298,7 @@ class CandidateDocumentCreationService:
                             original_input_id=original_input_id,
                             suitability=suitability,
                             created_at=created_at,
+                            confirmed_source=confirmed_source,
                         )
                     except CandidateDocumentCreationError:
                         raise
@@ -371,6 +405,10 @@ async def _insert_original_input(
     source_metadata: dict[str, Any],
     created_at: datetime,
 ) -> None:
+    # L2：original_inputs 只保留 lineage——source_text 恒 NULL（正文
+    # 唯一载体是 confirmed_source_documents.markdown_text），
+    # content_sha256 保留为原始提交文本的 hash（lineage 元数据，
+    # 非正文）；source_ref_json 始终非空（ck_original_inputs_has_source）。
     await conn.execute(
         """
         INSERT INTO original_inputs (
@@ -400,7 +438,7 @@ async def _insert_original_input(
         record_id,
         user_id,
         _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE[source_type],
-        text,
+        None,
         jsonb_param(_source_ref_json(source_type=source_type, filename=filename)),
         jsonb_param(source_metadata),
         hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -422,6 +460,7 @@ async def _insert_candidate_document(
     original_input_id: UUID,
     suitability: InputSuitabilityResult,
     created_at: datetime,
+    confirmed_source: ConfirmedSourceDocument | None = None,
 ) -> None:
     await conn.execute(
         """
@@ -466,6 +505,7 @@ async def _insert_candidate_document(
                 filename=filename,
                 source_metadata=source_metadata,
                 original_input_id=original_input_id,
+                confirmed_source=confirmed_source,
             )
         ),
         jsonb_param(_candidate_quality_json(suitability=suitability)),
@@ -479,6 +519,7 @@ def _candidate_source_refs_json(
     filename: str | None,
     source_metadata: dict[str, Any],
     original_input_id: UUID,
+    confirmed_source: ConfirmedSourceDocument | None = None,
 ) -> dict[str, Any]:
     source_refs_json: dict[str, Any] = {
         "source_type": source_type,
@@ -487,6 +528,11 @@ def _candidate_source_refs_json(
     }
     if filename is not None:
         source_refs_json["filename"] = filename
+    if confirmed_source is not None:
+        # L2 — candidate 引用最新 source revision/hash（设计文档 §6：
+        # 三 key 放 JSONB，不加列）。confirm 插入点 A 据此校验
+        # stale_candidate_revision。
+        source_refs_json.update(candidate_confirmed_source_refs(confirmed_source))
     return source_refs_json
 
 
@@ -503,6 +549,11 @@ def _candidate_quality_json(
             "word_count": suitability.word_count,
             "english_word_ratio": suitability.english_word_ratio,
             "natural_language_score": suitability.natural_language_score,
+            # L1: three-level adaptation records (silent /
+            # adaptation_notice / content_check).
+            "adaptations": [
+                record.model_dump() for record in suitability.adaptations
+            ],
         },
     }
 
@@ -530,12 +581,25 @@ def _build_candidate_blocks(
 ) -> tuple[list[StableDocumentBlock], str | None]:
     normalized_text = _normalize_source_text(text)
     title = _title_from_source_metadata(source_metadata)
-    if source_type == "markdown_file":
+    # L2 — format 驱动的结构化构造：parser 是块结构的 single source
+    # of truth，内容格式（而非输入来源）决定是否保留 Markdown 结构。
+    # 粘贴的 Markdown（pasted_text）与 markdown_file 走同一条 parser
+    # 路径；无 Markdown 标记的纯文本保持空行分段的纯文本行为。
+    parse_result = (
+        preparsed
+        if preparsed is not None
+        else _MARKDOWN_PARSER.parse(normalized_text)
+    )
+    content_format = detect_input_format(
+        source_type=source_type,
+        parse_result=parse_result,
+    )
+    if content_format == "markdown":
         drafts, markdown_title = _build_markdown_drafts_from_parser(
-            normalized_text, parse_result=preparsed
+            normalized_text, parse_result=parse_result
         )
         title = markdown_title or title
-        # markdown_file blocks carry the parser identity triple in
+        # markdown-format blocks carry the parser identity triple in
         # quality_json for provenance symmetry with the normalizer path.
         block_quality_json: dict[str, Any] = dict(_PARSER_IDENTITY)
     else:

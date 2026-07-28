@@ -14,6 +14,7 @@ vi.mock("@/services/api/reader-plate", () => ({
   submitUpstreamReaderUnifiedInput: vi.fn(),
   getUpstreamReaderPlateSnapshot: vi.fn(),
   pollUpstreamReaderEvents: vi.fn(),
+  putUpstreamReaderConfirmedSource: vi.fn(),
   initUpstreamReaderSourceArtifactUpload: vi.fn(),
   completeUpstreamReaderSourceArtifactUpload: vi.fn(),
   submitUpstreamReaderSourceArtifactInput: vi.fn(),
@@ -38,6 +39,7 @@ import {
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
+  putUpstreamReaderConfirmedSource,
   submitUpstreamReaderPlainText,
   submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
@@ -59,6 +61,7 @@ import {
   submitReaderSourceArtifactInputFromWeb,
   submitReaderUnifiedInputFromWeb,
   submitReadingRecordPlainTextFromWeb,
+  updateReaderConfirmedSourceFromWeb,
 } from "./reader-plate";
 import { appReadingRecordRoute } from "@/lib/routes";
 import type {
@@ -1849,6 +1852,29 @@ function makeCandidateDocumentReadResponse(
     ...rest,
   };
 }
+
+describe("reader-plate BFF confirmed source update", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(getWebSession).mockResolvedValue(mockSession);
+  });
+
+  it("rejects a fractional expected_revision instead of silently flooring it", async () => {
+    const result = await updateReaderConfirmedSourceFromWeb("rec_1", {
+      expectedRevision: 1.9,
+      markdownText: "# Draft",
+      editSource: "content_check",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      code: "invalid_input",
+    });
+    expect(getWebSession).not.toHaveBeenCalled();
+    expect(putUpstreamReaderConfirmedSource).not.toHaveBeenCalled();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // T5.6c — section translation (synchronous explicit-section command)

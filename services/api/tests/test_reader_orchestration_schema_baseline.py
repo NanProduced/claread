@@ -45,6 +45,9 @@ BASELINE_SQL = (
     # 这两个类型加入 StableDocumentBlockType 枚举，但 0004 的 DB constraint
     # 未同步。测试 baseline 需要包含 0023 才能构造 list wrapper block。
     REPO_ROOT / "infra" / "migrations" / "0023_stable_document_blocks_text_constraint_extend.sql"
+).read_text(encoding="utf-8") + "\n" + (
+    # 0025 L2 Confirmed Source 生命周期实体（confirmed_source_documents）。
+    REPO_ROOT / "infra" / "migrations" / "0025_confirmed_source_documents.sql"
 ).read_text(encoding="utf-8")
 
 

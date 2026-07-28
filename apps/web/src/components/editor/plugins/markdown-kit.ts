@@ -96,26 +96,36 @@ const ALLOWED_MARKDOWN_NODES = [
   "strikethrough",
 ] as const;
 
+/**
+ * MarkdownPlugin 的完整 options（输入端可在此基础上扩展 remarkPlugins，
+ * 例如 MarkdownTextInput 追加 remarkPreserveUnsupported）。
+ *
+ * 注：不要通过 `MarkdownKit[0].configure({ options: ...MarkdownKit[0].options })`
+ * 复制配置——Plate configure 的 options 解析会丢 remarkStringifyOptions
+ * 等字段（已实测）。统一从本对象展开。
+ */
+export const MARKDOWN_PLUGIN_OPTIONS = {
+  remarkPlugins: [remarkGfm],
+  allowedNodes: [...ALLOWED_MARKDOWN_NODES],
+  remarkStringifyOptions: {
+    // 与粘贴入口约定：无序列表用 `-`，避免 `*` 与 emphasis 歧义。
+    bullet: "-" as const,
+    // GFM 习惯：斜体用 `*`，粗体也用 `*`（remark-stringify 自动重复为 `**`）。
+    emphasis: "*" as const,
+    strong: "*" as const,
+    // 代码围栏用 `` ` ``（remark-stringify 自动重复为 ``` ``` ```）。
+    fence: "`" as const,
+    // 分隔线用 `-`（remark-stringify 自动重复为 `---`）。
+    rule: "-" as const,
+    // 有序列表 marker 递增（1. 2. 3.），而非全 1.
+    incrementListMarker: true,
+    // 链接定义紧凑，减少多余空行。
+    tightDefinitions: true,
+  },
+};
+
 export const MarkdownKit = [
   MarkdownPlugin.configure({
-    options: {
-      remarkPlugins: [remarkGfm],
-      allowedNodes: [...ALLOWED_MARKDOWN_NODES],
-      remarkStringifyOptions: {
-        // 与粘贴入口约定：无序列表用 `-`，避免 `*` 与 emphasis 歧义。
-        bullet: "-",
-        // GFM 习惯：斜体用 `*`，粗体也用 `*`（remark-stringify 自动重复为 `**`）。
-        emphasis: "*",
-        strong: "*",
-        // 代码围栏用 `` ` ``（remark-stringify 自动重复为 ``` ``` ```）。
-        fence: "`",
-        // 分隔线用 `-`（remark-stringify 自动重复为 `---`）。
-        rule: "-",
-        // 有序列表 marker 递增（1. 2. 3.），而非全 1.
-        incrementListMarker: true,
-        // 链接定义紧凑，减少多余空行。
-        tightDefinitions: true,
-      },
-    },
+    options: MARKDOWN_PLUGIN_OPTIONS,
   }),
 ];

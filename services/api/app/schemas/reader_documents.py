@@ -40,6 +40,19 @@ CandidateReadingDocumentStatus = Literal[
 
 StableReadingDocumentStatus = Literal["active", "superseded"]
 
+# L2 — Confirmed Source 生命周期（migration 0025）。
+# 每个 (reading_record_id, record_generation) 至多一行；markdown_text 是
+# 该 generation 全库唯一一份完整正文（规范化后文本）。
+ConfirmedSourceDocumentStatus = Literal["draft", "frozen"]
+
+ConfirmedSourceEditSource = Literal[
+    "initial",
+    "extraction",
+    "wysiwyg",
+    "source_mode",
+    "content_check",
+]
+
 # Mirrors the CHECK constraint on stable_document_blocks.block_type.
 StableDocumentBlockType = Literal[
     "paragraph",
@@ -489,3 +502,27 @@ class CandidateReadingDocument(BaseModel):
         # domain-level "must be an ordered list" invariant is documented
         # and re-validated after model mutations in callers.
         return list(value)
+
+
+class ConfirmedSourceDocument(BaseModel):
+    """L2 — 单一 Confirmed Source 生命周期实体（migration 0025）。
+
+    每个 ``(reading_record_id, record_generation)`` 至多一行；
+    ``markdown_text`` 是该 generation 全库唯一一份完整正文（规范化后
+    文本，与 blocks / reparse 输入严格同源）。revision 乐观并发演进
+    采用原地 UPDATE，不保留历史正文；``content_sha256`` 由 DB CHECK
+    自校验（reading_bases 先例）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    reading_record_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    record_generation: int = Field(ge=1)
+    original_input_id: str | None = None
+    markdown_text: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: ConfirmedSourceDocumentStatus = "draft"
+    edit_source: ConfirmedSourceEditSource = "initial"

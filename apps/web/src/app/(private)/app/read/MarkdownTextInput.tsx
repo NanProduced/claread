@@ -73,6 +73,36 @@ import {
   type KeyboardEvent,
 } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
+import remarkGfm from "remark-gfm";
+import {
+  BaseBlockquotePlugin,
+  BaseBoldPlugin,
+  BaseCodePlugin,
+  BaseH1Plugin,
+  BaseH2Plugin,
+  BaseH3Plugin,
+  BaseH4Plugin,
+  BaseH5Plugin,
+  BaseH6Plugin,
+  BaseHorizontalRulePlugin,
+  BaseItalicPlugin,
+  BaseStrikethroughPlugin,
+} from "@platejs/basic-nodes";
+import { BaseCodeBlockPlugin, BaseCodeLinePlugin } from "@platejs/code-block";
+import { BaseLinkPlugin } from "@platejs/link";
+import {
+  BaseBulletedListPlugin,
+  BaseListItemContentPlugin,
+  BaseListItemPlugin,
+  BaseListPlugin,
+  BaseNumberedListPlugin,
+} from "@platejs/list-classic";
+import {
+  BaseTableCellHeaderPlugin,
+  BaseTableCellPlugin,
+  BaseTablePlugin,
+  BaseTableRowPlugin,
+} from "@platejs/table";
 import {
   createPlatePlugin,
   type PlateElementProps,
@@ -84,11 +114,13 @@ import {
 } from "platejs/react";
 import type { Value } from "platejs";
 
-import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
+import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
+import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
 import {
   deserializeMarkdownToBlocksWithStatus,
   type DeserializeMarkdownResult,
 } from "@/lib/reader-plate/markdown/deserialize";
+import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
 import { cn } from "@/lib/cn";
 import {
   lintMarkdownInput,
@@ -102,7 +134,7 @@ import {
 
 function MarkdownParagraph({ children, attributes }: PlateElementProps) {
   return (
-    <p {...attributes} className="my-2 leading-relaxed">
+    <p {...attributes} className="my-3">
       {children}
     </p>
   );
@@ -140,7 +172,7 @@ function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
 
 function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ul {...attributes} className="my-2 list-disc pl-6 leading-relaxed">
+    <ul {...attributes} className="my-3 list-disc pl-6">
       {children}
     </ul>
   );
@@ -148,7 +180,7 @@ function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
 
 function MarkdownOrderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ol {...attributes} className="my-2 list-decimal pl-6 leading-relaxed">
+    <ol {...attributes} className="my-3 list-decimal pl-6">
       {children}
     </ol>
   );
@@ -266,34 +298,65 @@ function MarkdownStrikethroughLeaf({ children, attributes }: PlateLeafProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Plugins：复用 MarkdownKit + 自包含 element/leaf component
+// Plugins：官方行为插件（@platejs/basic-nodes / list-classic / link /
+// code-block / table）+ 复用上方 Markdown* 视觉组件。
+//
+// L1 接入（替代原 21 个薄 createPlatePlugin 渲染壳）：
+// - 官方插件自带 HTML deserializer / normalize / 快捷键等行为，粘贴
+//   text/html 不再摊平为段落。
+// - 视觉仍由本文件 Markdown* 组件负责，通过 `.configure({ node: { component } })`
+//   挂载；不重新设计样式。
+// - BaseListPlugin / BaseTablePlugin 自带子插件（ul/ol/taskList/li/lic、
+//   tr/td/th）；重复 key 的独立注册会合并（first-wins），用于给子插件
+//   挂 component。
+// - paragraph 无官方包，保留 core ParagraphPlugin + 薄壳 component。
+// - MarkdownKit 的 MarkdownPlugin 追加 remarkPreserveUnsupported：
+//   image/footnote/task list 在输入端降级为可见形态，不静默丢失
+//   （reader-plate projection 用的 MarkdownKit 不受影响）。
 // ---------------------------------------------------------------------------
 
+// 注：不要通过 `MarkdownKit[0].configure({ options: ...MarkdownKit[0].options })`
+// 复制配置——Plate configure 的 options 解析会丢 remarkStringifyOptions
+// 等字段（已实测）。统一从 markdown-kit 导出的 MARKDOWN_PLUGIN_OPTIONS 展开。
+const InputMarkdownPlugin = MarkdownPlugin.configure({
+  options: {
+    ...MARKDOWN_PLUGIN_OPTIONS,
+    remarkPlugins: [remarkGfm, remarkPreserveUnsupported],
+  },
+});
+
 const markdownTextInputPlugins = [
-  ...MarkdownKit,
-  // block elements
+  InputMarkdownPlugin,
+  // basic-nodes：标题/引用/分隔线
+  BaseH1Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseH2Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseH3Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseH4Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseH5Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseH6Plugin.configure({ node: { component: MarkdownHeading } }),
+  BaseBlockquotePlugin.configure({ node: { component: MarkdownBlockquote } }),
+  BaseHorizontalRulePlugin.configure({ node: { component: MarkdownHr } }),
+  // basic-nodes：行内 marks
+  BaseBoldPlugin.configure({ node: { component: MarkdownBoldLeaf } }),
+  BaseItalicPlugin.configure({ node: { component: MarkdownItalicLeaf } }),
+  BaseCodePlugin.configure({ node: { component: MarkdownCodeLeaf } }),
+  BaseStrikethroughPlugin.configure({ node: { component: MarkdownStrikethroughLeaf } }),
+  // list-classic：行为来自 BaseListPlugin（withList），component 挂子插件
+  BaseListPlugin,
+  BaseBulletedListPlugin.configure({ node: { component: MarkdownUnorderedList } }),
+  BaseNumberedListPlugin.configure({ node: { component: MarkdownOrderedList } }),
+  BaseListItemPlugin.configure({ node: { component: MarkdownListItem } }),
+  BaseListItemContentPlugin.configure({ node: { component: MarkdownListContent } }),
+  // link / code-block / table
+  BaseLinkPlugin.configure({ node: { component: MarkdownLink } }),
+  BaseCodeBlockPlugin.configure({ node: { component: MarkdownCodeBlock } }),
+  BaseCodeLinePlugin.configure({ node: { component: MarkdownCodeLine } }),
+  BaseTablePlugin.configure({ node: { component: MarkdownTable } }),
+  BaseTableRowPlugin.configure({ node: { component: MarkdownTableRow } }),
+  BaseTableCellPlugin.configure({ node: { component: MarkdownTableCell } }),
+  BaseTableCellHeaderPlugin.configure({ node: { component: MarkdownTableCell } }),
+  // paragraph：core 插件 + 薄壳 component
   createPlatePlugin({ key: "p", node: { isElement: true, component: MarkdownParagraph } }),
-  ...(["h1", "h2", "h3", "h4", "h5", "h6"] as const).map((key) =>
-    createPlatePlugin({ key, node: { isElement: true, component: MarkdownHeading } }),
-  ),
-  createPlatePlugin({ key: "blockquote", node: { isElement: true, component: MarkdownBlockquote } }),
-  createPlatePlugin({ key: "ul", node: { isElement: true, component: MarkdownUnorderedList } }),
-  createPlatePlugin({ key: "ol", node: { isElement: true, component: MarkdownOrderedList } }),
-  createPlatePlugin({ key: "li", node: { isElement: true, component: MarkdownListItem } }),
-  createPlatePlugin({ key: "lic", node: { isElement: true, component: MarkdownListContent } }),
-  createPlatePlugin({ key: "code_block", node: { isElement: true, component: MarkdownCodeBlock } }),
-  createPlatePlugin({ key: "code_line", node: { isElement: true, component: MarkdownCodeLine } }),
-  createPlatePlugin({ key: "hr", node: { isElement: true, component: MarkdownHr } }),
-  createPlatePlugin({ key: "table", node: { isElement: true, component: MarkdownTable } }),
-  createPlatePlugin({ key: "tr", node: { isElement: true, component: MarkdownTableRow } }),
-  createPlatePlugin({ key: "td", node: { isElement: true, component: MarkdownTableCell } }),
-  createPlatePlugin({ key: "th", node: { isElement: true, component: MarkdownTableCell } }),
-  createPlatePlugin({ key: "a", node: { isElement: true, component: MarkdownLink } }),
-  // inline marks
-  createPlatePlugin({ key: "bold", node: { isLeaf: true, component: MarkdownBoldLeaf } }),
-  createPlatePlugin({ key: "italic", node: { isLeaf: true, component: MarkdownItalicLeaf } }),
-  createPlatePlugin({ key: "code", node: { isLeaf: true, component: MarkdownCodeLeaf } }),
-  createPlatePlugin({ key: "strikethrough", node: { isLeaf: true, component: MarkdownStrikethroughLeaf } }),
 ];
 
 // R1：粘贴静默窗口时长（毫秒）。
@@ -301,9 +364,19 @@ const markdownTextInputPlugins = [
 //   （Plate v53 的 onChange 走 React passive effect，必然晚于 0ms 宏任务；
 //   浏览器中粘贴插入在事件内同步完成，远早于 300ms）。窗口到期仍无
 //   变更视为被拒绝的粘贴，强制收口并放弃保真。
-// - AFTER_CHANGE：见到粘贴派生变更后改为 0ms 窗口，窗口内无后续变更
-//   即视为批次结束（Slate 多次 normalize 的后续变更会持续重置窗口）。
-const PASTE_QUIET_AFTER_CHANGE_MS = 0;
+// - AFTER_CHANGE：见到粘贴派生变更后改为短窗口，窗口内每个后续变更
+//   都重置计时；窗口耗尽即视为批次结束。
+//
+// 阶段 3 修正（L1 实测证据）：AFTER_CHANGE 不能为 0。Plate v53 的
+// editor 级 onChange 在 passive effect 时机触发，必然晚于 setTimeout(0)，
+// 因此 0ms 窗口在首个变更后立即耗尽；L1 官方行为插件（list/table 等
+// normalizer、id 归一化）会让一次粘贴产生多个跨 effect 批次的变更，
+// 后续变更被误判为用户编辑（dirty=true），保真路径稳定不命中
+// （浏览器实测：小粘贴 349/323、30k 长文 31311/30400 均退化 serialize）。
+// 100ms 的依据：真实用户从粘贴到下一次击键的间隔远超 100ms，
+// 不会把用户编辑误吸收进粘贴批次；同时足以覆盖跨 effect 的
+// normalizer 追加变更。
+const PASTE_QUIET_AFTER_CHANGE_MS = 100;
 const PASTE_QUIET_BEFORE_CHANGE_MS = 300;
 
 function hasTextContent(nodes: unknown[]): boolean {
@@ -451,14 +524,17 @@ export const MarkdownTextInput = forwardRef<
   }, [initialResult]);
 
   // C1.4 / R1: 粘贴保真状态。
-  // - lastPastedTextRef: 用户最后一次"整篇粘贴"的原始文本（编辑器为空时粘贴）。
+  // - lastPastedTextRef: 用户最后一次"纯 Markdown 整篇粘贴"的原始文本。
+  //   富 HTML 粘贴不得保存 companion text/plain，因为它通常是已经摊平的
+  //   可访问性表示；此时 Confirmed Source 草稿来自清洗后的 Plate Value。
   // - dirtyRef: 用户是否在粘贴后进行了非粘贴编辑。
   // - pendingPasteRef: 是否存在尚未结束粘贴批次的挂起粘贴。Plate v53 的
   //   editor 级 onChange 在 React effect 时机异步触发，早于任何
   //   setTimeout(0) 宏任务复位——因此不能用"先置旗、定时复位"的时序模型
   //   （会稳定地把粘贴变更误判为用户编辑）。改为：粘贴挂起旗在粘贴派生
   //   变更到达时被消费并延长静默窗口；静默窗口（一个宏任务内再无变更）
-  //   结束后才视为粘贴批次完成。真实用户的下一次输入永远发生在窗口之外。
+  //   结束后才视为粘贴批次完成。用户输入通过 beforeinput/keydown/
+  //   composition 显式切断窗口，不依赖“用户一定慢于计时器”的假设。
   const lastPastedTextRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
   const pendingPasteRef = useRef(false);
@@ -590,13 +666,13 @@ export const MarkdownTextInput = forwardRef<
    * 仅当编辑器当前"实质为空"（整篇粘贴场景）时记录原始文本并开窗；
    * 增量粘贴（非空编辑器）视为编辑，关闭保真。
    */
-  const recordPasteText = useCallback((clipboardText: string) => {
-    if (!clipboardText.trim()) {
+  const beginPasteWindow = useCallback((rawMarkdown: string | null) => {
+    if (rawMarkdown !== null && !rawMarkdown.trim()) {
       return;
     }
     const isEmpty = !hasTextContent(editor.children);
     if (isEmpty) {
-      lastPastedTextRef.current = clipboardText;
+      lastPastedTextRef.current = rawMarkdown;
       dirtyRef.current = false;
       pendingPasteRef.current = true;
       pasteChangeSeenRef.current = false;
@@ -608,6 +684,12 @@ export const MarkdownTextInput = forwardRef<
       endPasteWindow();
     }
   }, [editor, armPasteQuietReset, endPasteWindow]);
+
+  const markUserEdit = useCallback(() => {
+    dirtyRef.current = true;
+    lastPastedTextRef.current = null;
+    endPasteWindow();
+  }, [endPasteWindow]);
 
   useImperativeHandle(
     ref,
@@ -737,11 +819,49 @@ export const MarkdownTextInput = forwardRef<
 
 
   const handlePaste = (event: ClipboardEvent) => {
-    // C1.4: 记录用户原始粘贴文本，用于提交保真。
-    recordPasteText(event.clipboardData?.getData("text/plain") ?? "");
+    const plain = event.clipboardData?.getData("text/plain") ?? "";
+    const html = event.clipboardData?.getData("text/html") ?? "";
+    if (!plain.trim() && !html.trim()) {
+      return;
+    }
+
+    // 仅纯 Markdown 粘贴保留 byte-exact 原文。富 HTML 的 text/plain
+    // companion 通常缺少标题、列表、表格等结构；提交源必须由清洗并
+    // deserialize 后的 Plate Value 序列化得到。
+    beginPasteWindow(html ? null : plain);
+    // L1: clipboard 同时携带 text/html 时，先清洗（script/iframe/on* /
+    // 危险 URL scheme）并做 Notion callout（aside→blockquote）语义映射，
+    // 再交给官方插件的 HTML deserializer。preventDefault 后 Slate 默认
+    // 粘贴管线短路（slate-react isEventHandled 检查 defaultPrevented），
+    // 避免未清洗 HTML 进入 Plate/DOM。
+    if (html) {
+      event.preventDefault();
+      const clean = prepareClipboardHtml(html);
+      const doc = new DOMParser().parseFromString(clean, "text/html");
+      const fragment = editor.api.html.deserialize({ element: doc.body });
+      if (fragment.length > 0) {
+        editor.tf.insertFragment(fragment as never[]);
+      } else if (plain.trim()) {
+        // 清洗后 HTML 没有可反序列化节点时，显式退回 companion text。
+        // 仍以 Plate Value 为提交源，避免 preventDefault 造成可见内容丢失。
+        const fallback = deserializeMarkdownToBlocksWithStatus(plain);
+        editor.tf.insertFragment(fallback.blocks as never[]);
+      }
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    const isEditingKey =
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      (event.key.length === 1 ||
+        event.key === "Backspace" ||
+        event.key === "Delete" ||
+        event.key === "Enter");
+    if (isEditingKey) {
+      markUserEdit();
+    }
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       onSubmitRef.current();
@@ -760,6 +880,13 @@ export const MarkdownTextInput = forwardRef<
           "[&_strong]:font-bold",
           className,
         )}
+        onBeforeInput={(event) => {
+          const inputType = (event.nativeEvent as InputEvent).inputType;
+          if (inputType !== "insertFromPaste") {
+            markUserEdit();
+          }
+        }}
+        onCompositionStart={markUserEdit}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
       />

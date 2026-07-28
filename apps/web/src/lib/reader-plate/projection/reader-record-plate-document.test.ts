@@ -1755,3 +1755,293 @@ describe("R1 stable paragraph inline marks projection", () => {
     expect(paragraph.data.textHash).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// L1: 后端 DTO key（codeLanguage / tableIsHeader / tableAlignment）的投影消费。
+// table wrapper 不产生 unit block，表级 alignments/headerRows 由单元格元数据推导。
+// ---------------------------------------------------------------------------
+
+describe("L1 code/table metadata projection", () => {
+  interface L1UnitSpec {
+    unitId: string;
+    text: string;
+    stableBlockType: string;
+    stableBlockId: string;
+    parentStableBlockId?: string | null;
+    codeLanguage?: string | null;
+    tableIsHeader?: boolean | null;
+    tableAlignment?: "left" | "center" | "right" | "default" | null;
+  }
+
+  function makeL1Snapshot(specs: L1UnitSpec[]): ReaderPlateSnapshotDto {
+    let offset = 0;
+    const navigationUnits: ReaderPlateSnapshotDto["navigation"]["units"] = [];
+    const anchorSegments: ReaderPlateSnapshotDto["anchor_segments"] = [];
+    const valueUnits: ReaderUnitNodeDto[] = [];
+
+    for (const [index, spec] of specs.entries()) {
+      const start = offset;
+      const end = start + spec.text.length;
+      offset = end + 2; // "\n\n" separator
+      const segId = `seg_${spec.unitId}`;
+      const textHash = computeUtf16FNV1a(spec.text);
+      navigationUnits.push({
+        unit_id: spec.unitId,
+        order_index: index + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        label: null,
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: textHash,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        stable_block_type: spec.stableBlockType,
+        heading_level: null,
+      });
+      anchorSegments.push({
+        anchor_segment_id: segId,
+        sentence_id: `sent_${spec.unitId}`,
+        paragraph_id: spec.unitId,
+        unit_id: spec.unitId,
+        order_index: index + 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        unit_start_utf16: 0,
+        unit_end_utf16: spec.text.length,
+        text_hash: textHash,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      });
+      valueUnits.push({
+        type: "reader_unit",
+        owner: "stable",
+        base_id: "base_l1",
+        unit_id: spec.unitId,
+        order_index: index + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: start,
+        base_end_utf16: end,
+        text_hash: textHash,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        children: [
+          {
+            type: "reader_source_block",
+            owner: "stable",
+            base_id: "base_l1",
+            unit_id: spec.unitId,
+            base_start_utf16: start,
+            base_end_utf16: end,
+            stableBlockType: spec.stableBlockType,
+            stableBlockId: spec.stableBlockId,
+            headingLevel: null,
+            inlineMarks: [],
+            tableRole: null,
+            parentStableBlockId: spec.parentStableBlockId ?? null,
+            // L1 新增 DTO key（不适用为 null，与后端合同一致）。
+            codeLanguage: spec.codeLanguage ?? null,
+            tableIsHeader: spec.tableIsHeader ?? null,
+            tableAlignment: spec.tableAlignment ?? null,
+            children: [
+              {
+                type: "reader_anchor_segment",
+                owner: "stable",
+                base_id: "base_l1",
+                unit_id: spec.unitId,
+                anchor_segment_id: segId,
+                sentence_id: `sent_${spec.unitId}`,
+                segment_type: "sentence",
+                boundary_quality: "normal",
+                base_start_utf16: start,
+                base_end_utf16: end,
+                unit_start_utf16: 0,
+                unit_end_utf16: spec.text.length,
+                text_hash: textHash,
+                hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+                children: [
+                  {
+                    text: spec.text,
+                    owner: "stable",
+                    lock_source: true,
+                    source_role: "segment_text",
+                    base_start_utf16: start,
+                    base_end_utf16: end,
+                    anchor_segment_id: segId,
+                    segment_start_utf16: 0,
+                    segment_end_utf16: spec.text.length,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    }
+
+    return {
+      schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
+      snapshot_id: "snapshot_l1",
+      snapshot_taken_at: "2026-07-28T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_l1",
+      record: {
+        title: "L1 Metadata Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-07-28T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: "base_l1",
+        content_sha256: "b".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: offset,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: { units: navigationUnits },
+      anchor_segments: anchorSegments,
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      ask_supplements: [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: valueUnits,
+    };
+  }
+
+  it("code_block 消费 codeLanguage 进入 block data.language", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeL1Snapshot([
+        {
+          unitId: "u_code",
+          text: "def f():\n    return 1",
+          stableBlockType: "code_block",
+          stableBlockId: "b_code",
+          codeLanguage: "python",
+        },
+      ]),
+    );
+    const codeBlock = document.children.find(
+      (child) => child.type === "code_block",
+    );
+    if (!codeBlock || codeBlock.type !== "code_block") {
+      throw new Error("code_block block missing");
+    }
+    expect(codeBlock.data.language).toBe("python");
+  });
+
+  it("code_block 无语言时 data.language 为 null", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeL1Snapshot([
+        {
+          unitId: "u_code",
+          text: "plain code",
+          stableBlockType: "code_block",
+          stableBlockId: "b_code",
+          codeLanguage: null,
+        },
+      ]),
+    );
+    const codeBlock = document.children.find(
+      (child) => child.type === "code_block",
+    );
+    if (!codeBlock || codeBlock.type !== "code_block") {
+      throw new Error("code_block block missing");
+    }
+    expect(codeBlock.data.language).toBeNull();
+  });
+
+  it("table_cell 消费 tableIsHeader/tableAlignment；行/表元数据正确推导", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeL1Snapshot([
+        {
+          unitId: "u_c11",
+          text: "Name",
+          stableBlockType: "table_cell",
+          stableBlockId: "c11",
+          parentStableBlockId: "row_1",
+          tableIsHeader: true,
+          tableAlignment: "left",
+        },
+        {
+          unitId: "u_c12",
+          text: "Value",
+          stableBlockType: "table_cell",
+          stableBlockId: "c12",
+          parentStableBlockId: "row_1",
+          tableIsHeader: true,
+          tableAlignment: "right",
+        },
+        {
+          unitId: "u_c21",
+          text: "a",
+          stableBlockType: "table_cell",
+          stableBlockId: "c21",
+          parentStableBlockId: "row_2",
+          tableIsHeader: false,
+          tableAlignment: "left",
+        },
+        {
+          unitId: "u_c22",
+          text: "1",
+          stableBlockType: "table_cell",
+          stableBlockId: "c22",
+          parentStableBlockId: "row_2",
+          tableIsHeader: false,
+          tableAlignment: "right",
+        },
+      ]),
+    );
+
+    const table = document.children.find((child) => child.type === "table");
+    if (!table || table.type !== "table") {
+      throw new Error("table block missing");
+    }
+    // 表级推导：列对齐按首行单元格列序；headerRows 为前导全 header 行计数。
+    expect(table.data.alignments).toEqual(["left", "right"]);
+    expect(table.data.headerRows).toBe(1);
+
+    expect(table.children).toHaveLength(2);
+    const [headerRow, bodyRow] = table.children;
+    expect(headerRow.data.isHeader).toBe(true);
+    expect(bodyRow.data.isHeader).toBe(false);
+    expect(headerRow.children[0].data.alignment).toBe("left");
+    expect(headerRow.children[0].data.isHeader).toBe(true);
+    expect(headerRow.children[1].data.alignment).toBe("right");
+    expect(bodyRow.children[0].data.isHeader).toBe(false);
+  });
+
+  it("legacy snapshot 无 L1 字段时回退 default/false/null", () => {
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+      makeL1Snapshot([
+        {
+          unitId: "u_cell",
+          text: "x",
+          stableBlockType: "table_cell",
+          stableBlockId: "c1",
+          parentStableBlockId: "row_1",
+          // L1 字段全部缺省（legacy snapshot 形态）
+        },
+      ]),
+    );
+    const table = document.children.find((child) => child.type === "table");
+    if (!table || table.type !== "table") {
+      throw new Error("table block missing");
+    }
+    expect(table.children[0].children[0].data.alignment).toBe("default");
+    expect(table.children[0].children[0].data.isHeader).toBe(false);
+    expect(table.data.headerRows).toBe(0);
+  });
+});

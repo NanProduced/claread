@@ -5,6 +5,7 @@ import { dailyArticleRoute, dailyRoute } from "@/lib/routes";
 import { fetchDailyReaderList, fetchDailyReaderToday } from "@/services/api/daily-reader";
 import { getProfileSettings } from "@/services/bff/profile";
 import { ReadPageIntake } from "./ReadPageIntake";
+import { ReadPageHero, ReadPageUiProvider } from "./read-page-ui";
 import { EditorialTagList } from "./EditorialTagList";
 
 export const dynamic = "force-dynamic";
@@ -165,25 +166,16 @@ export default async function PasteToReadPage() {
       <div className="mx-auto flex w-full max-w-[2200px] flex-col md:h-full">
         <div className="grid gap-10 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1fr)_20rem] md:gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-12 xl:grid-cols-[minmax(0,1fr)_29rem] xl:gap-14 2xl:grid-cols-[minmax(0,1fr)_34rem] 2xl:gap-[4.5rem]">
           <section className="flex min-w-0 flex-col pt-4 sm:pt-6 md:min-h-0 md:pt-8 md:pr-8 xl:pt-10 xl:pr-12 2xl:pr-16">
-            <div className="max-w-[58rem]">
-              <span className="mb-3 inline-block text-[0.72rem] font-bold tracking-[0.14em] text-lens-blue">
-                Paste to Begin
-              </span>
-              <h1 className="font-headline text-[clamp(2.5rem,4.3vw,4.5rem)] font-semibold leading-[0.94] tracking-[-0.035em] text-ink">
-                <span className="block">Bring it to Claread.</span>
-                <span className="mt-1 block">Read It Deeply.</span>
-              </h1>
-              <p className="mt-4 max-w-[28rem] font-reading text-[1.08rem] leading-[1.65] text-muted-foreground sm:text-[1.12rem]">
-                从粘贴开始，进入深度阅读。
-              </p>
-            </div>
+            <ReadPageUiProvider>
+              <ReadPageHero />
 
-            <div className="mt-9 flex flex-1 flex-col md:mt-9 md:min-h-0 xl:mt-11 2xl:mt-12">
-              <ReadPageIntake
-                readingGoal={readingDefaults.readingGoal}
-                readingVariant={readingDefaults.readingVariant}
-              />
-            </div>
+              <div className="mt-4 flex flex-1 flex-col md:mt-5 md:min-h-0 xl:mt-6">
+                <ReadPageIntake
+                  readingGoal={readingDefaults.readingGoal}
+                  readingVariant={readingDefaults.readingVariant}
+                />
+              </div>
+            </ReadPageUiProvider>
 
             <details className="group mt-8 border-t border-hairline/70 pt-5 md:hidden">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[0.86rem] font-semibold text-ink marker:hidden">

@@ -548,6 +548,12 @@ def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
     structure without re-parsing the canonical text and without having
     to guard key existence. ``stableBlockId`` is emitted only when
     present (it is a diagnostic identifier, not a render contract).
+
+    L1: additionally projects ``codeLanguage`` (code_block fence info
+    string, ``None`` for language-less code), ``tableIsHeader`` /
+    ``tableAlignment`` (table_row / table_cell header marker and cell
+    alignment). Table-wrapper metadata is intentionally not exposed on this
+    per-unit DTO because wrapper blocks do not produce reading units.
     """
     if unit.stable_block_type is None:
         return {}
@@ -558,6 +564,9 @@ def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
         "inlineMarks": list(unit.inline_marks),
         "tableRole": unit.table_role,
         "parentStableBlockId": unit.parent_stable_block_id,
+        "codeLanguage": unit.code_language,
+        "tableIsHeader": unit.table_is_header,
+        "tableAlignment": unit.table_alignment,
     }
     if unit.stable_block_id is not None:
         fields["stableBlockId"] = unit.stable_block_id

@@ -208,6 +208,29 @@ async def _seed_environment(
             source_ref_json,
             source_sha if source_sha else "a" * 64,
         )
+        # L2：模拟 extraction worker 完成态——正文载体是
+        # confirmed_source_documents（revision=1, edit_source=
+        # 'extraction'，正文为规范化后的抽取文本），materialization
+        # 从该行读取。
+        if source_text is not None:
+            markdown_text = source_text.replace("\r\n", "\n").replace("\r", "\n")
+            await conn.execute(
+                """
+                INSERT INTO confirmed_source_documents (
+                    id, reading_record_id, user_id, record_generation,
+                    original_input_id, markdown_text, revision,
+                    content_sha256, status, edit_source
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'draft', 'extraction')
+                """,
+                uuid4(),
+                _RECORD_ID,
+                _USER_ID,
+                record_generation,
+                _ORIGINAL_INPUT_ID,
+                markdown_text,
+                hashlib.sha256(markdown_text.encode("utf-8")).hexdigest(),
+            )
         if artifact_bound:
             await conn.execute(
                 """

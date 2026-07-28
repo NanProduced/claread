@@ -1,7 +1,12 @@
 {
   "fixture_name": "unclosed_fence",
   "warnings": [
-    {"code": "has_unclosed_fence", "message": "Fenced code block is missing its closing fence; captured as code_block but requires candidate review for boundary correctness.", "blocks_freeze": false}
+    {
+      "code": "has_unclosed_fence",
+      "message": "Fenced code block is missing its closing fence; captured as code_block but requires candidate review for boundary correctness.",
+      "blocks_freeze": false,
+      "classification": "content_check"
+    }
   ],
   "unsupported": [],
   "outcome": "candidate_document_required"

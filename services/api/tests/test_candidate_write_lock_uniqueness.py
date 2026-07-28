@@ -481,6 +481,25 @@ async def _seed_materialization_environment(
             source_ref_json,
             source_sha,
         )
+        # L2：模拟 extraction 完成态——confirmed_source_documents 行是
+        # 正文唯一载体，materialization 从该行读取。
+        await conn.execute(
+            """
+            INSERT INTO confirmed_source_documents (
+                id, reading_record_id, user_id, record_generation,
+                original_input_id, markdown_text, revision,
+                content_sha256, status, edit_source
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'draft', 'extraction')
+            """,
+            uuid4(),
+            record_id,
+            user_id,
+            generation,
+            original_input_id,
+            source_text,
+            source_sha,
+        )
         await conn.execute(
             """
             INSERT INTO source_artifacts (

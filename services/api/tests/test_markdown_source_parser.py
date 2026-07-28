@@ -41,7 +41,8 @@ _FIXTURES_ROOT = (
     / "markdown_structured_source"
 )
 
-# All 11 G0 fixtures PASS under the M1 production adapter.
+# All 13 fixtures PASS under the M1 production adapter (11 G0 + 2 L1:
+# safe_html_adaptation / table_structure_uncertain).
 # real_list_wrapper added in M3 prerequisite: focused list wrapper +
 # list_item regression for Article RAG eligibility.
 _PASSING_FIXTURES = (
@@ -53,7 +54,9 @@ _PASSING_FIXTURES = (
     "raw_html",
     "real_list_wrapper",
     "reject_empty",
+    "safe_html_adaptation",
     "simple_paragraph",
+    "table_structure_uncertain",
     "unclosed_fence",
     "unsafe_link",
 )
@@ -168,6 +171,17 @@ def _assert_diagnostics_match(
     assert actual_warning_codes == expected_warning_codes, (
         f"warning codes: actual={sorted(actual_warning_codes)!r}, "
         f"expected={sorted(expected_warning_codes)!r}"
+    )
+    # L1: every fixture warning declares a three-level classification;
+    # the parser's classification must match it exactly.
+    actual_classifications = {w.code: w.classification for w in result.warnings}
+    expected_classifications = {
+        w.get("code"): w.get("classification")
+        for w in expected_diagnostics.get("warnings", [])
+    }
+    assert actual_classifications == expected_classifications, (
+        f"warning classifications: actual={actual_classifications!r}, "
+        f"expected={expected_classifications!r}"
     )
     actual_unsupported_codes = {u.code for u in result.unsupported}
     expected_unsupported_codes = {
@@ -426,7 +440,9 @@ def test_all_g0_fixtures_exist_on_disk() -> None:
         "raw_html",
         "real_list_wrapper",
         "reject_empty",
+        "safe_html_adaptation",
         "simple_paragraph",
+        "table_structure_uncertain",
         "unclosed_fence",
         "unsafe_link",
     }

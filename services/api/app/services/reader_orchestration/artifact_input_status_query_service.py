@@ -118,6 +118,9 @@ class OriginalInputSummary:
     input_type: str
     content_sha256: str
     has_source_text: bool
+    # L2 (Q5)：confirmed_source_documents 行存在性。has_source_text
+    # 保留 legacy 原义（对新输入恒 false），消费者迁移到本字段。
+    has_confirmed_source: bool
     extraction_status: str | None
     metadata: dict[str, Any]
 
@@ -476,17 +479,25 @@ class ArtifactPipelineStatusQueryService:
 
                 # Load original_input with ownership check.
                 # IMPORTANT: never SELECT source_text — only derive
-                # has_source_text.
+                # has_source_text (legacy 语义保留) 与
+                # has_confirmed_source（L2 Q5：source 行存在性）。
                 input_row = await conn.fetchrow(
                     """
                     SELECT
                         id, reading_record_id, user_id, input_type,
                         source_text IS NOT NULL AS has_source_text,
+                        EXISTS(
+                            SELECT 1 FROM confirmed_source_documents cs
+                            WHERE cs.reading_record_id = $2
+                              AND cs.record_generation = $3
+                        ) AS has_confirmed_source,
                         content_sha256, metadata_json
                     FROM original_inputs
                     WHERE id = $1
                     """,
                     artifact.original_input_id,
+                    artifact.reading_record_id,
+                    int(record_row["generation"]),
                 )
                 if input_row is None:
                     raise ArtifactInputStatusQueryError(
@@ -526,6 +537,7 @@ class ArtifactPipelineStatusQueryService:
                     input_type=str(input_row["input_type"]),
                     content_sha256=str(input_row["content_sha256"]),
                     has_source_text=bool(input_row["has_source_text"]),
+                    has_confirmed_source=bool(input_row["has_confirmed_source"]),
                     extraction_status=extraction_status,
                     metadata=metadata,
                 )

@@ -1,0 +1,8 @@
+{
+  "fixture_name": "table_structure_uncertain",
+  "warnings": [
+    {"code": "table_structure_uncertain", "message": "Table row/column structure does not match the header definition; cells would be dropped or padded during deterministic normalization.", "blocks_freeze": false, "classification": "content_check"}
+  ],
+  "unsupported": [],
+  "outcome": "candidate_document_required"
+}

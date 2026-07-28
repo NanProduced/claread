@@ -430,13 +430,16 @@ def _queue_happy_path(
 
     Queues:
         fetchrow #1: candidate row (service SELECT ... FOR UPDATE)
-        fetchrow #2: None (existing stable doc, persistence idempotency)
-        fetchrow #3: {"status": "ready"} (candidate status lookup,
+        fetchrow #2: None (L2 插入点 A — confirmed_source_documents 行
+                     不存在 → legacy candidate 分支)
+        fetchrow #3: None (existing stable doc, persistence idempotency)
+        fetchrow #4: {"status": "ready"} (candidate status lookup,
                      persistence _confirm_candidate_document)
 
     Also sets the supersede UPDATE to return "UPDATE 0".
     """
     conn.queue_fetchrow(candidate_row or _candidate_row())
+    conn.queue_fetchrow(None)  # L2: no confirmed source row (legacy)
     conn.queue_fetchrow(None)
     conn.queue_fetchrow({"status": "ready"})
     conn.set_execute_result("UPDATE stable_reading_documents", "UPDATE 0")
@@ -1046,7 +1049,7 @@ def _queue_recovery_happy_path(
     readiness_state: str = "article_ready",
     product_state: str = "readable_enhancing",
 ) -> None:
-    """Queue fetchrow/fetchval results for the 5 recovery queries.
+    """Queue fetchrow/fetchval results for the recovery queries.
 
     Order must match _recover_confirmed_candidate:
         1. fetchrow: stable_reading_documents
@@ -1054,6 +1057,8 @@ def _queue_recovery_happy_path(
         3. fetchrow: reading_bases
         4. fetchval: stable_document_blocks count
         5. fetchrow: reader_events (with payload_json)
+        6. fetchrow: candidate_reading_documents source_refs_json
+           (L2 — legacy candidate: 无 source 引用三 key，跳过 source 校验)
     """
     if payload is None:
         payload = {
@@ -1090,6 +1095,8 @@ def _queue_recovery_happy_path(
         "sequence": event_sequence,
         "payload_json": payload,
     })
+    # (6) L2 candidate source_refs_json — legacy（无 source 引用三 key）
+    conn.queue_fetchrow({"source_refs_json": {}})
 
 
 def _build_recovery_service(
@@ -1461,9 +1468,10 @@ class TestRecoveryPayloadMismatch:
         """Queue the recovery happy path but override the reader_events
         payload_json with the given dict."""
         _queue_recovery_happy_path(conn)
-        # Replace the last queued fetchrow (reader_events) with the
+        # Replace the reader_events fetchrow (5th of 6; index -2 since the
+        # L2 candidate source_refs_json row is queued last) with the
         # custom payload.
-        conn._fetchrow_queue[-1] = _FakeRecord({
+        conn._fetchrow_queue[-2] = _FakeRecord({
             "id": _RECOVERY_EVENT_ID,
             "sequence": _RECOVERY_EVENT_SEQUENCE,
             "payload_json": payload,
@@ -1580,9 +1588,10 @@ class TestRecoveryPayloadInvalid:
         snapshot_svc = FakeSnapshotService(snapshot=_FAKE_SNAPSHOT)
         service = _build_recovery_service(conn, snapshot_service=snapshot_svc)
         _queue_recovery_happy_path(conn)
-        # Replace the last queued fetchrow (reader_events) with the
+        # Replace the reader_events fetchrow (5th of 6; index -2 since the
+        # L2 candidate source_refs_json row is queued last) with the
         # invalid payload raw value.
-        conn._fetchrow_queue[-1] = _FakeRecord({
+        conn._fetchrow_queue[-2] = _FakeRecord({
             "id": _RECOVERY_EVENT_ID,
             "sequence": _RECOVERY_EVENT_SEQUENCE,
             "payload_json": raw,

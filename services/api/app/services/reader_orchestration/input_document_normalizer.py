@@ -10,6 +10,9 @@ from app.schemas.reader_input_adapter import (
     InputSuitabilityResult,
     NormalizedInputDocument,
 )
+from app.services.reader_orchestration.input_format import (
+    detect_input_format,
+)
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
 )
@@ -103,7 +106,7 @@ class InputDocumentNormalizer:
 
         source_text = _normalize_source_text(request.text)
         # A4 — 解析结果共享: reuse the caller-provided parse result when
-        # available; otherwise parse once here. Both the upgrade probe
+        # available; otherwise parse once here. Both the format probe
         # and the block construction below consume this single result.
         parse_result = (
             preparsed
@@ -111,19 +114,22 @@ class InputDocumentNormalizer:
             else _MARKDOWN_PARSER.parse(source_text)
         )
 
+        # L2 — 内容格式检测（与 gate / candidate 块构造共用同一判定）：
+        # parser 产出非 paragraph 块结构即为 markdown；只有段落保持
+        # plain_text。markdown_file 显式声明格式恒为 markdown。
+        detected_format = detect_input_format(
+            source_type=request.source_type,
+            parse_result=parse_result,
+        )
+
         warnings: list[str] = [w.code for w in parse_result.warnings]
         used_markdown_parser = False
         if request.source_type in _PLAIN_TEXT_SOURCE_TYPES:
-            # 方案 C (upgrade routing): check for Markdown-specific
-            # structure (any block type other than ``paragraph``).
-            # Paragraphs alone do not trigger the upgrade because the
-            # plain text path already handles them; only headings /
-            # lists / blockquotes / tables / code blocks / thematic
-            # breaks require the typed-block markdown path.
-            has_markdown_structure = any(
-                block.block_type != "paragraph" for block in parse_result.blocks
-            )
-            if has_markdown_structure:
+            # 方案 C (upgrade routing): detected_format == "markdown"
+            # 时升级为 typed-block markdown 路径（heading / list /
+            # blockquote / table / code_block / thematic_break）；
+            # 纯段落输入保持 legacy plain-text 阅读行为。
+            if detected_format == "markdown":
                 drafts, title = _normalize_markdown_blocks(
                     source_text, parse_result=parse_result
                 )
@@ -167,7 +173,9 @@ class InputDocumentNormalizer:
             suitability=suitability,
             source_loss_flags=list(suitability.flags),
             warnings=warnings,
+            adaptations=list(suitability.adaptations),
             parser_identity=dict(_PARSER_IDENTITY) if used_markdown_parser else None,
+            detected_format=detected_format,
         )
 
 

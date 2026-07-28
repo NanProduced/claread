@@ -1,7 +1,12 @@
 {
   "fixture_name": "r14_complex",
   "warnings": [
-    {"code": "strikethrough_extension", "message": "Strikethrough syntax used; requires GFM strikethrough plugin.", "blocks_freeze": false}
+    {
+      "code": "strikethrough_extension",
+      "message": "Strikethrough syntax captured as plain text; rendering is preserved.",
+      "blocks_freeze": false,
+      "classification": "silent"
+    }
   ],
   "unsupported": [],
   "outcome": "stable_document_ready"

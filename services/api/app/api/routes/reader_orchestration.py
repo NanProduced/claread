@@ -16,6 +16,10 @@ from app.schemas.reader_orchestration import (
     ReaderCandidateDocumentConflictResponseDto,
     ReaderCandidateDocumentNotFoundResponseDto,
     ReaderCandidateDocumentReadResponseDto,
+    ReaderConfirmedSourceConflictResponse,
+    ReaderConfirmedSourceGetResponse,
+    ReaderConfirmedSourceUpdateRequest,
+    ReaderConfirmedSourceUpdateResponse,
     ReaderEventPollResponse,
     ReaderEventResponse,
     ReaderPlainTextSubmitRequest,
@@ -94,11 +98,18 @@ from app.services.reader_orchestration.candidate_document_creation_service impor
 from app.services.reader_orchestration.candidate_document_confirm_application_service import (
     CandidateDocumentConfirmApplicationError,
     CandidateDocumentConfirmApplicationService,
+    StaleCandidateRevisionApplicationError,
 )
 from app.services.reader_orchestration.candidate_document_read_service import (
     CandidateDocumentReadConflict,
     CandidateDocumentReadError,
     CandidateDocumentReadService,
+)
+from app.services.reader_orchestration.confirmed_source_application_service import (
+    ConfirmedSourceApplicationError,
+    ConfirmedSourceApplicationService,
+    ConfirmedSourceConflictError,
+    ConfirmedSourceNotFoundError,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.input_document_normalizer import (
@@ -106,6 +117,9 @@ from app.services.reader_orchestration.input_document_normalizer import (
 )
 from app.services.reader_orchestration.input_suitability_gate import (
     evaluate_input_suitability,
+)
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownSourceParser,
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
@@ -451,13 +465,20 @@ async def submit_reader_input(
     current_user: AuthUserDep,
 ) -> ReaderUnifiedInputSubmitResponse:
     user_id = UUID(current_user.user_id)
+    # L2/A4 — 每请求只解析一次：路由预检 gate、stable-ready freeze 与
+    # candidate 创建共用同一份 MarkdownParseResult；内容格式
+    # （detected_format）由这同一份解析结果决定，与输入来源解耦。
+    preparsed = MarkdownSourceParser().parse(
+        body.text.replace("\r\n", "\n").replace("\r", "\n")
+    )
     suitability = evaluate_input_suitability(
         InputSuitabilityRequest(
             source_type=body.source_type,
             text=body.text,
             filename=body.filename,
             source_metadata=body.source_metadata or {},
-        )
+        ),
+        preparsed=preparsed,
     )
 
     if suitability.outcome == "stable_document_ready":
@@ -473,6 +494,7 @@ async def submit_reader_input(
                 language=body.language,
                 reading_goal=body.reading_goal,
                 reading_variant=body.reading_variant,
+                preparsed=preparsed,
             )
         except StableReadyInputApplicationError as exc:
             _raise_stable_ready_input_application_error(exc)
@@ -492,6 +514,7 @@ async def submit_reader_input(
                 language=body.language,
                 reading_goal=body.reading_goal,
                 reading_variant=body.reading_variant,
+                preparsed=preparsed,
             )
         except CandidateDocumentCreationError as exc:
             _raise_candidate_document_creation_error(exc)
@@ -711,6 +734,7 @@ def _build_artifact_pipeline_status_response(
             input_type=result.original_input.input_type,
             content_sha256=result.original_input.content_sha256,
             has_source_text=result.original_input.has_source_text,
+            has_confirmed_source=result.original_input.has_confirmed_source,
             extraction_status=result.original_input.extraction_status,
             metadata=result.original_input.metadata,
         )
@@ -834,6 +858,19 @@ async def confirm_candidate_document(
             segmenter_version=AUTO_SEGMENTER_POLICY,
             language=body.language,
         )
+    except StaleCandidateRevisionApplicationError as exc:
+        # L2 插入点 A：candidate 引用过期 source revision —— 409 可恢复
+        # （重取 confirmed-source 获得基于最新 revision 的 candidate）。
+        return JSONResponse(
+            status_code=409,
+            content=ReaderConfirmedSourceConflictResponse(
+                ok=False,
+                code="stale_candidate_revision",
+                resolution="reload",
+                message="确认内容已过期，请重新加载最新待确认版本。",
+                current_revision=exc.current_revision,
+            ).model_dump(mode="json"),
+        )
     except CandidateDocumentConfirmApplicationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -851,6 +888,147 @@ async def confirm_candidate_document(
         freeze_idempotent_noop=result.freeze_idempotent_noop,
         article_ready_event_id=str(result.article_ready_event_id),
         article_ready_sequence=result.article_ready_sequence,
+        snapshot=result.snapshot,
+    )
+
+
+def _confirmed_source_not_found_response() -> JSONResponse:
+    # 404 collapse：not found / not owner / deleted / 无 draft source，
+    # 不区分原因（Q6 沿用 GET candidate-document 的 collapse 模式）。
+    return JSONResponse(
+        status_code=404,
+        content={
+            "ok": False,
+            "code": "not_found",
+            "message": "未找到可编辑的原文，可能已在其他设备处理。",
+        },
+    )
+
+
+def _confirmed_source_conflict_response(
+    exc: ConfirmedSourceConflictError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=ReaderConfirmedSourceConflictResponse(
+            ok=False,
+            code=exc.code,
+            resolution=exc.resolution,
+            message=str(exc),
+            current_revision=exc.current_revision,
+        ).model_dump(mode="json"),
+    )
+
+
+@router.get(
+    "/records/{record_id}/confirmed-source",
+    response_model=ReaderConfirmedSourceGetResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {"description": "Collapsed: not found / not owner / deleted / "
+              "no draft confirmed source."},
+        409: {"model": ReaderConfirmedSourceConflictResponse,
+              "description": "record_state_advanced (source frozen or "
+              "record advanced)."},
+    },
+    summary="Load the draft confirmed source for editing / resume",
+)
+async def get_reader_confirmed_source(
+    record_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderConfirmedSourceGetResponse | JSONResponse:
+    """L2 设计文档 §4.1：draft 读取 / resume 入口（编辑入口，返回正文）。"""
+    service = ConfirmedSourceApplicationService()
+    try:
+        result = await service.get_confirmed_source(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+        )
+    except ConfirmedSourceNotFoundError:
+        return _confirmed_source_not_found_response()
+    except ConfirmedSourceConflictError as exc:
+        return _confirmed_source_conflict_response(exc)
+
+    candidate = result.candidate
+    return ReaderConfirmedSourceGetResponse(
+        source_document_id=result.source.id,
+        record_generation=result.source.record_generation,
+        revision=result.source.revision,
+        status="draft",
+        markdown_text=result.source.markdown_text,
+        content_sha256=result.source.content_sha256,
+        edit_source=result.source.edit_source,
+        updated_at=result.updated_at,
+        candidate=(
+            {
+                "candidate_document_id": str(candidate.candidate_document_id),
+                "status": candidate.status,
+                "canonical_text_preview": candidate.canonical_text_preview,
+            }
+            if candidate is not None
+            else None
+        ),
+        quality=result.quality,
+        adaptation_notice=result.adaptation_notice,
+        content_check=result.content_check,
+    )
+
+
+@router.put(
+    "/records/{record_id}/confirmed-source",
+    response_model=ReaderConfirmedSourceUpdateResponse,
+    responses={
+        401: {"description": "Unauthenticated (existing auth mechanism)."},
+        404: {"description": "Collapsed: not found / not owner / deleted / "
+              "no draft confirmed source."},
+        409: {"model": ReaderConfirmedSourceConflictResponse,
+              "description": "source_frozen / stale_source_revision / "
+              "record_state_advanced."},
+    },
+    summary="Replace the confirmed source body and reparse "
+    "(optimistic concurrency via expected_revision)",
+)
+async def put_reader_confirmed_source(
+    record_id: UUID,
+    body: ReaderConfirmedSourceUpdateRequest,
+    current_user: AuthUserDep,
+) -> ReaderConfirmedSourceUpdateResponse | JSONResponse:
+    """L2 设计文档 §4.2：整篇更新 + reparse（revision 乐观并发、同 hash
+    幂等 no-op、三级分类、版本化 candidate supersede、stable 镜像自动
+    freeze 并同事务冻结 source）。"""
+    service = ConfirmedSourceApplicationService()
+    try:
+        result = await service.update_confirmed_source(
+            record_id=record_id,
+            user_id=UUID(current_user.user_id),
+            expected_revision=body.expected_revision,
+            markdown_text=body.markdown_text,
+            edit_source=body.edit_source,
+        )
+    except ConfirmedSourceNotFoundError:
+        return _confirmed_source_not_found_response()
+    except ConfirmedSourceConflictError as exc:
+        return _confirmed_source_conflict_response(exc)
+    except ConfirmedSourceApplicationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    candidate = result.candidate
+    return ReaderConfirmedSourceUpdateResponse(
+        revision=result.revision,
+        content_sha256=result.content_sha256,
+        outcome=result.outcome,  # type: ignore[arg-type]
+        candidate=(
+            {
+                "candidate_document_id": str(candidate.candidate_document_id),
+                "status": candidate.status,
+                "canonical_text_preview": candidate.canonical_text_preview,
+            }
+            if candidate is not None
+            else None
+        ),
+        quality=result.quality,
+        adaptation_notice=result.adaptation_notice,
+        content_check=result.content_check,
         snapshot=result.snapshot,
     )
 

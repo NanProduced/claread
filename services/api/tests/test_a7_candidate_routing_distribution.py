@@ -70,15 +70,14 @@ _ALL_FIXTURES: tuple[str, ...] = (
 )
 
 # Fixtures whose parser contract declares a ``candidate_document_required``
-# outcome due to markdown complexity (raw HTML / footnote / unclosed fence /
-# unsafe link). The gate MUST surface ``markdown_complex_structure`` for
-# each of these.
+# outcome due to content-check markdown complexity (footnote / unclosed
+# fence). The gate MUST surface ``markdown_complex_structure`` for each of
+# these. L1: raw HTML and unsafe links are deterministic adaptations
+# (``adaptation_notice``) and no longer surface the flag.
 _FIXTURES_WITH_MARKDOWN_COMPLEXITY: frozenset[str] = frozenset(
     {
-        "raw_html",
         "footnote",
         "unclosed_fence",
-        "unsafe_link",
     }
 )
 
@@ -420,12 +419,13 @@ def test_a7_report_has_expected_structure() -> None:
     assert len(report.samples) == report.total_samples
 
 
-def test_a7_fixture_raw_html_triggers_markdown_complexity() -> None:
-    """``raw_html`` fixture MUST surface ``markdown_complex_structure``."""
+def test_a7_fixture_raw_html_no_longer_triggers_markdown_complexity() -> None:
+    """L1: ``raw_html`` fixture is a deterministic adaptation — the gate
+    MUST NOT surface ``markdown_complex_structure`` anymore."""
     report = _build_full_report()
     raw_html_sample = next(s for s in report.samples if s.name == "raw_html")
-    assert raw_html_sample.has_markdown_complexity is True
-    assert "markdown_complex_structure" in raw_html_sample.flags
+    assert raw_html_sample.has_markdown_complexity is False
+    assert "markdown_complex_structure" not in raw_html_sample.flags
 
 
 def test_a7_fixture_footnote_triggers_markdown_complexity() -> None:
@@ -444,12 +444,13 @@ def test_a7_fixture_unclosed_fence_triggers_markdown_complexity() -> None:
     assert "markdown_complex_structure" in unclosed_sample.flags
 
 
-def test_a7_fixture_unsafe_link_triggers_markdown_complexity() -> None:
-    """``unsafe_link`` fixture MUST surface ``markdown_complex_structure``."""
+def test_a7_fixture_unsafe_link_no_longer_triggers_markdown_complexity() -> None:
+    """L1: ``unsafe_link`` fixture is a deterministic adaptation — the gate
+    MUST NOT surface ``markdown_complex_structure`` anymore."""
     report = _build_full_report()
     unsafe_sample = next(s for s in report.samples if s.name == "unsafe_link")
-    assert unsafe_sample.has_markdown_complexity is True
-    assert "markdown_complex_structure" in unsafe_sample.flags
+    assert unsafe_sample.has_markdown_complexity is False
+    assert "markdown_complex_structure" not in unsafe_sample.flags
 
 
 def test_a7_all_complexity_fixtures_surface_markdown_complex_structure() -> None:
@@ -490,20 +491,19 @@ def test_a7_real_style_feishu_clean_routes_to_stable() -> None:
     assert sample.has_markdown_complexity is False
 
 
-def test_a7_real_style_notion_with_table_routes_to_candidate() -> None:
-    """Notion-style export with a GFM table → candidate_document_required.
+def test_a7_real_style_notion_with_table_routes_to_stable() -> None:
+    """L1: Notion-style export with a deterministic GFM table → stable.
 
-    Tables trigger ``markdown_complex_structure`` + ``table_structure_uncertain``
-    flags, which route to candidate review (per gate policy: table structure
-    must be preserved instead of silently flattened).
+    A table with a complete header separator row and consistent raw cell
+    counts no longer triggers ``table_structure_uncertain``; it freezes as
+    a stable document with first-class table blocks.
     """
     report = _build_full_report()
     sample = next(s for s in report.samples if s.name == "notion_export_database_table")
-    assert sample.outcome == "candidate_document_required", (
-        f"expected candidate_document_required; got {sample.outcome} (flags={sample.flags})"
+    assert sample.outcome == "stable_document_ready", (
+        f"expected stable_document_ready; got {sample.outcome} (flags={sample.flags})"
     )
-    assert sample.has_markdown_complexity is True
-    assert "table_structure_uncertain" in sample.flags
+    assert "table_structure_uncertain" not in sample.flags
 
 
 def test_a7_real_style_feishu_with_math_routes_to_candidate() -> None:
@@ -520,18 +520,18 @@ def test_a7_real_style_feishu_with_math_routes_to_candidate() -> None:
     assert sample.has_markdown_complexity is True
 
 
-def test_a7_real_style_notion_with_html_routes_to_candidate() -> None:
-    """Notion-style export with raw HTML → candidate_document_required.
+def test_a7_real_style_notion_with_html_routes_to_stable() -> None:
+    """L1: Notion-style export with cleaned raw HTML → stable.
 
-    Raw HTML triggers ``markdown_complex_structure`` +
-    ``document_block_degraded`` flags, which route to candidate review.
+    Raw HTML is stripped to text with an ``adaptation_notice``; it no
+    longer routes to candidate review by itself.
     """
     report = _build_full_report()
     sample = next(s for s in report.samples if s.name == "notion_export_with_raw_html")
-    assert sample.outcome == "candidate_document_required", (
-        f"expected candidate_document_required; got {sample.outcome} (flags={sample.flags})"
+    assert sample.outcome == "stable_document_ready", (
+        f"expected stable_document_ready; got {sample.outcome} (flags={sample.flags})"
     )
-    assert sample.has_markdown_complexity is True
+    assert sample.has_markdown_complexity is False
 
 
 def test_a7_markdown_complexity_correlates_with_non_stable_outcome() -> None:

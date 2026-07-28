@@ -1,15 +1,20 @@
 {
   "fixture_name": "raw_html",
-  "description": "Raw HTML block and inline HTML — fail-closed to candidate with warning.",
+  "description": "Raw HTML block and inline HTML — executable structure removed, text preserved (adaptation_notice); document continues as stable.",
   "blocks": [
     {
       "block_id": "b1",
       "block_type": "paragraph",
       "text_content": "This is inside HTML.",
-      "payload_json": {"extracted_from": "html_block"},
+      "payload_json": {
+        "extracted_from": "html_block"
+      },
       "parent_block_id": null,
       "order_index": 0,
-      "source_range": {"line_start": 1, "line_end": 5}
+      "source_range": {
+        "line_start": 1,
+        "line_end": 5
+      }
     },
     {
       "block_id": "b2",
@@ -18,16 +23,24 @@
       "payload_json": {},
       "parent_block_id": null,
       "order_index": 1,
-      "source_range": {"line_start": 7, "line_end": 7}
+      "source_range": {
+        "line_start": 7,
+        "line_end": 7
+      }
     },
     {
       "block_id": "b3",
       "block_type": "paragraph",
       "text_content": "Bold via HTML",
-      "payload_json": {"extracted_from": "html_inline"},
+      "payload_json": {
+        "extracted_from": "html_inline"
+      },
       "parent_block_id": null,
       "order_index": 2,
-      "source_range": {"line_start": 9, "line_end": 9}
+      "source_range": {
+        "line_start": 9,
+        "line_end": 9
+      }
     }
   ]
 }

@@ -94,7 +94,11 @@ from app.services.reader_orchestration.candidate_document_confirm_service import
     CandidateDocumentConfirmError,
     CandidateDocumentConfirmResult,
     CandidateDocumentStatusError,
+    StaleCandidateRevisionError,
     confirm_candidate_document,
+)
+from app.services.reader_orchestration.confirmed_source_repository import (
+    load_confirmed_source,
 )
 from app.services.reader_orchestration.event_runtime import (
     ReaderEventEnvelope,
@@ -114,6 +118,28 @@ class CandidateDocumentConfirmApplicationError(ValueError):
     ``TypeError`` from the repository / event runtime / snapshot
     service. The original exception is preserved as ``__cause__``.
     """
+
+
+class StaleCandidateRevisionApplicationError(
+    CandidateDocumentConfirmApplicationError
+):
+    """L2 插入点 A 的应用层映射：candidate 引用过期 source revision。
+
+    路由据此返回 ``409 {code:"stale_candidate_revision",
+    resolution:"reload", current_revision}``（可恢复：客户端重取
+    confirmed-source 获得基于最新 revision 的 candidate）。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        current_revision: int,
+        current_content_sha256: str,
+    ) -> None:
+        super().__init__(message)
+        self.current_revision = current_revision
+        self.current_content_sha256 = current_content_sha256
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +309,15 @@ class CandidateDocumentConfirmApplicationService:
                             "closed."
                         ) from exc
                 except CandidateDocumentConfirmError as exc:
+                    if isinstance(exc, StaleCandidateRevisionError):
+                        # L2 插入点 A：candidate 引用过期 source
+                        # revision —— 以专用类型透传，路由映射为
+                        # 409 stale_candidate_revision + resolution=reload。
+                        raise StaleCandidateRevisionApplicationError(
+                            str(exc),
+                            current_revision=exc.current_revision,
+                            current_content_sha256=exc.current_content_sha256,
+                        ) from exc
                     raise CandidateDocumentConfirmApplicationError(
                         f"Candidate document confirmation failed for "
                         f"candidate {candidate_document_id}: {exc}"
@@ -442,7 +477,7 @@ class CandidateDocumentConfirmApplicationService:
         """Read and validate the already-committed state for a
         ``confirmed`` candidate inside the current transaction.
 
-        Issues five read-only queries in strict order and fails closed
+        Issues six read-only queries in strict order and fails closed
         (raising :class:`CandidateDocumentConfirmApplicationError`) if
         any expected row is missing or inconsistent. Does NOT write
         state, publish events, or re-confirm the candidate.
@@ -464,6 +499,10 @@ class CandidateDocumentConfirmApplicationService:
                fully validated: must be a JSON object with matching
                source / candidate_document_id / stable_document_id /
                base_id / generation / document_version fields.
+            6. ``confirmed_source_documents`` — L2：candidate 携带
+               source 引用三 key 时，source 行必须存在、
+               status='frozen'、revision/hash 与引用一致；legacy
+               candidate（无引用）跳过。
         """
         record_generation = status_error.record_generation
 
@@ -659,6 +698,76 @@ class CandidateDocumentConfirmApplicationService:
                     f"failed: reader_events payload_json field "
                     f"{field_name!r}={actual_value!r} does not match "
                     f"expected value {expected_value!r}."
+                )
+
+        # (6) L2：confirmed_source_documents 校验。candidate 携带 source
+        # 引用三 key 时，source 行必须存在、status='frozen'、且
+        # revision/hash 与 candidate 引用一致；legacy candidate（无
+        # 引用三 key）跳过本校验。
+        candidate_source_row = await conn.fetchrow(
+            """
+            SELECT source_refs_json
+            FROM candidate_reading_documents
+            WHERE id = $1
+            """,
+            candidate_document_id,
+        )
+        if candidate_source_row is None:
+            raise CandidateDocumentConfirmApplicationError(
+                f"Recovery for confirmed candidate {candidate_document_id} "
+                f"failed: candidate row disappeared during recovery."
+            )
+        source_refs_raw = candidate_source_row["source_refs_json"]
+        if isinstance(source_refs_raw, str):
+            try:
+                source_refs_raw = json.loads(source_refs_raw)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise CandidateDocumentConfirmApplicationError(
+                    f"Recovery for confirmed candidate "
+                    f"{candidate_document_id} failed: candidate "
+                    f"source_refs_json is not valid JSON."
+                ) from exc
+        source_refs = (
+            dict(source_refs_raw)
+            if isinstance(source_refs_raw, Mapping)
+            else {}
+        )
+        referenced_revision = source_refs.get("source_revision")
+        referenced_hash = source_refs.get("source_content_sha256")
+        if referenced_revision is not None or referenced_hash is not None:
+            confirmed_source = await load_confirmed_source(
+                conn,
+                record_id=reading_record_id,
+                user_id=user_id,
+                generation=record_generation,
+            )
+            if confirmed_source is None:
+                raise CandidateDocumentConfirmApplicationError(
+                    f"Recovery for confirmed candidate "
+                    f"{candidate_document_id} failed: candidate references "
+                    f"confirmed source revision={referenced_revision!r} "
+                    f"but no confirmed_source_documents row exists for "
+                    f"reading_record_id={reading_record_id} "
+                    f"record_generation={record_generation}."
+                )
+            if confirmed_source.status != "frozen":
+                raise CandidateDocumentConfirmApplicationError(
+                    f"Recovery for confirmed candidate "
+                    f"{candidate_document_id} failed: confirmed source "
+                    f"{confirmed_source.id} status="
+                    f"{confirmed_source.status!r} (expected 'frozen')."
+                )
+            if (
+                referenced_revision != confirmed_source.revision
+                or referenced_hash != confirmed_source.content_sha256
+            ):
+                raise CandidateDocumentConfirmApplicationError(
+                    f"Recovery for confirmed candidate "
+                    f"{candidate_document_id} failed: candidate references "
+                    f"source revision={referenced_revision!r} "
+                    f"hash={referenced_hash!r}, but the frozen source row "
+                    f"is revision={confirmed_source.revision} "
+                    f"hash={confirmed_source.content_sha256}."
                 )
 
         return _RecoveryState(

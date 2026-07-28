@@ -48,8 +48,13 @@ from .base_builder import (
     # role semantics as the in-memory build path (single source of truth;
     # no second projection implementation).
     _derive_table_role,
+    _extract_alignment_value,
+    _extract_alignments,
+    _extract_code_language,
+    _extract_header_rows,
     _extract_heading_level,
     _extract_inline_marks,
+    _extract_is_header,
     validate_reading_base_build_result,
 )
 from .span_recorder import parse_trace_id_from_envelope
@@ -218,6 +223,11 @@ class ReaderOrchestrationRepository:
         source_metadata: dict[str, Any],
         created_at: datetime,
     ) -> None:
+        # L2 已知例外（设计文档 §8 Q1，默认不接入）：legacy 纯文本路径
+        # （本方法 + article_ready_service 直建 base）不写
+        # confirmed_source_documents，source_text 保留为正文载体。
+        # 该路径无 stable document / candidate 生命周期，Confirmed
+        # Source 的可变→冻结编辑链路对其无适用场景。
         await conn.execute(
             """
             INSERT INTO original_inputs (
@@ -1244,6 +1254,11 @@ class ReaderOrchestrationRepository:
             inline_marks: tuple[dict[str, Any], ...] = ()
             table_role: str | None = None
             parent_stable_block_id: str | None = None
+            code_language: str | None = None
+            table_is_header: bool | None = None
+            table_alignment: str | None = None
+            table_alignments: tuple[str, ...] | None = None
+            table_header_rows: int | None = None
             if matched_block is not None:
                 stable_block_type = str(matched_block["block_type"])
                 stable_block_id = str(matched_block["block_id"])
@@ -1255,6 +1270,18 @@ class ReaderOrchestrationRepository:
                 heading_level = _extract_heading_level(block_payload)
                 inline_marks = _extract_inline_marks(block_payload)
                 table_role = _derive_table_role(stable_block_type)
+                # L1: code language + table header/alignment metadata,
+                # same projection helpers as the build path.
+                if stable_block_type == "code_block":
+                    code_language = _extract_code_language(block_payload)
+                elif stable_block_type == "table_cell":
+                    table_is_header = _extract_is_header(block_payload)
+                    table_alignment = _extract_alignment_value(block_payload)
+                elif stable_block_type == "table_row":
+                    table_is_header = _extract_is_header(block_payload)
+                elif stable_block_type == "table":
+                    table_alignments = _extract_alignments(block_payload)
+                    table_header_rows = _extract_header_rows(block_payload)
 
             units.append(
                 BuiltReadingUnit(
@@ -1275,6 +1302,11 @@ class ReaderOrchestrationRepository:
                     inline_marks=inline_marks,
                     table_role=table_role,
                     parent_stable_block_id=parent_stable_block_id,
+                    code_language=code_language,
+                    table_is_header=table_is_header,
+                    table_alignment=table_alignment,
+                    table_alignments=table_alignments,
+                    table_header_rows=table_header_rows,
                 )
             )
             navigation_units.append(

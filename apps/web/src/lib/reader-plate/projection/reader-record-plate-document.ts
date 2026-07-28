@@ -300,7 +300,15 @@ export interface ReaderRecordPlateTableBlock {
   type: "table";
   id: string;
   children: ReaderRecordPlateTableRowBlock[];
-  data: ReaderRecordPlateStableBlockData;
+  data: ReaderRecordPlateStableBlockData & {
+    /**
+     * 列对齐（按列序）。前端由首行单元格的 `alignment` 推导；
+     * table wrapper 不产生 reading unit，因此由首行单元格元数据推导。
+     */
+    alignments?: string[];
+    /** 表头行数（前导全 header 行计数，推导自单元格 `isHeader`）。 */
+    headerRows?: number;
+  };
 }
 
 /** Markdown 表格行块 — `stableBlockType === "table_row"` */
@@ -1561,10 +1569,9 @@ function buildStableBlockForSourceSpan(
         children,
         data: {
           ...data,
-          // Language hint is not yet projected by the backend DTO;
-          // reserve the field so B2.5 renderer can read it without a
-          // second type bump.
-          language: null,
+          // L1: 消费后端 DTO `codeLanguage`（fence info string；
+          // 无语言代码块为 null）。legacy snapshot 无该字段 → null。
+          language: sourceBlock.codeLanguage ?? null,
         },
       };
     case "blockquote":
@@ -1595,11 +1602,11 @@ function buildStableBlockForSourceSpan(
         children,
         data: {
           ...data,
-          // Column index / alignment / header flag are not yet projected
-          // by the backend DTO; B2.6 will populate them when
-          // reconstructing table structure via `parentStableBlockId`.
-          alignment: "default",
-          isHeader: false,
+          // L1: 消费后端 DTO `tableAlignment` / `tableIsHeader`
+          // （逐单元格对齐与表头标记）。legacy snapshot 无该字段 →
+          // 默认 default / false。columnIndex 由 B2.6 行重组按列位补齐。
+          alignment: sourceBlock.tableAlignment ?? "default",
+          isHeader: sourceBlock.tableIsHeader ?? false,
         },
       };
     default:
@@ -2153,10 +2160,11 @@ function groupTableCellsIntoTable(
       parentStableBlockId: null,
       isUnitStart: firstCellData.isUnitStart,
       // rowIndex is assigned after we know how many rows exist.
-      // isHeader defaults to false; the backend does not currently
-      // project header-row metadata. A future task can enrich this
-      // from the `table_row` block's `payload_json`.
-      isHeader: false,
+      // L1: 行级 isHeader 由单元格 DTO `tableIsHeader` 推导 ——
+      // 整行所有单元格都是 header 才是表头行（后端 table_row
+      // wrapper source block 不进入 Plate 投影，无法直接消费其
+      // `tableIsHeader`）。
+      isHeader: rowCells.every((cell) => cell.data.isHeader === true),
     };
 
     // Assign per-cell columnIndex based on position in the row.
@@ -2182,11 +2190,24 @@ function groupTableCellsIntoTable(
   const firstRowData = rows[0].data;
   const tableId = `table:fallback:${tableCounter.value++}`;
 
-  const tableData: ReaderRecordPlateStableBlockData = {
+  // L1: table wrapper 不产生 reading unit，表级元数据由 cell DTO 推导：
+  // - alignments：首行各列单元格的 alignment（按列序）。
+  // - headerRows：前导 isHeader 行计数。
+  const alignments = rows[0].children.map(
+    (cell) => cell.data.alignment ?? "default",
+  );
+  let headerRows = 0;
+  while (headerRows < rows.length && rows[headerRows].data.isHeader === true) {
+    headerRows += 1;
+  }
+
+  const tableData: ReaderRecordPlateTableBlock["data"] = {
     ...firstRowData,
     stableBlockType: "table",
     parentStableBlockId: null,
     isUnitStart: firstRowData.isUnitStart,
+    alignments,
+    headerRows,
   };
 
   return [

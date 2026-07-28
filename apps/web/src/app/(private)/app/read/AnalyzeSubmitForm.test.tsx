@@ -408,6 +408,35 @@ function makeUnifiedInputRejectedResponse() {
   };
 }
 
+/**
+ * L2 mock BFF：GET /records/{id}/confirmed-source 200 响应
+ * （冻结合同 §4.1 + 前端 mock 扩展字段 quality/adaptation_notice/content_check）。
+ */
+function makeConfirmedSourceReadResponse(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    ok: true as const,
+    source_document_id: "cs_1",
+    record_generation: 1,
+    revision: 1,
+    status: "draft" as const,
+    markdown_text: "Markdown article needing confirmation.",
+    content_sha256: "a".repeat(64),
+    edit_source: "initial" as const,
+    updated_at: "2026-07-28T00:00:00.000Z",
+    candidate: {
+      candidate_document_id: "cand_1",
+      status: "ready" as const,
+      canonical_text_preview: "Markdown article needing confirmation.",
+    },
+    quality: null,
+    adaptation_notice: [],
+    content_check: [],
+    ...overrides,
+  };
+}
+
 describe("AnalyzeSubmitForm unified input cutover", () => {
   it("uses Reader Plate input submit mode", () => {
     expect(READ_PAGE_SUBMIT_MODE).toBe("reader-plate-input");
@@ -687,13 +716,20 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     );
   });
 
-  it("candidate_document_required outcome opens the confirm dialog and keeps internal ids out of the DOM", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify(makeUnifiedInputCandidateResponse()), {
+  it("candidate_document_required outcome opens the same-page Content Check and keeps internal ids out of the DOM", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/confirmed-source")) {
+        return new Response(JSON.stringify(makeConfirmedSourceReadResponse()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(makeUnifiedInputCandidateResponse()), {
         status: 200,
         headers: { "content-type": "application/json" },
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(
@@ -708,16 +744,17 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
 
+    // L2 默认流程：同页 Content Check 替代候选确认模态。
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-    expect(screen.getByText("确认提取出的英文文章")).toBeTruthy();
-    expect(screen.getByTestId("candidate-confirm-preview").textContent).toContain(
-      "Markdown article needing confirmation.",
-    );
-    expect(screen.getByTestId("candidate-confirm-button")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
+    expect(screen.getByText("确认识别出的正文")).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "返回修改" })).toBeTruthy();
     expect(screen.queryByText("rec_unified_2")).toBeNull();
     expect(screen.queryByText("cand_1")).toBeNull();
     expect(screen.queryByText("inp_cand_1")).toBeNull();
@@ -1013,24 +1050,25 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R2R Issue C — Submit lint gate (fail-closed)
+// 阶段 3 — Submit lint 非阻断提示合同（fail-closed 已撤销）
 //
 // 合同：
-//   1. 提交必须读取 editor 最新内容（getSubmitText），不依赖 debounced 父状态
-//   2. 提交前必须同步得到该最新内容对应的 lint 结果（lintMarkdownInput）
-//   3. dangerous content 不得只依赖按钮 disabled 状态
-//   4. handleSubmit 内必须再次执行 fail-closed 检查
-//   5. Ctrl/Cmd+Enter、按钮点击必须走同一检查
-//   6. 被拒绝时不得发出 fetch
-//   7. 用户看到固定、可理解的中文提示，不能直接暴露内部 parser/lint 错误
+//   1. 提交必须读取 editor 最新内容（flush/getSubmitText），不依赖
+//      debounced 父状态
+//   2. 提交前必须同步计算该最新内容对应的 lint 结果并刷新警告 badge
+//      —— 纯 UX 提示，不阻断提交
+//   3. dangerous 内容（raw HTML / unsafe link / unclosed fence）照常发出
+//      fetch，服务端权威清洗与三级分类路由
+//   4. 按钮点击与 Ctrl/Cmd+Enter 走同一 handleSubmit，合同完全一致
+//   5. badge 文案不暴露内部 parser/lint 错误
 //
 // 这些测试通过 mock textarea 模拟"父 lintResult 状态滞后"场景：
 // mock 的 onLintResult 永远报告 safe，但 handleSubmit 直接调用真实
-// lintMarkdownInput(submitText) 重新计算，从而验证 fail-closed 路径
-// 不依赖 debounced 父状态。
+// lintMarkdownInput(submitText) 重新计算，从而验证提示路径不依赖
+// debounced 父状态。
 // ---------------------------------------------------------------------------
 
-describe("R2R Issue C: submit lint gate (fail-closed)", () => {
+describe("阶段 3: submit lint 非阻断提示", () => {
   const DANGEROUS_RAW_HTML = "Hello <script>alert(1)</script> world";
   const DANGEROUS_UNSAFE_LINK =
     "Click [here](javascript:alert(1)) for more";
@@ -1087,105 +1125,82 @@ describe("R2R Issue C: submit lint gate (fail-closed)", () => {
     });
   }
 
-  it("blocks fetch on button click when submitText contains raw HTML", async () => {
+  /** 非阻断合同核心断言：dangerous 内容也发出 fetch 并导航。 */
+  async function expectNonBlockingSubmit(
+    fetchMock: ReturnType<typeof vi.fn>,
+  ) {
+    await waitFor(() => {
+      expect(navigationMock.push).toHaveBeenCalledWith(
+        "/app/reader-record/rec_unified_1",
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  }
+
+  it("raw HTML via button: 不阻断，发 fetch，显示警告 badge", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_RAW_HTML);
     clickSubmitButton();
 
-    // 固定、可理解的中文提示（不暴露内部 parser 错误）
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    // 被拒绝时不得发出 fetch
-    expect(fetchMock).not.toHaveBeenCalled();
-    // 不得导航
-    expect(navigationMock.push).not.toHaveBeenCalled();
   });
 
-  it("blocks fetch on Ctrl+Enter when submitText contains raw HTML", async () => {
+  it("raw HTML via Ctrl+Enter: 不阻断，发 fetch，显示警告 badge", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_RAW_HTML);
     pressCtrlEnter();
 
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(navigationMock.push).not.toHaveBeenCalled();
   });
 
-  it("blocks fetch on button click when submitText contains unsafe link protocol", async () => {
+  it("unsafe link protocol via button: 不阻断，发 fetch", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_UNSAFE_LINK);
     clickSubmitButton();
 
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("blocks fetch on Ctrl+Enter when submitText contains unsafe link protocol", async () => {
+  it("unsafe link protocol via Ctrl+Enter: 不阻断，发 fetch", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_UNSAFE_LINK);
     pressCtrlEnter();
 
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("blocks fetch on button click when submitText contains unclosed code fence", async () => {
+  it("unclosed code fence via button: 不阻断，发 fetch", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_UNCLOSED_FENCE);
     clickSubmitButton();
 
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("blocks fetch on Ctrl+Enter when submitText contains unclosed code fence", async () => {
+  it("unclosed code fence via Ctrl+Enter: 不阻断，发 fetch", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_UNCLOSED_FENCE);
     pressCtrlEnter();
 
+    await expectNonBlockingSubmit(fetchMock);
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
-
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("safe pending content submits the latest text via button click", async () => {
@@ -1260,9 +1275,10 @@ describe("R2R Issue C: submit lint gate (fail-closed)", () => {
     );
   });
 
-  it("handleSubmit uses real lintMarkdownInput(submitText), not debounced parent state", async () => {
+  it("handleSubmit 基于 submitText 同步刷新 lint badge，无 fail-closed gate", async () => {
     // 静态契约测试：handleSubmit 内必须直接调用 lintMarkdownInput(submitText)
-    // 而不是读取 debounced 的 lintResult 状态。
+    // 刷新 badge（非阻断），而不是读取 debounced 的 lintResult 状态，
+    // 且不得再存在 hasDangerousContent 提交阻断。
     const source = readFileSync(
       resolve(
         process.cwd(),
@@ -1271,66 +1287,32 @@ describe("R2R Issue C: submit lint gate (fail-closed)", () => {
       "utf-8",
     );
 
-    // 同步 lint gate 必须存在且基于 submitText
-    expect(source).toMatch(/lintMarkdownInput\(submitText\)/);
-    expect(source).toMatch(/freshLintResult\.hasDangerousContent/);
+    expect(source).toContain("setLintResult(lintMarkdownInput(submitText))");
+    expect(source).not.toMatch(/freshLintResult\.hasDangerousContent/);
   });
 
-  it("error message is a fixed Chinese string, does not leak internal parser errors", async () => {
+  it("lint badge 不暴露内部 parser 错误", async () => {
     const { fetchMock } = await renderFormForLintGate();
     setTextareaValue(DANGEROUS_RAW_HTML);
     clickSubmitButton();
 
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
+      expect(screen.getByTestId("read-source-lint-warning")).toBeTruthy();
     });
 
     // 不得在 DOM 中暴露 raw error message 或内部 parser 错误
     const body = document.body.textContent ?? "";
-    expect(body).not.toMatch(/Failed to fetch/i);
     expect(body).not.toMatch(/parser/i);
     expect(body).not.toMatch(/token/i);
     expect(body).not.toMatch(/stack trace/i);
 
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("submit succeeds when content transitions from dangerous to safe", async () => {
-    const { fetchMock } = await renderFormForLintGate();
-
-    // 先输入 dangerous
-    setTextareaValue(DANGEROUS_RAW_HTML);
-    clickSubmitButton();
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "内容包含不安全元素（如原始 HTML、不安全协议链接或未闭合代码围栏），请修改后再提交。",
-        ),
-      ).toBeTruthy();
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-
-    // 改为 safe
-    setTextareaValue(SAFE_TEXT);
-    clickSubmitButton();
-
-    await waitFor(() => {
-      expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
-      );
-    });
+    // 非阻断：fetch 已发出
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0]!;
-    const body = JSON.parse(String(init?.body));
-    expect(body).toMatchObject({ text: SAFE_TEXT });
   });
 
-  it("attached file (artifact path) bypasses markdown lint gate", async () => {
-    // 附件提交链路不受 Markdown lint 影响
+  it("attached binary file skips client Markdown decoding and submits", async () => {
+    // PDF/图片由服务端提取后做权威归一化；客户端不得把二进制附件
+    // 完整解码成字符串来运行 Markdown lint。
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/init-upload")) {
@@ -1360,6 +1342,11 @@ describe("R2R Issue C: submit lint gate (fail-closed)", () => {
     );
 
     const file = makeFile("article.pdf", "application/pdf");
+    const fileTextSpy = vi.fn(async () => "binary-decoded-as-text");
+    Object.defineProperty(file, "text", {
+      configurable: true,
+      value: fileTextSpy,
+    });
     const dropZone = screen.getByTestId("read-source-input");
     fireEvent.drop(dropZone, {
       dataTransfer: {
@@ -1387,6 +1374,7 @@ describe("R2R Issue C: submit lint gate (fail-closed)", () => {
       ([url]) => String(url) === "/api/web/reader-plate/input",
     );
     expect(readerPlateCalls).toHaveLength(0);
+    expect(fileTextSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1479,6 +1467,27 @@ describe("candidate-document read route guard (S4)", () => {
     expect(source).toContain("recordId");
     expect(source).not.toContain("submitAnalysisFromWeb");
     expect(source).not.toContain("legacyAppReaderRoute");
+    expect(source).not.toContain("analysis-tasks");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L2: confirmed-source route guard (GET draft / PUT update, mock BFF 合同)
+// ---------------------------------------------------------------------------
+
+describe("confirmed-source route guard (L2)", () => {
+  const ROUTE_PATH =
+    "src/app/api/web/reader-plate/records/[recordId]/confirmed-source/route.ts";
+
+  it("wires GET/PUT to the confirmed-source BFF wrappers and forwards recordId + body", () => {
+    const source = readFileSync(resolve(process.cwd(), ROUTE_PATH), "utf-8");
+    expect(source).toContain("getReaderConfirmedSourceFromWeb");
+    expect(source).toContain("updateReaderConfirmedSourceFromWeb");
+    expect(source).toContain("recordId");
+    expect(source).toContain("expected_revision");
+    expect(source).toContain("markdown_text");
+    expect(source).toContain("edit_source");
+    expect(source).not.toContain("submitAnalysisFromWeb");
     expect(source).not.toContain("analysis-tasks");
   });
 });
@@ -1613,6 +1622,19 @@ function makeResumeResponse(previewMode: "full_text" | "truncated_preview" | "ou
 function installResumeFetchMock(payload: unknown, status = 200) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.includes("/confirmed-source")) {
+      // L2 resume 入口先探测 confirmed-source；存量记录返回 404，
+      // 前端回退旧 candidate-document 流（本组 S4 用例锁定的行为）。
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          status: 404,
+          code: "confirmed_source_not_found",
+          message: "没有找到可继续确认的草稿。",
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    }
     if (url.includes("/candidate-document")) {
       return new Response(JSON.stringify(payload), {
         status,
@@ -1908,15 +1930,60 @@ describe("resume_candidate entry (S4)", () => {
     expect(navigationMock.push).toHaveBeenCalledWith("/app/library");
   });
 
+  it("confirmed-source 200 opens the same-page Content Check instead of the legacy dialog", async () => {
+    setLocationSearch("?resume_candidate=rec_resume_1");
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/confirmed-source")) {
+        return new Response(JSON.stringify(makeConfirmedSourceReadResponse()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <AnalyzeSubmitForm
+        readingGoal="daily_reading"
+        readingVariant="intermediate_reading"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
+    // resume 来源：无"返回修改"，但保留稍后处理与主 CTA。
+    expect(screen.queryByRole("button", { name: "返回修改" })).toBeNull();
+    expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
+    // localStorage 不被 resume 流写入（BFF 是真相源）。
+    expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
+  });
+
   it("5xx / network failure renders the 重试加载 button; clicking it re-invokes the fetch", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
 
-    // First fetch: network failure. Subsequent fetches: success.
+    // First fetch: network failure. Subsequent fetches: confirmed-source 404
+    // (legacy record) → candidate-document success.
     const fetchMock = vi
       .fn<(input: RequestInfo | URL) => Promise<Response>>()
       .mockRejectedValueOnce(new Error("network down"))
       .mockImplementation(async (input) => {
         const url = String(input);
+        if (url.includes("/confirmed-source")) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              status: 404,
+              code: "confirmed_source_not_found",
+              message: "没有找到可继续确认的草稿。",
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          );
+        }
         if (url.includes("/candidate-document")) {
           return new Response(JSON.stringify(makeResumeResponse("full_text")), {
             status: 200,
@@ -1951,7 +2018,7 @@ describe("resume_candidate entry (S4)", () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("query param absent + submit-origin localStorage candidate opens the recovery dialog with the textarea prefilled", async () => {
+  it("query param absent + submit-origin localStorage candidate opens the same-page Content Check with the textarea prefilled", async () => {
     // Seed a submit-origin candidate so the existing recovery path engages.
     const seededSubmitCandidate = {
       readingRecordId: "rec_local_submit",
@@ -1968,8 +2035,27 @@ describe("resume_candidate entry (S4)", () => {
       JSON.stringify(seededSubmitCandidate),
     );
 
-    // No query param, no fetch expected for the resume path.
     setLocationSearch("");
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/confirmed-source")) {
+        return new Response(
+          JSON.stringify(
+            makeConfirmedSourceReadResponse({
+              candidate: {
+                candidate_document_id: "cand_local_submit",
+                status: "ready",
+                canonical_text_preview: "LocalStorage submit preview",
+              },
+            }),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       <AnalyzeSubmitForm
@@ -1978,22 +2064,34 @@ describe("resume_candidate entry (S4)", () => {
       />,
     );
 
+    // 刷新恢复走 L2 Content Check，不再默认打开旧候选确认模态。
     await waitFor(() => {
-      expect(screen.getByTestId("candidate-confirm-dialog")).toBeTruthy();
+      expect(screen.getByTestId("content-check-panel")).toBeTruthy();
     });
-
-    // In submit-mode recovery, all three buttons (including 重新提交) must be present.
-    expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByTestId("content-check-confirm-button")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "返回修改" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "稍后处理" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "确认并开始透读" })).toBeTruthy();
 
-    // The textarea must be pre-filled with the inputSnapshot.
+    // Content Check 编辑器展示服务端草稿（输入主区域已被面板替换）。
+    const panelEditor = screen.getByLabelText(
+      "待确认正文预览与编辑",
+    ) as HTMLTextAreaElement;
+    expect(panelEditor.value).toBe("Markdown article needing confirmation.");
+
+    // 返回修改：恢复输入编辑器并回填草稿文本。
+    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Paste an English article here"),
+      ).toBeTruthy();
+    });
     const textarea = screen.getByPlaceholderText(
       "Paste an English article here",
     ) as HTMLTextAreaElement;
-    expect(textarea.value).toBe(
-      "LocalStorage submit snapshot must populate the textarea.",
-    );
+    expect(textarea.value).toBe("Markdown article needing confirmation.");
   });
 
   it("query param absent + no localStorage renders the page normally with no dialog", async () => {

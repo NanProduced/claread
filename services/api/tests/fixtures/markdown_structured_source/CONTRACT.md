@@ -1,6 +1,6 @@
 # Structured Source Contract — G0 Frozen
 
-**Status**: G0 frozen artifact. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility regression), re-frozen on 2026-07-25 (Markdown ecosystem refactor D2 / A1: `code_block` and the `table` / `table_row` / `table_cell` hierarchy now default to `main_reading`; `table` / `table_row` wrappers stay `rag_eligible=false` — RAG targets the `table_cell` leaves; Clause 4 table and `gfm_table` / `code_mermaid` / `r14_complex` fixtures updated). Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
+**Status**: G0 frozen artifact. Frozen on 2026-07-22, re-frozen on 2026-07-23 (M3 prerequisite: added `real_list_wrapper` fixture for list wrapper RAG eligibility regression), re-frozen on 2026-07-25 (Markdown ecosystem refactor D2 / A1: `code_block` and the `table` / `table_row` / `table_cell` hierarchy now default to `main_reading`; `table` / `table_row` wrappers stay `rag_eligible=false` — RAG targets the `table_cell` leaves; Clause 4 table and `gfm_table` / `code_mermaid` / `r14_complex` fixtures updated), re-frozen on 2026-07-28 (L1 Authoritative Normalization: three-level classification `silent` / `adaptation_notice` / `content_check` on every diagnostic; safe HTML / unsafe links / safe `<aside>` / non-HTML placeholders like `vector<T>` now continue as stable with `adaptation_notice` instead of routing to candidate; deterministic GFM tables freeze as stable with table payload metadata; code language and per-cell table header/alignment are projected into the per-unit Reader snapshot DTO as `codeLanguage` / `tableIsHeader` / `tableAlignment`; wrapper-only table metadata remains in Stable Document payload and is not exposed on a per-unit DTO; new `safe_html_adaptation` / `table_structure_uncertain` fixtures; Clause 3.5 / 5.1 / 5.4 / 7 updated). Any change requires cross-owner review and must first update `tests/fixtures/markdown_structured_source/**` fixtures, then re-freeze this contract.
 
 **Scope**: This contract governs the structured Markdown source pipeline output — the parser adapter (`markdown_source_parser.py`) and the downstream freeze/candidate/RAG consumers. It does NOT modify the read path for legacy frozen documents or snapshot-only records (Clause 6).
 
@@ -102,9 +102,18 @@ Block types NOT emitted by the adapter in the first phase: `image`, `image_ocr`,
 
 **Safe links**: Preserved in `payload_json.links` as `{"text": ..., "href": ...}`.
 
-**Diagnostic**: Every unsafe-protocol strip emits an `unsafe_link_protocol` warning and routes the document to `candidate_document_required`.
+**Diagnostic (L1)**: Every unsafe-protocol strip emits an `unsafe_link_protocol` warning classified `adaptation_notice`; the document continues as stable (it no longer routes to candidate).
 
-**Raw HTML**: `html_block` and `html_inline` tokens are fail-closed in the first phase. Text is extracted (paragraph-level), but the document routes to `candidate_document_required` with a `raw_html_block` / `inline_html` warning. Raw HTML is not preserved as a first-class block type.
+**Raw HTML (L1)**: `html_block` and `html_inline` tokens are deterministically sanitized — executable structure (script / iframe / event-handler attributes / unknown markup) never survives into `text_content`; the remaining text is preserved as plain paragraphs (`extracted_from: html_block` / `html_inline`) and the document continues as stable with a `raw_html_block` / `inline_html` warning classified `adaptation_notice`. Raw HTML is not preserved as a first-class block type.
+
+**Non-HTML placeholders (L1)**: A bare inline tag whose name is not a known HTML element and that carries no attributes (`vector<T>`, `<name>`, `x<y>`) is NOT HTML — it is preserved verbatim in `text_content` and produces no diagnostic. Known tags, tags with attributes, comments and self-closing tags stay on the strip-and-flag path (fail-safe).
+
+### 3.6 Table structure determinism (L1)
+
+- `table` block `payload_json`: `{"alignments": list[str], "column_count": int, "header_rows": int, "structure_uncertain": bool (only when true)}`.
+- `table_row` block `payload_json`: `{"is_header": bool, "row_index": int}`.
+- `table_cell` block `payload_json`: `{"column_index": int, "alignment": "left" | "center" | "right" | "default", "is_header": bool}`.
+- A table is **deterministic** (freezes as stable) iff it has exactly one header row and every row's raw cell count equals `column_count`. markdown-it silently pads missing cells and drops extra cells, so any mismatch is a content/boundary change: the table payload is stamped `structure_uncertain: true`, a `table_structure_uncertain` warning (`content_check`) is emitted, and the document routes to candidate review.
 
 ---
 
@@ -144,7 +153,8 @@ Diagnostics are structured; free-text-only diagnostics are forbidden.
     {
       "code": "<snake_case_code>",
       "message": "<human-readable English message>",
-      "blocks_freeze": false
+      "blocks_freeze": false,
+      "classification": "silent | adaptation_notice | content_check"
     }
   ],
   "unsupported": [
@@ -157,19 +167,26 @@ Diagnostics are structured; free-text-only diagnostics are forbidden.
 }
 ```
 
-### 5.1 Warning codes (closed set, first phase)
+### 5.1 Warning codes (closed set)
 
-| code | message | blocks_freeze | outcome |
-|------|---------|---------------|--------|
-| `raw_html_block` | Raw HTML block detected; stored as text but requires candidate review. | `false` | `candidate_document_required` |
-| `inline_html` | Inline HTML tag stripped from paragraph text. | `false` | `candidate_document_required` |
-| `has_unclosed_fence` | Fenced code block is missing its closing fence; captured as code_block but requires candidate review. | `false` | `candidate_document_required` |
-| `unsafe_link_protocol` | Links with unsafe protocols (javascript/data/vbscript) were stripped from paragraph text; link text preserved. | `false` | `candidate_document_required` |
-| `footnote_reference` | Footnote reference encountered; footnote plugin not enabled in first phase. | `false` | `candidate_document_required` |
-| `strikethrough_extension` | GFM strikethrough extension captured in text; rendering preserved, no freeze block. | `false` | `stable_document_ready` |
-| `mermaid_static_only` | Mermaid diagram captured as static code block; dynamic rendering deferred. | `false` | `stable_document_ready` |
-| `code_dominant` | Input is code-dominant with no narrative blocks; rejected from stable document freeze, action required. | `false` | `input_rejected_or_action_required` |
-| `missing_source_range` | Parser token missing source range; requires candidate review for boundary correctness. | `false` | `candidate_document_required` |
+Every warning carries a `classification` from the closed three-level set
+(`silent` / `adaptation_notice` / `content_check`, Clause 5.4). The
+parser outcome is classification-driven: any `content_check` warning
+forces `candidate_document_required`; `silent` and `adaptation_notice`
+warnings never do.
+
+| code | message | blocks_freeze | classification | outcome |
+|------|---------|---------------|----------------|---------|
+| `raw_html_block` | Raw HTML block detected; executable structure removed, text preserved as a plain paragraph. | `false` | `adaptation_notice` | `stable_document_ready` |
+| `inline_html` | Inline HTML tag stripped from paragraph text. | `false` | `adaptation_notice` | `stable_document_ready` |
+| `unsafe_link_protocol` | Links with unsafe protocols (javascript/data/vbscript) were stripped from paragraph text; link text preserved. | `false` | `adaptation_notice` | `stable_document_ready` |
+| `mermaid_static_only` | Mermaid diagram captured as static code block; dynamic rendering deferred. | `false` | `adaptation_notice` | `stable_document_ready` |
+| `strikethrough_extension` | Strikethrough syntax captured as plain text; rendering is preserved. | `false` | `silent` | `stable_document_ready` |
+| `has_unclosed_fence` | Fenced code block is missing its closing fence; captured as code_block but requires candidate review for boundary correctness. | `false` | `content_check` | `candidate_document_required` |
+| `footnote_reference` | Footnote reference encountered; the reference marker is dropped from body text while the definition is captured as a footnote block. | `false` | `content_check` | `candidate_document_required` |
+| `table_structure_uncertain` | Table row/column structure does not match the header definition; cells would be dropped or padded during deterministic normalization. | `false` | `content_check` | `candidate_document_required` |
+| `missing_source_range` | Parser token missing source range; requires candidate review for boundary correctness. | `false` | `content_check` | `candidate_document_required` |
+| `code_dominant` | Input is code-dominant with no narrative blocks; rejected from stable document freeze, action required. | `false` | `content_check` | `input_rejected_or_action_required` |
 
 ### 5.2 Unsupported codes (closed set, first phase)
 
@@ -183,9 +200,45 @@ Diagnostics are structured; free-text-only diagnostics are forbidden.
 
 | outcome | meaning |
 |---------|---------|
-| `stable_document_ready` | No blocking warnings; document can freeze as stable. |
-| `candidate_document_required` | Warnings present; document must route to Candidate Document review before freeze. |
+| `stable_document_ready` | No content-check warnings; document can freeze as stable (silent / adaptation_notice records may be present). |
+| `candidate_document_required` | At least one content-check warning; document must route to Candidate Document review before freeze. |
 | `input_rejected_or_action_required` | Input is unsuitable for structured source (e.g. code-dominant, empty); rejected from freeze, action required. |
+
+### 5.4 Three-level adaptation classification (L1)
+
+Every normalization event is classified into exactly one level; the
+backend parser + gate are the single classification authority (the
+frontend only renders the records):
+
+| classification | semantics | routing effect |
+|----------------|-----------|----------------|
+| `silent` | Deterministic, meaning-preserving normalization (newline normalization, strikethrough capture). Invisible to the user. | none |
+| `adaptation_notice` | Content was cleaned or safely downgraded (raw HTML removed, unsafe link protocol stripped, mermaid rendered static) and the document continues. Surfaced as a non-blocking notice. | none (document stays stable) |
+| `content_check` | Content, boundaries or meaning may change (unclosed fence, footnote reference loss, table structure uncertainty, missing source range, image, math, OCR uncertainty, code dominance). Requires human review. | `candidate_document_required` |
+
+**Field contract (exact paths)**:
+
+- Parser: `MarkdownParseResult.warnings[i].classification` (`DiagnosticWarning.classification`).
+- Gate: `InputSuitabilityResult.adaptations[i]` = `{code, message, classification}` (`AdaptationRecord` in `app/schemas/reader_input_adapter.py`). Parser warnings flow through with their classification; gate-only signals (`image_ocr_uncertain`, `document_block_degraded` (math), `ocr_low_confidence`, `layout_order_uncertain`, `code_dominant`, `too_long_requires_envelope`, `source_type_review_default`) are recorded as `content_check`.
+- Normalizer: `NormalizedInputDocument.adaptations` mirrors the suitability records.
+- Candidate persistence: `candidate_reading_documents.quality_json.suitability.adaptations`.
+- Stable-ready persistence: `stable_reading_documents.source_profile_json.suitability.adaptations`.
+
+### 5.5 Snapshot DTO metadata projection (L1)
+
+The Reader snapshot `reader_source_block` payload projects (all keys
+present whenever `stableBlockType` is set, `null` when not applicable):
+
+| DTO key | source | emitted for |
+|---------|--------|-------------|
+| `codeLanguage` | `payload_json.language` (empty → `null`) | `code_block` |
+| `tableIsHeader` | `payload_json.is_header` | `table_row` / `table_cell` |
+| `tableAlignment` | `payload_json.alignment` | `table_cell` |
+
+The projection is implemented once in `base_builder.py` (build path) and
+reused in `repository.py` (DB reload path); both paths MUST produce
+structurally equivalent snapshots (proven by
+`tests/test_l1_table_code_metadata_reload.py` against real PostgreSQL).
 
 ---
 
@@ -203,14 +256,14 @@ Diagnostics are structured; free-text-only diagnostics are forbidden.
 
 ## Fixture Compliance
 
-The 11 G0 fixtures under `tests/fixtures/markdown_structured_source/` are the executable acceptance criteria for this contract. Each fixture declares:
+The 13 fixtures under `tests/fixtures/markdown_structured_source/` are the executable acceptance criteria for this contract. Each fixture declares:
 
 - `input.md` — raw Markdown input.
 - `expected_blocks.json` — expected block tree (block_id, block_type, text_content, payload_json, parent_block_id, order_index, source_range).
 - `expected_policy.json` — expected per-block policy (default_route, rag_eligible, allowed_source_scope).
-- `expected_diagnostics.json` — expected warnings, unsupported, outcome.
+- `expected_diagnostics.json` — expected warnings (code + classification), unsupported, outcome.
 
-**G0 gate**: Fixtures may be marked `xfail`/`skip` against the current regex normalizer (which cannot produce table/code/footnote blocks). The G1 gate (M1 completion) requires all 11 fixtures to pass against the new parser adapter.
+**G0 gate**: Fixtures may be marked `xfail`/`skip` against the current regex normalizer (which cannot produce table/code/footnote blocks). The G1 gate (M1 completion) requires all fixtures to pass against the new parser adapter.
 
 **Fixture inventory**:
 
@@ -220,12 +273,14 @@ The 11 G0 fixtures under `tests/fixtures/markdown_structured_source/` are the ex
 | `r14_complex` | Full complex article (heading/list/table/code/blockquote/emphasis/link) | `stable_document_ready` |
 | `nested_list` | 3-level nested ordered+unordered list | `stable_document_ready` |
 | `real_list_wrapper` | Realistic article with heading + unordered list wrapper + ordered list wrapper + closing paragraph; focused on list wrapper (text_content=null) + list_item child structure for RAG eligibility regression | `stable_document_ready` |
-| `gfm_table` | Standard GFM table with alignment | `stable_document_ready` |
+| `gfm_table` | Standard GFM table with alignment (deterministic: freezes stable) | `stable_document_ready` |
 | `code_mermaid` | ```mermaid and ```python code blocks | `stable_document_ready` |
-| `raw_html` | Raw HTML block + inline HTML | `candidate_document_required` |
-| `footnote` | Footnote reference + definition | `candidate_document_required` |
-| `unsafe_link` | javascript/data/vbscript links stripped | `candidate_document_required` |
-| `unclosed_fence` | Missing closing fence | `candidate_document_required` |
+| `raw_html` | Raw HTML block + inline HTML (L1: sanitized, adaptation_notice) | `stable_document_ready` |
+| `safe_html_adaptation` | L1: script/iframe/event handler/unsafe protocols stripped to safety; safe aside/links and `vector<T>` / `<name>` placeholders preserved | `stable_document_ready` |
+| `footnote` | Footnote reference + definition (ref dropped from body: content_check) | `candidate_document_required` |
+| `unsafe_link` | javascript/data/vbscript links stripped (L1: adaptation_notice) | `stable_document_ready` |
+| `unclosed_fence` | Missing closing fence (content_check) | `candidate_document_required` |
+| `table_structure_uncertain` | L1: body row with extra raw cell (column mismatch; content_check) | `candidate_document_required` |
 | `reject_empty` | Code-dominant content, no narrative | `input_rejected_or_action_required` |
 
 ---
@@ -276,17 +331,19 @@ MUST NOT override this matrix when they conflict.
 | `blockquote` | supported | supported | supported (ReaderBlockquote / ReaderMarkdownBlockquote) | supported | supported | — |
 | inline marks (em / strong / strikethrough / inline_code) | supported | supported (flattened into `text_content`) | supported (leaf components) | supported | supported | Strikethrough is captured as plain text with `strikethrough_extension` warning; visual rendering uses CSS `line-through`. |
 | `link` (safe protocol) | supported | supported (`payload_json.links`) | supported (ReaderLink) | supported | supported | — |
-| `link` (unsafe protocol) | fail-closed strip | supported (`payload_json.stripped_links`) | n/a (stripped before projection) | supported | supported | Routes document to `candidate_document_required`. |
-| `code_block` (fenced, with language) | supported | supported (`payload_json.language`, `fenced`, `closed`) | partial (Reading Record Snapshot omits language) | `test_code_block_survives_reload` | partial | DB reload preserves the language payload, but `ReaderSourceBlockNodeDto` has no language field and the Reading Record projection currently sets `language: null`. `structured-source-renderer` language-badge fixtures exercise a separate direct DTO path and are not Snapshot reload proof. |
-| `code_block` (indented, no language) | supported | supported (`language: null`) | supported (no badge) | supported | supported | — |
-| `code_block` (unclosed fence) | fail-closed | supported (`closed: false`) | supported (`data-closed="false"`) | `unclosed_fence` fixture | partial | Captured as `code_block` but document routes to `candidate_document_required` with `has_unclosed_fence` warning. |
-| `code_line` (Plate internal) | n/a (parser emits `text_content`) | n/a | Web deserialize-only plugin (`ReaderMarkdownCodeLineComponent`) | deserialize tests | partial | Only used by the Web MarkdownTextInput / callout deserialize path. The Stable Document path stores `text_content` as text nodes, not `code_line` elements. Does NOT project `language`. |
+| `link` (unsafe protocol) | deterministic strip (L1) | supported (`payload_json.stripped_links`) | n/a (stripped before projection) | supported | supported | L1: `adaptation_notice`; the document continues as `stable_document_ready` (no longer routes to candidate). |
+| `code_block` (fenced, with language) | supported | supported (`payload_json.language`, `fenced`, `closed`) | supported (L1: snapshot `reader_source_block.codeLanguage`) | `test_code_block_survives_reload`; `test_l1_table_code_metadata_reload.py` (real PostgreSQL) | supported | L1: language is projected into the snapshot DTO on both the build and DB-reload paths. Rendering the badge/highlight is the Web projection's follow-up. |
+| `code_block` (indented, no language) | supported | supported (`language` empty → DTO `null`) | supported (no badge) | supported | supported | — |
+| `code_block` (unclosed fence) | fail-closed (content_check) | supported (`closed: false`) | supported (`data-closed="false"`) | `unclosed_fence` fixture | partial | Captured as `code_block` but document routes to `candidate_document_required` with `has_unclosed_fence` warning (`content_check`). |
+| `code_line` (Plate internal) | n/a (parser emits `text_content`) | n/a | Web deserialize-only plugin (`ReaderMarkdownCodeLineComponent`) | deserialize tests | partial | Only used by the Web MarkdownTextInput / callout deserialize path. The Stable Document path stores `text_content` as text nodes, not `code_line` elements. |
 | `thematic_break` | supported | supported (`metadata_only` route) | NOT rendered as a Reader reading unit | `test_thematic_break_routes_to_metadata_only_no_unit` | partial | **Stable Document keeps the block as `metadata_only`**, but Reader does not emit a reading unit for it. The `<hr>` is invisible in the Reader projection by design; R3 may add a metadata-only divider affordance. |
-| `table` (GFM) | supported | supported (`table` / `table_row` / `table_cell` hierarchy) | partial (leaf-cell reconstruction) | `gfm_table` parser fixture; Web projection tests | partial | Inputs route to `candidate_document_required`. Reading Record reconstructs contiguous cells into rows/tables, but Snapshot omits wrapper identity and header metadata. |
-| `table_row` / `table_cell` | supported | supported | partial | parser fixtures; Web projection tests | partial | Web forces reconstructed rows to `isHeader: false`; source header-row semantics are not preserved through Reading Record Snapshot. |
+| `table` (GFM, deterministic) | supported | supported (`table` / `table_row` / `table_cell` hierarchy; `alignments` / `column_count` / `header_rows`) | supported (L1: leaf-cell `tableIsHeader` / `tableAlignment`; wrapper fields when a unit matches) | `gfm_table` fixture; `test_l1_table_code_metadata_reload.py` (real PostgreSQL) | supported | L1: tables with one header row and consistent raw cell counts freeze as `stable_document_ready` (no candidate). |
+| `table` (structure-uncertain) | fail-closed (content_check) | supported (`structure_uncertain: true`) | n/a (candidate path) | `table_structure_uncertain` fixture | supported | L1: row/column mismatch (cells would be padded/dropped) or missing header row routes to `candidate_document_required`. |
+| `table_row` / `table_cell` | supported | supported (`is_header`, `alignment`) | supported (L1: snapshot `tableIsHeader` / `tableAlignment`) | parser fixtures; `test_l1_table_code_metadata_reload.py` | supported | L1: source header-row semantics and per-cell alignment survive the Reading Record Snapshot reload. |
 | `footnote` | supported (mdit-py-plugins `footnote_plugin` enabled) | supported (`footnote` block type, `footnote_id`, `footnote_anchor`) | NOT rendered as a Reader reading unit | `footnote` fixture | partial | **Parser produces degraded/candidate semantics**, not "no parser support". Footnote reference produces `footnote_reference` warning and routes document to `candidate_document_required`. Full footnote rendering (multi-ref / backref / inline footnote) is R3. |
 | `image` | detected by suitability gate (`has_image`) | n/a (not frozen as a first-class block in the first phase) | n/a | `has_image` flag in `input_suitability_gate.py` | partial | **Backend suitability gate routes image-containing inputs to candidate review**, NOT "纯文本 + 暂不支持提示". Frontend renders no image block in the Reader. R3 image block schema/renderer is not implemented. |
-| `raw_html` (block / inline) | fail-closed | text extracted, HTML not preserved | n/a | `raw_html` fixture | partial | **Backend fail-closes to `candidate_document_required`** with `raw_html_block` / `inline_html` warning. Frontend Markdown lint (`lintMarkdownInput`) also flags raw HTML as `hasDangerousContent` and the submit gate blocks fetch. R3 may add a sanitized HTML candidate review path. |
+| `raw_html` (block / inline) | deterministic sanitize (L1) | text extracted, HTML not preserved | n/a | `raw_html` / `safe_html_adaptation` fixtures | partial | **L1: backend strips executable structure, preserves text, classifies `adaptation_notice` and continues as `stable_document_ready`.** Frontend Markdown lint (`lintMarkdownInput`) still flags raw HTML as `hasDangerousContent` and the submit gate blocks fetch; removing that fail-closed is the L1 frontend step that MUST land only after these server-side proofs. |
+| non-HTML placeholders (`vector<T>` / `<name>`) | supported (L1: preserved verbatim, no diagnostic) | supported | supported (plain text) | `safe_html_adaptation` fixture; `test_markdown_safe_normalization.py` | supported | Bare unknown tags without attributes are literal text, not HTML. |
 | `task_list` (GFM checkbox) | NOT implemented | NOT implemented | NOT implemented | none | not_implemented | **No `task_list` block type, no `checked` payload, no DTO/Reader consumer.** Cannot be declared as supported at any layer. R3 may add a `task_list` block type with `checked` state preservation. |
 | `image_ocr` | n/a (OCR pipeline) | n/a | n/a | n/a | not_implemented | Image OCR pipeline is the domain of the Candidate Document confirm flow; not in scope for the Markdown structured source pipeline. |
 | `caption` | not_implemented | not_implemented | not_implemented | none | not_implemented | — |
@@ -303,12 +360,12 @@ MUST NOT override this matrix when they conflict.
   demotion in the Reader projection is describing an R3 plan, not current
   behaviour. The parser preserves h1 as-is; the Reader renders it verbatim
   with the same component family as h2–h6.
-- **Code language**: The parser and DB preserve `payload_json.language`.
-  The Reading Record Snapshot DTO does not currently project it, and the
-  Reading Record Plate builder sets `language: null`. Direct
-  `structured-source-renderer` fixtures that show `data-language` exercise a
-  separate DTO path. Neither language badges nor syntax highlighting are an
-  end-to-end Reading Record reload capability yet.
+- **Code language**: The parser and DB preserve `payload_json.language`,
+  and (L1) the Reading Record Snapshot DTO projects it as
+  `reader_source_block.codeLanguage` on both the build and DB-reload
+  paths (`tests/test_l1_table_code_metadata_reload.py`). The Web Reading
+  Record Plate builder's rendering of the badge/highlight is a separate
+  follow-up; language projection ≠ syntax highlighting.
 - **Footnote**: The backend parser has `footnote_plugin` enabled and
   produces `footnote` / `footnote_ref` / `footnote_anchor` semantics with
   `footnote_reference` warning and `candidate_document_required` outcome.
@@ -319,19 +376,24 @@ MUST NOT override this matrix when they conflict.
   with `image_ocr_uncertain` flag. The matrix MUST NOT describe this as
   "纯文本 + 暂不支持提示" — it is a candidate review routing, not a silent
   text-only fallback.
-- **Raw HTML**: Backend fail-closes to `candidate_document_required` with
-  `raw_html_block` / `inline_html` warning. Frontend `lintMarkdownInput`
-  additionally flags raw HTML as dangerous and the submit gate blocks
-  fetch. The matrix MUST NOT claim raw HTML is silently stripped without
-  routing.
+- **Raw HTML**: L1 — the backend deterministically sanitizes raw HTML
+  (executable structure removed, text preserved), classifies it
+  `adaptation_notice` and continues as `stable_document_ready`.
+  The matrix MUST NOT claim raw HTML is silently stripped
+  without an adaptation record. Frontend `lintMarkdownInput` still flags
+  raw HTML as dangerous and the submit gate blocks fetch until the L1
+  frontend step removes that fail-closed (server proofs land first).
 - **Thematic break**: Stable Document keeps the block as `metadata_only`
   (`default_route = metadata_only`, `rag_eligible = false`). Reader does
   NOT render a reading unit for it — there is no `<hr>` reading unit in
   the Reader projection. The matrix MUST NOT claim thematic break is
   rendered as a Reader reading unit.
-- **Table**: Tables that trigger the suitability gate route to
-  `candidate_document_required`. Tables in already-frozen stable documents
-  reload through the normal Reader path, but the matrix MUST NOT claim
+- **Table**: L1 — deterministic GFM tables (one header row, consistent
+  raw cell counts) freeze as `stable_document_ready` with first-class
+  `table` / `table_row` / `table_cell` blocks and projected
+  header/alignment metadata. Structure-uncertain tables (row/column
+  mismatch or missing header) still route to `candidate_document_required`
+  with the `table_structure_uncertain` warning. The matrix MUST NOT claim
   that any random table input is equivalent to a paragraph reload without
   candidate review.
 - **Task list**: No `task_list` block type exists in the schema, no
@@ -345,6 +407,8 @@ MUST NOT override this matrix when they conflict.
 | Layer | Test file | Covers |
 |-------|-----------|--------|
 | Parser + DB reload | `services/api/tests/test_reader_snapshot_stable_block_reload.py` | `code_block`, `thematic_break` metadata_only, `nested list` parent chain, generation fence, mismatched block range |
+| L1 safe normalization contract | `services/api/tests/test_markdown_safe_normalization.py` | script/iframe/event-handler/unsafe-protocol sanitization, safe aside/links, `vector<T>`/`<name>` placeholders, three-level classification, deterministic vs uncertain table routing |
+| L1 table/code metadata reload | `services/api/tests/test_l1_table_code_metadata_reload.py` | deterministic table + code language stable-ready freeze, DB payload persistence, snapshot `codeLanguage`/`tableIsHeader`/`tableAlignment` build↔reload equivalence (real PostgreSQL) |
 | Web deserialize | `apps/web/src/lib/reader-plate/markdown/deserialize.test.ts` | h1–h3, nested list, code fence language, blockquote (deserialize-only) |
 | Web serialize round-trip | `apps/web/src/app/(private)/app/read/MarkdownTextInput.test.tsx` (`R2R Phase 0/3: real serialize round-trip`) | Markdown → Plate → Markdown preserves h1–h3, nested list, code fence language, blockquote |
 | Web scheduling | `apps/web/src/app/(private)/app/read/MarkdownTextInput.test.tsx` | public lifecycle, flush no-op/dedup, Strict Mode safety, long-document round-trip; real browser performance gate remains pending |

@@ -604,6 +604,15 @@ export interface ReaderSourceBlockNodeDto {
    * (table rows → table, table cells → row, list items → list).
    * `stableBlockId` is the diagnostic identifier of the stable block
    * (not a render contract; emitted only when present).
+   *
+   * L1 additions (emitted whenever `stableBlockType` is present; `null`
+   * when not applicable to the block type):
+   * `codeLanguage` is the fenced code info string for `code_block`
+   * (`null` for language-less code). `tableIsHeader` is the header marker
+   * for `table_row` / `table_cell`. `tableAlignment` is the per-cell
+   * alignment (`left` / `center` / `right` / `default`) for `table_cell`.
+   * Table-level alignment/header metadata is not part of this per-unit DTO:
+   * table wrapper blocks do not produce reading units.
    */
   stableBlockType?: string | null;
   headingLevel?: number | null;
@@ -611,6 +620,12 @@ export interface ReaderSourceBlockNodeDto {
   tableRole?: string | null;
   parentStableBlockId?: string | null;
   stableBlockId?: string | null;
+  /** L1: fenced code language for `code_block`, else `null`. */
+  codeLanguage?: string | null;
+  /** L1: header marker for `table_row` / `table_cell`, else `null`. */
+  tableIsHeader?: boolean | null;
+  /** L1: per-cell alignment for `table_cell`, else `null`. */
+  tableAlignment?: "left" | "center" | "right" | "default" | null;
 }
 
 export type ReaderSourceBlockChildNodeDto =
@@ -932,6 +947,117 @@ export type ReaderUnifiedInputSubmitResponseDto =
   | ReaderUnifiedInputSubmitStableResponseDto
   | ReaderUnifiedInputSubmitCandidateResponseDto
   | ReaderUnifiedInputSubmitRejectedResponseDto;
+
+// ---------------------------------------------------------------------------
+// GET/PUT /reader/records/{record_id}/confirmed-source — L2 Confirmed Source
+//
+// Frozen contract:
+// `docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md` §4.
+// The backend L2 endpoints are being implemented by another owner; the web
+// client is developed against this frozen shape with a mock BFF.
+// ---------------------------------------------------------------------------
+
+export type ReaderAdaptationClassificationDto =
+  | "silent"
+  | "adaptation_notice"
+  | "content_check";
+
+/**
+ * Mirrors `AdaptationRecord` in
+ * `services/api/app/schemas/reader_input_adapter.py` (L1, landed).
+ */
+export interface ReaderAdaptationRecordDto {
+  code: string;
+  message: string;
+  classification: ReaderAdaptationClassificationDto;
+}
+
+export type ReaderConfirmedSourceEditSourceDto =
+  | "initial"
+  | "extraction"
+  | "wysiwyg"
+  | "source_mode"
+  | "content_check";
+
+export type ReaderConfirmedSourceStatusDto = "draft" | "frozen";
+
+export interface ReaderConfirmedSourceCandidateSummaryDto {
+  candidate_document_id: string;
+  status: ReaderCandidateDocumentStatusDto;
+  canonical_text_preview: string;
+}
+
+/** 200 body of `GET /reader/records/{record_id}/confirmed-source` (design §4.1). */
+export interface ReaderConfirmedSourceReadResponseDto {
+  source_document_id: string;
+  record_generation: number;
+  revision: number;
+  status: ReaderConfirmedSourceStatusDto;
+  markdown_text: string;
+  content_sha256: string;
+  edit_source: ReaderConfirmedSourceEditSourceDto;
+  updated_at: string;
+  candidate: ReaderConfirmedSourceCandidateSummaryDto | null;
+  /**
+   * 正式合同（真实后端已落地，与 mock 假设一致）：GET 200 始终携带这三个
+   * 字段（后端 DTO 默认值 quality={}、adaptation_notice=[]、content_check=[]，
+   * 取自最新 candidate 的 quality_json.suitability.adaptations）。TS 侧保持
+   * 可选以容忍联调期旧响应，BFF sanitize 统一归一为 []。
+   */
+  quality?: Record<string, unknown> | null;
+  adaptation_notice?: ReaderAdaptationRecordDto[];
+  content_check?: ReaderAdaptationRecordDto[];
+}
+
+/** Request body of `PUT /reader/records/{record_id}/confirmed-source` (design §4.2). */
+export interface ReaderConfirmedSourceUpdateRequestDto {
+  expected_revision: number;
+  markdown_text: string;
+  edit_source: ReaderConfirmedSourceEditSourceDto;
+}
+
+export type ReaderConfirmedSourceUpdateOutcomeDto =
+  | "candidate_document_required"
+  | "stable_document_ready"
+  | "input_rejected_or_action_required"
+  /**
+   * 同 hash 幂等 no-op（设计 §4.2 步骤 4）：revision 不推进、candidate
+   * 未 supersede。前端视为良性成功：清 dirty，不重取、不报错。
+   */
+  | "idempotent_noop";
+
+/** 200 body of `PUT /reader/records/{record_id}/confirmed-source` (design §4.2 step 7). */
+export interface ReaderConfirmedSourceUpdateResponseDto {
+  revision: number;
+  content_sha256: string;
+  outcome: ReaderConfirmedSourceUpdateOutcomeDto;
+  candidate: ReaderConfirmedSourceCandidateSummaryDto | null;
+  /**
+   * `_candidate_quality_json` 超集（creation version + suitability 五元组，
+   * 设计 §4.4）。rejected outcome 的原因通道在 `quality.suitability.reasons`
+   * 与 `content_check`，真实后端不下发顶层 suitability 字段。
+   */
+  quality: Record<string, unknown> | null;
+  adaptation_notice: ReaderAdaptationRecordDto[];
+  content_check: ReaderAdaptationRecordDto[];
+}
+
+/**
+ * 409 error codes from the confirmed-source endpoints (design §4.1/§4.2):
+ * - `record_state_advanced` (GET): product state left needs_confirmation;
+ *   `resolution: "open_reader"`.
+ * - `stale_source_revision` (PUT): optimistic-concurrency miss; body carries
+ *   `current_revision`, `resolution: "reload"`; recoverable by re-GET and
+ *   replaying the edit against the new revision.
+ * - `source_frozen` (PUT): source already frozen; `resolution: "open_reader"`.
+ * - `stale_candidate_revision` (confirm POST): the candidate references an
+ *   outdated source revision; `resolution: "reload"`.
+ */
+export type ReaderConfirmedSourceConflictCodeDto =
+  | "record_state_advanced"
+  | "stale_source_revision"
+  | "source_frozen"
+  | "stale_candidate_revision";
 
 // ---------------------------------------------------------------------------
 // Source artifacts: init-upload / complete-upload / submit-input / pipeline-status

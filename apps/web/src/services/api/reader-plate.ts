@@ -9,6 +9,9 @@ import type {
   ReaderCandidateDocumentConfirmRequestDto,
   ReaderCandidateDocumentConfirmResponseDto,
   ReaderCandidateDocumentReadResponse,
+  ReaderConfirmedSourceReadResponseDto,
+  ReaderConfirmedSourceUpdateRequestDto,
+  ReaderConfirmedSourceUpdateResponseDto,
   ReaderEventPollResponseDto,
   ReaderPlainTextSubmitRequestDto,
   ReaderPlainTextSubmitResponseDto,
@@ -219,6 +222,36 @@ export function getUpstreamReaderCandidateDocument(
   return fastApiFetch<ReaderCandidateDocumentReadResponse>(
     `/reader/records/${encodeURIComponent(recordId)}/candidate-document`,
     { sessionToken },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confirmed Source (L2): draft read / resume entry + whole-document update
+// Frozen contract: docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md §4
+// ---------------------------------------------------------------------------
+
+export function getUpstreamReaderConfirmedSource(
+  recordId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderConfirmedSourceReadResponseDto>> {
+  return fastApiFetch<ReaderConfirmedSourceReadResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
+    { sessionToken },
+  );
+}
+
+export function putUpstreamReaderConfirmedSource(
+  recordId: string,
+  payload: ReaderConfirmedSourceUpdateRequestDto,
+  sessionToken: string,
+): Promise<UpstreamResult<ReaderConfirmedSourceUpdateResponseDto>> {
+  return fastApiFetch<ReaderConfirmedSourceUpdateResponseDto>(
+    `/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
+    {
+      method: "PUT",
+      sessionToken,
+      body: JSON.stringify(payload),
+    },
   );
 }
 

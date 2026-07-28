@@ -115,7 +115,21 @@ def _canned_rows(*, record_language: str | None) -> list[dict]:
         "source_filename": "article.txt",
         "status": "available",
     }
-    return [record_row, input_row, artifact_row]
+    # L2: materialization 正文改从 confirmed_source_documents 读取
+    # （lock_confirmed_source_for_update 的第四个 fetchrow）。
+    confirmed_source_row = {
+        "id": UUID("55555555-5555-5555-5555-555555555555"),
+        "reading_record_id": record_id,
+        "user_id": user_id,
+        "record_generation": 1,
+        "original_input_id": input_id,
+        "markdown_text": _ARTICLE_TEXT,
+        "revision": 1,
+        "content_sha256": "0" * 64,
+        "status": "draft",
+        "edit_source": "extraction",
+    }
+    return [record_row, input_row, artifact_row, confirmed_source_row]
 
 
 async def _run_materialization(record_language: str | None) -> dict:
@@ -127,6 +141,8 @@ async def _run_materialization(record_language: str | None) -> dict:
     conn = MagicMock()
     conn.is_in_transaction.return_value = True
     conn.fetchrow = AsyncMock(side_effect=_canned_rows(record_language=record_language))
+    # L2: stable 分支的 freeze_confirmed_source 期望 "UPDATE 1"。
+    conn.execute = AsyncMock(return_value="UPDATE 1")
 
     freeze_result = StableDocumentFreezePersistenceResult(
         stable_document_id=uuid4(),

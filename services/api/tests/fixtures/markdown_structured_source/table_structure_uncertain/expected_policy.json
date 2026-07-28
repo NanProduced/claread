@@ -1,0 +1,25 @@
+{
+  "fixture_name": "table_structure_uncertain",
+  "block_policies": [
+    {"block_id": "b1", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["heading"]},
+    {"block_id": "b2", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b3", "default_route": "main_reading", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b4", "default_route": "main_reading", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b5", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b6", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b7", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b8", "default_route": "main_reading", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b9", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b10", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b11", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b12", "default_route": "main_reading", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b13", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b14", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b15", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b16", "default_route": "main_reading", "rag_eligible": false, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b17", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b18", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b19", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["table_cell"]},
+    {"block_id": "b20", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]}
+  ]
+}

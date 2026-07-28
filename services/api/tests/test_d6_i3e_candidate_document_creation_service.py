@@ -135,11 +135,30 @@ class _FakeConn:
         if self._log is not None:
             if "reading_records" in query and "FOR UPDATE" in query:
                 self._log.append("lock_record_for_update")
+            elif "INSERT INTO confirmed_source_documents" in query:
+                self._log.append("insert_confirmed_source")
         if (
             self._fail_on_query_substring is not None
             and self._fail_on_query_substring in query
         ):
             raise self._fail_exception
+        # L2: insert_confirmed_source uses INSERT ... RETURNING via
+        # fetchrow; synthesize the inserted row from the query args
+        # (id, record_id, user_id, generation, original_input_id,
+        # markdown_text, content_sha256, edit_source, now).
+        if "INSERT INTO confirmed_source_documents" in query:
+            return {
+                "id": args[0],
+                "reading_record_id": args[1],
+                "user_id": args[2],
+                "record_generation": args[3],
+                "original_input_id": args[4],
+                "markdown_text": args[5],
+                "revision": 1,
+                "content_sha256": args[6],
+                "status": "draft",
+                "edit_source": args[7],
+            }
         return self._fetchrow_result
 
     def is_in_transaction(self) -> bool:
@@ -227,9 +246,11 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
     text = (
         "# Weekly Review\n\n"
         f"{_english_paragraph()}\n\n"
+        # L1: the extra raw cell makes the table structure-uncertain
+        # (content_check); deterministic tables go stable-ready instead.
         "| City | Cost |\n"
         "| --- | --- |\n"
-        "| A | 10 |\n\n"
+        "| A | 10 | 99 |\n\n"
         "Final paragraph explains the tradeoff in full sentences for readers."
     )
 
@@ -257,6 +278,7 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
         "transaction_started",
         "insert_reading_record",
         "insert_original_input",
+        "insert_confirmed_source",
         "lock_record_for_update",
         "supersede_ready_candidates",
         "insert_candidate_document",
@@ -276,7 +298,9 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
     original_input_call = _find_execute_call(conn, "INSERT INTO original_inputs")
     assert original_input_call.args[0] == result.original_input_id
     assert original_input_call.args[1] == result.reading_record_id
-    assert original_input_call.args[4] == text
+    # L2: original_inputs.source_text 恒 NULL（正文唯一载体是
+    # confirmed_source_documents）；content_sha256 保留原始文本 hash。
+    assert original_input_call.args[4] is None
     assert original_input_call.args[5] == {
         "adapter_source_type": "markdown_file",
         "filename": "weekly-review.md",
@@ -307,6 +331,11 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
         for block in blocks_json
     )
 
+    # L2: candidate source_refs_json 含 Confirmed Source 三 key
+    # （confirmed_source_document_id / source_revision /
+    # source_content_sha256），指向 revision=1 的 source 行。
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    expected_source_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     assert source_refs_json == {
         "source_type": "markdown_file",
         "filename": "weekly-review.md",
@@ -315,6 +344,11 @@ def test_markdown_table_candidate_creates_record_original_input_and_candidate_do
             "doc_id": "doc-1",
         },
         "original_input_id": str(result.original_input_id),
+        "confirmed_source_document_id": source_refs_json[
+            "confirmed_source_document_id"
+        ],
+        "source_revision": 1,
+        "source_content_sha256": expected_source_hash,
     }
     assert quality_json["candidate_creation_version"] == "candidate_creation_v1"
     assert quality_json["suitability"]["outcome"] == "candidate_document_required"
@@ -368,9 +402,11 @@ def test_markdown_candidate_preserves_list_payload_and_code_block_contract() -> 
         f"{_english_paragraph()}\n\n"
         "- First list item explains the tradeoff clearly for readers.\n"
         "- Second list item preserves grouping information for projection.\n\n"
+        # L1: the extra raw cell makes the table structure-uncertain
+        # (content_check); deterministic tables go stable-ready instead.
         "| Topic | Status |\n"
         "| --- | --- |\n"
-        "| Lists | keep structure |\n\n"
+        "| Lists | keep structure | spare |\n\n"
         "```python title=demo\n"
         "def add(a, b):\n"
         "    return a + b\n"

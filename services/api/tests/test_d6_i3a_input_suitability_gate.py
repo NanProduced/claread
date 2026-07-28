@@ -293,7 +293,8 @@ The closing fence is missing, so the remainder of the source is structurally amb
     assert "document_block_degraded" in result.flags
 
 
-def test_markdown_table_requires_candidate_document() -> None:
+def test_deterministic_markdown_table_is_stable_document_ready() -> None:
+    """L1: 表头分隔行齐全、行列一致的 GFM table → stable_document_ready。"""
     text = f"""
 {_english_paragraph()}
 
@@ -308,9 +309,32 @@ def test_markdown_table_requires_candidate_document() -> None:
         text=text,
     )
 
+    assert result.outcome == "stable_document_ready"
+    assert "table_structure_uncertain" not in result.flags
+    assert "markdown_complex_structure" not in result.flags
+
+
+def test_structure_uncertain_markdown_table_requires_candidate_document() -> None:
+    """L1: 行列不一致（parser 会丢/补单元格）的 table → candidate (content_check)。"""
+    text = f"""
+{_english_paragraph()}
+
+| City | Cost | Status |
+| --- | --- | --- |
+| A | 10 | Proposed |
+| B | 12 | Reviewed | Extra |
+""".strip()
+    result = _evaluate(
+        source_type="markdown_file",
+        filename="report.md",
+        text=text,
+    )
+
     assert result.outcome == "candidate_document_required"
     assert "markdown_complex_structure" in result.flags
     assert "table_structure_uncertain" in result.flags
+    adaptations = {record.code: record.classification for record in result.adaptations}
+    assert adaptations["table_structure_uncertain"] == "content_check"
 
 
 def test_markdown_image_requires_candidate_document() -> None:
@@ -366,6 +390,28 @@ The appendix also includes the expression $E = mc^2$ in the original source.
     assert result.outcome == "candidate_document_required"
     assert "markdown_complex_structure" in result.flags
     assert "document_block_degraded" in result.flags
+
+
+def test_safe_aside_alone_is_adaptation_notice_not_candidate() -> None:
+    """L1: 安全 <aside> 清洗后继续（adaptation_notice），不再触发 candidate。"""
+    text = f"""
+{_english_paragraph()}
+
+<aside class="note">Rendered callout from a source page.</aside>
+
+{_english_paragraph()}
+""".strip()
+    result = _evaluate(
+        source_type="markdown_file",
+        filename="report.md",
+        text=text,
+    )
+
+    assert result.outcome == "stable_document_ready"
+    assert "document_block_degraded" not in result.flags
+    assert "markdown_complex_structure" not in result.flags
+    adaptations = {record.code: record.classification for record in result.adaptations}
+    assert adaptations["raw_html_block"] == "adaptation_notice"
 
 
 def test_ocr_low_confidence_metadata_requires_candidate_document() -> None:

@@ -9,10 +9,12 @@ import {
   getUpstreamReaderArticleRagIndexStatus,
   getUpstreamReaderArtifactPipelineStatus,
   getUpstreamReaderCandidateDocument,
+  getUpstreamReaderConfirmedSource,
   getUpstreamReaderPlateSnapshot,
   getUpstreamReaderStableDocument,
   initUpstreamReaderSourceArtifactUpload,
   pollUpstreamReaderEvents,
+  putUpstreamReaderConfirmedSource,
   submitUpstreamReaderPlainText,
   submitUpstreamReaderSectionTranslation,
   submitUpstreamReaderSourceArtifactInput,
@@ -46,6 +48,11 @@ import type {
   ReaderCandidateDocumentPreviewMode,
   ReaderCandidateDocumentReadResponse,
   ReaderCandidateDocumentRiskItem,
+  ReaderAdaptationRecordDto,
+  ReaderConfirmedSourceCandidateSummaryDto,
+  ReaderConfirmedSourceReadResponseDto,
+  ReaderConfirmedSourceUpdateRequestDto,
+  ReaderConfirmedSourceUpdateResponseDto,
   ReaderEventPollResponseDto,
   ReaderInputAdapterSourceTypeDto,
   ReaderPlainTextSubmitResponseDto,
@@ -80,10 +87,20 @@ export type ReaderPlateBffError = {
     | "candidate_not_found"
     | "candidate_conflict_open_reader"
     | "candidate_conflict_return_to_library"
+    // L2 confirmed-source conflicts (409 pass-through, design §4.1/§4.2).
+    | "confirmed_source_not_found"
+    | "stale_source_revision"
+    | "stale_candidate_revision"
     // T5.6c: section-translation fence conflict (409 from upstream).
     | "section_translation_conflict";
   message: string;
   recordId?: string;
+  /**
+   * L2 confirmed-source: `current_revision` carried by a 409
+   * `stale_source_revision` body (design §4.2 step 3) so the client can
+   * rebase its optimistic-concurrency expectation after reloading.
+   */
+  currentRevision?: number;
 };
 
 export type ReaderPlateSubmitResult =
@@ -140,6 +157,14 @@ export type ReaderStableDocumentResult =
 
 export type ReaderCandidateDocumentReadResult =
   | ({ ok: true } & ReaderCandidateDocumentReadResponse)
+  | ReaderPlateBffError;
+
+export type ReaderConfirmedSourceReadResult =
+  | ({ ok: true } & ReaderConfirmedSourceReadResponseDto)
+  | ReaderPlateBffError;
+
+export type ReaderConfirmedSourceUpdateResult =
+  | ({ ok: true } & ReaderConfirmedSourceUpdateResponseDto)
   | ReaderPlateBffError;
 
 export type ReaderArticleRagIndexStatusResult =
@@ -939,6 +964,276 @@ export async function getReaderCandidateDocumentFromWeb(
   }
 
   return upstreamError(upstreamResult.status, upstreamResult.message);
+}
+
+// ---------------------------------------------------------------------------
+// Confirmed Source (L2): draft read / resume entry + whole-document update
+//
+// Frozen contract: docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md §4.
+// The GET endpoint returns the full draft markdown (edit entry, §4.1), so
+// the same runtime allowlist projection discipline as the candidate read
+// applies: only the declared keys below reach the browser.
+// ---------------------------------------------------------------------------
+
+const CONFIRMED_SOURCE_ALLOWED_TOP_KEYS = [
+  "source_document_id",
+  "record_generation",
+  "revision",
+  "status",
+  "markdown_text",
+  "content_sha256",
+  "edit_source",
+  "updated_at",
+  "candidate",
+  "quality",
+  "adaptation_notice",
+  "content_check",
+] as const;
+
+const CONFIRMED_SOURCE_UPDATE_ALLOWED_TOP_KEYS = [
+  "revision",
+  "content_sha256",
+  "outcome",
+  "candidate",
+  "quality",
+  "adaptation_notice",
+  "content_check",
+] as const;
+
+const CONFIRMED_SOURCE_CANDIDATE_ALLOWED_KEYS = [
+  "candidate_document_id",
+  "status",
+  "canonical_text_preview",
+] as const;
+
+const ADAPTATION_RECORD_ALLOWED_KEYS = [
+  "code",
+  "message",
+  "classification",
+] as const;
+
+const CONFIRMED_SOURCE_EDIT_SOURCES = new Set([
+  "initial",
+  "extraction",
+  "wysiwyg",
+  "source_mode",
+  "content_check",
+]);
+
+function sanitizeAdaptationRecords(value: unknown): ReaderAdaptationRecordDto[] {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[])
+    .map((item) =>
+      pickAllowed<ReaderAdaptationRecordDto>(item, ADAPTATION_RECORD_ALLOWED_KEYS),
+    )
+    .filter((item): item is ReaderAdaptationRecordDto => item !== null);
+}
+
+function sanitizeConfirmedSourceCandidate(
+  value: unknown,
+): ReaderConfirmedSourceCandidateSummaryDto | null {
+  const candidate = pickAllowed<ReaderConfirmedSourceCandidateSummaryDto>(
+    value,
+    CONFIRMED_SOURCE_CANDIDATE_ALLOWED_KEYS,
+  );
+  if (!candidate || typeof candidate.candidate_document_id !== "string") {
+    return null;
+  }
+  return candidate;
+}
+
+interface ConfirmedSourceConflictBody {
+  code?: string;
+  message?: string;
+  resolution?: string;
+  current_revision?: number;
+}
+
+function mapConfirmedSourceConflict(
+  recordId: string,
+  status: number,
+  body: unknown,
+  fallbackMessage: string,
+): ReaderPlateBffError {
+  const conflict = (body ?? {}) as ConfirmedSourceConflictBody;
+  const message = conflict.message?.trim() || fallbackMessage;
+
+  if (status === 409) {
+    if (conflict.code === "stale_source_revision") {
+      return {
+        ok: false,
+        status: 409,
+        code: "stale_source_revision",
+        message,
+        recordId,
+        currentRevision:
+          typeof conflict.current_revision === "number" &&
+          Number.isFinite(conflict.current_revision)
+            ? conflict.current_revision
+            : undefined,
+      };
+    }
+    if (conflict.code === "stale_candidate_revision") {
+      return {
+        ok: false,
+        status: 409,
+        code: "stale_candidate_revision",
+        message,
+        recordId,
+      };
+    }
+    if (
+      conflict.code === "source_frozen" ||
+      conflict.code === "record_state_advanced"
+    ) {
+      // Both carry `resolution: "open_reader"` (design §4.1/§4.2): the
+      // record has left the needs_confirmation lifecycle, so the reader
+      // route is the only safe destination.
+      return candidateConflictOpenReader(message, recordId);
+    }
+    return candidateConflictReturnToLibrary(message);
+  }
+
+  return upstreamError(status, message);
+}
+
+export async function getReaderConfirmedSourceFromWeb(
+  recordId: string,
+): Promise<ReaderConfirmedSourceReadResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const upstreamResult = await getUpstreamReaderConfirmedSource(
+    recordId,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    if (upstreamResult.status === 404) {
+      // §4.1 404 collapse: not found / not owner / deleted / no draft
+      // source are indistinguishable. The client uses this signal to fall
+      // back to the legacy candidate-document read for pre-L2 records.
+      return {
+        ok: false,
+        status: 404,
+        code: "confirmed_source_not_found",
+        message: "没有找到可继续确认的草稿。",
+        recordId,
+      };
+    }
+    if (upstreamResult.status === 409) {
+      return mapConfirmedSourceConflict(
+        recordId,
+        409,
+        upstreamResult.body,
+        "这条记录的状态已经变化。",
+      );
+    }
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  const raw = upstreamResult.data as unknown as Record<string, unknown>;
+  const top = pickAllowed<ReaderConfirmedSourceReadResponseDto>(
+    raw,
+    CONFIRMED_SOURCE_ALLOWED_TOP_KEYS,
+  );
+  if (!top) {
+    return upstreamError(502, "upstream returned no data");
+  }
+
+  return {
+    ok: true,
+    ...top,
+    candidate: sanitizeConfirmedSourceCandidate(raw.candidate),
+    adaptation_notice: sanitizeAdaptationRecords(raw.adaptation_notice),
+    content_check: sanitizeAdaptationRecords(raw.content_check),
+  };
+}
+
+export async function updateReaderConfirmedSourceFromWeb(
+  recordId: string,
+  input: {
+    expectedRevision?: unknown;
+    markdownText?: unknown;
+    editSource?: unknown;
+  },
+): Promise<ReaderConfirmedSourceUpdateResult> {
+  if (!recordId) {
+    return invalidInput("缺少 record_id。");
+  }
+
+  const expectedRevision =
+    typeof input.expectedRevision === "number" &&
+    Number.isFinite(input.expectedRevision) &&
+    Number.isInteger(input.expectedRevision) &&
+    input.expectedRevision >= 1
+      ? input.expectedRevision
+      : null;
+  if (expectedRevision === null) {
+    return invalidInput("expected_revision 必须是大于等于 1 的整数。");
+  }
+
+  if (typeof input.markdownText !== "string" || !input.markdownText.trim()) {
+    return invalidInput("markdown_text 不能为空。");
+  }
+
+  const editSource =
+    typeof input.editSource === "string" &&
+    CONFIRMED_SOURCE_EDIT_SOURCES.has(input.editSource)
+      ? (input.editSource as ReaderConfirmedSourceUpdateRequestDto["edit_source"])
+      : "content_check";
+
+  const sessionResult = await requireSession();
+  if (!sessionResult.ok) {
+    return sessionResult;
+  }
+
+  const payload: ReaderConfirmedSourceUpdateRequestDto = {
+    expected_revision: expectedRevision,
+    markdown_text: input.markdownText,
+    edit_source: editSource,
+  };
+
+  const upstreamResult = await putUpstreamReaderConfirmedSource(
+    recordId,
+    payload,
+    sessionResult.sessionToken,
+  );
+
+  if (!upstreamResult.ok) {
+    if (upstreamResult.status === 409) {
+      return mapConfirmedSourceConflict(
+        recordId,
+        409,
+        upstreamResult.body,
+        "草稿已被其他更新抢先保存。",
+      );
+    }
+    return upstreamError(upstreamResult.status, upstreamResult.message);
+  }
+
+  const raw = upstreamResult.data as unknown as Record<string, unknown>;
+  const top = pickAllowed<ReaderConfirmedSourceUpdateResponseDto>(
+    raw,
+    CONFIRMED_SOURCE_UPDATE_ALLOWED_TOP_KEYS,
+  );
+  if (!top) {
+    return upstreamError(502, "upstream returned no data");
+  }
+
+  return {
+    ok: true,
+    ...top,
+    candidate: sanitizeConfirmedSourceCandidate(raw.candidate),
+    adaptation_notice: sanitizeAdaptationRecords(raw.adaptation_notice),
+    content_check: sanitizeAdaptationRecords(raw.content_check),
+  };
 }
 
 // ---------------------------------------------------------------------------

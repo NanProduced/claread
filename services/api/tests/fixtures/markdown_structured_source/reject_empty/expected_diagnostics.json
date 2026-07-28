@@ -1,7 +1,12 @@
 {
   "fixture_name": "reject_empty",
   "warnings": [
-    {"code": "code_dominant", "message": "Input is code-dominant with no narrative blocks; rejected from stable document freeze, action required.", "blocks_freeze": false}
+    {
+      "code": "code_dominant",
+      "message": "Input is code-dominant with no narrative blocks; rejected from stable document freeze, action required.",
+      "blocks_freeze": false,
+      "classification": "content_check"
+    }
   ],
   "unsupported": [],
   "outcome": "input_rejected_or_action_required"

@@ -1,0 +1,13 @@
+{
+  "fixture_name": "safe_html_adaptation",
+  "warnings": [
+    {"code": "raw_html_block", "message": "Raw HTML block detected; executable structure removed, text preserved as a plain paragraph.", "blocks_freeze": false, "classification": "adaptation_notice"},
+    {"code": "inline_html", "message": "Inline HTML tag stripped from paragraph text.", "blocks_freeze": false, "classification": "adaptation_notice"},
+    {"code": "unsafe_link_protocol", "message": "Links with unsafe protocols (javascript/data/vbscript) were stripped from paragraph text; link text preserved.", "blocks_freeze": false, "classification": "adaptation_notice"}
+  ],
+  "unsupported": [
+    {"code": "raw_html", "message": "Raw HTML is not a first-class block type in the first phase; text is extracted but structure is not preserved."},
+    {"code": "unsafe_link_sanitization", "message": "Unsafe-protocol link sanitization is a first-phase safety measure; full link audit requires candidate review."}
+  ],
+  "outcome": "stable_document_ready"
+}

@@ -269,7 +269,9 @@ Readers cite **important evidence**, add *context*, reference `key terms`, and k
             "document_block_degraded",
         ),
         (
-            f"{_english_paragraph()}\n\n| City | Cost |\n| --- | --- |\n| A | 10 |",
+            # L1: deterministic tables are stable-ready; an extra raw
+            # cell (column mismatch) keeps the content_check contract.
+            f"{_english_paragraph()}\n\n| City | Cost |\n| --- | --- |\n| A | 10 | 99 |",
             "table_structure_uncertain",
         ),
         (

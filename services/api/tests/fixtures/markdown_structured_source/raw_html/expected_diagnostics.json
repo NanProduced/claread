@@ -1,11 +1,24 @@
 {
   "fixture_name": "raw_html",
   "warnings": [
-    {"code": "raw_html_block", "message": "Raw HTML block detected; stored as text but requires candidate review.", "blocks_freeze": false},
-    {"code": "inline_html", "message": "Inline HTML tag stripped from paragraph text.", "blocks_freeze": false}
+    {
+      "code": "raw_html_block",
+      "message": "Raw HTML block detected; executable structure removed, text preserved as a plain paragraph.",
+      "blocks_freeze": false,
+      "classification": "adaptation_notice"
+    },
+    {
+      "code": "inline_html",
+      "message": "Inline HTML tag stripped from paragraph text.",
+      "blocks_freeze": false,
+      "classification": "adaptation_notice"
+    }
   ],
   "unsupported": [
-    {"code": "raw_html", "message": "Raw HTML is not a first-class block type in the first phase; text is extracted but structure is not preserved."}
+    {
+      "code": "raw_html",
+      "message": "Raw HTML is not a first-class block type in the first phase; text is extracted but structure is not preserved."
+    }
   ],
-  "outcome": "candidate_document_required"
+  "outcome": "stable_document_ready"
 }

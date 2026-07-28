@@ -245,6 +245,15 @@ class BuiltReadingUnit:
     inline_marks: tuple[dict[str, Any], ...] = ()
     table_role: str | None = None
     parent_stable_block_id: str | None = None
+    # L1: code / table metadata projected from the matched stable block's
+    # payload_json so the snapshot DTO can render language badges and
+    # table header/alignment without re-parsing. ``None`` when the
+    # matched block type does not carry the field.
+    code_language: str | None = None
+    table_is_header: bool | None = None
+    table_alignment: str | None = None
+    table_alignments: tuple[str, ...] | None = None
+    table_header_rows: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +563,11 @@ def _build_reading_base_core(
         inline_marks: tuple[dict[str, Any], ...] = ()
         table_role: str | None = None
         parent_stable_block_id: str | None = None
+        code_language: str | None = None
+        table_is_header: bool | None = None
+        table_alignment: str | None = None
+        table_alignments: tuple[str, ...] | None = None
+        table_header_rows: int | None = None
         if matched_annotation is not None:
             stable_block_type = matched_annotation.block_type
             stable_block_id = matched_annotation.block_id
@@ -565,6 +579,17 @@ def _build_reading_base_core(
             heading_level = _extract_heading_level(payload)
             inline_marks = _extract_inline_marks(payload)
             table_role = _derive_table_role(matched_annotation.block_type)
+            # L1: code language + table header/alignment metadata.
+            if matched_annotation.block_type == "code_block":
+                code_language = _extract_code_language(payload)
+            elif matched_annotation.block_type == "table_cell":
+                table_is_header = _extract_is_header(payload)
+                table_alignment = _extract_alignment_value(payload)
+            elif matched_annotation.block_type == "table_row":
+                table_is_header = _extract_is_header(payload)
+            elif matched_annotation.block_type == "table":
+                table_alignments = _extract_alignments(payload)
+                table_header_rows = _extract_header_rows(payload)
             # Re-derive the label so a stable heading still produces a
             # heading label even when the heuristic would have
             # classified it as body.
@@ -590,6 +615,11 @@ def _build_reading_base_core(
             inline_marks=inline_marks,
             table_role=table_role,
             parent_stable_block_id=parent_stable_block_id,
+            code_language=code_language,
+            table_is_header=table_is_header,
+            table_alignment=table_alignment,
+            table_alignments=table_alignments,
+            table_header_rows=table_header_rows,
         )
         units.append(built_unit)
         navigation_units.append(
@@ -1432,6 +1462,58 @@ def _derive_table_role(block_type: str) -> str | None:
     if block_type == "table_cell":
         return "cell"
     return None
+
+
+def _extract_code_language(payload: dict[str, Any]) -> str | None:
+    """L1: extract the fenced code language from a code_block payload.
+
+    The parser stores the fence info string under ``payload_json.language``
+    (``""`` for indented / language-less code). Returns ``None`` when the
+    key is absent, not a string, or empty — a language-less code block
+    projects ``codeLanguage: null`` so the frontend renders no badge.
+    """
+    raw = payload.get("language")
+    if not isinstance(raw, str):
+        return None
+    stripped = raw.strip()
+    return stripped or None
+
+
+def _extract_is_header(payload: dict[str, Any]) -> bool | None:
+    """L1: extract the header marker from a table_row / table_cell payload."""
+    raw = payload.get("is_header")
+    if isinstance(raw, bool):
+        return raw
+    return None
+
+
+def _extract_alignment_value(payload: dict[str, Any]) -> str | None:
+    """L1: extract a single cell alignment (left / center / right / default)."""
+    raw = payload.get("alignment")
+    if raw in {"left", "center", "right", "default"}:
+        return str(raw)
+    return None
+
+
+def _extract_alignments(payload: dict[str, Any]) -> tuple[str, ...] | None:
+    """L1: extract the column alignment array from a table wrapper payload."""
+    raw = payload.get("alignments")
+    if not isinstance(raw, list):
+        return None
+    values = tuple(str(v) for v in raw if isinstance(v, str))
+    return values or None
+
+
+def _extract_header_rows(payload: dict[str, Any]) -> int | None:
+    """L1: extract the header row count from a table wrapper payload."""
+    raw = payload.get("header_rows")
+    if isinstance(raw, bool):
+        return None
+    if not isinstance(raw, int):
+        return None
+    if raw < 0:
+        return None
+    return raw
 
 
 def _next_visible_index(text: str, start: int) -> int:

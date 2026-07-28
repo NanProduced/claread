@@ -344,6 +344,27 @@ async def _seed_materialization_environment(
             source_ref_json,
             source_sha,
         )
+        # L2：模拟 extraction 完成态——confirmed_source_documents 行是
+        # 正文唯一载体（revision=1, edit_source='extraction'），
+        # materialization 从该行读取。
+        markdown_text = source_text.replace("\r\n", "\n").replace("\r", "\n")
+        await conn.execute(
+            """
+            INSERT INTO confirmed_source_documents (
+                id, reading_record_id, user_id, record_generation,
+                original_input_id, markdown_text, revision,
+                content_sha256, status, edit_source
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'draft', 'extraction')
+            """,
+            uuid4(),
+            _RECORD_ID,
+            _USER_ID,
+            generation,
+            _ORIGINAL_INPUT_ID,
+            markdown_text,
+            hashlib.sha256(markdown_text.encode("utf-8")).hexdigest(),
+        )
         await conn.execute(
             """
             INSERT INTO source_artifacts (

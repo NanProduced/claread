@@ -2,13 +2,15 @@
 
 Claims ``input_artifact_extraction`` reader_jobs, validates the artifact input
 contract, calls an injectable :class:`ArtifactExtractionProvider`, and persists
-the extracted text into ``original_inputs``. No OSS download, OCR, or PDF
-parsing is performed here — the default provider fails closed. Real providers
-(OSS/qwen-OCR/PDF parser) are injected in production or faked in tests.
+the extracted text into ``confirmed_source_documents`` (L2: the single full-body
+carrier; ``original_inputs`` keeps lineage metadata only). No OSS download, OCR,
+or PDF parsing is performed here — the default provider fails closed. Real
+providers (OSS/qwen-OCR/PDF parser) are injected in production or faked in
+tests.
 
 This worker does NOT create candidate documents, freeze stable documents, or
-publish ``article_ready`` events. It only fills ``original_inputs.source_text``
-so downstream build-base flows can pick the record up later.
+publish ``article_ready`` events. It only inserts the confirmed-source row
+so downstream materialization flows can pick the record up later.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -30,6 +32,12 @@ from .artifact_input_application_service import (
     EXTRACTION_JOB_TYPE,
     EXTRACTION_OPERATION_FINGERPRINT,
     EXTRACTION_TARGET_TYPE,
+)
+from .confirmed_source_repository import (
+    insert_confirmed_source,
+)
+from .extracted_artifact_materialization_service import (
+    _normalize_source_text,
 )
 from .job_runtime import (
     ClaimResult,
@@ -566,15 +574,29 @@ class ArtifactExtractionWorkerService:
                 await conn.execute(
                     """
                     UPDATE original_inputs
-                    SET source_text = $2,
-                        content_sha256 = $3,
-                        metadata_json = $4::jsonb
+                    SET metadata_json = $2::jsonb
                     WHERE id = $1
                     """,
                     context.original_input_id,
-                    extracted_text,
-                    content_sha256,
                     jsonb_param(merged_metadata),
+                )
+
+                # L2：worker 不再 UPDATE original_inputs.source_text /
+                # content_sha256——正文唯一载体是
+                # confirmed_source_documents。同一 worker 事务内插入
+                # source 行（revision=1, edit_source='extraction'，
+                # 正文为规范化后的抽取文本，与 materialization 的
+                # 解析输入严格同源）。
+                await insert_confirmed_source(
+                    conn,
+                    source_document_id=uuid4(),
+                    record_id=context.reading_record_id,
+                    user_id=context.user_id,
+                    generation=context.expected_generation,
+                    original_input_id=context.original_input_id,
+                    markdown_text=_normalize_source_text(extracted_text),
+                    edit_source="extraction",
+                    now=datetime.now(UTC),
                 )
 
                 updated = await self._job_runtime._apply_transition(  # type: ignore[attr-defined]

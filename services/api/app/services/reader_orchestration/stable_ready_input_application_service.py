@@ -36,6 +36,11 @@ from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
+from app.services.reader_orchestration.confirmed_source_repository import (
+    ConfirmedSourceError,
+    freeze_confirmed_source,
+    insert_confirmed_source,
+)
 from app.services.reader_orchestration.document_freeze_persistence import (
     StableDocumentFreezePersistenceError,
     StableDocumentFreezePersistenceResult,
@@ -52,6 +57,10 @@ from app.services.reader_orchestration.event_runtime import (
 from app.services.reader_orchestration.input_document_normalizer import (
     InputDocumentNormalizationError,
     normalize_input_document,
+)
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownParseResult,
+    MarkdownSourceParser,
 )
 from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
@@ -74,6 +83,8 @@ _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE: dict[InputAdapterSourceType, str] = {
     "pdf_text": "file_ref",
     "url_text": "url",
 }
+
+_MARKDOWN_PARSER = MarkdownSourceParser()
 
 
 class StableReadyInputApplicationError(ValueError):
@@ -145,10 +156,16 @@ class StableReadyInputApplicationService:
         reading_variant: ReaderOrchestrationReadingVariant = (
             DEFAULT_READER_ORCHESTRATION_READING_VARIANT
         ),
+        preparsed: MarkdownParseResult | None = None,
     ) -> StableReadyInputApplicationResult:
         frozen_at = now or datetime.now(UTC)
         language_value = resolve_default_reader_language(language)
         source_metadata_value = dict(source_metadata or {})
+        # L2/A4 — 每请求只解析一次：调用方（unified input route）已解析
+        # 时直接复用；否则在这里解析一次并喂给 gate + normalizer。
+        normalized_source_text = _normalize_source_text(text)
+        if preparsed is None:
+            preparsed = _MARKDOWN_PARSER.parse(normalized_source_text)
         pool = self._get_pool()
 
         record_id: UUID | None = None
@@ -167,7 +184,8 @@ class StableReadyInputApplicationService:
                                 text=text,
                                 filename=filename,
                                 source_metadata=source_metadata_value,
-                            )
+                            ),
+                            preparsed=preparsed,
                         )
                     except InputDocumentNormalizationError as exc:
                         raise StableReadyInputApplicationError(
@@ -204,6 +222,24 @@ class StableReadyInputApplicationService:
                             source_metadata=source_metadata_value,
                             created_at=frozen_at,
                         )
+                        # L2：同一事务内、在 freeze plan 之前插入
+                        # Confirmed Source 行（revision=1, edit_source=
+                        # 'initial'，正文为规范化后文本，与 preparsed /
+                        # normalizer 输入严格同源）。stable-ready 直冻
+                        # 路径在 persist 成功后用同一
+                        # freeze_confirmed_source 步骤冻结（插入点 B
+                        # 镜像，设计文档 §5）。
+                        confirmed_source = await insert_confirmed_source(
+                            conn,
+                            source_document_id=uuid4(),
+                            record_id=record_id,
+                            user_id=user_id,
+                            generation=1,
+                            original_input_id=original_input_id,
+                            markdown_text=normalized_source_text,
+                            edit_source="initial",
+                            now=frozen_at,
+                        )
                     except Exception as exc:
                         raise StableReadyInputApplicationError(
                             "Failed to create the stable-ready reading record shell: "
@@ -225,6 +261,13 @@ class StableReadyInputApplicationService:
                                     "outcome": normalized.suitability.outcome,
                                     "flags": list(normalized.suitability.flags),
                                     "reasons": list(normalized.suitability.reasons),
+                                    # L1: three-level adaptation records
+                                    # (silent / adaptation_notice /
+                                    # content_check).
+                                    "adaptations": [
+                                        record.model_dump()
+                                        for record in normalized.adaptations
+                                    ],
                                 },
                                 # Plan §4 G0 Clause 1: parser identity triple
                                 # (parser_name / parser_version / profile) is
@@ -262,6 +305,20 @@ class StableReadyInputApplicationService:
                     ) as exc:
                         raise StableReadyInputApplicationError(
                             f"Stable document freeze persistence failed: {exc}"
+                        ) from exc
+
+                    # L2 插入点 B 镜像：stable-ready 直冻路径与 confirm
+                    # 路径共用同一 freeze 语义——source 冻结与 Stable
+                    # Document 在同一事务原子提交（期望 UPDATE 1）。
+                    try:
+                        await freeze_confirmed_source(
+                            conn,
+                            source_document_id=UUID(confirmed_source.id),
+                            now=frozen_at,
+                        )
+                    except ConfirmedSourceError as exc:
+                        raise StableReadyInputApplicationError(
+                            f"Confirmed source freeze failed: {exc}"
                         ) from exc
 
                     if freeze_result.base_id is None:
@@ -434,6 +491,9 @@ async def _insert_original_input(
     source_metadata: dict[str, Any],
     created_at: datetime,
 ) -> None:
+    # L2：original_inputs 只保留 lineage——source_text 恒 NULL（正文
+    # 唯一载体是 confirmed_source_documents.markdown_text），
+    # content_sha256 保留为原始提交文本的 hash（lineage 元数据）。
     await conn.execute(
         """
         INSERT INTO original_inputs (
@@ -463,7 +523,7 @@ async def _insert_original_input(
         record_id,
         user_id,
         _ORIGINAL_INPUT_TYPE_BY_INPUT_SOURCE[source_type],
-        text,
+        None,
         jsonb_param(_source_ref_json(source_type=source_type, filename=filename)),
         jsonb_param(source_metadata),
         hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -471,14 +531,21 @@ async def _insert_original_input(
     )
 
 
+def _normalize_source_text(text: str) -> str:
+    """与 normalizer ``_normalize_source_text`` 同式（\\r\\n→\\n）——
+    Confirmed Source 正文与 preparsed / normalizer 输入严格同源。"""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _source_ref_json(
     *,
     source_type: InputAdapterSourceType,
     filename: str | None,
 ) -> dict[str, Any]:
-    if source_type == "pasted_text" and filename is None:
-        return {}
-
+    # L2：删除 pasted_text 特例——文本路径 original_inputs.source_text
+    # 恒 NULL（正文唯一载体是 confirmed_source_documents），
+    # source_ref_json 必须始终非空以满足 ck_original_inputs_has_source。
+    # 这本来就是 lineage 元数据，additive 变更不影响现有消费者。
     source_ref: dict[str, Any] = {"adapter_source_type": source_type}
     if filename is not None:
         source_ref["filename"] = filename
@@ -511,6 +578,11 @@ def _build_article_ready_payload(
             "outcome": suitability.outcome,
             "flags": list(suitability.flags),
             "reasons": list(suitability.reasons),
+            # L1: three-level adaptation records (silent /
+            # adaptation_notice / content_check).
+            "adaptations": [
+                record.model_dump() for record in suitability.adaptations
+            ],
         },
     }
     if filename is not None:

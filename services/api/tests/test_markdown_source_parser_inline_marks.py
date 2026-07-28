@@ -14,7 +14,7 @@ Offsets are UTF-16 code unit offsets within the block ``text_content``
 ``app.contracts.annotation.utf16_code_unit_length``).
 
 A3 rules:
-  * html_inline + link overlap → fail-closed to candidate_document_required
+  * html_inline + link overlap → stripped (L1: adaptation_notice, stable)
     with ``inline_html`` warning (no "rescue" merge via
     ``_reconstruct_raw_with_html``).
   * Safe-protocol whitelist (http/https/mailto); other protocols stripped
@@ -253,14 +253,16 @@ def test_a2_inline_marks_offsets_consistent_with_text_content() -> None:
 
 def test_a3_javascript_unsafe_link_stripped_with_warning() -> None:
     """[x](javascript:alert(1)) → stripped, unsafe_link_protocol warning,
-    candidate outcome. Merge semantics preserved (no html_inline).
+    L1: adaptation_notice, document continues as stable.
     """
     result = MarkdownSourceParser().parse("[x](javascript:alert(1)) tail")
     warning_codes = {w.code for w in result.warnings}
     assert "unsafe_link_protocol" in warning_codes, (
         f"unsafe_link_protocol warning missing: {warning_codes!r}"
     )
-    assert result.outcome == "candidate_document_required"
+    classifications = {w.code: w.classification for w in result.warnings}
+    assert classifications["unsafe_link_protocol"] == "adaptation_notice"
+    assert result.outcome == "stable_document_ready"
     # text_content has the label preserved, href stripped
     para = next(b for b in result.blocks if b.block_type == "paragraph")
     assert "x" in (para.text_content or "")
@@ -281,7 +283,8 @@ def test_a3_javascript_unsafe_link_stripped_with_warning() -> None:
 
 def test_a3_html_inline_link_overlap_fail_closed() -> None:
     """html_inline + link overlap (data:text/html,<script>...) →
-    fail-closed to candidate with inline_html warning. No "rescue" merge.
+    stripped with inline_html warning. No "rescue" merge; L1:
+    adaptation_notice, document continues as stable.
     """
     result = MarkdownSourceParser().parse(
         "[unsafe](data:text/html,<script>alert(1)</script>)"
@@ -290,7 +293,7 @@ def test_a3_html_inline_link_overlap_fail_closed() -> None:
     assert "inline_html" in warning_codes, (
         f"inline_html warning expected for html_inline+link overlap: {warning_codes!r}"
     )
-    assert result.outcome == "candidate_document_required"
+    assert result.outcome == "stable_document_ready"
     # The html_inline tokens (<script>/</script>) must NOT appear in text_content
     para = next(b for b in result.blocks if b.block_type == "paragraph")
     text = para.text_content or ""
@@ -307,7 +310,7 @@ def test_a3_vbscript_unsafe_link_stripped() -> None:
     result = MarkdownSourceParser().parse("[v](vbscript:msgbox(1)) end")
     warning_codes = {w.code for w in result.warnings}
     assert "unsafe_link_protocol" in warning_codes
-    assert result.outcome == "candidate_document_required"
+    assert result.outcome == "stable_document_ready"
     para = next(b for b in result.blocks if b.block_type == "paragraph")
     stripped = para.payload_json.get("stripped_links", [])
     assert any(s["href"] == "vbscript:msgbox(1)" for s in stripped), (
@@ -381,7 +384,7 @@ def test_a3_link_with_title_preserved_in_links() -> None:
 
 def test_a3_html_truncated_scheme_no_rescue() -> None:
     """html_inline breaking a scheme (e.g. <a href="jav...) →
-    fail-closed to candidate with inline_html warning.
+    stripped with inline_html warning; L1: adaptation_notice, stable.
     """
     # An html_inline that breaks a link scheme — should fail-closed
     result = MarkdownSourceParser().parse('<a href="jav`script:alert(1)">x</a>')
@@ -389,7 +392,7 @@ def test_a3_html_truncated_scheme_no_rescue() -> None:
     assert "inline_html" in warning_codes, (
         f"inline_html warning expected for html scheme break: {warning_codes!r}"
     )
-    assert result.outcome == "candidate_document_required"
+    assert result.outcome == "stable_document_ready"
 
 
 def test_a3_safe_links_do_not_emit_unsafe_warning() -> None:

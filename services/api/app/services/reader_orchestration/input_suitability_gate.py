@@ -5,11 +5,16 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app.schemas.reader_input_adapter import (
+    AdaptationRecord,
+    DetectedInputFormat,
     InputAdapterSourceType,
     InputSuitabilityOutcome,
     InputSuitabilityRequest,
     InputSuitabilityResult,
     SourceLossFlag,
+)
+from app.services.reader_orchestration.input_format import (
+    detect_input_format,
 )
 from app.services.reader_orchestration.markdown_source_parser import (
     MarkdownParseResult,
@@ -44,7 +49,19 @@ _LINK_ONLY_LINE_PATTERN = re.compile(
 _SHEBANG_PATTERN = re.compile(r"^#!\s*/")
 _MODELINE_PATTERN = re.compile(r"#\s*vim:\s*set|#\s*-\*-\s*coding|//\s*-\*-")
 _INLINE_MATH_PATTERN = re.compile(r"(?<!\$)\$[^$\n]+\$(?!\$)")
-_BLOCK_MATH_PATTERN = re.compile(r"\$\$[\s\S]+?\$\$|\\\(|\\\[")
+_BLOCK_MATH_PATTERN = re.compile(r"\$\$[\s\S]+?\$\$")
+# L2 — math 误判修复：``\[`` / ``\(`` 单独出现（如 ``\[Video]`` 转义
+# 方括号、普通 prose 中的 ``\(2019)``）不再识别为数学公式。数学判定
+# 要求**成对边界**（``\[`` 与 ``\]``、``\(`` 与 ``\)`` 配对）且内容
+# 像公式（含 LaTeX 命令、``=``/``^``/``{``/``}`` 或数字-运算符-数字）。
+_ESCAPED_MATH_PAIR_PATTERN = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]")
+_MATHLIKE_CONTENT_PATTERN = re.compile(
+    r"\\[a-zA-Z]+"  # LaTeX 命令（\frac / \sum ...）
+    r"|[=^{}]"  # 等号 / 上下标 / 分组括号
+    r"|\d\s*[+\-*/<>]\s*\d"  # 数字-运算符-数字（2x+3 中的 x+3 由字母规则覆盖）
+    r"|[a-zA-Z]\s*[+\-*/=<>]\s*\d"  # 字母-运算符-数字（x+3 / E=mc2 的 c2 除外）
+    r"|\d\s*[+\-*/=<>]\s*[a-zA-Z]"  # 数字-运算符-字母（2x）
+)
 _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _SUSPICIOUS_OCR_CHAR_PATTERN = re.compile(r"[�¦§¤]|[|]{2,}|[_]{3,}|[\\/]{3,}")
 _HYPHENATED_LINE_BREAK_PATTERN = re.compile(r"[A-Za-z]-\n[A-Za-z]")
@@ -90,6 +107,7 @@ class _CodeStructureMetrics:
 class _MarkdownComplexity:
     has_complex_structure: bool
     has_table: bool
+    has_table_structure_uncertain: bool
     has_image: bool
     has_footnote: bool
     has_raw_html: bool
@@ -147,6 +165,12 @@ class InputSuitabilityGate:
             if preparsed is not None
             else _MARKDOWN_PARSER.parse(normalized_text)
         )
+        # L2 — 内容格式检测：与 source_type 正交，由 parser 块结构决定。
+        # candidate / normalizer 路径共用同一判定与同一 parse_result。
+        detected_format = detect_input_format(
+            source_type=request.source_type,
+            parse_result=parse_result,
+        )
         code_metrics = _compute_code_structure_metrics(normalized_text, parse_result)
         metrics = _measure_text(normalized_text)
         metrics = replace(metrics, code_line_ratio=code_metrics.code_line_ratio)
@@ -202,11 +226,16 @@ class InputSuitabilityGate:
                 "输入疑似纯代码文本，缺少 Markdown 散文结构（标题/段落/列表），请在确认后继续。"
             )
 
-        if markdown.has_table:
+        if markdown.has_table_structure_uncertain:
+            # L1: only structure-uncertain tables (row/column mismatch the
+            # parser would have to pad or drop cells for, or a missing
+            # header row) require content check. Deterministic GFM tables
+            # freeze as stable documents.
             _add_flag(flags, "markdown_complex_structure")
             _add_flag(flags, "table_structure_uncertain")
             candidate_reasons.append(
-                "Markdown table structure must be preserved instead of silently flattened."
+                "Markdown table structure is uncertain; deterministic "
+                "normalization would drop or pad cells."
             )
         if markdown.has_image:
             _add_flag(flags, "markdown_complex_structure")
@@ -220,12 +249,9 @@ class InputSuitabilityGate:
             candidate_reasons.append(
                 "Markdown footnotes require candidate review so note structure is preserved."
             )
-        if markdown.has_raw_html:
-            _add_flag(flags, "markdown_complex_structure")
-            _add_flag(flags, "document_block_degraded")
-            candidate_reasons.append(
-                "Raw HTML requires candidate review instead of deterministic downgrade."
-            )
+        # L1: raw / inline HTML no longer routes to candidate. The parser
+        # strips executable structure and preserves the text as an
+        # ``adaptation_notice``; the document continues.
         if markdown.has_math:
             _add_flag(flags, "markdown_complex_structure")
             _add_flag(flags, "document_block_degraded")
@@ -256,19 +282,33 @@ class InputSuitabilityGate:
                 "OCR-like text noise suggests degraded extraction quality."
             )
 
-        if _requires_candidate_by_source_type(
+        source_type_requires_candidate = _requires_candidate_by_source_type(
             request.source_type,
             request.source_metadata,
             markdown=markdown,
             ocr=ocr,
             metrics=metrics,
-        ):
+        )
+        if source_type_requires_candidate:
             candidate_reasons.append(
                 f"{request.source_type} defaults to candidate review unless extraction confidence is explicitly high and the text is clearly simple."
             )
 
         reasons.extend(_dedupe_preserve_order(reject_reasons))
         reasons.extend(_dedupe_preserve_order(candidate_reasons))
+
+        # L1: structured three-level adaptation output. Parser warnings
+        # flow through with their authoritative classification; gate-only
+        # signals are recorded as content_check entries.
+        adaptations = _build_adaptations(
+            parse_result=parse_result,
+            markdown=markdown,
+            ocr=ocr,
+            is_code_dominant=is_code_dominant,
+            word_count=metrics.word_count,
+            source_type_requires_candidate=source_type_requires_candidate,
+            source_type=request.source_type,
+        )
 
         if reject_reasons:
             outcome: InputSuitabilityOutcome = "input_rejected_or_action_required"
@@ -296,6 +336,8 @@ class InputSuitabilityGate:
             flags=flags,
             reasons=reasons,
             preview=preview,
+            adaptations=adaptations,
+            detected_format=detected_format,
         )
 
 
@@ -317,6 +359,8 @@ def _build_result(
     flags: list[SourceLossFlag],
     reasons: list[str],
     preview: str,
+    adaptations: list[AdaptationRecord] | None = None,
+    detected_format: DetectedInputFormat = "plain_text",
 ) -> InputSuitabilityResult:
     return InputSuitabilityResult(
         outcome=outcome,
@@ -327,7 +371,89 @@ def _build_result(
         flags=_dedupe_preserve_order(flags),
         reasons=_dedupe_preserve_order(reasons),
         normalized_preview=preview,
+        adaptations=adaptations or [],
+        detected_format=detected_format,
     )
+
+
+def _build_adaptations(
+    *,
+    parse_result: MarkdownParseResult,
+    markdown: _MarkdownComplexity,
+    ocr: _OcrSignals,
+    is_code_dominant: bool,
+    word_count: int,
+    source_type_requires_candidate: bool,
+    source_type: InputAdapterSourceType,
+) -> list[AdaptationRecord]:
+    """Assemble the L1 three-level adaptation records.
+
+    Parser warnings keep their authoritative classification. Gate-only
+    detections (image / math / OCR / code dominance / length / source-type
+    defaults) are always content_check because they require human review.
+    """
+    adaptations: list[AdaptationRecord] = []
+    seen: set[str] = set()
+
+    def _add(code: str, message: str, classification: str) -> None:
+        if code in seen:
+            return
+        seen.add(code)
+        adaptations.append(
+            AdaptationRecord(
+                code=code,
+                message=message,
+                classification=classification,  # type: ignore[arg-type]
+            )
+        )
+
+    for warning in parse_result.warnings:
+        _add(warning.code, warning.message, warning.classification)
+
+    if markdown.has_image:
+        _add(
+            "image_ocr_uncertain",
+            "Markdown image blocks require candidate review so media truth is not lost.",
+            "content_check",
+        )
+    if markdown.has_math:
+        _add(
+            "document_block_degraded",
+            "Math syntax requires candidate review instead of deterministic downgrade.",
+            "content_check",
+        )
+    if is_code_dominant:
+        _add(
+            "code_dominant",
+            "Input appears to be code-dominant without Markdown prose structure.",
+            "content_check",
+        )
+    if word_count > _MAX_WORDS_BEFORE_ENVELOPE:
+        _add(
+            "too_long_requires_envelope",
+            "Input is too long to process as a single low-impact stable document.",
+            "content_check",
+        )
+    if ocr.low_confidence or ocr.noisy_text:
+        _add(
+            "ocr_low_confidence",
+            "OCR confidence or text noise suggests degraded extraction quality.",
+            "content_check",
+        )
+    if ocr.layout_uncertain:
+        _add(
+            "layout_order_uncertain",
+            "Reading order or layout confidence is too uncertain for direct freeze.",
+            "content_check",
+        )
+    if source_type_requires_candidate:
+        _add(
+            "source_type_review_default",
+            f"{source_type} defaults to candidate review unless extraction "
+            "confidence is explicitly high and the text is clearly simple.",
+            "content_check",
+        )
+    return adaptations
 
 
 def _normalize_text(text: str) -> str:
@@ -390,6 +516,24 @@ def _measure_text(text: str) -> _TextMetrics:
     )
 
 
+def _has_math_syntax(text: str) -> bool:
+    """L2 — 数学公式判定：成对边界 + 内容像公式，或 parser 级别信号。
+
+    - ``$...$`` / ``$$...$$``：本身即要求成对，直接采信。
+    - ``\\(...\\)`` / ``\\[...\\]``：必须成对出现，且内部内容像公式
+      （LaTeX 命令、``=``/``^``/``{``/``}``、数字与运算符组合）。
+      单独的 ``\\[Video]`` 转义方括号、``\\(2019)`` 引用、未成对的
+      ``\\(`` 不再误判为数学公式。
+    """
+    if _INLINE_MATH_PATTERN.search(text) or _BLOCK_MATH_PATTERN.search(text):
+        return True
+    for match in _ESCAPED_MATH_PAIR_PATTERN.finditer(text):
+        inner = match.group(1) if match.group(1) is not None else match.group(2)
+        if inner and _MATHLIKE_CONTENT_PATTERN.search(inner):
+            return True
+    return False
+
+
 def _detect_markdown_complexity(
     text: str,
     *,
@@ -410,6 +554,7 @@ def _detect_markdown_complexity(
     warning_codes = {warning.code for warning in parse_result.warnings}
 
     has_table = "table" in block_types
+    has_table_structure_uncertain = "table_structure_uncertain" in warning_codes
     has_image = bool(_MARKDOWN_IMAGE_PATTERN.search(text))
     has_footnote = (
         "footnote_reference" in warning_codes
@@ -419,19 +564,29 @@ def _detect_markdown_complexity(
         "raw_html_block" in warning_codes
         or "inline_html" in warning_codes
     )
-    has_math = bool(
-        _INLINE_MATH_PATTERN.search(text) or _BLOCK_MATH_PATTERN.search(text)
-    )
+    has_math = _has_math_syntax(text)
     has_unclosed_fence = "has_unclosed_fence" in warning_codes
     has_simple_markdown = is_markdown_source and bool(
         block_types & {"heading", "list", "list_item", "blockquote"}
     )
+    # L1: deterministic tables and cleaned raw HTML are no longer
+    # "complex" for candidate-routing purposes (they continue as stable
+    # with adaptation notices); they still count as structure for the
+    # natural-language score and the pdf/url "clearly simple" probe.
     has_complex_structure = any(
-        (has_table, has_image, has_footnote, has_raw_html, has_math, has_unclosed_fence)
+        (
+            has_table_structure_uncertain,
+            has_image,
+            has_footnote,
+            has_raw_html,
+            has_math,
+            has_unclosed_fence,
+        )
     )
     return _MarkdownComplexity(
         has_complex_structure=has_complex_structure,
         has_table=has_table,
+        has_table_structure_uncertain=has_table_structure_uncertain,
         has_image=has_image,
         has_footnote=has_footnote,
         has_raw_html=has_raw_html,

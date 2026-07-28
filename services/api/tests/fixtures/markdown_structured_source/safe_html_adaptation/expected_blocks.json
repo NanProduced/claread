@@ -1,0 +1,87 @@
+{
+  "fixture_name": "safe_html_adaptation",
+  "description": "L1 safe normalization: script/iframe/event handler/unsafe protocols are stripped or safely downgraded (adaptation_notice), safe aside/links and non-HTML placeholders (vector<T> / <name>) are preserved, document continues as stable.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "heading",
+      "text_content": "Safe HTML Adaptation Notes",
+      "payload_json": {"level": 1},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "paragraph",
+      "text_content": "The committee reviewed the adaptation pipeline and confirmed that every cleaning step must keep the reading content visible, preserve the author's wording, and record what changed so learners never lose meaning silently.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 1,
+      "source_range": {"line_start": 3, "line_end": 3}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "paragraph",
+      "text_content": "alert(\"xss\") An inline image  sits inside this sentence and must be neutralized.",
+      "payload_json": {"extracted_from": "html_block"},
+      "parent_block_id": null,
+      "order_index": 2,
+      "source_range": {"line_start": 5, "line_end": 9}
+    },
+    {
+      "block_id": "b4",
+      "block_type": "paragraph",
+      "text_content": "A javascript link and a data link and a vbscript link must keep their text.",
+      "payload_json": {
+        "links": [],
+        "stripped_links": [
+          {"text": "javascript link", "href": "javascript:alert(1)", "reason": "unsafe_protocol"},
+          {"text": "data link", "href": "data:text/html;base64,PHNjcmlwdA==", "reason": "unsafe_protocol"},
+          {"text": "vbscript link", "href": "vbscript:msgbox(1)", "reason": "unsafe_protocol"}
+        ]
+      },
+      "parent_block_id": null,
+      "order_index": 3,
+      "source_range": {"line_start": 11, "line_end": 11}
+    },
+    {
+      "block_id": "b5",
+      "block_type": "paragraph",
+      "text_content": "Safe links stay intact: https site, http site, and mail.",
+      "payload_json": {
+        "links": [
+          {"text": "https site", "href": "https://example.com/docs"},
+          {"text": "http site", "href": "http://example.com"},
+          {"text": "mail", "href": "mailto:test@example.com"}
+        ],
+        "inline_marks": [
+          {"type": "link", "start": 24, "end": 34, "href": "https://example.com/docs"},
+          {"type": "link", "start": 36, "end": 45, "href": "http://example.com"},
+          {"type": "link", "start": 51, "end": 55, "href": "mailto:test@example.com"}
+        ]
+      },
+      "parent_block_id": null,
+      "order_index": 4,
+      "source_range": {"line_start": 13, "line_end": 13}
+    },
+    {
+      "block_id": "b6",
+      "block_type": "paragraph",
+      "text_content": "C++ developers write vector<T> and template <name> placeholders in prose all the time.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 5,
+      "source_range": {"line_start": 15, "line_end": 15}
+    },
+    {
+      "block_id": "b7",
+      "block_type": "paragraph",
+      "text_content": "This aside carries a genuine reading note about the chapter summary. The final paragraph adds enough natural English words so the suitability gate sees a genuine reading document rather than a short suspicious snippet, and it keeps the discussion focused on learning value for the reader.",
+      "payload_json": {"extracted_from": "html_block"},
+      "parent_block_id": null,
+      "order_index": 6,
+      "source_range": {"line_start": 17, "line_end": 19}
+    }
+  ]
+}

@@ -65,6 +65,11 @@ from app.schemas.reader_documents import (
     CandidateReadingDocument,
     StableDocumentBlock,
 )
+from app.services.reader_orchestration.confirmed_source_repository import (
+    ConfirmedSourceError,
+    freeze_confirmed_source,
+    lock_confirmed_source_for_update,
+)
 from app.services.reader_orchestration.document_freeze_plan import (
     StableDocumentFreezePlanError,
     build_stable_document_freeze_plan,
@@ -83,6 +88,29 @@ class CandidateDocumentConfirmError(ValueError):
     found, candidate not in 'ready' status, blocks_json invalid/empty,
     plan build failure, or persistence failure.
     """
+
+
+class StaleCandidateRevisionError(CandidateDocumentConfirmError):
+    """L2 插入点 A — candidate 引用的 source revision/hash ≠ 当前
+    confirmed_source_documents 行（fail closed，可恢复）。
+
+    客户端重取 ``GET /records/{id}/confirmed-source`` 获得基于最新
+    source revision 的 candidate 后重试。映射为
+    ``409 {code:"stale_candidate_revision", resolution:"reload"}``。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        candidate_document_id: UUID,
+        current_revision: int,
+        current_content_sha256: str,
+    ) -> None:
+        super().__init__(message)
+        self.candidate_document_id = candidate_document_id
+        self.current_revision = current_revision
+        self.current_content_sha256 = current_content_sha256
 
 
 class CandidateDocumentStatusError(CandidateDocumentConfirmError):
@@ -367,6 +395,43 @@ async def confirm_candidate_document(
         "quality": candidate.quality_json,
     }
 
+    # ------------------------------------------------------------------
+    # L2 插入点 A（校验）：confirmed_source_documents 行
+    # SELECT ... FOR UPDATE（(reading_record_id, record_generation)）。
+    # - 行不存在 → legacy candidate（无 source 引用），走旧逻辑；
+    # - 行存在但 candidate 缺少 source 引用三 key，或引用的
+    #   revision/hash ≠ 当前 source 行 → fail closed
+    #   stale_candidate_revision（可恢复：重取 confirmed-source）；
+    # - source 已 frozen 且引用一致 → 幂等分支（下方 B 跳过冻结）。
+    # ------------------------------------------------------------------
+    confirmed_source = await lock_confirmed_source_for_update(
+        conn,
+        record_id=reading_record_id,
+        user_id=user_id,
+        generation=record_generation,
+    )
+    if confirmed_source is not None:
+        referenced_revision = candidate.source_refs_json.get("source_revision")
+        referenced_hash = candidate.source_refs_json.get(
+            "source_content_sha256"
+        )
+        if (
+            referenced_revision != confirmed_source.revision
+            or referenced_hash != confirmed_source.content_sha256
+        ):
+            raise StaleCandidateRevisionError(
+                f"Candidate document {candidate_document_id} references "
+                f"confirmed source revision={referenced_revision!r} "
+                f"hash={referenced_hash!r}, but the current confirmed "
+                f"source row is revision={confirmed_source.revision} "
+                f"hash={confirmed_source.content_sha256}. The candidate "
+                "is stale; reload the confirmed source to obtain a "
+                "candidate built from the latest revision.",
+                candidate_document_id=candidate_document_id,
+                current_revision=confirmed_source.revision,
+                current_content_sha256=confirmed_source.content_sha256,
+            )
+
     # document_version = record_generation to satisfy
     # uq_stable_reading_documents_record_version
     # (UNIQUE (reading_record_id, document_version)) across multiple
@@ -410,6 +475,26 @@ async def confirm_candidate_document(
             f"Failed to persist stable document freeze for candidate "
             f"{candidate_document_id}: {exc}"
         ) from exc
+
+    # ------------------------------------------------------------------
+    # L2 插入点 B（冻结）：persist 成功（含 candidate ready→confirmed
+    # UPDATE）之后、返回前，同事务冻结 source（期望 UPDATE 1）——
+    # source 冻结与 Stable Document 原子提交。source 已 frozen 时
+    # （插入点 A 的幂等分支）跳过，不重走 freeze。
+    # ------------------------------------------------------------------
+    if confirmed_source is not None and confirmed_source.status == "draft":
+        try:
+            await freeze_confirmed_source(
+                conn,
+                source_document_id=UUID(confirmed_source.id),
+                now=frozen_at,
+            )
+        except ConfirmedSourceError as exc:
+            raise CandidateDocumentConfirmError(
+                f"Failed to freeze confirmed source "
+                f"{confirmed_source.id} for candidate "
+                f"{candidate_document_id}: {exc}"
+            ) from exc
 
     # (8) Return the result.
     return CandidateDocumentConfirmResult(

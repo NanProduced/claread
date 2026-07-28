@@ -222,14 +222,17 @@ def _queue_happy_path(
 
     Queues:
         fetchrow #1: candidate row (from service SELECT ... FOR UPDATE)
-        fetchrow #2: None (existing stable doc, from persistence idempotency check)
-        fetchrow #3: {"status": "ready"} (candidate status lookup, from
+        fetchrow #2: None (L2 插入点 A — confirmed_source_documents 行
+                     不存在 → legacy candidate 分支，无 source 校验/冻结)
+        fetchrow #3: None (existing stable doc, from persistence idempotency check)
+        fetchrow #4: {"status": "ready"} (candidate status lookup, from
                      persistence _confirm_candidate_document)
 
     Also sets the supersede UPDATE to return "UPDATE 0" (no prior active
     stable doc).
     """
     conn.queue_fetchrow(candidate_row or _candidate_row())
+    conn.queue_fetchrow(None)  # L2: no confirmed source row (legacy)
     conn.queue_fetchrow(None)  # no existing stable doc
     conn.queue_fetchrow({"status": "ready"})  # candidate status for confirm
     conn.set_execute_result("UPDATE stable_reading_documents", "UPDATE 0")
@@ -539,17 +542,18 @@ class TestHappyPath:
         assert len(conn.execute_calls) == 15
 
     def test_fetchrow_count_for_happy_path(self) -> None:
-        """3 fetchrow calls:
+        """4 fetchrow calls:
             1. candidate SELECT (service)
-            2. existing stable doc check (persistence)
-            3. candidate status lookup (persistence _confirm_candidate_document)
+            2. L2 插入点 A — confirmed_source_documents lock (legacy: None)
+            3. existing stable doc check (persistence)
+            4. candidate status lookup (persistence _confirm_candidate_document)
         """
         conn = FakeConn()
         _queue_happy_path(conn)
 
         _confirm(conn)
 
-        assert len(conn.fetchrow_calls) == 3
+        assert len(conn.fetchrow_calls) == 4
 
 
 # --------------------------------------------------------------------
@@ -576,9 +580,9 @@ class TestUserIdGuard:
 
         _confirm(conn)
 
-        # fetchrow #3 is the candidate status lookup in
-        # _confirm_candidate_document.
-        status_lookup = conn.fetchrow_calls[2]
+        # fetchrow #4 is the candidate status lookup in
+        # _confirm_candidate_document (after the L2 插入点 A source lock).
+        status_lookup = conn.fetchrow_calls[3]
         assert "candidate_reading_documents" in status_lookup.query
         assert "user_id = $4" in status_lookup.query
 
@@ -795,7 +799,9 @@ class TestPersistenceErrorWrapping:
         conn = FakeConn()
         # fetchrow #1: candidate row (ready).
         conn.queue_fetchrow(_candidate_row(status="ready"))
-        # fetchrow #2: existing stable doc with DIFFERENT hash.
+        # fetchrow #2: L2 插入点 A — no confirmed source row (legacy).
+        conn.queue_fetchrow(None)
+        # fetchrow #3: existing stable doc with DIFFERENT hash.
         conn.queue_fetchrow({
             "id": UUID("aaaaaaaa-0000-0000-0000-000000000099"),
             "content_sha256": "0" * 64,  # different from plan hash

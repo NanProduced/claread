@@ -1,14 +1,15 @@
 /**
- * Markdown 输入端预警 lint（Phase 1 / P0，C2 降级为纯提示）。
+ * Markdown 输入端预警 lint（Phase 1 / P0；阶段 3 起为非阻断提示）。
  *
  * 目标：在用户粘贴/输入 Markdown 时，前端实时检测**可能**触发
- * `candidate_document_required` 的危险内容，显示**非阻塞**警告提示。
+ * `candidate_document_required` 的内容，显示**非阻断**警告 badge。
  *
- * 与后端关系（重要，C2 固化）：
+ * 与后端关系（重要，阶段 3 固化）：
  *   - 前端 lint 是纯启发式正则，**不与后端判定做强制一致承诺**。
- *   - 后端 `markdown_source_parser.py` + `input_suitability_gate.py` 仍是
- *     fail-closed 单一真相源；前端 lint 仅作 UX 提示，不影响 sourceType、
- *     不阻塞提交、不改变路由。
+ *   - 本模块不拥有安全真相：后端 `markdown_source_parser.py` +
+ *     `input_suitability_gate.py` 是安全判定与清洗的单一真相源
+ *     （三级分类 silent / adaptation_notice / content_check）。
+ *     前端不做任何提交阻断——粘贴与上传入口都只是提示。
  *   - 已知差异：代码块内 `<tag>` 前端正则假阳性、未闭合围栏处理细节等
  *     都属于启发式边界，后端会做权威判定。
  *   - 不再新增规则副本：本文件保持当前 4 类检测，后续若后端规则扩展，
@@ -26,7 +27,7 @@
  * 不变式：
  *   - lint 是纯启发式，不改变 sourceType，不阻塞提交。
  *   - 文案为"含可能进入审核的内容"风格，弱化为提示而非警告。
- *   - 后端仍是 fail-closed 单一真相源。
+ *   - `hasDangerousContent` 仅驱动 badge 展示，不得用于提交阻断。
  */
 
 export type MarkdownLintWarningKind =

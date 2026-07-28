@@ -347,8 +347,11 @@ async def test_happy_path_extracts_text_and_persists_result(
     assert output_ref["text_length"] == len(_EXTRACTED_TEXT)
 
     input_row = await _fetch_original_input(extraction_env)
-    assert input_row["source_text"] == _EXTRACTED_TEXT
-    assert input_row["content_sha256"] == expected_sha
+    # L2: worker 不再回写 original_inputs.source_text / content_sha256；
+    # 正文唯一载体是 confirmed_source_documents（revision=1,
+    # edit_source='extraction'，正文为规范化后的抽取文本）。
+    assert input_row["source_text"] is None
+    assert input_row["content_sha256"] == _DEFAULT_CONTENT_SHA256
     metadata = input_row["metadata_json"]
     assert metadata["extraction_status"] == "succeeded"
     assert metadata["extractor_name"] == "fake-ocr-provider"
@@ -356,6 +359,24 @@ async def test_happy_path_extracts_text_and_persists_result(
     assert metadata["extraction_warnings"] == ["low_dpi_page_3"]
     # Existing metadata preserved
     assert metadata["source_artifact_status"] == "available"
+
+    async with extraction_env.acquire() as conn:
+        source_row = await conn.fetchrow(
+            """
+            SELECT markdown_text, revision, content_sha256, status, edit_source,
+                   original_input_id
+            FROM confirmed_source_documents
+            WHERE reading_record_id = $1 AND record_generation = 1
+            """,
+            _RECORD_ID,
+        )
+    assert source_row is not None
+    assert source_row["markdown_text"] == _EXTRACTED_TEXT
+    assert source_row["revision"] == 1
+    assert source_row["content_sha256"] == expected_sha
+    assert source_row["status"] == "draft"
+    assert source_row["edit_source"] == "extraction"
+    assert source_row["original_input_id"] == _ORIGINAL_INPUT_ID
 
     run = await _fetch_run(extraction_env)
     assert run["status"] == "completed"

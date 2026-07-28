@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database.json_compat import jsonb_param
+from app.schemas.reader_documents import ConfirmedSourceDocument
 from app.schemas.reader_input_adapter import (
     InputAdapterSourceType,
     InputSuitabilityRequest,
@@ -53,6 +54,10 @@ from app.services.reader_orchestration.candidate_document_creation_service impor
     _candidate_quality_json,
     _candidate_source_refs_json,
     _canonical_text_preview,
+)
+from app.services.reader_orchestration.confirmed_source_repository import (
+    freeze_confirmed_source,
+    lock_confirmed_source_for_update,
 )
 from app.services.reader_orchestration.document_freeze_persistence import (
     persist_stable_document_freeze_plan,
@@ -364,7 +369,11 @@ class ExtractedArtifactMaterializationService:
         # submission paths.
         language_value = resolve_default_reader_language(record_row["language"])
 
-        # 3. Lock and validate the SPECIFIC original_input
+        # 3. Lock and validate the SPECIFIC original_input (lineage only).
+        #    L2: 正文不再从 original_inputs.source_text 读取（该列对新
+        #    输入恒 NULL）；正文唯一载体是 confirmed_source_documents，
+        #    由 step 4 之后的 source 行锁提供（保持 input → artifact →
+        #    source 的既有 fail-closed 校验顺序）。
         input_row = await conn.fetchrow(
             """
             SELECT id, reading_record_id, user_id, source_text,
@@ -384,13 +393,6 @@ class ExtractedArtifactMaterializationService:
                 f"original_input {original_input_id} not found for "
                 f"reading_record {reading_record_id} / user {user_id}",
                 reason_code="original_input_not_found",
-            )
-        source_text = input_row["source_text"]
-        if source_text is None or not source_text.strip():
-            raise ExtractedArtifactMaterializationError(
-                f"original_input {input_row['id']} source_text is "
-                f"empty; extraction must complete before materialization",
-                reason_code="source_text_empty",
             )
 
         # 4. Lock and validate the SPECIFIC source_artifact
@@ -440,6 +442,33 @@ class ExtractedArtifactMaterializationService:
                 reason_code="storage_provider_wrong",
             )
 
+        # 4b. L2: lock the confirmed-source row 并读取正文（锁顺序
+        #     record → source → candidate，设计文档 §3.4；校验顺序保持
+        #     既有 input → artifact → source）。空值 fail-closed 语义
+        #     平移自原 original_inputs.source_text 检查。
+        confirmed_source = await lock_confirmed_source_for_update(
+            conn,
+            record_id=reading_record_id,
+            user_id=user_id,
+            generation=expected_generation,
+        )
+        if confirmed_source is None:
+            raise ExtractedArtifactMaterializationError(
+                f"confirmed_source_documents row not found for "
+                f"reading_record {reading_record_id} generation "
+                f"{expected_generation}; source text is empty — "
+                f"extraction must complete before materialization",
+                reason_code="source_text_empty",
+            )
+        source_text = confirmed_source.markdown_text
+        if not source_text.strip():
+            raise ExtractedArtifactMaterializationError(
+                f"confirmed_source_documents {confirmed_source.id} "
+                f"markdown_text is empty; extraction must complete "
+                f"before materialization",
+                reason_code="source_text_empty",
+            )
+
         # 5. Derive source_type and build suitability request
         source_type = _derive_source_type(
             artifact_row["content_type"],
@@ -482,6 +511,7 @@ class ExtractedArtifactMaterializationService:
                 language=language_value,
                 suitability=suitability,
                 preparsed=preparsed,
+                confirmed_source=confirmed_source,
                 now=now,
             )
         elif suitability.outcome == "candidate_document_required":
@@ -498,6 +528,7 @@ class ExtractedArtifactMaterializationService:
                 source_text=source_text,
                 suitability=suitability,
                 preparsed=preparsed,
+                confirmed_source=confirmed_source,
                 now=now,
             )
         else:
@@ -531,6 +562,7 @@ class ExtractedArtifactMaterializationService:
         language: str,
         suitability: InputSuitabilityResult,
         preparsed: MarkdownParseResult | None = None,
+        confirmed_source: ConfirmedSourceDocument,
         now: datetime,
     ) -> MaterializationResult:
         # Normalize → freeze plan → persist → set_active_base → publish event
@@ -583,6 +615,15 @@ class ExtractedArtifactMaterializationService:
                 f"{record_id}",
                 reason_code="freeze_persistence_failed",
             )
+
+        # L2 插入点 B 镜像：source 冻结与 Stable Document 在同一事务
+        # 原子提交（期望 UPDATE 1，与 confirm/stable-ready 路径同一
+        # freeze 语义）。
+        await freeze_confirmed_source(
+            conn,
+            source_document_id=UUID(confirmed_source.id),
+            now=now,
+        )
 
         await self._repository.set_active_base_and_mark_article_ready(
             conn,
@@ -655,6 +696,7 @@ class ExtractedArtifactMaterializationService:
         source_text: str,
         suitability: InputSuitabilityResult,
         preparsed: MarkdownParseResult | None = None,
+        confirmed_source: ConfirmedSourceDocument,
         now: datetime,
     ) -> MaterializationResult:
         # A4 — 解析结果共享: reuse the parse result produced by the
@@ -670,11 +712,14 @@ class ExtractedArtifactMaterializationService:
         )
         candidate_document_id = uuid4()
         preview = _canonical_text_preview(suitability=suitability, blocks=blocks)
+        # L2 — candidate source_refs_json 三 key（设计文档 §6）：引用
+        # 当前 source revision/hash，confirm 插入点 A 据此校验。
         source_refs = _candidate_source_refs_json(
             source_type=source_type,
             filename=filename,
             source_metadata=source_metadata,
             original_input_id=input_id,
+            confirmed_source=confirmed_source,
         )
         quality = _candidate_quality_json(suitability=suitability)
 
