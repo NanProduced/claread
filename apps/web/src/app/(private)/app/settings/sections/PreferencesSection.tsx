@@ -30,10 +30,10 @@ export function PreferencesSection({
         aria-labelledby="settings-reading-defaults-heading"
       >
         <h3 id="settings-reading-defaults-heading" className="text-base font-semibold text-ink">
-          新阅读默认值
+          默认阅读方案
         </h3>
         <p className="mt-1 text-sm leading-6 text-muted-foreground">
-          新建阅读时先带入这些设置，单篇文章仍可单独调整。
+          新建阅读时自动带入，单篇文章仍可随时调整。
         </p>
         <div className="mt-5">
           <ReadingDefaultsSection

@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 
-import { SegmentedControl } from "@/components/composed";
+import { ReadingPlanFields } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import {
-  DEFAULT_READING_VARIANT_BY_GOAL,
-  READING_GOAL_OPTIONS,
-  READING_VARIANT_OPTIONS,
   type ReadingDefaultState,
   normalizeReadingDefaults,
 } from "@/lib/reading-defaults";
@@ -32,7 +29,6 @@ export function ReadingDefaultsSection({
   const [saved, setSaved] = useState(() => normalizeReadingDefaults({ readingGoal, readingVariant }));
   const [state, setState] = useState<SaveState>({ kind: "idle" });
 
-  const variantOptions = useMemo(() => READING_VARIANT_OPTIONS[draft.readingGoal], [draft.readingGoal]);
   const dirty =
     draft.readingGoal !== saved.readingGoal || draft.readingVariant !== saved.readingVariant;
 
@@ -64,22 +60,14 @@ export function ReadingDefaultsSection({
         return;
       }
       setSaved(draft);
-      setState({ kind: "saved", message: "默认透读模式已保存。" });
+      setState({ kind: "saved", message: "默认阅读方案已保存。" });
     } catch {
-      setState({ kind: "error", message: "网络异常，暂时无法保存默认透读模式。" });
+      setState({ kind: "error", message: "网络异常，暂时无法保存默认阅读方案。" });
     }
   }
 
-  function handleGoalChange(nextGoal: ReadingDefaultState["readingGoal"]) {
-    setDraft({
-      readingGoal: nextGoal,
-      readingVariant: DEFAULT_READING_VARIANT_BY_GOAL[nextGoal],
-    });
-    if (state.kind !== "idle") setState({ kind: "idle" });
-  }
-
-  function handleVariantChange(nextVariant: ReadingDefaultState["readingVariant"]) {
-    setDraft((current) => ({ ...current, readingVariant: nextVariant }));
+  function handlePlanChange(nextPlan: ReadingDefaultState) {
+    setDraft(nextPlan);
     if (state.kind !== "idle") setState({ kind: "idle" });
   }
 
@@ -89,32 +77,14 @@ export function ReadingDefaultsSection({
   }
 
   return (
-    <div className="space-y-0">
-      <section className="flex flex-col gap-3 border-b border-hairline py-5 first:pt-0 sm:flex-row sm:items-start sm:justify-between">
-        <div className="max-w-sm">
-          <h4 className="text-sm font-medium text-ink">阅读目标</h4>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">决定新阅读的学习意图。</p>
-        </div>
-        <SegmentedControl
-          value={draft.readingGoal}
-          onValueChange={handleGoalChange}
-          options={READING_GOAL_OPTIONS}
-          className="shrink-0"
-        />
-      </section>
-
-      <section className="flex flex-col gap-3 border-b border-hairline py-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="max-w-sm">
-          <h4 className="text-sm font-medium text-ink">解析模式</h4>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">决定首次解析时呈现的阅读深度。</p>
-        </div>
-        <SegmentedControl
-          value={draft.readingVariant}
-          onValueChange={handleVariantChange}
-          options={variantOptions}
-          className="shrink-0"
-        />
-      </section>
+    <div>
+      <ReadingPlanFields
+        value={draft}
+        onValueChange={handlePlanChange}
+        layout="settings"
+        disabled={!canEdit || state.kind === "saving"}
+        idPrefix="settings-reading-plan"
+      />
 
       {canEdit && (dirty || state.kind === "saving") ? (
         <div className="flex flex-wrap items-center gap-3 pt-5">
