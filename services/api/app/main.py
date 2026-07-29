@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from logging import getLogger
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,8 +22,13 @@ from app.services.dictionary.nlp import preload_dict_nlp
 
 # 尽可能早地配置日志（在任何 logger 使用之前）
 setup_logging()
-from app.database.connection import close_db, close_redis, init_db, init_redis
-from app.observability.langsmith import setup_langsmith
+from app.database.connection import (  # noqa: E402
+    close_db,
+    close_redis,
+    init_db,
+    init_redis,
+)
+from app.observability.langsmith import setup_langsmith  # noqa: E402
 
 logger = getLogger(__name__)
 
@@ -38,7 +43,7 @@ _WARMUP_WORDS = [
 
 async def _warm_dict_cache() -> None:
     from app.services.dictionary import cache as dict_cache
-    from app.services.dictionary.db_pg import lookup_candidates_batch, fetch_entry
+    from app.services.dictionary.db_pg import fetch_entry, lookup_candidates_batch
     from app.services.dictionary.providers.tecd3 import Tecd3Provider
 
     provider = Tecd3Provider()
@@ -106,7 +111,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if await asyncio.to_thread(preload_dict_nlp):
             logger.info("Dictionary spaCy pipeline preloaded")
         else:
-            logger.warning("Dictionary spaCy pipeline unavailable, /dict will fall back when needed")
+            logger.warning(
+                "Dictionary spaCy pipeline unavailable, "
+                "/dict will fall back when needed"
+            )
     except Exception as e:
         logger.warning("Failed to preload dictionary spaCy pipeline: %s", e)
 
@@ -117,13 +125,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Dict cache warmup failed (non-blocking): %s", e)
 
     # 4. 恢复服务重启前残留的活跃任务（重新入队）
+    from app.services.analysis.overview_task_executor import (
+        OverviewTaskWorker,
+    )
+    from app.services.analysis.overview_task_executor import (
+        recover_stuck_tasks as recover_stuck_overview_tasks,
+    )
     from app.services.analysis.task_executor import (
         AnalysisTaskWorker,
         recover_stuck_tasks,
-    )
-    from app.services.analysis.overview_task_executor import (
-        OverviewTaskWorker,
-        recover_stuck_tasks as recover_stuck_overview_tasks,
     )
 
     recovered = await recover_stuck_tasks()
@@ -149,9 +159,50 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.overview_task_worker = overview_worker
     logger.info("Overview task worker started")
 
+    # ASK-TURN-LIFECYCLE R4-5d: reconcile orphan streaming rows from a
+    # previous process lifetime. If this process crashed/restarted while
+    # a ``reader_ask_turn_runs`` row was still ``streaming``, that row is
+    # now orphaned — no route ``finally`` will ever run for it. The
+    # startup sweep converges all such rows to ``cancelled`` with a typed
+    # ``stale_stream_reconciled`` terminal_reason. Safe to call on a fresh
+    # DB (returns scanned=0). Errors are logged but non-fatal — the
+    # periodic sweeper will retry on the next interval.
+    try:
+        from app.services.reader_record_ask.stale_run_recovery import (
+            StaleStreamSweeper,
+            run_startup_stale_stream_sweep,
+        )
+
+        startup_summary = await run_startup_stale_stream_sweep()
+        if startup_summary.get("reconciled", 0) > 0:
+            logger.info(
+                "Startup stale-stream sweep reconciled %d orphan turn_run(s)",
+                startup_summary["reconciled"],
+            )
+        # Start the in-process periodic sweeper. This is the safety net
+        # for rows orphaned mid-lifetime (e.g. a worker thread crashes
+        # without unwinding the route ``finally``). The sweeper only
+        # converges rows whose heartbeat is dead — active turns with a
+        # recent ``updated_at`` are never touched.
+        stale_sweeper = StaleStreamSweeper()
+        stale_sweeper.start()
+        app.state.stale_stream_sweeper = stale_sweeper
+        logger.info("Stale-stream periodic sweeper started")
+    except Exception as e:  # noqa: BLE001
+        # Non-fatal: orphan rows will linger until the next restart, but
+        # the app must still come up. The startup sweep is retried on the
+        # next deploy.
+        logger.warning(
+            "Stale-stream recovery init failed (non-blocking): %s",
+            e,
+        )
+
     yield
 
     # 关闭时清理
+    if hasattr(app.state, 'stale_stream_sweeper'):
+        stale_sweeper = app.state.stale_stream_sweeper
+        await stale_sweeper.stop()
     if hasattr(app.state, 'analysis_task_worker'):
         worker = app.state.analysis_task_worker
         await worker.stop()

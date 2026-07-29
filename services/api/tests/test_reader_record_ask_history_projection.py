@@ -17,6 +17,9 @@ from app.services.reader_ask.repository import _message_row_to_dict
 from app.services.reader_record_ask.history_projection import (
     project_agentic_history_message,
 )
+from app.services.reader_record_ask.reasoning_projection import (
+    DEFAULT_PROJECTION_CHAR_CAP,
+)
 
 _HANDLE = "evh_" + ("ab" * 16)
 
@@ -667,8 +670,8 @@ def _bad_snapshot_cases() -> tuple:
         # Over quota.
         {
             "projection_policy_version": "reasoning_projection_v1",
-            "text": "思" * 4001,
-            "char_count": 4001,
+            "text": "思" * (DEFAULT_PROJECTION_CHAR_CAP + 1),
+            "char_count": DEFAULT_PROJECTION_CHAR_CAP + 1,
             "truncated": False,
         },
         # Raw sentinel inside text — fails byte-invariant re-projection.
@@ -740,6 +743,8 @@ def test_complete_update_sql_writes_reasoning_in_same_statement() -> None:
     )
 
     source = inspect.getsource(ReaderRecordAskRepository.complete_agentic_turn_run)
-    update_stmt = source[source.index("UPDATE reader_ask_turn_runs"):source.index("WHERE id = $1")]
+    update_start = source.index("UPDATE reader_ask_turn_runs")
+    update_end = source.index("WHERE id = $1", update_start)
+    update_stmt = source[update_start:update_end]
     assert "reasoning_projection_json = $6::jsonb" in update_stmt
     assert "user_visible_output_json = $3::jsonb" in update_stmt

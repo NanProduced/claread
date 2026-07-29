@@ -12,6 +12,13 @@ import type { ReaderAskMessageDto } from "@/types/api/reader-ask";
 type ReasoningPanelProps = {
   reasoningMd: string | null | undefined;
   reasoningStatus: ReaderAskMessageDto["reasoning_status"];
+  /**
+   * ASK-TURN-LIFECYCLE R3 — when `true`, the visible `reasoningMd` was
+   * truncated by the server-side projection char cap. The panel surfaces
+   * an explicit "达到展示上限" indicator below the reasoning body. The
+   * body itself never carries a truncation marker.
+   */
+  reasoningTruncated?: boolean;
   className?: string;
   // markdownComponents?: Partial<Components>; // TODO: ai-elements/reasoning
   // uses Streamdown internally; once it exposes markdownComponents we can
@@ -29,10 +36,15 @@ type ReasoningPanelProps = {
  * - no fabricated content: when there is no actual reasoning (provider
  *   returned none, or the turn never produced a projection), nothing
  *   renders — never an empty "model returned no reasoning" placeholder.
+ *
+ * ASK-TURN-LIFECYCLE R3:
+ * - `reasoningTruncated` toggles an explicit "达到展示上限" indicator
+ *   below the body; the body itself never contains a marker.
  */
 export function ReasoningPanel({
   reasoningMd,
   reasoningStatus,
+  reasoningTruncated,
   className,
 }: ReasoningPanelProps) {
   const reasoningText = reasoningMd ?? "";
@@ -68,6 +80,17 @@ export function ReasoningPanel({
           {reasoningText}
         </ReasoningContent>
       </Reasoning>
+      {reasoningTruncated ? (
+        <div
+          data-slot="reasoning-truncated"
+          data-testid="ask-reasoning-truncated"
+          role="status"
+          aria-label="推理已达到展示上限"
+          className="mt-1 pl-5 text-[11px] leading-4 text-muted-foreground"
+        >
+          已达到展示上限，仅显示部分推理内容。
+        </div>
+      ) : null}
     </div>
   );
 }

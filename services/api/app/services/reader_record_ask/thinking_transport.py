@@ -37,10 +37,17 @@ deprecated and its inheritance changed).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    BuiltinToolResultEvent,
+    FunctionToolResultEvent,
+    OutputToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -58,24 +65,12 @@ from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
+    AnswerPreviewResetEvent,
     RuntimeEvent,
 )
 
 # Hard ceiling on characters retained by any ThinkingObserver (host-only).
 DEFAULT_THINKING_OBSERVER_CHAR_CAP: int = 8_000
-
-# Stable public ``event_kind`` discriminator values that mark the end of a
-# tool/retry boundary — a new model response stream follows each of these,
-# so the per-index thinking lifecycle must reset. Using the documented
-# Literal discriminator (not type-name guessing) keeps this stable across
-# pydantic-ai releases.
-_TOOL_RESULT_EVENT_KINDS: frozenset[str] = frozenset(
-    {
-        "function_tool_result",  # FunctionToolResultEvent (tool return or ModelRetry)
-        "output_tool_result",  # OutputToolResultEvent (output-validator ModelRetry)
-        "builtin_tool_result",  # BuiltinToolResultEvent (deprecated, still covered)
-    }
-)
 
 
 class ThinkingObserver(Protocol):
@@ -217,7 +212,7 @@ class ThinkingPartLifecycle:
 
 
 class _AnswerTextStreamer:
-    """Partial-JSON answer-block text prefix streamer (R4-A6).
+    """Incremental answer-block text streamer (R4-A6 / ASK-TURN-LIFECYCLE R3).
 
     Accumulates streamed structured-output JSON text and extracts the
     resolved semantic block text via ``pydantic_core.from_json`` with
@@ -226,19 +221,50 @@ class _AnswerTextStreamer:
     ``_emitted_len`` is monotonically non-decreasing within one buffer.
     Fed exclusively from ``TextPart`` content: reasoning text and
     tool payloads never enter the buffer.
+
+    R3 optimization: block-aware incremental extraction. Instead of
+    re-joining all block texts with ``\\n\\n`` on every chunk (O(n) per
+    chunk → O(n²) total), the scanner tracks per-block emission state and
+    only emits deltas from the last (growing) block. Earlier blocks are
+    stable once later blocks appear in the partial parse, so the join
+    is reconstructed incrementally rather than recomputed. The
+    ``from_json`` parse remains O(buffer) but is executed in Rust
+    (pydantic_core) and is fast enough for 30K answers at ~4K chunks.
     """
 
     def __init__(self) -> None:
         self._buffer = ""
+        # Total emitted character count (monotonic; backward-compat with
+        # existing tests that introspect ``_emitted_len``).
         self._emitted_len = 0
+        # Block-aware incremental state (R3).
+        # _emitted_block_texts: texts of blocks already fully emitted.
+        # _last_block_emitted_len: char count emitted from the current
+        #   (last) block. When a new block appears, the previous last
+        #   block is sealed and a separator is emitted before the new
+        #   block's text.
+        self._emitted_block_texts: list[str] = []
+        self._last_block_emitted_len: int = 0
+        # Clarification mode: single-block shortcut. When True, the
+        # answer is ``clarification_text`` (not ``answer_blocks``).
+        self._is_clarification: bool = False
 
     def reset(self) -> None:
         """Drop the buffer at a model-response boundary (tool result)."""
         self._buffer = ""
         self._emitted_len = 0
+        self._emitted_block_texts = []
+        self._last_block_emitted_len = 0
+        self._is_clarification = False
 
     def feed(self, text: str) -> str | None:
-        """Append a streamed chunk; return newly resolved block text."""
+        """Append a streamed chunk; return newly resolved block text.
+
+        The delta is computed incrementally: only the last block's new
+        text (or a newly appeared block) contributes to the returned
+        delta. The full ``\\n\\n``-joined answer is never reconstructed
+        on the hot path.
+        """
         if not text:
             return None
         self._buffer += text
@@ -248,27 +274,91 @@ class _AnswerTextStreamer:
             return None
         if not isinstance(parsed, dict):
             return None
+
         if parsed.get("response_kind") == "clarification":
             clarification_text = parsed.get("clarification_text")
             if not isinstance(clarification_text, str):
                 return None
-            answer = clarification_text
-        else:
-            blocks = parsed.get("answer_blocks")
-            if not isinstance(blocks, list):
-                return None
-            block_texts = [
-                block.get("text")
-                for block in blocks
-                if isinstance(block, dict)
-                and isinstance(block.get("text"), str)
-            ]
-            answer = "\n\n".join(block_texts)
-        if len(answer) <= self._emitted_len:
+            return self._emit_clarification(clarification_text)
+
+        blocks = parsed.get("answer_blocks")
+        if not isinstance(blocks, list):
             return None
-        delta = answer[self._emitted_len :]
-        self._emitted_len = len(answer)
+        # Extract text from each block that has a string ``text`` field.
+        # Blocks without a string ``text`` are treated as not-yet-resolved
+        # (partial parse may yield incomplete trailing blocks).
+        block_texts: list[str] = []
+        for block in blocks:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                block_texts.append(block["text"])
+        if not block_texts:
+            return None
+        return self._emit_blocks(block_texts)
+
+    def _emit_clarification(self, text: str) -> str | None:
+        """Single-block clarification: emit delta beyond what we've sent."""
+        if not self._is_clarification:
+            # Transitioning from answer-blocks mode (or initial) to
+            # clarification. Reset block state to avoid mixed emission.
+            self._emitted_block_texts = []
+            self._last_block_emitted_len = 0
+            self._is_clarification = True
+        if len(text) <= self._last_block_emitted_len:
+            return None
+        delta = text[self._last_block_emitted_len :]
+        self._last_block_emitted_len = len(text)
+        self._emitted_len += len(delta)
         return delta
+
+    def _emit_blocks(self, block_texts: list[str]) -> str | None:
+        """Block-aware incremental emission (R3).
+
+        - New blocks beyond ``_emitted_block_texts``: emit ``\\n\\n``
+          separator + full block text.
+        - Last block may have grown: emit the text delta.
+        - Earlier blocks are stable in append-only streaming: no
+          re-emission, no re-join.
+        """
+        if self._is_clarification:
+            # Transitioning from clarification to answer-blocks mode.
+            self._is_clarification = False
+            self._emitted_block_texts = []
+            self._last_block_emitted_len = 0
+
+        deltas: list[str] = []
+        prev_block_count = len(self._emitted_block_texts)
+
+        # New blocks appeared beyond what we've already emitted.
+        if len(block_texts) > prev_block_count:
+            # Seal the current last block (if any) and emit separators
+            # + new block texts.
+            for i in range(prev_block_count, len(block_texts)):
+                if i > 0:
+                    deltas.append("\n\n")
+                    self._emitted_len += 2  # len("\n\n")
+                deltas.append(block_texts[i])
+                self._emitted_len += len(block_texts[i])
+                self._emitted_block_texts.append(block_texts[i])
+            # After appending all new blocks, the last block's emitted
+            # length is its full text length.
+            self._last_block_emitted_len = len(block_texts[-1])
+        elif block_texts:
+            # No new blocks, but the last block may have grown.
+            last_text = block_texts[-1]
+            prev_len = self._last_block_emitted_len
+            if len(last_text) > prev_len:
+                delta = last_text[prev_len:]
+                deltas.append(delta)
+                self._emitted_len += len(delta)
+                # Update the stored last block text.
+                if self._emitted_block_texts:
+                    self._emitted_block_texts[-1] = last_text
+                self._last_block_emitted_len = len(last_text)
+
+        if not deltas:
+            return None
+        result = "".join(deltas)
+        return result if result else None
 
 
 async def run_agent_with_thinking_transport(
@@ -306,6 +396,12 @@ async def run_agent_with_thinking_transport(
     lifecycle = ThinkingPartLifecycle()
     answer_streamer = _AnswerTextStreamer()
     answer_streamed_indices: set[int] = set()
+    # R4-2: generation_id tracks the current model-response generation.
+    # Starts at 0 (first generation). Incremented on every tool-result /
+    # ModelRetry boundary BEFORE the new generation begins. Each
+    # AnswerDeltaEvent carries the current value so the client can
+    # attribute deltas to the correct generation and discard stale ones.
+    generation_id: int = 0
 
     def _ensure_started() -> None:
         nonlocal analysis_started
@@ -337,9 +433,38 @@ async def run_agent_with_thinking_transport(
     def _emit_answer_delta(delta: str | None) -> None:
         # Answer text is user-visible output — safe on the event sink.
         # Never derived from ThinkingPart content (isolated feed path).
+        # R4-2: tag with the current generation_id so the client can
+        # discard deltas from a stale generation after a tool-result /
+        # ModelRetry boundary reset.
         if not delta:
             return
-        event = AnswerDeltaEvent(delta=delta)
+        event = AnswerDeltaEvent(delta=delta, generation_id=generation_id)
+        phase_events.append(event)
+        deps.emit_event(event)
+
+    def _emit_preview_reset(
+        *,
+        reason: (
+            Literal["tool_result_boundary"]
+            | Literal["tool_argument_model_retry"]
+            | Literal["output_validator_model_retry"]
+        ),
+    ) -> None:
+        """R4-2: emit a preview-reset signal at a generation boundary.
+
+        Fired after a tool-result / ModelRetry boundary is detected and
+        BEFORE the new model-response stream begins. The new
+        ``generation_id`` (post-increment) is included so the client can
+        attribute subsequent ``message.delta`` events to the new
+        generation. The client MUST clear ``provisional_content_md`` on
+        receipt but MUST NOT touch canonical ``content_md``.
+        """
+        nonlocal generation_id
+        generation_id += 1
+        event = AnswerPreviewResetEvent(
+            generation_id=generation_id,
+            reason=reason,
+        )
         phase_events.append(event)
         deps.emit_event(event)
 
@@ -374,29 +499,79 @@ async def run_agent_with_thinking_transport(
                 event_kind = getattr(event, "event_kind", None)
 
                 if event_kind == "agent_run_result":
-                    result = getattr(event, "result", None)
-                    if result is not None:
-                        final_output = getattr(result, "output", result)
+                    run_result = getattr(event, "result", None)
+                    if run_result is not None:
+                        final_output = getattr(run_result, "output", run_result)
                     continue
 
-                # New model response stream after a tool/retry boundary:
-                # reset the per-index thinking lifecycle so a PartEnd-only
-                # second round is still observed exactly once. Covers
-                # FunctionToolResultEvent (tool return or tool-arg
-                # ModelRetry), OutputToolResultEvent (output-validator
-                # ModelRetry), and the deprecated BuiltinToolResultEvent —
-                # all via the stable event_kind Literal.
-                if event_kind in _TOOL_RESULT_EVENT_KINDS:
+                # R4-2 / R4-6: use isinstance type guards (not event_kind
+                # string matching) so mypy narrows the union type and the
+                # reset boundary is detected robustly across pydantic-ai
+                # versions. Each tool-result boundary starts a NEW model
+                # response generation — emit a preview_reset so the client
+                # clears provisional_content_md before the new generation
+                # streams its first delta.
+                if isinstance(event, FunctionToolResultEvent):
+                    # FunctionToolResultEvent carries ToolReturnPart (regular
+                    # tool return) or RetryPromptPart (tool-arg ModelRetry).
+                    # Both end the current generation and start a new one.
+                    is_retry = isinstance(event.part, RetryPromptPart)
+                    _emit_preview_reset(
+                        reason=(
+                            "tool_argument_model_retry"
+                            if is_retry
+                            else "tool_result_boundary"
+                        )
+                    )
                     lifecycle.reset_stream()
-                    # R4-A6: a new model response stream follows the
-                    # boundary — drop any intermediate text so the final
-                    # answer JSON parses from a clean buffer (indices
-                    # restart as well).
                     answer_streamer.reset()
                     answer_streamed_indices.clear()
+                    if thinking_observer is not None:
+                        advance_fn = getattr(
+                            thinking_observer, "advance_round", None
+                        )
+                        if callable(advance_fn):
+                            advance_fn()
                     continue
 
-                if event_kind == "part_start" and isinstance(
+                if isinstance(event, OutputToolResultEvent):
+                    # OutputToolResultEvent is always an output-validator
+                    # ModelRetry — the output failed validation and the
+                    # agent must produce a new generation.
+                    _emit_preview_reset(
+                        reason="output_validator_model_retry"
+                    )
+                    lifecycle.reset_stream()
+                    answer_streamer.reset()
+                    answer_streamed_indices.clear()
+                    if thinking_observer is not None:
+                        advance_fn = getattr(
+                            thinking_observer, "advance_round", None
+                        )
+                        if callable(advance_fn):
+                            advance_fn()
+                    continue
+
+                if isinstance(event, BuiltinToolResultEvent):
+                    # Deprecated event; treat as a regular tool-result
+                    # boundary. Newer pydantic-ai versions may not emit
+                    # this, but we cover it for safety.
+                    _emit_preview_reset(reason="tool_result_boundary")
+                    lifecycle.reset_stream()
+                    answer_streamer.reset()
+                    answer_streamed_indices.clear()
+                    if thinking_observer is not None:
+                        advance_fn = getattr(
+                            thinking_observer, "advance_round", None
+                        )
+                        if callable(advance_fn):
+                            advance_fn()
+                    continue
+
+                # R4-6: isinstance type guards for PartStart/Delta/End so
+                # mypy narrows the union — no more event_kind string check
+                # followed by unsafe union-attribute access.
+                if isinstance(event, PartStartEvent) and isinstance(
                     event.part, ThinkingPart
                 ):
                     piece = lifecycle.on_start(
@@ -406,7 +581,7 @@ async def run_agent_with_thinking_transport(
                     _emit_reasoning(piece)
                     continue
 
-                if event_kind == "part_delta" and isinstance(
+                if isinstance(event, PartDeltaEvent) and isinstance(
                     event.delta, ThinkingPartDelta
                 ):
                     piece = lifecycle.on_delta(
@@ -420,7 +595,7 @@ async def run_agent_with_thinking_transport(
                     _emit_reasoning(piece)
                     continue
 
-                if event_kind == "part_end" and isinstance(
+                if isinstance(event, PartEndEvent) and isinstance(
                     event.part, ThinkingPart
                 ):
                     piece = lifecycle.on_end(
@@ -436,7 +611,7 @@ async def run_agent_with_thinking_transport(
                 # increments. Fully isolated from the ThinkingPart path
                 # above: no observer calls, no AnalysisStarted synthesis,
                 # no shared content.
-                if event_kind == "part_start" and isinstance(
+                if isinstance(event, PartStartEvent) and isinstance(
                     event.part, TextPart
                 ):
                     content = (
@@ -447,7 +622,7 @@ async def run_agent_with_thinking_transport(
                         _emit_answer_delta(answer_streamer.feed(content))
                     continue
 
-                if event_kind == "part_delta" and isinstance(
+                if isinstance(event, PartDeltaEvent) and isinstance(
                     event.delta, TextPartDelta
                 ):
                     piece = (
@@ -460,7 +635,7 @@ async def run_agent_with_thinking_transport(
                         _emit_answer_delta(answer_streamer.feed(piece))
                     continue
 
-                if event_kind == "part_end" and isinstance(
+                if isinstance(event, PartEndEvent) and isinstance(
                     event.part, TextPart
                 ):
                     # PartEnd-only delivery: full content without prior

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,8 @@ from app.services.reader_record_ask.citation_navigation import (
     resolve_citation_navigation,
 )
 from app.services.reader_record_ask.repository import ReaderRecordAskRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reader-record-ask"])
 
@@ -52,14 +55,94 @@ def _is_dev_error_mode() -> bool:
     return get_settings().app_env != "production"
 
 
-def _streaming_response(generator) -> StreamingResponse:
+class _StreamLifecycleContext:
+    """Mutable lifecycle hook shared between the route and the generator.
+
+    ASK-TURN-LIFECYCLE R1: the generator (``stream_agentic_thread_message``)
+    sets ``turn_run_id`` / ``message_id`` as soon as the rows are persisted.
+    The route's ``finally`` block reads them to reconcile any still-
+    streaming row when the FastAPI generator is closed (client disconnect,
+    BFF disconnect, ASGI cancellation) without a typed terminal.
+
+    The hook is intentionally minimal — it does NOT carry answer text,
+    reasoning, citations, or any user-visible payload. Only the two
+    identifiers needed for the idempotent reconciliation write.
+    """
+
+    def __init__(self) -> None:
+        self.turn_run_id: UUID | None = None
+        self.message_id: UUID | None = None
+        self.terminal_emitted: bool = False
+
+    def mark_terminal_emitted(self) -> None:
+        """Mark that the generator already wrote a typed terminal."""
+        self.terminal_emitted = True
+
+    def register_active_turn(
+        self,
+        *,
+        turn_run_id: UUID,
+        message_id: UUID,
+    ) -> None:
+        self.turn_run_id = turn_run_id
+        self.message_id = message_id
+
+    async def reconcile_if_streaming(self) -> None:
+        """Reconcile any still-streaming row to ``cancelled``.
+
+        Idempotent: ``reconcile_stale_streaming_turn_run`` itself guards
+        on ``status = 'streaming'``, and ``terminal_emitted`` short-
+        circuits the call entirely on the success path.
+        """
+        if self.terminal_emitted:
+            return
+        if self.turn_run_id is None or self.message_id is None:
+            return
+        repo = ReaderRecordAskRepository()
+        try:
+            await repo.reconcile_stale_streaming_turn_run(
+                turn_run_id=self.turn_run_id,
+                message_id=self.message_id,
+                run_status="cancelled",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "stream_lifecycle reconcile failed: turn_run_id=%s message_id=%s",
+                self.turn_run_id,
+                self.message_id,
+            )
+
+
+def _streaming_response(
+    generator,
+    *,
+    lifecycle: _StreamLifecycleContext | None = None,
+) -> StreamingResponse:
+    """Wrap an async generator in a StreamingResponse with terminal cleanup.
+
+    ASK-TURN-LIFECYCLE R1: the ``finally`` clause guarantees that any
+    streaming ``reader_ask_turn_runs`` / ``reader_ask_messages`` row
+    created during the generator is reconciled to a terminal state when
+    the FastAPI generator is closed — cleanly, via cancellation, or via
+    ASGI cancellation. Without this, a client disconnect mid-stream
+    would leave orphan streaming rows that never transition.
+
+    The reconciliation is idempotent (``WHERE status = 'streaming'``)
+    and skipped when the generator already emitted a typed terminal.
+    """
+
     async def event_stream():
         try:
             async for chunk in generator:
                 yield chunk
         except HTTPException as exc:
+            payload = {
+                "code": str(exc.status_code),
+                "detail": exc.detail,
+            }
             yield (
-                f"event: error\ndata: {json.dumps({'code': str(exc.status_code), 'detail': exc.detail}, ensure_ascii=False)}\n\n"
+                "event: error\ndata: "
+                f"{json.dumps(payload, ensure_ascii=False)}\n\n"
             )
         except Exception as exc:
             if _is_dev_error_mode():
@@ -74,6 +157,9 @@ def _streaming_response(generator) -> StreamingResponse:
                 "event: error\ndata: "
                 f"{json.dumps(payload, ensure_ascii=False)}\n\n"
             )
+        finally:
+            if lifecycle is not None:
+                await lifecycle.reconcile_if_streaming()
 
     return StreamingResponse(
         event_stream(),
@@ -232,13 +318,16 @@ async def send_reading_record_ask_message(
         reading_record_id=reading_record_id,
         request=body,
     )
+    lifecycle = _StreamLifecycleContext()
     return _streaming_response(
         rr_ask_svc.send_reading_record_ask_message(
             user_id=user_id,
             reading_record_id=reading_record_id,
             request=body,
             prepared=prepared,
-        )
+            lifecycle=lifecycle,
+        ),
+        lifecycle=lifecycle,
     )
 
 
@@ -259,6 +348,7 @@ async def stream_reading_record_ask_thread_message(
         request=body,
         thread_id=thread_id,
     )
+    lifecycle = _StreamLifecycleContext()
     return _streaming_response(
         rr_ask_svc.stream_reading_record_ask_thread_message(
             user_id=user_id,
@@ -266,7 +356,9 @@ async def stream_reading_record_ask_thread_message(
             thread_id=thread_id,
             request=body,
             prepared=prepared,
-        )
+            lifecycle=lifecycle,
+        ),
+        lifecycle=lifecycle,
     )
 
 
@@ -292,6 +384,7 @@ async def retry_reading_record_ask_message(
         thread_id=thread_id,
         message_id=message_id,
     )
+    lifecycle = _StreamLifecycleContext()
     return _streaming_response(
         rr_ask_svc.retry_reading_record_ask_message(
             user_id=UUID(current_user.user_id),
@@ -300,7 +393,9 @@ async def retry_reading_record_ask_message(
             message_id=message_id,
             request=body,
             prepared=prepared,
-        )
+            lifecycle=lifecycle,
+        ),
+        lifecycle=lifecycle,
     )
 
 

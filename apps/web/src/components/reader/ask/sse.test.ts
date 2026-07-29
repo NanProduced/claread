@@ -135,15 +135,26 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses multi-event chunk with reasoning.delta and message.completed", async () => {
+    // R4-1: message.completed is a trusted terminal and must carry a
+    // self-consistent identity (message_id / thread_id / turn_run_id) to
+    // be dispatched when no prior agentic.run_started captured an active
+    // identity. The canonical v2 payload shape is used here.
+    const completed = {
+      ...AGENTIC_COMPLETED_PAYLOAD,
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+    };
     const events = await collectEvents([
-      'event: reasoning.delta\ndata: {"delta":"thinking"}\n\nevent: message.completed\ndata: {"content_md":"done"}\n\n',
+      `event: reasoning.delta\ndata: ${JSON.stringify({ delta: "thinking" })}\n\n`,
+      `event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`,
     ]);
 
     expect(events).toHaveLength(2);
     expect(events[0].event).toBe("reasoning.delta");
     expect(events[0].data).toEqual({ delta: "thinking" });
     expect(events[1].event).toBe("message.completed");
-    expect(events[1].data).toEqual({ content_md: "done" });
+    expect(isReaderAskAgenticCompletedPayload(events[1].data)).toBe(true);
   });
 
   it("handles split chunk where one event spans two TCP chunks", async () => {
@@ -217,16 +228,29 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses message.completed with full payload", async () => {
+    // R4-1: message.completed must carry a self-consistent identity tuple
+    // (message_id / thread_id / turn_run_id) to be trusted as a terminal
+    // when no prior agentic.run_started captured an active identity. The
+    // canonical v2 payload shape is used here — legacy {id, content_md}
+    // shapes are rejected as untrusted by R4-1.
+    const completed = {
+      ...AGENTIC_COMPLETED_PAYLOAD,
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+    };
     const events = await collectEvents([
-      'event: message.completed\ndata: {"id":"msg-1","content_md":"done","citations":[]}\n\n',
+      `event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`,
     ]);
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.completed");
-    expect(events[0].data).toEqual({
-      id: "msg-1",
-      content_md: "done",
-      citations: [],
+    expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(true);
+    expect(events[0].data).toMatchObject({
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+      final_status: "ok",
     });
   });
 
@@ -254,16 +278,48 @@ describe("consumeReaderAskSse", () => {
     expect(events[0].data).toMatchObject({ code: "SSE_PARSE_ERROR" });
   });
 
-  it("still parses legacy message.interrupted with content_md", async () => {
+  it("still parses legacy message.interrupted with typed final_status and identity", async () => {
+    // R4-1: legacy message.interrupted is accepted as a trusted terminal
+    // ONLY when it carries a typed non-ok final_status AND a self-consistent
+    // identity tuple (message_id / thread_id / turn_run_id). The legacy
+    // {content_md only} shape is rejected as untrusted — foreign/stale
+    // terminals must NOT mutate UI state.
+    const interrupted = {
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      final_status: "cancelled" as const,
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "turn-run-1",
+      terminal_reason: "user aborted",
+      content_md: "partial answer",
+    };
     const events = await collectEvents([
-      'event: message.interrupted\ndata: {"content_md":"partial answer"}\n\n',
+      `event: message.interrupted\ndata: ${JSON.stringify(interrupted)}\n\n`,
     ]);
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.interrupted");
-    expect(events[0].data).toEqual({ content_md: "partial answer" });
-    expect(isReaderAskAgenticTerminalPayload(events[0].data)).toBe(false);
+    expect(events[0].data).toMatchObject({
+      final_status: "cancelled",
+      content_md: "partial answer",
+    });
+    // The payload is structurally a valid typed terminal (it carries
+    // execution_version / final_status / identity), but it arrives on the
+    // legacy ``message.interrupted`` event name rather than
+    // ``agentic.terminal``. It is NOT a completed success payload.
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(false);
+  });
+
+  it("rejects legacy message.interrupted without identity as untrusted (R4-1)", async () => {
+    // R4-1: a legacy message.interrupted that carries only content_md and
+    // no identity tuple is NOT a trusted terminal. It MUST NOT be
+    // dispatched, MUST NOT mutate UI state, and MUST NOT unlock the
+    // composer. The consumer falls through to eof.
+    const events = await collectEvents([
+      'event: message.interrupted\ndata: {"content_md":"partial answer"}\n\n',
+    ]);
+
+    expect(events).toHaveLength(0);
   });
 
   it("parses fragmented agentic SSE across TCP chunks", async () => {
@@ -350,7 +406,11 @@ describe("consumeReaderAskSse", () => {
     expect("evidence" in completed).toBe(false);
   });
 
-  it("parses failed agentic terminal on agentic.terminal and message.interrupted", async () => {
+  it("parses failed agentic terminal and ignores the legacy message.interrupted follow-up (R1 contract)", async () => {
+    // R1 contract: agentic.terminal is a trusted terminal. The consumer
+    // must cancel the reader immediately and ignore any later frames in
+    // the same chunk — including the legacy message.interrupted alias
+    // that producers historically emitted as a redundant follow-up.
     const terminal = {
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
       final_status: "failed",
@@ -364,21 +424,22 @@ describe("consumeReaderAskSse", () => {
       `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
     ]);
 
-    expect(events).toHaveLength(2);
+    // Only the first trusted terminal must be emitted; the late
+    // message.interrupted frame must be ignored.
+    expect(events).toHaveLength(1);
     expect(events[0].event).toBe("agentic.terminal");
-    expect(events[1].event).toBe("message.interrupted");
     expect(isReaderAskAgenticTerminalPayload(events[0].data)).toBe(true);
-    expect(isReaderAskAgenticTerminalPayload(events[1].data)).toBe(true);
     // Non-ok terminal must never be classified as completed success.
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(false);
-    expect(isReaderAskAgenticCompletedPayload(events[1].data)).toBe(false);
     expect(events[0].data).toMatchObject({
       final_status: "failed",
       terminal_reason: expect.stringContaining("agentic_model_unconfigured"),
     });
   });
 
-  it("parses context_stale agentic terminal without treating it as success", async () => {
+  it("parses context_stale agentic terminal without treating it as success (R1: late interrupted ignored)", async () => {
+    // R1 contract: only the first trusted terminal is emitted; the
+    // legacy message.interrupted follow-up is dropped.
     const terminal = {
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
       final_status: "context_stale",
@@ -392,9 +453,8 @@ describe("consumeReaderAskSse", () => {
       `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
     ]);
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(1);
     expect(events[0].event).toBe("agentic.terminal");
-    expect(events[1].event).toBe("message.interrupted");
     expect(isReaderAskAgenticTerminalPayload(events[0].data)).toBe(true);
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(false);
     expect(events[0].data).toMatchObject({
@@ -422,6 +482,187 @@ describe("consumeReaderAskSse", () => {
     expect(reexportedVersion).toBe(READER_ASK_AGENTIC_EXECUTION_VERSION);
     expect(reexportedCompletedGuard(AGENTIC_COMPLETED_PAYLOAD)).toBe(true);
     expect(reexportedCompletedGuard({ content_md: "legacy" })).toBe(false);
+  });
+
+  // R4-1: Terminal identity MUST be verified before any UI mutation.
+  // A foreign / stale terminal (whose message_id / thread_id / turn_run_id
+  // do not match the active identity captured at agentic.run_started)
+  // MUST NOT be dispatched to onEvent, MUST NOT terminate the consumer,
+  // and MUST NOT unlock the composer.
+  describe("R4-1: terminal identity verification before UI mutation", () => {
+    const RUN_STARTED = {
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      message_id: "msg-active",
+      thread_id: "thread-active",
+      turn_run_id: "turn-run-active",
+      has_initial_selection: false,
+    };
+
+    const FOREIGN_COMPLETED = {
+      ...AGENTIC_COMPLETED_PAYLOAD,
+      message_id: "msg-foreign",
+      thread_id: "thread-foreign",
+      turn_run_id: "turn-run-foreign",
+    };
+
+    const TRUSTED_COMPLETED = {
+      ...AGENTIC_COMPLETED_PAYLOAD,
+      message_id: "msg-active",
+      thread_id: "thread-active",
+      turn_run_id: "turn-run-active",
+    };
+
+    const FOREIGN_TERMINAL = {
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      final_status: "failed",
+      message_id: "msg-foreign",
+      thread_id: "thread-foreign",
+      turn_run_id: "turn-run-foreign",
+      terminal_reason: "foreign turn",
+    };
+
+    const TRUSTED_TERMINAL = {
+      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      final_status: "cancelled",
+      message_id: "msg-active",
+      thread_id: "thread-active",
+      turn_run_id: "turn-run-active",
+      terminal_reason: "user aborted",
+    };
+
+    it("foreign message.completed is NOT dispatched and does NOT terminate the consumer", async () => {
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: agentic.run_started\ndata: ${JSON.stringify(RUN_STARTED)}\n\n`,
+        `event: message.delta\ndata: {"delta":"partial"}\n\n`,
+        `event: message.completed\ndata: ${JSON.stringify(FOREIGN_COMPLETED)}\n\n`,
+        `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      // The foreign message.completed MUST NOT appear in dispatched events.
+      const completedEvents = events.filter((e) => e.event === "message.completed");
+      expect(completedEvents).toHaveLength(1);
+      expect(completedEvents[0].data).toMatchObject({
+        message_id: "msg-active",
+        thread_id: "thread-active",
+        turn_run_id: "turn-run-active",
+      });
+      // Non-terminal events before the foreign terminal ARE dispatched.
+      expect(events.find((e) => e.event === "agentic.run_started")).toBeDefined();
+      expect(events.find((e) => e.event === "message.delta")).toBeDefined();
+      // The consumer terminates on the trusted terminal, not the foreign one.
+      expect(result.kind).toBe("completed");
+    });
+
+    it("foreign agentic.terminal is NOT dispatched and does NOT terminate the consumer", async () => {
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: agentic.run_started\ndata: ${JSON.stringify(RUN_STARTED)}\n\n`,
+        `event: agentic.terminal\ndata: ${JSON.stringify(FOREIGN_TERMINAL)}\n\n`,
+        `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      // The foreign agentic.terminal MUST NOT appear in dispatched events.
+      expect(events.find((e) => e.event === "agentic.terminal")).toBeUndefined();
+      // The trusted completed IS dispatched.
+      expect(events.find((e) => e.event === "message.completed")).toBeDefined();
+      expect(result.kind).toBe("completed");
+    });
+
+    it("foreign message.interrupted is NOT dispatched and does NOT terminate the consumer", async () => {
+      const foreignInterrupted = {
+        ...FOREIGN_TERMINAL,
+        final_status: "cancelled",
+      };
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: agentic.run_started\ndata: ${JSON.stringify(RUN_STARTED)}\n\n`,
+        `event: message.interrupted\ndata: ${JSON.stringify(foreignInterrupted)}\n\n`,
+        `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      expect(events.find((e) => e.event === "message.interrupted")).toBeUndefined();
+      expect(events.find((e) => e.event === "message.completed")).toBeDefined();
+      expect(result.kind).toBe("completed");
+    });
+
+    it("foreign terminal in trailing buffer is NOT dispatched (eof instead)", async () => {
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: agentic.run_started\ndata: ${JSON.stringify(RUN_STARTED)}\n\n`,
+        `event: message.delta\ndata: {"delta":"partial"}\n\n`,
+        // Trailing buffer with foreign terminal — no double newline at end.
+        `event: agentic.terminal\ndata: ${JSON.stringify(FOREIGN_TERMINAL)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      // The foreign terminal in the trailing buffer MUST NOT be dispatched.
+      expect(events.find((e) => e.event === "agentic.terminal")).toBeUndefined();
+      // Non-terminal events ARE dispatched.
+      expect(events.find((e) => e.event === "agentic.run_started")).toBeDefined();
+      expect(events.find((e) => e.event === "message.delta")).toBeDefined();
+      // No trusted terminal arrived → eof.
+      expect(result.kind).toBe("eof");
+    });
+
+    it("trusted terminal terminates the consumer and unlocks via onEvent", async () => {
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: agentic.run_started\ndata: ${JSON.stringify(RUN_STARTED)}\n\n`,
+        `event: message.delta\ndata: {"delta":"partial"}\n\n`,
+        `event: agentic.terminal\ndata: ${JSON.stringify(TRUSTED_TERMINAL)}\n\n`,
+        // This frame should never arrive — consumer stops after trusted terminal.
+        `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      // The trusted terminal IS dispatched.
+      const terminalEvents = events.filter((e) => e.event === "agentic.terminal");
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0].data).toMatchObject({
+        message_id: "msg-active",
+        final_status: "cancelled",
+      });
+      // The post-terminal completed MUST NOT be dispatched.
+      expect(events.find((e) => e.event === "message.completed")).toBeUndefined();
+      expect(result.kind).toBe("terminal");
+      expect(result.finalStatus).toBe("cancelled");
+    });
+
+    it("terminal without prior run_started is trusted only if it carries a self-consistent identity", async () => {
+      // No run_started — the terminal must carry a complete identity tuple
+      // to be trusted. This is the legacy producer path.
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      expect(events).toHaveLength(1);
+      expect(events[0].event).toBe("message.completed");
+      expect(result.kind).toBe("completed");
+    });
   });
 });
 

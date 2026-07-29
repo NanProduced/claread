@@ -226,6 +226,8 @@ class _FakeRepo:
         self.retry_assistant: dict[str, Any] | None = None
         self.retry_user: dict[str, Any] | None = None
         self.reset_calls: list[UUID] = []
+        # R4-5c: heartbeat calls captured for assertion.
+        self.heartbeat_calls: list[UUID] = []
 
     async def get_thread(self, **kwargs):
         return {
@@ -316,6 +318,13 @@ class _FakeRepo:
             "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         }
         return self.turns[str(kwargs["turn_run_id"])]
+
+    async def heartbeat_turn_run(self, *, turn_run_id: UUID) -> None:
+        """R4-5c: capture heartbeat calls for assertion. No-op on rows
+        that already transitioned to terminal (matches production guard)."""
+        tid = str(turn_run_id)
+        if tid in self.turns and self.turns[tid].get("status") == "streaming":
+            self.heartbeat_calls.append(turn_run_id)
 
 
 def _parse_sse(chunks: list[str]) -> list[tuple[str, dict]]:
@@ -2650,7 +2659,12 @@ async def test_message_delta_streams_answer_text_on_success() -> None:
 
     # Exactly two message.delta events carrying the raw increments.
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    assert deltas == [{"delta": "Hello"}, {"delta": " world"}]
+    # R4-2: each delta carries a generation_id attributing it to the
+    # current answer generation. The first generation is id=0.
+    assert deltas == [
+        {"delta": "Hello", "generation_id": 0},
+        {"delta": " world", "generation_id": 0},
+    ]
 
     # Final completed DTO carries the full answer.
     completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
@@ -2707,7 +2721,8 @@ async def test_message_delta_partial_then_failure_no_completed() -> None:
     names = [name for name, _ in events]
 
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    assert deltas == [{"delta": "partial"}]
+    # R4-2: delta carries generation_id for current answer generation.
+    assert deltas == [{"delta": "partial", "generation_id": 0}]
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
     assert EVENT_MESSAGE_INTERRUPTED in names

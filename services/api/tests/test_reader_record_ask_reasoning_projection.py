@@ -877,9 +877,12 @@ def test_quota_exact_fit_has_no_marker() -> None:
     # Exact-cap protocol (R3): text without a marker may fill up to
     # char_cap − len(marker) (the content reservation) and stays
     # truncated=False with no marker.
+    # NOTE: advance_round() is a no-op (R4-4) — this test exercises the
+    # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
+    buffer.advance_round()  # no-op (R4-4)
     buffer.feed("字" * content_cap)  # exactly fills the content reservation
     buffer.flush()
     assert not buffer.truncated
@@ -893,9 +896,12 @@ def test_quota_fill_reservation_then_overflow_appends_marker_once() -> None:
     # appends the marker exactly once, landing the total at exactly char_cap
     # (marker at end). This is the case R2 got wrong (truncated=True with no
     # marker).
+    # NOTE: advance_round() is a no-op (R4-4) — this test exercises the
+    # total-cap boundary in isolation.
     cap = 50
     content_cap = cap - len(TRUNCATION_MARKER)
     buffer = ReasoningProjectionBuffer(char_cap=cap)
+    buffer.advance_round()  # no-op (R4-4)
     buffer.feed("字" * content_cap)
     assert not buffer.truncated
     assert TRUNCATION_MARKER not in buffer.text
@@ -1060,3 +1066,186 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
     payload = observer.persistence_payload()
     assert payload is not None
     assert redact_reasoning_text(payload["text"]) == payload["text"]
+
+
+# ---------------------------------------------------------------------------
+# ASK-TURN-LIFECYCLE R4-4: total cap is the ONLY quota
+# ---------------------------------------------------------------------------
+#
+# R4-4 removed the hard round-0 sub-cap (former ROUND0_CAP_FRACTION = 0.65)
+# because it silently dropped up to 35% of round-0 reasoning without setting
+# ``truncated=True``, producing an undeclared gap in the visible projection.
+# The turn-level total cap is the ONLY quota. ``advance_round()`` is a no-op
+# retained for backward-compat with thinking_transport boundary calls.
+
+
+def test_r4_4_no_round0_subcap_allows_full_total_budget_in_round0() -> None:
+    # R4-4: there is NO round-0 sub-cap. A round-0 feed under the total
+    # content cap is accepted in full — no silent drop, no marker.
+    cap = 100
+    marker_len = len(TRUNCATION_MARKER)
+    content_cap = cap - marker_len
+    buffer = ReasoningProjectionBuffer(char_cap=cap)
+    # Feed an amount that would have been OVER the old round-0 sub-cap
+    # (65% of content_cap) but UNDER the total content cap. R4-4: all
+    # of it is accepted.
+    feed_chars = content_cap  # fill the entire content reservation
+    out_round0 = buffer.feed("字" * feed_chars) + buffer.flush()
+    assert not buffer.truncated
+    assert TRUNCATION_MARKER not in buffer.text
+    assert buffer.char_count == content_cap
+    assert buffer.text == "字" * content_cap
+    assert out_round0 == "字" * content_cap
+
+
+def test_r4_4_advance_round_is_noop_does_not_affect_quota() -> None:
+    # R4-4: advance_round() is a no-op. Calling it does not change the
+    # buffer state or the available budget — the total cap is the only
+    # quota and it is shared across all rounds.
+    cap = 100
+    marker_len = len(TRUNCATION_MARKER)
+    content_cap = cap - marker_len
+    buffer = ReasoningProjectionBuffer(char_cap=cap)
+    # Feed some content.
+    first_batch = 20
+    buffer.feed("字" * first_batch)
+    buffer.flush()
+    assert buffer.char_count == first_batch
+    # Call advance_round — no effect on char_count or budget.
+    buffer.advance_round()
+    assert buffer.char_count == first_batch
+    # Feed more — still under the total cap, accepted in full.
+    second_batch = content_cap - first_batch
+    out = buffer.feed("后" * second_batch) + buffer.flush()
+    assert out == "后" * second_batch
+    assert buffer.char_count == content_cap
+    assert not buffer.truncated
+
+
+def test_r4_4_total_cap_truncates_with_marker_without_advance_round() -> None:
+    # R4-4: total cap truncation works the same with or without
+    # advance_round. The marker is appended exactly once at the end.
+    cap = 100
+    buffer = ReasoningProjectionBuffer(char_cap=cap)
+    # Overflow the total cap immediately — no advance_round needed.
+    buffer.feed("字" * 200)
+    buffer.flush()
+    assert buffer.truncated
+    assert buffer.text.endswith(TRUNCATION_MARKER)
+    assert buffer.text.count(TRUNCATION_MARKER) == 1
+    assert buffer.char_count == cap  # exactly the total cap
+
+
+def test_advance_round_idempotent_after_total_truncation() -> None:
+    cap = 50
+    buffer = ReasoningProjectionBuffer(char_cap=cap)
+    # Hit total cap immediately in round 0.
+    buffer.feed("字" * 200)
+    buffer.flush()
+    assert buffer.truncated
+    text_before = buffer.text
+    char_count_before = buffer.char_count
+    # advance_round is a no-op once truncated.
+    buffer.advance_round()
+    assert buffer.text == text_before
+    assert buffer.char_count == char_count_before
+    # Further feed is also a no-op.
+    assert buffer.feed("更多内容") == ""
+    assert buffer.flush() == ""
+
+
+def test_r4_4_multiple_advance_round_calls_are_all_noops() -> None:
+    # R4-4: multiple advance_round calls (multiple tool boundaries) are
+    # all no-ops. The total cap is the only quota — no per-round reserve.
+    cap = 200
+    marker_len = len(TRUNCATION_MARKER)
+    content_cap = cap - marker_len
+    buffer = ReasoningProjectionBuffer(char_cap=cap)
+    # Round 0: consume some budget.
+    round0_chars = 40
+    buffer.feed("零" * round0_chars)
+    buffer.flush()
+    # First tool boundary — no-op.
+    buffer.advance_round()
+    # Round 1: consume some budget.
+    round1_chars = 30
+    buffer.feed("一" * round1_chars)
+    buffer.flush()
+    # Second tool boundary — no-op.
+    buffer.advance_round()
+    # Round 2: consume the rest of the budget.
+    remaining = content_cap - round0_chars - round1_chars
+    buffer.feed("二" * remaining)
+    buffer.flush()
+    assert not buffer.truncated
+    assert buffer.char_count == content_cap
+    # One more char triggers total truncation.
+    buffer.feed("三")
+    buffer.flush()
+    assert buffer.truncated
+    assert buffer.text.endswith(TRUNCATION_MARKER)
+
+
+def test_r4_4_observer_advance_round_is_noop() -> None:
+    # R4-4: observer.advance_round() is a no-op — it does not affect
+    # which reasoning is accepted or dropped. All reasoning under the
+    # total cap is accepted regardless of round boundaries.
+    events: list[RuntimeEvent] = []
+    cap = 100
+    observer = ReasoningProjectorObserver(
+        emit=lambda e: events.append(e),
+        message_id="msg-1",
+        thread_id="thr-1",
+        turn_run_id="run-1",
+        char_cap=cap,
+    )
+    # Feed reasoning that would have been dropped by the old round-0
+    # sub-cap. R4-4: all of it is accepted.
+    observer.on_reasoning_delta("字" * 50)
+    observer.on_analysis_finished()
+    # Tool boundary — no-op.
+    observer.advance_round()
+    # More reasoning — accepted (total still under cap).
+    observer.on_reasoning_delta("后round1内容应该被接受")
+    observer.on_analysis_finished()
+    # Verify all content made it into the projection.
+    deltas = [e for e in events if isinstance(e, AgenticReasoningDeltaEvent)]
+    visible = "".join(d.delta for d in deltas)
+    assert "字" * 50 in visible
+    assert "后round1内容应该被接受" in visible
+
+
+def test_observer_advance_round_is_noop_when_sealed() -> None:
+    events: list[RuntimeEvent] = []
+    observer = _observer(events)
+    # Build the completed event — this seals the observer.
+    observer.on_reasoning_delta("一些推理内容。")
+    observer.on_analysis_finished()
+    completed = observer.build_completed_event()
+    assert completed is not None
+    # advance_round after sealing is a no-op (no exception, no effect).
+    observer.advance_round()
+    # Further deltas are dropped.
+    observer.on_reasoning_delta("sealed后不应有任何输出")
+    assert observer.projection_text == "一些推理内容。"
+
+
+def test_r4_4_default_band_keeps_long_turns_untruncated() -> None:
+    # R4-4 regression: with the round-0 sub-cap removed, a representative
+    # 6K round-0 reasoning + 4K round-1 reasoning (10K total) must NOT be
+    # truncated under the 14K default cap.
+    buffer = ReasoningProjectionBuffer()  # uses DEFAULT_PROJECTION_CHAR_CAP
+    round0_chars = 6_000
+    round1_chars = 4_000
+    # Round 0: 6K — accepted in full (no sub-cap to drop it).
+    buffer.feed("字" * round0_chars)
+    buffer.flush()
+    assert not buffer.truncated
+    # Tool boundary — no-op.
+    buffer.advance_round()
+    # Round 1: 4K — total now 10K, still under 14K - marker_len.
+    buffer.feed("字" * round1_chars)
+    buffer.flush()
+    assert not buffer.truncated
+    assert TRUNCATION_MARKER not in buffer.text
+    assert buffer.char_count == round0_chars + round1_chars

@@ -513,6 +513,28 @@ export interface ReaderAskMessageUiStateDto {
   compacting?: boolean | null;
   regenerate_preview?: boolean | null;
   /**
+   * ASK-TURN-LIFECYCLE R2 — provisional answer preview accumulated from
+   * `message.delta` frames during streaming. Strictly separated from the
+   * canonical {@link ReaderAskMessageDto.content_md}:
+   *
+   * - `provisional_content_md` accumulates deltas while streaming;
+   *   `content_md` stays empty (or holds the previous canonical answer
+   *   during a retry/regenerate cycle).
+   * - On `message.completed` the validated `answer_text` atomically
+   *   replaces `content_md` and `provisional_content_md` is cleared.
+   * - On any non-committed terminal (failed / cancelled / interrupted /
+   *   error / abort) `provisional_content_md` is dropped — never promoted
+   *   to canonical. This prevents half answers from being preserved when
+   *   the output validator fails or the user stops the turn.
+   * - Cold history never carries `provisional_content_md`; reload always
+   *   shows the committed canonical answer or nothing.
+   *
+   * Renderers must display `provisional_content_md` while streaming and
+   * fall back to `content_md` once committed. `null` / empty means no
+   * provisional preview is active (canonical should be used).
+   */
+  provisional_content_md?: string | null;
+  /**
    * UI-safe Ask article RAG sidecar. Frontend-only projection of the raw
    * `article_rag` field on {@link ReaderAskCompletedPayloadDto}. MUST be
    * produced via `mapAskArticleRagSidecar` so debug-only fields are
@@ -560,6 +582,21 @@ export interface ReaderAskMessageUiStateDto {
    * falls back to inferring from `agentic_web_search` when missing.
    */
   web_search_mode?: WebSearchModeDto | null;
+  /**
+   * ASK-TURN-LIFECYCLE R3 — typed reasoning truncation flag. Mirrors the
+   * backend `ReaderAskAgenticReasoningCompletedPayloadDto.truncated`
+   * field. When `true`, the visible `reasoning_md` was truncated by the
+   * server-side projection char cap; the UI must surface an explicit
+   * "达到展示上限" indicator rather than embedding a marker in the body.
+   *
+   * - Hot path: set to `payload.truncated` when
+   *   `agentic.reasoning.completed` arrives (and persisted alongside
+   *   `reasoning_status: "completed"`).
+   * - Cold path: backend persists this flag on the message row so a
+   *   reload shows the same indicator (no marker in the body).
+   * - `null` / `false` / missing ⇒ not truncated; render normally.
+   */
+  reasoning_truncated?: boolean | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;
@@ -703,6 +740,7 @@ export type ReaderAskStreamEventName =
   | "thread.ready"
   | "message.started"
   | "message.delta"
+  | "message.preview_reset"
   | "reasoning.started"
   | "reasoning.delta"
   | "reasoning.completed"

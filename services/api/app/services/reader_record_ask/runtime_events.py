@@ -80,12 +80,50 @@ class AnswerDeltaEvent(BaseModel):
     Carries user-visible answer text increments — never reasoning text,
     length, hash, or provider payloads. Production stream maps it 1:1 to
     ``message.delta`` SSE and never projects it as agentic progress.
+
+    R4-2: ``generation_id`` is a monotonically increasing counter that
+    identifies which model-response generation this delta belongs to.
+    The counter starts at 0 for the first generation and increments on
+    every tool-result / ModelRetry boundary (see
+    :class:`AnswerPreviewResetEvent`). Clients MUST attribute deltas to
+    the active generation and discard deltas from a stale generation.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["answer_delta"] = "answer_delta"
     delta: str
+    generation_id: int = Field(default=0, ge=0)
+
+
+class AnswerPreviewResetEvent(BaseModel):
+    """Safe signal: the answer preview MUST be reset (R4-2).
+
+    Emitted by the thinking transport when a tool result, tool-argument
+    ModelRetry, or output-validator ModelRetry boundary is reached and a
+    new model-response generation is about to begin. The provisional
+    answer text accumulated so far belongs to a now-stale generation and
+    MUST be cleared from the client preview.
+
+    ``generation_id`` is the NEW generation counter value (post-increment).
+    The first delta of the new generation will carry the same value.
+    ``reason`` is a stable machine-readable code (never user content,
+    never provider payloads).
+
+    Production stream maps this to ``message.preview_reset`` SSE,
+    supplemented with execution_version and turn identity. Never carries
+    raw reasoning, provider payloads, or secrets.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["answer_preview_reset"] = "answer_preview_reset"
+    generation_id: int = Field(ge=1)
+    reason: Literal[
+        "tool_result_boundary",
+        "tool_argument_model_retry",
+        "output_validator_model_retry",
+    ]
 
 
 class ComposingAnswerEvent(BaseModel):
@@ -250,6 +288,7 @@ RuntimeEvent = (
     | AnalysisStartedEvent
     | AnalysisFinishedEvent
     | AnswerDeltaEvent
+    | AnswerPreviewResetEvent
     | ComposingAnswerEvent
     | ValidatingEvidenceEvent
     | FinalAnswerEvent

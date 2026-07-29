@@ -60,7 +60,10 @@ from app.services.reader_record_ask.production_wiring import (
 from app.services.reader_record_ask.reasoning_projection import (
     ReasoningProjectorObserver,
 )
-from app.services.reader_record_ask.repository import ReaderRecordAskRepository
+from app.services.reader_record_ask.repository import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    ReaderRecordAskRepository,
+)
 from app.services.reader_record_ask.runtime import (
     ReadingRecordAskRunResult,
     run_reading_record_ask,
@@ -71,6 +74,7 @@ from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
+    AnswerPreviewResetEvent,
     ComposingAnswerEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
@@ -92,6 +96,7 @@ from app.services.reader_record_ask.sse import (
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
+    EVENT_MESSAGE_PREVIEW_RESET,
     EVENT_MESSAGE_STARTED,
     EVENT_THREAD_READY,
     encode_sse,
@@ -103,6 +108,7 @@ from app.services.reader_record_ask.tool_contracts import (
     TOOL_SEARCH_WEB,
 )
 from app.services.reader_record_ask.turn_coordinator import HostBudgetExhausted
+from app.services.reader_record_ask.turn_lifecycle import StreamLifecycleHook
 from app.services.reader_record_ask.web_evidence_registry import WebEvidenceRegistry
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
@@ -115,6 +121,22 @@ from app.services.reader_record_ask.web_search_port import (
 RunFn = Callable[..., Any]
 
 logger = logging.getLogger(__name__)
+
+# ASK-TURN-LIFECYCLE R1: SSE chunk prefixes that mark a typed terminal
+# event. When the generator yields a chunk starting with one of these
+# prefixes, the stream lifecycle hook's ``mark_terminal_emitted`` is
+# called so the route's ``finally`` block skips stale-stream
+# reconciliation (the row was already terminalized by the generator).
+_TERMINAL_SSE_PREFIXES: tuple[str, ...] = (
+    "event: message.completed\n",
+    "event: agentic.terminal\n",
+    "event: message.interrupted\n",
+)
+
+
+def _is_terminal_sse_chunk(chunk: str) -> bool:
+    """True iff ``chunk`` is a typed terminal SSE frame."""
+    return chunk.startswith(_TERMINAL_SSE_PREFIXES)
 
 # Stable external terminal reasons. Must not leak pydantic-ai / provider
 # internals (exception text, schema bodies, raw responses, thinking).
@@ -400,6 +422,80 @@ def build_terminal_dto(
         turn_run_id=turn_run_id,
         terminal_reason=terminal_reason,
     )
+
+
+class _TurnLifecycleMetrics:
+    """R3 observability: per-turn lifecycle timing metrics.
+
+    Records only timestamps and counts — never answer content, reasoning
+    text, citations, provider payloads, secrets, or user input. All
+    timestamps are ``time.perf_counter`` deltas (ms) from
+    ``started_at`` so they are monotonic and clock-skew-immune.
+
+    Lifecycle phases tracked (R3 contract):
+
+    - ``first_reasoning_ms``: first ``AgenticReasoningStartedEvent`` or
+      first ``AgenticReasoningDeltaEvent`` (whichever fires first).
+      ``None`` when no reasoning was emitted this turn.
+    - ``first_answer_delta_ms`` / ``last_answer_delta_ms``: first and
+      last ``AnswerDeltaEvent`` arrival times. ``None`` when no answer
+      delta was emitted (e.g. early validation failure). The gap
+      ``last - first`` is the answer streaming duration.
+    - ``validation_done_ms``: ``ValidatingEvidenceEvent`` projection or
+      ``FinalAnswerEvent`` arrival (whichever fires first), marking the
+      end of the agent run loop and the start of host-side validation.
+      ``None`` when the run failed before reaching validation.
+    - ``persistence_done_ms``: successful ``complete_agentic_turn_run``
+      commit timestamp. ``None`` on failure paths (no canonical answer
+      was persisted).
+    - ``terminal_sent_ms``: first typed terminal SSE frame yielded
+      (``message.completed`` / ``agentic.terminal`` /
+      ``message.interrupted``). Marks the moment the client should be
+      able to receive the terminal signal.
+    """
+
+    def __init__(self, *, started_at: float) -> None:
+        self._started_at = started_at
+        self.first_reasoning_ms: int | None = None
+        self.first_answer_delta_ms: int | None = None
+        self.last_answer_delta_ms: int | None = None
+        self.validation_done_ms: int | None = None
+        self.persistence_done_ms: int | None = None
+        self.terminal_sent_ms: int | None = None
+
+    def _elapsed_ms(self) -> int:
+        return max(0, int((time.perf_counter() - self._started_at) * 1000))
+
+    def mark_first_reasoning(self) -> None:
+        if self.first_reasoning_ms is None:
+            self.first_reasoning_ms = self._elapsed_ms()
+
+    def mark_answer_delta(self) -> None:
+        if self.first_answer_delta_ms is None:
+            self.first_answer_delta_ms = self._elapsed_ms()
+        self.last_answer_delta_ms = self._elapsed_ms()
+
+    def mark_validation_done(self) -> None:
+        if self.validation_done_ms is None:
+            self.validation_done_ms = self._elapsed_ms()
+
+    def mark_persistence_done(self) -> None:
+        self.persistence_done_ms = self._elapsed_ms()
+
+    def mark_terminal_sent(self) -> None:
+        if self.terminal_sent_ms is None:
+            self.terminal_sent_ms = self._elapsed_ms()
+
+    def to_log_dict(self) -> dict[str, Any]:
+        """Return metrics as a log-safe dict — no content/secrets."""
+        return {
+            "first_reasoning_ms": self.first_reasoning_ms,
+            "first_answer_delta_ms": self.first_answer_delta_ms,
+            "last_answer_delta_ms": self.last_answer_delta_ms,
+            "validation_done_ms": self.validation_done_ms,
+            "persistence_done_ms": self.persistence_done_ms,
+            "terminal_sent_ms": self.terminal_sent_ms,
+        }
 
 
 class _ProgressProjector:
@@ -816,6 +912,11 @@ async def _run_agentic_turn(
 
     started_at = time.perf_counter()
     projector = _ProgressProjector(started_at=started_at)
+    # ASK-TURN-LIFECYCLE R3: per-turn lifecycle timing metrics. Records
+    # only timestamps and counts — never content/secrets. Logged on the
+    # final info line so operators can observe the
+    # first-delta → validation → persistence → terminal sequence.
+    metrics = _TurnLifecycleMetrics(started_at=started_at)
     # Unbounded: tool fan-out is small; avoid blocking the agent on progress.
     event_queue: asyncio.Queue[Any] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -879,6 +980,8 @@ async def _run_agentic_turn(
                 # ASK-REASONING-R1: safe projection only — emitted by the
                 # reasoning projector on the first non-empty projected
                 # chunk. 1:1 wire mapping; never progress, never phase.
+                # R3: mark first-reasoning timestamp (idempotent).
+                metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_STARTED,
                     item.model_dump(mode="json"),
@@ -887,9 +990,32 @@ async def _run_agentic_turn(
             if isinstance(item, AgenticReasoningDeltaEvent):
                 # ASK-REASONING-R1: projected reasoning increment
                 # (redaction + quota already applied server-side).
+                # R3: mark first-reasoning timestamp (idempotent; covers
+                # the no-started-event edge case where the projector
+                # emits a delta without a preceding started event).
+                metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, AnswerPreviewResetEvent):
+                # R4-2: canonical preview-reset SSE event. Carries
+                # generation_id, reason, execution_version, and full
+                # turn identity so the client can validate trust before
+                # mutating UI state. The client MUST clear
+                # provisional_content_md but MUST NOT touch canonical
+                # content_md.
+                yield encode_sse(
+                    EVENT_MESSAGE_PREVIEW_RESET,
+                    {
+                        "generation_id": item.generation_id,
+                        "reason": item.reason,
+                        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                        "message_id": assistant_msg["id"],
+                        "thread_id": str(thread_id),
+                        "turn_run_id": turn["id"],
+                    },
                 )
                 continue
             if not isinstance(
@@ -913,8 +1039,24 @@ async def _run_agentic_turn(
                 # R4-A6: token-level answer_text increment — user-visible
                 # answer content, never reasoning. Maps 1:1 to
                 # message.delta; never projected as agentic progress.
-                yield encode_sse(EVENT_MESSAGE_DELTA, {"delta": item.delta})
+                # R4-2: include generation_id so the client can discard
+                # deltas from a stale generation after a preview_reset.
+                # R3: track first/last answer delta timestamps.
+                metrics.mark_answer_delta()
+                yield encode_sse(
+                    EVENT_MESSAGE_DELTA,
+                    {
+                        "delta": item.delta,
+                        "generation_id": item.generation_id,
+                    },
+                )
                 continue
+            # R3: validation_done marks the end of the agent run loop
+            # (ValidatingEvidenceEvent fires when finalizer starts;
+            # FinalAnswerEvent fires when finalizer completes). Whichever
+            # arrives first closes the validation phase.
+            if isinstance(item, ValidatingEvidenceEvent | FinalAnswerEvent):
+                metrics.mark_validation_done()
             for progress in projector.project(item):
                 yield encode_sse(
                     EVENT_AGENTIC_PROGRESS,
@@ -931,6 +1073,8 @@ async def _run_agentic_turn(
                 continue
             if isinstance(item, AgenticReasoningStartedEvent):
                 # ASK-REASONING-R1 (late drain path).
+                # R3: mark first-reasoning timestamp (idempotent).
+                metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_STARTED,
                     item.model_dump(mode="json"),
@@ -938,6 +1082,8 @@ async def _run_agentic_turn(
                 continue
             if isinstance(item, AgenticReasoningDeltaEvent):
                 # ASK-REASONING-R1 (late drain path).
+                # R3: mark first-reasoning timestamp (idempotent).
+                metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
@@ -960,10 +1106,15 @@ async def _run_agentic_turn(
             ):
                 if isinstance(item, AnswerDeltaEvent):
                     # R4-A6: token-level answer_text increment (drain path).
+                    # R3: track first/last answer delta timestamps.
+                    metrics.mark_answer_delta()
                     yield encode_sse(
                         EVENT_MESSAGE_DELTA, {"delta": item.delta}
                     )
                     continue
+                # R3: validation_done on drain path too.
+                if isinstance(item, ValidatingEvidenceEvent | FinalAnswerEvent):
+                    metrics.mark_validation_done()
                 for progress in projector.project(item):
                     yield encode_sse(
                         EVENT_AGENTIC_PROGRESS,
@@ -979,13 +1130,15 @@ async def _run_agentic_turn(
             # Never surface account dumps, body, or denial text on the wire.
             logger.warning(
                 "reader_record_ask budget exhausted: account=%s turn_run_id=%s "
-                "message_id=%s model_route=%s envelope_fp=%s total_ms=%s",
+                "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
+                "lifecycle=%s",
                 getattr(exc, "account", "unknown"),
                 turn["id"],
                 assistant_msg["id"],
                 _safe_model_route(active_model),
                 envelope.envelope_fingerprint[:12],
                 max(0, int((time.perf_counter() - started_at) * 1000)),
+                metrics.to_log_dict(),
             )
             terminal = build_terminal_dto(
                 finalized=None,
@@ -1004,6 +1157,8 @@ async def _run_agentic_turn(
                 terminal_reason=terminal.terminal_reason,
                 terminal_dto=terminal.model_dump(mode="json"),
             )
+            # R3: terminal_sent marks the moment we yield the terminal SSE.
+            metrics.mark_terminal_sent()
             yield encode_sse(
                 EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
             )
@@ -1019,10 +1174,11 @@ async def _run_agentic_turn(
             if budget_exc is not None:
                 logger.warning(
                     "reader_record_ask budget exhausted (group): account=%s "
-                    "turn_run_id=%s message_id=%s",
+                    "turn_run_id=%s message_id=%s lifecycle=%s",
                     budget_exc.account,
                     turn["id"],
                     assistant_msg["id"],
+                    metrics.to_log_dict(),
                 )
                 terminal = build_terminal_dto(
                     finalized=None,
@@ -1041,6 +1197,8 @@ async def _run_agentic_turn(
                     terminal_reason=terminal.terminal_reason,
                     terminal_dto=terminal.model_dump(mode="json"),
                 )
+                # R3: terminal_sent marks the moment we yield the terminal SSE.
+                metrics.mark_terminal_sent()
                 yield encode_sse(
                     EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
                 )
@@ -1059,7 +1217,8 @@ async def _run_agentic_turn(
             logger.warning(
                 "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
-                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s",
+                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s "
+                "lifecycle=%s",
                 type(exc).__name__,
                 turn["id"],
                 assistant_msg["id"],
@@ -1070,6 +1229,7 @@ async def _run_agentic_turn(
                 projector.time_to_first_activity_ms,
                 projector.read_range_calls,
                 projector.search_current_article_calls,
+                metrics.to_log_dict(),
             )
             terminal = build_terminal_dto(
                 finalized=None,
@@ -1088,6 +1248,8 @@ async def _run_agentic_turn(
                 terminal_reason=terminal.terminal_reason,
                 terminal_dto=terminal.model_dump(mode="json"),
             )
+            # R3: terminal_sent marks the moment we yield the terminal SSE.
+            metrics.mark_terminal_sent()
             yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
             yield encode_sse(
                 EVENT_MESSAGE_INTERRUPTED,
@@ -1099,7 +1261,8 @@ async def _run_agentic_turn(
             logger.warning(
                 "reader_record_ask agent run failed: type=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
-                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s",
+                "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s "
+                "lifecycle=%s",
                 type(exc).__name__,
                 turn["id"],
                 assistant_msg["id"],
@@ -1110,6 +1273,7 @@ async def _run_agentic_turn(
                 projector.time_to_first_activity_ms,
                 projector.read_range_calls,
                 projector.search_current_article_calls,
+                metrics.to_log_dict(),
             )
             terminal = build_terminal_dto(
                 finalized=None,
@@ -1128,6 +1292,8 @@ async def _run_agentic_turn(
                 terminal_reason=terminal.terminal_reason,
                 terminal_dto=terminal.model_dump(mode="json"),
             )
+            # R3: terminal_sent marks the moment we yield the terminal SSE.
+            metrics.mark_terminal_sent()
             yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
             yield encode_sse(
                 EVENT_MESSAGE_INTERRUPTED,
@@ -1162,6 +1328,19 @@ async def _run_agentic_turn(
                 terminal_dto=terminal.model_dump(mode="json"),
             )
             assert persisted.get("resolved_evidence_json") in (None, [], "[]")
+            # R3: terminal_sent marks the moment we yield the terminal SSE.
+            # On cancel, persistence_done is intentionally skipped — no
+            # canonical answer was persisted on this path.
+            metrics.mark_terminal_sent()
+            logger.info(
+                "reader_record_ask turn cancelled: turn_run_id=%s message_id=%s "
+                "model_route=%s total_ms=%s lifecycle=%s",
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                max(0, int((time.perf_counter() - started_at) * 1000)),
+                metrics.to_log_dict(),
+            )
             yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
             yield encode_sse(
                 EVENT_MESSAGE_INTERRUPTED,
@@ -1226,7 +1405,8 @@ async def _run_agentic_turn(
         logger.info(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=%s total_ms=%s ttfa_ms=%s "
-            "progress_events=%s read_range_calls=%s search_calls=%s",
+            "progress_events=%s read_range_calls=%s search_calls=%s "
+            "lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1236,7 +1416,10 @@ async def _run_agentic_turn(
             projector.progress_event_count,
             run_result.read_range_calls,
             run_result.search_current_article_calls,
+            metrics.to_log_dict(),
         )
+        # R3: terminal_sent marks the moment we yield the terminal SSE.
+        metrics.mark_terminal_sent()
         yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
@@ -1274,7 +1457,7 @@ async def _run_agentic_turn(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
             "progress_events=%s read_range_calls=%s search_calls=%s "
-            "reason=%s",
+            "reason=%s lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1284,7 +1467,10 @@ async def _run_agentic_turn(
             run_result.read_range_calls,
             run_result.search_current_article_calls,
             TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+            metrics.to_log_dict(),
         )
+        # R3: terminal_sent marks the moment we yield the terminal SSE.
+        metrics.mark_terminal_sent()
         yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
@@ -1366,11 +1552,13 @@ async def _run_agentic_turn(
                 "reader_record_ask terminal persist also failed: turn_run_id=%s",
                 turn_run_id,
             )
+        # R3: terminal_sent marks the moment we yield the terminal SSE.
+        metrics.mark_terminal_sent()
         logger.info(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
             "progress_events=%s read_range_calls=%s search_calls=%s "
-            "reason=%s",
+            "reason=%s lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1380,10 +1568,71 @@ async def _run_agentic_turn(
             run_result.read_range_calls,
             run_result.search_current_article_calls,
             TERMINAL_REASON_PERSIST_FAILED,
+            metrics.to_log_dict(),
         )
         yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
         yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
+    # R3: persistence_done marks the successful commit timestamp. From
+    # this point on, the canonical answer is durable and any reload
+    # returns the same content.
+    # R4-3: CAS outcome check. Only the CAS WINNER (the call that
+    # actually flipped the row from streaming → completed with
+    # final_status=ok) may emit reasoning.completed and message.completed.
+    # The CAS loser (status == "already_terminal") must NOT emit
+    # completed — the winning writer owns the terminal. If the winning
+    # terminal was a non-ok state (cancelled / failed / context_stale),
+    # project the real persisted terminal so the client sees a typed
+    # terminal instead of an unexplained EOF. If the winning terminal
+    # was ok (duplicate completed), end silently — the first completed
+    # already emitted the canonical terminal.
+    if persisted.get("status") == "already_terminal":
+        winning_final_status = persisted.get("winning_final_status")
+        winning_terminal_reason = persisted.get("winning_terminal_reason")
+        winning_output_json = persisted.get("winning_user_visible_output_json")
+        logger.info(
+            "reader_record_ask CAS lost: turn_run_id=%s message_id=%s "
+            "winning_final_status=%s winning_terminal_reason=%s "
+            "model_route=%s total_ms=%s lifecycle=%s",
+            turn["id"],
+            assistant_msg["id"],
+            winning_final_status,
+            winning_terminal_reason,
+            _safe_model_route(active_model),
+            total_ms,
+            metrics.to_log_dict(),
+        )
+        # R4-3: mark terminal_sent so the lifecycle hook does not
+        # double-reconcile. We are about to either project the winning
+        # terminal or end silently — both are terminal outcomes.
+        metrics.mark_terminal_sent()
+        if winning_final_status in ("failed", "cancelled", "context_stale"):
+            # Project the real persisted terminal. Prefer the winning
+            # terminal DTO if the winner persisted one; otherwise build
+            # a minimal typed terminal from the persisted fields.
+            if isinstance(winning_output_json, dict):
+                terminal_json = winning_output_json
+            else:
+                terminal = build_terminal_dto(
+                    finalized=None,
+                    message_id=assistant_msg["id"],
+                    thread_id=str(thread_id),
+                    turn_run_id=turn["id"],
+                    envelope_fingerprint=envelope.envelope_fingerprint,
+                    final_status=winning_final_status,
+                    terminal_reason=winning_terminal_reason
+                    or TERMINAL_REASON_AGENT_RUN_FAILED,
+                )
+                terminal_json = terminal.model_dump(mode="json")
+            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
+            yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
+        # If winning_final_status == "ok" or unknown, end silently —
+        # the winning completed writer owns the message.completed
+        # terminal. The client will either see the winner's
+        # message.completed (same request) or run stale-stream
+        # reconciliation (different request / reconnect).
+        return
+    metrics.mark_persistence_done()
     stored = persisted.get("user_visible_output_json")
     emit_payload = stored if isinstance(stored, dict) else completed_json
     # ASK-REASONING-R1: persist-first ordering contract. The projection
@@ -1397,7 +1646,7 @@ async def _run_agentic_turn(
         "reader_record_ask turn completed: turn_run_id=%s message_id=%s "
         "model_route=%s final_status=ok total_ms=%s ttfa_ms=%s "
         "progress_events=%s read_range_calls=%s search_calls=%s "
-        "reasoning_projected=%s",
+        "reasoning_projected=%s lifecycle=%s",
         turn["id"],
         assistant_msg["id"],
         _safe_model_route(active_model),
@@ -1407,12 +1656,16 @@ async def _run_agentic_turn(
         run_result.read_range_calls,
         run_result.search_current_article_calls,
         reasoning_completed is not None,
+        metrics.to_log_dict(),
     )
     if reasoning_completed is not None:
         yield encode_sse(
             EVENT_AGENTIC_REASONING_COMPLETED,
             reasoning_completed.model_dump(mode="json"),
         )
+    # R3: terminal_sent marks the moment we yield message.completed —
+    # the client should be able to receive the terminal signal now.
+    metrics.mark_terminal_sent()
     yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
 
 
@@ -1448,6 +1701,12 @@ async def stream_agentic_thread_message(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
+    # ASK-TURN-LIFECYCLE R1: route-owned lifecycle hook. The generator
+    # registers the active turn (turn_run_id + message_id) as soon as
+    # the rows are persisted, and marks terminal-emitted after yielding
+    # a typed terminal event. The route's ``finally`` block uses this
+    # to reconcile any still-streaming row on generator close.
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -1660,63 +1919,132 @@ async def stream_agentic_thread_message(
         envelope_snapshot=_safe_envelope_snapshot(envelope),
     )
 
-    yield encode_sse(
-        EVENT_THREAD_READY,
-        {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V2},
-    )
-    yield encode_sse(
-        EVENT_MESSAGE_STARTED,
-        {
-            "message_id": assistant_msg["id"],
-            "thread_id": str(thread_id),
-            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-        },
-    )
-    run_started = ReaderRecordAskRunStartedDTO(
-        message_id=assistant_msg["id"],
-        thread_id=str(thread_id),
-        turn_run_id=turn["id"],
-        has_initial_selection=envelope.initial_anchor is not None,
-        # ASK-WEB-G1-R1: echo the resolved capability mode so the
-        # frontend can render the Search toggle in the correct state.
-        # ``allowed`` only means the capability is mounted; the agent
-        # may still choose not to search.
-        #
-        # ASK-WEB-G1-R3: ``allowed`` must only be echoed when a real
-        # executable ``WebSearchBackend`` is wired this turn. Even when
-        # the capability resolver returned ``enabled_for_turn=True``,
-        # missing backend means the ``search_web`` tool would be a
-        # "假可用" (fake-available) capability — the runtime must
-        # fail-closed to ``disabled`` so the UI/RunStarted never
-        # advertises a capability that cannot execute.
-        web_search_mode=(
-            "allowed"
-            if effective_web_search_capability is not None
-            else "disabled"
-        ),
-    )
-    yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
+    # ASK-TURN-LIFECYCLE R1: register the active turn identity with the
+    # route-owned lifecycle hook. From this point on, any generator close
+    # (client disconnect, BFF disconnect, ASGI cancellation) will trigger
+    # the route's ``finally`` block to reconcile this turn_run/message to
+    # a terminal state via ``reconcile_stale_streaming_turn_run``.
+    if lifecycle is not None:
+        lifecycle.register_active_turn(
+            turn_run_id=UUID(turn["id"]),
+            message_id=UUID(assistant_msg["id"]),
+        )
 
-    async for chunk in _run_agentic_turn(
-        repo=repo,
-        thread_id=thread_id,
-        assistant_msg=assistant_msg,
-        turn=turn,
-        envelope=envelope,
-        access=access,
-        active_model=active_model,
-        wired_rag=wired_rag,
-        wired_map_source_provider=wired_map_source_provider,
-        user_message=content,
-        run_fn=run_fn,
-        pointer_ledger=pointer_ledger,
-        model_settings=model_settings,
-        usage_limits=usage_limits,
-        web_search_capability=effective_web_search_capability,
-        web_search_backend=wired_web_search_backend,
-        web_evidence_registry=wired_web_evidence_registry,
-    ):
-        yield chunk
+    # ASK-TURN-LIFECYCLE R4-5c: heartbeat task. During streaming, a
+    # background coroutine updates ``updated_at`` on the turn_run row at
+    # ``HEARTBEAT_INTERVAL_SECONDS`` intervals. The stale-stream
+    # reconciler (startup sweep + periodic sweeper) treats rows whose
+    # ``updated_at`` is older than ``HEARTBEAT_STALE_THRESHOLD_SECONDS``
+    # as heartbeat-dead — i.e. the owner process is gone or stuck. This
+    # is the heartbeat half of the owner/lease proof: the route
+    # ``finally`` is the lease release; this loop is the heartbeat that
+    # proves the lease is still alive during long-running turns.
+    #
+    # The task is best-effort: heartbeat failures are logged and do not
+    # tear down the stream. The ``WHERE status = 'streaming'`` guard in
+    # ``heartbeat_turn_run`` makes the write a no-op once the row
+    # transitions to terminal, so a late heartbeat after the row has
+    # already been reconciled cannot resurrect it.
+    heartbeat_turn_run_id = UUID(turn["id"])
+    heartbeat_task: asyncio.Task[None] | None = None
+
+    async def _heartbeat_loop() -> None:
+        while True:
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+            try:
+                await repo.heartbeat_turn_run(turn_run_id=heartbeat_turn_run_id)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "heartbeat_turn_run failed turn_run_id=%s",
+                    heartbeat_turn_run_id,
+                    exc_info=True,
+                )
+
+    try:
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
+        yield encode_sse(
+            EVENT_THREAD_READY,
+            {"thread_id": str(thread_id), "execution_version": EXECUTION_VERSION_AGENTIC_V2},
+        )
+        yield encode_sse(
+            EVENT_MESSAGE_STARTED,
+            {
+                "message_id": assistant_msg["id"],
+                "thread_id": str(thread_id),
+                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            },
+        )
+        run_started = ReaderRecordAskRunStartedDTO(
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            has_initial_selection=envelope.initial_anchor is not None,
+            # ASK-WEB-G1-R1: echo the resolved capability mode so the
+            # frontend can render the Search toggle in the correct state.
+            # ``allowed`` only means the capability is mounted; the agent
+            # may still choose not to search.
+            #
+            # ASK-WEB-G1-R3: ``allowed`` must only be echoed when a real
+            # executable ``WebSearchBackend`` is wired this turn. Even when
+            # the capability resolver returned ``enabled_for_turn=True``,
+            # missing backend means the ``search_web`` tool would be a
+            # "假可用" (fake-available) capability — the runtime must
+            # fail-closed to ``disabled`` so the UI/RunStarted never
+            # advertises a capability that cannot execute.
+            web_search_mode=(
+                "allowed"
+                if effective_web_search_capability is not None
+                else "disabled"
+            ),
+        )
+        yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
+
+        async for chunk in _run_agentic_turn(
+            repo=repo,
+            thread_id=thread_id,
+            assistant_msg=assistant_msg,
+            turn=turn,
+            envelope=envelope,
+            access=access,
+            active_model=active_model,
+            wired_rag=wired_rag,
+            wired_map_source_provider=wired_map_source_provider,
+            user_message=content,
+            run_fn=run_fn,
+            pointer_ledger=pointer_ledger,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            web_search_capability=effective_web_search_capability,
+            web_search_backend=wired_web_search_backend,
+            web_evidence_registry=wired_web_evidence_registry,
+        ):
+            yield chunk
+            # ASK-TURN-LIFECYCLE R1: mark terminal-emitted as soon as the
+            # generator yields a typed terminal event. This tells the
+            # route's ``finally`` block that the row was already
+            # terminalized by the generator and stale-stream reconciliation
+            # must be skipped (idempotent guard).
+            if lifecycle is not None and _is_terminal_sse_chunk(chunk):
+                lifecycle.mark_terminal_emitted()
+    finally:
+        # R4-5c: cancel the heartbeat task on stream end (normal,
+        # exception, or ASGI cancellation). The ``CancelledError`` is
+        # expected and swallowed; any other exception surfaced from the
+        # heartbeat loop is logged but never re-raised — the stream's
+        # own terminal state must win.
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "heartbeat_task teardown raised turn_run_id=%s",
+                    heartbeat_turn_run_id,
+                    exc_info=True,
+                )
 
 
 async def retry_agentic_thread_message(
@@ -1744,6 +2072,8 @@ async def retry_agentic_thread_message(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
+    # ASK-TURN-LIFECYCLE R1: forwarded to ``stream_agentic_thread_message``.
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     """Retry an existing assistant message via the agentic path.
 
@@ -1790,6 +2120,7 @@ async def retry_agentic_thread_message(
         web_search_capability=web_search_capability,
         web_search_backend=web_search_backend,
         web_evidence_registry=web_evidence_registry,
+        lifecycle=lifecycle,
     ):
         yield chunk
     return

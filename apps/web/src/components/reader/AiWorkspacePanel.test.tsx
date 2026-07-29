@@ -11,6 +11,7 @@ import type {
   ReaderAskWebSearchSummaryDto,
 } from "@/types/api/reader-ask";
 import { consumeReaderAskSse } from "./ask/sse";
+import { makeLogicalTerminalResult } from "./ask/turn-lifecycle";
 import {
   AiWorkspacePanel,
   createSseMessageHandler,
@@ -2600,6 +2601,7 @@ describe("AiWorkspacePanel", () => {
           required_points: 10,
         },
       });
+      return makeLogicalTerminalResult("parse_error");
     });
 
     render(
@@ -2695,6 +2697,7 @@ describe("AiWorkspacePanel", () => {
         event: "message.completed",
         data: { ...completedPayload, article_rag: articleRag },
       });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
   }
 
@@ -3148,6 +3151,7 @@ describe("createSseMessageHandler – replan.started", () => {
         status: "streaming",
         content_md: "旧的中断内容",
         regenerate_preview: true,
+        provisional_content_md: null,
         context_anchors: [],
         citations: [],
         action_proposals: [],
@@ -3177,7 +3181,11 @@ describe("createSseMessageHandler – replan.started", () => {
     });
     flushRaf();
 
-    expect(updatedMessages[0].content_md).toBe("新的开头");
+    // ASK-TURN-LIFECYCLE R2 — delta goes into provisional_content_md, not
+    // content_md. The old canonical answer is preserved until a new one
+    // is committed via message.completed.
+    expect(updatedMessages[0].provisional_content_md).toBe("新的开头");
+    expect(updatedMessages[0].content_md).toBe("旧的中断内容");
     expect(updatedMessages[0].regenerate_preview).toBe(false);
   });
 });
@@ -3221,6 +3229,7 @@ describe("createSseMessageHandler – reasoning lifecycle", () => {
       role: "assistant",
       status: "streaming",
       content_md: "",
+      provisional_content_md: null,
       reasoning_md: null,
       reasoning_status: null,
       context_anchors: [],
@@ -3487,6 +3496,7 @@ describe("createSseMessageHandler – agentic reasoning projection", () => {
       role: "assistant",
       status: "streaming",
       content_md: "",
+      provisional_content_md: null,
       reasoning_md: null,
       reasoning_status: null,
       context_anchors: [],
@@ -3928,6 +3938,7 @@ describe("createSseMessageHandler – context compression UX", () => {
       role: "assistant",
       status: "streaming",
       content_md: "",
+      provisional_content_md: null,
       reasoning_md: null,
       reasoning_status: null,
       context_anchors: [],
@@ -3979,7 +3990,10 @@ describe("createSseMessageHandler – context compression UX", () => {
     flushRaf();
 
     expect(getMessages()[0].compacting).toBe(false);
-    expect(getMessages()[0].content_md).toBe("开始回答");
+    // ASK-TURN-LIFECYCLE R2 — delta accumulates into provisional_content_md,
+    // not content_md.
+    expect(getMessages()[0].provisional_content_md).toBe("开始回答");
+    expect(getMessages()[0].content_md).toBe("");
   });
 
   it("resets compacting to false on message.completed", () => {
@@ -4096,6 +4110,7 @@ describe("createSseMessageHandler – agentic stream", () => {
       role: "assistant",
       status: "streaming",
       content_md: "",
+      provisional_content_md: null,
       reasoning_md: null,
       reasoning_status: null,
       context_anchors: [],
@@ -4178,7 +4193,7 @@ describe("createSseMessageHandler – agentic stream", () => {
 
   it("completes temporary assistant from agentic answer_text without reading content_md", () => {
     const { handler, getMessages, onMessageIdAssigned, onError } = setupHandler([
-      makeStreamingAssistant({ compacting: true, replan_status: "replanning", regenerate_preview: true }),
+      makeStreamingAssistant({ compacting: true, replan_status: "replanning", regenerate_preview: true, provisional_content_md: "streaming preview" }),
     ]);
 
     handler({ event: "message.completed", data: agenticCompleted });
@@ -4189,6 +4204,9 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.thread_id).toBe("thread-1");
     expect(message.status).toBe("completed");
     expect(message.content_md).toBe("Climate change is discussed in paragraph 2.");
+    // ASK-TURN-LIFECYCLE R2 — canonical answer atomically replaces provisional.
+    // The provisional slot must be cleared on committed terminal.
+    expect(message.provisional_content_md).toBeNull();
     expect(message.compacting).toBe(false);
     expect(message.replan_status).toBe("idle");
     expect(message.regenerate_preview).toBe(false);
@@ -4223,7 +4241,7 @@ describe("createSseMessageHandler – agentic stream", () => {
 
   it("does not complete answer on agentic failed terminal", () => {
     const { handler, getMessages, onError } = setupHandler([
-      makeStreamingAssistant({ content_md: "", compacting: true }),
+      makeStreamingAssistant({ content_md: "", compacting: true, provisional_content_md: "half answer" }),
     ]);
 
     const terminal = {
@@ -4242,7 +4260,10 @@ describe("createSseMessageHandler – agentic stream", () => {
 
     const message = getMessages()[0];
     expect(message.status).toBe("failed");
+    // ASK-TURN-LIFECYCLE R2 — non-ok terminal must not preserve provisional
+    // preview as canonical. content_md stays empty, provisional is dropped.
     expect(message.content_md).toBe("");
+    expect(message.provisional_content_md).toBeNull();
     expect(message.compacting).toBe(false);
     expect(message.replan_status).toBe("idle");
     expect(message.agentic_evidence ?? null).toBeNull();
@@ -4253,7 +4274,7 @@ describe("createSseMessageHandler – agentic stream", () => {
 
   it("does not complete answer on agentic context_stale terminal", () => {
     const { handler, getMessages, onError } = setupHandler([
-      makeStreamingAssistant({ content_md: "should stay", regenerate_preview: true }),
+      makeStreamingAssistant({ content_md: "should stay", regenerate_preview: true, provisional_content_md: "new preview" }),
     ]);
 
     const terminal = {
@@ -4270,7 +4291,10 @@ describe("createSseMessageHandler – agentic stream", () => {
 
     const message = getMessages()[0];
     expect(message.status).toBe("interrupted");
+    // ASK-TURN-LIFECYCLE R2 — non-ok terminal drops provisional preview.
+    // Canonical content_md is preserved from before this turn.
     expect(message.content_md).toBe("should stay");
+    expect(message.provisional_content_md).toBeNull();
     expect(message.regenerate_preview).toBe(false);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenLastCalledWith("阅读上下文已更新，请重试提问。");
@@ -4308,6 +4332,134 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.content_md).toBe("");
     expect(onError).not.toHaveBeenCalled();
     expect(onMessageIdAssigned).toHaveBeenCalledWith("msg-agentic-1");
+  });
+
+  it("accepts only strictly increasing preview resets for the active turn", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        has_initial_selection: true,
+      },
+    });
+    handler({
+      event: "message.preview_reset",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 2,
+        reason: "tool_result_boundary",
+      },
+    });
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 2,
+        delta: "new answer",
+      },
+    });
+    handler({
+      event: "message.preview_reset",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 2,
+        reason: "model_retry_output",
+      },
+    });
+    handler({
+      event: "message.preview_reset",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 1,
+        reason: "model_retry_output",
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].provisional_content_md).toBe("new answer");
+  });
+
+  it("ignores foreign-turn answer deltas even when generation_id matches", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        has_initial_selection: true,
+      },
+    });
+    handler({
+      event: "message.preview_reset",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 2,
+        reason: "tool_result_boundary",
+      },
+    });
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-foreign",
+        generation_id: 2,
+        delta: "foreign answer",
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].provisional_content_md).toBe("");
+  });
+
+  it("requires a trusted reset before accepting a future generation delta", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        has_initial_selection: true,
+      },
+    });
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-agentic-1",
+        thread_id: "thread-1",
+        turn_run_id: "turn-run-1",
+        generation_id: 1,
+        delta: "untrusted future answer",
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].provisional_content_md).toBeNull();
   });
 
   it("still completes legacy message.completed with content_md", () => {
@@ -4712,6 +4864,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
       onEvent({ event: "message.completed", data: agenticCompletedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
 
     const { container } = renderPanel();
@@ -4776,6 +4929,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
           citations: [],
         },
       });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
 
     renderPanel();
@@ -4798,9 +4952,11 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
       .mockImplementationOnce(async (_response, onEvent) => {
         onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
         onEvent({ event: "message.completed", data: agenticCompletedPayload });
+        return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
       })
       .mockImplementationOnce(async () => {
         // Leave the stream hanging so we can assert the retry placeholder state.
+        return makeLogicalTerminalResult("eof");
       });
 
     renderPanel();
@@ -5670,6 +5826,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
       role: "assistant",
       status: "streaming",
       content_md: "",
+      provisional_content_md: null,
       reasoning_md: null,
       reasoning_status: null,
       context_anchors: [],
@@ -5779,7 +5936,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
   });
 
   it("applyAgenticTerminal stores final_status on the message for bubble refinement", () => {
-    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant({ provisional_content_md: "preview" })]);
     handler({
       event: "agentic.terminal",
       data: agenticTerminal({ final_status: "context_stale", terminal_reason: "generation mismatch" }),
@@ -5788,6 +5945,8 @@ describe("AiWorkspacePanel – terminal error classification", () => {
     expect(message.status).toBe("interrupted");
     expect(message.final_status).toBe("context_stale");
     expect(message.content_md).toBe("");
+    // ASK-TURN-LIFECYCLE R2 — non-ok terminal drops provisional preview.
+    expect(message.provisional_content_md).toBeNull();
   });
 });
 

@@ -35,6 +35,7 @@ CoT and never the final answer.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -50,7 +51,44 @@ from app.services.reader_record_ask.runtime_events import (
 PROJECTION_POLICY_VERSION: str = "reasoning_projection_v1"
 
 # Host-side quota for one turn's visible projection (code points).
-DEFAULT_PROJECTION_CHAR_CAP: int = 4_000
+# ASK-TURN-LIFECYCLE R3: raised from 4_000 to 14_000 (within the audit-
+# recommended 12K–16K band). Long agentic turns with thinking + article
+# RAG + web search + retry routinely produce >4K reasoning; the old cap
+# guaranteed truncation on every long turn. 14K balances visibility with
+# DB/SSE cost. Override via ``CLAREAD_REASONING_PROJECTION_CHAR_CAP``.
+_DEFAULT_PROJECTION_CHAR_CAP_BAND: tuple[int, int] = (12_000, 20_000)
+
+
+def _resolve_projection_char_cap() -> int:
+    """Resolve the reasoning projection cap from env or default.
+
+    Priority: ``CLAREAD_REASONING_PROJECTION_CHAR_CAP`` env > default.
+    The env value must be in the [12K, 20K] band — values outside are
+    clamped to the band to prevent misconfiguration (too small → always
+    truncated; too large → DB/SSE bloat).
+    """
+    default = 14_000
+    raw = os.environ.get("CLAREAD_REASONING_PROJECTION_CHAR_CAP")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    lo, hi = _DEFAULT_PROJECTION_CHAR_CAP_BAND
+    return max(lo, min(hi, value))
+
+
+DEFAULT_PROJECTION_CHAR_CAP: int = _resolve_projection_char_cap()
+
+# ASK-TURN-LIFECYCLE R4-4: the hard round-0 sub-cap (former
+# ``ROUND0_CAP_FRACTION = 0.65``) was removed because it silently dropped
+# up to 35% of round-0 reasoning without setting ``truncated=True``,
+# producing an undeclared gap in the visible projection. The turn-level
+# total cap is the ONLY quota: ``truncated`` now accurately reflects
+# whether the user-visible projection was truncated by the total cap.
+# ``advance_round()`` is retained as a no-op for backward-compat with
+# thinking_transport boundary calls — it no longer affects quota.
 
 # Appended exactly once when the quota is hit; part of the visible text so
 # hot deltas, persisted snapshot, and cold history stay byte-identical.
@@ -488,7 +526,13 @@ class ReasoningProjectionBuffer:
     empty); ``text`` is the exact concatenation of every increment ever
     returned — the same string that is persisted and cold-loaded. Quota
     truncation appends ``TRUNCATION_MARKER`` once and then stays silent;
-    after the quota is reached no further raw reasoning is fed or buffered.
+    after the quota is reached no further raw reasoning is fed or bufferred.
+
+    ASK-TURN-LIFECYCLE R4-4: the per-round sub-cap was removed. The
+    turn-level total cap is the ONLY quota. ``truncated=True`` iff the
+    total cap was hit (marker appended exactly once at the end).
+    ``advance_round()`` is a no-op retained for backward-compat with
+    thinking_transport boundary calls.
     """
 
     char_cap: int = DEFAULT_PROJECTION_CHAR_CAP
@@ -509,6 +553,15 @@ class ReasoningProjectionBuffer:
                 "char_cap must be an integer greater than or equal to "
                 "the truncation marker length"
             )
+
+    def advance_round(self) -> None:
+        """No-op retained for backward-compat with thinking_transport.
+
+        R4-4: the per-round sub-cap was removed. The turn-level total
+        cap is the only quota. This method is now a no-op so callers
+        (thinking_transport tool-result boundary) don't need changes.
+        """
+        return None
 
     def feed(self, raw_chunk: str) -> str:
         if self._truncated or not raw_chunk:
@@ -532,24 +585,21 @@ class ReasoningProjectionBuffer:
             # and preserves concat(deltas) == persisted text.
             return ""
         marker_len = len(TRUNCATION_MARKER)
-        # Exact-cap protocol (R3): reserve marker_len code points so the
-        # marker always fits when actual truncation occurs. Provable:
+        # R4-4: total cap is the ONLY quota. Provable:
         #   no marker   ⇒ text ≤ char_cap − marker_len
         #   with marker ⇒ text == char_cap exactly, marker at end, once
         # Hence truncated=True ⇔ marker at end, and truncated=False ⇒ no
-        # marker. Emitted text is only ever appended — never rewritten — so
-        # concat(SSE deltas) == buffer.text == persisted == cold history.
+        # marker. Emitted text is only ever appended — never rewritten —
+        # so concat(SSE deltas) == buffer.text == persisted == cold history.
         content_room = (self.char_cap - marker_len) - len(self._text)
-        if len(projected) <= content_room:
-            # Fits entirely within the content reservation — no truncation.
-            self._text += projected
-            return projected
-        # Crossed the reservation ⇒ actual truncation; marker exactly once.
-        keep = max(0, content_room)
-        increment = projected[:keep] + TRUNCATION_MARKER
-        self._text += increment
-        self._truncated = True
-        return increment
+        if len(projected) > content_room:
+            keep = max(0, content_room)
+            increment = projected[:keep] + TRUNCATION_MARKER
+            self._text += increment
+            self._truncated = True
+            return increment
+        self._text += projected
+        return projected
 
     @property
     def text(self) -> str:
@@ -687,6 +737,18 @@ class ReasoningProjectorObserver:
         self._publish(self._buffer.flush())
 
     # -- Host API ------------------------------------------------------------
+
+    def advance_round(self) -> None:
+        """Signal a tool/retry boundary to the projection buffer.
+
+        ASK-TURN-LIFECYCLE R4-4: the per-round sub-cap was removed. The
+        turn-level total cap is the ONLY quota. This method is now a no-op
+        retained for backward-compat with thinking_transport boundary
+        calls — the buffer ignores it entirely. Idempotent.
+        """
+        if self._sealed:
+            return
+        self._buffer.advance_round()
 
     @property
     def started(self) -> bool:

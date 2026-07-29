@@ -121,6 +121,8 @@ def _empty_legacy_lists() -> dict[str, Any]:
         "run_history": [],
         "reasoning_md": None,
         "reasoning_status": None,
+        # R4-4: cold history truncated flag — None when no reasoning.
+        "reasoning_truncated": None,
         "article_rag": None,
         "article_rag_citations": [],
     }
@@ -143,8 +145,10 @@ def _sanitize_turn_run_for_wire(turn_run: dict[str, Any] | None) -> dict[str, An
     return cleaned
 
 
-def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | None:
-    """Extract the visible reasoning text for cold history, fail-closed.
+def _safe_reasoning_projection(
+    turn_run: dict[str, Any] | None
+) -> tuple[str | None, bool | None]:
+    """Extract the visible reasoning text + truncated flag, fail-closed.
 
     ASK-REASONING-R1/R2: delegates to the canonical snapshot validator
     shared with the write path — exact policy version, exact key set,
@@ -152,15 +156,31 @@ def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | No
     and byte-invariant re-projection (no raw sentinel may have reached the
     stored shape). Any invalid snapshot yields no reasoning element at
     all — never a degraded display of the raw payload.
+
+    ASK-TURN-LIFECYCLE R4-4: returns ``(text, truncated)`` so cold history
+    restores both ``reasoning_md`` and ``reasoning_truncated`` from the
+    same validated snapshot. ``(None, None)`` when no valid projection
+    exists — frontend renders no reasoning element.
+
+    Returns ``(text, truncated)`` where ``text`` is the visible projection
+    string (or None) and ``truncated`` is True/False (or None).
     """
     if not isinstance(turn_run, dict):
-        return None
+        return None, None
     validated = validate_reasoning_snapshot(
         turn_run.get("reasoning_projection_json")
     )
     if validated is None:
-        return None
-    return validated["text"]
+        return None, None
+    return validated["text"], validated["truncated"]
+
+
+def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | None:
+    """Backward-compat wrapper returning only the text. Prefer
+    :func:`_safe_reasoning_projection` for new callers.
+    """
+    text, _ = _safe_reasoning_projection(turn_run)
+    return text
 
 
 def _safe_degraded_message(
@@ -301,7 +321,11 @@ def project_agentic_history_message(
     # ASK-REASONING-R1: cold reasoning comes only from the persisted
     # projection (committed atomically with the ok answer). Extracted
     # before wire sanitization strips the raw JSONB payload.
-    reasoning_text = _safe_reasoning_projection_text(current_turn_run)
+    # R4-4: extract both text and truncated flag from the same validated
+    # snapshot so hot SSE, DB snapshot, and cold history stay consistent.
+    reasoning_text, reasoning_truncated = _safe_reasoning_projection(
+        current_turn_run
+    )
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
     base_kwargs = {
         "message_id": message_id,
@@ -348,8 +372,13 @@ def project_agentic_history_message(
                 # fields (hot SSE and cold history share them). Byte-identical
                 # to the hot projection: persisted snapshot text == concat of
                 # streamed deltas by construction.
+                # R4-4: ``reasoning_truncated`` restored from the same
+                # validated snapshot — ``True`` means the visible text was
+                # truncated by the turn-level total cap (marker at end).
+                # ``None`` when no reasoning was projected.
                 "reasoning_md": reasoning_text,
                 "reasoning_status": "completed" if reasoning_text is not None else None,
+                "reasoning_truncated": reasoning_truncated,
                 "usage_event_id": usage_event_id,
                 "current_turn_run_id": current_turn_run_id,
                 "current_turn_run": safe_turn_run,

@@ -1,0 +1,302 @@
+/**
+ * ASK-TURN-LIFECYCLE R0 — Turn stream lifecycle typed contract (Web).
+ *
+ * Mirrors the backend contract in
+ * `services/api/app/services/reader_record_ask/turn_lifecycle.py`.
+ *
+ * State machine
+ * -------------
+ *
+ *   idle → running → finalizing → committed
+ *                        │
+ *                        ├──→ failed
+ *                        └──→ cancelled
+ *
+ * Critical invariants
+ * -------------------
+ *
+ * - HTTP EOF is transport cleanup, NOT a business terminal. Only a
+ *   trusted typed terminal event (message.completed /
+ *   agentic.terminal / legacy message.interrupted / parse-error /
+ *   abort) may move the lifecycle into a terminal state.
+ * - A terminal is TRUSTED only when its message_id / thread_id /
+ *   turn_run_id match the active turn identity captured at
+ *   agentic.run_started. Foreign / stale terminals are ignored and
+ *   never unlock the composer.
+ * - Provisional answer deltas never write to canonical answer slots.
+ *   Only message.completed atomically replaces them.
+ * - Any terminal other than `committed` discards the provisional
+ *   preview. Failure / cancel / retry never preserves half answers.
+ * - Terminal writes are idempotent: a `cancelled` arriving after
+ *   `committed` (or vice versa) must not flip the row back.
+ *
+ * This module is intentionally dependency-free (no React, no fetch)
+ * so it can be imported by both the SSE consumer and Vitest contract
+ * tests.
+ */
+
+export type TurnLifecycleState =
+  | "idle"
+  | "running"
+  | "finalizing"
+  | "committed"
+  | "failed"
+  | "cancelled";
+
+export const TERMINAL_STATES: ReadonlySet<TurnLifecycleState> = new Set([
+  "committed",
+  "failed",
+  "cancelled",
+]);
+
+export const TRUSTED_TERMINAL_EVENT_NAMES: ReadonlySet<string> = new Set([
+  "message.completed",
+  "agentic.terminal",
+  "message.interrupted",
+]);
+
+export type TerminalFinalStatus =
+  | "ok"
+  | "failed"
+  | "cancelled"
+  | "context_stale";
+
+export type LogicalTerminalKind =
+  | "completed"
+  | "terminal"
+  | "interrupted"
+  | "abort"
+  | "parse_error"
+  | "eof";
+
+export interface TurnIdentity {
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly turnRunId: string;
+}
+
+export interface LogicalTerminalResult {
+  readonly kind: LogicalTerminalKind;
+  readonly identity: TurnIdentity | null;
+  readonly finalStatus: TerminalFinalStatus | null;
+  readonly terminalReason: string | null;
+  readonly receivedAt: number; // epoch ms
+}
+
+export const STALE_STREAM_TERMINAL_REASON = "stale_stream_reconciled";
+
+export function isTerminalState(state: TurnLifecycleState): boolean {
+  return TERMINAL_STATES.has(state);
+}
+
+export function isTrustedTerminalEvent(eventName: string): boolean {
+  return TRUSTED_TERMINAL_EVENT_NAMES.has(eventName);
+}
+
+export function stateForFinalStatus(
+  finalStatus: TerminalFinalStatus | string | null | undefined,
+): TurnLifecycleState {
+  if (finalStatus === null || finalStatus === undefined || finalStatus === "") {
+    return "failed";
+  }
+  switch (finalStatus) {
+    case "ok":
+      return "committed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "context_stale":
+      return "failed";
+    default:
+      return "failed";
+  }
+}
+
+export function isTrustedTerminal(
+  result: LogicalTerminalResult,
+): boolean {
+  return (
+    result.kind === "completed" ||
+    result.kind === "terminal" ||
+    result.kind === "interrupted" ||
+    result.kind === "abort" ||
+    result.kind === "parse_error"
+  );
+}
+
+export function resultingState(
+  result: LogicalTerminalResult,
+): TurnLifecycleState {
+  switch (result.kind) {
+    case "completed":
+      return "committed";
+    case "terminal":
+    case "interrupted":
+      return result.finalStatus === "cancelled" ? "cancelled" : "failed";
+    case "abort":
+      return "cancelled";
+    case "parse_error":
+      return "failed";
+    case "eof":
+      return "failed";
+  }
+}
+
+export function matchesTurnIdentity(
+  identity: TurnIdentity,
+  candidate: {
+    messageId?: string | null;
+    threadId?: string | null;
+    turnRunId?: string | null;
+  },
+): boolean {
+  const { messageId, threadId, turnRunId } = candidate;
+  return (
+    Boolean(messageId) &&
+    Boolean(threadId) &&
+    Boolean(turnRunId) &&
+    messageId === identity.messageId &&
+    threadId === identity.threadId &&
+    turnRunId === identity.turnRunId
+  );
+}
+
+export function makeLogicalTerminalResult(
+  kind: LogicalTerminalKind,
+  init: {
+    identity?: TurnIdentity | null;
+    finalStatus?: TerminalFinalStatus | null;
+    terminalReason?: string | null;
+  } = {},
+): LogicalTerminalResult {
+  return {
+    kind,
+    identity: init.identity ?? null,
+    finalStatus: init.finalStatus ?? null,
+    terminalReason: init.terminalReason ?? null,
+    receivedAt: Date.now(),
+  };
+}
+
+/**
+ * ASK-TURN-LIFECYCLE R3 — Per-turn lifecycle timing metrics (Web).
+ *
+ * Mirrors the backend ``_TurnLifecycleMetrics`` in
+ * ``services/api/app/services/reader_record_ask/production_stream.py``.
+ *
+ * Records only timestamps relative to ``startedAt`` — never answer
+ * content, reasoning text, citations, provider payloads, secrets, or
+ * user input. The metric set is the union of backend-emitted and
+ * frontend-only-emitted kinds:
+ *
+ * - ``first_reasoning`` — first ``agentic.reasoning.started`` /
+ *   ``agentic.reasoning.delta`` arrival. ``null`` if no reasoning was
+ *   emitted this turn.
+ * - ``first_answer_delta`` / ``last_answer_delta`` — first and last
+ *   ``message.delta`` arrival times. ``null`` if no answer delta
+ *   arrived (e.g., early validation failure). The gap
+ *   ``last - first`` is the answer streaming duration.
+ * - ``validation_done`` — signal that the host has reached the
+ *   validation/finalization phase. On the frontend this is approximated
+ *   by the first ``agentic.progress`` event whose phase is
+ *   ``validating_evidence`` OR the first ``message.completed`` frame,
+ *   whichever fires first. ``null`` if the turn failed before reaching
+ *   validation.
+ * - ``persistence_done`` — successful commit timestamp. On the
+ *   frontend this is approximated by the ``message.completed`` arrival
+ *   (the backend only emits ``message.completed`` after the canonical
+ *   answer is durable). ``null`` on failure paths.
+ * - ``terminal_sent`` — backend-only metric (when the backend yielded
+ *   the typed terminal SSE frame). Not tracked on the frontend.
+ * - ``terminal_received`` — first typed terminal frame arrival at the
+ *   SSE consumer (``message.completed`` / ``agentic.terminal`` /
+ *   ``message.interrupted`` for the active turn, or ``parse_error`` /
+ *   ``abort`` / ``eof``). Marks the moment the client should be able
+ *   to start unlocking the composer.
+ * - ``composer_enabled`` — the moment ``setSending(false)`` runs and
+ *   the composer is actually interactive again. The gap
+ *   ``composer_enabled - terminal_received`` is the client-side unlock
+ *   latency; a large gap indicates the host is doing too much work
+ *   between the terminal frame and the composer re-enable.
+ *
+ * All timestamps are ``performance.now()`` deltas (ms) from
+ * ``startedAt`` so they are monotonic and clock-skew-immune. The
+ * ``toJSON()`` method returns a log-safe object — no content or
+ * secrets.
+ */
+export interface TurnLifecycleMetricSnapshot {
+  readonly first_reasoning: number | null;
+  readonly first_answer_delta: number | null;
+  readonly last_answer_delta: number | null;
+  readonly validation_done: number | null;
+  readonly persistence_done: number | null;
+  readonly terminal_received: number | null;
+  readonly composer_enabled: number | null;
+}
+
+export class TurnLifecycleMetrics {
+  private readonly startedAt: number;
+  public first_reasoning: number | null = null;
+  public first_answer_delta: number | null = null;
+  public last_answer_delta: number | null = null;
+  public validation_done: number | null = null;
+  public persistence_done: number | null = null;
+  public terminal_received: number | null = null;
+  public composer_enabled: number | null = null;
+
+  constructor(startedAt: number = performance.now()) {
+    this.startedAt = startedAt;
+  }
+
+  private elapsed(): number {
+    return Math.max(0, performance.now() - this.startedAt);
+  }
+
+  markFirstReasoning(): void {
+    if (this.first_reasoning === null) {
+      this.first_reasoning = this.elapsed();
+    }
+  }
+
+  markAnswerDelta(): void {
+    if (this.first_answer_delta === null) {
+      this.first_answer_delta = this.elapsed();
+    }
+    this.last_answer_delta = this.elapsed();
+  }
+
+  markValidationDone(): void {
+    if (this.validation_done === null) {
+      this.validation_done = this.elapsed();
+    }
+  }
+
+  markPersistenceDone(): void {
+    this.persistence_done = this.elapsed();
+  }
+
+  markTerminalReceived(): void {
+    if (this.terminal_received === null) {
+      this.terminal_received = this.elapsed();
+    }
+  }
+
+  markComposerEnabled(): void {
+    if (this.composer_enabled === null) {
+      this.composer_enabled = this.elapsed();
+    }
+  }
+
+  toJSON(): TurnLifecycleMetricSnapshot {
+    return {
+      first_reasoning: this.first_reasoning,
+      first_answer_delta: this.first_answer_delta,
+      last_answer_delta: this.last_answer_delta,
+      validation_done: this.validation_done,
+      persistence_done: this.persistence_done,
+      terminal_received: this.terminal_received,
+      composer_enabled: this.composer_enabled,
+    };
+  }
+}

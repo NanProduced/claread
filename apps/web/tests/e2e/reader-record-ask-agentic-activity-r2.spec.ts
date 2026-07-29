@@ -76,6 +76,37 @@ function agenticCompletedPayload(answerText: string) {
   };
 }
 
+function messageDeltaPayload(
+  generationId: number,
+  delta: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    execution_version: EXECUTION_VERSION,
+    message_id: MESSAGE_ID,
+    thread_id: THREAD_ID,
+    turn_run_id: TURN_RUN_ID,
+    generation_id: generationId,
+    delta,
+    ...overrides,
+  };
+}
+
+function previewResetPayload(
+  generationId: number,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    execution_version: EXECUTION_VERSION,
+    message_id: MESSAGE_ID,
+    thread_id: THREAD_ID,
+    turn_run_id: TURN_RUN_ID,
+    generation_id: generationId,
+    reason: "tool_result_boundary",
+    ...overrides,
+  };
+}
+
 function agenticTerminalPayload(
   finalStatus: "failed" | "cancelled" | "context_stale" | "invalid_citations" = "failed",
   overrides: Record<string, unknown> = {},
@@ -1383,5 +1414,70 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       "部分投影思考。",
       { timeout: 10_000 },
     );
+  });
+
+  test("23. preview reset 严格递增且不会被重复 reset 清空", async ({ page }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      {
+        event: "message.delta",
+        data: messageDeltaPayload(0, "旧 generation 前缀"),
+        hold: true,
+      },
+      {
+        event: "message.preview_reset",
+        data: previewResetPayload(1),
+        hold: true,
+      },
+      {
+        event: "message.delta",
+        data: messageDeltaPayload(1, "新 generation 回答"),
+        hold: true,
+      },
+      {
+        event: "message.preview_reset",
+        data: previewResetPayload(1, { reason: "model_retry_output" }),
+        hold: true,
+      },
+      { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
+    ]);
+
+    await submitQuestion(page, "generation reset 浏览器合同");
+    const assistantMessage = page.locator('[data-testid="ask-assistant-message"]');
+    await expect(assistantMessage).toContainText("旧 generation 前缀");
+
+    await releaseNext(page);
+    await expect(assistantMessage).not.toContainText("旧 generation 前缀");
+
+    await releaseNext(page);
+    await expect(assistantMessage).toContainText("新 generation 回答");
+
+    await releaseNext(page);
+    await expect(assistantMessage).toContainText("新 generation 回答");
+
+    await releaseAll(page);
+    await expect(assistantMessage).toContainText("主要观点");
+    await expect(assistantMessage).not.toContainText("新 generation 回答");
+  });
+
+  test("24. message.completed 到达即解锁输入框,不等待传输 EOF", async ({ page }) => {
+    await loginAndOpenHarness(page);
+    await setScript(page, [
+      { event: "agentic.run_started", data: runStartedPayload() },
+      {
+        event: "message.completed",
+        data: agenticCompletedPayload(SHORT_ANSWER),
+        hold: true,
+      },
+    ]);
+
+    await submitQuestion(page, "终态立即解锁合同");
+    await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
+      "主要观点",
+      { timeout: 10_000 },
+    );
+    await expect(page.locator('[data-ask-composer-textarea="true"]')).toBeEnabled();
+    await expect(page.locator('button[aria-label="发送"]')).toBeEnabled();
   });
 });

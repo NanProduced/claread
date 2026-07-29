@@ -189,6 +189,7 @@ import {
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
 } from "./ask/sse";
+import { TurnLifecycleMetrics } from "./ask/turn-lifecycle";
 import {
   formatAgenticTerminalMessage,
   formatStreamErrorMessage,
@@ -809,6 +810,14 @@ export function createSseMessageHandler(
     threadId: string;
     turnRunId: string;
   } | null = null;
+  // R4-2: generation_id tracking for message.preview_reset /
+  // message.delta attribution. ``null`` means no preview_reset has been
+  // accepted yet — the first generation (generation_id=0) is implicitly
+  // active. After a trusted preview_reset, only deltas whose
+  // generation_id matches ``activeGenerationId`` are applied to
+  // provisional_content_md; stale-generation deltas are discarded so
+  // the provisional preview never mixes text from two generations.
+  let activeGenerationId: number | null = null;
   const commitStreamingMessageUpdate = createStreamingCommit(updateMessage);
 
   function applyAgenticCompleted(payload: ReaderAskAgenticCompletedPayloadDto) {
@@ -848,6 +857,10 @@ export function createSseMessageHandler(
           status: "completed",
           // Agentic wire field is answer_text; map into the UI content slot only.
           content_md: payload.answer_text,
+          // ASK-TURN-LIFECYCLE R2 — atomically drop the provisional preview
+          // when the canonical answer arrives. The provisional slot must
+          // never survive a committed terminal.
+          provisional_content_md: null,
           // Keep legacy evidence fields untouched — never map agentic evidence
           // into ReaderAskEvidenceItemDto or article_rag sidecar.
           citations: message.citations ?? [],
@@ -912,8 +925,15 @@ export function createSseMessageHandler(
           // R4-A6-T3: keep the typed terminal status so the interrupted
           // bubble can refine its copy (context_stale / cancelled / …).
           final_status: payload.final_status,
-          // Never write answer_text / content_md from non-ok terminals.
+          // ASK-TURN-LIFECYCLE R2 — non-ok terminals must NEVER preserve
+          // the provisional preview as canonical. Drop the provisional
+          // slot and keep `content_md` exactly as it was before this
+          // turn started (empty for a fresh turn, or the previous
+          // canonical answer when this was a retry/regenerate). This
+          // fixes the bug where an output-validator failure left a
+          // half answer visible in the bubble.
           content_md: message.content_md,
+          provisional_content_md: null,
           // ASK-REASONING-R1: session-visible partial reasoning freezes as
           // interrupted on agentic terminals (cancel / failure / budget /
           // persist failure). Cold history never carries it — reload shows
@@ -951,6 +971,7 @@ export function createSseMessageHandler(
           threadId: event.data.thread_id,
           turnRunId: event.data.turn_run_id,
         };
+        activeGenerationId = 0;
         onAgenticActivity?.({
           type: "run_started",
           messageId: event.data.message_id ?? currentMessageId,
@@ -1115,11 +1136,18 @@ export function createSseMessageHandler(
         agenticReasoningCompleted = true;
         // Immediate: the projection is persisted server-side; from now on
         // any reload returns the same text (collapsed, re-expandable).
+        // ASK-TURN-LIFECYCLE R3 — persist the typed truncation flag so the
+        // UI can surface "达到展示上限" without a marker in the body.
+        const reasoningTruncated = payload.truncated === true;
         commitStreamingMessageUpdate(
           (messages) =>
             messages.map((message) =>
               message.id === currentMessageId
-                ? { ...message, reasoning_status: "completed" }
+                ? {
+                    ...message,
+                    reasoning_status: "completed",
+                    reasoning_truncated: reasoningTruncated,
+                  }
                 : message,
             ),
           true,
@@ -1135,14 +1163,140 @@ export function createSseMessageHandler(
       return;
     }
 
-    if (event.event === "message.delta") {
-      const delta = String((event.data as { delta?: unknown }).delta ?? "");
+    if (event.event === "message.preview_reset") {
+      // R4-2: canonical preview-reset wire. The server emits this at a
+      // tool-result / ModelRetry boundary BEFORE the new generation
+      // streams its first delta. The client MUST clear
+      // provisional_content_md (the in-progress preview) but MUST NOT
+      // touch canonical content_md. Only deltas whose generation_id
+      // matches the new generation are applied afterwards.
+      //
+      // Trust validation: if an active run identity was captured at
+      // agentic.run_started, the reset's message_id / thread_id /
+      // turn_run_id must match it exactly — foreign / stale resets are
+      // ignored (no UI mutation). If no run_started was seen yet, the
+      // reset is accepted only when it targets the current message id
+      // (fail-closed against unattributed resets).
+      const payload = event.data as {
+        generation_id?: unknown;
+        message_id?: unknown;
+        thread_id?: unknown;
+        turn_run_id?: unknown;
+        reason?: unknown;
+      };
+      const resetGenerationId =
+        typeof payload.generation_id === "number" &&
+        Number.isInteger(payload.generation_id)
+          ? payload.generation_id
+          : null;
+      if (resetGenerationId === null || resetGenerationId < 1) {
+        // Invalid generation_id — ignore the reset (fail-closed).
+        return;
+      }
+      const resetMessageId =
+        typeof payload.message_id === "string" ? payload.message_id : null;
+      const resetThreadId =
+        typeof payload.thread_id === "string" ? payload.thread_id : null;
+      const resetTurnRunId =
+        typeof payload.turn_run_id === "string" ? payload.turn_run_id : null;
+      if (activeRunIdentity !== null) {
+        if (
+          resetMessageId !== activeRunIdentity.messageId ||
+          resetThreadId !== activeRunIdentity.threadId ||
+          resetTurnRunId !== activeRunIdentity.turnRunId
+        ) {
+          // Foreign / stale reset — ignore.
+          return;
+        }
+      } else if (resetMessageId !== currentMessageId) {
+        // No run_started captured and the reset does not target the
+        // current message — ignore (fail-closed).
+        return;
+      }
+      const currentGenerationId = activeGenerationId ?? 0;
+      if (resetGenerationId <= currentGenerationId) {
+        // Duplicate / stale reset — never clear a newer preview.
+        return;
+      }
+      activeGenerationId = resetGenerationId;
       commitStreamingMessageUpdate((messages) =>
         messages.map((message) =>
           message.id === currentMessageId
             ? {
                 ...message,
-                content_md: message.regenerate_preview ? delta : `${message.content_md}${delta}`,
+                // R4-2: clear the provisional preview only. Canonical
+                // content_md is never touched by a reset — it is
+                // replaced atomically by message.completed.
+                provisional_content_md: "",
+                regenerate_preview: false,
+              }
+            : message,
+        ),
+        true,
+      );
+      return;
+    }
+
+    if (event.event === "message.delta") {
+      const payload = event.data as {
+        delta?: unknown;
+        generation_id?: unknown;
+        message_id?: unknown;
+        thread_id?: unknown;
+        turn_run_id?: unknown;
+      };
+      const delta = String(payload.delta ?? "");
+      if (
+        activeRunIdentity !== null &&
+        (payload.message_id !== activeRunIdentity.messageId ||
+          payload.thread_id !== activeRunIdentity.threadId ||
+          payload.turn_run_id !== activeRunIdentity.turnRunId)
+      ) {
+        // Agentic answer deltas are turn-owned. A matching generation is
+        // insufficient when the message/thread/run identity is foreign.
+        return;
+      }
+      // R4-2: attribute the delta to the active generation. After a
+      // trusted preview_reset, only deltas whose generation_id matches
+      // activeGenerationId are applied — stale-generation deltas (from
+      // an older generation whose preview was just cleared) are
+      // discarded so the provisional preview never mixes text from two
+      // generations. Before any preview_reset, generation_id is
+      // expected to be 0 (or absent for forward-compat with streams
+      // that do not tag deltas).
+      const deltaGenerationId =
+        typeof payload.generation_id === "number" &&
+        Number.isInteger(payload.generation_id)
+          ? payload.generation_id
+          : null;
+      if (activeGenerationId !== null) {
+        if (deltaGenerationId !== activeGenerationId) {
+          // Stale-generation delta — discard.
+          return;
+        }
+      } else if (deltaGenerationId !== null && deltaGenerationId !== 0) {
+        // No preview_reset seen yet but the delta carries a non-zero
+        // generation_id — discard (the matching preview_reset was
+        // lost or arrived out of order).
+        return;
+      }
+      // ASK-TURN-LIFECYCLE R2 — deltas accumulate into the provisional
+      // preview slot only. `content_md` is reserved for the canonical
+      // answer that arrives atomically via `message.completed`. This
+      // guarantees that an output-validator failure / cancel / abort
+      // never preserves a half answer as canonical. The `regenerate_preview`
+      // flag is kept for legacy callers but no longer drives a replace-vs-
+      // append decision on `content_md` — both paths append to the
+      // provisional slot, which is reset on retry boundary (see
+      // `resetForRetryBoundary` callers).
+      commitStreamingMessageUpdate((messages) =>
+        messages.map((message) =>
+          message.id === currentMessageId
+            ? {
+                ...message,
+                provisional_content_md: message.regenerate_preview
+                  ? delta
+                  : `${message.provisional_content_md ?? ""}${delta}`,
                 regenerate_preview: false,
                 compacting: false,
               }
@@ -1284,6 +1438,9 @@ export function createSseMessageHandler(
               thread_id: payload.thread_id,
               status: "completed",
               content_md: payload.content_md,
+              // ASK-TURN-LIFECYCLE R2 — drop the provisional preview when
+              // the canonical legacy completed payload arrives.
+              provisional_content_md: null,
               submission_mode: payload.submission_mode ?? message.submission_mode ?? "chat",
               resolved_intent: payload.resolved_intent ?? null,
               citations: payload.citations,
@@ -1350,7 +1507,13 @@ export function createSseMessageHandler(
             ? {
                 ...message,
                 status: "interrupted",
+                // ASK-TURN-LIFECYCLE R2 — legacy interrupted must not
+                // preserve the provisional preview. Only a typed
+                // `content_md` from the legacy payload (when present)
+                // may be promoted to canonical; otherwise keep the
+                // existing canonical (empty for a fresh turn).
                 content_md: typeof payload.content_md === "string" ? payload.content_md : message.content_md,
+                provisional_content_md: null,
                 // If reasoning was started (streaming or has content), mark it
                 // as completed so it doesn't stay in streaming after interrupt.
                 // An empty reasoning_md after reasoning.started means the model
@@ -1373,7 +1536,15 @@ export function createSseMessageHandler(
       commitStreamingMessageUpdate((messages) =>
         messages.map((message) =>
           message.id === currentMessageId
-            ? { ...message, status: "failed", compacting: false, replan_status: "idle" }
+            ? {
+                ...message,
+                status: "failed",
+                compacting: false,
+                replan_status: "idle",
+                // ASK-TURN-LIFECYCLE R2 — drop provisional preview on
+                // stream error; never preserve half answers.
+                provisional_content_md: null,
+              }
             : message,
         ),
       true);
@@ -1945,6 +2116,9 @@ function normalizeReaderAskMessages(
         // Legacy never carries a web-search summary; clear to prevent a stale
         // summary leaking in from a prior agentic session on the same message id.
         agentic_web_search: null,
+        // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
+        // preview. Only the canonical `content_md` is persisted server-side.
+        provisional_content_md: null,
       } as ReaderAskUiMessageDto;
     }
 
@@ -1998,6 +2172,9 @@ function normalizeReaderAskMessages(
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
       evidence: [],
+      // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
+      // preview. Only the canonical `content_md` is persisted server-side.
+      provisional_content_md: null,
     } as ReaderAskUiMessageDto;
   });
 }
@@ -3166,9 +3343,11 @@ function AskPanelLoadingState({
 function AssistantReasoningBlock({
   reasoningMd,
   reasoningStatus,
+  reasoningTruncated,
 }: {
   reasoningMd: string | null | undefined;
   reasoningStatus: ReaderAskMessageDto["reasoning_status"];
+  reasoningTruncated?: boolean | null;
 }) {
   const hasReasoningContent = Boolean(reasoningMd?.trim());
   const isStreaming = reasoningStatus === "streaming";
@@ -3184,6 +3363,7 @@ function AssistantReasoningBlock({
     <ReasoningPanel
       reasoningMd={reasoningMd}
       reasoningStatus={reasoningStatus}
+      reasoningTruncated={reasoningTruncated === true}
       className={cn("mb-0.5 transition-all", isActive ? "" : "")}
     />
   );
@@ -3237,7 +3417,19 @@ function MessageBubble({
   const clarificationText = clarificationHint(message.trace_summary, message.evidence);
   const candidateSupplements = pendingSupplementCandidates(message);
   const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
-  const hasAnswerContent = Boolean(message.content_md?.trim());
+  // ASK-TURN-LIFECYCLE R2 — pick the visible answer text based on
+  // streaming state. While streaming, the provisional preview
+  // accumulated from `message.delta` is shown. Once committed
+  // (completed / interrupted / failed / cold history), the canonical
+  // `content_md` is the only source of truth. This prevents a
+  // half-answer from being displayed as canonical after an
+  // output-validator failure or cancel.
+  const isStreamingAssistant = isAssistant && message.status === "streaming";
+  const provisionalPreview = message.provisional_content_md ?? null;
+  const displayAnswerContent = isStreamingAssistant && provisionalPreview
+    ? provisionalPreview
+    : message.content_md;
+  const hasAnswerContent = Boolean(displayAnswerContent?.trim());
   const hasAgenticAnswerBlocks = (message.agentic_answer_blocks ?? []).length > 0;
   // Project citations once for both InlineCitation (article) and WebSources (web).
   const agenticCitationItems = hasAgenticAnswerBlocks
@@ -3264,6 +3456,7 @@ function MessageBubble({
                       <AssistantReasoningBlock
                         reasoningMd={message.reasoning_md}
                         reasoningStatus={message.reasoning_status}
+                        reasoningTruncated={message.reasoning_truncated}
                       />
                     }
                     process={
@@ -3298,7 +3491,10 @@ function MessageBubble({
                           <MessageResponse
                             className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-reader-reading-ink shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-reader-reading-ink [&_p+p]:mt-3 [&_table]:my-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted"
                           >
-                            {message.content_md}
+                            {/* ASK-TURN-LIFECYCLE R2 — render provisional
+                             * preview while streaming, canonical content_md
+                             * otherwise. Copy / actions always use canonical. */}
+                            {displayAnswerContent}
                           </MessageResponse>
                         ) : null}
                         {message.status === "interrupted" ? (
@@ -3712,6 +3908,12 @@ export function AiWorkspacePanel({
   // Active streaming assistant id — used to attach activity UI only to the
   // current turn and avoid stale indicators on older messages.
   const streamingAssistantIdRef = useRef<string | null>(null);
+  // ASK-TURN-LIFECYCLE R3 — per-turn lifecycle metrics. Created when a
+  // turn starts (sendMessage / handleRetry), passed to the SSE consumer,
+  // and finalized (``markComposerEnabled``) in the ``finally`` block
+  // when ``setSending(false)`` runs. Logged to console.info as a
+  // log-safe JSON object — never contains content / reasoning / secrets.
+  const turnMetricsRef = useRef<TurnLifecycleMetrics | null>(null);
 
   const dispatchAgenticActivity = (event: AgenticActivityEvent) => {
     setAgenticActivity((current) => reduceAgenticActivityEvent(current, event));
@@ -3723,6 +3925,9 @@ export function AiWorkspacePanel({
       sseAbortRef.current?.abort();
       sseAbortRef.current = null;
       initInProgressRef.current = false;
+      // ASK-TURN-LIFECYCLE R3 — drop the metrics ref so a stale metrics
+      // object from a previous turn is never logged after unmount.
+      turnMetricsRef.current = null;
     };
   }, [open]);
 
@@ -4388,6 +4593,10 @@ export function AiWorkspacePanel({
       role: "assistant",
       status: "streaming",
       content_md: "",
+      // ASK-TURN-LIFECYCLE R2 — provisional preview slot starts empty.
+      // `message.delta` accumulates here; `content_md` is reserved for
+      // the canonical answer that arrives via `message.completed`.
+      provisional_content_md: "",
       submission_mode: submissionMode,
       context_anchors: [],
       citations: [],
@@ -4432,6 +4641,11 @@ export function AiWorkspacePanel({
     streamingAssistantIdRef.current = tempAssistantId;
     const controller = new AbortController();
     sseAbortRef.current = controller;
+    // ASK-TURN-LIFECYCLE R3 — start per-turn metrics. The SSE consumer
+    // records first_reasoning / first_answer_delta / last_answer_delta /
+    // validation_done / persistence_done / terminal_received; the
+    // ``finally`` block records composer_enabled.
+    turnMetricsRef.current = new TurnLifecycleMetrics();
     setMessages((current) => [...current, userMessage, assistantMessage]);
     setThreads((current) =>
       current.map((thread) =>
@@ -4482,6 +4696,7 @@ export function AiWorkspacePanel({
           dispatchAgenticActivity,
         ),
         controller.signal,
+        turnMetricsRef.current ?? undefined,
       );
       onClearAttachments();
     } catch (error) {
@@ -4517,6 +4732,22 @@ export function AiWorkspacePanel({
       );
       streamingAssistantIdRef.current = null;
       setSending(false);
+      // ASK-TURN-LIFECYCLE R3 — composer is interactive again. Log the
+      // per-turn lifecycle metrics as a log-safe JSON object (no content,
+      // reasoning text, citations, or secrets — only timestamps in ms
+      // relative to turn start). The gap
+      // ``composer_enabled - terminal_received`` is the client-side
+      // unlock latency.
+      const metrics = turnMetricsRef.current;
+      if (metrics !== null) {
+        metrics.markComposerEnabled();
+        // eslint-disable-next-line no-console
+        console.info(
+          "[AskTurnLifecycle] metrics",
+          JSON.stringify(metrics.toJSON()),
+        );
+        turnMetricsRef.current = null;
+      }
     }
   }
 
@@ -4560,6 +4791,10 @@ export function AiWorkspacePanel({
     streamingAssistantIdRef.current = messageId;
     const controller = new AbortController();
     sseAbortRef.current = controller;
+    // ASK-TURN-LIFECYCLE R3 — start per-turn metrics for retry. Same
+    // lifecycle as sendMessage: SSE consumer records phase timestamps,
+    // ``finally`` records composer_enabled.
+    turnMetricsRef.current = new TurnLifecycleMetrics();
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
@@ -4570,6 +4805,14 @@ export function AiWorkspacePanel({
               // until the regenerated answer starts streaming in. This is NOT resume/continue.
               content_md: message.status === "interrupted" ? message.content_md : "",
               regenerate_preview: message.status === "interrupted",
+              // ASK-TURN-LIFECYCLE R2 — reset the provisional preview slot
+              // for the new generation. The previous canonical answer
+              // (if any) stays in `content_md` as the display fallback
+              // until the new turn's `message.completed` atomically
+              // replaces it. Server-owned generation reset: no prefix
+              // from the previous generation may survive into the new
+              // provisional slot.
+              provisional_content_md: "",
               citations: [],
               action_proposals: [],
               tool_trace: [],
@@ -4633,6 +4876,7 @@ export function AiWorkspacePanel({
           dispatchAgenticActivity,
         ),
         controller.signal,
+        turnMetricsRef.current ?? undefined,
       );
     } catch (error) {
       if (isAbortError(error)) {
@@ -4644,6 +4888,10 @@ export function AiWorkspacePanel({
                   status: "interrupted",
                   // Restore original content so the user doesn't lose the previous answer
                   content_md: originalContentMd,
+                  // ASK-TURN-LIFECYCLE R2 — drop any partial provisional
+                  // preview accumulated before the abort. The canonical
+                  // answer is restored to `originalContentMd`.
+                  provisional_content_md: null,
                   reasoning_md: originalReasoningMd,
                   reasoning_status: originalReasoningStatus,
                 }
@@ -4661,6 +4909,10 @@ export function AiWorkspacePanel({
                   status: "failed",
                   // Restore original content so the user doesn't lose the previous answer
                   content_md: originalContentMd,
+                  // ASK-TURN-LIFECYCLE R2 — drop any partial provisional
+                  // preview accumulated before the failure. The canonical
+                  // answer is restored to `originalContentMd`.
+                  provisional_content_md: null,
                   reasoning_md: originalReasoningMd,
                   reasoning_status: originalReasoningStatus,
                 }
@@ -4676,6 +4928,19 @@ export function AiWorkspacePanel({
       setAgenticActivity(() => createIdleAgenticActivityState());
       streamingAssistantIdRef.current = null;
       setSending(false);
+      // ASK-TURN-LIFECYCLE R3 — composer is interactive again. Log
+      // per-turn lifecycle metrics (log-safe JSON — no content or
+      // secrets, only timestamps in ms relative to turn start).
+      const metrics = turnMetricsRef.current;
+      if (metrics !== null) {
+        metrics.markComposerEnabled();
+        // eslint-disable-next-line no-console
+        console.info(
+          "[AskTurnLifecycle] retry metrics",
+          JSON.stringify(metrics.toJSON()),
+        );
+        turnMetricsRef.current = null;
+      }
     }
   }
 

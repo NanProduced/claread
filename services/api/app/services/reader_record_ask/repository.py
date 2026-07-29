@@ -6,13 +6,50 @@ Does not import ``app.services.reader_ask.repository``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
+
+logger = logging.getLogger(__name__)
+
+# ASK-TURN-LIFECYCLE R1: typed terminal reason for stale-stream
+# reconciliation. Used when the host detects a streaming run/message
+# whose owner has gone away (client disconnect, BFF disconnect,
+# generator close without typed terminal, host restart). Never used
+# to fabricate a ``committed`` row — only ``failed`` or ``cancelled``.
+RECONCILE_STALE_TERMINAL_REASON = "stale_stream_reconciled"
+
+# ASK-TURN-LIFECYCLE R1: default wall-clock threshold after which a
+# streaming ``reader_ask_turn_runs`` row is considered orphaned. The
+# in-process lifecycle hook (``_StreamLifecycleContext``) is the
+# primary reconciliation path on generator close; this threshold is the
+# safety net for host restart / process crash / leaked rows from prior
+# deploys. Picked conservatively — long enough that no healthy turn
+# exceeds it (DeepSeek V4 Pro p99 was ~95s as of the audit), short
+# enough that an orphan does not linger for hours.
+DEFAULT_STALE_STREAM_THRESHOLD_SECONDS: int = 300
+
+# ASK-TURN-LIFECYCLE R4-5: heartbeat interval for active streaming turns.
+# During streaming, the production generator updates ``updated_at`` on the
+# turn_run row at this interval, proving the owner process is alive. The
+# stale-stream reconciler checks ``updated_at`` — a row with a recent
+# heartbeat is NOT stale even if ``started_at`` is old. This prevents the
+# safety-net sweep from killing long-running turns that are still actively
+# streaming. No schema change is needed: the existing ``updated_at`` column
+# (present since 0001_initial_schema.sql) serves as the heartbeat column.
+HEARTBEAT_INTERVAL_SECONDS: int = 15
+
+# ASK-TURN-LIFECYCLE R4-5: a streaming row whose ``updated_at`` is older
+# than this threshold (relative to now) is considered heartbeat-dead — the
+# owner process is gone or stuck. Must be > HEARTBEAT_INTERVAL_SECONDS to
+# avoid false positives from scheduling jitter; 3x gives comfortable margin.
+HEARTBEAT_STALE_THRESHOLD_SECONDS: int = HEARTBEAT_INTERVAL_SECONDS * 3
 
 
 class ReaderRecordAskRepository:
@@ -26,6 +63,94 @@ class ReaderRecordAskRepository:
         if pool is None:
             raise RuntimeError("Database pool not initialized")
         return pool
+
+    async def _read_winning_terminal(
+        self,
+        *,
+        conn_pool: Any,
+        turn_run_id: UUID,
+    ) -> dict[str, Any]:
+        """R4-3: read the actual winning terminal state after CAS loss.
+
+        Returns a dict with ``final_status``, ``terminal_reason``,
+        ``user_visible_output_json``, ``envelope_fingerprint``, and
+        ``execution_version`` from the persisted row. If the row is
+        missing (deleted), returns an empty dict — callers must treat
+        this as an unknown terminal and converge silently.
+        """
+        async with conn_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT final_status,
+                       terminal_reason,
+                       user_visible_output_json,
+                       envelope_fingerprint,
+                       execution_version
+                FROM reader_ask_turn_runs
+                WHERE id = $1
+                """,
+                turn_run_id,
+            )
+        if row is None:
+            return {}
+        return {
+            "final_status": row["final_status"],
+            "terminal_reason": row["terminal_reason"],
+            "user_visible_output_json": (
+                json.loads(row["user_visible_output_json"])
+                if row["user_visible_output_json"] is not None
+                else None
+            ),
+            "envelope_fingerprint": row["envelope_fingerprint"],
+            "execution_version": row["execution_version"],
+        }
+
+    async def _terminalize_superseded_turn_run(
+        self,
+        *,
+        conn_pool: Any,
+        turn_run_id: UUID,
+    ) -> dict[str, Any]:
+        """Close an old run that no longer owns its assistant message.
+
+        This statement intentionally touches only ``reader_ask_turn_runs``.
+        The newer run owns the message row and must remain unaffected.
+        """
+        now = datetime.now(UTC)
+        async with conn_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_turn_runs
+                SET status = 'cancelled',
+                    final_status = 'cancelled',
+                    terminal_reason = 'superseded_by_newer_turn',
+                    user_visible_output_json = NULL,
+                    resolved_evidence_json = '[]'::jsonb,
+                    reasoning_projection_json = NULL,
+                    failed_at = $2,
+                    updated_at = $2
+                WHERE id = $1 AND status = 'streaming'
+                RETURNING final_status,
+                          terminal_reason,
+                          user_visible_output_json,
+                          envelope_fingerprint,
+                          execution_version
+                """,
+                turn_run_id,
+                now,
+            )
+        if row is None:
+            return await self._read_winning_terminal(
+                conn_pool=conn_pool,
+                turn_run_id=turn_run_id,
+            )
+        return {
+            "final_status": row["final_status"],
+            "terminal_reason": row["terminal_reason"],
+            "user_visible_output_json": None,
+            "envelope_fingerprint": row["envelope_fingerprint"],
+            "execution_version": row["execution_version"],
+        }
 
     async def get_thread(
         self,
@@ -130,38 +255,55 @@ class ReaderRecordAskRepository:
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO reader_ask_turn_runs (
-                    message_id, thread_id, user_id, analysis_record_id,
-                    reading_record_id, base_id, generation, turn_id,
-                    run_attempt, status, execution_version,
-                    envelope_fingerprint, envelope_snapshot_json,
-                    started_at, created_at, updated_at
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO reader_ask_turn_runs (
+                        message_id, thread_id, user_id, analysis_record_id,
+                        reading_record_id, base_id, generation, turn_id,
+                        run_attempt, status, execution_version,
+                        envelope_fingerprint, envelope_snapshot_json,
+                        started_at, created_at, updated_at
+                    )
+                    VALUES (
+                        $1, $2, $3, NULL,
+                        $4, $5, $6, $7,
+                        1, $8, $9,
+                        $10, $11::jsonb,
+                        $12, $12, $12
+                    )
+                    RETURNING id, status, execution_version, envelope_fingerprint
+                    """,
+                    message_id,
+                    thread_id,
+                    user_id,
+                    reading_record_id,
+                    base_id,
+                    generation,
+                    turn_id,
+                    status,
+                    EXECUTION_VERSION_AGENTIC_V2,
+                    envelope_fingerprint,
+                    jsonb_param(envelope_snapshot),
+                    now,
                 )
-                VALUES (
-                    $1, $2, $3, NULL,
-                    $4, $5, $6, $7,
-                    1, $8, $9,
-                    $10, $11::jsonb,
-                    $12, $12, $12
+                assert row is not None
+                claim = await conn.execute(
+                    """
+                    UPDATE reader_ask_messages
+                    SET current_turn_run_id = $2,
+                        status = 'streaming',
+                        updated_at = $3
+                    WHERE id = $1
+                    """,
+                    message_id,
+                    row["id"],
+                    now,
                 )
-                RETURNING id, status, execution_version, envelope_fingerprint
-                """,
-                message_id,
-                thread_id,
-                user_id,
-                reading_record_id,
-                base_id,
-                generation,
-                turn_id,
-                status,
-                EXECUTION_VERSION_AGENTIC_V2,
-                envelope_fingerprint,
-                jsonb_param(envelope_snapshot),
-                now,
-            )
-        assert row is not None
+                if claim != "UPDATE 1":
+                    raise RuntimeError(
+                        "agentic turn run could not claim assistant message"
+                    )
         return {
             "id": str(row["id"]),
             "status": row["status"],
@@ -180,50 +322,132 @@ class ReaderRecordAskRepository:
         final_status: str = "ok",
         reasoning_projection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Idempotent success-terminal write.
+
+        ASK-TURN-LIFECYCLE R1: the ``WHERE status = 'streaming'`` guard
+        makes the write idempotent — a second call after the row already
+        transitioned to a terminal state (committed / failed / cancelled)
+        returns a typed ``already_terminal`` placeholder instead of
+        flipping the row back or asserting. This closes the
+        cancel-after-completed / completed-after-cancel race.
+
+        ASK-TURN-LIFECYCLE R4-3: when the CAS fails (``row is None``),
+        the method SELECTs the actual winning terminal state so the
+        caller can project the real persisted terminal instead of
+        fabricating a ``completed``. The returned dict carries
+        ``winning_final_status`` / ``winning_terminal_reason`` /
+        ``winning_user_visible_output_json`` so the caller can decide
+        whether to emit a typed terminal, a no-op, or converge silently.
+        """
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
             async with conn.transaction():
-                row = await conn.fetchrow(
+                owner = await conn.fetchrow(
                     """
-                    UPDATE reader_ask_turn_runs
-                    SET status = 'completed',
-                        final_status = $2,
-                        terminal_reason = NULL,
-                        user_visible_output_json = $3::jsonb,
-                        resolved_evidence_json = $4::jsonb,
-                        reasoning_projection_json = $6::jsonb,
-                        completed_at = $5,
-                        updated_at = $5
+                    SELECT status, current_turn_run_id
+                    FROM reader_ask_messages
                     WHERE id = $1
-                    RETURNING id, status, final_status, user_visible_output_json,
-                              resolved_evidence_json, reasoning_projection_json,
-                              envelope_fingerprint, execution_version
-                    """,
-                    turn_run_id,
-                    final_status,
-                    jsonb_param(completed_dto),
-                    jsonb_param(resolved_evidence),
-                    now,
-                    jsonb_param(reasoning_projection)
-                    if reasoning_projection is not None
-                    else None,
-                )
-                await conn.execute(
-                    """
-                    UPDATE reader_ask_messages
-                    SET status = 'completed',
-                        content_md = $2,
-                        current_turn_run_id = $3,
-                        updated_at = $4
-                    WHERE id = $1
+                    FOR UPDATE
                     """,
                     message_id,
-                    answer_text,
-                    turn_run_id,
-                    now,
                 )
-        assert row is not None
+                owns_message = (
+                    owner is not None
+                    and owner["status"] == "streaming"
+                    and owner["current_turn_run_id"] == turn_run_id
+                )
+                row = (
+                    await conn.fetchrow(
+                        """
+                        UPDATE reader_ask_turn_runs
+                        SET status = 'completed',
+                            final_status = $2,
+                            terminal_reason = NULL,
+                            user_visible_output_json = $3::jsonb,
+                            resolved_evidence_json = $4::jsonb,
+                            reasoning_projection_json = $6::jsonb,
+                            completed_at = $5,
+                            updated_at = $5
+                        WHERE id = $1 AND status = 'streaming'
+                        RETURNING id, status, final_status,
+                                  user_visible_output_json,
+                                  resolved_evidence_json,
+                                  reasoning_projection_json,
+                                  envelope_fingerprint,
+                                  execution_version
+                        """,
+                        turn_run_id,
+                        final_status,
+                        jsonb_param(completed_dto),
+                        jsonb_param(resolved_evidence),
+                        now,
+                        jsonb_param(reasoning_projection)
+                        if reasoning_projection is not None
+                        else None,
+                    )
+                    if owns_message
+                    else None
+                )
+                if row is not None and owns_message:
+                    await conn.execute(
+                        """
+                        UPDATE reader_ask_messages
+                        SET status = 'completed',
+                            content_md = $2,
+                            current_turn_run_id = $3,
+                            updated_at = $4
+                        WHERE id = $1
+                          AND status = 'streaming'
+                          AND current_turn_run_id = $3
+                        """,
+                        message_id,
+                        answer_text,
+                        turn_run_id,
+                        now,
+                    )
+        if row is None:
+            # R4-3: CAS lost — read the actual winning terminal state so
+            # the caller can project the real persisted terminal instead
+            # of fabricating a completed. Never returns a fabricated ok.
+            winning = await self._read_winning_terminal(
+                conn_pool=pool,
+                turn_run_id=turn_run_id,
+            )
+            if winning.get("final_status") is None:
+                winning = await self._terminalize_superseded_turn_run(
+                    conn_pool=pool,
+                    turn_run_id=turn_run_id,
+                )
+            logger.info(
+                "complete_agentic_turn_run skipped: turn_run_id=%s already "
+                "terminal winning_final_status=%s",
+                turn_run_id,
+                winning.get("final_status"),
+            )
+            return {
+                "id": str(turn_run_id),
+                "status": "already_terminal",
+                "final_status": None,
+                "user_visible_output_json": None,
+                "resolved_evidence_json": None,
+                "reasoning_projection_json": None,
+                "envelope_fingerprint": winning.get("envelope_fingerprint"),
+                "execution_version": winning.get("execution_version")
+                or EXECUTION_VERSION_AGENTIC_V2,
+                # R4-3: winning terminal state for caller-side CAS
+                # decisioning. ``winning_final_status`` is the actual
+                # persisted final_status (ok / failed / cancelled /
+                # context_stale). ``winning_terminal_reason`` is the
+                # persisted terminal_reason (NULL when the winner was
+                # a clean completed). ``winning_user_visible_output_json``
+                # is the persisted terminal DTO (if any).
+                "winning_final_status": winning.get("final_status"),
+                "winning_terminal_reason": winning.get("terminal_reason"),
+                "winning_user_visible_output_json": winning.get(
+                    "user_visible_output_json"
+                ),
+            }
         return {
             "id": str(row["id"]),
             "status": row["status"],
@@ -251,11 +475,31 @@ class ReaderRecordAskRepository:
         forced to NULL on every terminal path — fail-closed by statement,
         not by relying on fresh rows starting empty. Cancel / validation
         failure / budget / persist failure never persist reasoning.
+
+        ASK-TURN-LIFECYCLE R1: the ``WHERE status = 'streaming'`` guard
+        makes the write idempotent — a second call after the row already
+        transitioned to a terminal state returns a typed
+        ``already_terminal`` placeholder. This closes the
+        cancel-after-completed / completed-after-cancel race.
         """
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
             async with conn.transaction():
+                owner = await conn.fetchrow(
+                    """
+                    SELECT status, current_turn_run_id
+                    FROM reader_ask_messages
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    message_id,
+                )
+                owns_message = (
+                    owner is not None
+                    and owner["status"] == "streaming"
+                    and owner["current_turn_run_id"] == turn_run_id
+                )
                 row = await conn.fetchrow(
                     """
                     UPDATE reader_ask_turn_runs
@@ -269,7 +513,7 @@ class ReaderRecordAskRepository:
                                          THEN $6 ELSE failed_at END,
                         completed_at = CASE WHEN $2 = 'stale' THEN $6 ELSE completed_at END,
                         updated_at = $6
-                    WHERE id = $1
+                    WHERE id = $1 AND status = 'streaming'
                     RETURNING id, status, final_status, terminal_reason,
                               user_visible_output_json, reasoning_projection_json,
                               envelope_fingerprint, execution_version
@@ -281,20 +525,37 @@ class ReaderRecordAskRepository:
                     jsonb_param(terminal_dto) if terminal_dto is not None else None,
                     now,
                 )
-                await conn.execute(
-                    """
-                    UPDATE reader_ask_messages
-                    SET status = 'failed',
-                        content_md = '',
-                        current_turn_run_id = $2,
-                        updated_at = $3
-                    WHERE id = $1
-                    """,
-                    message_id,
-                    turn_run_id,
-                    now,
-                )
-        assert row is not None
+                if row is not None and owns_message:
+                    await conn.execute(
+                        """
+                        UPDATE reader_ask_messages
+                        SET status = 'failed',
+                            content_md = '',
+                            current_turn_run_id = $2,
+                            updated_at = $3
+                        WHERE id = $1
+                          AND status = 'streaming'
+                          AND current_turn_run_id = $2
+                        """,
+                        message_id,
+                        turn_run_id,
+                        now,
+                    )
+        if row is None:
+            logger.info(
+                "terminal_agentic_turn_run skipped: turn_run_id=%s already terminal",
+                turn_run_id,
+            )
+            return {
+                "id": str(turn_run_id),
+                "status": "already_terminal",
+                "final_status": None,
+                "terminal_reason": None,
+                "user_visible_output_json": None,
+                "reasoning_projection_json": None,
+                "envelope_fingerprint": None,
+                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            }
         return {
             "id": str(row["id"]),
             "status": row["status"],
@@ -304,6 +565,229 @@ class ReaderRecordAskRepository:
             "reasoning_projection_json": row["reasoning_projection_json"],
             "envelope_fingerprint": row["envelope_fingerprint"],
             "execution_version": row["execution_version"],
+        }
+
+    async def reconcile_stale_streaming_turn_run(
+        self,
+        *,
+        turn_run_id: UUID,
+        message_id: UUID,
+        run_status: str = "cancelled",
+    ) -> dict[str, Any]:
+        """Reconcile a streaming row whose owner has gone away.
+
+        ASK-TURN-LIFECYCLE R1: used by the route ``finally`` and the
+        ``stream_agentic_thread_message`` outer ``finally`` when the
+        generator is closed without a typed terminal (client disconnect,
+        BFF disconnect, ASGI cancellation, host restart). Always moves
+        the row to ``cancelled`` or ``failed`` — NEVER to ``committed``
+        (no fabricated success). The typed
+        ``RECONCILE_STALE_TERMINAL_REASON`` is recorded so observers can
+        distinguish reconciliation from a real provider terminal.
+
+        Idempotent: a row already in a terminal state is left untouched
+        and a typed ``already_terminal`` placeholder is returned.
+        """
+        if run_status not in ("cancelled", "failed"):
+            raise ValueError(
+                "reconcile_stale_streaming_turn_run: run_status must be "
+                "'cancelled' or 'failed'; never 'committed'"
+            )
+        final_status = "cancelled" if run_status == "cancelled" else "failed"
+        return await self.terminal_agentic_turn_run(
+            turn_run_id=turn_run_id,
+            message_id=message_id,
+            run_status=run_status,
+            final_status=final_status,
+            terminal_reason=RECONCILE_STALE_TERMINAL_REASON,
+            terminal_dto=None,
+        )
+
+    async def heartbeat_turn_run(self, *, turn_run_id: UUID) -> None:
+        """Update ``updated_at`` on a streaming turn_run row.
+
+        ASK-TURN-LIFECYCLE R4-5: proves the owner process is alive during
+        long-running turns. The stale-stream reconciler checks
+        ``updated_at`` — a row with a recent heartbeat is NOT considered
+        stale even if ``started_at`` is old. This is the heartbeat half
+        of the owner/lease proof: the route ``finally`` is the lease
+        release.
+
+        Safe to call on a row that already transitioned to terminal —
+        the ``WHERE status = 'streaming'`` guard makes it a no-op.
+        Never raises on missing rows (best-effort observability write).
+        """
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_ask_turn_runs
+                SET updated_at = NOW()
+                WHERE id = $1 AND status = 'streaming'
+                """,
+                turn_run_id,
+            )
+
+    async def list_stale_streaming_turn_runs(
+        self,
+        *,
+        older_than_seconds: int = DEFAULT_STALE_STREAM_THRESHOLD_SECONDS,
+        now: datetime | None = None,
+        limit: int = 200,
+        heartbeat_stale_seconds: int = HEARTBEAT_STALE_THRESHOLD_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List streaming ``reader_ask_turn_runs`` that are heartbeat-dead.
+
+        ASK-TURN-LIFECYCLE R1/R4-5: the safety-net reconciliation query.
+        The in-process ``_StreamLifecycleContext`` hook handles per-request
+        cleanup on generator close; this method handles rows whose owner
+        process is gone (host restart / crash / leaked rows from prior
+        deploys).
+
+        R4-5 owner/heartbeat proof: a row is stale ONLY if BOTH:
+          1. ``started_at < cutoff`` — old enough to be considered stale.
+          2. ``updated_at < heartbeat_cutoff`` — no recent heartbeat.
+        The heartbeat is written by ``heartbeat_turn_run`` during active
+        streaming (every ``HEARTBEAT_INTERVAL_SECONDS``). A long-running
+        turn with recent heartbeats is NOT stale — its owner is provably
+        alive. A row from a crashed process has stale ``updated_at``
+        because no heartbeat has been written since the crash.
+
+        On startup (``run_startup_stale_stream_sweep``) all streaming
+        rows are stale because the previous process is dead and no
+        heartbeats are being written.
+
+        Returns the typed rows for the caller (worker / admin script /
+        observability) to inspect before reconciliation. **Does not
+        mutate the database** — call ``reconcile_stale_streaming_turn_runs_batch``
+        to flip the rows. The caller is responsible for not running this
+        against the local DB without explicit owner approval.
+
+        ``limit`` caps the result to avoid unbounded scans on databases
+        with many orphans; the caller may invoke again to drain.
+        """
+        pool = self._pool_or_raise()
+        now_dt = now or datetime.now(UTC)
+        started_cutoff = now_dt - timedelta(seconds=older_than_seconds)
+        heartbeat_cutoff = now_dt - timedelta(seconds=heartbeat_stale_seconds)
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT tr.id AS turn_run_id,
+                       tr.message_id,
+                       tr.thread_id,
+                       tr.user_id,
+                       tr.started_at,
+                       tr.updated_at,
+                       tr.execution_version,
+                       tr.envelope_fingerprint
+                FROM reader_ask_turn_runs tr
+                WHERE tr.status = 'streaming'
+                  AND tr.started_at < $1
+                  AND tr.updated_at < $2
+                ORDER BY tr.started_at ASC
+                LIMIT $3
+                """,
+                started_cutoff,
+                heartbeat_cutoff,
+                limit,
+            )
+        return [
+            {
+                "turn_run_id": str(row["turn_run_id"]),
+                "message_id": str(row["message_id"]),
+                "thread_id": str(row["thread_id"]),
+                "user_id": str(row["user_id"]),
+                "started_at": row["started_at"],
+                "updated_at": row["updated_at"],
+                "execution_version": row["execution_version"],
+                "envelope_fingerprint": row["envelope_fingerprint"],
+            }
+            for row in rows
+        ]
+
+    async def reconcile_stale_streaming_turn_runs_batch(
+        self,
+        *,
+        older_than_seconds: int = DEFAULT_STALE_STREAM_THRESHOLD_SECONDS,
+        now: datetime | None = None,
+        limit: int = 100,
+        run_status: str = "cancelled",
+    ) -> dict[str, Any]:
+        """Reconcile all stale streaming rows older than the threshold.
+
+        ASK-TURN-LIFECYCLE R1: iterates the rows returned by
+        ``list_stale_streaming_turn_runs`` and reconciles each to
+        ``cancelled`` (default) or ``failed`` using the typed
+        ``stale_stream_reconciled`` terminal reason. **Never** fabricates
+        ``committed`` — the run_status guard rejects any other value.
+
+        Idempotent: rows already transitioned by a concurrent reconciler
+        or by the in-process lifecycle hook return ``already_terminal``
+        and are counted separately.
+
+        Returns a typed summary the caller can log / surface to ops:
+
+            {
+              "scanned": <int>,
+              "reconciled": <int>,
+              "already_terminal": <int>,
+              "errors": <int>,
+              "run_status": "cancelled" | "failed",
+              "terminal_reason": "stale_stream_reconciled",
+              "cutoff": <iso8601>,
+            }
+
+        The caller is responsible for not running this against the local
+        DB without explicit owner approval. The method does NOT open a
+        single wrapping transaction — each row is reconciled in its own
+        transaction so a single bad row does not abort the whole batch.
+        """
+        if run_status not in ("cancelled", "failed"):
+            raise ValueError(
+                "reconcile_stale_streaming_turn_runs_batch: run_status "
+                "must be 'cancelled' or 'failed'; never 'committed'"
+            )
+
+        cutoff_dt = (now or datetime.now(UTC)) - timedelta(seconds=older_than_seconds)
+        stale_rows = await self.list_stale_streaming_turn_runs(
+            older_than_seconds=older_than_seconds,
+            now=now,
+            limit=limit,
+        )
+
+        reconciled = 0
+        already_terminal = 0
+        errors = 0
+        for row in stale_rows:
+            try:
+                result = await self.reconcile_stale_streaming_turn_run(
+                    turn_run_id=UUID(row["turn_run_id"]),
+                    message_id=UUID(row["message_id"]),
+                    run_status=run_status,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "stale_stream_reconcile_batch row failed: "
+                    "turn_run_id=%s message_id=%s",
+                    row["turn_run_id"],
+                    row["message_id"],
+                )
+                errors += 1
+                continue
+            if result.get("status") == "already_terminal":
+                already_terminal += 1
+            else:
+                reconciled += 1
+
+        return {
+            "scanned": len(stale_rows),
+            "reconciled": reconciled,
+            "already_terminal": already_terminal,
+            "errors": errors,
+            "run_status": run_status,
+            "terminal_reason": RECONCILE_STALE_TERMINAL_REASON,
+            "cutoff": cutoff_dt.isoformat(),
         }
 
     async def get_turn_run(self, turn_run_id: UUID) -> dict[str, Any] | None:
@@ -482,6 +966,7 @@ class ReaderRecordAskRepository:
                 UPDATE reader_ask_messages
                 SET status = 'streaming',
                     content_md = '',
+                    current_turn_run_id = NULL,
                     updated_at = $2
                 WHERE id = $1
                 RETURNING id, thread_id, role, status, content_md
