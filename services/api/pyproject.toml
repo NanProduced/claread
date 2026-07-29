@@ -31,6 +31,8 @@ dependencies = [
     "trafilatura>=2.0.0,<3.0.0",
     # Prompt YAML 加载
     "pyyaml>=6.0,<7.0",
+    # Offline bundled Public Suffix List lookup for Web Search source diversity.
+    "tldextract>=5.1.3,<6.0.0",
     # Grammar RAG 向量数据库
     "pymilvus>=2.4.0,<3.0.0",
     # Grammar RAG 百炼 Embedding & Rerank

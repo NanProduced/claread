@@ -422,4 +422,93 @@ describe("reduceAgenticActivityEvent — searching_web phase + search_web tool (
     expect(state.currentToolName).toBeNull();
     expect(state.currentActivity).toBe("started");
   });
+
+  it("upserts all web-search attempts into one stable activity_id step", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+        activity_id: "web_search",
+        attempt_count: null,
+        call_sequence: 1,
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "未找到可用网页来源", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        activity_id: "web_search",
+        attempt_count: 1,
+        call_sequence: 1,
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(3, "searching_web", "正在联网搜索", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+        activity_id: "web_search",
+        attempt_count: null,
+        call_sequence: 2,
+      }),
+    );
+    expect(state.steps[0].attemptCount).toBe(1);
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(4, "searching_web", "已检索网页来源", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        activity_id: "web_search",
+        attempt_count: 2,
+        call_sequence: 2,
+        duration_ms: 240,
+      }),
+    );
+
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      activityId: "web_search",
+      attemptCount: 2,
+      callSequence: 2,
+      summary: "已检索网页来源",
+      durationMs: 240,
+    });
+  });
+
+  it("never regresses a confirmed web-search attempt count", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "已完成网页搜索", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        activity_id: "web_search",
+        attempt_count: 2,
+        call_sequence: 2,
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "网页搜索暂不可用", {
+        activity: "unavailable",
+        tool_name: "search_web",
+        status: "unavailable",
+        activity_id: "web_search",
+        attempt_count: 1,
+        call_sequence: 1,
+      }),
+    );
+
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0].attemptCount).toBe(2);
+    expect(state.steps[0].callSequence).toBe(2);
+  });
 });

@@ -40,10 +40,35 @@ function makeSseResponse(chunks: string[]): Response {
 async function collectEvents(
   chunks: string[],
   signal?: AbortSignal,
+  activeIdentity?: {
+    messageId: string;
+    threadId: string;
+    turnRunId: string;
+  },
 ): Promise<ReaderAskStreamEnvelopeDto[]> {
   const events: ReaderAskStreamEnvelopeDto[] = [];
-  const response = makeSseResponse(chunks);
-  await consumeReaderAskSse(response, (event) => events.push(event), signal);
+  const boundChunks = activeIdentity
+    ? [
+        `event: agentic.run_started\ndata: ${JSON.stringify({
+          execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+          message_id: activeIdentity.messageId,
+          thread_id: activeIdentity.threadId,
+          turn_run_id: activeIdentity.turnRunId,
+          has_initial_selection: false,
+        })}\n\n`,
+        ...chunks,
+      ]
+    : chunks;
+  const response = makeSseResponse(boundChunks);
+  await consumeReaderAskSse(
+    response,
+    (event) => {
+      if (!(activeIdentity && event.event === "agentic.run_started")) {
+        events.push(event);
+      }
+    },
+    signal,
+  );
   return events;
 }
 
@@ -135,20 +160,23 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses multi-event chunk with reasoning.delta and message.completed", async () => {
-    // R4-1: message.completed is a trusted terminal and must carry a
-    // self-consistent identity (message_id / thread_id / turn_run_id) to
-    // be dispatched when no prior agentic.run_started captured an active
-    // identity. The canonical v2 payload shape is used here.
+    // R4-1: message.completed is dispatched only after run_started binds
+    // the active identity. The helper filters that setup frame from the
+    // collected application events.
     const completed = {
       ...AGENTIC_COMPLETED_PAYLOAD,
       message_id: "msg-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
     };
-    const events = await collectEvents([
-      `event: reasoning.delta\ndata: ${JSON.stringify({ delta: "thinking" })}\n\n`,
-      `event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [
+        `event: reasoning.delta\ndata: ${JSON.stringify({ delta: "thinking" })}\n\n`,
+        `event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`,
+      ],
+      undefined,
+      { messageId: "msg-1", threadId: "thread-1", turnRunId: "turn-run-1" },
+    );
 
     expect(events).toHaveLength(2);
     expect(events[0].event).toBe("reasoning.delta");
@@ -228,20 +256,20 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses message.completed with full payload", async () => {
-    // R4-1: message.completed must carry a self-consistent identity tuple
-    // (message_id / thread_id / turn_run_id) to be trusted as a terminal
-    // when no prior agentic.run_started captured an active identity. The
-    // canonical v2 payload shape is used here — legacy {id, content_md}
-    // shapes are rejected as untrusted by R4-1.
+    // R4-1: message.completed must match the identity established by
+    // agentic.run_started. The canonical v2 payload shape is used here;
+    // the helper injects the matching setup frame.
     const completed = {
       ...AGENTIC_COMPLETED_PAYLOAD,
       message_id: "msg-1",
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
     };
-    const events = await collectEvents([
-      `event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [`event: message.completed\ndata: ${JSON.stringify(completed)}\n\n`],
+      undefined,
+      { messageId: "msg-1", threadId: "thread-1", turnRunId: "turn-run-1" },
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.completed");
@@ -293,9 +321,11 @@ describe("consumeReaderAskSse", () => {
       terminal_reason: "user aborted",
       content_md: "partial answer",
     };
-    const events = await collectEvents([
-      `event: message.interrupted\ndata: ${JSON.stringify(interrupted)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [`event: message.interrupted\ndata: ${JSON.stringify(interrupted)}\n\n`],
+      undefined,
+      { messageId: "msg-1", threadId: "thread-1", turnRunId: "turn-run-1" },
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.interrupted");
@@ -388,9 +418,17 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses agentic message.completed with public citations (no raw evidence)", async () => {
-    const events = await collectEvents([
-      `event: message.completed\ndata: ${JSON.stringify(AGENTIC_COMPLETED_PAYLOAD)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [
+        `event: message.completed\ndata: ${JSON.stringify(AGENTIC_COMPLETED_PAYLOAD)}\n\n`,
+      ],
+      undefined,
+      {
+        messageId: "msg-agentic-1",
+        threadId: "thread-1",
+        turnRunId: "turn-run-1",
+      },
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.completed");
@@ -420,9 +458,17 @@ describe("consumeReaderAskSse", () => {
       terminal_reason: "agentic_model_unconfigured: no validated model",
     };
 
-    const events = await collectEvents([
-      `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [
+        `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
+      ],
+      undefined,
+      {
+        messageId: "msg-agentic-1",
+        threadId: "thread-1",
+        turnRunId: "turn-run-1",
+      },
+    );
 
     // Only the first trusted terminal must be emitted; the late
     // message.interrupted frame must be ignored.
@@ -449,9 +495,17 @@ describe("consumeReaderAskSse", () => {
       terminal_reason: "generation mismatch",
     };
 
-    const events = await collectEvents([
-      `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [
+        `event: agentic.terminal\ndata: ${JSON.stringify(terminal)}\n\nevent: message.interrupted\ndata: ${JSON.stringify(terminal)}\n\n`,
+      ],
+      undefined,
+      {
+        messageId: "msg-agentic-1",
+        threadId: "thread-1",
+        turnRunId: "turn-run-1",
+      },
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("agentic.terminal");
@@ -647,9 +701,10 @@ describe("consumeReaderAskSse", () => {
       expect(result.finalStatus).toBe("cancelled");
     });
 
-    it("terminal without prior run_started is trusted only if it carries a self-consistent identity", async () => {
-      // No run_started — the terminal must carry a complete identity tuple
-      // to be trusted. This is the legacy producer path.
+    it("v2 terminal without prior run_started is ignored even when it carries a complete identity", async () => {
+      // A v2 identity tuple is only trustworthy after agentic.run_started
+      // establishes the active turn. A self-asserted terminal tuple must not
+      // mutate UI state or unlock the composer.
       const events: ReaderAskStreamEnvelopeDto[] = [];
       const response = makeSseResponse([
         `event: message.completed\ndata: ${JSON.stringify(TRUSTED_COMPLETED)}\n\n`,
@@ -659,9 +714,8 @@ describe("consumeReaderAskSse", () => {
         (event) => events.push(event),
       );
 
-      expect(events).toHaveLength(1);
-      expect(events[0].event).toBe("message.completed");
-      expect(result.kind).toBe("completed");
+      expect(events).toHaveLength(0);
+      expect(result.kind).toBe("eof");
     });
   });
 });
@@ -1061,9 +1115,17 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
   });
 
   it("parses agentic message.completed with article_seed evidence over SSE", async () => {
-    const events = await collectEvents([
-      `event: message.completed\ndata: ${JSON.stringify(ARTICLE_SEED_COMPLETED)}\n\n`,
-    ]);
+    const events = await collectEvents(
+      [
+        `event: message.completed\ndata: ${JSON.stringify(ARTICLE_SEED_COMPLETED)}\n\n`,
+      ],
+      undefined,
+      {
+        messageId: ARTICLE_SEED_COMPLETED.message_id,
+        threadId: ARTICLE_SEED_COMPLETED.thread_id,
+        turnRunId: ARTICLE_SEED_COMPLETED.turn_run_id,
+      },
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].event).toBe("message.completed");

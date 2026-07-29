@@ -5,6 +5,7 @@ import {
   isReaderAskAgenticAnswerBlockList,
   isReaderAskAgenticCitationList,
   isReaderAskAgenticCompletedPayload,
+  isReaderAskAgenticProgressPayload,
   isReaderAskWebSearchSummary,
   type ReaderAskAgenticAnswerBlockDto,
   type ReaderAskAgenticCitationDto,
@@ -430,6 +431,102 @@ describe("isReaderAskAgenticCitationList — web citation branches (ASK-WEB-G0/G
 
   it("accepts an empty array (no citations is legal)", () => {
     expect(isReaderAskAgenticCitationList([])).toBe(true);
+  });
+
+  it("accepts provider publication date separately from host retrieval time", () => {
+    expect(
+      isReaderAskAgenticCitationList([
+        {
+          citation_id: "c-web-dates",
+          source_kind: "web",
+          url: "https://example.com/date",
+          title: "Dated source",
+          published_at: "2026-07-20",
+          retrieved_at: "2026-07-29T08:30:00+00:00",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("rejects page_age and web-only dates on the public citation surface", () => {
+    expect(
+      isReaderAskAgenticCitationList([
+        {
+          citation_id: "c-web-page-age",
+          source_kind: "web",
+          url: "https://example.com/date",
+          title: "Dated source",
+          page_age: "2 days",
+        } as unknown as ReaderAskAgenticCitationDto,
+      ]),
+    ).toBe(false);
+    expect(
+      isReaderAskAgenticCitationList([
+        {
+          citation_id: "c-article-date-leak",
+          source_kind: "article",
+          published_at: "2026-07-20",
+          retrieved_at: "2026-07-29T08:30:00+00:00",
+        } as unknown as ReaderAskAgenticCitationDto,
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("isReaderAskAgenticProgressPayload — Web Search activity safety", () => {
+  const safeWebSearchProgress = {
+    execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+    phase: "searching_web",
+    summary: "正在搜索网页",
+    activity_id: "web_search",
+    attempt_count: 1,
+    call_sequence: 1,
+  };
+
+  it("accepts the stable activity id and safe counters", () => {
+    expect(isReaderAskAgenticProgressPayload(safeWebSearchProgress)).toBe(true);
+  });
+
+  it("accepts a started event without an unconfirmed attempt and rejects call_sequence=0", () => {
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        attempt_count: null,
+      }),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        call_sequence: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects query, URL, provider payload, and unknown activity ids", () => {
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        query: "must never reach SSE",
+      }),
+    ).toBe(false);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        url: "https://example.com/private",
+      }),
+    ).toBe(false);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        provider_payload: { raw: "must not render" },
+      }),
+    ).toBe(false);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        activity_id: "future_unregistered_activity",
+      }),
+    ).toBe(false);
   });
 });
 

@@ -58,6 +58,7 @@ WebSearchPortOutcome = Literal[
     "empty",
     "unavailable",
     "failed",
+    "timeout",
 ]
 
 
@@ -77,13 +78,10 @@ class WebSearchHitView:
 
     ``provider_result_ref`` is internal-only — never on public DTOs.
 
-    ASK-WEB-R4: ``published_at`` / ``page_age`` are optional
-    provider-supplied freshness hints. ``published_at`` is an ISO-8601
-    date/datetime string when the provider exposes one; ``page_age`` is
-    the raw provider hint (e.g. "2 days ago") when only a relative age
-    is available. Both are untrusted provider text — the host never
-    treats them as authoritative, only as a ranking hint, and never
-    echoes them as confirmed facts to the user.
+    R5: ``published_at`` / ``page_age`` are optional provider-supplied
+    freshness metadata. The host accepts only a strict ``YYYY-MM-DD``
+    value as ``published_at``; it retains raw ``page_age`` internally but
+    never projects it as a public freshness claim.
     """
 
     raw_url: str = ""
@@ -162,7 +160,7 @@ class WebSearchResult:
         if not isinstance(self.hits, tuple):
             # Defensive: callers may pass a list; coerce once.
             object.__setattr__(self, "hits", tuple(self.hits))  # type: ignore[arg-type]
-        if self.status in {"unavailable", "failed"} and self.hits:
+        if self.status in {"unavailable", "failed", "timeout"} and self.hits:
             raise ValueError(
                 f"WebSearchResult status={self.status!r} must not carry hits"
             )

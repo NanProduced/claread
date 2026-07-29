@@ -62,6 +62,10 @@ export interface AgenticCitationDisplayItem {
   sourceTitle: string | null;
   /** Web page description (only for source_kind === "web"); null otherwise. */
   description: string | null;
+  /** Provider-supplied publication date, never inferred by the client. */
+  publishedAt: string | null;
+  /** Host-recorded retrieval time, distinct from publication time. */
+  retrievedAt: string | null;
 }
 
 const EVIDENCE_KIND_TITLES: Record<ReaderAskAgenticEvidenceKindDto, string> = {
@@ -175,6 +179,14 @@ export function projectAgenticCitationsForDisplay(
       description:
         isWeb && typeof citation.description === "string"
           ? citation.description
+          : null,
+      publishedAt:
+        isWeb && typeof citation.published_at === "string"
+          ? citation.published_at
+          : null,
+      retrievedAt:
+        isWeb && typeof citation.retrieved_at === "string"
+          ? citation.retrieved_at
           : null,
     };
   });

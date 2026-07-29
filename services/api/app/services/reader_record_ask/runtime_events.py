@@ -255,6 +255,10 @@ class WebSearchCallEvent(BaseModel):
     # Sequence of the call within the turn (1-based). Lets observers
     # order multiple search calls without exposing the query text.
     call_sequence: int = Field(ge=1)
+    # ``None`` for the live "started" state: the Host has not yet proved a
+    # provider invocation occurred. The paired result event carries the
+    # authoritative, monotonically non-decreasing real invocation count.
+    attempt_count: int | None = Field(default=None, ge=0)
 
 
 class WebSearchResultEvent(BaseModel):
@@ -264,17 +268,18 @@ class WebSearchResultEvent(BaseModel):
     :class:`WebEvidence` entries (opaque handles). Never carries the
     raw provider result count, scores, URLs, titles, descriptions, or
     any provider payload. Production stream projects
-    ``ok`` / ``unavailable`` / ``failed`` activity only.
+    ``ok`` / ``unavailable`` / ``failed`` / ``timeout`` activity only.
 
     ASK-WEB-R4: attempt vs turn-level outcome separation.
 
     - ``outcome`` is the **per-attempt** outcome (this single call's
       result). Used for telemetry only.
     - ``turn_outcome`` is the **turn-level aggregated** outcome at the
-      time of this attempt (strongest-wins: completed > no_results >
-      unavailable > failed). Used by the production-stream projector
-      for UI activity so a ``call_limit`` attempt after a successful
-      search does NOT degrade the turn-level status to ``unavailable``.
+      time of this attempt (strongest-wins: completed > timeout >
+      no_results > unavailable > failed). Used by the production-stream
+      projector for UI activity so a ``call_limit`` attempt after a
+      successful search does NOT degrade the turn-level status to
+      ``unavailable``.
     - ``detail_code`` is a safe per-attempt reason code (e.g.
       ``"call_limit"``, ``"ok"``, ``"empty"``, ``"fence_pre"``).
       Never carries query / URL / provider payload.
@@ -284,18 +289,24 @@ class WebSearchResultEvent(BaseModel):
 
     type: Literal["web_search_result"] = "web_search_result"
     call_sequence: int = Field(ge=1)
+    # Actual provider invocation count at this point. It can differ from the
+    # tool call sequence when the host rejects a normalization-equivalent
+    # reformulation without contacting a provider.
+    attempt_count: int = Field(default=0, ge=0)
     # Per-attempt outcome (this single call only).
-    outcome: Literal["completed", "no_results", "unavailable", "failed"]
+    outcome: Literal[
+        "completed", "no_results", "unavailable", "failed", "timeout"
+    ]
     # Turn-level aggregated outcome at the time of this attempt.
     # The projector uses this for UI activity so call_limit after
     # success does not degrade to ``unavailable``.
     turn_outcome: Literal[
-        "completed", "no_results", "unavailable", "failed"
+        "completed", "no_results", "unavailable", "failed", "timeout"
     ] = Field(default="unavailable")
     # Per-attempt safe detail code (never query / URL / payload).
     detail_code: str | None = Field(default=None, max_length=64)
     # Count of host-minted :class:`WebEvidence` entries from this call.
-    # Always 0 for ``no_results`` / ``unavailable`` / ``failed``.
+    # Always 0 for ``no_results`` / ``unavailable`` / ``failed`` / ``timeout``.
     registered_evidence_count: int = Field(default=0, ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
 

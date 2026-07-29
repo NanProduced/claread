@@ -115,8 +115,9 @@ logger = logging.getLogger(__name__)
 # max-calls / max-results mapping).
 WEB_SEARCH_CAPABILITY_POLICY_VERSION: str = "reader_record_ask_web_search_v1"
 
-# ASK-WEB-R4: defaults raised to match ResolvedWebSearchCapability (3/5).
-_DEFAULT_MAX_CALLS: int = 3
+# R5 frozen policy: at most two provider attempts, with the coordinator
+# allowing the second only after the first outcome is ``no_results``.
+_DEFAULT_MAX_CALLS: int = 2
 _DEFAULT_MAX_RESULTS_PER_CALL: int = 5
 
 # Canonical provider Web Search endpoints. These are the ONLY origins
@@ -441,6 +442,7 @@ def build_production_web_search_adapter_registry() -> WebSearchAdapterRegistry:
             # capability. Never rely on the backend dataclass default
             # here — the default is a defensive fallback only.
             max_results_per_call=_DEFAULT_MAX_RESULTS_PER_CALL,
+            timeout=18.0,
         )
 
     def deepseek_factory(
@@ -456,6 +458,7 @@ def build_production_web_search_adapter_registry() -> WebSearchAdapterRegistry:
             # ASK-WEB-R4-R1: backend budget MUST come from the same
             # configuration fact as the capability (see qwen_factory).
             max_results_per_call=_DEFAULT_MAX_RESULTS_PER_CALL,
+            timeout=18.0,
         )
 
     registry.register_qwen(qwen_factory)

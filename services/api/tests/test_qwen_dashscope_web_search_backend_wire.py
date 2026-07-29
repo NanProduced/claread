@@ -185,8 +185,8 @@ async def test_search_web_rate_limit_returns_unavailable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_web_timeout_returns_unavailable() -> None:
-    """httpx.TimeoutException → status=unavailable with timeout detail."""
+async def test_search_web_timeout_returns_typed_timeout() -> None:
+    """httpx.TimeoutException → typed timeout with a safe detail code."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("simulated timeout")
@@ -194,7 +194,7 @@ async def test_search_web_timeout_returns_unavailable() -> None:
     backend = _build_backend(transport_handler=handler)
     result = await backend.search_web(query="anything", max_results=3)
 
-    assert result.status == "unavailable"
+    assert result.status == "timeout"
     assert result.hits == ()
     assert result.detail_code is not None
     assert "timeout" in result.detail_code
@@ -508,7 +508,7 @@ async def test_stream_closed_after_timeout_exception(
         warnings.simplefilter("always")
         result = await backend.search_web(query="anything", max_results=3)
 
-    assert result.status == "unavailable"
+    assert result.status == "timeout"
     assert result.detail_code is not None
     assert "timeout" in result.detail_code
     for w in caught:

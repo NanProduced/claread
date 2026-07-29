@@ -70,6 +70,7 @@ from app.services.reader_record_ask.sse import (
     encode_sse,
 )
 from app.services.reader_record_ask.tool_contracts import TOOL_SEARCH_WEB
+from app.services.reader_record_ask.turn_coordinator import TurnCoordinator
 from app.services.reader_record_ask.web_evidence_registry import (
     WebEvidenceRegistry,
 )
@@ -157,7 +158,12 @@ def _fake_facts():
     return SimpleNamespace(build_result=build_result, record=record)
 
 
-def _capability(*, enabled: bool = True) -> ResolvedWebSearchCapability:
+def _capability(
+    *,
+    enabled: bool = True,
+    max_calls: int = 1,
+    max_results_per_call: int = 3,
+) -> ResolvedWebSearchCapability:
     """Build a resolved web search capability matching the G1 fake profile."""
     return ResolvedWebSearchCapability(
         enabled_for_turn=enabled,
@@ -165,8 +171,8 @@ def _capability(*, enabled: bool = True) -> ResolvedWebSearchCapability:
         protocol="fake",
         execution_mode="host_function",
         decision_mode="agent_auto",
-        max_calls=1,
-        max_results_per_call=3,
+        max_calls=max_calls,
+        max_results_per_call=max_results_per_call,
         policy_version="reader_record_ask_web_search_v1",
     )
 
@@ -176,6 +182,8 @@ def _hit(
     url: str = "https://example.com/page",
     title: str = "Example Page",
     description: str = "An example page.",
+    published_at: str | None = None,
+    page_age: str | None = None,
 ) -> WebSearchHitView:
     """Build a provider-neutral hit view for scripted fake backends.
 
@@ -187,6 +195,8 @@ def _hit(
         title=title,
         description=description,
         provider_result_ref="pr-1",
+        published_at=published_at,
+        page_age=page_age,
     )
 
 
@@ -372,7 +382,9 @@ def _make_run_fn(
 
 
 @pytest.mark.asyncio
-async def test_disabled_mode_capability_none_no_search_events() -> None:
+async def test_disabled_mode_capability_none_no_search_events(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """``web_search_capability=None`` (disabled mode) must produce zero
     ``searching_web`` progress events and a ``web_search_mode="disabled"``
     echo on ``agentic.run_started``.
@@ -381,6 +393,7 @@ async def test_disabled_mode_capability_none_no_search_events() -> None:
     runtime must not have mounted the ``search_web`` tool. We assert the
     projector never sees a Web Search event by inspecting the SSE stream.
     """
+    caplog.set_level(logging.INFO)
     repo = _FakeRepo()
 
     chunks = [
@@ -413,6 +426,16 @@ async def test_disabled_mode_capability_none_no_search_events() -> None:
     # Completed DTO has web_search=None.
     completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
     assert completed["web_search"] is None
+
+    terminal_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search turn:" in record.getMessage()
+    ]
+    assert len(terminal_logs) == 1
+    assert "attempt_count=0" in terminal_logs[0]
+    assert "final_outcome=None" in terminal_logs[0]
+    assert "total_duration_ms=None" in terminal_logs[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1815,6 +1838,748 @@ async def test_full_production_loop_unavailable_emits_no_citation() -> None:
         assert leak not in cold_blob, f"{leak} leaked into cold history"
 
 
+# ---------------------------------------------------------------------------
+# R5 frozen lifecycle / deadline / source-quality regressions
+# ---------------------------------------------------------------------------
+
+
+def _general_answer_response(text: str = "fallback answer") -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            TextPart(
+                json.dumps(
+                    {
+                        "response_kind": "grounded_answer",
+                        "answer_blocks": [
+                            {
+                                "text": text,
+                                "basis": "general",
+                                "evidence_handles": [],
+                            }
+                        ],
+                    }
+                )
+            )
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_results_allows_only_one_distinct_reformulation_then_retires() -> None:
+    """A distinct second query is legal only after initial no_results.
+
+    The third model request must no longer expose the tool, so the fake
+    provider sees exactly two calls even if the model would prefer more.
+    """
+    repo = _FakeRepo()
+    backend = FakeWebSearchBackend(
+        outcomes=[
+            WebSearchResult(status="empty", summary="first empty"),
+            WebSearchResult(status="empty", summary="second empty"),
+        ]
+    )
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": "first query"})]
+            )
+        if state["requests"] == 2:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        TOOL_SEARCH_WEB,
+                        {"query": "clearly different second query"},
+                    )
+                ]
+            )
+        assert state["requests"] == 3
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    chunks = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_calls=2),
+            web_search_backend=backend,
+        )
+    ]
+
+    events = _parse_sse(chunks)
+    assert state["requests"] == 3
+    assert backend.call_count == 2
+    web_progress = [
+        data
+        for name, data in events
+        if name == EVENT_AGENTIC_PROGRESS and data["phase"] == "searching_web"
+    ]
+    assert len(web_progress) == 4
+    assert all(step["activity_id"] == "web_search" for step in web_progress)
+    assert [
+        (step["call_sequence"], step["attempt_count"])
+        for step in web_progress
+    ] == [(1, None), (1, 1), (2, None), (2, 2)]
+
+
+@pytest.mark.asyncio
+async def test_equivalent_normalized_reformulation_never_calls_provider_or_leaks_query(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NFKC/case/punctuation/whitespace equivalence stays fail-closed."""
+    repo = _FakeRepo()
+    backend = FakeWebSearchBackend(
+        outcomes=[WebSearchResult(status="empty", summary="first empty")]
+    )
+    state = {"requests": 0}
+    secret_query = "ＦＯＯ， TOP_SECRET_QUERY"
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": secret_query})]
+            )
+        if state["requests"] == 2:
+            assert TOOL_SEARCH_WEB in tool_names
+            # Same after Unicode NFKC + case/punctuation/whitespace cleanup.
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        TOOL_SEARCH_WEB,
+                        {"query": "foo top_secret_query"},
+                    )
+                ]
+            )
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    caplog.set_level(
+        logging.INFO,
+        logger="app.services.reader_record_ask.production_stream",
+    )
+    chunks = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_calls=2),
+            web_search_backend=backend,
+        )
+    ]
+
+    events = _parse_sse(chunks)
+    assert state["requests"] == 3
+    assert backend.call_count == 1
+    web_progress = [
+        data
+        for name, data in events
+        if name == EVENT_AGENTIC_PROGRESS and data["phase"] == "searching_web"
+    ]
+    assert [
+        (step["call_sequence"], step["attempt_count"])
+        for step in web_progress
+    ] == [(1, None), (1, 1), (2, None), (2, 1)]
+    sse_blob = json.dumps(events)
+    persisted_blob = json.dumps(repo.completed_writes, default=str)
+    assert "query" not in json.dumps(web_progress)
+    for forbidden in (
+        secret_query,
+        "TOP_SECRET_QUERY",
+        '"query"',
+        '"normalized_query"',
+        '"token"',
+        '"shingle"',
+        '"signature"',
+    ):
+        assert forbidden not in sse_blob
+        assert forbidden not in persisted_blob
+    log_blob = "\n".join(record.getMessage() for record in caplog.records)
+    for forbidden in (secret_query, "TOP_SECRET_QUERY", "token", "shingle", "signature"):
+        assert forbidden not in log_blob
+
+    terminal_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search turn:" in record.getMessage()
+    ]
+    assert len(terminal_logs) == 1
+    assert "attempt_count=1" in terminal_logs[0]
+    assert "second_query_changed=False" in terminal_logs[0]
+    assert "final_detail_code=equivalent_query" in terminal_logs[0]
+    assert secret_query not in terminal_logs[0]
+    assert "TOP_SECRET_QUERY" not in terminal_logs[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_query", "second_query", "expected_provider_calls"),
+    [
+        pytest.param(
+            "climate change impacts on coastal cities",
+            "climate change impacts on coastal cities 2026",
+            1,
+            id="english-light-date-append-is-not-a-rewrite",
+        ),
+        pytest.param(
+            "rain now",
+            "rain now 2026",
+            1,
+            id="short-english-date-append-is-still-not-a-rewrite",
+        ),
+        pytest.param(
+            "rain now",
+            "rain now meteorological",
+            1,
+            id="long-single-word-append-is-still-not-a-rewrite",
+        ),
+        pytest.param(
+            "foo,bar",
+            "foobar",
+            1,
+            id="punctuation-normalization-equivalence-is-not-a-rewrite",
+        ),
+        pytest.param(
+            "北京今天天气预报",
+            "北京今天天气预报呢",
+            1,
+            id="chinese-light-append-is-not-a-rewrite",
+        ),
+        pytest.param(
+            "天气",
+            "天气呢",
+            1,
+            id="short-chinese-light-append-is-still-not-a-rewrite",
+        ),
+        pytest.param(
+            "climate change impacts on coastal cities",
+            "official flood evacuation guidance for coastal cities",
+            2,
+            id="english-different-angle-is-a-rewrite",
+        ),
+        pytest.param(
+            "北京今天天气预报",
+            "上海空气质量指数",
+            2,
+            id="chinese-different-angle-is-a-rewrite",
+        ),
+    ],
+)
+async def test_no_results_only_allows_materially_rewritten_second_query(
+    first_query: str,
+    second_query: str,
+    expected_provider_calls: int,
+) -> None:
+    """The second no-results query must clear the privacy-safe rewrite gate.
+
+    These are production-loop witnesses: the model can request a second tool
+    call, but only a genuine change of search angle may reach the provider.
+    The third request never sees the tool because two host invocations have
+    already been consumed.
+    """
+    repo = _FakeRepo()
+    backend = FakeWebSearchBackend(
+        outcomes=[
+            WebSearchResult(status="empty", summary="first empty"),
+            WebSearchResult(status="empty", summary="second empty"),
+        ]
+    )
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": first_query})]
+            )
+        if state["requests"] == 2:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": second_query})]
+            )
+        assert state["requests"] == 3
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    chunks = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_calls=2),
+            web_search_backend=backend,
+        )
+    ]
+
+    events = _parse_sse(chunks)
+    assert state["requests"] == 3
+    assert backend.call_count == expected_provider_calls
+    web_progress = [
+        data
+        for name, data in events
+        if name == EVENT_AGENTIC_PROGRESS and data["phase"] == "searching_web"
+    ]
+    assert [step["call_sequence"] for step in web_progress] == [1, 1, 2, 2]
+    assert [step.get("attempt_count") for step in web_progress] == [
+        None,
+        1,
+        None,
+        expected_provider_calls,
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["unavailable", "failed"])
+async def test_unavailable_or_failed_search_retires_tool_without_agent_retry(
+    outcome: str,
+) -> None:
+    repo = _FakeRepo()
+    backend = _scripted_backend(outcome=outcome)  # type: ignore[arg-type]
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": "one query"})]
+            )
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    _ = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_calls=2),
+            web_search_backend=backend,
+        )
+    ]
+    assert state["requests"] == 2
+    assert backend.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_untrusted_port_detail_code_never_reaches_web_search_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Detail codes are host allowlisted, not arbitrary provider text."""
+    repo = _FakeRepo()
+    secret_detail = "top_secret_query"
+    backend = FakeWebSearchBackend(
+        outcomes=[
+            WebSearchResult(
+                status="unavailable",
+                summary="search unavailable",
+                detail_code=secret_detail,
+            )
+        ]
+    )
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": "current fact"})]
+            )
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    caplog.set_level(
+        logging.INFO,
+        logger="app.services.reader_record_ask.production_stream",
+    )
+    _ = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_calls=2),
+            web_search_backend=backend,
+        )
+    ]
+
+    assert state["requests"] == 2
+    assert backend.call_count == 1
+    log_messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert secret_detail not in log_messages
+    assert "detail_code=port_unavailable" in log_messages
+    assert "final_detail_code=port_unavailable" in log_messages
+
+
+@pytest.mark.asyncio
+async def test_twenty_five_second_deadline_fails_soft_and_retires_without_retry() -> None:
+    """The deadline is tested with a monotonic-clock seam, not a 25s sleep."""
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    class AdvancingBackend:
+        def __init__(self, clock: Clock) -> None:
+            self.clock = clock
+            self.call_count = 0
+
+        async def search_web(self, *, query: str, max_results: int) -> WebSearchResult:
+            del query, max_results
+            self.call_count += 1
+            self.clock.value = 25.001
+            return WebSearchResult(status="ok", summary="late", hits=())
+
+    clock = Clock()
+    backend = AdvancingBackend(clock)
+    coordinator = TurnCoordinator(
+        envelope=_envelope(),
+        document_access=None,  # type: ignore[arg-type]
+        user_message="q",
+        system_instructions="",
+        web_search_capability=_capability(max_calls=2),
+        web_search_backend=backend,  # type: ignore[arg-type]
+        web_search_deadline_seconds=25.0,
+        monotonic_clock=clock,
+    )
+
+    first = await coordinator.search_web("initial query")
+    assert first.status == "unavailable"
+    assert first.detail_code == "deadline_exhausted"
+    assert coordinator.web_search_outcome == "timeout"
+    assert coordinator.can_offer_web_search is False
+    observation = coordinator.web_search_turn_observation(
+        cited_source_count=0,
+        distinct_domain_count=0,
+    )
+    assert observation.attempt_count == 1
+    assert observation.deadline_exhausted is True
+    assert observation.final_detail_code == "deadline_exhausted"
+
+    second = await coordinator.search_web("would be a retry")
+    assert second.status == "unavailable"
+    assert backend.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_results_deadline_expires_before_next_prepare_and_hides_tool(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A deadline expiry between attempts retires the tool before model I/O.
+
+    The clock moves just after the first real provider outcome is recorded.
+    The next FunctionModel request is therefore the tool-prepare seam: it must
+    not receive ``search_web``, emit no second started event, or call the
+    backend again. The existing ``no_results`` outcome remains public truth.
+    """
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    clock = Clock()
+
+    class ExpiringCoordinator(TurnCoordinator):
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["monotonic_clock"] = clock
+            super().__init__(*args, **kwargs)
+
+        async def _register_web_search_outcome(self, **kwargs):  # type: ignore[no-untyped-def]
+            metered = await super()._register_web_search_outcome(**kwargs)
+            if self.web_search_outcome == "no_results" and self.web_search_calls == 1:
+                clock.value = 25.001
+            return metered
+
+    repo = _FakeRepo()
+    backend = _scripted_backend(outcome="no_results")
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[ToolCallPart(TOOL_SEARCH_WEB, {"query": "initial query"})]
+            )
+        assert state["requests"] == 2
+        assert TOOL_SEARCH_WEB not in tool_names
+        return _general_answer_response()
+
+    caplog.set_level(
+        logging.INFO,
+        logger="app.services.reader_record_ask.production_stream",
+    )
+    with patch(
+        "app.services.reader_record_ask.runtime.TurnCoordinator",
+        ExpiringCoordinator,
+    ):
+        chunks = [
+            chunk
+            async for chunk in stream_agentic_thread_message(
+                user_id=_USER,
+                reading_record_id=_RECORD,
+                thread_id=_THREAD,
+                content="q",
+                facts=_fake_facts(),
+                request_anchor=None,
+                repository=repo,  # type: ignore[arg-type]
+                model=FunctionModel(model_fn),
+                auto_wire_dependencies=False,
+                stable_document_id=_DOC,
+                web_search_capability=_capability(max_calls=2),
+                web_search_backend=backend,
+            )
+        ]
+
+    events = _parse_sse(chunks)
+    assert state["requests"] == 2
+    assert backend.call_count == 1
+    web_progress = [
+        data
+        for name, data in events
+        if name == EVENT_AGENTIC_PROGRESS and data["phase"] == "searching_web"
+    ]
+    assert [step["activity"] for step in web_progress] == ["started", "completed"]
+    completed = next(data for name, data in events if name == EVENT_MESSAGE_COMPLETED)
+    assert completed["web_search"] == {
+        "outcome": "no_results",
+        "cited_source_count": 0,
+    }
+    terminal_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search turn:" in record.getMessage()
+    ]
+    assert len(terminal_logs) == 1
+    assert "deadline_exhausted=True" in terminal_logs[0]
+    assert "final_outcome=no_results" in terminal_logs[0]
+
+
+@pytest.mark.asyncio
+async def test_terminal_web_observation_stops_at_last_search_attempt() -> None:
+    """Search total_duration excludes later answer/validation latency."""
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self) -> float:
+            return self.value
+
+    class AdvancingBackend:
+        async def search_web(self, *, query: str, max_results: int) -> WebSearchResult:
+            del query, max_results
+            clock.value = 1.25
+            return WebSearchResult(status="empty", summary="empty", hits=())
+
+    clock = Clock()
+    coordinator = TurnCoordinator(
+        envelope=_envelope(),
+        document_access=None,  # type: ignore[arg-type]
+        user_message="q",
+        system_instructions="",
+        web_search_capability=_capability(max_calls=2),
+        web_search_backend=AdvancingBackend(),  # type: ignore[arg-type]
+        monotonic_clock=clock,
+    )
+
+    await coordinator.search_web("initial query")
+    # Simulate model composition and output validation after Web Search ended.
+    clock.value = 99.0
+    observation = coordinator.web_search_turn_observation(
+        cited_source_count=0,
+        distinct_domain_count=0,
+    )
+    assert observation.total_duration_ms == 1250
+
+
+@pytest.mark.asyncio
+async def test_public_dates_and_independent_domain_priority_do_not_project_page_age(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = _FakeRepo()
+    backend = FakeWebSearchBackend(
+        outcomes=[
+            WebSearchResult(
+                status="ok",
+                summary="ok",
+                hits=(
+                    _hit(
+                        url="https://news.example.com/first",
+                        title="Example subdomain first",
+                        published_at="2026-07-01",
+                    ),
+                    _hit(
+                        url="https://www.example.com/second",
+                        title="Example sibling subdomain",
+                        published_at="not-a-date",
+                        page_age="2 days ago",
+                    ),
+                    _hit(
+                        url="https://a.example.co.uk/first",
+                        title="UK independent source",
+                    ),
+                    _hit(
+                        url="https://b.example.co.uk/second",
+                        title="UK sibling subdomain",
+                    ),
+                    _hit(
+                        url="https://independent.org/news",
+                        title="Independent source",
+                        page_age="1 hour ago",
+                    ),
+                ),
+            )
+        ]
+    )
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        if state["requests"] == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        TOOL_SEARCH_WEB,
+                        {"query": "current fact", "max_results": 5},
+                    )
+                ]
+            )
+        handles: list[str] = []
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if not isinstance(part, ToolReturnPart):
+                    continue
+                for handle_id in re.findall(r"evh_[0-9a-f]{32}", str(part.content)):
+                    if handle_id not in handles:
+                        handles.append(handle_id)
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps(
+                        {
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": "answer from ordered sources",
+                                    "basis": "web",
+                                    "evidence_handles": handles,
+                                }
+                            ],
+                        }
+                    )
+                )
+            ]
+        )
+
+    caplog.set_level(
+        logging.INFO,
+        logger="app.services.reader_record_ask.production_stream",
+    )
+    chunks = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(max_results_per_call=5),
+            web_search_backend=backend,
+        )
+    ]
+
+    completed = next(
+        data for name, data in _parse_sse(chunks) if name == EVENT_MESSAGE_COMPLETED
+    )
+    citations = completed["citations"]
+    assert [citation["title"] for citation in citations] == [
+        "Example subdomain first",
+        "UK independent source",
+        "Independent source",
+        "Example sibling subdomain",
+        "UK sibling subdomain",
+    ]
+    assert [citation["published_at"] for citation in citations] == [
+        "2026-07-01",
+        None,
+        None,
+        None,
+        None,
+    ]
+    assert all(citation["retrieved_at"] for citation in citations)
+    assert "page_age" not in json.dumps(completed)
+    terminal_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search turn:" in record.getMessage()
+    ]
+    assert len(terminal_logs) == 1
+    assert "distinct_domain_count=3" in terminal_logs[0]
+
+
 @pytest.mark.asyncio
 async def test_full_production_loop_failed_emits_no_citation() -> None:
     """ASK-WEB-G1-R3 cold history witness for the ``failed`` outcome.
@@ -2066,6 +2831,16 @@ async def test_successful_search_retires_tool_and_completes_with_sources(
     assert "outcome=completed" in attempt_logs[0]
     assert "turn_outcome=completed" in attempt_logs[0]
     assert "detail_code=ok" in attempt_logs[0]
+    terminal_observation_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search turn:" in record.getMessage()
+    ]
+    assert len(terminal_observation_logs) == 1
+    assert "attempt_count=1" in terminal_observation_logs[0]
+    assert "english grammar articles" not in terminal_observation_logs[0]
+    assert "https://example.com/page" not in terminal_observation_logs[0]
+    assert "Example Page" not in terminal_observation_logs[0]
 
     # message.completed carries the aggregated completed outcome.
     completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)

@@ -35,6 +35,7 @@ from app.services.reader_record_ask.web_search_contracts import (
     WebEvidence,
     WebSearchOutcome,
     canonicalize_url,
+    normalize_provider_published_at,
 )
 
 # Internal-only finalize status. Wire FinalStatus lives in
@@ -107,6 +108,12 @@ class PublicCitation(BaseModel):
     description: str | None = Field(
         default=None, max_length=WEB_DESCRIPTION_MAX_LEN
     )
+    # Publication and retrieval are deliberately distinct. ``published_at``
+    # is present only when a provider supplied a strict ISO calendar date;
+    # ``retrieved_at`` is host-recorded and must be labeled "retrieved" by UI.
+    # Raw provider ``page_age`` is never a public field.
+    published_at: str | None = Field(default=None, max_length=10)
+    retrieved_at: str | None = Field(default=None, max_length=64)
 
     @field_validator("url")
     @classmethod
@@ -120,6 +127,11 @@ class PublicCitation(BaseModel):
                 "through canonicalize_url()"
             )
         return value
+
+    @field_validator("published_at", mode="before")
+    @classmethod
+    def _validate_published_at(cls, value: object) -> str | None:
+        return normalize_provider_published_at(value)
 
     @model_validator(mode="after")
     def _validate_web_citation_fields(self) -> PublicCitation:
@@ -139,6 +151,10 @@ class PublicCitation(BaseModel):
                 raise ValueError(
                     "article citation must not carry description"
                 )
+            if self.published_at is not None:
+                raise ValueError("article citation must not carry published_at")
+            if self.retrieved_at is not None:
+                raise ValueError("article citation must not carry retrieved_at")
         return self
 
 
@@ -155,6 +171,7 @@ class InternalCitationBinding(BaseModel):
     canonical_url: str | None = None
     web_title: str | None = None
     web_description: str | None = None
+    published_at: str | None = None
     retrieved_at: str | None = None
     source_fingerprint: str | None = None
     unit_id: str | None = None
@@ -230,6 +247,7 @@ def _binding_from_web_evidence(
         canonical_url=web_evidence.canonical_url,
         web_title=web_evidence.title,
         web_description=web_evidence.description,
+        published_at=web_evidence.published_at,
         retrieved_at=web_evidence.retrieved_at,
         source_fingerprint=web_evidence.source_fingerprint,
         unit_id=None,
@@ -487,6 +505,8 @@ async def finalize_agent_answer(
                     url=web_ev.canonical_url,
                     title=web_title,
                     description=web_ev.description,
+                    published_at=web_ev.published_at,
+                    retrieved_at=web_ev.retrieved_at,
                 )
             )
             bindings.append(

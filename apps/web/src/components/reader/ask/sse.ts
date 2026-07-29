@@ -114,13 +114,15 @@ function classifyTrustedTerminal(
     ) {
       return null;
     }
-  } else if (!candidateMessageId || !candidateThreadId || !candidateTurnRunId) {
-    // No active identity captured yet and the terminal is missing v2
-    // identity fields. A legacy `message.completed` (pre-v2 producer
-    // that never emits `agentic.run_started`) carries `id` + `thread_id`
-    // + `content_md` but no `message_id` / `turn_run_id`. We accept it
-    // as a legacy completed terminal so the legacy path keeps working.
-    // Any other terminal shape without full identity is untrusted.
+  } else {
+    // A v2 terminal cannot establish its own trust. Until a valid
+    // agentic.run_started binds the active turn identity, every v2
+    // message.completed / agentic.terminal / message.interrupted frame is
+    // unattributed and must be ignored even when it carries a complete tuple.
+    //
+    // The only exception is the pre-v2 legacy completed shape, whose producer
+    // never emits agentic.run_started and identifies the message with
+    // id + thread_id + content_md.
     if (
       event === "message.completed" &&
       typeof payload.id === "string" &&
@@ -228,9 +230,9 @@ function classifyTrustedTerminal(
  *    turn_run_id do not match the active identity captured at
  *    `agentic.run_started`) are ignored and never terminate the stream.
  * 4. The active identity is captured from the first valid
- *    `agentic.run_started` frame. If no `agentic.run_started` ever
- *    arrives, any later terminal must carry a self-consistent
- *    (message_id, thread_id, turn_run_id) tuple to be trusted.
+ *    `agentic.run_started` frame. Without it, v2 terminal frames are
+ *    unattributed and ignored; only the explicit pre-v2 completed shape is
+ *    accepted for legacy compatibility.
  */
 export async function consumeReaderAskSse(
   response: Response,

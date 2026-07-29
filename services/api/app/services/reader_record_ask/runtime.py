@@ -81,6 +81,8 @@ from app.services.reader_record_ask.web_evidence_registry import (
 )
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
+    WebSearchTurnObservation,
+    registrable_domain_from_canonical_url,
 )
 from app.services.reader_record_ask.web_search_port import WebSearchBackend
 
@@ -112,6 +114,9 @@ class ReadingRecordAskRunResult:
     # G1-b5: per-turn web search call count (host-owned; never model-supplied).
     # ``0`` when the capability was not enabled or no call was made.
     web_search_calls: int = 0
+    # Terminal-only aggregate; production_stream logs it but never serializes
+    # it into SSE, completed DTOs, history, or persistence JSON.
+    web_search_turn_observation: WebSearchTurnObservation | None = None
 
 
 async def run_reading_record_ask(
@@ -290,6 +295,10 @@ async def run_reading_record_ask(
             agent_output=None,
             baseline_context=baseline,
             web_search_calls=0,
+            web_search_turn_observation=coordinator.web_search_turn_observation(
+                cited_source_count=0,
+                distinct_domain_count=0,
+            ),
         )
 
     # Production prompt: exact turn_frame user surface (no re-assembly).
@@ -362,6 +371,22 @@ async def run_reading_record_ask(
     )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
+    cited_web_citations = [
+        citation
+        for citation in finalized.public_citations
+        if citation.source_kind == "web" and citation.url is not None
+    ]
+    web_search_turn_observation = coordinator.web_search_turn_observation(
+        cited_source_count=len(cited_web_citations),
+        distinct_domain_count=len(
+            {
+                registrable_domain_from_canonical_url(citation.url)
+                for citation in cited_web_citations
+                if citation.url is not None
+            }
+            - {None}
+        ),
+    )
     deps.emit_event(
         FinalAnswerEvent(
             text=final_text or f"[{finalized.status}] {finalized.reason or ''}"
@@ -392,4 +417,5 @@ async def run_reading_record_ask(
         agent_output=agent_output,
         baseline_context=baseline,
         web_search_calls=deps.web_search_calls,
+        web_search_turn_observation=web_search_turn_observation,
     )

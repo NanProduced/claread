@@ -34,6 +34,8 @@ export type AgenticActivityToolName =
   | "search_current_article"
   | "search_web";
 
+export type AgenticActivityId = "web_search";
+
 export type AgenticActivityStep = {
   sequence: number;
   phase: AgenticActivityPhase;
@@ -43,6 +45,9 @@ export type AgenticActivityStep = {
   toolName: AgenticActivityToolName | null;
   status: "running" | "ok" | "unavailable" | "failed" | null;
   durationMs: number | null;
+  activityId: AgenticActivityId | null;
+  attemptCount: number | null;
+  callSequence: number | null;
 };
 
 export type AgenticActivityState = {
@@ -72,6 +77,9 @@ export type AgenticActivityProgressInput = {
   tool_name?: string | null;
   status?: string | null;
   duration_ms?: number | null;
+  activity_id?: string | null;
+  attempt_count?: number | null;
+  call_sequence?: number | null;
 };
 
 export type AgenticActivityEvent =
@@ -103,6 +111,7 @@ const ACTIVITIES = new Set<AgenticActivityKind>([
   "unavailable",
   "failed",
 ]);
+const ACTIVITY_IDS = new Set<AgenticActivityId>(["web_search"]);
 
 const TOOLS = new Set<AgenticActivityToolName>([
   "read_range",
@@ -153,6 +162,12 @@ function asActivity(value: unknown): AgenticActivityKind | null {
     : null;
 }
 
+function asActivityId(value: unknown): AgenticActivityId | null {
+  return typeof value === "string" && ACTIVITY_IDS.has(value as AgenticActivityId)
+    ? (value as AgenticActivityId)
+    : null;
+}
+
 function asToolName(value: unknown): AgenticActivityToolName | null {
   return typeof value === "string" && TOOLS.has(value as AgenticActivityToolName)
     ? (value as AgenticActivityToolName)
@@ -171,6 +186,11 @@ function asNonNegativeInt(value: unknown): number | null {
   }
   const n = Math.trunc(value);
   return n >= 0 ? n : null;
+}
+
+function asPositiveInt(value: unknown): number | null {
+  const n = asNonNegativeInt(value);
+  return n != null && n >= 1 ? n : null;
 }
 
 function sanitizeSummary(value: unknown): string | null {
@@ -285,6 +305,26 @@ export function reduceAgenticActivityEvent(
   const stepStatus = asStepStatus(payload.status);
   const elapsedMs = asNonNegativeInt(payload.elapsed_ms) ?? state.elapsedMs;
   const durationMs = asNonNegativeInt(payload.duration_ms);
+  const activityId = asActivityId(payload.activity_id);
+  const existingActivityIndex =
+    activityId == null
+      ? -1
+      : state.steps.findIndex((existing) => existing.activityId === activityId);
+  const existingActivity =
+    existingActivityIndex < 0 ? null : state.steps[existingActivityIndex];
+  const reportedAttemptCount = asNonNegativeInt(payload.attempt_count);
+  const reportedCallSequence = asPositiveInt(payload.call_sequence);
+  // A started event intentionally has no confirmed provider count. Keep the
+  // last one while the stable activity step is updated, and never let a late
+  // event regress an already-confirmed count.
+  const attemptCount =
+    reportedAttemptCount == null
+      ? (existingActivity?.attemptCount ?? null)
+      : Math.max(existingActivity?.attemptCount ?? 0, reportedAttemptCount);
+  const callSequence =
+    reportedCallSequence == null
+      ? (existingActivity?.callSequence ?? null)
+      : Math.max(existingActivity?.callSequence ?? 0, reportedCallSequence);
 
   const step: AgenticActivityStep = {
     sequence,
@@ -295,6 +335,9 @@ export function reduceAgenticActivityEvent(
     toolName,
     status: stepStatus,
     durationMs,
+    activityId,
+    attemptCount,
+    callSequence,
   };
 
   const hasUnavailable =
@@ -309,6 +352,13 @@ export function reduceAgenticActivityEvent(
         ? "degraded"
         : "running";
 
+  const steps =
+    existingActivityIndex < 0
+      ? [...state.steps, step]
+      : state.steps.map((existing, index) =>
+          index === existingActivityIndex ? step : existing,
+        );
+
   return {
     ...state,
     status: nextStatus,
@@ -321,7 +371,7 @@ export function reduceAgenticActivityEvent(
     currentDurationMs: durationMs,
     elapsedMs,
     hasUnavailable,
-    steps: [...state.steps, step],
+    steps,
   };
 }
 

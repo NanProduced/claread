@@ -29,6 +29,21 @@ export const NETWORK_ERROR_MESSAGE = "网络连接失败，请检查网络后重
 /** Generic interrupted-bubble copy when no final_status refinement applies. */
 export const INTERRUPTED_BUBBLE_FALLBACK_MESSAGE = "输出中断，可重新生成。";
 
+/**
+ * Optional-tool warning: the turn succeeded (final_status=ok) but an
+ * optional tool (e.g. web search) was unavailable or failed during the
+ * run. The answer is still canonical; this is a non-blocking warning.
+ */
+export const OPTIONAL_TOOL_WARNING_MESSAGE = "部分可选能力暂不可用，回答已正常生成。";
+
+/** A clarification action no longer has the user turn it must replay. */
+export const CLARIFICATION_CONTEXT_MISSING_MESSAGE =
+  "没有找到这轮澄清对应的原始问题，暂时无法继续当前讨论。";
+
+/** An asset clarification action no longer has the user turn it must replay. */
+export const ASSET_CLARIFICATION_CONTEXT_MISSING_MESSAGE =
+  "没有找到这轮资产澄清对应的原始问题，暂时无法继续当前讨论。";
+
 /** terminal_reason → fixed Chinese message (production + DEV). */
 export const TERMINAL_REASON_MESSAGES: Record<string, string> = {
   agent_run_failed: "回答生成失败，请稍后重试。",
@@ -182,6 +197,7 @@ const KNOWN_FRIENDLY_PATTERNS: readonly RegExp[] = [
   /上下文文章搜索失败/,
   /请求失败/,
   /没有找到这轮.*澄清对应的原始问题/,
+  /部分可选能力暂不可用/,
 ];
 
 /** Whitelist gate for the composer banner — never passes raw errors. */

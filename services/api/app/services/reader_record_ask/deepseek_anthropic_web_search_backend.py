@@ -242,8 +242,8 @@ class DeepseekAnthropicWebSearchBackend:
     api_key: str = field(repr=False)
     model_name: str = ""
     base_url: str = "https://api.deepseek.com/anthropic"
-    timeout: float = 30.0
-    max_results_per_call: int = 3
+    timeout: float = 18.0
+    max_results_per_call: int = 5
     transport: httpx.AsyncBaseTransport | None = field(default=None, repr=False)
 
     async def search_web(
@@ -318,7 +318,7 @@ class DeepseekAnthropicWebSearchBackend:
                         )
                     if status_code == 408:
                         return WebSearchResult(
-                            status="unavailable",
+                            status="timeout",
                             summary=_SUMMARY_TIMEOUT,
                             hits=(),
                             detail_code=_DETAIL_TIMEOUT,
@@ -349,7 +349,7 @@ class DeepseekAnthropicWebSearchBackend:
                         )
         except httpx.TimeoutException:
             return WebSearchResult(
-                status="unavailable",
+                status="timeout",
                 summary=_SUMMARY_TIMEOUT,
                 hits=(),
                 detail_code=_DETAIL_TIMEOUT,

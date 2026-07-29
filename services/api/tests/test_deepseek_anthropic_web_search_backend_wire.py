@@ -11,7 +11,7 @@ Test surface
 - Citations ignored: no ``web_search_tool_result`` block → ``unavailable``.
 - Citations partial: entries with missing URLs → ``failed`` (no fabrication).
 - HTTP 429 → ``unavailable``; HTTP 500 → ``failed``.
-- Timeout → ``unavailable`` (``detail_code="deepseek_timeout"``).
+- Timeout → typed ``timeout`` (``detail_code="deepseek_timeout"``).
 - Malformed response (non-SSE body) → ``failed``.
 - URL canonicalization (query preserved, fragment dropped).
 - URL deduplication (same canonical form collapsed).
@@ -527,12 +527,12 @@ class TestSearchWebHttpErrors:
         assert result.hits == ()
 
     @pytest.mark.asyncio
-    async def test_search_web_timeout_returns_unavailable(self) -> None:
+    async def test_search_web_timeout_returns_typed_timeout(self) -> None:
         transport = _make_sse_transport(raise_exc=httpx.TimeoutException)
         backend = _backend(transport)
         result = await backend.search_web(query="x", max_results=8)
 
-        assert result.status == "unavailable"
+        assert result.status == "timeout"
         assert result.detail_code == "deepseek_timeout"
         assert result.hits == ()
 
@@ -766,7 +766,7 @@ class TestStreamResourceLifecycle:
             warnings.simplefilter("always")
             result = await backend.search_web(query="x", max_results=8)
 
-        assert result.status == "unavailable"
+        assert result.status == "timeout"
         assert result.detail_code is not None
         assert "timeout" in result.detail_code
         for w in caught:

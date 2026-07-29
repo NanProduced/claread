@@ -32,6 +32,17 @@ function sourceDomain(href: string) {
   }
 }
 
+function formatRetrievedAt(retrievedAt: string): string | null {
+  const parsed = new Date(retrievedAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
 /**
  * Prompt Kit's compact web-source disclosure, adapted to Claread's existing
  * HoverCard primitive and semantic tokens. It intentionally accepts only a
@@ -84,13 +95,18 @@ export function SourceTrigger({
 export function SourceContent({
   title,
   description,
+  publishedAt,
+  retrievedAt,
   className,
 }: {
   title: string;
   description?: string;
+  publishedAt?: string;
+  retrievedAt?: string;
   className?: string;
 }) {
   const { href, domain } = useSourceContext();
+  const formattedRetrievedAt = retrievedAt ? formatRetrievedAt(retrievedAt) : null;
 
   return (
     <HoverCardContent
@@ -114,6 +130,23 @@ export function SourceContent({
             {description}
           </span>
         ) : null}
+        {publishedAt ? (
+          <span
+            className="text-xs text-muted-foreground"
+            data-testid="web-source-published-at"
+          >
+            发布于 {publishedAt}
+          </span>
+        ) : null}
+        {formattedRetrievedAt && retrievedAt ? (
+          <time
+            className="text-xs text-muted-foreground"
+            data-testid="web-source-retrieved-at"
+            dateTime={retrievedAt}
+          >
+            检索于 {formattedRetrievedAt}
+          </time>
+        ) : null}
       </a>
     </HoverCardContent>
   );
@@ -130,6 +163,8 @@ export interface WebSourceItem {
   href: string;
   title: string;
   description?: string;
+  publishedAt?: string;
+  retrievedAt?: string;
 }
 
 export function WebSources({ sources }: { sources: readonly WebSourceItem[] }) {
@@ -145,7 +180,12 @@ export function WebSources({ sources }: { sources: readonly WebSourceItem[] }) {
       {sources.map((source) => (
         <Source href={source.href} key={source.citationId}>
           <SourceTrigger showFavicon />
-          <SourceContent description={source.description} title={source.title} />
+          <SourceContent
+            description={source.description}
+            publishedAt={source.publishedAt}
+            retrievedAt={source.retrievedAt}
+            title={source.title}
+          />
         </Source>
       ))}
     </div>

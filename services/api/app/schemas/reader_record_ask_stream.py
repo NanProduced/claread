@@ -300,6 +300,12 @@ class ReaderRecordAskProgressDTO(BaseModel):
     tool_name: ProgressToolName | None = None
     status: ProgressStatus | None = None
     duration_ms: int | None = Field(default=None, ge=0)
+    # Stable host-owned activity identity. Web Search retries/reformulations
+    # update ``web_search`` rather than creating additional UI steps; this
+    # is intentionally reusable by future Chain-of-Thought activity clients.
+    activity_id: Literal["web_search"] | None = None
+    attempt_count: int | None = Field(default=None, ge=0)
+    call_sequence: int | None = Field(default=None, ge=1)
 
 
 def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:

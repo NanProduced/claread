@@ -6044,6 +6044,7 @@ export function ReaderRecordPlateSurface({
           onToggle={() => setAskOpen((current) => !current)}
           onActionExecuted={handleAskActionExecuted}
           onSupplementDeleted={handleAskSupplementDeleted}
+          hasSidecarCapacity={hasSidecarCapacity}
           capacityDowngradeNotice={
             showCapacityDowngradeNotice
               ? "当前阅读区较窄，Ask Claread 已暂以浮窗展示；空间恢复后将回到侧边栏。"

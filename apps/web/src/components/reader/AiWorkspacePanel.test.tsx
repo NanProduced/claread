@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
@@ -4143,12 +4143,20 @@ describe("createSseMessageHandler – agentic stream", () => {
       );
     });
     const onAgenticActivity = vi.fn();
+    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // (typed fields) instead of onError (formatted string). The panel uses
+    // projectTurnTerminalNotice to build the AskSystemNotice from these
+    // fields. onError is reserved for legacy stream-level `error` events.
+    const onTerminalNotice = vi.fn();
+    const onOptionalToolWarning = vi.fn();
     const handler = createSseMessageHandler(
       initialId,
       updateMessage,
       onMessageIdAssigned,
       onError,
       onAgenticActivity,
+      onTerminalNotice,
+      onOptionalToolWarning,
     );
     return {
       getMessages: () => updatedMessages,
@@ -4156,6 +4164,8 @@ describe("createSseMessageHandler – agentic stream", () => {
       onError,
       onMessageIdAssigned,
       onAgenticActivity,
+      onTerminalNotice,
+      onOptionalToolWarning,
     };
   }
 
@@ -4240,7 +4250,7 @@ describe("createSseMessageHandler – agentic stream", () => {
   });
 
   it("does not complete answer on agentic failed terminal", () => {
-    const { handler, getMessages, onError } = setupHandler([
+    const { handler, getMessages, onTerminalNotice } = setupHandler([
       makeStreamingAssistant({ content_md: "", compacting: true, provisional_content_md: "half answer" }),
     ]);
 
@@ -4268,12 +4278,20 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.replan_status).toBe("idle");
     expect(message.agentic_evidence ?? null).toBeNull();
     expect(message.agentic_evidence_scope ?? null).toBeNull();
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0]).toBeTruthy();
+    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // (typed fields) instead of onError (formatted string). The formatted
+    // message is produced by projectTurnTerminalNotice in the panel, not by
+    // the SSE handler.
+    expect(onTerminalNotice).toHaveBeenCalledTimes(1);
+    expect(onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-agentic-1",
+      finalStatus: "failed",
+      terminalReason: "agentic_model_unconfigured: no validated model",
+    });
   });
 
   it("does not complete answer on agentic context_stale terminal", () => {
-    const { handler, getMessages, onError } = setupHandler([
+    const { handler, getMessages, onTerminalNotice } = setupHandler([
       makeStreamingAssistant({ content_md: "should stay", regenerate_preview: true, provisional_content_md: "new preview" }),
     ]);
 
@@ -4296,8 +4314,16 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.content_md).toBe("should stay");
     expect(message.provisional_content_md).toBeNull();
     expect(message.regenerate_preview).toBe(false);
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenLastCalledWith("阅读上下文已更新，请重试提问。");
+    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // (typed fields). The formatted "阅读上下文已更新，请重试提问。" message
+    // is produced by projectTurnTerminalNotice in the panel, not by the
+    // SSE handler.
+    expect(onTerminalNotice).toHaveBeenCalledTimes(1);
+    expect(onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-agentic-1",
+      finalStatus: "context_stale",
+      terminalReason: "generation mismatch",
+    });
   });
 
   it("keeps message non-terminal on agentic.run_started and agentic.progress", () => {
@@ -4593,7 +4619,7 @@ describe("createSseMessageHandler – agentic stream", () => {
         execution_version: "reader_record_ask_agentic_v2",
         message_id: "msg-agentic-1",
         thread_id: "thread-1",
-        turn_run_id: "turn-1",
+        turn_run_id: "turn-run-1",
         has_initial_selection: false,
       },
     });
@@ -4662,6 +4688,38 @@ describe("createSseMessageHandler – agentic stream", () => {
       },
     });
     expect(onAgenticActivity.mock.calls.at(-1)?.[0].type).toBe("progress");
+  });
+
+  it("preserves stable web-search activity identity and counters for the reducer", () => {
+    const { handler, onAgenticActivity } = setupHandler([
+      makeStreamingAssistant({ id: "temp-assistant-1" }),
+    ]);
+
+    handler({
+      event: "agentic.progress",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        sequence: 1,
+        phase: "searching_web",
+        activity: "started",
+        summary: "正在搜索网页",
+        elapsed_ms: 12,
+        tool_name: "search_web",
+        status: "running",
+        activity_id: "web_search",
+        attempt_count: 1,
+        call_sequence: 1,
+      },
+    });
+
+    expect(onAgenticActivity).toHaveBeenCalledWith({
+      type: "progress",
+      payload: expect.objectContaining({
+        activity_id: "web_search",
+        attempt_count: 1,
+        call_sequence: 1,
+      }),
+    });
   });
 
   it("does not start agentic activity for legacy completed payloads", () => {
@@ -4753,7 +4811,7 @@ describe("createSseMessageHandler – agentic stream", () => {
   });
 
   it("maps agentic terminal to activity terminal without inventing an answer", () => {
-    const { handler, getMessages, onAgenticActivity, onError } = setupHandler([
+    const { handler, getMessages, onAgenticActivity, onTerminalNotice } = setupHandler([
       makeStreamingAssistant({ id: "temp-assistant-1", content_md: "" }),
     ]);
     handler({
@@ -4772,7 +4830,13 @@ describe("createSseMessageHandler – agentic stream", () => {
       type: "terminal",
       finalStatus: "failed",
     });
-    expect(onError).toHaveBeenCalled();
+    // ASK-UX-MOBILE-R3 — terminal errors flow through onTerminalNotice
+    // (typed fields) instead of onError (formatted string).
+    expect(onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-failed-1",
+      finalStatus: "failed",
+      terminalReason: "agent_run_failed",
+    });
     const assistant = getMessages().find((m) => m.role === "assistant");
     expect(assistant?.status).toBe("failed");
     expect(assistant?.content_md).toBe("");
@@ -5363,9 +5427,11 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     expect(screen.queryByTestId("agentic-sources")).toBeNull();
     // No pseudo answer body from empty content_md.
     expect(screen.queryByText("Climate change is discussed in paragraph 2.")).toBeNull();
-    // Terminal reload must not surface stream onError copy.
+    // Terminal reload must not surface a panel/composer stream error. It
+    // reconstructs the typed warning inside the owning turn instead.
     expect(screen.queryByText(/Ask Claread 暂时不可用/)).toBeNull();
-    expect(screen.queryByText(/阅读上下文已更新/)).toBeNull();
+    const turnNotice = screen.getByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("阅读上下文已更新，请重试提问。");
   });
 
   // -------------------------------------------------------------------------
@@ -5852,8 +5918,20 @@ describe("AiWorkspacePanel – terminal error classification", () => {
       updatedMessages = updater(updatedMessages);
     };
     const onError = vi.fn();
-    const handler = createSseMessageHandler(initialId, updateMessage, undefined, onError);
-    return { getMessages: () => updatedMessages, handler, onError };
+    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // (typed fields) instead of onError (formatted string). The panel uses
+    // projectTurnTerminalNotice to build the AskSystemNotice. The formatted
+    // message tests live in ask-system-notice.test.ts.
+    const onTerminalNotice = vi.fn();
+    const handler = createSseMessageHandler(
+      initialId,
+      updateMessage,
+      undefined,
+      onError,
+      undefined,
+      onTerminalNotice,
+    );
+    return { getMessages: () => updatedMessages, handler, onError, onTerminalNotice };
   }
 
   function agenticTerminal(overrides: Record<string, unknown> = {}) {
@@ -5880,23 +5958,44 @@ describe("AiWorkspacePanel – terminal error classification", () => {
   it.each(REASON_CASES)(
     "consumes terminal_reason %s as fixed Chinese copy (not the generic fallback)",
     (reason, expected) => {
-      const { handler, onError } = setupHandler([makeStreamingAssistant()]);
+      const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
       handler({ event: "agentic.terminal", data: agenticTerminal({ terminal_reason: reason }) });
-      expect(onError).toHaveBeenCalledTimes(1);
-      expect(onError).toHaveBeenCalledWith(expected);
-      expect(onError.mock.calls[0][0]).not.toBe("Ask Claread 暂时不可用。");
-      expect(onError.mock.calls[0][0]).not.toBe(reason);
+      // ASK-UX-MOBILE-R3 — the SSE handler now fires onTerminalNotice with
+      // typed fields (reason string). The formatted Chinese copy is produced
+      // by projectTurnTerminalNotice in the panel (tested in
+      // ask-system-notice.test.ts). We verify the typed reason is passed
+      // through unchanged; the projector maps it to `expected`.
+      expect(onTerminalNotice).toHaveBeenCalledTimes(1);
+      expect(onTerminalNotice).toHaveBeenCalledWith({
+        messageId: "msg-failed-1",
+        finalStatus: "failed",
+        terminalReason: reason,
+      });
+      // The expected formatted copy is NOT the generic fallback and NOT the
+      // raw reason — it is the fixed Chinese mapping. This is asserted in
+      // ask-system-notice.test.ts; here we only confirm the handler does
+      // not format (it passes the raw reason through).
+      expect(expected).not.toBe("Ask Claread 暂时不可用。");
+      expect(expected).not.toBe(reason);
     },
   );
 
   it("unknown terminal_reason: production shows the fallback, DEV shows raw", () => {
+    // ASK-UX-MOBILE-R3 — the SSE handler no longer formats messages. It
+    // passes the raw terminal_reason through onTerminalNotice unchanged,
+    // regardless of NODE_ENV. The DEV-vs-production fallback behavior now
+    // lives in projectTurnTerminalNotice (tested in ask-system-notice.test.ts).
     vi.stubEnv("NODE_ENV", "production");
     const prod = setupHandler([makeStreamingAssistant()]);
     prod.handler({
       event: "agentic.terminal",
       data: agenticTerminal({ terminal_reason: "some_new_reason" }),
     });
-    expect(prod.onError).toHaveBeenCalledWith("Ask Claread 暂时不可用。");
+    expect(prod.onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-failed-1",
+      finalStatus: "failed",
+      terminalReason: "some_new_reason",
+    });
 
     vi.stubEnv("NODE_ENV", "test");
     const dev = setupHandler([makeStreamingAssistant()]);
@@ -5904,7 +6003,11 @@ describe("AiWorkspacePanel – terminal error classification", () => {
       event: "agentic.terminal",
       data: agenticTerminal({ terminal_reason: "some_new_reason" }),
     });
-    expect(dev.onError).toHaveBeenCalledWith("some_new_reason");
+    expect(dev.onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-failed-1",
+      finalStatus: "failed",
+      terminalReason: "some_new_reason",
+    });
   });
 
   it("stream error with a known code maps to fixed copy without leaking detail", () => {
@@ -5990,7 +6093,10 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
       }),
     ]);
     renderPanel();
-    expect(await screen.findByText("上下文已更新，回答已中断。")).not.toBeNull();
+    const notice = await screen.findByTestId("ask-turn-notice");
+    expect(notice.textContent).toContain("阅读上下文已更新，请重试提问。");
+    expect(within(notice).getByRole("button", { name: "重新生成" })).not.toBeNull();
+    expect(screen.queryByText("上下文已更新，回答已中断。")).toBeNull();
     expect(screen.queryByText("输出中断，可重新生成。")).toBeNull();
   });
 
@@ -6004,7 +6110,10 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
       }),
     ]);
     renderPanel();
-    expect(await screen.findByText("本次回答已取消。")).not.toBeNull();
+    const notice = await screen.findByTestId("ask-turn-notice");
+    expect(notice.textContent).toContain("本次回答已取消。");
+    const assistant = screen.getByTestId("ask-assistant-message");
+    expect(within(assistant).queryByRole("button", { name: "重新生成" })).toBeNull();
   });
 
   it("keeps the generic interrupted note when final_status is absent", async () => {
@@ -6016,5 +6125,604 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
     ]);
     renderPanel();
     expect(await screen.findByText("输出中断，可重新生成。")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-UX-MOBILE R2 — surface capacity gating, turn-scoped notices, panel banner
+// ---------------------------------------------------------------------------
+
+describe("AiWorkspacePanel – ASK-UX-MOBILE surface capacity gating", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("hides the surface menu and shows a static 浮窗 label when hasSidecarCapacity=false", async () => {
+    renderPanel({
+      surface: "floating",
+      onChangeSurface: vi.fn(),
+      hasSidecarCapacity: false,
+    });
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    // The interactive menu trigger must NOT be present.
+    expect(
+      screen.queryByRole("button", { name: "选择 Ask Claread 面板形式" }),
+    ).toBeNull();
+    // No menuitems should be in the document at all.
+    expect(screen.queryByRole("menuitem", { name: "侧边栏" })).toBeNull();
+    // The static 浮窗 label is visible (non-interactive span with a title).
+    const staticLabel = screen.getByTitle("当前阅读区较窄，仅支持浮窗形式");
+    expect(staticLabel.textContent).toContain("浮窗");
+  });
+
+  it("shows the surface menu with both options when hasSidecarCapacity=true", async () => {
+    renderPanel({
+      surface: "floating",
+      onChangeSurface: vi.fn(),
+      hasSidecarCapacity: true,
+    });
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+
+    const trigger = screen.getByRole("button", { name: "选择 Ask Claread 面板形式" });
+    await userEvent.click(trigger);
+
+    expect(await screen.findByRole("menuitem", { name: "侧边栏" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "浮窗" })).not.toBeNull();
+  });
+});
+
+describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // Clear any leftover mockImplementationOnce queue from prior tests so
+    // our mockImplementationOnce is the next one consumed.
+    vi.mocked(consumeReaderAskSse).mockReset();
+    vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("renders a turn terminal error inside the assistant bubble, not in the composer banner", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "error",
+        data: {
+          code: "INSUFFICIENT_CREDITS",
+          user_message: "当前积分不足，本轮请求未发送给模型。",
+        },
+      });
+      return makeLogicalTerminalResult("parse_error");
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下这个问题" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // The turn notice renders inside the assistant message bubble.
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("当前积分不足，本轮请求未发送给模型。");
+
+    // The composer error banner must NOT contain the turn error. Since
+    // errorMessage is null after the migration, the composer banner
+    // SystemMessage does not render at all — the error text appears only
+    // in the turn notice.
+    expect(screen.getAllByText("当前积分不足，本轮请求未发送给模型。")).toHaveLength(1);
+  });
+
+  it("renders a panel banner below the header when init fails", async () => {
+    vi.mocked(global.fetch).mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    renderPanel();
+
+    const banner = await screen.findByTestId("ask-panel-notice");
+    expect(banner.textContent).toContain("网络连接失败，请检查网络后重试。");
+    // The panel banner is a sibling of the header, not inside a turn bubble.
+    expect(screen.queryByTestId("ask-turn-notice")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-UX-MOBILE-R3 — canonical notice wiring: live terminal projector,
+// foreign terminal guard, optional-tool warning, dismiss, CTA semantics.
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – ASK-UX-MOBILE-R3 canonical terminal-notice path", () => {
+  type Msg = ReaderAskUiMessageDto;
+  const VERSION = "reader_record_ask_agentic_v2";
+
+  function makeStreamingAssistant(overrides: Partial<Msg> = {}): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      provisional_content_md: null,
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function setupHandler(messages: Msg[], initialId = "msg-1") {
+    let updatedMessages: Msg[] = messages;
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const onError = vi.fn();
+    const onAgenticActivity = vi.fn();
+    const onTerminalNotice = vi.fn();
+    const onOptionalToolWarning = vi.fn();
+    const handler = createSseMessageHandler(
+      initialId,
+      updateMessage,
+      undefined,
+      onError,
+      onAgenticActivity,
+      onTerminalNotice,
+      onOptionalToolWarning,
+    );
+    return {
+      getMessages: () => updatedMessages,
+      handler,
+      onError,
+      onTerminalNotice,
+      onOptionalToolWarning,
+    };
+  }
+
+  function runStartedPayload(overrides: Partial<{
+    message_id: string;
+    thread_id: string;
+    turn_run_id: string;
+  }> = {}) {
+    return {
+      execution_version: VERSION,
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      has_initial_selection: false,
+      ...overrides,
+    };
+  }
+
+  function terminalPayload(overrides: Partial<{
+    final_status: string;
+    message_id: string;
+    thread_id: string;
+    turn_run_id: string;
+    terminal_reason: string | null;
+  }> = {}) {
+    return {
+      execution_version: VERSION,
+      final_status: "failed",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      terminal_reason: null,
+      ...overrides,
+    };
+  }
+
+  function progressPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      execution_version: VERSION,
+      phase: "tool",
+      summary: "progress",
+      ...overrides,
+    };
+  }
+
+  function completedPayload(overrides: Partial<{
+    message_id: string;
+    thread_id: string;
+    turn_run_id: string;
+  }> = {}) {
+    return {
+      execution_version: VERSION,
+      final_status: "ok",
+      answer_text: "Answer.",
+      answer_blocks: [],
+      citations: [],
+      knowledge_mode: null,
+      source_status: null,
+      web_search: null,
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      ...overrides,
+    };
+  }
+
+  // --- live hard terminal uses canonical projector ---
+
+  it("live hard terminal fires onTerminalNotice with typed fields (not a formatted string)", () => {
+    const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.terminal",
+      data: terminalPayload({
+        final_status: "failed",
+        terminal_reason: "agent_run_failed",
+      }),
+    });
+    expect(onTerminalNotice).toHaveBeenCalledTimes(1);
+    // The callback receives typed fields, NOT a pre-formatted message string.
+    // The panel is responsible for calling projectTurnTerminalNotice with these fields.
+    expect(onTerminalNotice).toHaveBeenCalledWith({
+      messageId: "msg-1",
+      finalStatus: "failed",
+      terminalReason: "agent_run_failed",
+    });
+  });
+
+  // --- context_stale / invalid_citations / cancelled matrix ---
+
+  it.each([
+    ["context_stale"],
+    ["invalid_citations"],
+    ["cancelled"],
+  ] as const)(
+    "live soft terminal final_status=%s fires onTerminalNotice with the typed finalStatus",
+    (status) => {
+      const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
+      handler({ event: "agentic.run_started", data: runStartedPayload() });
+      handler({
+        event: "agentic.terminal",
+        data: terminalPayload({ final_status: status, terminal_reason: null }),
+      });
+      expect(onTerminalNotice).toHaveBeenCalledTimes(1);
+      expect(onTerminalNotice).toHaveBeenCalledWith({
+        messageId: "msg-1",
+        finalStatus: status,
+        terminalReason: null,
+      });
+    },
+  );
+
+  // --- foreign terminal does not create notice ---
+
+  it("foreign terminal (mismatched message_id) after run_started does NOT fire onTerminalNotice", () => {
+    const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.terminal",
+      data: terminalPayload({
+        message_id: "msg-FOREIGN",
+        final_status: "failed",
+        terminal_reason: "agent_run_failed",
+      }),
+    });
+    expect(onTerminalNotice).not.toHaveBeenCalled();
+  });
+
+  it("foreign terminal (mismatched turn_run_id) after run_started does NOT fire onTerminalNotice", () => {
+    const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.terminal",
+      data: terminalPayload({
+        turn_run_id: "run-FOREIGN",
+        final_status: "failed",
+        terminal_reason: "agent_run_failed",
+      }),
+    });
+    expect(onTerminalNotice).not.toHaveBeenCalled();
+  });
+
+  // --- optional-tool warning wiring ---
+
+  it("agentic.progress activity=unavailable + completed fires onOptionalToolWarning", () => {
+    const { handler, onOptionalToolWarning } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.progress",
+      data: progressPayload({ activity: "unavailable" }),
+    });
+    handler({ event: "message.completed", data: completedPayload() });
+    expect(onOptionalToolWarning).toHaveBeenCalledTimes(1);
+    expect(onOptionalToolWarning).toHaveBeenCalledWith({ messageId: "msg-1" });
+  });
+
+  it("agentic.progress status=unavailable + completed fires onOptionalToolWarning", () => {
+    const { handler, onOptionalToolWarning } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.progress",
+      data: progressPayload({ status: "unavailable" }),
+    });
+    handler({ event: "message.completed", data: completedPayload() });
+    expect(onOptionalToolWarning).toHaveBeenCalledTimes(1);
+  });
+
+  it("no unavailable progress → completed does NOT fire onOptionalToolWarning", () => {
+    const { handler, onOptionalToolWarning } = setupHandler([makeStreamingAssistant()]);
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.progress",
+      data: progressPayload({ activity: "tool_call", status: "completed" }),
+    });
+    handler({ event: "message.completed", data: completedPayload() });
+    expect(onOptionalToolWarning).not.toHaveBeenCalled();
+  });
+
+  it("run_started resets the optional-tool flag (no bleed across turns)", () => {
+    const { handler, onOptionalToolWarning } = setupHandler([makeStreamingAssistant()]);
+    // Turn 1: optional tool unavailable.
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "agentic.progress",
+      data: progressPayload({ activity: "unavailable" }),
+    });
+    handler({ event: "message.completed", data: completedPayload() });
+    expect(onOptionalToolWarning).toHaveBeenCalledTimes(1);
+    // Turn 2: run_started resets the flag; completed without unavailable progress
+    // must NOT fire the warning.
+    handler({ event: "agentic.run_started", data: runStartedPayload() });
+    handler({
+      event: "message.completed",
+      data: completedPayload({ message_id: "msg-2" }),
+    });
+    expect(onOptionalToolWarning).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllEnvs();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(consumeReaderAskSse).mockReset();
+    vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  const VERSION = "reader_record_ask_agentic_v2";
+
+  function agenticCompletedPayload(overrides: Partial<{
+    message_id: string;
+    answer_text: string;
+  }> = {}) {
+    return {
+      execution_version: VERSION,
+      final_status: "ok" as const,
+      answer_text: "已完成回答。",
+      answer_blocks: [],
+      citations: [],
+      knowledge_mode: null,
+      source_status: null,
+      web_search: null,
+      message_id: "msg-assistant-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      ...overrides,
+    };
+  }
+
+  it("live hard terminal (agentic.terminal) renders the canonical projector output inside the turn bubble", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "agentic.terminal",
+        data: {
+          execution_version: VERSION,
+          final_status: "failed",
+          message_id: "msg-assistant-1",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          terminal_reason: "agent_run_failed",
+        },
+      });
+      return makeLogicalTerminalResult("parse_error");
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    // Canonical projector output: typed Chinese copy, not the raw terminal_reason.
+    expect(turnNotice.textContent).toContain("回答生成失败，请稍后重试。");
+    expect(turnNotice.textContent).not.toContain("agent_run_failed");
+    // Hard terminal → retry CTA inside the turn notice (scoped to avoid
+    // matching the footer "重新生成" action that also renders for interrupted
+    // messages).
+    expect(within(turnNotice).getByRole("button", { name: "重新生成" })).not.toBeNull();
+  });
+
+  it("completed + optional-tool warning renders on the completed bubble (not swallowed by status=completed)", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          phase: "tool",
+          summary: "Web search unavailable",
+          activity: "unavailable",
+        },
+      });
+      onEvent({
+        event: "message.completed",
+        data: agenticCompletedPayload({ answer_text: "已完成回答。" }),
+      });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // The completed answer is visible.
+    await waitFor(() => {
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
+    });
+    // The optional-tool warning is also visible on the same completed bubble.
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("部分可选能力暂不可用，回答已正常生成。");
+    // No retry CTA on the warning (it is dismissible only).
+    expect(turnNotice.querySelector("button")).not.toBeNull();
+    expect(turnNotice.textContent).not.toContain("重新生成");
+  });
+
+  it("optional warning is dismissible; dismissing removes only the warning, keeps the answer", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          phase: "tool",
+          summary: "Web search unavailable",
+          activity: "unavailable",
+        },
+      });
+      onEvent({
+        event: "message.completed",
+        data: agenticCompletedPayload({ answer_text: "保留的回答。" }),
+      });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // Wait for the warning to appear.
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("部分可选能力暂不可用，回答已正常生成。");
+
+    // The completed answer is visible.
+    expect(screen.getByText("保留的回答。")).not.toBeNull();
+
+    // Click the dismiss button (aria-label="关闭提示").
+    const dismissButton = turnNotice.querySelector('button[aria-label="关闭提示"]');
+    expect(dismissButton).not.toBeNull();
+    fireEvent.click(dismissButton!);
+
+    // The warning is gone, the answer remains.
+    await waitFor(() => {
+      expect(screen.queryByTestId("ask-turn-notice")).toBeNull();
+    });
+    expect(screen.getByText("保留的回答。")).not.toBeNull();
+  });
+
+  it("composer does not render an error banner for turn errors (errorMessage prop not wired)", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "agentic.terminal",
+        data: {
+          execution_version: VERSION,
+          final_status: "failed",
+          message_id: "msg-assistant-1",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          terminal_reason: "agent_run_failed",
+        },
+      });
+      return makeLogicalTerminalResult("parse_error");
+    });
+
+    renderPanel();
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    // The turn notice appears inside the assistant bubble.
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("回答生成失败，请稍后重试。");
+
+    // The composer area must NOT contain a SystemMessage error banner.
+    // The composer is the PromptInput wrapper; the error banner would be a
+    // SystemMessage with variant="error" rendered above the PromptInput.
+    // Since errorMessage is not passed to AskComposer, no such banner exists.
+    const composer = screen.getByPlaceholderText("继续问这篇文章…").closest("form");
+    expect(composer).not.toBeNull();
+    // The turn error text appears exactly once (only in the turn notice, not
+    // duplicated in a composer banner).
+    expect(screen.getAllByText("回答生成失败，请稍后重试。")).toHaveLength(1);
   });
 });

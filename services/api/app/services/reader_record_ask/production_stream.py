@@ -114,6 +114,8 @@ from app.services.reader_record_ask.web_evidence_registry import WebEvidenceRegi
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
     WebSearchMode,
+    WebSearchTurnObservation,
+    registrable_domain_from_canonical_url,
 )
 from app.services.reader_record_ask.web_search_port import (
     WebSearchBackend,
@@ -499,6 +501,76 @@ class _TurnLifecycleMetrics:
         }
 
 
+def _log_web_search_turn_observation(
+    *,
+    run_result: ReadingRecordAskRunResult | None,
+    model_route: str,
+    provider: str | None,
+) -> None:
+    """Write exactly one content-free terminal Web Search observation.
+
+    The observation is deliberately a logger-only aggregate. It is not added
+    to the completed DTO, history, SSE, or persistence payload, and neither
+    this function nor its format string accepts query/URL/title/raw-provider
+    data.
+    """
+    observation = (
+        run_result.web_search_turn_observation
+        if run_result is not None
+        else None
+    )
+    if observation is None:
+        finalized = run_result.finalized if run_result is not None else None
+        web_summary = (
+            finalized.web_search_summary if finalized is not None else None
+        )
+        citations = (
+            finalized.public_citations if finalized is not None else ()
+        )
+        web_citations = [
+            citation
+            for citation in citations
+            if citation.source_kind == "web" and citation.url is not None
+        ]
+        observation = WebSearchTurnObservation(
+            attempt_count=(run_result.web_search_calls if run_result is not None else 0),
+            final_outcome=(web_summary.outcome if web_summary is not None else None),
+            # Without the coordinator-owned observation, the Web Search
+            # lifecycle duration is unknown. The enclosing Ask turn duration
+            # includes model, validation, and persistence work and must never
+            # be mislabeled as search latency.
+            total_duration_ms=None,
+            cited_source_count=len(web_citations),
+            distinct_domain_count=len(
+                {
+                    registrable_domain_from_canonical_url(citation.url)
+                    for citation in web_citations
+                    if citation.url is not None
+                }
+                - {None}
+            ),
+            deadline_exhausted=False,
+            second_query_changed=None,
+            final_detail_code=None,
+        )
+    logger.info(
+        "reader_record_ask web search turn: model_route=%s provider=%s "
+        "attempt_count=%s final_outcome=%s total_duration_ms=%s "
+        "cited_source_count=%s distinct_domain_count=%s "
+        "deadline_exhausted=%s second_query_changed=%s final_detail_code=%s",
+        model_route,
+        provider,
+        observation.attempt_count,
+        observation.final_outcome,
+        observation.total_duration_ms,
+        observation.cited_source_count,
+        observation.distinct_domain_count,
+        observation.deadline_exhausted,
+        observation.second_query_changed,
+        observation.final_detail_code,
+    )
+
+
 class _ProgressProjector:
     """Map internal RuntimeEvent → privacy-safe ProgressDTO with monotonic clock."""
 
@@ -540,6 +612,9 @@ class _ProgressProjector:
         tool_name: ProgressToolName | None = None,
         status: ProgressStatus | None = None,
         duration_ms: int | None = None,
+        activity_id: str | None = None,
+        attempt_count: int | None = None,
+        call_sequence: int | None = None,
     ) -> ReaderRecordAskProgressDTO:
         self._sequence += 1
         elapsed = self._elapsed_ms()
@@ -555,6 +630,9 @@ class _ProgressProjector:
             tool_name=tool_name,
             status=status,
             duration_ms=duration_ms,
+            activity_id=activity_id,
+            attempt_count=attempt_count,
+            call_sequence=call_sequence,
         )
 
     def ensure_agent_started(self) -> ReaderRecordAskProgressDTO | None:
@@ -767,7 +845,6 @@ class _ProgressProjector:
         # call sequence + typed outcome. The projector maps them to the
         # ``searching_web`` phase with ``search_web`` tool_name.
         if isinstance(event, WebSearchCallEvent):
-            self.web_search_calls += 1
             started = self.ensure_agent_started()
             if started is not None:
                 out.append(started)
@@ -778,11 +855,18 @@ class _ProgressProjector:
                     summary="正在搜索网页",
                     tool_name="search_web",
                     status="running",
+                    activity_id="web_search",
+                    attempt_count=event.attempt_count,
+                    call_sequence=event.call_sequence,
                 )
             )
             return out
 
         if isinstance(event, WebSearchResultEvent):
+            # Result events carry the only authoritative provider count. A
+            # host-rejected invocation may have emitted a started event but
+            # must never increase this real-attempt counter.
+            self.web_search_calls = max(self.web_search_calls, event.attempt_count)
             # ASK-WEB-R4: per-attempt telemetry. Logs only non-sensitive
             # identifiers and typed outcomes — never query / URL / provider
             # payload / reasoning / API key. ``turn_run_id`` and
@@ -790,12 +874,13 @@ class _ProgressProjector:
             # safe reason code (e.g. ``"ok"``, ``"call_limit"``).
             logger.info(
                 "reader_record_ask web search attempt: turn_run_id=%s "
-                "model_route=%s tool=search_web call_sequence=%s "
+                "model_route=%s tool=search_web call_sequence=%s attempt_count=%s "
                 "outcome=%s turn_outcome=%s detail_code=%s "
                 "registered_evidence_count=%s duration_ms=%s",
                 self._turn_run_id,
                 self._model_route,
                 event.call_sequence,
+                event.attempt_count,
                 event.outcome,
                 event.turn_outcome,
                 event.detail_code,
@@ -816,19 +901,23 @@ class _ProgressProjector:
             web_activity: ProgressActivity = (
                 "completed"
                 if turn_outcome in ("completed", "no_results")
-                else turn_outcome
+                else (
+                    "unavailable" if turn_outcome == "timeout" else turn_outcome
+                )
             )
             web_summary = {
                 "completed": "已完成网页搜索",
                 "no_results": "未找到相关网页结果",
                 "unavailable": "网页搜索暂不可用",
                 "failed": "网页搜索失败",
+                "timeout": "网页搜索超时，未能验证最新信息",
             }.get(turn_outcome, "网页搜索未知状态")
             web_status: ProgressStatus = {
                 "completed": "ok",
                 "no_results": "ok",
                 "unavailable": "unavailable",
                 "failed": "failed",
+                "timeout": "unavailable",
             }.get(turn_outcome, "failed")
             out.append(
                 self._next(
@@ -838,6 +927,9 @@ class _ProgressProjector:
                     tool_name="search_web",
                     status=web_status,
                     duration_ms=event.duration_ms,
+                    activity_id="web_search",
+                    attempt_count=event.attempt_count,
+                    call_sequence=event.call_sequence,
                 )
             )
             return out
@@ -1428,6 +1520,15 @@ async def _run_agentic_turn(
                 await agent_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        _log_web_search_turn_observation(
+            run_result=run_result,
+            model_route=_safe_model_route(active_model),
+            provider=(
+                web_search_capability.provider
+                if web_search_capability is not None
+                else None
+            ),
+        )
 
     if terminal_emitted or run_result is None:
         return

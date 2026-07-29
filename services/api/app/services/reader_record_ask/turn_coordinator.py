@@ -16,12 +16,16 @@ committed and is never refunded because the model already saw content.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _datetime
+import hmac
 import json
 import secrets as _secrets
 import time
+import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from xml.sax.saxutils import escape as _xml_escape_web
 
 if TYPE_CHECKING:
@@ -115,12 +119,16 @@ from app.services.reader_record_ask.web_search_contracts import (
     WEB_MAX_CALLS_PER_TURN,
     WEB_MAX_RESULTS_PER_CALL,
     WEB_QUERY_MAX_LEN,
+    WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS,
+    WEB_SEARCH_TURN_DEADLINE_SECONDS,
     ResolvedWebSearchCapability,
     WebEvidence,
     WebSearchOutcome,
+    WebSearchTurnObservation,
     canonicalize_url,
     compute_web_source_fingerprint,
     display_domain_from_canonical_url,
+    registrable_domain_from_canonical_url,
 )
 from app.services.reader_record_ask.web_search_port import (
     WebSearchBackend,
@@ -139,12 +147,101 @@ _MAX_MAP_ENTRY_SOURCES = 32
 _MAX_DESCRIPTOR_MAP_ENTRY_SOURCES = 8
 
 # G1-b5: default web search call limit. Mirrors the G0/G1 capability
-# resolver default (3 as of ASK-WEB-R4). The actual limit comes from the
+# resolver default (2 as of ASK-WEB-QUALITY-R5). The actual limit comes from the
 # resolved capability's ``max_calls`` field; this constant is only used
 # when the coordinator is constructed without an explicit
 # ``max_web_search_calls`` AND the capability is unavailable (defensive
 # fail-soft path).
-_DEFAULT_MAX_WEB_SEARCH_CALLS: int = 3
+_DEFAULT_MAX_WEB_SEARCH_CALLS: int = 2
+
+# A port is an adapter boundary, so its diagnostic code is not trusted even
+# though production adapters currently use fixed constants.  This finite list
+# is deliberately stricter than a shape regex: a query such as
+# ``top_secret_query`` could otherwise look like a harmless snake_case code.
+# Unknown future adapter codes degrade to a host-owned fallback until they are
+# consciously added here.
+_SAFE_WEB_SEARCH_DETAIL_CODES = frozenset(
+    {
+        "ok",
+        "empty",
+        "call_limit",
+        "equivalent_query",
+        "insufficient_rewrite",
+        "unsafe_query_comparison",
+        "deadline_exhausted",
+        "provider_timeout",
+        "fence_pre",
+        "fence_post",
+        "capability_or_backend_missing",
+        "backend_exception",
+        "port_unavailable",
+        "port_failed",
+        "budget_exhausted",
+        "unknown",
+        "qwen_completed",
+        "qwen_no_canonical_hits",
+        "qwen_rate_limit",
+        "qwen_service_unavailable",
+        "qwen_timeout",
+        "qwen_malformed_response",
+        "qwen_http_400",
+        "qwen_http_422",
+        "qwen_http_500",
+        "qwen_http_error",
+        "qwen_http_transport_error",
+        "qwen_unexpected_error",
+        "deepseek_completed",
+        "deepseek_no_canonical_hits",
+        "deepseek_partial_citations_refused",
+        "deepseek_citations_ignored",
+        "deepseek_rate_limit",
+        "deepseek_service_unavailable",
+        "deepseek_timeout",
+        "deepseek_malformed_response",
+        "deepseek_http_400",
+        "deepseek_http_422",
+        "deepseek_http_500",
+        "deepseek_http_error",
+        "deepseek_http_transport_error",
+        "deepseek_unexpected_error",
+    }
+)
+
+# The Host does not retain plaintext query comparison state.  It uses a
+# per-turn HMAC key over lexical units and 2/3-unit shingles, then compares
+# only the resulting opaque digest sets.  The Jaccard threshold is a
+# necessary condition for a second provider call; a short edge append/prepend
+# is additionally rejected so a date or one small word cannot consume the
+# only retry merely because a short query has a small feature set.
+_WEB_QUERY_SIGNIFICANT_REWRITE_JACCARD_THRESHOLD = 0.8
+_WEB_QUERY_LIGHT_EDGE_DELTA_MAX_CHARS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class _WebQuerySimilaritySignature:
+    """Per-turn opaque comparison state; never emitted or persisted.
+
+    Every digest is HMAC-SHA256 under a random per-turn key.  The dataclass
+    deliberately has no plaintext query, normalized query, lexical token, or
+    shingle field.
+    """
+
+    full_digest: bytes
+    feature_digests: frozenset[bytes]
+    normalized_length: int
+    edge_trim_digests: frozenset[bytes]
+    edge_unit_trim_digests: frozenset[bytes]
+
+
+def _safe_web_search_detail_code(value: object, *, fallback: str) -> str:
+    """Return only a host-approved diagnostic code for logs/events.
+
+    The fallback is always a literal at the call site.  Do not accept an
+    arbitrary string by shape: it could be provider text, a query, or a URL.
+    """
+    if isinstance(value, str) and value in _SAFE_WEB_SEARCH_DETAIL_CODES:
+        return value
+    return fallback
 
 
 class HostBudgetExhausted(Exception):
@@ -241,6 +338,8 @@ class TurnCoordinator:
         web_search_backend: WebSearchBackend | None = None,
         web_evidence_registry: WebEvidenceRegistry | None = None,
         max_web_search_calls: int | None = None,
+        web_search_deadline_seconds: float = WEB_SEARCH_TURN_DEADLINE_SECONDS,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
@@ -308,10 +407,36 @@ class TurnCoordinator:
 
         self.turn_id: str = mint_turn_id()
         self.search_current_article_calls: int = 0
+        # ``web_search_calls`` counts actual provider invocations.  Host-only
+        # rejections (for example equivalent normalized re-queries) are kept
+        # separate in ``web_search_tool_requests`` so telemetry never claims
+        # a provider call that did not happen.
         self.web_search_calls: int = 0
+        self.web_search_tool_requests: int = 0
+        self._web_search_lock = asyncio.Lock()
+        self._web_search_clock = monotonic_clock or time.perf_counter
+        if not isinstance(web_search_deadline_seconds, int | float):
+            raise TypeError("web_search_deadline_seconds must be numeric")
+        if web_search_deadline_seconds <= 0:
+            raise ValueError("web_search_deadline_seconds must be positive")
+        self.web_search_deadline_seconds = float(web_search_deadline_seconds)
+        self._web_search_started_at: float | None = None
+        self._web_search_finished_at: float | None = None
+        # HMAC, not plaintext: this comparison state exists only for this
+        # coordinator instance and is never emitted, logged, persisted, or
+        # included in a public DTO/SSE payload. It contains opaque token /
+        # shingle feature digests only, never a query or normalized query.
+        self._web_search_query_digest_key = _secrets.token_bytes(32)
+        self._first_no_results_query_signature: _WebQuerySimilaritySignature | None = (
+            None
+        )
+        self._web_search_deadline_exhausted = False
+        self._web_search_second_query_changed: bool | None = None
+        self._web_search_final_detail_code: str | None = None
         # G1-b5: last translated public outcome for ``web_search_outcome``
         # property / finalizer. ``None`` until the first call sets it.
         self._last_web_search_outcome: WebSearchOutcome | None = None
+        self._last_web_search_attempt_outcome: WebSearchOutcome | None = None
         self._selection_session: EvidenceExpansionSession | None = None
         self._map_expander: ArticleMapExpander | None = None
         self._assembled = False
@@ -991,116 +1116,225 @@ class TurnCoordinator:
         query: str,
         max_results: int | None = None,
     ) -> MeteredToolReturn:
-        """Provider-neutral web search via :class:`WebSearchBackend` port.
+        """Execute the frozen, serial Web Search lifecycle.
 
-        Mirrors :meth:`search_current_article` discipline:
-
-        - pre-call fence (fail-soft ``unavailable`` on stale envelope);
-        - call-limit consumption (even on fence failure after the call
-          is made);
-        - host re-canonicalizes provider URLs and recomputes
-          :class:`WebEvidence.source_fingerprint` before any host-side
-          registry mutation;
-        - metered budget charge via the ``rag`` account (web evidence
-          shares the existing model-visible budget pool);
-        - host-only ``budget_exhausted`` abort when even a minimal safe
-          view cannot be charged.
-
-        ``query`` is clamped to :data:`WEB_QUERY_MAX_LEN` before the
-        port call. ``max_results`` is clamped to the resolved
-        capability's ``max_results_per_call`` (or
-        :data:`WEB_MAX_RESULTS_PER_CALL` when capability is ``None``).
-
-        Fail-soft safe views (``unavailable`` / ``failed`` / ``empty``)
-        carry no evidence handles and no web source blocks.
+        The lock is intentional: model tool calls may be scheduled together,
+        but provider attempt two is legal only after attempt one has completed
+        with ``no_results``. The host never stores query text; it keeps only
+        an in-memory keyed HMAC signature set for the rewrite gate.
         """
-        started = time.perf_counter()
+        async with self._web_search_lock:
+            tool_requests_before = self.web_search_tool_requests
+            try:
+                return await self._search_web_locked(query, max_results)
+            finally:
+                # ``total_duration_ms`` is Web Search lifecycle time, not
+                # later model composition/validation latency. A rejected
+                # late call does not extend it because it did not start a
+                # new allowed tool request.
+                if self.web_search_tool_requests > tool_requests_before:
+                    self._web_search_finished_at = self._web_search_clock()
 
-        # Clamp query length BEFORE any port call (defensive fail-soft).
+    async def _search_web_locked(
+        self,
+        query: str,
+        max_results: int | None,
+    ) -> MeteredToolReturn:
+        started = self._web_search_clock()
+        if self._web_search_started_at is None:
+            self._web_search_started_at = started
+
+        # A late/malicious invocation cannot make another provider call or
+        # downgrade an earlier successful outcome.
+        if not self.can_offer_web_search:
+            detail = (
+                "deadline_exhausted"
+                if self._web_search_deadline_exhausted
+                and self._last_web_search_outcome == "no_results"
+                else "call_limit"
+            )
+            self._last_web_search_attempt_outcome = "unavailable"
+            if self._last_web_search_outcome is None:
+                self._record_web_search_outcome(
+                    "unavailable", detail_code=detail
+                )
+            return await self._web_safe_unavailable(
+                started=started,
+                detail=detail,
+            )
+
+        self.web_search_tool_requests += 1
+        if self._remaining_web_search_deadline_seconds() <= 0:
+            self._web_search_deadline_exhausted = True
+            if self._last_web_search_outcome == "no_results":
+                # A narrow race can occur after tool preparation. Keep the
+                # first real no-results result as the turn truth; no second
+                # provider call happened, but terminal telemetry still records
+                # why the retry was not available.
+                self._web_search_final_detail_code = "deadline_exhausted"
+                self._last_web_search_attempt_outcome = "unavailable"
+            else:
+                self._record_web_search_outcome(
+                    "timeout", detail_code="deadline_exhausted"
+                )
+            return await self._web_safe_unavailable(
+                started=started,
+                detail="deadline_exhausted",
+            )
+
+        # Clamp query before any port call. The original query remains local
+        # to this function and never enters logs, events, DTOs, or storage.
         if not isinstance(query, str):
             query = ""
         clamped_query = query[:WEB_QUERY_MAX_LEN] if query else ""
 
-        # Resolve effective max_results from capability / default.
-        if max_results is not None:
-            effective_max_results = max(
-                1, min(int(max_results), WEB_MAX_RESULTS_PER_CALL)
+        # The only possible second tool request follows the first real
+        # no-results provider attempt. Block exact, near-duplicate, and
+        # unsafe-to-compare forms locally without another provider call.
+        if self._last_web_search_outcome == "no_results":
+            rewrite_decision = self._web_query_reformulation_decision(
+                clamped_query
             )
-        elif self.web_search_capability is not None:
-            effective_max_results = max(
+            changed = rewrite_decision == "changed"
+            self._web_search_second_query_changed = changed
+            if not changed:
+                self._record_web_search_outcome(
+                    "no_results", detail_code=rewrite_decision
+                )
+                return await self._web_emit_empty_view(
+                    started=started,
+                    detail=rewrite_decision,
+                )
+
+        capability_max_results = WEB_MAX_RESULTS_PER_CALL
+        if self.web_search_capability is not None:
+            capability_max_results = max(
                 1,
                 min(
                     self.web_search_capability.max_results_per_call,
                     WEB_MAX_RESULTS_PER_CALL,
                 ),
             )
+        if max_results is None:
+            effective_max_results = capability_max_results
         else:
-            effective_max_results = WEB_MAX_RESULTS_PER_CALL
-
-        # Call-limit (consume even on fence failure after the call is made).
-        if self.web_search_calls >= self.max_web_search_calls:
-            self._record_web_search_outcome("unavailable")
-            return await self._web_safe_unavailable(
-                started=started,
-                detail="call_limit",
+            try:
+                requested_max_results = int(max_results)
+            except (TypeError, ValueError):
+                requested_max_results = capability_max_results
+            effective_max_results = max(
+                1, min(requested_max_results, capability_max_results)
             )
 
-        # Pre-generation fence.
+        # Pre-generation fence is a host refusal, not a provider retry.
         fence_result = await self._run_fence()
         if not fence_result.ok:
-            self._record_web_search_outcome("unavailable")
+            self._record_web_search_outcome("unavailable", detail_code="fence_pre")
             return await self._web_safe_unavailable(
                 started=started, detail="fence_pre"
             )
 
-        # Capability not enabled OR backend port None → no I/O.
+        # Capability/backend absence is terminal for this turn and performs
+        # no I/O. It is not counted as a provider attempt.
         if (
             self.web_search_capability is None
             or not self.web_search_capability.enabled_for_turn
             or self.web_search_backend is None
         ):
-            self.web_search_calls += 1
-            self._record_web_search_outcome("unavailable")
+            self._record_web_search_outcome(
+                "unavailable", detail_code="capability_or_backend_missing"
+            )
             return await self._web_safe_unavailable(
                 started=started, detail="capability_or_backend_missing"
             )
 
-        # Backend port call (provider-neutral). The host re-canonicalizes
-        # every URL and recomputes source_fingerprint AFTER the call.
-        outcome: WebSearchResult
+        remaining_seconds = self._remaining_web_search_deadline_seconds()
+        if remaining_seconds <= 0:
+            self._web_search_deadline_exhausted = True
+            self._record_web_search_outcome(
+                "timeout", detail_code="deadline_exhausted"
+            )
+            return await self._web_safe_unavailable(
+                started=started, detail="deadline_exhausted"
+            )
+
+        provider_timeout = min(
+            WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS,
+            remaining_seconds,
+        )
+        self.web_search_calls += 1
         try:
-            outcome = await self.web_search_backend.search_web(
-                query=clamped_query,
-                max_results=effective_max_results,
+            outcome = await asyncio.wait_for(
+                self.web_search_backend.search_web(
+                    query=clamped_query,
+                    max_results=effective_max_results,
+                ),
+                timeout=provider_timeout,
+            )
+        except TimeoutError:
+            deadline_exhausted = (
+                remaining_seconds <= WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS
+            )
+            detail_code = (
+                "deadline_exhausted" if deadline_exhausted else "provider_timeout"
+            )
+            self._web_search_deadline_exhausted = (
+                self._web_search_deadline_exhausted or deadline_exhausted
+            )
+            self._record_web_search_outcome("timeout", detail_code=detail_code)
+            return await self._web_safe_unavailable(
+                started=started, detail=detail_code
             )
         except Exception:
-            # Provider raised — fail-soft safe view; never ModelRetry.
-            self.web_search_calls += 1
-            self._record_web_search_outcome("failed")
+            # Provider raised — fail soft; host and provider retry budgets are
+            # intentionally separate, and this path never retries the port.
+            self._record_web_search_outcome(
+                "failed", detail_code="backend_exception"
+            )
             return await self._web_safe_unavailable(
                 started=started, detail="backend_exception"
             )
-        self.web_search_calls += 1
+
+        # A provider that returned just as the global deadline elapsed cannot
+        # surface a partial success; fail soft and retire the tool instead.
+        if self._remaining_web_search_deadline_seconds() <= 0:
+            self._web_search_deadline_exhausted = True
+            self._record_web_search_outcome(
+                "timeout", detail_code="deadline_exhausted"
+            )
+            return await self._web_safe_unavailable(
+                started=started, detail="deadline_exhausted"
+            )
 
         # Post-generation fence.
         fence_after = await self._run_fence()
         if not fence_after.ok:
-            self._record_web_search_outcome("unavailable")
+            self._record_web_search_outcome("unavailable", detail_code="fence_post")
             return await self._web_safe_unavailable(
                 started=started, detail="fence_post"
             )
 
-        # Translate port outcome → host model view + evidence registration.
-        return await self._register_web_search_outcome(
+        metered = await self._register_web_search_outcome(
             outcome=outcome,
             started=started,
+            max_results=effective_max_results,
         )
+        if (
+            metered.status == "empty"
+            and self.web_search_calls == 1
+            and self._last_web_search_outcome == "no_results"
+        ):
+            self._first_no_results_query_signature = self._web_query_signature(
+                clamped_query
+            )
+        return metered
 
     async def _register_web_search_outcome(
         self,
         *,
         outcome: WebSearchResult,
         started: float,
+        max_results: int,
     ) -> MeteredToolReturn:
         """Translate a port outcome into a metered tool view + registry.
 
@@ -1122,24 +1356,51 @@ class TurnCoordinator:
 
         # Map port outcome to public outcome + tool status.
         if outcome.status == "unavailable":
-            self._record_web_search_outcome("unavailable")
+            detail = _safe_web_search_detail_code(
+                outcome.detail_code,
+                fallback="port_unavailable",
+            )
+            self._record_web_search_outcome(
+                "unavailable",
+                detail_code=detail,
+            )
             return await self._web_safe_unavailable(
                 started=started,
-                detail=outcome.detail_code or "port_unavailable",
+                detail=detail,
             )
         if outcome.status == "failed":
-            self._record_web_search_outcome("failed")
+            detail = _safe_web_search_detail_code(
+                outcome.detail_code,
+                fallback="port_failed",
+            )
+            self._record_web_search_outcome(
+                "failed",
+                detail_code=detail,
+            )
             return await self._web_safe_unavailable(
                 started=started,
-                detail=outcome.detail_code or "port_failed",
+                detail=detail,
                 tool_status="failed",
+            )
+        if outcome.status == "timeout":
+            detail = _safe_web_search_detail_code(
+                outcome.detail_code,
+                fallback="provider_timeout",
+            )
+            self._record_web_search_outcome(
+                "timeout",
+                detail_code=detail,
+            )
+            return await self._web_safe_unavailable(
+                started=started,
+                detail=detail,
             )
         # ``ok`` with zero hits and ``empty`` both map to ``no_results``.
         if outcome.status == "empty" or (
             outcome.status == "ok" and not outcome.hits
         ):
-            self._record_web_search_outcome("no_results")
-            return await self._web_emit_empty_view(started=started)
+            self._record_web_search_outcome("no_results", detail_code="empty")
+            return await self._web_emit_empty_view(started=started, detail="empty")
 
         # ``ok`` with hits → register evidence + emit ok view.
         assert outcome.status == "ok" and outcome.hits
@@ -1147,6 +1408,17 @@ class TurnCoordinator:
         retrieved_at = _web_retrieved_at_iso()
         handle_ids: list[str] = []
         web_source_blocks: list[str] = []
+        # Canonical URL dedup happens before ordering. Then emit first hits
+        # from independent PSL registrable domains ahead of later results from
+        # the same registrable domain, while retaining every valid candidate
+        # below the diversity boundary. A hostname without a safe registrable
+        # key is never fabricated into an independent domain. Provider
+        # rank/score/raw payload never reach this host path.
+        seen_canonical_urls: set[str] = set()
+        seen_registrable_domains: set[str] = set()
+        independent_domain_candidates: list[tuple[Any, str, str]] = []
+        same_domain_candidates: list[tuple[Any, str, str]] = []
+        unclassified_domain_candidates: list[tuple[Any, str, str]] = []
         for hit in outcome.hits:
             try:
                 canonical = canonicalize_url(hit.raw_url)
@@ -1154,13 +1426,30 @@ class TurnCoordinator:
                 # Drop malformed / disallowed scheme hits silently —
                 # never raise from provider text.
                 continue
+            display_domain = display_domain_from_canonical_url(canonical)
+            if not display_domain or canonical in seen_canonical_urls:
+                continue
+            seen_canonical_urls.add(canonical)
+            candidate = (hit, canonical, display_domain)
+            registrable_domain = registrable_domain_from_canonical_url(canonical)
+            if registrable_domain is None:
+                unclassified_domain_candidates.append(candidate)
+            elif registrable_domain in seen_registrable_domains:
+                same_domain_candidates.append(candidate)
+            else:
+                seen_registrable_domains.add(registrable_domain)
+                independent_domain_candidates.append(candidate)
+
+        ordered_candidates = (
+            independent_domain_candidates
+            + same_domain_candidates
+            + unclassified_domain_candidates
+        )[:max_results]
+        for hit, canonical, display_domain in ordered_candidates:
             source_fingerprint = compute_web_source_fingerprint(
                 canonical_url=canonical,
                 retrieved_at=retrieved_at,
             )
-            display_domain = display_domain_from_canonical_url(canonical)
-            if not display_domain:
-                continue
             handle_id = _mint_web_evidence_handle_id()
             try:
                 evidence = WebEvidence(
@@ -1172,9 +1461,9 @@ class TurnCoordinator:
                     retrieved_at=retrieved_at,
                     provider_result_ref=hit.provider_result_ref,
                     source_fingerprint=source_fingerprint,
-                    # ASK-WEB-R4: propagate optional provider-supplied
-                    # freshness hints. Untrusted provider text — the
-                    # host never treats them as authoritative.
+                    # Strict date normalization is enforced by WebEvidence.
+                    # Raw page_age stays server-internal and is never rendered
+                    # to public DTO/SSE/UI surfaces.
                     published_at=hit.published_at,
                     page_age=hit.page_age,
                 )
@@ -1193,17 +1482,17 @@ class TurnCoordinator:
                     canonical_url=canonical,
                     title=hit.title or "",
                     description=hit.description or "",
-                    page_age=hit.page_age,
+                    published_at=evidence.published_at,
                 )
             )
 
         if not handle_ids:
             # All hits dropped (URL canonicalization / fingerprint /
             # registry rejection) — surface ``no_results`` to the model.
-            self._record_web_search_outcome("no_results")
-            return await self._web_emit_empty_view(started=started)
+            self._record_web_search_outcome("no_results", detail_code="empty")
+            return await self._web_emit_empty_view(started=started, detail="empty")
 
-        self._record_web_search_outcome("completed")
+        self._record_web_search_outcome("completed", detail_code="ok")
         tool_view = SearchWebToolView(
             status="ok",
             summary=(
@@ -1226,7 +1515,7 @@ class TurnCoordinator:
             status="ok",
             summary=tool_view.summary,
             evidence_handle_ids=tuple(handle_ids),
-            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            duration_ms=self._web_elapsed_ms(started),
             detail_code="ok",
         )
 
@@ -1255,11 +1544,19 @@ class TurnCoordinator:
             text=rendered.text,
             status=tool_status,
             summary=summary,
-            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-            detail_code=detail,
+            duration_ms=self._web_elapsed_ms(started),
+            detail_code=_safe_web_search_detail_code(
+                detail,
+                fallback="unknown",
+            ),
         )
 
-    async def _web_emit_empty_view(self, *, started: float) -> MeteredToolReturn:
+    async def _web_emit_empty_view(
+        self,
+        *,
+        started: float,
+        detail: str = "empty",
+    ) -> MeteredToolReturn:
         """Emit a no-results web search view (no handles / blocks)."""
         from app.services.reader_record_ask.tool_contracts import (
             SearchWebToolView,
@@ -1278,8 +1575,11 @@ class TurnCoordinator:
             text=rendered.text,
             status="empty",
             summary=summary,
-            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-            detail_code="empty",
+            duration_ms=self._web_elapsed_ms(started),
+            detail_code=_safe_web_search_detail_code(
+                detail,
+                fallback="empty",
+            ),
         )
 
     def _tool_budget_exhausted(
@@ -1299,7 +1599,10 @@ class TurnCoordinator:
                 summary="",
                 duration_ms=duration_ms,
                 host_budget_abort=True,
-                detail_code=detail_code,
+                detail_code=_safe_web_search_detail_code(
+                    detail_code,
+                    fallback="budget_exhausted",
+                ),
             )
         self.budget.charge("control", rendered)
         return MeteredToolReturn(
@@ -1307,7 +1610,10 @@ class TurnCoordinator:
             status="budget_exhausted",
             summary=tool_view.summary,
             duration_ms=duration_ms,
-            detail_code=detail_code,
+            detail_code=_safe_web_search_detail_code(
+                detail_code,
+                fallback="budget_exhausted",
+            ),
         )
 
     @property
@@ -1320,17 +1626,97 @@ class TurnCoordinator:
           some hits were dropped on canonicalization).
         - ``no_results`` when at least one call returned ``empty`` /
           ``ok`` with zero hits, and no call returned hits.
+        - ``timeout`` when the provider cap or the turn-level web-search
+          deadline elapsed before a usable result was registered.
         - ``unavailable`` when every call returned ``unavailable``.
         - ``failed`` when every call returned ``failed``.
 
         The finalizer reads this to set ``web_search_summary`` on the
         completed DTO. Mixing outcomes within a turn is conservative:
-        ``completed`` wins over ``no_results`` wins over ``unavailable``
-        wins over ``failed``.
+        ``completed`` wins over ``timeout`` wins over ``no_results`` wins
+        over ``unavailable`` wins over ``failed``.
         """
-        if self.web_search_calls == 0:
-            return None
         return self._last_web_search_outcome
+
+    @property
+    def web_search_last_attempt_outcome(self) -> WebSearchOutcome | None:
+        """Typed outcome for the latest tool invocation, never raw provider data."""
+        return self._last_web_search_attempt_outcome
+
+    @property
+    def web_search_next_call_sequence(self) -> int:
+        """One-based host tool-invocation sequence for safe progress events."""
+        return self.web_search_tool_requests + 1
+
+    @property
+    def can_offer_web_search(self) -> bool:
+        """Whether ``search_web`` may be exposed on the next agent request.
+
+        The only non-terminal transition is exactly one provider result of
+        ``no_results`` followed by one further host tool request. The query
+        rewrite gate runs inside :meth:`search_web`, because tool preparing
+        intentionally never sees or stores model query text. It does, however,
+        retire the tool if the remaining Web Search deadline is exhausted.
+        """
+        if self.web_search_tool_requests >= self.max_web_search_calls:
+            return False
+        outcome = self._last_web_search_outcome
+        if outcome is None:
+            return self.web_search_tool_requests == 0
+        if outcome != "no_results":
+            return False
+        may_offer_retry = (
+            self.web_search_tool_requests == 1
+            and self.web_search_calls == 1
+            and self.max_web_search_calls >= 2
+        )
+        if not may_offer_retry:
+            return False
+        if self._remaining_web_search_deadline_seconds() <= 0:
+            # Do not manufacture a provider result or alter the already-real
+            # ``no_results`` outcome. This is a tool-prepare-only terminal
+            # marker, consumed by the terminal aggregate observation.
+            self._web_search_deadline_exhausted = True
+            self._web_search_final_detail_code = "deadline_exhausted"
+            return False
+        return True
+
+    @property
+    def web_search_deadline_exhausted(self) -> bool:
+        return self._web_search_deadline_exhausted
+
+    def web_search_turn_observation(
+        self,
+        *,
+        cited_source_count: int,
+        distinct_domain_count: int,
+    ) -> WebSearchTurnObservation:
+        """Build the one terminal-only aggregate without content fields."""
+        total_duration_ms: int | None = None
+        if (
+            self._web_search_started_at is not None
+            and self._web_search_finished_at is not None
+        ):
+            total_duration_ms = max(
+                0,
+                int(
+                    (
+                        self._web_search_finished_at
+                        - self._web_search_started_at
+                    )
+                    * 1000
+                ),
+            )
+        return WebSearchTurnObservation(
+            attempt_count=self.web_search_calls,
+            final_outcome=self._last_web_search_outcome,
+            total_duration_ms=total_duration_ms,
+            cited_source_count=max(0, int(cited_source_count)),
+            distinct_domain_count=max(0, int(distinct_domain_count)),
+            deadline_exhausted=self._web_search_deadline_exhausted,
+            second_query_changed=self._web_search_second_query_changed,
+            final_detail_code=self._web_search_final_detail_code,
+        )
 
     # ASK-WEB-R4: executable-capability properties used by the runtime to
     # decide whether to mount ``expand_evidence`` and
@@ -1368,7 +1754,12 @@ class TurnCoordinator:
             and self.envelope.stable_document_id is not None
         )
 
-    def _record_web_search_outcome(self, outcome: WebSearchOutcome) -> None:
+    def _record_web_search_outcome(
+        self,
+        outcome: WebSearchOutcome,
+        *,
+        detail_code: str | None = None,
+    ) -> None:
         """Keep the strongest user-visible outcome across all attempts.
 
         A successful search must not be downgraded when the agent makes a
@@ -1378,11 +1769,262 @@ class TurnCoordinator:
             "failed": 0,
             "unavailable": 1,
             "no_results": 2,
-            "completed": 3,
+            "timeout": 3,
+            "completed": 4,
         }
+        safe_detail_code = (
+            _safe_web_search_detail_code(
+                detail_code,
+                fallback="unknown",
+            )
+            if detail_code is not None
+            else None
+        )
+        self._last_web_search_attempt_outcome = outcome
         current = self._last_web_search_outcome
-        if current is None or priority[outcome] > priority[current]:
+        if current is None or priority[outcome] >= priority[current]:
             self._last_web_search_outcome = outcome
+            self._web_search_final_detail_code = safe_detail_code
+
+    def _remaining_web_search_deadline_seconds(self) -> float:
+        if self._web_search_started_at is None:
+            return self.web_search_deadline_seconds
+        return self.web_search_deadline_seconds - (
+            self._web_search_clock() - self._web_search_started_at
+        )
+
+    def _web_elapsed_ms(self, started: float) -> int:
+        return max(0, int((self._web_search_clock() - started) * 1000))
+
+    def _normalize_web_query_for_comparison(self, query: str) -> str:
+        """Return the private NFKC/casefold/punctuation-space comparison form.
+
+        The result is used only as a local input to HMAC during this method's
+        caller; it is never placed in coordinator state, events, logs, DTOs,
+        or persistence.
+        """
+        return "".join(
+            character
+            for character in unicodedata.normalize("NFKC", query).casefold()
+            if not character.isspace()
+            and not unicodedata.category(character).startswith("P")
+        )
+
+    @staticmethod
+    def _is_cjk_query_character(character: str) -> bool:
+        """Whether a character must remain its own lexical unit.
+
+        In particular, a continuous Chinese phrase is deliberately not treated
+        as one giant token. Han extensions and compatibility ideographs are
+        included so the behavior stays stable for common Chinese input.
+        """
+        return (
+            "\u3400" <= character <= "\u4dbf"
+            or "\u4e00" <= character <= "\u9fff"
+            or "\uf900" <= character <= "\ufaff"
+            or "\U00020000" <= character <= "\U0002ebef"
+        )
+
+    def _web_query_lexical_units(self, query: str) -> tuple[str, ...]:
+        """Build ephemeral CJK-character / alphanumeric-token units.
+
+        Punctuation and whitespace are boundaries and are omitted. The tuple
+        is immediately HMACed by :meth:`_web_query_signature`; it is never
+        retained on the coordinator or emitted outside this stack frame.
+        """
+        units: list[str] = []
+        latin_or_number: list[str] = []
+
+        def flush_latin_or_number() -> None:
+            if latin_or_number:
+                units.append("".join(latin_or_number))
+                latin_or_number.clear()
+
+        for character in unicodedata.normalize("NFKC", query).casefold():
+            if (
+                character.isspace()
+                or unicodedata.category(character).startswith("P")
+            ):
+                flush_latin_or_number()
+            elif self._is_cjk_query_character(character):
+                flush_latin_or_number()
+                units.append(character)
+            elif character.isalnum():
+                latin_or_number.append(character)
+            else:
+                # Symbols are neither comparison tokens nor token glue.
+                flush_latin_or_number()
+        flush_latin_or_number()
+        return tuple(units)
+
+    def _web_query_hmac(self, material: str) -> bytes:
+        return hmac.digest(
+            self._web_search_query_digest_key,
+            material.encode("utf-8"),
+            "sha256",
+        )
+
+    def _web_query_signature(
+        self,
+        query: str,
+    ) -> _WebQuerySimilaritySignature | None:
+        """Build opaque HMAC token/shingle features for one local query.
+
+        Individual lexical units are token features. Consecutive two- and
+        three-unit windows are shingle features. The actual units and shingles
+        exist only in this function until HMACed; the returned signature stores
+        only bytes and a length needed for the light edge-append safeguard.
+        """
+        normalized = self._normalize_web_query_for_comparison(query)
+        if not normalized:
+            return None
+        units = self._web_query_lexical_units(query)
+        if not units or "".join(units) != normalized:
+            # Unsupported symbols would make the unit boundary comparison
+            # ambiguous. A missing signature causes the retry to fail closed.
+            return None
+
+        feature_materials = {f"token:{unit}" for unit in units}
+        for shingle_size in (2, 3):
+            for start_index in range(len(units) - shingle_size + 1):
+                feature_materials.add(
+                    f"shingle:{shingle_size}:"
+                    + "\x1f".join(
+                        units[start_index : start_index + shingle_size]
+                    )
+                )
+        feature_digests = frozenset(
+            self._web_query_hmac(material) for material in feature_materials
+        )
+        if not feature_digests:
+            return None
+
+        edge_trim_digests: set[bytes] = set()
+        for delta in range(
+            1,
+            min(_WEB_QUERY_LIGHT_EDGE_DELTA_MAX_CHARS, len(normalized) - 1)
+            + 1,
+        ):
+            edge_trim_digests.add(
+                self._web_query_hmac(f"full:{normalized[delta:]}")
+            )
+            edge_trim_digests.add(
+                self._web_query_hmac(f"full:{normalized[:-delta]}")
+            )
+        edge_unit_trim_digests: set[bytes] = set()
+        if len(units) >= 2:
+            edge_unit_trim_digests.add(
+                self._web_query_hmac(f"full:{''.join(units[:-1])}")
+            )
+            edge_unit_trim_digests.add(
+                self._web_query_hmac(f"full:{''.join(units[1:])}")
+            )
+        return _WebQuerySimilaritySignature(
+            full_digest=self._web_query_hmac(f"full:{normalized}"),
+            feature_digests=feature_digests,
+            normalized_length=len(normalized),
+            edge_trim_digests=frozenset(edge_trim_digests),
+            edge_unit_trim_digests=frozenset(edge_unit_trim_digests),
+        )
+
+    def _is_light_web_query_edge_extension(
+        self,
+        *,
+        query: str,
+        first: _WebQuerySimilaritySignature,
+        candidate: _WebQuerySimilaritySignature,
+    ) -> bool:
+        """Reject a small edge change or one lexical-unit edge change.
+
+        The stored first-query state is HMAC-only. For a longer candidate we
+        HMAC its temporary matching edge and compare it with the stored full
+        digest. For a shorter candidate we compare its full digest with the
+        first query's precomputed, HMAC-only character and unit edge trims.
+        """
+        length_delta = candidate.normalized_length - first.normalized_length
+        if length_delta == 0:
+            return False
+        if length_delta < 0:
+            candidate_matches = first.edge_unit_trim_digests
+            if abs(length_delta) <= _WEB_QUERY_LIGHT_EDGE_DELTA_MAX_CHARS:
+                candidate_matches = (
+                    candidate_matches | first.edge_trim_digests
+                )
+            return any(
+                hmac.compare_digest(candidate.full_digest, digest)
+                for digest in candidate_matches
+            )
+
+        normalized = self._normalize_web_query_for_comparison(query)
+        if len(normalized) != candidate.normalized_length:
+            # Defensive fail closed if the local material cannot be reproduced
+            # exactly for comparison.
+            return True
+        original_length = first.normalized_length
+        if abs(length_delta) <= _WEB_QUERY_LIGHT_EDGE_DELTA_MAX_CHARS:
+            for edge in (
+                normalized[:original_length],
+                normalized[-original_length:],
+            ):
+                if hmac.compare_digest(
+                    first.full_digest,
+                    self._web_query_hmac(f"full:{edge}"),
+                ):
+                    return True
+        units = self._web_query_lexical_units(query)
+        if "".join(units) != normalized:
+            return True
+        if len(units) >= 2:
+            for edge_units in (units[:-1], units[1:]):
+                if hmac.compare_digest(
+                    first.full_digest,
+                    self._web_query_hmac(f"full:{''.join(edge_units)}"),
+                ):
+                    return True
+        return False
+
+    def _web_query_reformulation_decision(
+        self,
+        query: str,
+    ) -> Literal[
+        "changed",
+        "equivalent_query",
+        "insufficient_rewrite",
+        "unsafe_query_comparison",
+    ]:
+        """Return the safe host decision for the sole potential retry.
+
+        The Jaccard score is calculated over opaque HMAC digest sets. A score
+        at or above 0.8 is near-duplicate and fails closed. A short direct
+        edge extension also fails closed even if a small query's set Jaccard
+        falls below the threshold; this prevents appending a date or one word
+        from spending the retry. No score, token, shingle, or normalized form
+        is retained after this method returns.
+        """
+        first = self._first_no_results_query_signature
+        candidate = self._web_query_signature(query)
+        if first is None or candidate is None:
+            return "unsafe_query_comparison"
+        # Normalization equivalence is an absolute Host refusal, independent
+        # of lexical-boundary differences caused by removed punctuation (for
+        # example ``foo,bar`` versus ``foobar``).
+        if hmac.compare_digest(first.full_digest, candidate.full_digest):
+            return "equivalent_query"
+        union = first.feature_digests | candidate.feature_digests
+        if not union:
+            return "unsafe_query_comparison"
+        jaccard = len(first.feature_digests & candidate.feature_digests) / len(
+            union
+        )
+        if jaccard >= _WEB_QUERY_SIGNIFICANT_REWRITE_JACCARD_THRESHOLD:
+            return "equivalent_query"
+        if self._is_light_web_query_edge_extension(
+            query=query,
+            first=first,
+            candidate=candidate,
+        ):
+            return "insufficient_rewrite"
+        return "changed"
 
     async def _rag_safe_unavailable(self, *, started: float, detail: str) -> MeteredToolReturn:
         from app.services.reader_record_ask.article_rag_port import (
@@ -1498,7 +2140,7 @@ def _render_web_source_block(
     canonical_url: str,
     title: str,
     description: str,
-    page_age: str | None = None,
+    published_at: str | None = None,
 ) -> str:
     """Render one ``<untrusted_web_source>`` XML block for the model view.
 
@@ -1507,11 +2149,9 @@ def _render_web_source_block(
     block is the *only* place the model sees web source text — it never
     sees ``provider_result_ref`` or raw provider payload.
 
-    ASK-WEB-R4: ``page_age`` is an optional untrusted provider-supplied
-    freshness hint (e.g. "2 days ago"). Included as a ``page_age``
-    attribute so the model can prefer newer sources for time-sensitive
-    questions. Never authoritative — the model must not claim a fact is
-    confirmed 'as of today' based solely on this hint.
+    Only a strict provider-supplied ``published_at`` date may be projected.
+    Raw relative ``page_age`` hints never enter the model or public surface,
+    so they cannot be mistaken for a verifiable publication date.
     """
     title_attr = _xml_escape_web(title, {'"': "&quot;"}) if title else ""
     desc_attr = (
@@ -1526,9 +2166,9 @@ def _render_web_source_block(
         parts.append(f' title="{title_attr}"')
     if desc_attr:
         parts.append(f' description="{desc_attr}"')
-    if page_age:
-        age_attr = _xml_escape_web(page_age, {'"': "&quot;"})
-        parts.append(f' page_age="{age_attr}"')
+    if published_at:
+        date_attr = _xml_escape_web(published_at, {'"': "&quot;"})
+        parts.append(f' published_at="{date_attr}"')
     parts.append("/>")
     return "".join(parts)
 

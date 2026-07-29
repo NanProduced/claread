@@ -872,6 +872,10 @@ export interface ReaderAskAgenticCitationDto {
   url?: string | null;
   title?: string | null;
   description?: string | null;
+  /** Strict provider-supplied ISO publication date; null when unknown. */
+  published_at?: string | null;
+  /** Host-recorded retrieval timestamp; UI must label this as retrieved. */
+  retrieved_at?: string | null;
 }
 
 export interface ReaderAskAgenticAnswerBlockDto {
@@ -903,7 +907,8 @@ export type WebSearchOutcomeDto =
   | "completed"
   | "no_results"
   | "unavailable"
-  | "failed";
+  | "failed"
+  | "timeout";
 
 /**
  * Turn-level web search outcome summary (mirrors backend
@@ -990,6 +995,18 @@ export interface ReaderAskAgenticProgressPayloadDto {
   execution_version: ReaderAskAgenticExecutionVersionDto;
   phase: string;
   summary: string;
+  sequence?: number;
+  activity?: string | null;
+  tool_name?: string | null;
+  status?: string | null;
+  elapsed_ms?: number | null;
+  duration_ms?: number | null;
+  /** Stable cross-attempt activity identity, currently only web_search. */
+  activity_id?: "web_search" | null;
+  /** Confirmed provider invocation count; null while a call is only started. */
+  attempt_count?: number | null;
+  /** Host tool invocation sequence within this search activity. */
+  call_sequence?: number | null;
 }
 
 /**
@@ -1319,9 +1336,18 @@ export function isReaderAskAgenticCitationList(
       (citation.url != null && typeof citation.url !== "string") ||
       (citation.title != null && typeof citation.title !== "string") ||
       (citation.description != null && typeof citation.description !== "string") ||
+      (citation.published_at != null && typeof citation.published_at !== "string") ||
+      (citation.retrieved_at != null && typeof citation.retrieved_at !== "string") ||
       "handle_id" in citation ||
       "rag_navigation" in citation ||
-      "web_snapshot" in citation
+      "web_snapshot" in citation ||
+      "page_age" in citation ||
+      "query" in citation ||
+      "provider" in citation ||
+      "provider_payload" in citation ||
+      "raw_payload" in citation ||
+      "rank" in citation ||
+      "score" in citation
     ) {
       return false;
     }
@@ -1340,7 +1366,9 @@ export function isReaderAskAgenticCitationList(
       if (
         citation.url != null ||
         citation.title != null ||
-        citation.description != null
+        citation.description != null ||
+        citation.published_at != null ||
+        citation.retrieved_at != null
       ) {
         return false;
       }
@@ -1365,6 +1393,7 @@ const READER_ASK_WEB_SEARCH_OUTCOMES = new Set<string>([
   "no_results",
   "unavailable",
   "failed",
+  "timeout",
 ]);
 
 /**
@@ -1511,12 +1540,25 @@ export function isReaderAskAgenticProgressPayload(
   return (
     payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
     typeof payload.phase === "string" &&
-    typeof payload.summary === "string"
+    typeof payload.summary === "string" &&
+    (payload.activity_id == null || payload.activity_id === "web_search") &&
+    (payload.attempt_count == null || isNonNegativeInt(payload.attempt_count)) &&
+    (payload.call_sequence == null || isPositiveInt(payload.call_sequence)) &&
+    !(
+      "query" in payload ||
+      "url" in payload ||
+      "provider_payload" in payload ||
+      "raw_payload" in payload
+    )
   );
 }
 
 function isNonNegativeInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
 /** ASK-REASONING-R1: identity binding + seq only; no content fields. */

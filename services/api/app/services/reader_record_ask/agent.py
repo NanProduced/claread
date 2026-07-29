@@ -105,9 +105,12 @@ _WEB_SEARCH_ENABLED_GUIDANCE = (
     "or claim Web verification without a successful ``search_web`` call. "
     "For current or time-sensitive claims, prefer one sufficiently broad search "
     "and use two independent recent sources from that result set when available. "
+    "Use one normal search. Only if that first search returns no results may you "
+    "make one clearly reformulated query; do not repeat an equivalent query. "
     "Once a successful search returns relevant sources, stop searching and answer. "
-    "If search is unavailable or fails, do not retry it; answer with an explicit "
-    "freshness limitation instead."
+    "If search is unavailable, fails, or times out, do not retry it; answer with "
+    "an explicit freshness limitation instead. When sources conflict, state the "
+    "disagreement and relevant dates rather than inventing a certain conclusion."
 )
 
 # G1-b4: tool-name clause appended to the product-principles sentence
@@ -369,15 +372,7 @@ def create_reading_record_ask_agent(
             coordinator = ctx.deps.turn_coordinator
             if coordinator is None:
                 return None
-            if coordinator.web_search_calls >= coordinator.max_web_search_calls:
-                return None
-            if coordinator.web_search_outcome in {
-                "completed",
-                "unavailable",
-                "failed",
-            }:
-                return None
-            return tool_definition
+            return tool_definition if coordinator.can_offer_web_search else None
 
         @agent.tool(name=TOOL_SEARCH_WEB, prepare=prepare_search_web)
         async def search_web(
@@ -410,12 +405,15 @@ def create_reading_record_ask_agent(
                 raise RuntimeError(
                     "turn_coordinator is required for search_web"
                 )
-            # call_sequence is 1-based: pre-increment so the first call
-            # emits sequence=1 and the deps counter stays in sync with
-            # the coordinator's counter after the call returns.
-            call_sequence = coordinator.web_search_calls + 1
+            # Host tool call sequence is distinct from provider attempt count.
+            # The live started event deliberately omits attempt_count because
+            # host query/deadline/fence guards may prevent provider I/O. The
+            # paired result event is the first authoritative count.
+            call_sequence = coordinator.web_search_next_call_sequence
             deps.emit_event(
-                WebSearchCallEvent(call_sequence=call_sequence)
+                WebSearchCallEvent(
+                    call_sequence=call_sequence,
+                )
             )
             started = time.perf_counter()
             metered = await coordinator.search_web(
@@ -439,9 +437,13 @@ def create_reading_record_ask_agent(
                 "empty": "no_results",
                 "unavailable": "unavailable",
                 "failed": "failed",
+                "timeout": "timeout",
                 "budget_exhausted": "unavailable",
             }
-            attempt_outcome = outcome_map.get(metered.status, "unavailable")
+            attempt_outcome = (
+                coordinator.web_search_last_attempt_outcome
+                or outcome_map.get(metered.status, "unavailable")
+            )
             # ASK-WEB-R4-R1: project the Coordinator's authoritative
             # ``detail_code`` directly — do NOT forge a reason from
             # ``metered.status``. The Coordinator already classifies
@@ -464,6 +466,7 @@ def create_reading_record_ask_agent(
             deps.emit_event(
                 WebSearchResultEvent(
                     call_sequence=call_sequence,
+                    attempt_count=coordinator.web_search_calls,
                     outcome=attempt_outcome,
                     turn_outcome=turn_outcome,
                     detail_code=detail_code,

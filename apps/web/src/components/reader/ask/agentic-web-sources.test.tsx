@@ -19,6 +19,8 @@ function articleCitation(
     url: null,
     sourceTitle: null,
     description: null,
+    publishedAt: null,
+    retrievedAt: null,
   };
 }
 
@@ -37,6 +39,8 @@ function webCitation(
     url,
     sourceTitle: overrides.sourceTitle ?? "Example Title",
     description: overrides.description ?? null,
+    publishedAt: overrides.publishedAt ?? null,
+    retrievedAt: overrides.retrievedAt ?? null,
   };
 }
 
@@ -150,27 +154,20 @@ describe("AgenticWebSources", () => {
     expect(screen.queryByTestId("web-source-list")).toBeNull();
   });
 
-  it("renders outcome notice for unavailable", () => {
-    const summary: ReaderAskWebSearchSummaryDto = {
-      outcome: "unavailable",
-      cited_source_count: 0,
-    };
-    render(<AgenticWebSources citations={[]} webSearchSummary={summary} />);
-    expect(screen.getByTestId("web-search-outcome-notice").textContent).toBe(
-      "网页搜索暂不可用",
-    );
-  });
-
-  it("renders outcome notice for failed", () => {
-    const summary: ReaderAskWebSearchSummaryDto = {
-      outcome: "failed",
-      cited_source_count: 0,
-    };
-    render(<AgenticWebSources citations={[]} webSearchSummary={summary} />);
-    expect(screen.getByTestId("web-search-outcome-notice").textContent).toBe(
-      "网页搜索未完成",
-    );
-  });
+  it.each(["unavailable", "failed", "timeout"] as const)(
+    "does not duplicate the turn-scoped optional-tool warning for %s",
+    (outcome) => {
+      const summary: ReaderAskWebSearchSummaryDto = {
+        outcome,
+        cited_source_count: 0,
+      };
+      const { container } = render(
+        <AgenticWebSources citations={[]} webSearchSummary={summary} />,
+      );
+      expect(container.innerHTML).toBe("");
+      expect(screen.queryByTestId("web-search-outcome-notice")).toBeNull();
+    },
+  );
 
   it("prefers verified web citations over a contradictory non-completed summary", () => {
     const summary: ReaderAskWebSearchSummaryDto = {

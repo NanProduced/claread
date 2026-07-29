@@ -222,7 +222,7 @@ export function AskComposer({
   const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
 
   return (
-    <div className="bg-background px-4 pb-3 pt-1.5">
+    <div className="shrink-0 bg-background px-4 pb-3 pt-1.5">
       {displayErrorMessage ? (
         <SystemMessage className="mb-2.5 rounded-md px-3 py-2 text-xs leading-5" variant="error">
           {displayErrorMessage}

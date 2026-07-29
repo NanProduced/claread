@@ -36,11 +36,15 @@ This slice does **not**:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
+from dataclasses import dataclass
+from datetime import date as _date
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from tldextract import TLDExtract
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -56,6 +60,7 @@ WebSearchOutcome = Literal[
     "no_results",
     "unavailable",
     "failed",
+    "timeout",
 ]
 
 # Provider-neutral execution truth. ``provider_native`` means the model
@@ -79,8 +84,12 @@ WEB_URL_MAX_LEN: int = 2_048
 WEB_TITLE_MAX_LEN: int = 512
 WEB_DESCRIPTION_MAX_LEN: int = 1_024
 WEB_QUERY_MAX_LEN: int = 1_000
-WEB_MAX_RESULTS_PER_CALL: int = 8
-WEB_MAX_CALLS_PER_TURN: int = 4
+WEB_MAX_RESULTS_PER_CALL: int = 5
+WEB_MAX_CALLS_PER_TURN: int = 2
+# Frozen R5 latency budget. The host applies the remaining turn deadline to
+# every call and providers receive the smaller of these two caps.
+WEB_SEARCH_TURN_DEADLINE_SECONDS: float = 25.0
+WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS: float = 18.0
 # Source fingerprint length (SHA-256 hex).
 WEB_SOURCE_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -100,6 +109,15 @@ _FORBIDDEN_HOSTS_LOWER: frozenset[str] = frozenset(
         "::1",
         "[::1]",
     }
+)
+
+# Deliberately disable remote suffix-list URLs and on-disk caching. The
+# dependency ships a PSL snapshot, so host source-diversity decisions remain
+# deterministic and never cause runtime network I/O.
+_REGISTRABLE_DOMAIN_EXTRACTOR = TLDExtract(
+    cache_dir=None,
+    suffix_list_urls=(),
+    include_psl_private_domains=True,
 )
 
 
@@ -216,6 +234,81 @@ def display_domain_from_canonical_url(canonical_url: str) -> str:
     return host.lower()
 
 
+def registrable_domain_from_canonical_url(canonical_url: str) -> str | None:
+    """Return the PSL registrable-domain key, or ``None`` when unsafe.
+
+    This is for Host-only source diversity accounting, not public display. It
+    maps subdomains such as ``news.example.com`` to ``example.com`` and
+    ``a.example.co.uk`` to ``example.co.uk``. IP literals, localhost,
+    malformed/illegal hosts, unknown suffixes, and non-HTTP(S) inputs return
+    ``None`` rather than manufacturing a domain identity.
+
+    The module-level extractor is configured with ``suffix_list_urls=()`` and
+    ``cache_dir=None``; it uses only tldextract's bundled Public Suffix List
+    snapshot and cannot download at runtime.
+    """
+    if not isinstance(canonical_url, str) or not canonical_url:
+        return None
+    parts = urlsplit(canonical_url)
+    if parts.scheme.lower() not in _ALLOWED_URL_SCHEMES:
+        return None
+    host = parts.hostname
+    if not host:
+        return None
+    host = host.rstrip(".").lower()
+    if not host or host == "localhost":
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    if len(ascii_host) > 253:
+        return None
+    labels = ascii_host.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or any(
+            not (character.isascii() and (character.isalnum() or character == "-"))
+            for character in label
+        )
+        for label in labels
+    ):
+        return None
+
+    extracted = _REGISTRABLE_DOMAIN_EXTRACTOR(ascii_host)
+    if not extracted.domain or not extracted.suffix:
+        return None
+    return f"{extracted.domain}.{extracted.suffix}".lower()
+
+
+_STRICT_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def normalize_provider_published_at(value: object) -> str | None:
+    """Accept only a provider-supplied strict ISO calendar date.
+
+    The host never derives publication dates from ``page_age``, URLs, or a
+    retrieval timestamp.  A missing or malformed provider value therefore
+    remains ``None`` instead of becoming a freshness claim.
+    """
+    if not isinstance(value, str) or not _STRICT_ISO_DATE_RE.fullmatch(value):
+        return None
+    try:
+        return _date.fromisoformat(value).isoformat()
+    except ValueError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Execution capability (server-owned)
 # ---------------------------------------------------------------------------
@@ -237,12 +330,10 @@ class ResolvedWebSearchCapability(BaseModel):
     protocol: WebSearchProtocol
     execution_mode: WebSearchExecutionMode = "host_function"
     decision_mode: WebSearchDecisionMode = "agent_auto"
-    # ASK-WEB-R4: defaults raised to 3 calls / 5 results per call so the
-    # agent can self-decide multi-query fan-out without hitting call_limit
-    # after the first success. Still bounded by WEB_MAX_CALLS_PER_TURN (4)
-    # and WEB_MAX_RESULTS_PER_CALL (8), and the model-view budget remains
-    # the independent hard cap on what the model actually sees.
-    max_calls: int = Field(default=3, ge=1, le=WEB_MAX_CALLS_PER_TURN)
+    # R5 freezes the lifecycle to two provider attempts. The second can only
+    # follow an initial ``no_results`` outcome; the coordinator enforces that
+    # state transition independently of this declarative capability.
+    max_calls: int = Field(default=2, ge=1, le=WEB_MAX_CALLS_PER_TURN)
     max_results_per_call: int = Field(
         default=5, ge=1, le=WEB_MAX_RESULTS_PER_CALL
     )
@@ -284,22 +375,25 @@ class WebEvidence(BaseModel):
         description="Internal-only provider result id; never on public DTO.",
     )
     source_fingerprint: str = Field(pattern=WEB_SOURCE_FINGERPRINT_PATTERN)
-    # ASK-WEB-R4: optional provider-supplied publish date / page age for
-    # freshness ranking. ``published_at`` is an ISO-8601 date/datetime
-    # string when the provider exposes one; ``page_age`` is the raw
-    # provider hint (e.g. "2 days ago") when only a relative age is
-    # available. Both are untrusted provider text — the host never
-    # treats them as authoritative, only as a ranking hint.
+    # R5: retain optional provider freshness metadata internally. Only a
+    # strict ``YYYY-MM-DD`` provider value becomes ``published_at``;
+    # datetimes and malformed values become ``None``. ``page_age`` remains
+    # raw provider text for internal use and is never a public freshness claim.
     published_at: str | None = Field(
         default=None,
         max_length=64,
-        description="Optional ISO-8601 publish date from provider; untrusted.",
+        description="Optional strict ISO calendar date from provider; untrusted.",
     )
     page_age: str | None = Field(
         default=None,
         max_length=64,
         description="Optional relative page-age hint from provider; untrusted.",
     )
+
+    @field_validator("published_at", mode="before")
+    @classmethod
+    def _normalize_provider_published_at(cls, value: object) -> str | None:
+        return normalize_provider_published_at(value)
 
     @field_validator("canonical_url")
     @classmethod
@@ -359,6 +453,25 @@ class PublicWebSearchSummary(BaseModel):
     cited_source_count: int = Field(ge=0)
 
 
+@dataclass(frozen=True, slots=True)
+class WebSearchTurnObservation:
+    """One terminal-only, content-free Web Search telemetry record.
+
+    This object is deliberately not a DTO, SSE payload, or persistence model.
+    It contains aggregate state only; query text, URLs, titles, provider raw
+    payloads, credentials, and opaque evidence handles are absent by design.
+    """
+
+    attempt_count: int
+    final_outcome: WebSearchOutcome | None
+    total_duration_ms: int | None
+    cited_source_count: int
+    distinct_domain_count: int
+    deadline_exhausted: bool
+    second_query_changed: bool | None
+    final_detail_code: str | None
+
+
 __all__ = [
     "PublicWebSearchSummary",
     "ResolvedWebSearchCapability",
@@ -366,6 +479,8 @@ __all__ = [
     "WEB_MAX_CALLS_PER_TURN",
     "WEB_MAX_RESULTS_PER_CALL",
     "WEB_QUERY_MAX_LEN",
+    "WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS",
+    "WEB_SEARCH_TURN_DEADLINE_SECONDS",
     "WEB_SOURCE_FINGERPRINT_PATTERN",
     "WEB_TITLE_MAX_LEN",
     "WEB_URL_MAX_LEN",
@@ -375,7 +490,10 @@ __all__ = [
     "WebSearchMode",
     "WebSearchOutcome",
     "WebSearchProtocol",
+    "WebSearchTurnObservation",
     "canonicalize_url",
     "compute_web_source_fingerprint",
     "display_domain_from_canonical_url",
+    "normalize_provider_published_at",
+    "registrable_domain_from_canonical_url",
 ]

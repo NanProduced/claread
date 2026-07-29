@@ -191,11 +191,26 @@ import {
 } from "./ask/sse";
 import { TurnLifecycleMetrics } from "./ask/turn-lifecycle";
 import {
+  ASSET_CLARIFICATION_CONTEXT_MISSING_MESSAGE,
+  ASK_UNAVAILABLE_MESSAGE,
+  CLARIFICATION_CONTEXT_MISSING_MESSAGE,
+  OPTIONAL_TOOL_WARNING_MESSAGE,
   formatAgenticTerminalMessage,
   formatStreamErrorMessage,
   interruptedBubbleMessage,
   toUserFacingErrorMessage,
 } from "./ask/ask-error-messages";
+import {
+  projectActionFailureNotice,
+  projectClarifyWarningNotice,
+  projectOptionalToolWarning,
+  projectPanelInitNotice,
+  projectSendFailureNotice,
+  projectSupplementFailureNotice,
+  projectTurnTerminalNotice,
+  type AskSystemNotice,
+  type AskSystemNoticeCtaAction,
+} from "./ask/ask-system-notice";
 
 type ErrorEnvelope = {
   message?: string;
@@ -778,11 +793,39 @@ export function createSseMessageHandler(
   onMessageIdAssigned: ((assignedId: string) => void) | undefined,
   onError: (message: string) => void,
   onAgenticActivity?: (event: AgenticActivityEvent) => void,
+  // ASK-UX-MOBILE-R3 — canonical terminal-notice callback. Fired after a
+  // trusted identity check passes (see applyAgenticTerminal). The panel uses
+  // projectTurnTerminalNotice to build the AskSystemNotice from these fields
+  // — it must NOT hand-craft a notice from the formatted message string.
+  // Foreign / stale terminals (mismatched message_id / thread_id /
+  // turn_run_id vs. the active run identity) are dropped silently: no
+  // notice, no UI change, no composer unlock.
+  onTerminalNotice?: (args: {
+    messageId: string;
+    finalStatus: string | null;
+    terminalReason: string | null;
+  }) => void,
+  // ASK-UX-MOBILE-R3 — canonical optional-tool warning callback. Fired
+  // from applyAgenticCompleted when the run succeeded (final_status=ok)
+  // but an optional tool produced an `unavailable` activity/status during
+  // agentic.progress. The panel uses projectOptionalToolWarning to build
+  // a dismissible turn-scoped warning notice bound to the canonical
+  // assistant message_id. This notice is the SOLE presentation owner for
+  // the optional-tool warning — the Web activity / Sources area must not
+  // duplicate it. The flag is reset on run_started (per-turn).
+  onOptionalToolWarning?: (args: { messageId: string }) => void,
 ) {
   let currentMessageId = initialMessageId;
   // Agentic terminal may arrive as both agentic.terminal and message.interrupted
   // with the same payload; only apply UI terminal side-effects once per stream.
   let agenticTerminalHandled = false;
+  // ASK-UX-MOBILE-R3 — tracks whether any optional tool produced an
+  // `unavailable` activity/status during the current run. Mirrors the
+  // hasUnavailable flag in agentic-activity.ts reducer (single source of
+  // truth for the activity state machine); this local flag is only used
+  // to decide whether to fire onOptionalToolWarning at completed time.
+  // Reset on run_started so it never bleeds across turns.
+  let optionalToolUnavailable = false;
   // ASK-REASONING-R2: strict identity/seq state machine for
   // agentic.reasoning.* (one stream per handler instance). `started`
   // (seq === 0) establishes the turn identity binding; delta/completed
@@ -820,7 +863,27 @@ export function createSseMessageHandler(
   let activeGenerationId: number | null = null;
   const commitStreamingMessageUpdate = createStreamingCommit(updateMessage);
 
+  function matchesActiveRunIdentity(payload: {
+    message_id?: string | null;
+    thread_id?: string | null;
+    turn_run_id?: string | null;
+  }): boolean {
+    return (
+      activeRunIdentity === null ||
+      (payload.message_id === activeRunIdentity.messageId &&
+        payload.thread_id === activeRunIdentity.threadId &&
+        payload.turn_run_id === activeRunIdentity.turnRunId)
+    );
+  }
+
   function applyAgenticCompleted(payload: ReaderAskAgenticCompletedPayloadDto) {
+    // The SSE consumer is the trust owner and never dispatches an unattributed
+    // v2 terminal. This local guard protects against foreign/stale frames once
+    // run_started has established an identity, without maintaining a second
+    // competing pre-start trust policy in the UI handler.
+    if (!matchesActiveRunIdentity(payload)) {
+      return;
+    }
     // Capture the streaming temp id BEFORE reassignment so we can still find it.
     const previousMessageId = currentMessageId;
     if (payload.message_id) {
@@ -828,6 +891,18 @@ export function createSseMessageHandler(
       onMessageIdAssigned?.(payload.message_id);
     }
     onAgenticActivity?.({ type: "completed" });
+    // ASK-UX-MOBILE-R3 — fire the canonical optional-tool warning when
+    // the run succeeded (final_status=ok by definition of the agentic
+    // completed path) but an optional tool was unavailable during the
+    // run. The panel projects a dismissible turn-scoped warning bound to
+    // the canonical assistant message_id. We fire this AFTER the message
+    // update is committed so the canonical id is already in place; the
+    // panel stores the notice keyed by message_id and renders it on the
+    // completed bubble (the render condition no longer swallows notices
+    // for status=completed — see MessageBubble).
+    if (optionalToolUnavailable && payload.message_id) {
+      onOptionalToolWarning?.({ messageId: payload.message_id });
+    }
     commitStreamingMessageUpdate((messages) =>
       messages.map((message) => {
         if (
@@ -895,6 +970,16 @@ export function createSseMessageHandler(
     if (agenticTerminalHandled) {
       return;
     }
+    // ASK-UX-MOBILE-R3 — foreign / stale terminal guard. If a trusted
+    // run_started was accepted, the terminal must match its identity
+    // exactly (message_id / thread_id / turn_run_id). A foreign or stale
+    // terminal is dropped silently: no notice, no UI change, no composer
+    // unlock, no agentic-activity terminal dispatch. This prevents a
+    // late-arriving terminal from a previous turn from creating a notice
+    // or unlocking the composer for the wrong turn.
+    if (!matchesActiveRunIdentity(payload)) {
+      return;
+    }
     agenticTerminalHandled = true;
     // Capture the streaming temp id BEFORE reassignment so we can still find it.
     const previousMessageId = currentMessageId;
@@ -906,7 +991,23 @@ export function createSseMessageHandler(
       type: "terminal",
       finalStatus: payload.final_status,
     });
-    onError(formatAgenticTerminalError(payload));
+    // ASK-UX-MOBILE-R3 — fire the canonical terminal-notice callback with
+    // the typed fields. The panel uses projectTurnTerminalNotice to build
+    // the AskSystemNotice. We no longer route the formatted string through
+    // onError (which the panel would hand-craft into a notice). onError is
+    // now reserved for legacy stream-level `error` events only.
+    const terminalMessageId = payload.message_id || currentMessageId;
+    const terminalFinalStatus =
+      typeof payload.final_status === "string" ? payload.final_status : null;
+    const terminalReason =
+      typeof payload.terminal_reason === "string" && payload.terminal_reason.trim()
+        ? payload.terminal_reason.trim()
+        : null;
+    onTerminalNotice?.({
+      messageId: terminalMessageId,
+      finalStatus: terminalFinalStatus,
+      terminalReason,
+    });
     const nextStatus = agenticTerminalMessageStatus(payload.final_status);
     commitStreamingMessageUpdate((messages) =>
       messages.map((message) => {
@@ -972,6 +1073,10 @@ export function createSseMessageHandler(
           turnRunId: event.data.turn_run_id,
         };
         activeGenerationId = 0;
+        // ASK-UX-MOBILE-R3 — reset optional-tool warning flag for the
+        // new turn. An unavailable optional tool in a previous turn must
+        // not bleed into this one.
+        optionalToolUnavailable = false;
         onAgenticActivity?.({
           type: "run_started",
           messageId: event.data.message_id ?? currentMessageId,
@@ -983,19 +1088,35 @@ export function createSseMessageHandler(
 
     if (event.event === "agentic.progress") {
       if (isReaderAskAgenticProgressPayload(event.data)) {
+        const progressPayload = event.data as {
+          execution_version?: string | null;
+          sequence?: number | null;
+          phase?: string | null;
+          activity?: string | null;
+          summary?: string | null;
+          elapsed_ms?: number | null;
+          tool_name?: string | null;
+          status?: string | null;
+          duration_ms?: number | null;
+          activity_id?: "web_search" | null;
+          attempt_count?: number | null;
+          call_sequence?: number | null;
+        };
+        // ASK-UX-MOBILE-R3 — mirror agentic-activity.ts hasUnavailable
+        // logic: once an optional tool reports `unavailable` (activity
+        // or status), the flag stays true for the rest of the run. This
+        // local flag is the sole input to onOptionalToolWarning at
+        // completed time (the reducer state is async and may not have
+        // applied the latest progress when applyAgenticCompleted fires).
+        if (
+          progressPayload.activity === "unavailable" ||
+          progressPayload.status === "unavailable"
+        ) {
+          optionalToolUnavailable = true;
+        }
         onAgenticActivity?.({
           type: "progress",
-          payload: event.data as {
-            execution_version?: string | null;
-            sequence?: number | null;
-            phase?: string | null;
-            activity?: string | null;
-            summary?: string | null;
-            elapsed_ms?: number | null;
-            tool_name?: string | null;
-            status?: string | null;
-            duration_ms?: number | null;
-          },
+          payload: progressPayload,
         });
       }
       return;
@@ -3388,6 +3509,8 @@ function MessageBubble({
   agenticActivity,
   onNavigateAgenticSource,
   onAnnounce,
+  turnNotice,
+  onDismissTurnNotice,
 }: {
   item: AskPanelConversationItem;
   currentRecordId: string;
@@ -3411,6 +3534,8 @@ function MessageBubble({
   agenticActivity?: AgenticActivityState | null;
   onNavigateAgenticSource?: NavigateAgenticSource;
   onAnnounce?: (message: string) => void;
+  turnNotice?: AskSystemNotice | null;
+  onDismissTurnNotice?: (messageId: string) => void;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -3497,7 +3622,44 @@ function MessageBubble({
                             {displayAnswerContent}
                           </MessageResponse>
                         ) : null}
-                        {message.status === "interrupted" ? (
+                        {turnNotice ? (
+                          // A typed turn notice is the sole presentation owner
+                          // for live and cold non-ok terminals as well as
+                          // successful optional-tool warnings. The generic
+                          // interrupted copy is only a legacy fallback when no
+                          // typed notice can be reconstructed.
+                          <div data-testid="ask-turn-notice" className="space-y-1">
+                            <SystemMessage
+                              variant={turnNotice.severity}
+                              cta={
+                                turnNotice.cta
+                                  ? {
+                                      label: turnNotice.cta.label,
+                                      onClick: () => {
+                                        if (turnNotice.cta?.action === "retry") {
+                                          onRetry(message.id);
+                                        }
+                                      },
+                                    }
+                                  : undefined
+                              }
+                            >
+                              {turnNotice.message}
+                            </SystemMessage>
+                            {turnNotice.dismissible && onDismissTurnNotice ? (
+                              <div className="flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => onDismissTurnNotice(message.id)}
+                                  aria-label="关闭提示"
+                                  className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+                                >
+                                  <X aria-hidden="true" className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : message.status === "interrupted" ? (
                           <SystemMessage variant="warning">
                             {interruptedBubbleMessage(message.final_status)}
                           </SystemMessage>
@@ -3511,7 +3673,8 @@ function MessageBubble({
                       </div>
                     }
                     footer={
-                      message.status === "completed" || message.status === "interrupted" ? (
+                      message.status === "completed" ||
+                      (message.status === "interrupted" && !turnNotice) ? (
                         <MessageActions className="gap-0.5">
                           <MessageAction
                             label="复制内容"
@@ -3818,6 +3981,14 @@ export interface AiWorkspacePanelProps {
    * Must not pass CurrentPageIdentity / Document / Element here.
    */
   onNavigateAgenticSource?: NavigateAgenticSource;
+  /**
+   * ASK-UX-MOBILE — whether the host layout currently has room for the
+   * sidecar surface. When false, the surface switch menu is replaced by a
+   * static「浮窗」label so the user cannot pick an unavailable surface.
+   * Defaults to true so Analysis-scope callers (which never pass it) keep
+   * the existing menu behavior.
+   */
+  hasSidecarCapacity?: boolean;
 }
 
 export function AiWorkspacePanel({
@@ -3853,6 +4024,7 @@ export function AiWorkspacePanel({
   capacityDowngradeNotice,
   onDismissCapacityDowngradeNotice,
   onNavigateAgenticSource,
+  hasSidecarCapacity = true,
 }: AiWorkspacePanelProps) {
   const isFloatingSurface = surface === "floating";
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
@@ -3892,7 +4064,14 @@ export function AiWorkspacePanel({
   const [sending, setSending] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [pendingSupplementDeleteId, setPendingSupplementDeleteId] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // ASK-UX-MOBILE R2 — turn-scoped system notices keyed by messageId. These
+  // persist across new turns (do not drift to the composer) and render
+  // inside the corresponding assistant turn bubble, not above the composer.
+  const [turnNotices, setTurnNotices] = useState<Record<string, AskSystemNotice>>({});
+  // ASK-UX-MOBILE R2 — panel-level init / restore / capability notice.
+  // Renders in a dedicated banner slot between the header and the
+  // conversation wrapper, never in a turn bubble or the composer.
+  const [panelNotice, setPanelNotice] = useState<AskSystemNotice | null>(null);
   const [supplementNotice, setSupplementNotice] = useState<string | null>(null);
   const [supplementNoticeMessageId, setSupplementNoticeMessageId] = useState<string | null>(null);
   const [contextPickerOpen, setContextPickerOpen] = useState(false);
@@ -3930,6 +4109,25 @@ export function AiWorkspacePanel({
       turnMetricsRef.current = null;
     };
   }, [open]);
+
+  // ASK-UX-MOBILE R2 — minimal body scroll lock for the floating overlay.
+  // Only active when the panel is open, in overlay layout, and on the
+  // floating surface. Prevents background scroll on mobile while the
+  // floating panel is visible. Restores the previous body overflow on
+  // cleanup. SSR-safe via typeof document guard.
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (!open || !isFloatingSurface || layout !== "overlay") {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open, isFloatingSurface, layout]);
 
   const conversationItems: AskPanelConversationItem[] = messages.map((message) => ({
     id: message.id,
@@ -4121,9 +4319,31 @@ export function AiWorkspacePanel({
 
   async function loadThread(threadId: string, nextThreads?: ReaderAskThreadSummaryDto[]) {
     const detail = await fetchThreadDetail(threadId);
+    const normalizedMessages = normalizeReaderAskMessages(detail.messages);
     setActiveThreadId(threadId);
-    setMessages(normalizeReaderAskMessages(detail.messages));
+    setMessages(normalizedMessages);
     setSupplementNotice(null);
+    // ASK-UX-MOBILE R2 — reconstruct turn-scoped notices for cold history.
+    // Assistant messages with a non-ok final_status get a turn notice so the
+    // failure context survives a reload. The render layer suppresses turn
+    // notices for "interrupted" status (the interrupted bubble handles those);
+    // only non-interrupted, non-completed statuses actually render the notice.
+    const restoredNotices: Record<string, AskSystemNotice> = {};
+    for (const msg of normalizedMessages) {
+      if (msg.role !== "assistant") {
+        continue;
+      }
+      const fs = typeof msg.final_status === "string" ? msg.final_status : null;
+      if (fs && fs !== "ok") {
+        restoredNotices[msg.id] = projectTurnTerminalNotice({
+          messageId: msg.id,
+          finalStatus: fs,
+          terminalReason: null,
+          dev: isDevMode(),
+        });
+      }
+    }
+    setTurnNotices(restoredNotices);
     const nextSummary = toThreadSummary(detail);
     setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
     setThreads((current) => replaceThreadSummary(nextThreads ?? current, nextSummary));
@@ -4241,7 +4461,6 @@ export function AiWorkspacePanel({
 
   async function ensureThreadReady(): Promise<string | null> {
     setLoading(true);
-    setErrorMessage(null);
     try {
       let nextThreads = await fetchThreadList();
       if (nextThreads.length === 0) {
@@ -4257,9 +4476,15 @@ export function AiWorkspacePanel({
         throw new Error("Ask Claread 线程初始化失败。");
       }
       await loadThread(preferredThreadId, nextThreads);
+      setPanelNotice(null);
       return preferredThreadId;
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 初始化失败。"));
+      setPanelNotice(
+        projectPanelInitNotice({
+          kind: "init",
+          message: toUserFacingErrorMessage(error, "Ask Claread 初始化失败。"),
+        }),
+      );
       return null;
     } finally {
       setLoading(false);
@@ -4316,7 +4541,6 @@ export function AiWorkspacePanel({
     if (!activeThreadId || sending) {
       return;
     }
-    setErrorMessage(null);
     setLoading(true);
     try {
       const detail = await fetchJson<ReaderAskThreadDetailDto>(
@@ -4333,9 +4557,16 @@ export function AiWorkspacePanel({
       setThreads([toThreadSummary(detail)]);
       setSupplementNotice(null);
       setSupplementNoticeMessageId(null);
+      setTurnNotices({});
+      setPanelNotice(null);
       onClearAttachments();
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "重置会话失败。"));
+      setPanelNotice(
+        projectPanelInitNotice({
+          kind: "init",
+          message: toUserFacingErrorMessage(error, "重置会话失败。"),
+        }),
+      );
     } finally {
       setLoading(false);
     }
@@ -4348,7 +4579,6 @@ export function AiWorkspacePanel({
     const targetMessageId =
       messages.find((message) => message.action_proposals.some((proposal) => proposal.id === actionId))?.id ?? null;
     setPendingActionId(actionId);
-    setErrorMessage(null);
     try {
       const payload = await fetchJson<ReaderAskActionConfirmResponseDto>(
         scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`),
@@ -4404,7 +4634,24 @@ export function AiWorkspacePanel({
         onActionExecuted?.(payload.result);
       }
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "动作确认失败。"));
+      const actionMsg = toUserFacingErrorMessage(error, "动作确认失败。");
+      if (targetMessageId) {
+        // ASK-UX-MOBILE-R3 — action-confirm failure uses the canonical
+        // projector. NOT retryable via "重新生成" (regenerate would
+        // discard the action context); dismissible so the user can
+        // clear the notice and retry the action card directly.
+        setTurnNotices((prev) => ({
+          ...prev,
+          [targetMessageId]: projectActionFailureNotice({
+            messageId: targetMessageId,
+            message: actionMsg,
+          }),
+        }));
+      } else {
+        setPanelNotice(
+          projectPanelInitNotice({ kind: "init", message: actionMsg }),
+        );
+      }
     } finally {
       setPendingActionId(null);
     }
@@ -4415,7 +4662,6 @@ export function AiWorkspacePanel({
       messages.find((message) => message.persisted_supplements.some((item) => item.supplement_id === supplementId))?.id ??
       null;
     setPendingSupplementDeleteId(supplementId);
-    setErrorMessage(null);
     try {
       const payload = await fetchJson<ReaderAskDeleteSupplementResponseDto>(
         scopedReaderAskUrl(`/api/web/reader-ask/supplements/${supplementId}`),
@@ -4446,7 +4692,24 @@ export function AiWorkspacePanel({
       setSupplementNoticeMessageId(targetMessageId);
       await onSupplementDeleted?.(supplementId);
     } catch (error) {
-      setErrorMessage(toUserFacingErrorMessage(error, "删除补充失败。"));
+      const deleteMsg = toUserFacingErrorMessage(error, "删除补充失败。");
+      if (targetMessageId) {
+        // ASK-UX-MOBILE-R3 — supplement-delete failure uses the canonical
+        // projector. NOT retryable via "重新生成" (regenerate would not
+        // retry the delete); dismissible so the user can clear the
+        // notice and retry the delete control directly.
+        setTurnNotices((prev) => ({
+          ...prev,
+          [targetMessageId]: projectSupplementFailureNotice({
+            messageId: targetMessageId,
+            message: deleteMsg,
+          }),
+        }));
+      } else {
+        setPanelNotice(
+          projectPanelInitNotice({ kind: "init", message: deleteMsg }),
+        );
+      }
     } finally {
       setPendingSupplementDeleteId(null);
     }
@@ -4472,7 +4735,14 @@ export function AiWorkspacePanel({
         ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
         : null;
     if (!priorUserMessage?.content_md.trim()) {
-      setErrorMessage("没有找到这轮澄清对应的原始问题，暂时无法继续当前讨论。");
+      // ASK-UX-MOBILE-R3 — clarify warning uses the canonical projector.
+      setTurnNotices((prev) => ({
+        ...prev,
+        [messageId]: projectClarifyWarningNotice({
+          messageId,
+          message: CLARIFICATION_CONTEXT_MISSING_MESSAGE,
+        }),
+      }));
       return;
     }
     const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
@@ -4505,7 +4775,13 @@ export function AiWorkspacePanel({
         ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
         : null;
     if (!priorUserMessage?.content_md.trim()) {
-      setErrorMessage("没有找到这轮资产澄清对应的原始问题，暂时无法继续当前讨论。");
+      setTurnNotices((prev) => ({
+        ...prev,
+        [messageId]: projectClarifyWarningNotice({
+          messageId,
+          message: ASSET_CLARIFICATION_CONTEXT_MISSING_MESSAGE,
+        }),
+      }));
       return;
     }
     const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
@@ -4633,7 +4909,6 @@ export function AiWorkspacePanel({
     };
 
     setSending(true);
-    setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
     // New user turn: clear previous activity so old summaries never linger.
@@ -4692,8 +4967,56 @@ export function AiWorkspacePanel({
               current.map((message) => (message.id === tempAssistantId ? { ...message, id: assignedId } : message)),
             );
           },
-          (errorMsg) => setErrorMessage(errorMsg),
+          (errorMsg) => {
+            // ASK-UX-MOBILE-R3 — legacy stream-level `error` event path
+            // (e.g. INSUFFICIENT_CREDITS surfaced before any
+            // message.assigned). Use the canonical projector instead of
+            // hand-crafting a notice. Fall back to tempAssistantId when
+            // the server errors before assigning a canonical message id.
+            const streamingId = streamingAssistantIdRef.current ?? tempAssistantId;
+            setTurnNotices((prev) => ({
+              ...prev,
+              [streamingId]: projectSendFailureNotice({
+                messageId: streamingId,
+                message: errorMsg,
+              }),
+            }));
+          },
           dispatchAgenticActivity,
+          // ASK-UX-MOBILE-R3 — canonical terminal-notice path. The SSE
+          // handler has already verified the terminal matches the active
+          // run identity (foreign/stale terminals are dropped silently
+          // before this callback fires). projectTurnTerminalNotice builds
+          // the AskSystemNotice from the typed fields; the panel never
+          // hand-crafts a notice for a live terminal.
+          (terminalArgs) => {
+            setTurnNotices((prev) => ({
+              ...prev,
+              [terminalArgs.messageId]: projectTurnTerminalNotice({
+                messageId: terminalArgs.messageId,
+                finalStatus: terminalArgs.finalStatus,
+                terminalReason: terminalArgs.terminalReason,
+                dev: isDevMode(),
+              }),
+            }));
+          },
+          // ASK-UX-MOBILE-R3 — optional-tool warning. Fired when the run
+          // succeeded (final_status=ok) but an optional tool was
+          // unavailable. Bound to the canonical assistant message_id; the
+          // notice is the SOLE presentation owner (Web activity / Sources
+          // must not duplicate it). Dismissible; no CTA.
+          (warningArgs) => {
+            const warningNotice = projectOptionalToolWarning({
+              messageId: warningArgs.messageId,
+              message: OPTIONAL_TOOL_WARNING_MESSAGE,
+            });
+            if (warningNotice !== null) {
+              setTurnNotices((prev) => ({
+                ...prev,
+                [warningArgs.messageId]: warningNotice,
+              }));
+            }
+          },
         ),
         controller.signal,
         turnMetricsRef.current ?? undefined,
@@ -4711,7 +5034,16 @@ export function AiWorkspacePanel({
         );
         dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
       } else {
-        setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
+        // ASK-UX-MOBILE-R3 — send failure (network / non-ok / thrown).
+        // Use the canonical projector. The message is always typed copy
+        // from ask-error-messages.ts via toUserFacingErrorMessage.
+        setTurnNotices((prev) => ({
+          ...prev,
+          [tempAssistantId]: projectSendFailureNotice({
+            messageId: tempAssistantId,
+            message: toUserFacingErrorMessage(error, ASK_UNAVAILABLE_MESSAGE),
+          }),
+        }));
         setMessages((current) =>
           current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
         );
@@ -4763,6 +5095,34 @@ export function AiWorkspacePanel({
     }
   }
 
+  // ASK-UX-MOBILE R2 — panel banner CTA handler. "reload" re-runs the
+  // init flow (thread + model load); "dismiss" clears the banner.
+  function handlePanelCta(action: AskSystemNoticeCtaAction) {
+    if (action === "reload") {
+      setPanelNotice(null);
+      void ensureThreadReady();
+    } else if (action === "dismiss") {
+      setPanelNotice(null);
+    }
+  }
+
+  // ASK-UX-MOBILE-R3 — dismiss a single turn-scoped notice by message id.
+  // Only removes the notice for the targeted turn; other turns and the
+  // underlying assistant message are untouched. Used by the dismiss button
+  // on dismissible turn notices (optional-tool warning, clarify warning,
+  // action / supplement failure). Non-dismissible notices (hard terminal,
+  // send failure) have no dismiss button and cannot be cleared this way.
+  function handleDismissTurnNotice(messageId: string) {
+    setTurnNotices((prev) => {
+      if (!prev[messageId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+  }
+
   /** Regenerate (not resume/continue) the assistant answer for a given message. */
   async function handleRetry(messageId: string) {
     if (!activeThreadId || sending) {
@@ -4784,7 +5144,6 @@ export function AiWorkspacePanel({
     // invoked Search.
 
     setSending(true);
-    setErrorMessage(null);
     setSupplementNotice(null);
     setSupplementNoticeMessageId(null);
     dispatchAgenticActivity({ type: "reset" });
@@ -4872,8 +5231,49 @@ export function AiWorkspacePanel({
           (assignedId) => {
             streamingAssistantIdRef.current = assignedId;
           },
-          (errorMsg) => setErrorMessage(errorMsg),
+          (errorMsg) => {
+            // ASK-UX-MOBILE-R3 — legacy stream-level `error` event path.
+            // Use the canonical projector. Fall back to messageId when
+            // the server errors before assigning a canonical message id.
+            const streamingId = streamingAssistantIdRef.current ?? messageId;
+            setTurnNotices((prev) => ({
+              ...prev,
+              [streamingId]: projectSendFailureNotice({
+                messageId: streamingId,
+                message: errorMsg,
+              }),
+            }));
+          },
           dispatchAgenticActivity,
+          // ASK-UX-MOBILE-R3 — canonical terminal-notice path for retry.
+          // Same projector semantics as sendMessage: foreign/stale
+          // terminals are dropped silently by the SSE handler.
+          (terminalArgs) => {
+            setTurnNotices((prev) => ({
+              ...prev,
+              [terminalArgs.messageId]: projectTurnTerminalNotice({
+                messageId: terminalArgs.messageId,
+                finalStatus: terminalArgs.finalStatus,
+                terminalReason: terminalArgs.terminalReason,
+                dev: isDevMode(),
+              }),
+            }));
+          },
+          // ASK-UX-MOBILE-R3 — optional-tool warning for retry path.
+          // Same semantics as sendMessage: bound to canonical message_id,
+          // dismissible, no CTA, sole presentation owner.
+          (warningArgs) => {
+            const warningNotice = projectOptionalToolWarning({
+              messageId: warningArgs.messageId,
+              message: OPTIONAL_TOOL_WARNING_MESSAGE,
+            });
+            if (warningNotice !== null) {
+              setTurnNotices((prev) => ({
+                ...prev,
+                [warningArgs.messageId]: warningNotice,
+              }));
+            }
+          },
         ),
         controller.signal,
         turnMetricsRef.current ?? undefined,
@@ -4900,7 +5300,14 @@ export function AiWorkspacePanel({
         );
         dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
       } else {
-        setErrorMessage(toUserFacingErrorMessage(error, "Ask Claread 暂时不可用。"));
+        // ASK-UX-MOBILE-R3 — retry failure. Use the canonical projector.
+        setTurnNotices((prev) => ({
+          ...prev,
+          [messageId]: projectSendFailureNotice({
+            messageId: messageId,
+            message: toUserFacingErrorMessage(error, ASK_UNAVAILABLE_MESSAGE),
+          }),
+        }));
         setMessages((current) =>
           current.map((message) =>
             message.id === messageId
@@ -4976,7 +5383,7 @@ export function AiWorkspacePanel({
           ? cn(
               "fixed z-[var(--reader-z-floating-ask,40)] flex flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg",
               isFloatingSurface
-                ? "inset-x-4 bottom-4 max-h-[min(68vh,38rem)] md:inset-x-auto md:right-4 md:bottom-4 md:w-[min(26rem,calc(100vw-2rem))]"
+                ? "inset-x-4 bottom-4 h-[min(85dvh,38rem)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] md:inset-x-auto md:right-4 md:bottom-4 md:w-[min(26rem,calc(100vw-2rem))]"
                 : "inset-x-3 bottom-3 max-h-[82vh] 2xl:inset-y-3 2xl:left-auto 2xl:right-3 2xl:w-[var(--reader-record-ask-panel-width)] 2xl:min-w-0 2xl:max-h-none",
             )
           : "relative flex flex-col overflow-hidden bg-background h-full w-full",
@@ -5005,7 +5412,7 @@ export function AiWorkspacePanel({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {onChangeSurface ? (
+            {onChangeSurface && hasSidecarCapacity ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -5046,6 +5453,15 @@ export function AiWorkspacePanel({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+            ) : onChangeSurface && !hasSidecarCapacity ? (
+              <span
+                aria-label="当前以浮窗展示 Ask Claread"
+                className="inline-flex h-7 cursor-default items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground/70"
+                title="当前阅读区较窄，仅支持浮窗形式"
+              >
+                <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
+                <span>浮窗</span>
+              </span>
             ) : null}
             <IconButton
               variant="quiet"
@@ -5083,6 +5499,38 @@ export function AiWorkspacePanel({
               onClick={onDismissCapacityDowngradeNotice}
               aria-label="关闭说明"
               className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+            >
+              <X aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {panelNotice ? (
+        <div
+          data-testid="ask-panel-notice"
+          className="border-b border-hairline/60 px-4 py-2"
+        >
+          <SystemMessage
+            fill
+            variant={panelNotice.severity}
+            cta={
+              panelNotice.cta
+                ? {
+                    label: panelNotice.cta.label,
+                    onClick: () => handlePanelCta(panelNotice.cta!.action),
+                  }
+                : undefined
+            }
+          >
+            {panelNotice.message}
+          </SystemMessage>
+          {panelNotice.dismissible ? (
+            <button
+              type="button"
+              onClick={() => setPanelNotice(null)}
+              aria-label="关闭提示"
+              className="mt-1 shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
             >
               <X aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
@@ -5147,6 +5595,8 @@ export function AiWorkspacePanel({
                 }
                 onNavigateAgenticSource={onNavigateAgenticSource}
                 onAnnounce={setLiveAnnouncement}
+                turnNotice={turnNotices[item.id] ?? null}
+                onDismissTurnNotice={handleDismissTurnNotice}
               />
             ))}
           </ConversationShell>
@@ -5160,7 +5610,6 @@ export function AiWorkspacePanel({
         sending={sending}
         onStop={handleStop}
         placeholder={COMPOSER_PLACEHOLDER}
-        errorMessage={errorMessage}
         contextStrip={
           recordTitle || composerContextAttachments.length > 0 || liveContextAttachment ? (
             <>

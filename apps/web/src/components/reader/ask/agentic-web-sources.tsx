@@ -7,6 +7,7 @@ import {
   WebSources,
   type WebSourceItem,
 } from "@/components/prompt-kit/source";
+import { SystemMessage } from "@/components/ui/system-message";
 import { cn } from "@/lib/cn";
 import type { ReaderAskWebSearchSummaryDto } from "@/types/api/reader-ask";
 import type { AgenticCitationDisplayItem } from "./agentic-evidence";
@@ -17,15 +18,7 @@ import type { AgenticCitationDisplayItem } from "./agentic-evidence";
  * `completed` maps to empty string because the sources list itself is the
  * positive signal — no extra notice is needed.
  */
-const WEB_SEARCH_OUTCOME_MESSAGES: Record<
-  ReaderAskWebSearchSummaryDto["outcome"],
-  string
-> = {
-  completed: "",
-  no_results: "未找到可用网页来源",
-  unavailable: "网页搜索暂不可用",
-  failed: "网页搜索未完成",
-};
+const WEB_SEARCH_NO_RESULTS_MESSAGE = "未找到可用网页来源";
 
 /**
  * Project agentic web citations into prompt-kit WebSourceItem entries.
@@ -59,6 +52,8 @@ function projectWebSources(
       href: citation.url,
       title: citation.sourceTitle ?? citation.url,
       description: citation.description ?? undefined,
+      publishedAt: citation.publishedAt ?? undefined,
+      retrievedAt: citation.retrievedAt ?? undefined,
     });
   }
   return items;
@@ -99,14 +94,14 @@ export function AgenticWebSources({
 }) {
   const webSources = projectWebSources(citations);
 
-  // Only show the outcome notice for non-completed outcomes. `completed`
-  // with 0 cited sources is a valid state (search finished, nothing cited)
-  // and should not produce a misleading "no results" notice.
+  // no_results is a source-level fact and stays adjacent to the source area.
+  // unavailable / failed / timeout are optional-tool warnings owned by the
+  // turn-scoped Prompt Kit SystemMessage; duplicating them here makes one
+  // provider failure look like two separate product errors.
   const outcomeNotice =
     webSources.length === 0 &&
-    webSearchSummary != null &&
-    webSearchSummary.outcome !== "completed"
-      ? WEB_SEARCH_OUTCOME_MESSAGES[webSearchSummary.outcome]
+    webSearchSummary?.outcome === "no_results"
+      ? WEB_SEARCH_NO_RESULTS_MESSAGE
       : "";
 
   if (webSources.length === 0 && !outcomeNotice) {
@@ -119,12 +114,14 @@ export function AgenticWebSources({
       data-testid="agentic-web-sources"
     >
       {outcomeNotice ? (
-        <p
-          className="text-xs text-muted-foreground"
+        <SystemMessage
+          variant="warning"
+          isIconHidden
+          className="border-0 px-0 py-0 text-xs text-muted-foreground"
           data-testid="web-search-outcome-notice"
         >
           {outcomeNotice}
-        </p>
+        </SystemMessage>
       ) : null}
       {webSources.length > 0 ? (
         <div data-testid="web-source-list">

@@ -59,6 +59,7 @@ from app.services.reader_record_ask.web_search_contracts import (
     canonicalize_url,
     compute_web_source_fingerprint,
     display_domain_from_canonical_url,
+    registrable_domain_from_canonical_url,
 )
 from app.services.reader_record_ask.web_search_port import (
     FakeWebSearchBackend,
@@ -197,6 +198,33 @@ class TestDisplayDomain:
 
 
 # ---------------------------------------------------------------------------
+# registrable_domain_from_canonical_url
+# ---------------------------------------------------------------------------
+
+
+class TestRegistrableDomain:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://www.example.com/p", "example.com"),
+            ("https://news.example.com/p", "example.com"),
+            ("https://a.example.co.uk/p", "example.co.uk"),
+            ("https://b.example.co.uk/p", "example.co.uk"),
+            ("https://127.0.0.1/p", None),
+            ("https://[::1]/p", None),
+            ("https://localhost/p", None),
+            ("not a canonical URL", None),
+        ],
+    )
+    def test_uses_bundled_psl_and_fails_safe(
+        self,
+        url: str,
+        expected: str | None,
+    ) -> None:
+        assert registrable_domain_from_canonical_url(url) == expected
+
+
+# ---------------------------------------------------------------------------
 # WebEvidence model
 # ---------------------------------------------------------------------------
 
@@ -258,6 +286,19 @@ class TestWebEvidence:
         ev = WebEvidence(**kwargs)
         assert ev.title is None
         assert ev.description is None
+
+    def test_normalizes_only_strict_provider_iso_publish_dates(self) -> None:
+        valid = WebEvidence(**_good_web_evidence_kwargs(published_at="2026-07-29"))
+        assert valid.published_at == "2026-07-29"
+
+        # Provider text must not be guessed into a date.  Relative ages and
+        # non-date ISO-looking values remain absent on the evidence contract.
+        relative = WebEvidence(**_good_web_evidence_kwargs(published_at="2 days ago"))
+        timestamp = WebEvidence(
+            **_good_web_evidence_kwargs(published_at="2026-07-29T12:00:00Z")
+        )
+        assert relative.published_at is None
+        assert timestamp.published_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +371,18 @@ class TestPublicCitationWeb:
         )
         assert cit.description == "Desc"
 
+    def test_web_citation_projects_publish_and_retrieval_dates_separately(self) -> None:
+        cit = PublicCitation(
+            citation_id="c1",
+            source_kind="web",
+            url="https://example.com/p",
+            title="Title",
+            published_at="2026-07-01",
+            retrieved_at="2026-07-29T01:02:03+00:00",
+        )
+        assert cit.published_at == "2026-07-01"
+        assert cit.retrieved_at == "2026-07-29T01:02:03+00:00"
+
     def test_rejects_article_snippet_on_web_citation(self) -> None:
         with pytest.raises(ValidationError):
             PublicCitation(
@@ -392,10 +445,9 @@ class TestResolvedWebSearchCapability:
         )
         assert cap.execution_mode == "host_function"
         assert cap.decision_mode == "agent_auto"
-        # ASK-WEB-R4: defaults raised to max_calls=3, max_results_per_call=5
-        # so the agent can search again if the first call returns no useful
-        # results, while still being bounded by the model-view budget.
-        assert cap.max_calls == 3
+        # R5 freezes a two-attempt lifecycle: only an initial no_results may
+        # consume the second provider attempt.
+        assert cap.max_calls == 2
         assert cap.max_results_per_call == 5
 
     def test_rejects_max_calls_above_bound(self) -> None:
@@ -492,6 +544,22 @@ class TestWebSearchResult:
             WebSearchResult(
                 status="failed",
                 summary="f",
+                hits=(WebSearchHitView(raw_url="https://example.com/p"),),
+            )
+
+    def test_timeout_must_not_carry_hits(self) -> None:
+        result = WebSearchResult(
+            status="timeout",
+            summary="timed out",
+            hits=(),
+            detail_code="deadline_exhausted",
+        )
+        assert result.status == "timeout"
+
+        with pytest.raises(ValueError):
+            WebSearchResult(
+                status="timeout",
+                summary="timed out",
                 hits=(WebSearchHitView(raw_url="https://example.com/p"),),
             )
 
