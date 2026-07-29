@@ -236,6 +236,11 @@ async function mockApiRoutes(page: Page) {
             label: "DeepSeek V4 Flash",
             price_multiplier: 1,
             is_default: true,
+            // ASK-WEB-R4: the toggle visibility gate in AiWorkspacePanel
+            // requires ``web_search_capability === "available"``. Without
+            // this field the toggle is hidden (fail-closed) and the E2E
+            // assertions cannot reach the web sources / outcome flows.
+            web_search_capability: "available",
           },
         ],
       }),

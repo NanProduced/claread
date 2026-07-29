@@ -90,6 +90,26 @@ ReaderRecordAskToolStatus = Literal[
 ]
 
 
+class ToolBudgetExhaustedView(BaseModel):
+    """Bounded control-channel result when a tool content account is full.
+
+    This view carries no evidence, source text, cursor, provider payload, or
+    retry instruction. It lets the agent finish from evidence already visible
+    instead of converting ordinary content pressure into a terminal failure.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["budget_exhausted"] = "budget_exhausted"
+    summary: str = Field(
+        default=(
+            "Tool content limit reached. Continue with evidence already available."
+        ),
+        min_length=1,
+        max_length=400,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Limited locators (business parameters only)
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ from app.llm.types import (
     ModelSelection,
     ResolvedModelConfig,
 )
-from app.services.reader_record_ask.finalizer import AgentAnswerDraft
+from app.services.reader_record_ask.grounding_validator import AgentAnswerDraftOutput
 
 
 def _native_settings(api_key: str = "k") -> Settings:
@@ -171,8 +171,10 @@ async def test_dashscope_native_agent_forwards_instructions_and_prompted_output_
                     message={
                         "role": "assistant",
                         "content": (
-                            '{"answer_text":"ok","cited_evidence_handles":[],'
-                            '"response_kind":"grounded_answer"}'
+                            '{"response_kind":"grounded_answer",'
+                            '"clarification_text":null,"answer_blocks":[{'
+                            '"text":"ok","basis":"general",'
+                            '"evidence_handles":[]}]}'
                         ),
                     }
                 )
@@ -185,17 +187,17 @@ async def test_dashscope_native_agent_forwards_instructions_and_prompted_output_
         mock_generation.call = AsyncMock(return_value=response)
         result = await Agent(
             model,
-            output_type=AgentAnswerDraft,
+            output_type=AgentAnswerDraftOutput,
             instructions="You are Ask Claread.",
         ).run("Summarize the article.")
 
-    assert result.output.answer_text == "ok"
+    assert result.output.answer_blocks[0].text == "ok"
     sent_messages = mock_generation.call.await_args.kwargs["messages"]
     assert sent_messages[0]["role"] == "system"
     system_content = sent_messages[0]["content"]
     assert "You are Ask Claread." in system_content
     assert "Always respond with a JSON object" in system_content
-    assert '"answer_text"' in system_content
+    assert '"answer_blocks"' in system_content
 
 
 def test_dashscope_native_profile_marks_prompted_structured_output() -> None:

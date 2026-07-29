@@ -98,6 +98,7 @@ class TurnCapabilityProjection:
 
     turn_id: str
     can_search_article: bool
+    web_search_allowed: bool
     can_read_range: bool
     has_visible_range: bool
     baseline_injected: bool
@@ -114,6 +115,7 @@ class TurnCapabilityProjection:
         payload: dict[str, Any] = {
             "turn_id": self.turn_id,
             "can_search_article": self.can_search_article,
+            "web_search_allowed": self.web_search_allowed,
             "can_read_range": self.can_read_range,
             "has_visible_range": self.has_visible_range,
             "baseline_injected": self.baseline_injected,
@@ -154,6 +156,7 @@ def build_turn_capability_projection(
     stable_document_id: UUID | None,
     product_search_enabled: bool,
     baseline_injected: bool,
+    web_search_allowed: bool = False,
     baseline_complete: bool = False,
     can_read_range: bool = True,
     has_visible_range: bool = False,
@@ -214,6 +217,7 @@ def build_turn_capability_projection(
     return TurnCapabilityProjection(
         turn_id=turn_id if turn_id is not None else mint_turn_id(),
         can_search_article=can_search,
+        web_search_allowed=web_search_allowed,
         can_read_range=can_read_range,
         has_visible_range=has_visible_range,
         baseline_injected=baseline_injected,

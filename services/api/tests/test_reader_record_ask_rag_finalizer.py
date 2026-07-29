@@ -147,11 +147,6 @@ def _final_part(content: str, handles: list[str] | None = None) -> ToolCallPart:
                     {
                         "text": content,
                         "basis": basis,
-                        "article_scope": (
-                            "evidence_bounded"
-                            if evidence_handles
-                            else None
-                        ),
                         "evidence_handles": evidence_handles,
                     }
                 ],

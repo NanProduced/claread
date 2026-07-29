@@ -27,6 +27,6 @@ describe("WebSources", () => {
 
     const trigger = screen.getByRole("link", { name: "查看网页来源 example.com" });
     expect(trigger.getAttribute("href")).toBe("https://example.com/research");
-    expect(screen.getByText("网页来源")).not.toBeNull();
+    expect(screen.getByText("网页来源 · 1")).not.toBeNull();
   });
 });

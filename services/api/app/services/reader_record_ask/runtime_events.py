@@ -265,16 +265,35 @@ class WebSearchResultEvent(BaseModel):
     raw provider result count, scores, URLs, titles, descriptions, or
     any provider payload. Production stream projects
     ``ok`` / ``unavailable`` / ``failed`` activity only.
+
+    ASK-WEB-R4: attempt vs turn-level outcome separation.
+
+    - ``outcome`` is the **per-attempt** outcome (this single call's
+      result). Used for telemetry only.
+    - ``turn_outcome`` is the **turn-level aggregated** outcome at the
+      time of this attempt (strongest-wins: completed > no_results >
+      unavailable > failed). Used by the production-stream projector
+      for UI activity so a ``call_limit`` attempt after a successful
+      search does NOT degrade the turn-level status to ``unavailable``.
+    - ``detail_code`` is a safe per-attempt reason code (e.g.
+      ``"call_limit"``, ``"ok"``, ``"empty"``, ``"fence_pre"``).
+      Never carries query / URL / provider payload.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["web_search_result"] = "web_search_result"
     call_sequence: int = Field(ge=1)
-    # Mirrors :data:`WebSearchOutcome` (completed | no_results |
-    # unavailable | failed). The host translates the port outcome to
-    # this public set before emitting the event.
+    # Per-attempt outcome (this single call only).
     outcome: Literal["completed", "no_results", "unavailable", "failed"]
+    # Turn-level aggregated outcome at the time of this attempt.
+    # The projector uses this for UI activity so call_limit after
+    # success does not degrade to ``unavailable``.
+    turn_outcome: Literal[
+        "completed", "no_results", "unavailable", "failed"
+    ] = Field(default="unavailable")
+    # Per-attempt safe detail code (never query / URL / payload).
+    detail_code: str | None = Field(default=None, max_length=64)
     # Count of host-minted :class:`WebEvidence` entries from this call.
     # Always 0 for ``no_results`` / ``unavailable`` / ``failed``.
     registered_evidence_count: int = Field(default=0, ge=0)

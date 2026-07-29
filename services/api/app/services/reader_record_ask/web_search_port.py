@@ -76,6 +76,14 @@ class WebSearchHitView:
     cannot overflow the model view or persistence.
 
     ``provider_result_ref`` is internal-only — never on public DTOs.
+
+    ASK-WEB-R4: ``published_at`` / ``page_age`` are optional
+    provider-supplied freshness hints. ``published_at`` is an ISO-8601
+    date/datetime string when the provider exposes one; ``page_age`` is
+    the raw provider hint (e.g. "2 days ago") when only a relative age
+    is available. Both are untrusted provider text — the host never
+    treats them as authoritative, only as a ranking hint, and never
+    echoes them as confirmed facts to the user.
     """
 
     raw_url: str = ""
@@ -86,6 +94,9 @@ class WebSearchHitView:
     # the host can correlate a registered :class:`WebEvidence` with a
     # provider-side diagnostic id when auditing a turn.
     provider_result_ref: str | None = None
+    # ASK-WEB-R4: optional provider-supplied freshness hints.
+    published_at: str | None = None
+    page_age: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.raw_url, str):
@@ -111,6 +122,16 @@ class WebSearchHitView:
             and not isinstance(self.provider_result_ref, str)
         ):
             raise TypeError("provider_result_ref must be str | None")
+        if self.published_at is not None:
+            if not isinstance(self.published_at, str):
+                raise TypeError("published_at must be str | None")
+            if len(self.published_at) > 64:
+                raise ValueError("published_at exceeds max length 64")
+        if self.page_age is not None:
+            if not isinstance(self.page_age, str):
+                raise TypeError("page_age must be str | None")
+            if len(self.page_age) > 64:
+                raise ValueError("page_age exceeds max length 64")
 
 
 # ---------------------------------------------------------------------------

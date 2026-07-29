@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -16,6 +16,9 @@ from app.schemas.reader_ask import (
 from app.schemas.reader_record_ask_stream import ReaderRecordAskThreadDetail
 from app.services.reader_ask import model_options as model_options_svc
 from app.services.reader_ask import repository as repo
+from app.services.reader_record_ask.web_search_common import (
+    resolve_web_search_availability_for_option,
+)
 
 
 def _parse_uuid(value: str, detail: str) -> UUID:
@@ -43,6 +46,17 @@ def _resolve_reader_ask_model_option_or_422(
 def _selected_model_payload(
     option: model_options_svc.ResolvedReaderAskModelOption,
 ) -> dict[str, Any]:
+    # ASK-WEB-G3-R1: project the server-declared Web Search capability
+    # via the canonical ``resolve_web_search_availability_for_option``
+    # helper in ``web_search_common``. The helper resolves the model
+    # config from ``option.selection``, calls the production registry
+    # exactly once, and projects the binding to ``"available"`` /
+    # ``"unavailable"``. There is no duplicate resolver here — the
+    # previous local copy was removed in G3-R1 to collapse all
+    # capability projection into a single canonical call chain.
+    web_search_capability: Literal["unavailable", "available"] = (
+        resolve_web_search_availability_for_option(option)
+    )
     return ReaderAskSelectedModel(
         key=option.key,
         label=option.label,
@@ -50,6 +64,7 @@ def _selected_model_payload(
         model_name=option.main_model_name,
         replan_model_name=option.replan_model_name,
         price_multiplier=option.billing.price_multiplier,
+        web_search_capability=web_search_capability,
     ).model_dump(mode="json")
 
 

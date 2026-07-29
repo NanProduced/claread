@@ -10,11 +10,15 @@ export async function POST(
   const recordId = searchParams.get("recordId") ?? searchParams.get("record_id");
   const recordScope = searchParams.get("record_scope");
   const body = (await request.json().catch(() => ({}))) as ReaderAskMessageRetryRequestDto;
+  // ASK-TURN-LIFECYCLE R1: see messages/stream/route.ts — forward the
+  // browser's AbortSignal so an abort cancels the upstream connection
+  // and triggers the FastAPI generator's ``finally`` reconciliation.
   return retryReaderAskMessageForWeb(
     threadId,
     messageId,
     body,
     recordId,
     recordScope === "reading_record" ? "reading_record" : "analysis",
+    request.signal,
   );
 }

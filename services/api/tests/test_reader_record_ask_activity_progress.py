@@ -194,11 +194,6 @@ def _function_model(answer: str = "ok answer", handles: list[str] | None = None)
                                     "basis": (
                                         "article" if handles else "general"
                                     ),
-                                    "article_scope": (
-                                        "evidence_bounded"
-                                        if handles
-                                        else None
-                                    ),
                                     "evidence_handles": handles or [],
                                 }
                             ],
@@ -702,18 +697,14 @@ async def test_zero_tool_progress_sequence() -> None:
 
 @pytest.mark.asyncio
 async def test_rag_off_search_unavailable_still_completes() -> None:
+    """RAG-off: ``search_current_article`` is NOT mounted (ASK-WEB-R4).
+
+    The model directly produces a grounded answer without attempting to
+    call the article search tool. No ``searching_article`` progress
+    events should be emitted because the tool is not registered. The
+    turn must still complete successfully.
+    """
     async def model_fn(messages, info):
-        if not getattr(model_fn, "_called", False):
-            model_fn._called = True  # type: ignore[attr-defined]
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name="search_current_article",
-                        args=json.dumps({"query": "SECRET_QUERY_TOKEN"}),
-                        tool_call_id="s-1",
-                    )
-                ]
-            )
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -725,7 +716,6 @@ async def test_rag_off_search_unavailable_still_completes() -> None:
                                 {
                                     "text": "answer without rag",
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 }
                             ],
@@ -757,13 +747,13 @@ async def test_rag_off_search_unavailable_still_completes() -> None:
     names = [n for n, _ in events]
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     search = [p for p in progress if p.get("phase") == "searching_article"]
-    assert any(p["activity"] == "started" for p in search)
-    assert any(p["activity"] == "unavailable" for p in search)
+    # ASK-WEB-R4: no searching_article events because the tool is not
+    # mounted when ``article_rag=None``.
+    assert len(search) == 0
     assert EVENT_MESSAGE_COMPLETED in names
     assert EVENT_AGENTIC_TERMINAL not in names
     blob = "".join(chunks)
     assert "SECRET_QUERY_TOKEN" not in blob
-    assert "not_ready" not in blob or "当前文章检索暂不可用" in blob
 
 
 @pytest.mark.asyncio
@@ -835,7 +825,30 @@ async def test_progress_privacy_no_sensitive_fields() -> None:
     blob = "".join(chunks)
     for secret in _SENSITIVE:
         assert secret not in blob
-    # Ensure no raw tool arg keys leaked via dump
+
+
+def test_expand_evidence_unavailable_is_neutral_non_blocking_activity() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    projected = []
+    for event in (
+        ToolCallEvent(tool_name="expand_evidence", args={"pointer": "opaque"}),
+        ToolResultEvent(
+            tool_name="expand_evidence",
+            status="unavailable",
+            summary="stale_evidence",
+            duration_ms=2,
+        ),
+    ):
+        projected.extend(projector.project(event))
+
+    assert projected[-1].activity == "completed"
+    assert projected[-1].status == "ok"
+    assert projected[-1].summary == "已检查文章证据"
+    assert all("暂不可用" not in item.summary for item in projected)
+    # Ensure no raw tool arg keys leaked via the public progress projection.
+    blob = "".join(item.model_dump_json() for item in projected)
     assert "evidence_handle_ids" not in blob
     assert "reasoning_content" not in blob
 

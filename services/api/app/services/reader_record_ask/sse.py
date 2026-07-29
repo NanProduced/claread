@@ -15,6 +15,7 @@ EVENT_MESSAGE_STARTED = "message.started"
 EVENT_MESSAGE_DELTA = "message.delta"
 EVENT_MESSAGE_COMPLETED = "message.completed"
 EVENT_MESSAGE_INTERRUPTED = "message.interrupted"
+EVENT_MESSAGE_PREVIEW_RESET = "message.preview_reset"
 EVENT_ERROR = "error"
 # Agentic-only typed progress (safe for clients that ignore unknown events).
 EVENT_AGENTIC_PROGRESS = "agentic.progress"

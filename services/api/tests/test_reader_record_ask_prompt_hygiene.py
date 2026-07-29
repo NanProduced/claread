@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.reader_record_ask.agent import _SYSTEM_INSTRUCTIONS
+from app.services.reader_record_ask.agent import (
+    _SYSTEM_INSTRUCTIONS,
+    _build_system_instructions,
+)
 from app.services.reader_record_ask.model_view_budget import (
     ModelViewRenderer,
     ModelVisibleTurnBudget,
@@ -87,6 +90,18 @@ def test_system_prompt_keeps_stable_principles() -> None:
     assert "basis=web" in _SYSTEM_INSTRUCTIONS
     # Article as foundation, not boundary.
     assert "foundation" in _SYSTEM_INSTRUCTIONS
+
+
+def test_web_enabled_prompt_carries_host_date_and_search_discipline() -> None:
+    instructions = _build_system_instructions(
+        web_search_enabled=True,
+        current_date="2026-07-29",
+    )
+
+    assert "Current host date (UTC): 2026-07-29" in instructions
+    assert "prefer one sufficiently broad search" in instructions
+    assert "stop searching and answer" in instructions
+    assert "two independent recent sources" in instructions
 
 
 def test_coverage_prose_lives_only_in_the_user_prompt_block() -> None:

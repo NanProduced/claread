@@ -749,6 +749,8 @@ class ReaderAskMessage(BaseModel):
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    # ASK-TURN-LIFECYCLE R4-4: cold history truncated flag.
+    reasoning_truncated: bool | None = None
     usage_event_id: str | None = None
     # Round 2: follow-up prompt suggestions emitted by
     # ``suggest_prompts`` tool. The frontend renders them as clickable
@@ -1030,6 +1032,8 @@ class ReaderAskUserVisibleOutput(BaseModel):
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    # ASK-TURN-LIFECYCLE R4-4: cold history truncated flag.
+    reasoning_truncated: bool | None = None
     # Round 2: follow-up prompt suggestions emitted by the
     # ``suggest_prompts`` tool. The frontend renders them as clickable
     # chips at the tail of the assistant message. None when the tool

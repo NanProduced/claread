@@ -57,6 +57,14 @@ from app.services.reader_record_ask.turn_prompt import (
     account_partition_equals_first_surface,
     build_production_agent_user_prompt,
 )
+from app.services.reader_record_ask.web_search_contracts import (
+    ResolvedWebSearchCapability,
+)
+from app.services.reader_record_ask.web_search_port import (
+    FakeWebSearchBackend,
+    WebSearchHitView,
+    WebSearchResult,
+)
 
 _USER = UUID("11111111-1111-1111-1111-111111111111")
 _RECORD = UUID("22222222-2222-2222-2222-222222222222")
@@ -110,7 +118,12 @@ def _scope(*, generation: int = 1):
     )
 
 
-def _envelope(*, selection: str | None = None, generation: int = 1):
+def _envelope(
+    *,
+    selection: str | None = None,
+    generation: int = 1,
+    web_search_mode: str = "disabled",
+):
     anchor = None
     if selection is not None:
         end = max(1, min(len(selection), 10))
@@ -134,6 +147,7 @@ def _envelope(*, selection: str | None = None, generation: int = 1):
             can_read_range=True,
             can_search_current_article=True,
             article_rag_ready=False,
+            web_search_mode=web_search_mode,
             readiness_state="ready",
             product_state="ready",
         )
@@ -159,8 +173,18 @@ def _coordinator(
     article_rag=None,
     budget: ModelVisibleTurnBudget | None = None,
     registry: EvidenceRegistry | None = None,
+    web_search_capability: ResolvedWebSearchCapability | None = None,
+    web_search_backend: FakeWebSearchBackend | None = None,
 ) -> TurnCoordinator:
-    env = _envelope(selection=selection)
+    env = _envelope(
+        selection=selection,
+        web_search_mode=(
+            "allowed"
+            if web_search_capability is not None
+            and web_search_capability.enabled_for_turn
+            else "disabled"
+        ),
+    )
     return TurnCoordinator(
         envelope=env,
         document_access=_access(),
@@ -171,7 +195,46 @@ def _coordinator(
         budget=budget,
         evidence_registry=registry,
         product_search_enabled=True,
+        web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
     )
+
+
+@pytest.mark.asyncio
+async def test_completed_web_search_is_not_downgraded_by_followup_call_limit():
+    capability = ResolvedWebSearchCapability(
+        enabled_for_turn=True,
+        provider="test",
+        protocol="fake",
+        max_calls=1,
+        max_results_per_call=1,
+        policy_version="test-v1",
+    )
+    backend = FakeWebSearchBackend(
+        outcomes=[
+            WebSearchResult(
+                status="ok",
+                summary="Search completed.",
+                hits=(
+                    WebSearchHitView(
+                        raw_url="https://example.com/latest",
+                        title="Latest result",
+                    ),
+                ),
+            )
+        ]
+    )
+    coord = _coordinator(
+        web_search_capability=capability,
+        web_search_backend=backend,
+    )
+
+    first = await coord.search_web("latest result")
+    second = await coord.search_web("try again")
+
+    assert first.status == "ok"
+    assert second.status == "unavailable"
+    assert coord.web_search_outcome == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -880,14 +943,37 @@ async def test_function_model_expand_returns_exact_rendered_string():
 
 
 @pytest.mark.asyncio
-async def test_host_budget_abort_flag_no_model_text():
-    """budget_exhausted host abort carries no model-visible error text."""
+async def test_tool_account_exhaustion_returns_control_view_fail_soft():
+    """Tool payload exhaustion uses the reserved control account."""
     coord = _coordinator()
     await coord.assemble_turn()
     # Exhaust expand account.
     filler = coord.renderer.render_plain("e" * coord.budget.remaining("expand"))
     coord.budget.charge("expand", filler)
     metered = coord.expand_evidence("not-a-pointer")
+    assert metered.host_budget_abort is False
+    assert metered.text
+    assert metered.status == "budget_exhausted"
+    assert "Continue with evidence already available" in metered.summary
+    assert coord.budget.spent("control") > 0
+
+
+@pytest.mark.asyncio
+async def test_control_account_exhaustion_remains_hard_abort():
+    """Only loss of the safety/control channel may terminate the turn."""
+    coord = _coordinator()
+    await coord.assemble_turn()
+    expand_filler = coord.renderer.render_plain(
+        "e" * coord.budget.remaining("expand")
+    )
+    control_filler = coord.renderer.render_plain(
+        "c" * coord.budget.remaining("control")
+    )
+    coord.budget.charge("expand", expand_filler)
+    coord.budget.charge("control", control_filler)
+
+    metered = coord.expand_evidence("not-a-pointer")
+
     assert metered.host_budget_abort is True
     assert metered.text == ""
     assert metered.status == "budget_exhausted"

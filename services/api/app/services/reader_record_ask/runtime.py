@@ -81,7 +81,6 @@ from app.services.reader_record_ask.web_evidence_registry import (
 )
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
-    WebSearchOutcome,
 )
 from app.services.reader_record_ask.web_search_port import WebSearchBackend
 
@@ -303,9 +302,18 @@ async def run_reading_record_ask(
 
     # G1-b4: conditionally mount the ``search_web`` tool. The flag is
     # the resolved execution truth — never the request toggle directly.
+    # ASK-WEB-R4: also gate ``expand_evidence`` and
+    # ``search_current_article`` by real executable capability so the
+    # model never sees a non-executable tool and no ``unavailable``
+    # activity is produced for tools that would always return a safe
+    # ``invalid_cursor`` / ``port_or_document_missing`` view.
     agent = create_reading_record_ask_agent(
         model,
         web_search_enabled=web_search_enabled_for_turn,
+        expand_evidence_enabled=coordinator.has_expand_pointer,
+        search_current_article_enabled=(
+            coordinator.has_executable_article_rag
+        ),
     )
     if observation is not None:
         observation.execution_stage = "agent_run"

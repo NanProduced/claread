@@ -333,6 +333,7 @@ export async function createReaderAskStreamForWeb(
   body: ReaderAskMessageStreamRequestDto,
   recordId?: string | null,
   recordScope: ReaderAskRecordScope = "analysis",
+  signal?: AbortSignal,
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
@@ -355,9 +356,14 @@ export async function createReaderAskStreamForWeb(
     }
   }
 
+  // ASK-TURN-LIFECYCLE R1: forward the browser-supplied AbortSignal to the
+  // upstream fetch so a user stop / network abort / page navigation cancels
+  // the upstream connection. This is what triggers the FastAPI generator's
+  // ``finally`` block (ASGI cancellation) which in turn reconciles any
+  // still-streaming turn_run / message row to ``cancelled``.
   const upstream = recordScope === "reading_record"
-    ? await createUpstreamReadingRecordAskStream(recordId!, threadId, body, session.sessionToken)
-    : await createUpstreamReaderAskStream(threadId, body, session.sessionToken);
+    ? await createUpstreamReadingRecordAskStream(recordId!, threadId, body, session.sessionToken, signal)
+    : await createUpstreamReaderAskStream(threadId, body, session.sessionToken, signal);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }
@@ -380,6 +386,7 @@ export async function retryReaderAskMessageForWeb(
   body: ReaderAskMessageRetryRequestDto,
   recordId?: string | null,
   recordScope: ReaderAskRecordScope = "analysis",
+  signal?: AbortSignal,
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
@@ -402,9 +409,10 @@ export async function retryReaderAskMessageForWeb(
     }
   }
 
+  // ASK-TURN-LIFECYCLE R1: see createReaderAskStreamForWeb.
   const upstream = recordScope === "reading_record"
-    ? await retryUpstreamReadingRecordAskMessage(recordId!, threadId, messageId, body, session.sessionToken)
-    : await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken);
+    ? await retryUpstreamReadingRecordAskMessage(recordId!, threadId, messageId, body, session.sessionToken, signal)
+    : await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken, signal);
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }

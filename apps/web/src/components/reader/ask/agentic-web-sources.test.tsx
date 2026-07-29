@@ -89,7 +89,7 @@ describe("AgenticWebSources", () => {
 
     expect(screen.getByTestId("agentic-web-sources")).toBeTruthy();
     expect(screen.getByTestId("web-source-list")).toBeTruthy();
-    expect(screen.getByText("网页来源")).toBeTruthy();
+    expect(screen.getByText("网页来源 · 2")).toBeTruthy();
     // Domain extraction strips www. prefix.
     expect(screen.getByText("example.com")).toBeTruthy();
     expect(screen.getByText("other.org")).toBeTruthy();
@@ -172,7 +172,7 @@ describe("AgenticWebSources", () => {
     );
   });
 
-  it("renders both outcome notice and web citations when outcome is non-completed but citations exist", () => {
+  it("prefers verified web citations over a contradictory non-completed summary", () => {
     const summary: ReaderAskWebSearchSummaryDto = {
       outcome: "failed",
       cited_source_count: 1,
@@ -181,9 +181,7 @@ describe("AgenticWebSources", () => {
     const { container } = render(
       <AgenticWebSources citations={citations} webSearchSummary={summary} />,
     );
-    expect(screen.getByTestId("web-search-outcome-notice").textContent).toBe(
-      "网页搜索未完成",
-    );
+    expect(screen.queryByTestId("web-search-outcome-notice")).toBeNull();
     expect(getSourceTriggers(container)).toHaveLength(1);
   });
 

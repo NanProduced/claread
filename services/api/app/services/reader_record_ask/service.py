@@ -35,6 +35,7 @@ from app.services.reader_record_ask.execution_config import (
     resolve_reader_record_ask_execution,
 )
 from app.services.reader_record_ask.repository import ReaderRecordAskRepository
+from app.services.reader_record_ask.turn_lifecycle import StreamLifecycleHook
 from app.services.reader_record_ask.web_search_contracts import WebSearchMode
 
 logger = logging.getLogger(__name__)
@@ -339,6 +340,25 @@ async def prepare_reading_record_ask_message(
         option,
         web_search_mode=request.web_search_mode,
     )
+    # G3-R3: when the user requested ``web_search_mode="allowed"`` but
+    # the resolved capability is unavailable OR the adapter could not
+    # construct a real backend, fail-closed with a typed 503 BEFORE
+    # the StreamingResponse starts. Never silently stream a turn that
+    # promised Web Search but cannot deliver it.
+    if request.web_search_mode == "allowed":
+        capability = execution.web_search_capability
+        if (
+            capability is None
+            or not capability.enabled_for_turn
+            or execution.web_search_backend is None
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "web_search_unavailable",
+                    "message": "Web Search is temporarily unavailable for this model.",
+                },
+            )
     return parsed_record_id, resolved_thread_id, execution
 
 
@@ -349,6 +369,7 @@ async def _stream_legacy_or_agentic(
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
     execution: ReaderRecordAskExecutionConfig | None = None,
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     """Dispatch to agentic path when flag is on; never fall back on agentic failure."""
     if not get_settings().reader_record_ask_agentic_enabled:
@@ -381,6 +402,22 @@ async def _stream_legacy_or_agentic(
     web_search_capability = (
         execution.web_search_capability if execution is not None else None
     )
+    # G3-R3: forward the real provider backend produced by the registry.
+    # When ``None`` (capability not granted / adapter unverified) the
+    # production stream auto-wires a fake backend only in tests; in
+    # production the ``search_web`` tool is not mounted.
+    #
+    # Defensive invariant: when ``web_search_capability`` is ``None``
+    # (disabled mode), the backend MUST also be ``None`` — even if a
+    # buggy resolver ever returned a non-None backend with a disabled
+    # capability. The runtime must never mount ``search_web`` for a
+    # disabled turn.
+    resolved_backend = (
+        execution.web_search_backend if execution is not None else None
+    )
+    web_search_backend = (
+        resolved_backend if web_search_capability is not None else None
+    )
 
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
@@ -395,6 +432,8 @@ async def _stream_legacy_or_agentic(
         model_settings=model_settings,
         usage_limits=usage_limits,
         web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
+        lifecycle=lifecycle,
     ):
         yield chunk
 
@@ -405,6 +444,7 @@ async def send_reading_record_ask_message(
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
     prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
         prepared = await prepare_reading_record_ask_message(
@@ -419,6 +459,7 @@ async def send_reading_record_ask_message(
         thread_id=resolved_thread_id,
         request=request,
         execution=execution,
+        lifecycle=lifecycle,
     ):
         yield chunk
 
@@ -430,6 +471,7 @@ async def stream_reading_record_ask_thread_message(
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
     prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
         prepared = await prepare_reading_record_ask_message(
@@ -445,6 +487,7 @@ async def stream_reading_record_ask_thread_message(
         thread_id=resolved_thread_id,
         request=request,
         execution=execution,
+        lifecycle=lifecycle,
     ):
         yield chunk
 
@@ -534,7 +577,11 @@ async def prepare_reading_record_ask_retry(
     )
     if replayed_web_search_mode == "allowed":
         capability = execution.web_search_capability
-        if capability is None or not capability.enabled_for_turn:
+        if (
+            capability is None
+            or not capability.enabled_for_turn
+            or execution.web_search_backend is None
+        ):
             raise HTTPException(
                 status_code=503,
                 detail={
@@ -677,6 +724,7 @@ async def retry_reading_record_ask_message(
     message_id: UUID,
     request: ReaderAskMessageRetryRequest,
     prepared: RetryPreparedResult | None = None,
+    lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     """Stream a retry. ``prepared`` must come from the route's preflight.
 
@@ -715,6 +763,15 @@ async def retry_reading_record_ask_message(
     )
 
     execution = prepared.execution
+    # G3-R3: defensive invariant — when ``web_search_capability`` is
+    # ``None`` (disabled mode), the backend MUST also be ``None`` so
+    # the runtime never mounts ``search_web`` on a disabled retry.
+    retry_capability = execution.web_search_capability
+    retry_backend = (
+        execution.web_search_backend
+        if retry_capability is not None
+        else None
+    )
     async for chunk in retry_agentic_thread_message(
         user_id=user_id,
         reading_record_id=parsed_record_id,
@@ -728,7 +785,12 @@ async def retry_reading_record_ask_message(
         # retry uses the same execution truth as the original send. When
         # ``None`` (capability not granted on the original turn) the
         # runtime must NOT mount the ``search_web`` tool on retry.
-        web_search_capability=execution.web_search_capability,
+        web_search_capability=retry_capability,
+        # G3-R3: forward the real provider backend so retry uses the
+        # same adapter as the original send. When ``None`` the runtime
+        # must NOT mount ``search_web`` on retry.
+        web_search_backend=retry_backend,
+        lifecycle=lifecycle,
     ):
         yield chunk
 

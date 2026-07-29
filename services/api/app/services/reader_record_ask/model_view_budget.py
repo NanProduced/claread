@@ -46,22 +46,21 @@ from typing import Any, Literal, cast
 from xml.sax.saxutils import escape as _xml_escape
 
 # ---------------------------------------------------------------------------
-# Cap + six-account reserves (sum == MODEL_VISIBLE_TURN_PAYLOAD_CAP)
+# Cap + seven-account reserves (sum == MODEL_VISIBLE_TURN_PAYLOAD_CAP)
 # ---------------------------------------------------------------------------
 
-MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 24_000
+MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 96_000
 
-# R4-A5-7: request_frame must absorb full system instructions (~6.3k) plus
-# projection / handles / coverage / question / section chrome.
-# Rebalanced from the A5-1 placeholder 4k so production turns fit without
-# truncating the user question. Selection/expand/map stay at their A5-2/3/4
-# sizes so existing cost-fit tests remain valid. Sum remains 24_000.
-RESERVE_REQUEST_FRAME: int = 9_500
-RESERVE_SELECTION: int = 2_500
-RESERVE_BASELINE: int = 3_500
-RESERVE_MAP: int = 1_500
-RESERVE_EXPAND: int = 4_000
-RESERVE_RAG: int = 3_000
+# The separate ``control`` reserve guarantees a bounded model-visible result
+# when a content account fills up. Content exhaustion is therefore fail-soft;
+# only exhaustion of this safety/control channel remains a hard turn abort.
+RESERVE_REQUEST_FRAME: int = 16_000
+RESERVE_SELECTION: int = 6_000
+RESERVE_BASELINE: int = 14_000
+RESERVE_MAP: int = 6_000
+RESERVE_EXPAND: int = 30_000
+RESERVE_RAG: int = 20_000
+RESERVE_CONTROL: int = 4_000
 
 BudgetAccountName = Literal[
     "request_frame",
@@ -70,6 +69,7 @@ BudgetAccountName = Literal[
     "map",
     "expand",
     "rag",
+    "control",
 ]
 
 ACCOUNT_RESERVES: dict[BudgetAccountName, int] = {
@@ -79,6 +79,7 @@ ACCOUNT_RESERVES: dict[BudgetAccountName, int] = {
     "map": RESERVE_MAP,
     "expand": RESERVE_EXPAND,
     "rag": RESERVE_RAG,
+    "control": RESERVE_CONTROL,
 }
 
 assert sum(ACCOUNT_RESERVES.values()) == MODEL_VISIBLE_TURN_PAYLOAD_CAP

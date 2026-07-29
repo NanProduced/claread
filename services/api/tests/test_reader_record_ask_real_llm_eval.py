@@ -6853,8 +6853,8 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
     # block cites a fabricated, unregistered handle — schema-valid under
     # the P2C-A1 structured output contract (``AgentAnswerDraftOutput``)
     # but grounding-INVALID. The output validator raises ModelRetry on
-    # every call. The block's ``article_scope`` is "evidence_bounded",
-    # which the real runtime always confirms (turn_coordinator), so the
+    # every call. The host-derived ``article_scope`` is always
+    # "evidence_bounded" (confirmed by turn_coordinator), so the
     # rejection is specifically due to the fabricated handle, not the
     # scope.
     calls = {"n": 0}
@@ -6874,7 +6874,6 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
                                 {
                                     "text": f"回答 attempt {calls['n']}",
                                     "basis": "article",
-                                    "article_scope": "evidence_bounded",
                                     "evidence_handles": ["evh_fabricated"],
                                 }
                             ],
@@ -7182,7 +7181,6 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
             AgentAnswerBlockOutput(
                 text="partial answer",
                 basis="general",
-                article_scope=None,
                 evidence_handles=[],
             )
         ],
@@ -7259,15 +7257,14 @@ async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
     valid_handle = registry.list_handle_refs()[0].handle_id
 
     # P2C-A1 structured output contract: one article block citing the
-    # registry's real handle, with the confirmed "evidence_bounded"
-    # scope (the helper confirms it on deps).
+    # registry's real handle. The host derives "evidence_bounded" scope
+    # (the helper confirms it on deps).
     draft = AgentAnswerDraftOutput(
         response_kind="grounded_answer",
         answer_blocks=[
             AgentAnswerBlockOutput(
                 text="grounded answer",
                 basis="article",
-                article_scope="evidence_bounded",
                 evidence_handles=[valid_handle],
             )
         ],
@@ -7430,7 +7427,6 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
                                     {
                                         "text": "invalid attempt 1",
                                         "basis": "article",
-                                        "article_scope": "evidence_bounded",
                                         "evidence_handles": [],
                                     }
                                 ],
@@ -7467,11 +7463,10 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
                             "response_kind": "grounded_answer",
                             "clarification_text": None,
                             "answer_blocks": [
-                                {
-                                    "text": "valid grounded answer",
-                                    "basis": "article",
-                                    "article_scope": "evidence_bounded",
-                                    "evidence_handles": [valid_handles[0]],
+                                    {
+                                        "text": "valid grounded answer",
+                                        "basis": "article",
+                                        "evidence_handles": [valid_handles[0]],
                                 }
                             ],
                         }
@@ -8496,7 +8491,6 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
                     {
                         "text": f"回答 attempt {n}",
                         "basis": "article",
-                        "article_scope": "evidence_bounded",
                         "evidence_handles": ["evh_fabricated"],
                     }
                 ],
@@ -8792,8 +8786,8 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
 
     def _valid_grounding_args(handle_id: str) -> str:
         # P2C-A1 structured output contract: one article block citing
-        # the real seed handle, with the "evidence_bounded" scope the
-        # real runtime always confirms (turn_coordinator).
+        # the real seed handle. The host derives "evidence_bounded"
+        # scope, which the real runtime always confirms (turn_coordinator).
         return _json.dumps(
             {
                 "response_kind": "grounded_answer",
@@ -8802,7 +8796,6 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
                     {
                         "text": "valid grounded answer",
                         "basis": "article",
-                        "article_scope": "evidence_bounded",
                         "evidence_handles": [handle_id],
                     }
                 ],

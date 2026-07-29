@@ -214,11 +214,6 @@ def _final_result_part(
                     {
                         "text": content,
                         "basis": basis,
-                        "article_scope": (
-                            "evidence_bounded"
-                            if evidence_handles
-                            else None
-                        ),
                         "evidence_handles": evidence_handles,
                     }
                 ],
@@ -1100,7 +1095,6 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
                                     {
                                         "text": "第一次回答",
                                         "basis": "article",
-                                        "article_scope": "evidence_bounded",
                                         "evidence_handles": [],
                                     }
                                 ],
@@ -1201,7 +1195,6 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
                                     {
                                         "text": "仍然没有依据",
                                         "basis": "article",
-                                        "article_scope": "evidence_bounded",
                                         "evidence_handles": [],
                                     }
                                 ],
@@ -1346,7 +1339,6 @@ async def test_t10_user_prompt_byte_stable_across_retries() -> None:
                                     {
                                         "text": "第一次回答",
                                         "basis": "article",
-                                        "article_scope": "evidence_bounded",
                                         "evidence_handles": [],
                                     }
                                 ],
@@ -1441,3 +1433,89 @@ async def test_unit_order_span_rejects_overwide_span_before_join() -> None:
     assert "exceeds server max" in result.summary
     # Scope was loaded for identity, but span rejected before large join work.
     assert (result.payloads or {}).get("requested_width") == MAX_UNIT_ORDER_SPAN_WIDTH + 1
+
+
+# ---------------------------------------------------------------------------
+# ASK-WEB-R4-R1: tool mounting matrix
+# ---------------------------------------------------------------------------
+
+
+def test_tool_mounting_matrix_no_capabilities() -> None:
+    """ASK-WEB-R4-R1: when no capabilities are present, no host function
+    tools are registered. The model cannot invoke ``expand_evidence``,
+    ``search_current_article``, or ``search_web`` — and therefore no
+    ``unavailable`` activity can be produced for them.
+    """
+    agent = create_reading_record_ask_agent(
+        _text_model("x"),
+        web_search_enabled=False,
+        expand_evidence_enabled=False,
+        search_current_article_enabled=False,
+    )
+    tools = set(agent._function_toolset.tools.keys())
+    assert "expand_evidence" not in tools, (
+        "expand_evidence must NOT be registered when has_expand_pointer=False"
+    )
+    assert "search_current_article" not in tools, (
+        "search_current_article must NOT be registered when "
+        "has_executable_article_rag=False"
+    )
+    assert "search_web" not in tools, (
+        "search_web must NOT be registered when web_search_enabled=False"
+    )
+
+
+def test_tool_mounting_matrix_expand_only() -> None:
+    """Expansion pointer present but no article RAG and no web search."""
+    agent = create_reading_record_ask_agent(
+        _text_model("x"),
+        web_search_enabled=False,
+        expand_evidence_enabled=True,
+        search_current_article_enabled=False,
+    )
+    tools = set(agent._function_toolset.tools.keys())
+    assert "expand_evidence" in tools
+    assert "search_current_article" not in tools
+    assert "search_web" not in tools
+
+
+def test_tool_mounting_matrix_rag_only() -> None:
+    """Article RAG executable but no expansion pointer and no web search."""
+    agent = create_reading_record_ask_agent(
+        _text_model("x"),
+        web_search_enabled=False,
+        expand_evidence_enabled=False,
+        search_current_article_enabled=True,
+    )
+    tools = set(agent._function_toolset.tools.keys())
+    assert "expand_evidence" not in tools
+    assert "search_current_article" in tools
+    assert "search_web" not in tools
+
+
+def test_tool_mounting_matrix_web_search_only() -> None:
+    """Web search enabled but no expansion pointer and no article RAG."""
+    agent = create_reading_record_ask_agent(
+        _text_model("x"),
+        web_search_enabled=True,
+        expand_evidence_enabled=False,
+        search_current_article_enabled=False,
+    )
+    tools = set(agent._function_toolset.tools.keys())
+    assert "expand_evidence" not in tools
+    assert "search_current_article" not in tools
+    assert "search_web" in tools
+
+
+def test_tool_mounting_matrix_all_capabilities() -> None:
+    """All capabilities present → all three tools registered."""
+    agent = create_reading_record_ask_agent(
+        _text_model("x"),
+        web_search_enabled=True,
+        expand_evidence_enabled=True,
+        search_current_article_enabled=True,
+    )
+    tools = set(agent._function_toolset.tools.keys())
+    assert "expand_evidence" in tools
+    assert "search_current_article" in tools
+    assert "search_web" in tools

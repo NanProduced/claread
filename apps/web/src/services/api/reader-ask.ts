@@ -284,6 +284,7 @@ export async function createUpstreamReaderAskStream(
   threadId: string,
   body: ReaderAskMessageStreamRequestDto,
   sessionToken: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`${getBaseUrl()}/reader-ask/threads/${threadId}/messages/stream`, {
     method: "POST",
@@ -294,6 +295,13 @@ export async function createUpstreamReaderAskStream(
     },
     body: JSON.stringify(toGenericReaderAskMessageRequest(body)),
     cache: "no-store",
+    // ASK-TURN-LIFECYCLE R1: propagate the browser-supplied AbortSignal so
+    // that a user stop / network abort / page navigation cancels the
+    // upstream connection too. Without this, the FastAPI generator keeps
+    // running after the browser disconnects and the route ``finally``
+    // block never fires (no ASGI cancellation signal). The signal is
+    // optional so non-browser callers (server-to-server) are not broken.
+    signal,
   });
 }
 
@@ -302,6 +310,7 @@ export async function createUpstreamReadingRecordAskStream(
   threadId: string,
   body: ReaderAskMessageStreamRequestDto,
   sessionToken: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`${getBaseUrl()}${readingRecordAskPath(recordId, `/threads/${threadId}/messages/stream`)}`, {
     method: "POST",
@@ -312,6 +321,8 @@ export async function createUpstreamReadingRecordAskStream(
     },
     body: JSON.stringify(toReadingRecordAskMessageRequest(body)),
     cache: "no-store",
+    // ASK-TURN-LIFECYCLE R1: see createUpstreamReaderAskStream.
+    signal,
   });
 }
 
@@ -321,6 +332,7 @@ export async function retryUpstreamReaderAskMessage(
   messageId: string,
   body: ReaderAskMessageRetryRequestDto,
   sessionToken: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`${getBaseUrl()}/reader-ask/threads/${threadId}/messages/${messageId}/retry/stream`, {
     method: "POST",
@@ -331,6 +343,8 @@ export async function retryUpstreamReaderAskMessage(
     },
     body: JSON.stringify(body),
     cache: "no-store",
+    // ASK-TURN-LIFECYCLE R1: see createUpstreamReaderAskStream.
+    signal,
   });
 }
 
@@ -340,6 +354,7 @@ export async function retryUpstreamReadingRecordAskMessage(
   messageId: string,
   body: ReaderAskMessageRetryRequestDto,
   sessionToken: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`${getBaseUrl()}${readingRecordAskPath(recordId, `/threads/${threadId}/messages/${messageId}/retry/stream`)}`, {
     method: "POST",
@@ -350,6 +365,8 @@ export async function retryUpstreamReadingRecordAskMessage(
     },
     body: JSON.stringify(body),
     cache: "no-store",
+    // ASK-TURN-LIFECYCLE R1: see createUpstreamReaderAskStream.
+    signal,
   });
 }
 

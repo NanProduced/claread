@@ -307,11 +307,23 @@ def _build_openai_compatible_model(model_config: ResolvedModelConfig) -> OpenAIC
 def _dashscope_native_profile() -> ModelProfile:
     """Conservative default profile for DashScope native streaming.
 
-    DashScope native Qwen / GLM do not advertise tool_choice=required or
-    strict JSON schema, and structured output must be prompted.
-    ``supports_thinking=True`` is required so the agent graph forwards
-    ``ThinkingPart`` events emitted by ``FunctionModel``; without it the
-    graph silently drops them.
+    ASK-WEB-R4-R1 (Qwen strategy correction): Qwen3.7-Max officially
+    supports ``thinking`` + ``json_object`` response_format per DashScope
+    official documentation. The previous claim that "DashScope native
+    Qwen / GLM do not advertise strict JSON schema" was inaccurate.
+    However, the current custom DashScope native transport
+    (``DashScopeNativeModel``) is wired with PydanticAI
+    ``output_type=AgentAnswerDraftOutput`` and prompted structured
+    output — NOT native ``json_object`` transport. Whether switching to
+    ``response_format=json_object`` transport improves format stability
+    is an open question that requires real A/B evidence (not addressed
+    in this round). ``supports_json_object_output=False`` is retained
+    deliberately to keep the prompted-output transport unchanged; it is
+    NOT a statement about model capability. Format issues must NOT be
+    masked by increasing ``output`` retries — they should be diagnosed
+    via A/B comparison. ``supports_thinking=True`` is required so the
+    agent graph forwards ``ThinkingPart`` events emitted by
+    ``FunctionModel``; without it the graph silently drops them.
     """
     return ModelProfile(
         supports_json_object_output=False,

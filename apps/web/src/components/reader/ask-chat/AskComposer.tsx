@@ -130,28 +130,37 @@ function AskComposerSurface({
           {webSearchSupported ? (
             <button
               type="button"
-              aria-label="联网搜索"
+              aria-label={
+                webSearchEnabled ? "联网搜索已开启" : "联网搜索已关闭"
+              }
               aria-pressed={webSearchEnabled}
               data-testid="ask-composer-web-search-toggle"
               data-state={webSearchEnabled ? "on" : "off"}
               disabled={sending}
+              title={
+                webSearchEnabled
+                  ? "联网搜索已开启，Agent 会在需要最新信息时自行搜索"
+                  : "联网搜索已关闭"
+              }
               onClick={() =>
                 onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
               }
-              className="inline-flex h-7 items-center gap-1 rounded-md border-transparent px-1.5 text-xs font-normal shadow-none transition-colors focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3"
+              className="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs font-medium shadow-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3"
               style={
                 webSearchEnabled
                   ? {
                       backgroundColor: "hsl(var(--primary) / 0.1)",
+                      borderColor: "hsl(var(--primary) / 0.22)",
                       color: "hsl(var(--primary))",
                     }
                   : {
+                      borderColor: "hsl(var(--border) / 0.7)",
                       color: "hsl(var(--muted-foreground) / 0.7)",
                     }
               }
             >
               <Globe aria-hidden="true" />
-              <span>联网搜索</span>
+              <span>联网搜索 · {webSearchEnabled ? "开" : "关"}</span>
             </button>
           ) : null}
         </PromptInputTools>

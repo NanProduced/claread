@@ -237,9 +237,14 @@ class ResolvedWebSearchCapability(BaseModel):
     protocol: WebSearchProtocol
     execution_mode: WebSearchExecutionMode = "host_function"
     decision_mode: WebSearchDecisionMode = "agent_auto"
-    max_calls: int = Field(default=1, ge=1, le=WEB_MAX_CALLS_PER_TURN)
+    # ASK-WEB-R4: defaults raised to 3 calls / 5 results per call so the
+    # agent can self-decide multi-query fan-out without hitting call_limit
+    # after the first success. Still bounded by WEB_MAX_CALLS_PER_TURN (4)
+    # and WEB_MAX_RESULTS_PER_CALL (8), and the model-view budget remains
+    # the independent hard cap on what the model actually sees.
+    max_calls: int = Field(default=3, ge=1, le=WEB_MAX_CALLS_PER_TURN)
     max_results_per_call: int = Field(
-        default=3, ge=1, le=WEB_MAX_RESULTS_PER_CALL
+        default=5, ge=1, le=WEB_MAX_RESULTS_PER_CALL
     )
     policy_version: str = Field(min_length=1, max_length=64)
 
@@ -279,6 +284,22 @@ class WebEvidence(BaseModel):
         description="Internal-only provider result id; never on public DTO.",
     )
     source_fingerprint: str = Field(pattern=WEB_SOURCE_FINGERPRINT_PATTERN)
+    # ASK-WEB-R4: optional provider-supplied publish date / page age for
+    # freshness ranking. ``published_at`` is an ISO-8601 date/datetime
+    # string when the provider exposes one; ``page_age`` is the raw
+    # provider hint (e.g. "2 days ago") when only a relative age is
+    # available. Both are untrusted provider text — the host never
+    # treats them as authoritative, only as a ranking hint.
+    published_at: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional ISO-8601 publish date from provider; untrusted.",
+    )
+    page_age: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Optional relative page-age hint from provider; untrusted.",
+    )
 
     @field_validator("canonical_url")
     @classmethod

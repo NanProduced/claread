@@ -67,7 +67,6 @@ def _answer_payload(
             {
                 "text": text,
                 "basis": "general",
-                "article_scope": None,
                 "evidence_handles": [],
             }
         ],
@@ -195,8 +194,8 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
                 parts=[
                     ThinkingPart(content=_SENTINEL + "-r1"),
                     ToolCallPart(
-                        tool_name="search_current_article",
-                        args=json.dumps({"query": "x"}),
+                        tool_name="expand_evidence",
+                        args=json.dumps({"pointer": ""}),
                         tool_call_id="tc1",
                     ),
                 ]
@@ -226,8 +225,8 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
 
             yield {
                 1: DeltaToolCall(
-                    name="search_current_article",
-                    json_args=json.dumps({"query": "x"}),
+                    name="expand_evidence",
+                    json_args=json.dumps({"pointer": ""}),
                     tool_call_id="tc1",
                 )
             }
@@ -892,7 +891,7 @@ _ANSWER_JSON_CHUNKS: tuple[str, ...] = (
     'text": "Hel',
     'lo world",',
     '"basis": "general",',
-    '"article_scope": null, "evidence_handles": []}]}',
+    '"evidence_handles": []}]}',
 )
 
 
@@ -1072,7 +1071,7 @@ def test_answer_text_streamer_partial_parse_and_monotonic_emission():
     assert track('lo world",') == "lo world"
     # Completed provenance keys after text add no answer prefix.
     assert track('"basis": "general",') is None
-    assert track('"article_scope": null, "evidence_handles": []}]}') is None
+    assert track('"evidence_handles": []}]}') is None
 
     # _emitted_len monotonically non-decreasing — never rolls back.
     assert emitted_lens == sorted(emitted_lens)

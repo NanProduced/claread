@@ -18,6 +18,7 @@ from app.services.reader_record_ask.document_access import (
     ReadingUnitView,
     build_document_scope,
 )
+from app.services.reader_record_ask.web_search_contracts import WebSearchMode
 
 
 def build_envelope_from_facts(
@@ -28,6 +29,7 @@ def build_envelope_from_facts(
     request_anchor: Any | None,
     validated_anchor: Any | None = None,
     stable_document_id: UUID | None = None,
+    web_search_mode: WebSearchMode = "disabled",
 ) -> ReadingRecordAskContextEnvelope:
     """Construct envelope after route-level record/anchor validation."""
     base = facts.build_result.base
@@ -66,6 +68,7 @@ def build_envelope_from_facts(
             can_read_range=True,
             can_search_current_article=True,
             article_rag_ready=False,
+            web_search_mode=web_search_mode,
         )
     )
 

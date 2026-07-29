@@ -407,6 +407,12 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
     reasoning_md: str | None = None
     reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    # ASK-TURN-LIFECYCLE R4-4: cold history restores the truncated flag
+    # from the persisted reasoning projection snapshot. ``True`` means the
+    # visible ``reasoning_md`` was truncated by the turn-level total cap
+    # (marker appended exactly once at the end). ``None`` when no
+    # reasoning was projected (legacy / degraded / no reasoning).
+    reasoning_truncated: bool | None = None
     usage_event_id: str | None = None
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     article_rag: ReaderAskArticleRagSidecar | None = None

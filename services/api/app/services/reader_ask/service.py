@@ -126,11 +126,6 @@ from app.services.reader_ask import stream_checkpoint as stream_checkpoint_svc
 from app.services.reader_ask import stream_events as stream_events_svc
 from app.services.reader_ask import supplements as supplements_svc
 from app.services.reader_ask.agent_deps_factory import build_reader_ask_agent_deps
-from app.services.reader_ask.article_rag_prompt_integration import (
-    ArticleRagPromptIntegration,
-    ArticleRagSidecar,
-    build_default_article_rag_prompt_integration,
-)
 from app.services.reader_ask.agent_invocation import (
     AgentStreamRuntime,
     ReaderAskStreamCompleted,
@@ -140,6 +135,14 @@ from app.services.reader_ask.agent_invocation import (
     stream_reader_ask_agent_run,
 )
 from app.services.reader_ask.agent_runner import is_degenerate_answer
+from app.services.reader_ask.article_rag_prompt_integration import (
+    ArticleRagPromptIntegration,
+    ArticleRagSidecar,
+    build_default_article_rag_prompt_integration,
+)
+from app.services.reader_record_ask.web_search_common import (
+    resolve_web_search_availability_for_option,
+)
 from app.services.text_anchors import ensure_json_dict, sentence_map
 from app.services.user_assets import vocabulary as vocabulary_svc
 
@@ -2850,22 +2853,25 @@ def _build_evidence_items(
 def _selected_model_payload(
     option: model_options_svc.ResolvedReaderAskModelOption,
 ) -> dict[str, Any]:
-    # ASK-WEB-G1-R3: project the server-declared Web Search capability
-    # for this model option. ``available`` requires a real, registered
-    # adapter for the current model's provider — not merely a non-empty
-    # ``settings.reader_record_ask_web_search_provider`` string.
-    #
-    # Until a real ``WebSearchBackend`` adapter is implemented and
-    # registered in the production adapter registry (G2+), every
-    # production model option must return ``web_search_capability=
-    # "unavailable"``. A non-empty settings string alone does NOT
-    # constitute a capability — the runtime would mount ``search_web``
-    # with no executable backend, producing a "假可用" (fake-available)
-    # capability that misleads the UI and RunStarted metadata.
-    #
-    # Tests may inject a FakeWebSearchBackend + test-only capability to
-    # prove the closed loop; this production path stays unavailable.
-    web_search_capability: Literal["unavailable", "available"] = "unavailable"
+    # ASK-WEB-G3-R1: project the server-declared Web Search capability
+    # for this model option via the canonical
+    # :func:`resolve_web_search_availability_for_option` helper in
+    # ``web_search_common``. ``available`` requires that the production
+    # adapter registry can BOTH resolve an enabled capability AND
+    # construct an executable ``WebSearchBackend`` for the current
+    # ``ResolvedModelConfig``. Capability and backend are produced in
+    # the same registry resolution call — never judged separately.
+    # The helper resolves the model config from ``option.selection``
+    # (or the route default when ``selection is None``) and calls the
+    # production registry exactly once. Any resolution failure, missing
+    # key, unsupported provider, or adapter construction error returns
+    # ``"unavailable"`` — never raises. The previous local
+    # ``_resolve_web_search_capability_for_option`` wrapper was removed
+    # in G3-R1 to collapse all capability projection into a single
+    # canonical call chain.
+    web_search_capability: Literal["unavailable", "available"] = (
+        resolve_web_search_availability_for_option(option)
+    )
     return ReaderAskSelectedModel(
         key=option.key,
         label=option.label,

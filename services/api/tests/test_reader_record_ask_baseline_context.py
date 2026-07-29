@@ -15,6 +15,7 @@ import json
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -62,7 +63,10 @@ from app.services.reader_record_ask.model_view_budget import (
     ModelViewRenderer,
     ModelVisibleTurnBudget,
 )
-from app.services.reader_record_ask.production_stream import build_completed_dto
+from app.services.reader_record_ask.production_stream import (
+    build_completed_dto,
+    build_restricted_evidence_json,
+)
 from app.services.reader_record_ask.runtime import run_reading_record_ask
 from app.services.reader_record_ask.turn_prompt import (
     build_production_agent_user_prompt,
@@ -171,9 +175,6 @@ def _final_result_part(
                 {
                     "text": content,
                     "basis": "article" if evidence_handles else "general",
-                    "article_scope": (
-                        "evidence_bounded" if evidence_handles else None
-                    ),
                     "evidence_handles": evidence_handles,
                 }
             ],
@@ -628,19 +629,22 @@ async def test_baseline_failure_does_not_produce_pseudo_success() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 13. Hot completed DTO accepts article_seed evidence
+# 13. Public v2 completed DTO rejects internal article_seed evidence
 # ---------------------------------------------------------------------------
 
 
-def test_hot_completed_dto_accepts_article_seed() -> None:
+def test_public_v2_completed_dto_rejects_internal_article_seed_evidence() -> None:
     payload = {
-        "execution_version": "reader_record_ask_agentic_v1",
+        "execution_version": "reader_record_ask_agentic_v2",
         "final_status": "ok",
         "answer_text": "An answer.",
+        "answer_blocks": [],
+        "citations": [],
+        "knowledge_mode": None,
+        "source_status": None,
         "message_id": "m1",
         "thread_id": "t1",
         "turn_run_id": "tr1",
-        "envelope_fingerprint": "a" * 64,
         "evidence": [
             {
                 "handle_id": "evh_" + "1" * 32,
@@ -651,21 +655,16 @@ def test_hot_completed_dto_accepts_article_seed() -> None:
             }
         ],
     }
-    dto = ReaderRecordAskCompletedDTO.model_validate(payload)
-    assert dto.final_status == "ok"
-    assert len(dto.evidence) == 1
-    item = dto.evidence[0]
-    assert item.kind == "article_seed"
-    assert item.source_tool == "baseline_context"
-    assert item.unit_id == "u1"
+    with pytest.raises(ValidationError):
+        ReaderRecordAskCompletedDTO.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------
-# 14. Cold history restores article_seed evidence
+# 14. Cold history degrades v1 article_seed evidence without exposing it
 # ---------------------------------------------------------------------------
 
 
-def test_cold_history_restores_article_seed() -> None:
+def test_cold_history_does_not_restore_v1_article_seed_evidence() -> None:
     completed_dict = {
         "execution_version": "reader_record_ask_agentic_v1",
         "final_status": "ok",
@@ -701,9 +700,10 @@ def test_cold_history_restores_article_seed() -> None:
         final_status="ok",
         turn_run_status=None,
     )
-    assert projected["agentic_evidence"] is not None
-    kinds = [item["kind"] for item in projected["agentic_evidence"]]
-    assert "article_seed" in kinds
+    assert projected["content_md"] == "An answer."
+    assert projected["legacy_classification"] == "legacy_unclassified"
+    assert projected.get("agentic_evidence") is None
+    assert "evh_" not in json.dumps(projected)
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +729,8 @@ def test_terminal_path_does_not_carry_seed_evidence() -> None:
         final_status="failed",
         turn_run_status=None,
     )
-    assert projected["agentic_evidence"] is None
+    assert projected.get("agentic_evidence") is None
+    assert "evh_" not in json.dumps(projected)
 
 
 # ---------------------------------------------------------------------------
@@ -1144,43 +1145,43 @@ async def test_persistence_integration_runtime_to_completed_to_history() -> None
         envelope=envelope,
     )
 
-    # message.completed evidence contains article_seed
+    # Public v2 completed output exposes citation ids, never article_seed
+    # handles or restricted evidence records.
     assert completed.final_status == "ok"
     assert completed.answer_text == "The article discusses climate change impacts."
-    assert len(completed.evidence) >= 1
+    assert completed.execution_version == "reader_record_ask_agentic_v2"
+    assert len(completed.answer_blocks) == 1
+    assert completed.answer_blocks[0].citation_ids == ["c1"]
+    assert len(completed.citations) == 1
+    assert completed.citations[0].citation_id == "c1"
+    assert completed.citations[0].source_kind == "article"
 
-    seed_evidence = [
-        ev for ev in completed.evidence if ev.kind == "article_seed"
-    ]
-    assert len(seed_evidence) == 1
-    assert seed_evidence[0].handle_id == cited_handle
-    assert seed_evidence[0].source_tool == "baseline_context"
-
-    # evidence_scope is correct: projected from envelope
-    assert completed.evidence_scope is not None
-    assert completed.evidence_scope.reading_record_id == str(_RECORD)
-    assert completed.evidence_scope.base_id == str(_BASE)
-    assert completed.evidence_scope.record_generation == 1
-    assert completed.evidence_scope.stable_document_id == str(_DOC)
-
-    # --- Persistence simulation: no full article text in persisted JSON ---
+    # --- Persistence simulation: public and restricted JSON stay separate. ---
     completed_json = completed.model_dump(mode="json")
     serialized = json.dumps(completed_json, ensure_ascii=False)
-
-    # The full article text must NOT appear in the persisted JSON.
-    # Only the snippet (≤ 2000 chars) is allowed.
-    assert article_text not in serialized, (
-        "Full article text must not enter persisted JSON; only snippet is allowed"
+    restricted_json = build_restricted_evidence_json(
+        run_result=result,
+        envelope=envelope,
     )
-    # The snippet IS present (it's ≤ 2000 chars).
-    snippet = seed_evidence[0].snippet or ""
-    assert len(snippet) <= _ARTICLE_SEED_SNIPPET_MAX_CHARS
-    assert snippet in serialized
+    restricted_serialized = json.dumps(restricted_json, ensure_ascii=False)
 
-    # The cited handle IS present in the persisted JSON.
-    assert cited_handle in serialized
+    # Public JSON contains neither the full article nor internal handles.
+    assert article_text not in serialized, (
+        "Full article text must not enter public persisted JSON"
+    )
+    assert cited_handle not in serialized
+    assert "evh_" not in serialized
 
-    # --- Cold history: project_agentic_history_message restores article_seed ---
+    # Restricted server-only evidence preserves the citation binding while
+    # still capping the article snippet and excluding the full article.
+    assert len(restricted_json) == 1
+    assert restricted_json[0]["citation_id"] == "c1"
+    assert restricted_json[0]["handle_id"] == cited_handle
+    restricted_snippet = restricted_json[0].get("snippet") or ""
+    assert len(restricted_snippet) <= _ARTICLE_SEED_SNIPPET_MAX_CHARS
+    assert article_text not in restricted_serialized
+
+    # --- Cold history restores only the public v2 projection. ---
     projected = project_agentic_history_message(
         message_id="msg-integration-1",
         thread_id="thread-integration-1",
@@ -1194,31 +1195,21 @@ async def test_persistence_integration_runtime_to_completed_to_history() -> None
         current_turn_run_id=None,
         current_turn_run=None,
         user_visible_output_json=completed_json,
-        resolved_evidence_json=None,
+        resolved_evidence_json=restricted_json,
         final_status="ok",
         turn_run_status=None,
     )
 
-    # Cold history restores article_seed
     assert projected["final_status"] == "ok"
     assert projected["status"] == "completed"
-    assert projected["execution_version"] == "reader_record_ask_agentic_v1"
-    assert projected["agentic_evidence"] is not None
-
-    cold_seed_evidence = [
-        ev for ev in projected["agentic_evidence"] if ev["kind"] == "article_seed"
+    assert projected["execution_version"] == "reader_record_ask_agentic_v2"
+    assert projected["agentic_answer_blocks"] == completed_json["answer_blocks"]
+    expected_citations = [
+        {key: value for key, value in citation.items() if value is not None}
+        for citation in completed_json["citations"]
     ]
-    assert len(cold_seed_evidence) == 1
-    assert cold_seed_evidence[0]["handle_id"] == cited_handle
-    assert cold_seed_evidence[0]["source_tool"] == "baseline_context"
-
-    # Cold history evidence_scope is correct
-    cold_scope = projected["agentic_evidence_scope"]
-    assert cold_scope is not None
-    assert cold_scope["reading_record_id"] == str(_RECORD)
-    assert cold_scope["base_id"] == str(_BASE)
-    assert cold_scope["record_generation"] == 1
-    assert cold_scope["stable_document_id"] == str(_DOC)
+    assert projected["agentic_citations"] == expected_citations
+    assert projected.get("agentic_evidence") is None
 
     # No terminal/interrupted in the cold projection
     assert projected["status"] != "failed"
@@ -1228,11 +1219,13 @@ async def test_persistence_integration_runtime_to_completed_to_history() -> None
     assert projected["final_status"] != "context_stale"
     assert projected["final_status"] != "invalid_citations"
 
-    # Full article text must NOT appear in the cold projection either.
+    # Full article text and restricted handles must NOT appear in cold history.
     cold_serialized = json.dumps(projected, ensure_ascii=False)
     assert article_text not in cold_serialized, (
         "Full article text must not appear in cold history projection"
     )
+    assert cited_handle not in cold_serialized
+    assert "evh_" not in cold_serialized
 
 
 # ---------------------------------------------------------------------------

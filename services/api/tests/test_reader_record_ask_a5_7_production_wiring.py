@@ -163,11 +163,6 @@ def _json_final(
                                     if evidence_handles
                                     else "general"
                                 ),
-                                "article_scope": (
-                                    "evidence_bounded"
-                                    if evidence_handles
-                                    else None
-                                ),
                                 "evidence_handles": evidence_handles,
                             }
                         ],
@@ -423,21 +418,12 @@ async def test_host_budget_abort_one_model_call_no_tool_return():
 @pytest.mark.asyncio
 async def test_rag_port_none_zero_io_via_runtime():
     port = FakeArticleRagSearchPort()
-    # article_rag=None path; port must stay at 0 if not injected.
+    observed_tool_names: set[str] = set()
+
     def model_fn(messages, info: AgentInfo):
-        # Try search once then answer.
-        for m in messages:
-            if isinstance(m, ModelRequest):
-                for p in m.parts:
-                    if isinstance(p, ToolReturnPart):
-                        return _json_final(answer_text="unavailable search")
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    TOOL_SEARCH_CURRENT_ARTICLE, {"query": "cities", "limit": 3}
-                )
-            ]
-        )
+        del messages
+        observed_tool_names.update(tool.name for tool in info.function_tools)
+        return _json_final(answer_text="general answer without article search")
 
     result = await run_reading_record_ask(
         user_message="cities?",
@@ -448,8 +434,9 @@ async def test_rag_port_none_zero_io_via_runtime():
         pointer_ledger=ExpansionPointerLedger(),
     )
     assert result.finalized is not None
+    assert TOOL_SEARCH_CURRENT_ARTICLE not in observed_tool_names
     assert port.call_count == 0
-    assert result.search_current_article_calls == 1
+    assert result.search_current_article_calls == 0
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +474,9 @@ def test_expand_progress_is_generic_agent_running_no_tool_name():
         duration_ms=1,
     )
     out3 = projector.project(result_stale)
-    assert out3[-1].activity == "unavailable"
+    assert out3[-1].activity == "completed"
+    assert out3[-1].status == "ok"
+    assert out3[-1].summary == "已检查文章证据"
 
 
 def test_budget_exhausted_terminal_reason_constant():

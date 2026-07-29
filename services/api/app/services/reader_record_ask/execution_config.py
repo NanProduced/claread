@@ -50,16 +50,20 @@ from app.config.settings import Settings, get_settings
 from app.llm.provider_factory import ModelProviderError
 from app.llm.router import ModelSelectionError, build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_ASK
-from app.llm.types import RunModelSettings
+from app.llm.types import ResolvedModelConfig, RunModelSettings
 from app.services.reader_ask.model_options import (
     ReaderAskRuntimeBudgetConfig,
     ResolvedReaderAskModelOption,
 )
+from app.services.reader_record_ask.web_search_adapter_registry import (
+    WEB_SEARCH_CAPABILITY_POLICY_VERSION as _REGISTRY_POLICY_VERSION,
+)
+from app.services.reader_record_ask.web_search_common import resolve_web_search_binding
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
     WebSearchMode,
-    WebSearchProtocol,
 )
+from app.services.reader_record_ask.web_search_port import WebSearchBackend
 
 logger = logging.getLogger(__name__)
 
@@ -68,42 +72,10 @@ logger = logging.getLogger(__name__)
 # rules). Option-level config drift is captured by ``budget_fingerprint``.
 EXECUTION_CONFIG_POLICY_VERSION: str = "reader_record_ask_execution_v2"
 
-# Web search capability policy version. Bumped only when the
-# capability-resolution semantics change (new provider, new protocol,
-# new max-calls / max-results mapping).
-WEB_SEARCH_CAPABILITY_POLICY_VERSION: str = "reader_record_ask_web_search_v1"
-
-# ASK-WEB-G1-R2: default capability shape constants. The fake backend
-# is test-only — production paths must NEVER resolve to ``fake`` via
-# this module. Tests inject :class:`FakeWebSearchBackend` directly via
-# the stream constructor; they do NOT route through the resolver.
-_DEFAULT_WEB_SEARCH_MAX_CALLS: int = 1
-_DEFAULT_WEB_SEARCH_MAX_RESULTS_PER_CALL: int = 3
-
-# Closed map: provider identifier (from Settings) → protocol. Only
-# providers registered here AND backed by a real adapter in the
-# production adapter registry may resolve to an enabled capability.
-#
-# ASK-WEB-G1-R3: this map is intentionally EMPTY. The previous entries
-# (``dashscope_responses`` / ``deepseek_anthropic``) were reserved
-# placeholders — they mapped protocol names to themselves without any
-# real adapter being registered in the production adapter registry.
-# That caused the resolver to return ``enabled_for_turn=True`` whenever
-# the operator set ``settings.reader_record_ask_web_search_provider``
-# to one of those names, even though no ``WebSearchBackend`` adapter
-# existed in production. The runtime would then mount the
-# ``search_web`` tool with no executable backend, producing a
-# "假可用" (fake-available) capability.
-#
-# G2+ will populate this map only after:
-#   1. a real ``WebSearchBackend`` adapter is implemented;
-#   2. the adapter is registered in the production adapter registry;
-#   3. the adapter can be constructed with the current settings;
-#   4. required config (API key, endpoint) is present;
-#   5. the adapter declares support for the current wire model.
-# Until then, every production path returns
-# ``enabled_for_turn=False`` (typed unavailable).
-_SUPPORTED_WEB_SEARCH_PROTOCOLS: dict[str, WebSearchProtocol] = {}
+# Web search capability policy version. Re-exported from the registry
+# module so existing imports keep working. The registry is now the
+# single source of truth for capability resolution.
+WEB_SEARCH_CAPABILITY_POLICY_VERSION: str = _REGISTRY_POLICY_VERSION
 
 
 class ReaderRecordAskExecutionUnavailable(RuntimeError):
@@ -238,6 +210,15 @@ class ReaderRecordAskExecutionConfig:
     # port into :class:`ReaderRecordAskDeps`. The model never reads this
     # object — it only observes the mounted tool.
     web_search_capability: ResolvedWebSearchCapability | None = None
+    # G3-R3: executable backend produced by the same registry resolution
+    # that produced ``web_search_capability``. ``None`` when capability
+    # is ``None`` (disabled) or when capability is non-None but disabled
+    # (adapter unverified / missing key / unsupported model). Carries
+    # provider auth material — excluded from repr (callers should log
+    # ``snapshot`` only). Send and retry MUST rebuild from the same
+    # persisted model option + web_search_mode so the backend identity
+    # is deterministic.
+    web_search_backend: WebSearchBackend | None = field(default=None, repr=False)
 
     def model_settings(self) -> ModelSettings | None:
         """Return a fresh ``ModelSettings`` copy of the provider settings.
@@ -309,9 +290,10 @@ def _resolve_usage_limits(
 def resolve_web_search_capability(
     *,
     web_search_mode: WebSearchMode,
+    model_config: ResolvedModelConfig,
     settings: Settings | None = None,
 ) -> ResolvedWebSearchCapability | None:
-    """Resolve the per-turn web search capability (G0-b6 / G1-R2).
+    """Resolve the per-turn web search capability (G0-b6 / G1-R2 / G3-R3).
 
     Single source of truth for translating the user-visible request
     toggle (``web_search_mode``) into the server-owned execution truth
@@ -321,14 +303,20 @@ def resolve_web_search_capability(
     --------
     - ``web_search_mode="disabled"`` → returns ``None`` (capability not
       granted; the runtime must NOT mount the ``search_web`` tool).
-    - ``web_search_mode="allowed"`` → returns a non-None capability
-      ONLY when a real provider is wired via
-      ``settings.reader_record_ask_web_search_provider``. When the
-      provider is empty or not registered, returns a capability with
-      ``enabled_for_turn=False`` (typed unavailable — never silently
-      fake). Production must NEVER resolve to the fake protocol; the
-      fake backend is test-only and is injected directly via the
-      stream constructor (``web_search_backend=FakeWebSearchBackend(...)``).
+    - ``web_search_mode="allowed"`` → delegates to the canonical
+      :func:`resolve_web_search_binding` helper (G3-R1) which calls the
+      production registry exactly once and returns the binding whose
+      ``capability`` field is projected here. Callers that need BOTH
+      capability AND backend MUST use
+      :func:`resolve_reader_record_ask_execution` — never re-derive
+      capability separately from the backend.
+    - When the model config does not match any registered adapter (or
+      the matching adapter cannot be constructed), the binding carries
+      a non-None but disabled capability (``enabled_for_turn=False``)
+      and ``None`` backend. Production must NEVER resolve to the
+      ``fake`` protocol; the fake backend is test-only and is injected
+      directly via the stream constructor
+      (``web_search_backend=FakeWebSearchBackend(...)``).
 
     The capability is intentionally NOT part of the envelope fingerprint
     — it may change across retry without rewriting the fence identity.
@@ -338,50 +326,21 @@ def resolve_web_search_capability(
     capability with ``enabled_for_turn=False`` (typed unavailable — the
     ``search_web`` tool returns ``unavailable``). The resolver never
     raises ``ReaderRecordAskExecutionUnavailable`` for web search
-    because G0/G1 has no "user required web search" path — the model
+    because there is no "user required web search" path — the model
     can always fall back to article-grounded answers.
     """
     if web_search_mode == "disabled":
         return None
 
-    cfg = settings or get_settings()
-    provider_id = cfg.reader_record_ask_web_search_provider.strip()
-    protocol = _SUPPORTED_WEB_SEARCH_PROTOCOLS.get(provider_id)
-
-    # No provider wired (default) OR provider not registered → typed
-    # unavailable. The capability is retained for internal diagnostics,
-    # but ``enabled_for_turn=False`` prevents the runtime from mounting
-    # ``search_web`` or advertising the capability publicly.
-    if protocol is None:
-        return ResolvedWebSearchCapability(
-            enabled_for_turn=False,
-            # Use the requested provider id (safe — not a secret) when
-            # non-empty so the snapshot records what the operator
-            # configured. Empty string is normalised to ``unwired``.
-            provider=provider_id or "unwired",
-            protocol="fake",  # placeholder; never executed
-            execution_mode="host_function",
-            decision_mode="agent_auto",
-            max_calls=_DEFAULT_WEB_SEARCH_MAX_CALLS,
-            max_results_per_call=_DEFAULT_WEB_SEARCH_MAX_RESULTS_PER_CALL,
-            policy_version=WEB_SEARCH_CAPABILITY_POLICY_VERSION,
-        )
-
-    # G2+ path: a real provider transport is wired. Until the G2 wire
-    # probes pass, this branch is unreachable in production (no provider
-    # id in ``_SUPPORTED_WEB_SEARCH_PROTOCOLS`` maps to a working
-    # backend). When G2 lands, replace this branch with provider-aware
-    # readiness resolution (API key presence, model capability probe).
-    return ResolvedWebSearchCapability(
-        enabled_for_turn=True,
-        provider=provider_id,
-        protocol=protocol,
-        execution_mode="host_function",
-        decision_mode="agent_auto",
-        max_calls=_DEFAULT_WEB_SEARCH_MAX_CALLS,
-        max_results_per_call=_DEFAULT_WEB_SEARCH_MAX_RESULTS_PER_CALL,
-        policy_version=WEB_SEARCH_CAPABILITY_POLICY_VERSION,
-    )
+    # G3-R1: delegate to the canonical binding resolver. The helper
+    # calls the production registry exactly once and returns the binding
+    # produced by the same resolution call. ``settings`` is retained
+    # for API compatibility but no longer drives the decision — the
+    # global provider string is no longer consulted, and there is no
+    # second registry instance constructed here.
+    _ = settings or get_settings()  # may be used for future readiness flags
+    binding = resolve_web_search_binding(model_config)
+    return binding.capability
 
 
 def resolve_reader_record_ask_execution(
@@ -459,10 +418,20 @@ def resolve_reader_record_ask_execution(
         max_turn_output_tokens=budget.max_turn_output_tokens,
     )
 
-    web_search_capability = resolve_web_search_capability(
-        web_search_mode=web_search_mode,
-        settings=cfg,
-    )
+    # G3-R1: capability + backend produced by the SAME registry resolution
+    # call via the canonical :func:`resolve_web_search_binding` helper.
+    # The helper is the single source of truth — callers MUST NOT
+    # re-derive capability from ``model_config`` separately, and MUST NOT
+    # construct a second production registry instance. When
+    # ``web_search_mode="disabled"`` the binding is short-circuited at
+    # the resolver layer (capability=None, backend=None).
+    if web_search_mode == "disabled":
+        web_search_capability: ResolvedWebSearchCapability | None = None
+        web_search_backend: WebSearchBackend | None = None
+    else:
+        binding = resolve_web_search_binding(model_config)
+        web_search_capability = binding.capability
+        web_search_backend = binding.backend
 
     snapshot = ReaderRecordAskExecutionSnapshot(
         option_key=option.key,
@@ -502,6 +471,7 @@ def resolve_reader_record_ask_execution(
         runtime_budget=budget,
         snapshot=snapshot,
         web_search_capability=web_search_capability,
+        web_search_backend=web_search_backend,
     )
 
 

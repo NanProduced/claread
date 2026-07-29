@@ -42,7 +42,6 @@ from app.services.reader_record_ask.finalizer import (
     finalize_agent_answer,
 )
 from app.services.reader_record_ask.grounding_validator import (
-    MAX_CITED_EVIDENCE_HANDLES,
     AgentAnswerBlockOutput,
     AgentAnswerDraftOutput,
     grounding_validator,
@@ -162,9 +161,6 @@ def _draft(
     block = AgentAnswerBlockOutput(
         text=answer_text,
         basis=resolved_basis,  # type: ignore[arg-type]
-        article_scope=(
-            "evidence_bounded" if resolved_basis == "article" else None
-        ),
         evidence_handles=evidence_handles,
     )
     if response_kind == "clarification":
@@ -276,28 +272,35 @@ async def test_grounded_answer_cross_registry_handle_triggers_model_retry() -> N
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3: over evidence limit → ModelRetry (no silent truncation)
+# Scenario 3: over evidence limit → no longer ModelRetry (ASK-WEB-R4)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_grounded_answer_over_limit_triggers_model_retry() -> None:
-    """Citing more than MAX_CITED_EVIDENCE_HANDLES must ModelRetry."""
+async def test_grounded_answer_over_limit_passes_without_retry() -> None:
+    """Citing more than the former 6-handle cap no longer ModelRetries.
+
+    ASK-WEB-R4-R1: the hard cap (formerly ``MAX_CITED_EVIDENCE_HANDLES=6``)
+    has been removed entirely. Tool output and the model-view budget
+    control how many handles the model can see; the validator keeps all
+    cited handles.
+    """
     envelope = _envelope()
     registry = _registry_with_seed(
         fingerprint=envelope.envelope_fingerprint,
-        count=MAX_CITED_EVIDENCE_HANDLES + 2,
+        count=8,  # former cap was 6; 8 exceeds it
     )
     ctx = _ctx(registry=registry, envelope=envelope)
     all_handles = [ref.handle_id for ref in registry.list_handle_refs()]
-    assert len(all_handles) == MAX_CITED_EVIDENCE_HANDLES + 2
+    assert len(all_handles) == 8
     draft = _draft(
         answer_text="x",
         handles=all_handles,
         response_kind="grounded_answer",
     )
-    with pytest.raises(ModelRetry):
-        await grounding_validator(ctx, draft)
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+    assert result.cited_evidence_handles == all_handles
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +340,6 @@ def test_clarification_with_valid_handle_is_schema_invalid() -> None:
                     {
                         "text": "invalid evidence carrier",
                         "basis": "article",
-                        "article_scope": "evidence_bounded",
                         "evidence_handles": [handle],
                     }
                 ],
@@ -372,7 +374,9 @@ async def test_validator_is_deterministic_on_repeated_invalid_draft() -> None:
     # Call the validator N times directly; it must raise ModelRetry every
     # time and never silently start passing. This proves the validator
     # won't degenerate into a no-op after repeated failures.
-    for _ in range(MAX_CITED_EVIDENCE_HANDLES + 5):
+    # ASK-WEB-R4-R1: the former handle cap was removed; use a fixed
+    # iteration count independent of any cap constant.
+    for _ in range(11):
         with pytest.raises(ModelRetry):
             await grounding_validator(ctx, draft)
 
@@ -470,12 +474,6 @@ def test_agent_prompt_external_knowledge_boundary_contract() -> None:
     # intent policy vocabulary.
     assert "Turn answer policy" not in instructions
     assert "article_only" not in instructions
-
-
-def test_max_cited_evidence_handles_constant_is_six() -> None:
-    """MAX_CITED_EVIDENCE_HANDLES must be exactly 6 (contract lock)."""
-    assert MAX_CITED_EVIDENCE_HANDLES == 6
-    assert isinstance(MAX_CITED_EVIDENCE_HANDLES, int)
 
 
 # ---------------------------------------------------------------------------
@@ -613,19 +611,19 @@ async def test_validator_does_not_mutate_draft() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 17: duplicate handles → ModelRetry (fail-closed, no silent de-dup)
+# Scenario 17: duplicate handles → silently deduped (ASK-WEB-R4, no ModelRetry)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_grounded_answer_duplicate_handle_triggers_model_retry() -> None:
-    """grounded_answer with a duplicate handle must ModelRetry, not de-dup.
+async def test_grounded_answer_duplicate_handle_is_silently_deduped() -> None:
+    """grounded_answer with a duplicate handle is silently deduped (no ModelRetry).
 
-    The validator rejects duplicates BEFORE registry resolution so the
-    finalizer's silent de-dup path is never reached for correctable
-    citation-quality issues. The error must be actionable (tells the
-    model to remove duplicates) and must not leak body text, snippets, or
-    the envelope fingerprint.
+    ASK-WEB-R4: duplicate handles are deduped at the draft boundary
+    preserving first-seen order. The same evidence may support multiple
+    claims. Unknown / foreign / wrong-kind handles still fail-closed
+    inside ``validate_answer_blocks``. The model-facing draft is not
+    mutated — dedup happens in ``to_block_draft``.
     """
     envelope = _envelope()
     registry = _registry_with_seed(fingerprint=envelope.envelope_fingerprint, count=2)
@@ -638,16 +636,16 @@ async def test_grounded_answer_duplicate_handle_triggers_model_retry() -> None:
         handles=dup_handles,
         response_kind="grounded_answer",
     )
-    with pytest.raises(ModelRetry) as exc_info:
-        await grounding_validator(ctx, draft)
-    msg = str(exc_info.value)
-    # Actionable guidance present.
-    assert "remove duplicate handles" in msg
-    # No internal data leakage.
-    assert envelope.envelope_fingerprint not in msg
-    assert "snippet" not in msg.lower()
-    # The validator must NOT have mutated the draft.
+    result = await grounding_validator(ctx, draft)
+    assert result is draft
+    # The model-facing draft is NOT mutated (dedup happens in to_block_draft).
     assert draft.cited_evidence_handles == dup_handles
+    # The validated provenance carries the deduped handle set.
+    assert result.validated_answer_blocks is not None
+    assert result.validated_answer_blocks.blocks[0].evidence_handles == (
+        handles[0],
+        handles[1],
+    )
 
 
 def test_clarification_duplicate_handle_is_schema_invalid() -> None:
@@ -664,7 +662,6 @@ def test_clarification_duplicate_handle_is_schema_invalid() -> None:
                     {
                         "text": "invalid duplicate evidence carrier",
                         "basis": "article",
-                        "article_scope": "evidence_bounded",
                         "evidence_handles": [handle, handle],
                     }
                 ],
@@ -677,17 +674,19 @@ async def test_multiple_unique_handles_pass_without_duplicate_error() -> None:
     """Multiple distinct, valid handles must pass the duplicate check.
 
     This guards against false positives where the duplicate helper
-    incorrectly flags unique handles. Up to ``MAX_CITED_EVIDENCE_HANDLES``
-    unique handles from the registry must pass cleanly.
+    incorrectly flags unique handles. ASK-WEB-R4-R1: any number of
+    unique handles from the registry must pass cleanly — the former
+    6-handle cap was removed; 8 unique handles (exceeding the former
+    cap) must pass without retry.
     """
     envelope = _envelope()
     registry = _registry_with_seed(
         fingerprint=envelope.envelope_fingerprint,
-        count=MAX_CITED_EVIDENCE_HANDLES,
+        count=8,
     )
     ctx = _ctx(registry=registry, envelope=envelope)
     all_handles = [ref.handle_id for ref in registry.list_handle_refs()]
-    assert len(all_handles) == MAX_CITED_EVIDENCE_HANDLES
+    assert len(all_handles) == 8
     draft = _draft(
         answer_text="grounded on multiple handles",
         handles=all_handles,
@@ -699,14 +698,15 @@ async def test_multiple_unique_handles_pass_without_duplicate_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_check_runs_before_registry_resolution() -> None:
-    """Duplicate rejection fires even when handles are not in the registry.
+async def test_duplicate_handles_silently_deduped_before_registry_resolution() -> None:
+    """Duplicate handles are silently deduped; the remaining handle is
+    then checked against the registry.
 
-    If the duplicate check depended on registry resolution, a draft with
-    duplicate unknown handles could slip through (or produce a confusing
-    "not registered" error instead of "remove duplicates"). The
-    duplicate check is a pure function of the handle list and runs
-    first, so the model gets the most actionable error.
+    ASK-WEB-R4: duplicates no longer trigger ``ModelRetry``. They are
+    deduped in ``to_block_draft`` preserving first-seen order, then the
+    unique handle is resolved against the registry. With an empty
+    registry the deduped handle is unknown → ``ModelRetry`` for the
+    unknown handle, NOT for duplicates.
     """
     envelope = _envelope()
     # Empty registry — no handles are registered.
@@ -720,6 +720,7 @@ async def test_duplicate_check_runs_before_registry_resolution() -> None:
     )
     with pytest.raises(ModelRetry) as exc_info:
         await grounding_validator(ctx, draft)
-    # The duplicate error fires, NOT the "not registered" error.
-    assert "remove duplicate handles" in str(exc_info.value)
-    assert "not registered" not in str(exc_info.value)
+    # No duplicate error — duplicates were silently deduped. The failure
+    # is now the unknown-handle error from registry resolution.
+    assert "remove duplicate handles" not in str(exc_info.value)
+    assert "unknown evidence handle" in str(exc_info.value)

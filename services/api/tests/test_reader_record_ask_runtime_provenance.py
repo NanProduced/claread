@@ -132,7 +132,6 @@ async def test_ordinary_general_only_answer_derives_general_knowledge() -> None:
             AgentAnswerBlockOutput(
                 text="这是明确标注的通用知识补充。",
                 basis="general",
-                article_scope=None,
                 evidence_handles=[],
             )
         ],
@@ -158,7 +157,6 @@ async def test_ordinary_article_answer_uses_current_envelope_evidence() -> None:
             AgentAnswerBlockOutput(
                 text="文章确认了人物身份。",
                 basis="article",
-                article_scope="evidence_bounded",
                 evidence_handles=[handle_id],
             )
         ],
@@ -186,13 +184,11 @@ async def test_ordinary_mixed_answer_derives_mixed_mode() -> None:
             AgentAnswerBlockOutput(
                 text="文章确认了人物身份。",
                 basis="article",
-                article_scope="evidence_bounded",
                 evidence_handles=[handle_id],
             ),
             AgentAnswerBlockOutput(
                 text="以下人物背景属于通用知识。",
                 basis="general",
-                article_scope=None,
                 evidence_handles=[],
             ),
         ],
@@ -216,7 +212,6 @@ async def test_ordinary_mixed_answer_derives_mixed_mode() -> None:
                 AgentAnswerBlockOutput(
                     text="没有证据的文章结论。",
                     basis="article",
-                    article_scope="evidence_bounded",
                     evidence_handles=[],
                 )
             ],
@@ -227,7 +222,6 @@ async def test_ordinary_mixed_answer_derives_mixed_mode() -> None:
                 AgentAnswerBlockOutput(
                     text="伪造证据的文章结论。",
                     basis="article",
-                    article_scope="evidence_bounded",
                     evidence_handles=["evh_00000000000000000000000000000000"],
                 )
             ],
@@ -262,7 +256,6 @@ async def test_article_block_rejects_handle_from_another_envelope() -> None:
             AgentAnswerBlockOutput(
                 text="来自其他 turn envelope 的文章结论。",
                 basis="article",
-                article_scope="evidence_bounded",
                 evidence_handles=[other_handle_id],
             )
         ],
@@ -285,17 +278,10 @@ async def test_article_block_rejects_handle_from_another_envelope() -> None:
         AgentAnswerBlockOutput(
             text="错误携带文章证据的通用知识。",
             basis="general",
-            article_scope=None,
             evidence_handles=["evh_00000000000000000000000000000000"],
         ),
-        AgentAnswerBlockOutput(
-            text="错误声明文章范围的通用知识。",
-            basis="general",
-            article_scope="evidence_bounded",
-            evidence_handles=[],
-        ),
     ],
-    ids=["evidence", "article_scope"],
+    ids=["evidence"],
 )
 async def test_general_block_cannot_claim_article_provenance(
     block: AgentAnswerBlockOutput,
@@ -315,28 +301,45 @@ async def test_general_block_cannot_claim_article_provenance(
 
 
 @pytest.mark.asyncio
-async def test_partial_coverage_cannot_claim_full_article() -> None:
+async def test_partial_coverage_host_derives_evidence_bounded_scope() -> None:
+    """ASK-WEB-R4: article_scope is host-derived (always evidence_bounded).
+
+    The model can no longer claim ``full_article`` — the host conservatively
+    derives ``evidence_bounded`` for every ``basis=article`` block. Since
+    ``evidence_bounded`` is always present in ``confirmed_article_scopes``
+    (the coordinator seeds it unconditionally), an article block with a
+    valid handle passes provenance validation even when only partial
+    coverage is confirmed.
+    """
     envelope = _envelope()
     registry, handle_id = _registry_with_article(envelope)
 
-    with pytest.raises(ModelRetry, match="not confirmed by current coverage"):
-        await grounding_validator(
-            _ctx(
-                registry=registry,
-                confirmed_article_scopes=frozenset({"evidence_bounded"}),
-            ),
-            AgentAnswerDraftOutput(
-                response_kind="grounded_answer",
-                answer_blocks=[
-                    AgentAnswerBlockOutput(
-                        text="未经完整覆盖确认的全文结论。",
-                        basis="article",
-                        article_scope="full_article",
-                        evidence_handles=[handle_id],
-                    )
-                ],
-            ),
-        )
+    validated = await grounding_validator(
+        _ctx(
+            registry=registry,
+            confirmed_article_scopes=frozenset({"evidence_bounded"}),
+        ),
+        AgentAnswerDraftOutput(
+            response_kind="grounded_answer",
+            answer_blocks=[
+                AgentAnswerBlockOutput(
+                    text="未经完整覆盖确认的全文结论。",
+                    basis="article",
+                    evidence_handles=[handle_id],
+                )
+            ],
+        ),
+    )
+
+    assert validated.validated_answer_blocks is not None
+    assert (
+        validated.validated_answer_blocks.blocks[0].article_scope
+        == "evidence_bounded"
+    )
+    assert (
+        validated.validated_answer_blocks.knowledge_mode
+        == "article_grounded"
+    )
 
 
 def test_model_output_schema_has_no_knowledge_mode_or_legacy_flat_escape() -> None:
@@ -362,7 +365,6 @@ def test_model_output_schema_has_no_knowledge_mode_or_legacy_flat_escape() -> No
                     {
                         "text": "试图伪造 knowledge_mode。",
                         "basis": "general",
-                        "article_scope": None,
                         "evidence_handles": [],
                     }
                 ],
@@ -391,7 +393,6 @@ def test_clarification_schema_requires_text_and_forbids_answer_blocks() -> None:
                 {
                     "text": "clarification 不得携带答案 block。",
                     "basis": "general",
-                    "article_scope": None,
                     "evidence_handles": [],
                 }
             ],
@@ -408,7 +409,6 @@ def test_clarification_schema_requires_text_and_forbids_answer_blocks() -> None:
                 {
                     "text": "有效答案。",
                     "basis": "general",
-                    "article_scope": None,
                     "evidence_handles": [],
                 }
             ],
@@ -480,7 +480,6 @@ async def test_unknown_evidence_kind_is_rejected_fail_closed() -> None:
                     AgentAnswerBlockOutput(
                         text="不得把未来 Web evidence 当成 article。",
                         basis="article",
-                        article_scope="evidence_bounded",
                         evidence_handles=[future_handle.handle_id],
                     )
                 ],
@@ -502,13 +501,11 @@ async def test_finalizer_projection_uses_head_flat_constructor_only(
                 AgentAnswerBlockOutput(
                     text="文章确认了人物身份。",
                     basis="article",
-                    article_scope="evidence_bounded",
                     evidence_handles=[handle_id],
                 ),
                 AgentAnswerBlockOutput(
                     text="人物背景属于通用知识。",
                     basis="general",
-                    article_scope=None,
                     evidence_handles=[],
                 ),
             ],
@@ -556,13 +553,11 @@ async def test_runtime_validates_mixed_blocks_before_finalizer_projection() -> N
                                 {
                                     "text": "文章确认了人物身份。",
                                     "basis": "article",
-                                    "article_scope": "evidence_bounded",
                                     "evidence_handles": [handle_match.group(0)],
                                 },
                                 {
                                     "text": "以下人物背景属于通用知识。",
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 },
                             ],

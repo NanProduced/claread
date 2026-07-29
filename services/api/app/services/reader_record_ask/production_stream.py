@@ -68,6 +68,7 @@ from app.services.reader_record_ask.runtime import (
     ReadingRecordAskRunResult,
     run_reading_record_ask,
 )
+from app.services.reader_record_ask.runtime_deps import RuntimeObservation
 from app.services.reader_record_ask.runtime_events import (
     AgenticReasoningDeltaEvent,
     AgenticReasoningStartedEvent,
@@ -501,7 +502,13 @@ class _TurnLifecycleMetrics:
 class _ProgressProjector:
     """Map internal RuntimeEvent → privacy-safe ProgressDTO with monotonic clock."""
 
-    def __init__(self, *, started_at: float) -> None:
+    def __init__(
+        self,
+        *,
+        started_at: float,
+        turn_run_id: str = "",
+        model_route: str = "",
+    ) -> None:
         self._started_at = started_at
         self._sequence = 0
         self.progress_event_count = 0
@@ -514,6 +521,12 @@ class _ProgressProjector:
         # touching the agent's tool surface.
         self.web_search_calls = 0
         self._agent_started_emitted = False
+        # ASK-WEB-R4: per-attempt telemetry context. ``turn_run_id`` and
+        # ``model_route`` are server-owned, non-sensitive identifiers
+        # logged with each WebSearchResultEvent for per-attempt
+        # observability. Never includes query / URL / provider payload.
+        self._turn_run_id = turn_run_id
+        self._model_route = model_route
 
     def _elapsed_ms(self) -> int:
         return max(0, int((time.perf_counter() - self._started_at) * 1000))
@@ -643,14 +656,29 @@ class _ProgressProjector:
             activity = _TOOL_RESULT_ACTIVITY.get(raw_status, "failed")
             duration = event.duration_ms if event.duration_ms is not None else None
             if tool == TOOL_EXPAND_EVIDENCE:
+                if activity == "unavailable":
+                    # Evidence expansion is an internal, fail-soft refinement.
+                    # When the pointer is stale or yields no additional text,
+                    # keep the user-facing activity neutral: the agent may
+                    # still answer from baseline/article/Web evidence. Raw
+                    # status remains available in the runtime event stream and
+                    # telemetry; only the public progress copy is de-noised.
+                    out.append(
+                        self._next(
+                            phase="agent_running",
+                            activity="completed",
+                            summary="已检查文章证据",
+                            status="ok",
+                            duration_ms=duration,
+                        )
+                    )
+                    return out
                 summary = {
                     "completed": "已扩展证据",
-                    "unavailable": "证据扩展暂不可用",
                     "failed": "证据扩展失败",
                 }.get(activity, "证据扩展失败")
                 status: ProgressStatus = {
                     "completed": "ok",
-                    "unavailable": "unavailable",
                     "failed": "failed",
                 }.get(activity, "failed")  # type: ignore[assignment]
                 out.append(
@@ -755,35 +783,60 @@ class _ProgressProjector:
             return out
 
         if isinstance(event, WebSearchResultEvent):
-            # Translate outcome → public activity / status / summary.
+            # ASK-WEB-R4: per-attempt telemetry. Logs only non-sensitive
+            # identifiers and typed outcomes — never query / URL / provider
+            # payload / reasoning / API key. ``turn_run_id`` and
+            # ``model_route`` are server-owned. ``detail_code`` is a short
+            # safe reason code (e.g. ``"ok"``, ``"call_limit"``).
+            logger.info(
+                "reader_record_ask web search attempt: turn_run_id=%s "
+                "model_route=%s tool=search_web call_sequence=%s "
+                "outcome=%s turn_outcome=%s detail_code=%s "
+                "registered_evidence_count=%s duration_ms=%s",
+                self._turn_run_id,
+                self._model_route,
+                event.call_sequence,
+                event.outcome,
+                event.turn_outcome,
+                event.detail_code,
+                event.registered_evidence_count,
+                event.duration_ms,
+            )
+            # ASK-WEB-R4: use ``turn_outcome`` (turn-level aggregated)
+            # instead of ``outcome`` (per-attempt) for UI activity so a
+            # ``call_limit`` attempt after a successful search does NOT
+            # degrade the turn to ``unavailable``. ``outcome`` and
+            # ``detail_code`` remain available for telemetry.
+            #
+            # Translate turn_outcome → public activity / status / summary.
             # ``completed`` / ``no_results`` → completed activity, ok status.
             # ``unavailable`` → unavailable activity, unavailable status.
             # ``failed`` → failed activity, failed status.
-            outcome = event.outcome
-            activity: ProgressActivity = (
+            turn_outcome = event.turn_outcome
+            web_activity: ProgressActivity = (
                 "completed"
-                if outcome in ("completed", "no_results")
-                else outcome  # type: ignore[assignment]
+                if turn_outcome in ("completed", "no_results")
+                else turn_outcome
             )
-            summary = {
+            web_summary = {
                 "completed": "已完成网页搜索",
                 "no_results": "未找到相关网页结果",
                 "unavailable": "网页搜索暂不可用",
                 "failed": "网页搜索失败",
-            }.get(outcome, "网页搜索未知状态")
-            status: ProgressStatus = {
+            }.get(turn_outcome, "网页搜索未知状态")
+            web_status: ProgressStatus = {
                 "completed": "ok",
                 "no_results": "ok",
                 "unavailable": "unavailable",
                 "failed": "failed",
-            }.get(outcome, "failed")  # type: ignore[assignment]
+            }.get(turn_outcome, "failed")
             out.append(
                 self._next(
                     phase="searching_web",
-                    activity=activity,
-                    summary=summary,
+                    activity=web_activity,
+                    summary=web_summary,
                     tool_name="search_web",
-                    status=status,
+                    status=web_status,
                     duration_ms=event.duration_ms,
                 )
             )
@@ -911,7 +964,13 @@ async def _run_agentic_turn(
         return
 
     started_at = time.perf_counter()
-    projector = _ProgressProjector(started_at=started_at)
+    # ASK-WEB-R4: pass turn_run_id and model_route to the projector for
+    # per-attempt web search telemetry. Both are server-owned, non-sensitive.
+    projector = _ProgressProjector(
+        started_at=started_at,
+        turn_run_id=str(turn["id"]),
+        model_route=_safe_model_route(active_model),
+    )
     # ASK-TURN-LIFECYCLE R3: per-turn lifecycle timing metrics. Records
     # only timestamps and counts — never content/secrets. Logged on the
     # final info line so operators can observe the
@@ -941,6 +1000,12 @@ async def _run_agentic_turn(
         if pointer_ledger is not None
         else get_process_pointer_ledger()
     )
+    # ASK-WEB-R4: create a RuntimeObservation so the runtime tracks
+    # output_validation_final_attempts / output_validation_retry_requests
+    # for per-turn observability. Never serialised; never on any public
+    # DTO / SSE / DB surface. Logged only as aggregate counts on the
+    # terminal/completed info line.
+    runtime_observation = RuntimeObservation()
     agent_task = asyncio.create_task(
         run_agent(
             user_message=user_message,
@@ -953,6 +1018,7 @@ async def _run_agentic_turn(
             map_source_material_provider=wired_map_source_provider,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            observation=runtime_observation,
             thinking_observer=reasoning_projector,
             web_search_capability=web_search_capability,
             web_search_backend=web_search_backend,
@@ -1218,7 +1284,8 @@ async def _run_agentic_turn(
                 "reader_record_ask structured output invalid: type=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
                 "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s "
-                "lifecycle=%s",
+                "web_search_calls=%s output_validation_final_attempts=%s "
+                "output_validation_retry_requests=%s lifecycle=%s",
                 type(exc).__name__,
                 turn["id"],
                 assistant_msg["id"],
@@ -1229,6 +1296,9 @@ async def _run_agentic_turn(
                 projector.time_to_first_activity_ms,
                 projector.read_range_calls,
                 projector.search_current_article_calls,
+                projector.web_search_calls,
+                runtime_observation.output_validation_final_attempts,
+                runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
             terminal = build_terminal_dto(
@@ -1262,7 +1332,8 @@ async def _run_agentic_turn(
                 "reader_record_ask agent run failed: type=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
                 "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s "
-                "lifecycle=%s",
+                "web_search_calls=%s output_validation_final_attempts=%s "
+                "output_validation_retry_requests=%s lifecycle=%s",
                 type(exc).__name__,
                 turn["id"],
                 assistant_msg["id"],
@@ -1273,6 +1344,9 @@ async def _run_agentic_turn(
                 projector.time_to_first_activity_ms,
                 projector.read_range_calls,
                 projector.search_current_article_calls,
+                projector.web_search_calls,
+                runtime_observation.output_validation_final_attempts,
+                runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
             terminal = build_terminal_dto(
@@ -1406,7 +1480,8 @@ async def _run_agentic_turn(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=%s total_ms=%s ttfa_ms=%s "
             "progress_events=%s read_range_calls=%s search_calls=%s "
-            "lifecycle=%s",
+            "web_search_calls=%s output_validation_final_attempts=%s "
+            "output_validation_retry_requests=%s lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1416,6 +1491,9 @@ async def _run_agentic_turn(
             projector.progress_event_count,
             run_result.read_range_calls,
             run_result.search_current_article_calls,
+            run_result.web_search_calls,
+            runtime_observation.output_validation_final_attempts,
+            runtime_observation.output_validation_retry_requests,
             metrics.to_log_dict(),
         )
         # R3: terminal_sent marks the moment we yield the terminal SSE.
@@ -1457,7 +1535,8 @@ async def _run_agentic_turn(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
             "progress_events=%s read_range_calls=%s search_calls=%s "
-            "reason=%s lifecycle=%s",
+            "web_search_calls=%s output_validation_final_attempts=%s "
+            "output_validation_retry_requests=%s reason=%s lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1466,6 +1545,9 @@ async def _run_agentic_turn(
             projector.progress_event_count,
             run_result.read_range_calls,
             run_result.search_current_article_calls,
+            run_result.web_search_calls,
+            runtime_observation.output_validation_final_attempts,
+            runtime_observation.output_validation_retry_requests,
             TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
             metrics.to_log_dict(),
         )
@@ -1558,7 +1640,8 @@ async def _run_agentic_turn(
             "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
             "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
             "progress_events=%s read_range_calls=%s search_calls=%s "
-            "reason=%s lifecycle=%s",
+            "web_search_calls=%s output_validation_final_attempts=%s "
+            "output_validation_retry_requests=%s reason=%s lifecycle=%s",
             turn["id"],
             assistant_msg["id"],
             _safe_model_route(active_model),
@@ -1567,6 +1650,9 @@ async def _run_agentic_turn(
             projector.progress_event_count,
             run_result.read_range_calls,
             run_result.search_current_article_calls,
+            run_result.web_search_calls,
+            runtime_observation.output_validation_final_attempts,
+            runtime_observation.output_validation_retry_requests,
             TERMINAL_REASON_PERSIST_FAILED,
             metrics.to_log_dict(),
         )
@@ -1646,7 +1732,9 @@ async def _run_agentic_turn(
         "reader_record_ask turn completed: turn_run_id=%s message_id=%s "
         "model_route=%s final_status=ok total_ms=%s ttfa_ms=%s "
         "progress_events=%s read_range_calls=%s search_calls=%s "
-        "reasoning_projected=%s lifecycle=%s",
+        "web_search_calls=%s output_validation_final_attempts=%s "
+        "output_validation_retry_requests=%s reasoning_projected=%s "
+        "lifecycle=%s",
         turn["id"],
         assistant_msg["id"],
         _safe_model_route(active_model),
@@ -1655,6 +1743,9 @@ async def _run_agentic_turn(
         projector.progress_event_count,
         run_result.read_range_calls,
         run_result.search_current_article_calls,
+        run_result.web_search_calls,
+        runtime_observation.output_validation_final_attempts,
+        runtime_observation.output_validation_retry_requests,
         reasoning_completed is not None,
         metrics.to_log_dict(),
     )
@@ -1759,6 +1850,15 @@ async def stream_agentic_thread_message(
             expected_base_id=base_id,
         )
 
+    effective_web_search_mode: WebSearchMode = (
+        "allowed"
+        if (
+            web_search_capability is not None
+            and web_search_capability.enabled_for_turn
+            and web_search_backend is not None
+        )
+        else "disabled"
+    )
     envelope = build_envelope_from_facts(
         user_id=user_id,
         reading_record_id=reading_record_id,
@@ -1766,6 +1866,7 @@ async def stream_agentic_thread_message(
         request_anchor=request_anchor,
         validated_anchor=validated_anchor,
         stable_document_id=resolved_stable_id,
+        web_search_mode=effective_web_search_mode,
     )
     access = document_access or document_access_from_facts(
         reading_record_id=reading_record_id,
@@ -1885,11 +1986,7 @@ async def stream_agentic_thread_message(
         # backend was actually wired this turn. Without a backend, the
         # capability cannot execute, so retry replay must NOT inherit a
         # "假可用" (fake-available) mode — fail-closed to ``disabled``.
-        persisted_web_search_mode: WebSearchMode = (
-            "allowed"
-            if effective_web_search_capability is not None
-            else "disabled"
-        )
+        persisted_web_search_mode = effective_web_search_mode
         user_msg = await repo.create_message(
             thread_id=thread_id,
             role="user",
@@ -1992,11 +2089,7 @@ async def stream_agentic_thread_message(
             # "假可用" (fake-available) capability — the runtime must
             # fail-closed to ``disabled`` so the UI/RunStarted never
             # advertises a capability that cannot execute.
-            web_search_mode=(
-                "allowed"
-                if effective_web_search_capability is not None
-                else "disabled"
-            ),
+            web_search_mode=effective_web_search_mode,
         )
         yield encode_sse(EVENT_AGENTIC_RUN_STARTED, run_started.model_dump(mode="json"))
 

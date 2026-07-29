@@ -23,6 +23,7 @@ is scripted per-test via the ``outcomes`` list.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from types import SimpleNamespace
 from typing import Any
@@ -331,6 +332,11 @@ def _make_run_fn(
                 WebSearchResultEvent(
                     call_sequence=1,
                     outcome=web_search_outcome,  # type: ignore[arg-type]
+                    # ASK-WEB-R4: turn_outcome mirrors the per-attempt outcome
+                    # for single-call test scenarios. In real production the
+                    # coordinator aggregates across attempts; here the fake
+                    # run emits one attempt so turn_outcome == outcome.
+                    turn_outcome=web_search_outcome,  # type: ignore[arg-type]
                     registered_evidence_count=registered_evidence_count,
                     duration_ms=duration_ms,
                 )
@@ -1046,6 +1052,7 @@ def _web_search_then_answer_model_fn(
     *,
     answer_text: str = "Web source answer.",
     basis: str = "web",
+    expect_web_search_allowed: bool | None = None,
 ):
     """Build a FunctionModel ``model_fn`` that calls ``search_web`` then
     emits a single ``basis=web`` answer block referencing the
@@ -1063,6 +1070,14 @@ def _web_search_then_answer_model_fn(
 
     def model_fn(messages, info: AgentInfo):  # noqa: ARG001
         state["calls"] += 1
+        if state["calls"] == 1 and expect_web_search_allowed is not None:
+            prompt_blob = "\n".join(
+                str(getattr(part, "content", ""))
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            model_fn.first_prompt_blob = prompt_blob  # type: ignore[attr-defined]
         # Inspect prior tool returns for an evh_ handle.
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1095,7 +1110,6 @@ def _web_search_then_answer_model_fn(
                                 {
                                     "text": answer_text,
                                     "basis": effective_basis,
-                                    "article_scope": None,
                                     "evidence_handles": handles,
                                 }
                             ],
@@ -1129,7 +1143,10 @@ async def test_full_production_loop_without_run_fn_override() -> None:
        or provider raw payload.
     """
     repo = _FakeRepo()
-    model_fn = _web_search_then_answer_model_fn(answer_text="Web answer.")
+    model_fn = _web_search_then_answer_model_fn(
+        answer_text="Web answer.",
+        expect_web_search_allowed=True,
+    )
     model = FunctionModel(model_fn)
 
     chunks = [
@@ -1157,6 +1174,9 @@ async def test_full_production_loop_without_run_fn_override() -> None:
         )
     ]
     events = _parse_sse(chunks)
+    assert '"web_search_allowed":true' in getattr(
+        model_fn, "first_prompt_blob", ""
+    )
 
     # 1. run_started echoes allowed (capability is granted + enabled).
     run_started = next(d for n, d in events if n == EVENT_AGENTIC_RUN_STARTED)
@@ -1366,7 +1386,6 @@ async def test_full_production_loop_search_not_called_when_disabled() -> None:
                                 {
                                     "text": "General answer.",
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 }
                             ],
@@ -1476,7 +1495,6 @@ async def test_full_production_loop_fabricated_handle_fails_provenance() -> None
                                 {
                                     "text": "Fabricated web answer.",
                                     "basis": "web",
-                                    "article_scope": None,
                                     "evidence_handles": [
                                         "evh_0000000000000000000000000000dead"
                                     ],
@@ -1561,7 +1579,6 @@ async def test_full_production_loop_no_results_emits_no_citation() -> None:
                                 {
                                     "text": "No web results available.",
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 }
                             ],
@@ -1704,7 +1721,6 @@ async def test_full_production_loop_unavailable_emits_no_citation() -> None:
                                         "answering from general knowledge."
                                     ),
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 }
                             ],
@@ -1837,7 +1853,6 @@ async def test_full_production_loop_failed_emits_no_citation() -> None:
                                 {
                                     "text": "Search failed; answering from general knowledge.",
                                     "basis": "general",
-                                    "article_scope": None,
                                     "evidence_handles": [],
                                 }
                             ],
@@ -1917,6 +1932,191 @@ async def test_full_production_loop_failed_emits_no_citation() -> None:
     hot_blob = json.dumps(completed)
     db_blob = json.dumps(persisted_failed_dto)
     cold_blob = json.dumps(cold_failed)
+    for leak in (
+        "evh_",
+        "handle_id",
+        "fingerprint",
+        "provider_result_ref",
+        "source_fingerprint",
+        "query",
+        "rank",
+        "score",
+    ):
+        assert leak not in hot_blob, f"{leak} leaked into hot completed"
+        assert leak not in db_blob, f"{leak} leaked into persisted DTO"
+        assert leak not in cold_blob, f"{leak} leaked into cold history"
+
+
+# ---------------------------------------------------------------------------
+# Browser acceptance: a successful search retires the tool for this turn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_successful_search_retires_tool_and_completes_with_sources(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After a successful search, later model requests no longer expose
+    ``search_web``. The model must answer from the registered sources
+    instead of spending the remaining call budget or hitting call_limit.
+    """
+    repo = _FakeRepo()
+    backend = _scripted_backend(
+        outcome="completed",
+        hits=(_hit(), _hit(url="https://example.com/page2")),
+    )
+    state = {"requests": 0}
+
+    def model_fn(messages, info: AgentInfo):  # noqa: ARG001
+        state["requests"] += 1
+        tool_names = {tool.name for tool in info.function_tools}
+        if state["requests"] == 1:
+            assert TOOL_SEARCH_WEB in tool_names
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        TOOL_SEARCH_WEB,
+                        {
+                            "query": "english grammar articles",
+                            "max_results": 2,
+                        },
+                    )
+                ]
+            )
+
+        assert TOOL_SEARCH_WEB not in tool_names
+        handles: list[str] = []
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if not isinstance(part, ToolReturnPart):
+                    continue
+                for handle_id in re.findall(
+                    r"evh_[0-9a-f]{32}", str(part.content or "")
+                ):
+                    if handle_id not in handles:
+                        handles.append(handle_id)
+        assert len(handles) == 2
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps(
+                        {
+                            "response_kind": "grounded_answer",
+                            "answer_blocks": [
+                                {
+                                    "text": "answer with two web sources",
+                                    "basis": "web",
+                                    "evidence_handles": handles,
+                                }
+                            ],
+                        }
+                    )
+                )
+            ]
+        )
+
+    caplog.set_level(
+        logging.INFO,
+        logger="app.services.reader_record_ask.production_stream",
+    )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=FunctionModel(model_fn),
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+            web_search_capability=_capability(),
+            web_search_backend=backend,
+        )
+    ]
+    events = _parse_sse(chunks)
+    assert state["requests"] == 2
+    assert backend.call_count == 1
+
+    # One searching_web attempt: started, completed.
+    web_progress = [
+        d
+        for n, d in events
+        if n == EVENT_AGENTIC_PROGRESS and d["phase"] == "searching_web"
+    ]
+    assert len(web_progress) == 2, (
+        f"expected 2 searching_web progress events, got {len(web_progress)}"
+    )
+    # First attempt: started → completed.
+    assert web_progress[0]["activity"] == "started"
+    assert web_progress[0]["status"] == "running"
+    assert web_progress[1]["activity"] == "completed"
+    assert web_progress[1]["status"] == "ok"
+    attempt_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if "reader_record_ask web search attempt:" in record.getMessage()
+    ]
+    assert len(attempt_logs) == 1
+    assert "outcome=completed" in attempt_logs[0]
+    assert "turn_outcome=completed" in attempt_logs[0]
+    assert "detail_code=ok" in attempt_logs[0]
+
+    # message.completed carries the aggregated completed outcome.
+    completed = next(d for n, d in events if n == EVENT_MESSAGE_COMPLETED)
+    assert completed["web_search"] is not None
+    assert completed["web_search"]["outcome"] == "completed", (
+        f"web_search.outcome must be completed, got "
+        f"{completed['web_search']['outcome']}"
+    )
+    assert completed["web_search"]["cited_source_count"] == 2
+    assert len(completed["citations"]) == 2
+    assert all(
+        citation["source_kind"] == "web"
+        for citation in completed["citations"]
+    )
+    assert len(completed["answer_blocks"]) == 1
+    assert len(completed["answer_blocks"][0]["citation_ids"]) == 2
+
+    # Hot / DB / cold parity.
+    assert len(repo.completed_writes) == 1
+    persisted_dto = repo.completed_writes[0]["completed_dto"]
+    assert persisted_dto["web_search"] == completed["web_search"]
+    persisted_turn = next(iter(repo.turns.values()))
+    cold = project_agentic_history_message(
+        message_id=completed["message_id"],
+        thread_id=completed["thread_id"],
+        role="assistant",
+        row_status="completed",
+        row_content_md=completed["answer_text"],
+        created_at=None,
+        updated_at=None,
+        context_anchors=[],
+        usage_event_id=None,
+        current_turn_run_id=str(persisted_turn["id"]),
+        current_turn_run=persisted_turn,
+        user_visible_output_json=persisted_turn["user_visible_output_json"],
+        resolved_evidence_json=repo.completed_writes[0]["resolved_evidence"],
+        final_status="ok",
+        turn_run_status="completed",
+    )
+    assert cold["agentic_web_search"] == completed["web_search"]
+    expected_cold_citations = [
+        {key: value for key, value in citation.items() if value is not None}
+        for citation in completed["citations"]
+    ]
+    assert cold["agentic_citations"] == expected_cold_citations
+    assert cold["agentic_answer_blocks"] == completed["answer_blocks"]
+
+    # Public JSON must not leak internals.
+    hot_blob = json.dumps(completed)
+    db_blob = json.dumps(persisted_dto)
+    cold_blob = json.dumps(cold)
     for leak in (
         "evh_",
         "handle_id",

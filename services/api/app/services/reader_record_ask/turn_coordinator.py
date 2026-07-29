@@ -95,6 +95,7 @@ from app.services.reader_record_ask.selection_model_view import (
     assemble_selection_model_view,
 )
 from app.services.reader_record_ask.tool_contracts import (
+    ToolBudgetExhaustedView,
     is_expand_pointer_shape,
 )
 from app.services.reader_record_ask.turn_capability_projection import (
@@ -138,11 +139,12 @@ _MAX_MAP_ENTRY_SOURCES = 32
 _MAX_DESCRIPTOR_MAP_ENTRY_SOURCES = 8
 
 # G1-b5: default web search call limit. Mirrors the G0/G1 capability
-# resolver default (1). The actual limit comes from the resolved
-# capability's ``max_calls`` field; this constant is only used when the
-# coordinator is constructed without an explicit ``max_web_search_calls``
-# AND the capability is unavailable (defensive fail-soft path).
-_DEFAULT_MAX_WEB_SEARCH_CALLS: int = 1
+# resolver default (3 as of ASK-WEB-R4). The actual limit comes from the
+# resolved capability's ``max_calls`` field; this constant is only used
+# when the coordinator is constructed without an explicit
+# ``max_web_search_calls`` AND the capability is unavailable (defensive
+# fail-soft path).
+_DEFAULT_MAX_WEB_SEARCH_CALLS: int = 3
 
 
 class HostBudgetExhausted(Exception):
@@ -170,6 +172,16 @@ class MeteredToolReturn:
     duration_ms: int = 0
     # True when the host must abort the agent (no ToolReturnPart to model).
     host_budget_abort: bool = False
+    # ASK-WEB-R4-R1: safe, restricted diagnostic short-code carried from
+    # the Coordinator's web search decision tree. ONLY short codes from
+    # the frozen allowlist appear here (``ok`` / ``empty`` / ``call_limit``
+    # / ``capability_or_backend_missing`` / ``backend_exception`` /
+    # ``fence_pre`` / ``fence_post`` / ``budget_exhausted`` / provider
+    # detail codes such as ``qwen_*`` / ``deepseek_*``). The field NEVER
+    # carries query text, URLs, provider payload, exception strings, or
+    # credentials. The public ``completed`` DTO is unchanged — this field
+    # is consumed only by internal event projection and safe logs.
+    detail_code: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,6 +411,9 @@ class TurnCoordinator:
             article_rag_port=self.article_rag,
             stable_document_id=self.envelope.stable_document_id,
             product_search_enabled=self.product_search_enabled,
+            web_search_allowed=(
+                self.envelope.capabilities.web_search_mode == "allowed"
+            ),
             baseline_injected=False,
             baseline_complete=False,
             can_read_range=False,
@@ -539,6 +554,9 @@ class TurnCoordinator:
             article_rag_port=self.article_rag,
             stable_document_id=envelope.stable_document_id,
             product_search_enabled=self.product_search_enabled,
+            web_search_allowed=(
+                envelope.capabilities.web_search_mode == "allowed"
+            ),
             baseline_injected=True,
             baseline_complete=baseline.is_complete,
             can_read_range=can_read_range,
@@ -871,13 +889,7 @@ class TurnCoordinator:
 
         duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         if outcome.kind == "budget_exhausted" or not outcome.model_visible:
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=duration_ms,
-                host_budget_abort=True,
-            )
+            return self._tool_budget_exhausted(started=started)
         assert outcome.rendered_tool_view is not None
         handle_ids: tuple[str, ...] = ()
         if outcome.evidence_handle_id:
@@ -959,13 +971,7 @@ class TurnCoordinator:
         )
         duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         if result.kind == "budget_denied" or not result.model_visible:
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=duration_ms,
-                host_budget_abort=True,
-            )
+            return self._tool_budget_exhausted(started=started)
         assert result.rendered_tool_view is not None
         handle_ids = tuple(ref.handle_id for ref in result.evidence_handles)
         return MeteredToolReturn(
@@ -1033,7 +1039,7 @@ class TurnCoordinator:
 
         # Call-limit (consume even on fence failure after the call is made).
         if self.web_search_calls >= self.max_web_search_calls:
-            self._last_web_search_outcome = "unavailable"
+            self._record_web_search_outcome("unavailable")
             return await self._web_safe_unavailable(
                 started=started,
                 detail="call_limit",
@@ -1042,7 +1048,7 @@ class TurnCoordinator:
         # Pre-generation fence.
         fence_result = await self._run_fence()
         if not fence_result.ok:
-            self._last_web_search_outcome = "unavailable"
+            self._record_web_search_outcome("unavailable")
             return await self._web_safe_unavailable(
                 started=started, detail="fence_pre"
             )
@@ -1054,7 +1060,7 @@ class TurnCoordinator:
             or self.web_search_backend is None
         ):
             self.web_search_calls += 1
-            self._last_web_search_outcome = "unavailable"
+            self._record_web_search_outcome("unavailable")
             return await self._web_safe_unavailable(
                 started=started, detail="capability_or_backend_missing"
             )
@@ -1070,7 +1076,7 @@ class TurnCoordinator:
         except Exception:
             # Provider raised — fail-soft safe view; never ModelRetry.
             self.web_search_calls += 1
-            self._last_web_search_outcome = "failed"
+            self._record_web_search_outcome("failed")
             return await self._web_safe_unavailable(
                 started=started, detail="backend_exception"
             )
@@ -1079,7 +1085,7 @@ class TurnCoordinator:
         # Post-generation fence.
         fence_after = await self._run_fence()
         if not fence_after.ok:
-            self._last_web_search_outcome = "unavailable"
+            self._record_web_search_outcome("unavailable")
             return await self._web_safe_unavailable(
                 started=started, detail="fence_post"
             )
@@ -1116,13 +1122,13 @@ class TurnCoordinator:
 
         # Map port outcome to public outcome + tool status.
         if outcome.status == "unavailable":
-            self._last_web_search_outcome = "unavailable"
+            self._record_web_search_outcome("unavailable")
             return await self._web_safe_unavailable(
                 started=started,
                 detail=outcome.detail_code or "port_unavailable",
             )
         if outcome.status == "failed":
-            self._last_web_search_outcome = "failed"
+            self._record_web_search_outcome("failed")
             return await self._web_safe_unavailable(
                 started=started,
                 detail=outcome.detail_code or "port_failed",
@@ -1132,7 +1138,7 @@ class TurnCoordinator:
         if outcome.status == "empty" or (
             outcome.status == "ok" and not outcome.hits
         ):
-            self._last_web_search_outcome = "no_results"
+            self._record_web_search_outcome("no_results")
             return await self._web_emit_empty_view(started=started)
 
         # ``ok`` with hits → register evidence + emit ok view.
@@ -1166,6 +1172,11 @@ class TurnCoordinator:
                     retrieved_at=retrieved_at,
                     provider_result_ref=hit.provider_result_ref,
                     source_fingerprint=source_fingerprint,
+                    # ASK-WEB-R4: propagate optional provider-supplied
+                    # freshness hints. Untrusted provider text — the
+                    # host never treats them as authoritative.
+                    published_at=hit.published_at,
+                    page_age=hit.page_age,
                 )
             except (ValueError, TypeError):
                 # Drop malformed hits — never raise from provider text.
@@ -1182,16 +1193,17 @@ class TurnCoordinator:
                     canonical_url=canonical,
                     title=hit.title or "",
                     description=hit.description or "",
+                    page_age=hit.page_age,
                 )
             )
 
         if not handle_ids:
             # All hits dropped (URL canonicalization / fingerprint /
             # registry rejection) — surface ``no_results`` to the model.
-            self._last_web_search_outcome = "no_results"
+            self._record_web_search_outcome("no_results")
             return await self._web_emit_empty_view(started=started)
 
-        self._last_web_search_outcome = "completed"
+        self._record_web_search_outcome("completed")
         tool_view = SearchWebToolView(
             status="ok",
             summary=(
@@ -1205,17 +1217,9 @@ class TurnCoordinator:
         )
         rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
         if not self.budget.can_charge("rag", rendered):
-            # Budget exhausted after registry mutation. The host cannot
-            # roll back registry entries (the model already saw content
-            # in prior tool calls). Abort the agent — the finalizer
-            # ignores unbound web handles.
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-                host_budget_abort=True,
-            )
+            # Registered handles remain internal and unbound because the
+            # model never saw them. The finalizer ignores them.
+            return self._tool_budget_exhausted(started=started, detail_code="budget_exhausted")
         self.budget.charge("rag", rendered)
         return MeteredToolReturn(
             text=rendered.text,
@@ -1223,6 +1227,7 @@ class TurnCoordinator:
             summary=tool_view.summary,
             evidence_handle_ids=tuple(handle_ids),
             duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            detail_code="ok",
         )
 
     async def _web_safe_unavailable(
@@ -1239,24 +1244,19 @@ class TurnCoordinator:
 
         summary = "Web search is unavailable for this turn."
         tool_view = SearchWebToolView(
-            status=tool_status,  # type: ignore[arg-type]
+            status=tool_status,
             summary=summary,
         )
         rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
         if not self.budget.can_charge("rag", rendered):
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-                host_budget_abort=True,
-            )
+            return self._tool_budget_exhausted(started=started, detail_code="budget_exhausted")
         self.budget.charge("rag", rendered)
         return MeteredToolReturn(
             text=rendered.text,
             status=tool_status,
             summary=summary,
             duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            detail_code=detail,
         )
 
     async def _web_emit_empty_view(self, *, started: float) -> MeteredToolReturn:
@@ -1272,19 +1272,42 @@ class TurnCoordinator:
         )
         rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
         if not self.budget.can_charge("rag", rendered):
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-                host_budget_abort=True,
-            )
+            return self._tool_budget_exhausted(started=started, detail_code="budget_exhausted")
         self.budget.charge("rag", rendered)
         return MeteredToolReturn(
             text=rendered.text,
             status="empty",
             summary=summary,
             duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            detail_code="empty",
+        )
+
+    def _tool_budget_exhausted(
+        self,
+        *,
+        started: float,
+        detail_code: str = "budget_exhausted",
+    ) -> MeteredToolReturn:
+        """Return a bounded control view, hard-aborting only if it cannot fit."""
+        tool_view = ToolBudgetExhaustedView()
+        rendered = self.renderer.render_tool_view(tool_view.model_dump(mode="json"))
+        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        if not self.budget.can_charge("control", rendered):
+            return MeteredToolReturn(
+                text="",
+                status="budget_exhausted",
+                summary="",
+                duration_ms=duration_ms,
+                host_budget_abort=True,
+                detail_code=detail_code,
+            )
+        self.budget.charge("control", rendered)
+        return MeteredToolReturn(
+            text=rendered.text,
+            status="budget_exhausted",
+            summary=tool_view.summary,
+            duration_ms=duration_ms,
+            detail_code=detail_code,
         )
 
     @property
@@ -1307,10 +1330,59 @@ class TurnCoordinator:
         """
         if self.web_search_calls == 0:
             return None
-        # Single-call vertical slice (G1): outcome is the last call's
-        # translated outcome. Multi-call mixing priority is reserved for
-        # G2+ when ``WEB_MAX_CALLS_PER_TURN`` > 1 is actually exercised.
         return self._last_web_search_outcome
+
+    # ASK-WEB-R4: executable-capability properties used by the runtime to
+    # decide whether to mount ``expand_evidence`` and
+    # ``search_current_article``. When ``False``, the tool is NOT
+    # registered on the agent and the model never sees it — no
+    # ``unavailable`` activity is produced for a non-executable tool.
+    @property
+    def has_expand_pointer(self) -> bool:
+        """True when a real expansion pointer exists this turn.
+
+        - selection session created (injected + expandable + selected_text), OR
+        - article map expander created (map_result.is_ok).
+
+        When ``False``, ``expand_evidence`` would always return a safe
+        ``invalid_cursor`` / ``stale_evidence`` view — so the tool is
+        not mounted and no ``unavailable`` activity is produced.
+        """
+        return (
+            self._selection_session is not None
+            or self._map_expander is not None
+        )
+
+    @property
+    def has_executable_article_rag(self) -> bool:
+        """True when ``search_current_article`` can perform real I/O.
+
+        Requires a non-None ``ArticleRagSearchPort`` AND a non-None
+        ``stable_document_id`` on the envelope. When ``False``, the
+        tool would always return a safe ``port_or_document_missing``
+        view — so the tool is not mounted and no ``unavailable``
+        activity is produced.
+        """
+        return (
+            self.article_rag is not None
+            and self.envelope.stable_document_id is not None
+        )
+
+    def _record_web_search_outcome(self, outcome: WebSearchOutcome) -> None:
+        """Keep the strongest user-visible outcome across all attempts.
+
+        A successful search must not be downgraded when the agent makes a
+        follow-up call after the per-turn limit has already been consumed.
+        """
+        priority: dict[WebSearchOutcome, int] = {
+            "failed": 0,
+            "unavailable": 1,
+            "no_results": 2,
+            "completed": 3,
+        }
+        current = self._last_web_search_outcome
+        if current is None or priority[outcome] > priority[current]:
+            self._last_web_search_outcome = outcome
 
     async def _rag_safe_unavailable(self, *, started: float, detail: str) -> MeteredToolReturn:
         from app.services.reader_record_ask.article_rag_port import (
@@ -1330,13 +1402,7 @@ class TurnCoordinator:
             )
             rendered = self.renderer.render_tool_view(rag_view.model_dump(mode="json"))
             if not self.budget.can_charge("rag", rendered):
-                return MeteredToolReturn(
-                    text="",
-                    status="budget_exhausted",
-                    summary="",
-                    duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-                    host_budget_abort=True,
-                )
+                return self._tool_budget_exhausted(started=started)
             self.budget.charge("rag", rendered)
             return MeteredToolReturn(
                 text=rendered.text,
@@ -1366,13 +1432,7 @@ class TurnCoordinator:
         )
         duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         if result.kind == "budget_denied" or not result.model_visible:
-            return MeteredToolReturn(
-                text="",
-                status="budget_exhausted",
-                summary="",
-                duration_ms=duration_ms,
-                host_budget_abort=True,
-            )
+            return self._tool_budget_exhausted(started=started)
         assert result.rendered_tool_view is not None
         return MeteredToolReturn(
             text=result.rendered_tool_view.text,
@@ -1438,6 +1498,7 @@ def _render_web_source_block(
     canonical_url: str,
     title: str,
     description: str,
+    page_age: str | None = None,
 ) -> str:
     """Render one ``<untrusted_web_source>`` XML block for the model view.
 
@@ -1445,6 +1506,12 @@ def _render_web_source_block(
     field is XML-escaped so provider text cannot inject markup. The
     block is the *only* place the model sees web source text — it never
     sees ``provider_result_ref`` or raw provider payload.
+
+    ASK-WEB-R4: ``page_age`` is an optional untrusted provider-supplied
+    freshness hint (e.g. "2 days ago"). Included as a ``page_age``
+    attribute so the model can prefer newer sources for time-sensitive
+    questions. Never authoritative — the model must not claim a fact is
+    confirmed 'as of today' based solely on this hint.
     """
     title_attr = _xml_escape_web(title, {'"': "&quot;"}) if title else ""
     desc_attr = (
@@ -1459,6 +1526,9 @@ def _render_web_source_block(
         parts.append(f' title="{title_attr}"')
     if desc_attr:
         parts.append(f' description="{desc_attr}"')
+    if page_age:
+        age_attr = _xml_escape_web(page_age, {'"': "&quot;"})
+        parts.append(f' page_age="{age_attr}"')
     parts.append("/>")
     return "".join(parts)
 

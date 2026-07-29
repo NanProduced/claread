@@ -4,6 +4,15 @@ The model supplies semantic answer blocks. The host projects the current
 turn's registered evidence and confirmed article coverage into the canonical
 block provenance validator, then attaches its immutable result privately.
 Failures raise ``ModelRetry``; no block is reclassified or silently repaired.
+
+ASK-WEB-R4: ``article_scope`` is no longer a model-generated field. The
+host conservatively derives it for ``basis="article"`` blocks (default
+``evidence_bounded``) and sets ``None`` for general/web blocks. The
+internal :data:`ArticleScope` type is retained for provenance/coverage.
+Duplicate evidence handles are safely deduped at the draft boundary —
+they no longer trigger ``ModelRetry``. Unknown handles, foreign
+envelope, and article/web source-kind mixing continue to fail-closed
+inside :func:`validate_answer_blocks`.
 """
 
 from __future__ import annotations
@@ -26,11 +35,20 @@ from app.services.reader_record_ask.answer_block_provenance import (
 )
 from app.services.reader_record_ask.runtime_deps import ReaderRecordAskDeps
 
-# Hard cap on the number of cited evidence handles per answer. The model
-# is prompted to return the MINIMAL sufficient set; exceeding this cap is
-# a correctable output error (ModelRetry), never silently truncated by
-# the finalizer.
-MAX_CITED_EVIDENCE_HANDLES: Final[int] = 6
+# ASK-WEB-R4-R1: the hard cap on cited evidence handles (formerly
+# ``MAX_CITED_EVIDENCE_HANDLES=6``) has been removed. Tool output and
+# the model-view budget control how many handles the model can see; the
+# validator does NOT reject an answer for citing "too many" handles.
+# Duplicate handles are deduped silently at the draft boundary. There is
+# no arbitrary numeric cap on legal unique handles.
+
+# ASK-WEB-R4: conservative host-derived article scope for ``basis=article``
+# blocks. ``evidence_bounded`` is always present in
+# ``confirmed_article_scopes`` (the coordinator seeds it unconditionally),
+# so an article block with at least one valid article evidence handle
+# passes provenance validation without forcing the model to guess a
+# coverage scope that may not be confirmed.
+_HOST_DERIVED_ARTICLE_SCOPE: Final[ArticleScope] = "evidence_bounded"
 
 _EVIDENCE_KIND_TO_SOURCE_KIND: Final[dict[str, Literal["article"]]] = {
     "initial_anchor": "article",
@@ -42,23 +60,50 @@ _EVIDENCE_KIND_TO_SOURCE_KIND: Final[dict[str, Literal["article"]]] = {
 
 
 class AgentAnswerBlockOutput(BaseModel):
-    """Thin model-output adapter for one provenance-explicit answer block."""
+    """Thin model-output adapter for one provenance-explicit answer block.
+
+    ASK-WEB-R4: ``article_scope`` is NOT a model field. The host derives
+    it conservatively in :meth:`to_block_draft` — ``evidence_bounded``
+    for ``basis="article"`` and ``None`` otherwise. This removes a
+    non-safety preference (which coverage scope to claim) from the model
+    output contract so it can no longer trigger ``ModelRetry`` when the
+    model picks a scope the host has not confirmed.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     text: str = Field(min_length=1, max_length=8_000)
     basis: AnswerBlockBasis
-    article_scope: ArticleScope | None
     evidence_handles: list[str] = Field(default_factory=list)
 
     def to_block_draft(self) -> AnswerBlockDraft:
-        """Project model syntax into the canonical provenance block draft."""
+        """Project model syntax into the canonical provenance block draft.
 
+        ASK-WEB-R4: host derives ``article_scope`` conservatively and
+        dedupes repeated evidence handles (preserving first-seen order)
+        instead of raising ``ModelRetry`` on duplicates.
+        """
+
+        derived_scope: ArticleScope | None = (
+            _HOST_DERIVED_ARTICLE_SCOPE
+            if self.basis == "article"
+            else None
+        )
+        # Dedupe handles preserving first-seen order. Duplicates across
+        # blocks or within a block are safe — the same evidence may
+        # support multiple claims. Unknown / foreign / wrong-kind
+        # handles still fail-closed in validate_answer_blocks.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for handle_id in self.evidence_handles:
+            if handle_id not in seen:
+                seen.add(handle_id)
+                deduped.append(handle_id)
         return AnswerBlockDraft(
             text=self.text,
             basis=self.basis,
-            article_scope=self.article_scope,
-            evidence_handles=tuple(self.evidence_handles),
+            article_scope=derived_scope,
+            evidence_handles=tuple(deduped),
         )
 
 
@@ -323,19 +368,11 @@ async def _grounding_validator_final_body(
 
     try:
         blocks = tuple(block.to_block_draft() for block in draft.answer_blocks)
-        handle_ids = [
-            handle_id
-            for block in blocks
-            for handle_id in block.evidence_handles
-        ]
-        if len(handle_ids) > MAX_CITED_EVIDENCE_HANDLES:
-            raise ValueError(
-                f"answer may cite at most {MAX_CITED_EVIDENCE_HANDLES} evidence handles"
-            )
-        if len(handle_ids) != len(set(handle_ids)):
-            raise ValueError(
-                "remove duplicate handles; duplicate evidence handles are not allowed"
-            )
+        # ASK-WEB-R4-R1: no arbitrary handle-count ModelRetry and no
+        # duplicate-handle ModelRetry. ``to_block_draft`` already dedupes
+        # handles per block; tool output + model-view budget control how
+        # many handles the model can see. Unknown / foreign / wrong-kind
+        # handles still fail-closed inside ``validate_answer_blocks``.
         validated = validate_answer_blocks(
             blocks=blocks,
             evidence_context=build_evidence_validation_context(ctx.deps),

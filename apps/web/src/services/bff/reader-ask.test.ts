@@ -201,6 +201,8 @@ describe("reader-ask BFF RR cutover", () => {
     );
 
     expect(result.status).toBe(200);
+    // ASK-TURN-LIFECYCLE R1: signal is the new 5th arg; undefined when
+    // the caller (e.g. a server-to-server test) does not supply one.
     expect(createUpstreamReadingRecordAskStream).toHaveBeenCalledWith(
       "reading-record-1",
       "thread-rr-1",
@@ -208,6 +210,52 @@ describe("reader-ask BFF RR cutover", () => {
         content: "Explain this paragraph",
       }),
       "session-token",
+      undefined,
+    );
+  });
+
+  it("forwards the browser AbortSignal to the upstream fetch (R1)", async () => {
+    // ASK-TURN-LIFECYCLE R1: a user stop / network abort / page navigation
+    // must cancel the upstream SSE connection too, so the FastAPI
+    // generator's ``finally`` block fires and reconciles any still-
+    // streaming turn_run / message row to ``cancelled``.
+    vi.mocked(createUpstreamReadingRecordAskStream).mockResolvedValue(
+      new Response("event: ready\ndata: {}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+
+    const controller = new AbortController();
+    await createReaderAskStreamForWeb(
+      "thread-rr-1",
+      {
+        content: "Explain this paragraph",
+        entry_action: "ask_about_this",
+        page_identity: {
+          record_id: "reading-record-1",
+          title: "Reading Record",
+          surface: "reader",
+          source: "reader_2_0",
+          available_context_capabilities: [],
+          has_article_overview: false,
+          has_sentence_entries: true,
+          has_annotations: false,
+          has_reader_notes: false,
+        },
+        attachments: [],
+      },
+      "reading-record-1",
+      "reading_record",
+      controller.signal,
+    );
+
+    expect(createUpstreamReadingRecordAskStream).toHaveBeenCalledWith(
+      "reading-record-1",
+      "thread-rr-1",
+      expect.objectContaining({ content: "Explain this paragraph" }),
+      "session-token",
+      controller.signal,
     );
   });
 });

@@ -103,7 +103,9 @@ export function AgenticWebSources({
   // with 0 cited sources is a valid state (search finished, nothing cited)
   // and should not produce a misleading "no results" notice.
   const outcomeNotice =
-    webSearchSummary != null && webSearchSummary.outcome !== "completed"
+    webSources.length === 0 &&
+    webSearchSummary != null &&
+    webSearchSummary.outcome !== "completed"
       ? WEB_SEARCH_OUTCOME_MESSAGES[webSearchSummary.outcome]
       : "";
 

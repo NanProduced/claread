@@ -139,7 +139,9 @@ export function WebSources({ sources }: { sources: readonly WebSourceItem[] }) {
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5" data-slot="prompt-kit-sources">
-      <span className="text-xs text-muted-foreground">网页来源</span>
+      <span className="text-xs font-medium text-muted-foreground">
+        网页来源 · {sources.length}
+      </span>
       {sources.map((source) => (
         <Source href={source.href} key={source.citationId}>
           <SourceTrigger showFavicon />

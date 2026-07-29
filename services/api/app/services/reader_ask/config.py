@@ -9,10 +9,10 @@ Do not change values without updating corresponding tests.
 # ---------------------------------------------------------------------------
 DEFAULT_MAX_OUTPUT_TOKENS: int = 1600
 MIN_MAX_OUTPUT_TOKENS: int = 400
-PROMPT_BUDGET_BUFFER_TOKENS: int = 800
-DEFAULT_RUNTIME_MAX_INPUT_TOKENS: int = 24000
-DEFAULT_RUNTIME_MAX_OUTPUT_TOKENS: int = 3200
-DEFAULT_RUNTIME_MAX_TURN_OUTPUT_TOKENS: int = 9600
+PROMPT_BUDGET_BUFFER_TOKENS: int = 8192
+DEFAULT_RUNTIME_MAX_INPUT_TOKENS: int = 131072
+DEFAULT_RUNTIME_MAX_OUTPUT_TOKENS: int = 8192
+DEFAULT_RUNTIME_MAX_TURN_OUTPUT_TOKENS: int = 32768
 
 # ---------------------------------------------------------------------------
 # History / context limits
