@@ -53,6 +53,9 @@ export const TRUSTED_TERMINAL_EVENT_NAMES: ReadonlySet<string> = new Set([
   "message.completed",
   "agentic.terminal",
   "message.interrupted",
+  // R6: duplicate-submission short-circuit is a logical terminal —
+  // the host must hydrate via GET and must not leave a streaming bubble.
+  "submission.reconcile",
 ]);
 
 export type TerminalFinalStatus =
@@ -67,7 +70,21 @@ export type LogicalTerminalKind =
   | "interrupted"
   | "abort"
   | "parse_error"
-  | "eof";
+  | "eof"
+  /** R6: server returned submission.reconcile (duplicate / in-flight). */
+  | "submission_reconcile";
+
+/** Public fields from SSE `submission.reconcile` (no secrets). */
+export interface SubmissionReconcileTerminalPayload {
+  readonly clientSubmissionId: string;
+  readonly threadId: string;
+  readonly status: string;
+  readonly userMessageId: string | null;
+  readonly assistantMessageId: string | null;
+  readonly terminalCode: string | null;
+  readonly actionHint: string | null;
+  readonly claimGeneration: number | null;
+}
 
 export interface TurnIdentity {
   readonly messageId: string;
@@ -81,6 +98,8 @@ export interface LogicalTerminalResult {
   readonly finalStatus: TerminalFinalStatus | null;
   readonly terminalReason: string | null;
   readonly receivedAt: number; // epoch ms
+  /** Present when kind === "submission_reconcile". */
+  readonly submissionReconcile?: SubmissionReconcileTerminalPayload | null;
 }
 
 export const STALE_STREAM_TERMINAL_REASON = "stale_stream_reconciled";
@@ -121,7 +140,8 @@ export function isTrustedTerminal(
     result.kind === "terminal" ||
     result.kind === "interrupted" ||
     result.kind === "abort" ||
-    result.kind === "parse_error"
+    result.kind === "parse_error" ||
+    result.kind === "submission_reconcile"
   );
 }
 
@@ -140,6 +160,13 @@ export function resultingState(
       return "failed";
     case "eof":
       return "failed";
+    case "submission_reconcile": {
+      const st = result.submissionReconcile?.status;
+      if (st === "completed") return "committed";
+      if (st === "cancelled") return "cancelled";
+      // streaming / claimed / failed / not_found — host hydrates further
+      return "failed";
+    }
   }
 }
 
@@ -168,6 +195,7 @@ export function makeLogicalTerminalResult(
     identity?: TurnIdentity | null;
     finalStatus?: TerminalFinalStatus | null;
     terminalReason?: string | null;
+    submissionReconcile?: SubmissionReconcileTerminalPayload | null;
   } = {},
 ): LogicalTerminalResult {
   return {
@@ -176,6 +204,39 @@ export function makeLogicalTerminalResult(
     finalStatus: init.finalStatus ?? null,
     terminalReason: init.terminalReason ?? null,
     receivedAt: Date.now(),
+    submissionReconcile: init.submissionReconcile ?? null,
+  };
+}
+
+/** Parse public SSE submission.reconcile data into a typed payload. */
+export function parseSubmissionReconcilePayload(
+  data: Record<string, unknown> | null | undefined,
+): SubmissionReconcileTerminalPayload | null {
+  if (!data || typeof data !== "object") return null;
+  const clientSubmissionId =
+    typeof data.client_submission_id === "string"
+      ? data.client_submission_id
+      : null;
+  const threadId =
+    typeof data.thread_id === "string" ? data.thread_id : null;
+  const status = typeof data.status === "string" ? data.status : null;
+  if (!clientSubmissionId || !threadId || !status) return null;
+  return {
+    clientSubmissionId,
+    threadId,
+    status,
+    userMessageId:
+      typeof data.user_message_id === "string" ? data.user_message_id : null,
+    assistantMessageId:
+      typeof data.assistant_message_id === "string"
+        ? data.assistant_message_id
+        : null,
+    terminalCode:
+      typeof data.terminal_code === "string" ? data.terminal_code : null,
+    actionHint:
+      typeof data.action_hint === "string" ? data.action_hint : null,
+    claimGeneration:
+      typeof data.claim_generation === "number" ? data.claim_generation : null,
   };
 }
 

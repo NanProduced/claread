@@ -19,6 +19,7 @@ import {
   resetUpstreamReadingRecordAskThread,
   retryUpstreamReaderAskMessage,
   retryUpstreamReadingRecordAskMessage,
+  getUpstreamReadingRecordAskSubmission,
   navigateUpstreamReadingRecordAskCitation,
   type ReadingRecordAskCitationNavigateResultDto,
 } from "@/services/api/reader-ask";
@@ -31,6 +32,7 @@ import type {
   ReaderAskMessageRetryRequestDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskModelOptionListResponseDto,
+  ReaderAskSubmissionReconcileDto,
   ReaderAskThreadCreateRequestDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadListResponseDto,
@@ -93,6 +95,32 @@ function missingReadingRecordIdResponse() {
     status: 400,
     headers: { "content-type": "application/json" },
   });
+}
+
+/** ASK-RETRY-CONTRACT-R0 — fail-closed before any upstream hop. */
+const PERSISTED_MESSAGE_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isPersistedMessageId(messageId: string): boolean {
+  return PERSISTED_MESSAGE_ID_RE.test(messageId.trim());
+}
+
+/**
+ * Typed 409 when the browser attempts retry with a non-UUID target
+ * (e.g. `local-assistant-*`). Never forwards to FastAPI.
+ */
+function retryTargetNotPersistedResponse(messageId: string): Response {
+  return new Response(
+    JSON.stringify({
+      code: "retry_target_not_persisted",
+      detail: "这轮回答尚未保存，请重新发送，不要直接重新生成。",
+      message_id: messageId,
+    }),
+    {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    },
+  );
 }
 
 export async function listReaderAskModelOptionsForWeb(): Promise<Response> {
@@ -403,6 +431,12 @@ export async function retryReaderAskMessageForWeb(
     );
   }
 
+  // ASK-RETRY-CONTRACT-R0: non-UUID message ids (local-assistant-*) must
+  // never reach FastAPI. Typed 409 — fail-closed at the BFF edge.
+  if (!isPersistedMessageId(messageId)) {
+    return retryTargetNotPersistedResponse(messageId);
+  }
+
   if (recordScope === "reading_record") {
     if (!recordId?.trim()) {
       return missingReadingRecordIdResponse();
@@ -410,6 +444,7 @@ export async function retryReaderAskMessageForWeb(
   }
 
   // ASK-TURN-LIFECYCLE R1: see createReaderAskStreamForWeb.
+  // Upstream path is always `/retry/stream` (BFF → FastAPI only).
   const upstream = recordScope === "reading_record"
     ? await retryUpstreamReadingRecordAskMessage(recordId!, threadId, messageId, body, session.sessionToken, signal)
     : await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken, signal);
@@ -426,6 +461,55 @@ export async function retryReaderAskMessageForWeb(
       "x-accel-buffering": "no",
     },
   });
+}
+
+/**
+ * ASK-RETRY-CONTRACT-R4 — typed submission reconcile (Browser → FastAPI).
+ * Reading-record scope only for R4 (agentic + RR Ask cutover path).
+ */
+export async function reconcileReaderAskSubmissionForWeb(
+  threadId: string,
+  clientSubmissionId: string,
+  recordId?: string | null,
+  recordScope: ReaderAskRecordScope = "analysis",
+): Promise<Response> {
+  const session = await requireUpstreamSession();
+  if (!session) {
+    return authError("请先登录后再使用 Ask Claread。");
+  }
+  if (recordScope !== "reading_record" || !recordId?.trim()) {
+    return new Response(
+      JSON.stringify({
+        code: "reconcile_scope_unsupported",
+        detail: "Submission reconcile is only available for Reading Record Ask.",
+      }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (!isPersistedMessageId(clientSubmissionId)) {
+    return new Response(
+      JSON.stringify({
+        code: "invalid_client_submission_id",
+        detail: "client_submission_id must be a UUID.",
+      }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  const upstream = await getUpstreamReadingRecordAskSubmission(
+    recordId,
+    threadId,
+    clientSubmissionId,
+    session.sessionToken,
+  );
+  if (!upstream.ok) {
+    return new Response(JSON.stringify({ message: upstream.message }), {
+      status: upstream.status || 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const data: ReaderAskSubmissionReconcileDto = upstream.data;
+  return Response.json(data);
 }
 
 /** Secure citation navigate — message_id + citation_id only; server owns fence. */

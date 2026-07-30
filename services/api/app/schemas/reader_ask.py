@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -853,12 +854,65 @@ class ReaderAskMessageStreamRequest(BaseModel):
     attachments: list[ReaderAskAttachment] = Field(default_factory=list)
     entry_action: ReaderAskEntryAction
     model: str | None = None
+    # ASK-RETRY-CONTRACT-R2 — optional on legacy clients; new web always sends.
+    client_submission_id: UUID | None = None
 
 
 class ReaderAskMessageRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    # Optional model key for thread option resolution compatibility only.
+    # ASK-RETRY-CONTRACT-R3: must NOT invent a new lane or override the
+    # original turn's capability snapshot. Lane is always the persisted
+    # execution_version of the target assistant message.
     model: str | None = None
+
+
+class ReaderAskSubmissionPublicMessage(BaseModel):
+    """Safe public projection of a message for reconcile hydrate (R5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    thread_id: str
+    role: ReaderAskMessageRole
+    status: ReaderAskMessageStatus
+    content_md: str
+    reasoning_md: str | None = None
+    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
+    reasoning_truncated: bool | None = None
+    citations: list[ReaderAskCitation] = Field(default_factory=list)
+    agentic_citations: list[Any] | None = None
+    agentic_answer_blocks: list[Any] | None = None
+    agentic_web_search: Any | None = None
+    execution_version: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ReaderAskSubmissionReconcileResponse(BaseModel):
+    """ASK-RETRY-CONTRACT-R5 — typed reconciliation with optional hydrate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_submission_id: str
+    thread_id: str
+    status: Literal[
+        "claimed",
+        "streaming",
+        "completed",
+        "failed",
+        "cancelled",
+        "not_found",
+    ]
+    user_message_id: str | None = None
+    assistant_message_id: str | None = None
+    terminal_code: str | None = None
+    claim_generation: int | None = None
+    action_hint: Literal["resend", "retry", "reask", "wait", "none"] | None = None
+    # Full public messages when terminal / available — never internal handles.
+    user_message: ReaderAskSubmissionPublicMessage | None = None
+    assistant_message: ReaderAskSubmissionPublicMessage | None = None
 
 
 class ReaderAskFollowUpSuggestion(BaseModel):
@@ -891,6 +945,10 @@ class ReaderRecordAskMessageRequest(BaseModel):
     # to invoke ``search_web``; Retry replays the original turn's mode
     # instead of re-reading current UI state.
     web_search_mode: Literal["disabled", "allowed"] = "disabled"
+    # ASK-RETRY-CONTRACT-R2: client-generated UUID for idempotent claim.
+    # Same value re-submitted after a network blip must not create a
+    # second user/assistant pair or re-call the model.
+    client_submission_id: UUID | None = None
 
 
 class ReaderRecordAskActionConfirmRequest(BaseModel):

@@ -99,16 +99,26 @@ describe("projectPanelInitNotice", () => {
 });
 
 describe("projectSendFailureNotice", () => {
-  it("→ turn / error, bound to message, not dismissible, retry CTA", () => {
+  it("→ turn / action, bound to message, not dismissible, retry CTA (persisted)", () => {
     const notice = projectSendFailureNotice({
       messageId: "msg_send_1",
       message: ASK_UNAVAILABLE_MESSAGE,
     });
     expect(notice.scope).toBe("turn");
-    expect(notice.severity).toBe("error");
+    expect(notice.severity).toBe("action");
     expect(notice.relatedMessageId).toBe("msg_send_1");
     expect(notice.dismissible).toBe(false);
     expect(notice.cta).toEqual({ label: "重新生成", action: "retry" });
+  });
+
+  it("pending submission → action + 重新发送 CTA", () => {
+    const notice = projectSendFailureNotice({
+      messageId: "local-assistant-1",
+      message: "这次消息尚未完成提交，请重新发送。",
+      target: "pending",
+    });
+    expect(notice.severity).toBe("action");
+    expect(notice.cta).toEqual({ label: "重新发送", action: "resend" });
   });
 });
 

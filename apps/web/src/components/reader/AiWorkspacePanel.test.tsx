@@ -21,7 +21,7 @@ import {
 } from "./AiWorkspacePanel";
 
 const completedPayload = {
-  id: "msg-assistant-1",
+  id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   thread_id: "thread-1",
   content_md: "解释完成。",
   submission_mode: "chat" as const,
@@ -147,7 +147,7 @@ vi.mock("./ask/sse", async (importOriginal) => {
   return {
     ...actual,
     consumeReaderAskSse: vi.fn(async (_response: Response, onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "message.completed",
         data: completedPayload,
@@ -391,9 +391,12 @@ function mockFetch() {
   });
 }
 
+/** Canonical-shaped assistant id used by fixtures (must be UUID for regenerate CTA). */
+const FIXTURE_ASSISTANT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
 function createAssistantMessage(overrides: Partial<ReaderAskUiMessageDto> = {}): ReaderAskUiMessageDto {
   return {
-    id: "msg-assistant-1",
+    id: FIXTURE_ASSISTANT_ID,
     thread_id: "thread-1",
     role: "assistant",
     status: "completed",
@@ -1003,7 +1006,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -1131,7 +1134,7 @@ describe("AiWorkspacePanel", () => {
           last_message_at: null,
           messages: [
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -1334,7 +1337,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -1536,7 +1539,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -1869,7 +1872,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "interrupted",
@@ -1897,8 +1900,8 @@ describe("AiWorkspacePanel", () => {
           ],
         });
       }
-      // retry/stream endpoint — simulate a full regenerate
-      if (url.includes("/retry/stream")) {
+      // Browser retry ABI is /retry (never /retry/stream) — simulate regenerate
+      if (url.includes("/retry") && !url.includes("/retry/stream")) {
         return new Response("", {
           status: 200,
           headers: { "content-type": "text/event-stream" },
@@ -1933,15 +1936,19 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("继续生成")).toBeNull();
     expect(screen.queryByText("继续")).toBeNull();
 
-    // Clicking the button triggers a full regenerate (retry/stream endpoint)
+    // Clicking the button triggers a full regenerate on browser /retry ABI
     fireEvent.click(regenerateButton);
 
     await waitFor(() => {
       const retryCall = vi
         .mocked(global.fetch)
-        .mock.calls.find(([url]) => String(url).includes("/retry/stream"));
+        .mock.calls.find(([url]) => {
+          const value = String(url);
+          return value.includes("/retry") && !value.includes("/retry/stream");
+        });
       expect(retryCall).toBeTruthy();
-      expect(String(retryCall?.[0])).toContain("/retry/stream");
+      expect(String(retryCall?.[0])).toContain("/retry");
+      expect(String(retryCall?.[0])).not.toContain("/retry/stream");
       expect(retryCall?.[1]?.method).toBe("POST");
     });
   });
@@ -2006,7 +2013,7 @@ describe("AiWorkspacePanel", () => {
           last_message_at: null,
           messages: [
             {
-              id: "msg-assistant-1",
+              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -2404,14 +2411,14 @@ describe("AiWorkspacePanel", () => {
           last_message_at: null,
           messages: [
             createAssistantMessage({
-              id: "msg-retry-target",
+              id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
               status: "interrupted",
               content_md: "已有部分答案。",
             }),
           ],
         });
       }
-      if (url.includes("/retry/stream")) {
+      if (url.includes("/retry") && !url.includes("/retry/stream")) {
         return new Response("", {
           status: 200,
           headers: { "content-type": "text/event-stream" },
@@ -2432,8 +2439,12 @@ describe("AiWorkspacePanel", () => {
     await waitFor(() => {
       const retryCall = vi
         .mocked(global.fetch)
-        .mock.calls.find(([url]) => String(url).includes("/retry/stream"));
+        .mock.calls.find(([url]) => {
+          const value = String(url);
+          return value.includes("/retry") && !value.includes("/retry/stream");
+        });
       expect(retryCall).toBeTruthy();
+      expect(String(retryCall?.[0])).not.toContain("/retry/stream");
       // ASK-WEB-G1-R3: Retry body only carries ``model``. The backend
       // replays the persisted ``web_search_mode`` from the original user
       // message metadata after ownership verification — no client input
@@ -2692,7 +2703,7 @@ describe("AiWorkspacePanel", () => {
 
   function mockArticleRagCompletedPayload(articleRag: unknown) {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "message.completed",
         data: { ...completedPayload, article_rag: articleRag },
@@ -5180,10 +5191,13 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
 
   it("clears agentic evidence on regenerate placeholder before the next stream", async () => {
     // First stream stores agentic evidence; retry should clear it immediately.
+    // Canonical UUID required for regenerate CTA (ASK-RETRY-CONTRACT-R4).
+    const canonicalId = "cccccccc-dddd-4eee-8fff-000000000001";
+    const completed = { ...agenticCompletedPayload, message_id: canonicalId };
     vi.mocked(consumeReaderAskSse)
       .mockImplementationOnce(async (_response, onEvent) => {
-        onEvent({ event: "message.started", data: { message_id: "msg-agentic-1" } });
-        onEvent({ event: "message.completed", data: agenticCompletedPayload });
+        onEvent({ event: "message.started", data: { message_id: canonicalId } });
+        onEvent({ event: "message.completed", data: completed });
         return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
       })
       .mockImplementationOnce(async () => {
@@ -6408,7 +6422,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
     // our mockImplementationOnce is the next one consumed.
     vi.mocked(consumeReaderAskSse).mockReset();
     vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "message.completed", data: completedPayload });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
@@ -6737,7 +6751,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
     vi.restoreAllMocks();
     vi.mocked(consumeReaderAskSse).mockReset();
     vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "message.completed", data: completedPayload });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
@@ -6768,7 +6782,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
       knowledge_mode: null,
       source_status: null,
       web_search: null,
-      message_id: "msg-assistant-1",
+      message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       thread_id: "thread-1",
       turn_run_id: "run-1",
       ...overrides,
@@ -6777,13 +6791,13 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
 
   it("live hard terminal (agentic.terminal) renders the canonical projector output inside the turn bubble", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "agentic.terminal",
         data: {
           execution_version: VERSION,
           final_status: "failed",
-          message_id: "msg-assistant-1",
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           thread_id: "thread-1",
           turn_run_id: "run-1",
           terminal_reason: "agent_run_failed",
@@ -6811,7 +6825,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
 
   it("completed + optional-tool warning renders on the completed bubble (not swallowed by status=completed)", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "agentic.progress",
         data: {
@@ -6849,7 +6863,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
 
   it("optional warning is dismissible; dismissing removes only the warning, keeps the answer", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "agentic.progress",
         data: {
@@ -6894,13 +6908,13 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
 
   it("composer does not render an error banner for turn errors (errorMessage prop not wired)", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "agentic.terminal",
         data: {
           execution_version: VERSION,
           final_status: "failed",
-          message_id: "msg-assistant-1",
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           thread_id: "thread-1",
           turn_run_id: "run-1",
           terminal_reason: "agent_run_failed",
@@ -6956,7 +6970,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     vi.restoreAllMocks();
     vi.mocked(consumeReaderAskSse).mockReset();
     vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "message.completed", data: completedPayload });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });
@@ -6982,7 +6996,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
       knowledge_mode: null,
       source_status: null,
       web_search: null,
-      message_id: "msg-assistant-1",
+      message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       thread_id: "thread-1",
       turn_run_id: "run-1",
       ...overrides,
@@ -6992,7 +7006,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
   function runStartedPayload() {
     return {
       execution_version: VERSION,
-      message_id: "msg-assistant-1",
+      message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       thread_id: "thread-1",
       turn_run_id: "run-1",
       has_initial_selection: false,
@@ -7003,7 +7017,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
   function reasoningPayloads() {
     const identity = {
       execution_version: VERSION,
-      message_id: "msg-assistant-1",
+      message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       thread_id: "thread-1",
       turn_run_id: "run-1",
     };
@@ -7033,7 +7047,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 
   it("settled v2 turn keeps a frozen Chain of Thought (snapshot persisted before idle reset)", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "agentic.run_started", data: runStartedPayload() });
       onEvent({
         event: "agentic.progress",
@@ -7112,7 +7126,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 
   it("non-ok terminal freezes steps as interrupted; the warning stays with the SystemMessage notice", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "agentic.run_started", data: runStartedPayload() });
       onEvent({
         event: "agentic.progress",
@@ -7131,7 +7145,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
         data: {
           execution_version: VERSION,
           final_status: "failed",
-          message_id: "msg-assistant-1",
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           thread_id: "thread-1",
           turn_run_id: "run-1",
           terminal_reason: "agent_run_failed",
@@ -7142,7 +7156,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
         data: {
           execution_version: VERSION,
           final_status: "failed",
-          message_id: "msg-assistant-1",
+          message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
           thread_id: "thread-1",
           turn_run_id: "run-1",
           terminal_reason: "agent_run_failed",
@@ -7174,7 +7188,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 
   it("retry clears the previous attempt's snapshot before the new run", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "agentic.run_started", data: runStartedPayload() });
       onEvent({
         event: "agentic.progress",
@@ -7304,13 +7318,13 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 
   it("legacy lanes keep ReasoningPanel and never render the CoT", async () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
-      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
-      onEvent({ event: "reasoning.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      onEvent({ event: "reasoning.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({
         event: "reasoning.delta",
-        data: { message_id: "msg-assistant-1", delta: "legacy thinking" },
+        data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", delta: "legacy thinking" },
       });
-      onEvent({ event: "reasoning.completed", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "reasoning.completed", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       onEvent({ event: "message.completed", data: completedPayload });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     });

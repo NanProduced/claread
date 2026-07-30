@@ -16,6 +16,7 @@ import {
   isTrustedTerminalEvent,
   makeLogicalTerminalResult,
   matchesTurnIdentity,
+  parseSubmissionReconcilePayload,
   TurnLifecycleMetrics,
   type LogicalTerminalResult,
   type TerminalFinalStatus,
@@ -95,6 +96,32 @@ function classifyTrustedTerminal(
     return null;
   }
   const payload = (data ?? {}) as Record<string, unknown>;
+
+  // R6: submission.reconcile is a logical terminal independent of
+  // agentic turn identity — it arrives *instead* of a model stream when
+  // the same client_submission_id already has a claim/pair. No identity
+  // match is required (and no fake agentic.terminal(ok) is emitted).
+  if (event === "submission.reconcile") {
+    const reconcile = parseSubmissionReconcilePayload(payload);
+    if (reconcile === null) {
+      return makeLogicalTerminalResult("parse_error");
+    }
+    const finalStatus: TerminalFinalStatus | null =
+      reconcile.status === "completed"
+        ? "ok"
+        : reconcile.status === "failed"
+          ? "failed"
+          : reconcile.status === "cancelled"
+            ? "cancelled"
+            : null;
+    return makeLogicalTerminalResult("submission_reconcile", {
+      identity: null,
+      finalStatus,
+      terminalReason: reconcile.terminalCode,
+      submissionReconcile: reconcile,
+    });
+  }
+
   const candidateMessageId =
     typeof payload.message_id === "string" ? payload.message_id : null;
   const candidateThreadId =

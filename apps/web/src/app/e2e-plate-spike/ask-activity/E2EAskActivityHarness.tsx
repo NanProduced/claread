@@ -93,9 +93,10 @@ export default function E2EAskActivityHarness() {
   const handleSetScript = useCallback((events: SpikeSseScriptEvent[]) => {
     scriptRef.current = events.map((item) => ({
       event: item.event,
-      data: { ...item.data },
+      data: { ...(item.data ?? {}) },
       hold: item.hold === true,
       delayMs: item.delayMs,
+      raw: typeof item.raw === "string" ? item.raw : undefined,
     }));
   }, []);
 
@@ -156,7 +157,13 @@ export default function E2EAskActivityHarness() {
               if (typeof item.delayMs === "number" && item.delayMs > 0) {
                 await new Promise((resolve) => setTimeout(resolve, item.delayMs));
               }
-              controller.enqueue(encoder.encode(encodeSse(item.event, item.data)));
+              if (typeof item.raw === "string" && item.raw.length > 0) {
+                controller.enqueue(encoder.encode(item.raw));
+              } else {
+                controller.enqueue(
+                  encoder.encode(encodeSse(item.event, item.data)),
+                );
+              }
               streamController.emitted += 1;
               if (item.hold) {
                 await streamController.waitForRelease();

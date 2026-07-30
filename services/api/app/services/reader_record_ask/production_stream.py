@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -140,6 +140,146 @@ _TERMINAL_SSE_PREFIXES: tuple[str, ...] = (
 def _is_terminal_sse_chunk(chunk: str) -> bool:
     """True iff ``chunk`` is a typed terminal SSE frame."""
     return chunk.startswith(_TERMINAL_SSE_PREFIXES)
+
+
+SubmissionTerminalStatus = Literal["completed", "failed", "cancelled"]
+
+# R8.1: fixed priority — completed > failed > cancelled.
+_SUBMISSION_TERMINAL_RANK: dict[SubmissionTerminalStatus, int] = {
+    "completed": 3,
+    "failed": 2,
+    "cancelled": 1,
+}
+
+
+def merge_known_submission_status(
+    current: SubmissionTerminalStatus | None,
+    incoming: SubmissionTerminalStatus | None,
+) -> SubmissionTerminalStatus | None:
+    """Monotonic merge for agentic ``known_submission_status``.
+
+    Late/duplicate terminals must never demote a stronger outcome:
+    completed cannot become failed/cancelled; failed cannot become cancelled.
+    """
+    if incoming is None:
+        return current
+    if current is None:
+        return incoming
+    if _SUBMISSION_TERMINAL_RANK[incoming] > _SUBMISSION_TERMINAL_RANK[current]:
+        return incoming
+    return current
+
+
+def map_message_row_to_submission_status(
+    message_status: str | None,
+) -> SubmissionTerminalStatus | None:
+    """Trusted message-row statuses only; streaming/None → None (no invent)."""
+    if message_status == "completed":
+        return "completed"
+    if message_status == "failed":
+        return "failed"
+    if message_status in {"interrupted", "cancelled"}:
+        return "cancelled"
+    return None
+
+
+def resolve_agentic_submission_write_status(
+    *,
+    known: SubmissionTerminalStatus | None,
+    message_status: str | None = None,
+    message_lookup_ok: bool = True,
+) -> SubmissionTerminalStatus | None:
+    """Decide what status (if any) to write for agentic submission terminal.
+
+    - ``known`` is authoritative when set (already merged monotonically).
+    - Message row is supplementary **only** when known is None.
+    - Lookup failure / missing row → None (zero write, never invent cancelled).
+    """
+    if known is not None:
+        return known
+    if not message_lookup_ok:
+        return None
+    return map_message_row_to_submission_status(message_status)
+
+
+async def apply_agentic_submission_terminal(
+    *,
+    hook: Any,
+    known: SubmissionTerminalStatus | None,
+    load_message_status: Any | None = None,
+    repo: Any | None = None,
+) -> SubmissionTerminalStatus | None:
+    """Executable seam: resolve + mark submission terminal.
+
+    Returns the status that was requested for write, or ``None`` when no
+    write is attempted (unknown outcome). Does not invent cancelled.
+    """
+    message_status: str | None = None
+    message_lookup_ok = True
+    if known is None and load_message_status is not None:
+        try:
+            message_status = await load_message_status()
+        except Exception:  # noqa: BLE001
+            message_lookup_ok = False
+            message_status = None
+    write = resolve_agentic_submission_write_status(
+        known=known,
+        message_status=message_status,
+        message_lookup_ok=message_lookup_ok,
+    )
+    if write is None:
+        return None
+    ok = await hook.mark(write, repo=repo)
+    if not ok:
+        await hook.ensure_synced(repo=repo, fallback=write)
+    return write
+
+
+def _submission_status_from_terminal_chunk(
+    chunk: str,
+) -> SubmissionTerminalStatus | None:
+    """Map a typed terminal SSE frame to durable submission status.
+
+    R8: captures the **known** model outcome at the yield site of a
+    trusted terminal event. Does not invent cancelled for non-terminal
+    or unparseable frames.
+    """
+    if chunk.startswith("event: message.completed\n"):
+        return "completed"
+    if not (
+        chunk.startswith("event: agentic.terminal\n")
+        or chunk.startswith("event: message.interrupted\n")
+    ):
+        return None
+    # Extract final_status from the data line when present.
+    for line in chunk.split("\n"):
+        if not line.startswith("data:"):
+            continue
+        raw = line[5:].strip()
+        if not raw:
+            continue
+        try:
+            import json
+
+            payload = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return "failed"
+        if not isinstance(payload, dict):
+            return "failed"
+        final = payload.get("final_status")
+        if final == "ok":
+            return "completed"
+        if final == "cancelled":
+            return "cancelled"
+        if final in {
+            "failed",
+            "context_stale",
+            "invalid_citations",
+            "unavailable",
+        }:
+            return "failed"
+        return "failed"
+    return "failed"
 
 # Stable external terminal reasons. Must not leak pydantic-ai / provider
 # internals (exception text, schema bodies, raw responses, thinking).
@@ -1899,6 +2039,13 @@ async def stream_agentic_thread_message(
     # a typed terminal event. The route's ``finally`` block uses this
     # to reconcile any still-streaming row on generator close.
     lifecycle: StreamLifecycleHook | None = None,
+    # ASK-RETRY-CONTRACT-R2/R5: client-generated submission identity.
+    client_submission_id: UUID | None = None,
+    # R5: pair already durable-created by facade gateway.
+    existing_user_message: dict[str, Any] | None = None,
+    existing_assistant_message: dict[str, Any] | None = None,
+    claim_generation: int | None = None,
+    model_option_key: str | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -2043,9 +2190,13 @@ async def stream_agentic_thread_message(
         else None
     )
 
+    supersedes_run_id: UUID | None = None
+    run_attempt = 1
     if retry_message_id is not None:
         # Retry mode: reset the existing assistant message and reuse the
         # preceding user message's content.  No new user message is created.
+        # ASK-RETRY-CONTRACT-R3: content_md is preserved until the new run
+        # commits; supersedes_run_id + run_attempt link the regenerate chain.
         existing_assistant, existing_user = (
             await repo.get_assistant_message_with_preceding_user_message(
                 thread_id=thread_id,
@@ -2064,9 +2215,30 @@ async def stream_agentic_thread_message(
                 },
             )
             return
-        assistant_msg = await repo.reset_assistant_message_for_retry(
-            message_id=retry_message_id,
-        )
+        prior_run_id = existing_assistant.get("turn_run_id")
+        prior_attempt = existing_assistant.get("turn_run_attempt")
+        if prior_run_id:
+            try:
+                supersedes_run_id = UUID(str(prior_run_id))
+            except ValueError:
+                supersedes_run_id = None
+        if isinstance(prior_attempt, int) and prior_attempt >= 1:
+            run_attempt = prior_attempt + 1
+        else:
+            run_attempt = 2
+        try:
+            assistant_msg = await repo.reset_assistant_message_for_retry(
+                message_id=retry_message_id,
+            )
+        except Exception:
+            yield encode_sse(
+                "error",
+                {
+                    "code": "409",
+                    "detail": "A regenerate is already in progress for this answer.",
+                },
+            )
+            return
         user_msg = existing_user
         # Use the original user message text as agent input.
         content = existing_user["content_md"] or ""
@@ -2087,35 +2259,151 @@ async def stream_agentic_thread_message(
         # backend was actually wired this turn. Without a backend, the
         # capability cannot execute, so retry replay must NOT inherit a
         # "假可用" (fake-available) mode — fail-closed to ``disabled``.
-        persisted_web_search_mode = effective_web_search_mode
-        user_msg = await repo.create_message(
+        #
+        # ASK-RETRY-CONTRACT-R5: prefer pair already created by the facade
+        # gateway (atomic claim+pair+bind). Fall back to create only when
+        # no client_submission_id (pre-R2 clients) or tests inject messages.
+        from app.services.reader_record_ask.submission_gateway import (
+            build_retry_snapshot,
+        )
+
+        if existing_user_message is not None and existing_assistant_message is not None:
+            user_msg = existing_user_message
+            assistant_msg = existing_assistant_message
+        else:
+            persisted_web_search_mode = effective_web_search_mode
+            retry_snapshot = build_retry_snapshot(
+                lane="agentic",
+                model_option_key=model_option_key,
+                web_search_mode=persisted_web_search_mode,
+            )
+            if model_option_key is None and client_submission_id is not None:
+                # Incomplete snapshot for a submission-bound turn is fail-closed.
+                yield encode_sse(
+                    "error",
+                    {
+                        "code": "retry_snapshot_incomplete",
+                        "detail": "Agentic turn requires a resolved model_option_key.",
+                    },
+                )
+                return
+            user_msg = await repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                status="completed",
+                content_md=content,
+                metadata={
+                    "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                    "retry_lane": "agentic",
+                    "retry_contract_version": retry_snapshot[
+                        "retry_contract_version"
+                    ],
+                    "web_search_mode": persisted_web_search_mode,
+                    "model_option_key": model_option_key,
+                    "retry_snapshot": retry_snapshot,
+                },
+            )
+            assistant_msg = await repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                status="streaming",
+                content_md="",
+                metadata={
+                    "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                    "retry_lane": "agentic",
+                    "retry_contract_version": retry_snapshot[
+                        "retry_contract_version"
+                    ],
+                    "model_option_key": model_option_key,
+                    "retry_snapshot": retry_snapshot,
+                },
+            )
+
+    # R8/R8.1: known model terminal; monotonic via merge_known_submission_status.
+    known_submission_status: SubmissionTerminalStatus | None = None
+
+    async def _sync_submission_terminal_r6(
+        *,
+        known: SubmissionTerminalStatus | None = None,
+    ) -> None:
+        """R6–R8.1: CAS terminal sync for client_submission_id.
+
+        Uses :func:`apply_agentic_submission_terminal` seam. Never invents
+        cancelled when outcome is unknown.
+        """
+        if client_submission_id is None or assistant_msg is None:
+            return
+        from app.services.reader_ask import repository as ask_msg_repo
+        from app.services.reader_record_ask.submission_gateway import (
+            SubmissionTerminalHook,
+        )
+
+        asst_uuid: UUID | None
+        try:
+            asst_uuid = UUID(str(assistant_msg["id"]))
+        except (ValueError, TypeError, KeyError):
+            asst_uuid = None
+        hook = SubmissionTerminalHook(
             thread_id=thread_id,
-            role="user",
-            status="completed",
-            content_md=content,
-            metadata={
-                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                "web_search_mode": persisted_web_search_mode,
+            client_submission_id=client_submission_id,
+            claim_generation=claim_generation,
+            assistant_message_id=asst_uuid,
+        )
+        effective_known = (
+            known if known is not None else known_submission_status
+        )
+
+        async def _load_msg_status() -> str | None:
+            if asst_uuid is None:
+                return None
+            row = await ask_msg_repo.get_message(asst_uuid)
+            if row is None:
+                return None
+            return str(row.get("status") or "") or None
+
+        try:
+            await apply_agentic_submission_terminal(
+                hook=hook,
+                known=effective_known,
+                load_message_status=(
+                    _load_msg_status if effective_known is None else None
+                ),
+                repo=repo,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "agentic submission terminal sync failed "
+                "client_submission_id=%s assistant_id=%s",
+                client_submission_id,
+                asst_uuid,
+                exc_info=True,
+            )
+
+    try:
+        turn = await repo.create_agentic_turn_run(
+            message_id=UUID(assistant_msg["id"]),
+            thread_id=thread_id,
+            user_id=user_id,
+            reading_record_id=reading_record_id,
+            base_id=envelope.base_id,
+            generation=envelope.record_generation,
+            turn_id=UUID(user_msg["id"]),
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            envelope_snapshot=_safe_envelope_snapshot(envelope),
+            run_attempt=run_attempt,
+            supersedes_run_id=supersedes_run_id,
+        )
+    except RuntimeError:
+        yield encode_sse(
+            "error",
+            {
+                "code": "409",
+                "detail": "A regenerate is already in progress for this answer.",
             },
         )
-        assistant_msg = await repo.create_message(
-            thread_id=thread_id,
-            role="assistant",
-            status="streaming",
-            content_md="",
-            metadata={"execution_version": EXECUTION_VERSION_AGENTIC_V2},
-        )
-    turn = await repo.create_agentic_turn_run(
-        message_id=UUID(assistant_msg["id"]),
-        thread_id=thread_id,
-        user_id=user_id,
-        reading_record_id=reading_record_id,
-        base_id=envelope.base_id,
-        generation=envelope.record_generation,
-        turn_id=UUID(user_msg["id"]),
-        envelope_fingerprint=envelope.envelope_fingerprint,
-        envelope_snapshot=_safe_envelope_snapshot(envelope),
-    )
+        # Conflict is a known failure, not cancel.
+        await _sync_submission_terminal_r6(known="failed")
+        return
 
     # ASK-TURN-LIFECYCLE R1: register the active turn identity with the
     # route-owned lifecycle hook. From this point on, any generator close
@@ -2219,8 +2507,15 @@ async def stream_agentic_thread_message(
             # route's ``finally`` block that the row was already
             # terminalized by the generator and stale-stream reconciliation
             # must be skipped (idempotent guard).
-            if lifecycle is not None and _is_terminal_sse_chunk(chunk):
-                lifecycle.mark_terminal_emitted()
+            if _is_terminal_sse_chunk(chunk):
+                if lifecycle is not None:
+                    lifecycle.mark_terminal_emitted()
+                # R8.1: single monotonic merge for known terminal status.
+                noted = _submission_status_from_terminal_chunk(chunk)
+                known_submission_status = merge_known_submission_status(
+                    known_submission_status,
+                    noted,
+                )
     finally:
         # R4-5c: cancel the heartbeat task on stream end (normal,
         # exception, or ASGI cancellation). The ``CancelledError`` is
@@ -2239,6 +2534,8 @@ async def stream_agentic_thread_message(
                     heartbeat_turn_run_id,
                     exc_info=True,
                 )
+        # R8: sync with known outcome; never invent cancelled if unknown.
+        await _sync_submission_terminal_r6(known=known_submission_status)
 
 
 async def retry_agentic_thread_message(

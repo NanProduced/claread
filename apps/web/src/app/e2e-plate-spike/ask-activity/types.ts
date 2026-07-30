@@ -13,6 +13,11 @@ export type SpikeSseScriptEvent = {
   hold?: boolean;
   /** Optional delay (ms) before emitting this event. */
   delayMs?: number;
+  /**
+   * When set, emit this SSE text verbatim (skip JSON encode).
+   * Used by R8.1 parse_error gates.
+   */
+  raw?: string;
 };
 
 export type SpikeAskActivityApi = {

@@ -26,6 +26,21 @@ export const ASK_INCOMPLETE_MESSAGE = "这次回答没有完成。请稍后重�
 /** Fixed copy for fetch-level network failures. */
 export const NETWORK_ERROR_MESSAGE = "网络连接失败，请检查网络后重试。";
 
+/**
+ * ASK-RETRY-CONTRACT-R1 — pending/optimistic submission never reached a
+ * canonical assistant id. CTA is 重新发送, not 重新生成.
+ */
+export const PENDING_SUBMISSION_RESEND_MESSAGE =
+  "这次消息尚未完成提交，请重新发送。";
+
+/** Retry target is not a persisted server UUID (BFF 409). */
+export const RETRY_TARGET_NOT_PERSISTED_MESSAGE =
+  "这轮回答尚未保存，请重新发送，不要直接重新生成。";
+
+/** Retry lane missing / untrusted (backend 409). */
+export const RETRY_LANE_UNKNOWN_MESSAGE =
+  "无法确认这轮回答的执行链路，请新建提问，不要跨链重试。";
+
 /** Generic interrupted-bubble copy when no final_status refinement applies. */
 export const INTERRUPTED_BUBBLE_FALLBACK_MESSAGE = "输出中断，可重新生成。";
 
@@ -192,6 +207,9 @@ const KNOWN_FRIENDLY_PATTERNS: readonly RegExp[] = [
   /当前积分不足/,
   /发送消息失败/,
   /重新生成失败/,
+  /这次消息尚未完成提交/,
+  /这轮回答尚未保存/,
+  /无法确认这轮回答的执行链路/,
   /Ask Claread (初始化|线程列表|模型列表|加载失败)/,
   /重置会话失败|动作确认失败|删除补充失败/,
   /上下文文章搜索失败/,

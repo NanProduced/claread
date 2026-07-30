@@ -35,7 +35,7 @@ export type AskSystemNoticeScope = "turn" | "panel" | "composer";
 export type AskSystemNoticeSeverity = "action" | "warning" | "error";
 
 /** CTA intent — the UI layer maps each value to a concrete handler. */
-export type AskSystemNoticeCtaAction = "retry" | "reload" | "dismiss";
+export type AskSystemNoticeCtaAction = "retry" | "resend" | "reload" | "dismiss";
 
 export interface AskSystemNoticeCta {
   label: string;
@@ -67,6 +67,7 @@ const SOFT_FINAL_STATUSES: ReadonlySet<string> = new Set(
 );
 
 const RETRY_CTA: AskSystemNoticeCta = { label: "重新生成", action: "retry" };
+const RESEND_CTA: AskSystemNoticeCta = { label: "重新发送", action: "resend" };
 const RELOAD_CTA: AskSystemNoticeCta = { label: "重新加载", action: "reload" };
 
 /**
@@ -151,27 +152,39 @@ export function projectPanelInitNotice(args: {
 }
 
 /**
- * Project a send / retry failure (network error, non-ok response, or thrown
- * exception during the SSE request). Turn-scoped, error severity, bound to
- * the streaming message id, NOT dismissible, with a "重新生成 / retry" CTA.
+ * Project a send / retry transport failure (network error, non-ok response,
+ * or thrown exception during the SSE request).
  *
- * Semantically equivalent to a hard agent failure: the turn did not produce
- * a canonical answer, so the user must retry to get one. `message` MUST be
- * typed copy from ask-error-messages.ts (caller responsibility — pass
- * `toUserFacingErrorMessage(error, fallback)` output, never `error.message`).
+ * ASK-RETRY-CONTRACT-R1:
+ * - Pending/optimistic submissions use severity `action` + CTA 重新发送
+ *   (never hit `/retry`).
+ * - Persisted assistant regenerates use severity `action` + CTA 重新生成
+ *   for retryable transport/service issues (no red error border).
+ * - Callers may force `error` only for true validation / unrecoverable
+ *   cases via `severity: "error"`.
+ *
+ * `message` MUST be typed copy from ask-error-messages.ts (caller
+ * responsibility — pass `toUserFacingErrorMessage(error, fallback)` output,
+ * never `error.message`).
  */
 export function projectSendFailureNotice(args: {
   messageId: string;
   message: string;
+  /**
+   * `pending` → 重新发送; `persisted` / default → 重新生成.
+   */
+  target?: "pending" | "persisted";
+  severity?: "action" | "error";
 }): AskSystemNotice {
+  const isPending = args.target === "pending";
   return {
     id: `turn:send:${args.messageId}`,
     scope: "turn",
-    severity: "error",
+    severity: args.severity ?? "action",
     message: args.message,
     relatedMessageId: args.messageId,
     dismissible: false,
-    cta: RETRY_CTA,
+    cta: isPending ? RESEND_CTA : RETRY_CTA,
   };
 }
 
@@ -282,10 +295,13 @@ export function projectOptionalToolWarning(args: {
  * errors.
  */
 export function isFullTurnError(notice: AskSystemNotice | null): boolean {
+  // Full-turn transport/service failures use severity `action` with a
+  // retry or resend CTA (ASK-RETRY-CONTRACT). Hard agent terminals stay
+  // severity `error` with retry. Both count as full-turn issues.
   return (
     notice !== null &&
     notice.scope === "turn" &&
-    notice.severity === "error" &&
-    notice.cta?.action === "retry"
+    (notice.severity === "error" || notice.severity === "action") &&
+    (notice.cta?.action === "retry" || notice.cta?.action === "resend")
   );
 }

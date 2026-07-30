@@ -13,6 +13,7 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
+    ReaderAskSubmissionReconcileResponse,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderRecordAskActionConfirmRequest,
@@ -359,6 +360,101 @@ async def stream_reading_record_ask_thread_message(
             lifecycle=lifecycle,
         ),
         lifecycle=lifecycle,
+    )
+
+
+@router.get(
+    "/reader/records/{reading_record_id}/ask/threads/{thread_id}/submissions/{client_submission_id}",
+    response_model=ReaderAskSubmissionReconcileResponse,
+    summary="Reconcile a client submission after a network blip",
+)
+async def reconcile_reading_record_ask_submission(
+    reading_record_id: str,
+    thread_id: UUID,
+    client_submission_id: UUID,
+    current_user: AuthUserDep,
+) -> ReaderAskSubmissionReconcileResponse:
+    """ASK-RETRY-CONTRACT-R5 — typed reconcile + safe public message hydrate."""
+    from app.schemas.reader_ask import ReaderAskSubmissionPublicMessage
+    from app.services.reader_ask import repository as ask_repo
+    from app.services.reader_record_ask.submission_gateway import (
+        build_reconcile_view,
+    )
+
+    user_id = UUID(current_user.user_id)
+    repo = ReaderRecordAskRepository()
+    try:
+        record_uuid = UUID(reading_record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid reading_record_id") from exc
+    thread = await repo.get_thread(
+        user_id=user_id,
+        thread_id=thread_id,
+        reading_record_id=record_uuid,
+    )
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+
+    async def project_public_message(message_id: UUID) -> dict | None:
+        msg = await ask_repo.get_message(message_id)
+        if msg is None:
+            return None
+        # Strip internal-only fields if present.
+        safe = {
+            "id": msg.get("id"),
+            "thread_id": msg.get("thread_id"),
+            "role": msg.get("role"),
+            "status": msg.get("status"),
+            "content_md": msg.get("content_md") or "",
+            "reasoning_md": msg.get("reasoning_md"),
+            "reasoning_status": msg.get("reasoning_status"),
+            "reasoning_truncated": msg.get("reasoning_truncated"),
+            "citations": msg.get("citations") or [],
+            "agentic_citations": msg.get("agentic_citations"),
+            "agentic_answer_blocks": msg.get("agentic_answer_blocks"),
+            "agentic_web_search": msg.get("agentic_web_search"),
+            "execution_version": msg.get("execution_version"),
+            "created_at": msg.get("created_at"),
+            "updated_at": msg.get("updated_at"),
+        }
+        try:
+            return ReaderAskSubmissionPublicMessage.model_validate(safe).model_dump(
+                mode="json"
+            )
+        except Exception:
+            return {
+                "id": str(msg.get("id")),
+                "thread_id": str(msg.get("thread_id")),
+                "role": msg.get("role") or "assistant",
+                "status": msg.get("status") or "completed",
+                "content_md": msg.get("content_md") or "",
+            }
+
+    view = await build_reconcile_view(
+        repo=repo,
+        thread_id=thread_id,
+        client_submission_id=client_submission_id,
+        project_public_message=project_public_message,
+    )
+    return ReaderAskSubmissionReconcileResponse(
+        client_submission_id=view.client_submission_id,
+        thread_id=view.thread_id,
+        status=view.status,
+        user_message_id=view.user_message_id,
+        assistant_message_id=view.assistant_message_id,
+        terminal_code=view.terminal_code,
+        claim_generation=view.claim_generation,
+        action_hint=view.action_hint,
+        user_message=(
+            ReaderAskSubmissionPublicMessage.model_validate(view.user_message)
+            if view.user_message
+            else None
+        ),
+        assistant_message=(
+            ReaderAskSubmissionPublicMessage.model_validate(view.assistant_message)
+            if view.assistant_message
+            else None
+        ),
     )
 
 

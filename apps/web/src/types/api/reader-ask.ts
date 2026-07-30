@@ -797,6 +797,51 @@ export interface ReaderAskMessageStreamRequestDto {
    * Omitted / `disabled` means web search is not requested this turn.
    */
   web_search_mode?: WebSearchModeDto;
+  /**
+   * ASK-RETRY-CONTRACT-R2 — client-generated UUID for idempotent claim.
+   * Same value re-submitted after a network blip must not create a second
+   * user/assistant pair or re-call the model. Optional on legacy clients;
+   * new web clients always send it.
+   */
+  client_submission_id?: string | null;
+}
+
+/**
+ * ASK-RETRY-CONTRACT-R2 — typed reconciliation snapshot for a client
+ * submission (after claim or on re-submit of the same id).
+ */
+/** Safe public message projection returned by reconcile hydrate (R5). */
+export interface ReaderAskSubmissionPublicMessageDto {
+  id: string;
+  thread_id: string;
+  role: "user" | "assistant" | "system";
+  status: "pending" | "streaming" | "completed" | "failed" | "interrupted";
+  content_md: string;
+  reasoning_md?: string | null;
+  reasoning_status?: "idle" | "streaming" | "completed" | null;
+  reasoning_truncated?: boolean | null;
+  citations?: unknown[];
+  agentic_citations?: unknown[] | null;
+  agentic_answer_blocks?: unknown[] | null;
+  agentic_web_search?: unknown | null;
+  execution_version?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReaderAskSubmissionReconcileDto {
+  client_submission_id: string;
+  thread_id: string;
+  status: "claimed" | "streaming" | "completed" | "failed" | "cancelled" | "not_found";
+  user_message_id?: string | null;
+  assistant_message_id?: string | null;
+  /** When status is completed/failed/cancelled, a short typed reason code. */
+  terminal_code?: string | null;
+  claim_generation?: number | null;
+  action_hint?: "resend" | "retry" | "reask" | "wait" | "none" | null;
+  /** Full public projections — required for completed hydrate. */
+  user_message?: ReaderAskSubmissionPublicMessageDto | null;
+  assistant_message?: ReaderAskSubmissionPublicMessageDto | null;
 }
 
 export interface ReaderAskMessageRetryRequestDto {
@@ -840,7 +885,25 @@ export type ReaderAskStreamEventName =
   | "agentic.reasoning.started"
   | "agentic.reasoning.delta"
   | "agentic.reasoning.completed"
+  // ASK-RETRY-CONTRACT-R6: duplicate client_submission_id short-circuits
+  // the model; payload is a public reconcile snapshot (no secrets).
+  | "submission.reconcile"
   | "error";
+
+/**
+ * ASK-RETRY-CONTRACT-R6 — public SSE payload for `submission.reconcile`.
+ * No internal metadata, query, provider payload, or handle.
+ */
+export interface ReaderAskSubmissionReconcileSseDto {
+  client_submission_id: string;
+  thread_id: string;
+  status: ReaderAskSubmissionReconcileDto["status"];
+  user_message_id?: string | null;
+  assistant_message_id?: string | null;
+  terminal_code?: string | null;
+  action_hint?: ReaderAskSubmissionReconcileDto["action_hint"];
+  claim_generation?: number | null;
+}
 
 /**
  * Generic envelope kept for existing call sites that only need event+data.

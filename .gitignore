@@ -12,6 +12,9 @@ coverage/
 .next-e2e-spike-test/
 .next-e2e-gate-test/
 .next-e2e-ask-activity-r2-test/
+.next-e2e-ask-retry-r7-test/
+# ASK-RETRY R7 Playwright globalSetup port file (runtime only)
+apps/web/.claread-r7-e2e-url
 *.tsbuildinfo
 apps/miniprogram/dist/
 

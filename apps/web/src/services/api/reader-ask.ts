@@ -43,6 +43,8 @@ interface ReaderRecordAskMessageRequestDto {
    * only grants turn capability; it never forces a search.
    */
   web_search_mode?: WebSearchModeDto;
+  /** ASK-RETRY-CONTRACT-R2 — idempotent client submission identity. */
+  client_submission_id?: string | null;
 }
 
 function readingRecordAskPath(recordId: string, suffix = ""): string {
@@ -75,6 +77,7 @@ function toReadingRecordAskMessageRequest(
     // mount the `search_web` capability for this turn. Default to `disabled`
     // when omitted — `allowed` only grants capability, never forces a search.
     web_search_mode: body.web_search_mode ?? "disabled",
+    client_submission_id: body.client_submission_id ?? null,
   };
 }
 
@@ -326,7 +329,10 @@ export async function createUpstreamReadingRecordAskStream(
   });
 }
 
-/** Regenerate (not resume/continue) the assistant answer. Calls the upstream retry endpoint. */
+/**
+ * Regenerate (not resume/continue) the assistant answer.
+ * Upstream FastAPI path is always `/retry/stream` — Browser never sees this.
+ */
 export async function retryUpstreamReaderAskMessage(
   threadId: string,
   messageId: string,
@@ -368,6 +374,25 @@ export async function retryUpstreamReadingRecordAskMessage(
     // ASK-TURN-LIFECYCLE R1: see createUpstreamReaderAskStream.
     signal,
   });
+}
+
+/** ASK-RETRY-CONTRACT-R4 — FastAPI submission reconcile GET. */
+export async function getUpstreamReadingRecordAskSubmission(
+  recordId: string,
+  threadId: string,
+  clientSubmissionId: string,
+  sessionToken: string,
+): Promise<UpstreamResult<import("@/types/api/reader-ask").ReaderAskSubmissionReconcileDto>> {
+  return fastApiFetch(
+    readingRecordAskPath(
+      recordId,
+      `/threads/${encodeURIComponent(threadId)}/submissions/${encodeURIComponent(clientSubmissionId)}`,
+    ),
+    {
+      method: "GET",
+      sessionToken,
+    },
+  );
 }
 
 export type ReadingRecordAskCitationNavigateResultDto = {

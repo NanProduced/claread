@@ -20,7 +20,7 @@ import {
   ThumbsUp,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   InlineCitation,
   InlineCitationCard,
@@ -195,11 +195,29 @@ import {
   ASK_UNAVAILABLE_MESSAGE,
   CLARIFICATION_CONTEXT_MISSING_MESSAGE,
   OPTIONAL_TOOL_WARNING_MESSAGE,
+  PENDING_SUBMISSION_RESEND_MESSAGE,
   formatAgenticTerminalMessage,
   formatStreamErrorMessage,
   interruptedBubbleMessage,
   toUserFacingErrorMessage,
 } from "./ask/ask-error-messages";
+import {
+  browserAskRetryPath,
+  browserAskStreamPath,
+  browserAskSubmissionPath,
+  isPersistedAssistantMessageId,
+} from "@/lib/reader-ask/browser-paths";
+import {
+  clearPendingSendKeys,
+  messageMatchesActiveAssistant,
+  rekeyPendingSend,
+  resolveActiveAssistantId,
+} from "@/lib/reader-ask/pending-send";
+import {
+  classifyRetryTarget,
+  classifyRetryTargetForRecovery,
+  type PendingSendRequest,
+} from "@/lib/reader-ask/retry-target";
 import {
   projectActionFailureNotice,
   projectClarifyWarningNotice,
@@ -3531,6 +3549,8 @@ function MessageBubble({
   onSelectDisambiguationCandidate,
   onSelectAssetDisambiguationCandidate,
   onRetry,
+  onResend,
+  resolveRetryTarget,
   onJumpToAttachment,
   onAnnotationFeedback,
   analysisRecordId,
@@ -3556,6 +3576,11 @@ function MessageBubble({
     assetDisambiguation: ReaderAskAssetDisambiguationDto,
   ) => void;
   onRetry: (messageId: string) => void;
+  onResend?: (localAssistantId: string) => void;
+  /** R8: pending recovery may force resend for UUID bubbles. */
+  resolveRetryTarget: (
+    messageId: string,
+  ) => ReturnType<typeof classifyRetryTarget>;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
@@ -3697,6 +3722,11 @@ function MessageBubble({
                                       onClick: () => {
                                         if (turnNotice.cta?.action === "retry") {
                                           onRetry(message.id);
+                                        } else if (
+                                          turnNotice.cta?.action === "resend" &&
+                                          onResend
+                                        ) {
+                                          onResend(message.id);
                                         }
                                       },
                                     }
@@ -3733,24 +3763,46 @@ function MessageBubble({
                     }
                     footer={
                       message.status === "completed" ||
-                      (message.status === "interrupted" && !turnNotice) ? (
+                      (message.status === "interrupted" && !turnNotice) ||
+                      (message.status === "failed" &&
+                        resolveRetryTarget(message.id)?.kind ===
+                          "pending_submission") ? (
                         <MessageActions className="gap-0.5">
-                          <MessageAction
-                            label="复制内容"
-                            title="复制内容"
-                            onClick={() => {
-                              void copyMessageText(message.content_md ?? "");
-                            }}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </MessageAction>
-                          <MessageAction
-                            label="重新生成"
-                            title="重新生成"
-                            onClick={() => onRetry(message.id)}
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                          </MessageAction>
+                          {message.status !== "failed" ? (
+                            <MessageAction
+                              label="复制内容"
+                              title="复制内容"
+                              onClick={() => {
+                                void copyMessageText(message.content_md ?? "");
+                              }}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </MessageAction>
+                          ) : null}
+                          {isPersistedAssistantMessageId(message.id) &&
+                          message.status !== "failed" &&
+                          resolveRetryTarget(message.id)?.kind !==
+                            "pending_submission" ? (
+                            <MessageAction
+                              label="重新生成"
+                              title="重新生成"
+                              onClick={() => onRetry(message.id)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </MessageAction>
+                          ) : null}
+                          {resolveRetryTarget(message.id)?.kind ===
+                            "pending_submission" &&
+                          message.status === "failed" &&
+                          onResend ? (
+                            <MessageAction
+                              label="重新发送"
+                              title="重新发送"
+                              onClick={() => onResend(message.id)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </MessageAction>
+                          ) : null}
                         </MessageActions>
                       ) : null
                     }
@@ -4160,6 +4212,24 @@ export function AiWorkspacePanel({
   // when ``setSending(false)`` runs. Logged to console.info as a
   // log-safe JSON object — never contains content / reasoning / secrets.
   const turnMetricsRef = useRef<TurnLifecycleMetrics | null>(null);
+  // ASK-RETRY-CONTRACT-R1/R2/R8 — retain the original send payload for
+  // recovery. Keys may be local-assistant-* or a canonical UUID after
+  // message.started rekey. Authority is clientSubmissionId on the value.
+  // Do not delete until trusted terminal or successful hydrate.
+  const pendingSendByLocalAssistantRef = useRef<
+    Map<string, PendingSendRequest>
+  >(new Map());
+  // In-flight regenerate guard (double-click): at most one active retry
+  // per assistant message id.
+  const activeRetryMessageIdsRef = useRef<Set<string>>(new Set());
+
+  /** R8: pending recovery forces 重新发送 even when bubble id is UUID. */
+  const resolveRetryTarget = useCallback((messageId: string) => {
+    return classifyRetryTargetForRecovery(
+      messageId,
+      pendingSendByLocalAssistantRef.current.has(messageId),
+    );
+  }, []);
 
   const dispatchAgenticActivity = (event: AgenticActivityEvent) => {
     const next = reduceAgenticActivityEvent(agenticActivityMirrorRef.current, event);
@@ -4894,6 +4964,8 @@ export function AiWorkspacePanel({
     entryAction?: ReaderAskEntryActionDto;
     submissionMode?: "chat" | "quick_action";
     clearComposer?: boolean;
+    /** R2: reuse a prior client_submission_id on resend (idempotent claim). */
+    clientSubmissionId?: string;
   }) {
     const content = (options?.content ?? "").trim();
     if (!content || sending) {
@@ -4921,6 +4993,27 @@ export function AiWorkspacePanel({
     const now = Date.now();
     const tempUserId = `local-user-${now}`;
     const tempAssistantId = `local-assistant-${now}`;
+    // ASK-RETRY-CONTRACT-R2 — client-generated UUID claimed server-side
+    // before any model call. Same id re-submitted after a network blip
+    // must not create a second user/assistant pair. Resend reuses the
+    // retained id from the failed pending submission.
+    const clientSubmissionId =
+      options?.clientSubmissionId ??
+      (typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `00000000-0000-4000-8000-${String(now).padStart(12, "0").slice(-12)}`);
+    const pendingRequest: PendingSendRequest = {
+      content,
+      attachments: usedAttachments.map(serializeAttachment),
+      entryAction: entryAction,
+      model: effectiveSelectedModelKey,
+      webSearchMode: webSearchMode,
+      clientSubmissionId,
+      localUserId: tempUserId,
+      localAssistantId: tempAssistantId,
+      threadId,
+    };
+    pendingSendByLocalAssistantRef.current.set(tempAssistantId, pendingRequest);
     const userMessage: ReaderAskUiMessageDto = {
       id: tempUserId,
       thread_id: threadId,
@@ -5029,6 +5122,249 @@ export function AiWorkspacePanel({
       ),
     );
 
+    // R7: single reconcile helper shared by submission.reconcile / eof /
+    // parse_error / non-abort transport failure. Declared outside try so
+    // catch can call the same function (no duplicated poll/hydrate).
+    type ReconcileSnap = {
+      status?: string;
+      assistant_message_id?: string | null;
+      user_message_id?: string | null;
+      action_hint?: string | null;
+      assistant_message?: {
+        id?: string;
+        content_md?: string;
+        status?: string;
+        reasoning_md?: string | null;
+        reasoning_status?: string | null;
+        agentic_citations?: unknown;
+        agentic_answer_blocks?: unknown;
+      } | null;
+      user_message?: { id?: string; content_md?: string } | null;
+    };
+
+    const activeAssistantId = () =>
+      resolveActiveAssistantId(
+        streamingAssistantIdRef.current,
+        tempAssistantId,
+      );
+
+    const clearThisPending = (...extraIds: Array<string | null | undefined>) => {
+      clearPendingSendKeys(
+        pendingSendByLocalAssistantRef.current,
+        tempAssistantId,
+        streamingAssistantIdRef.current,
+        ...extraIds,
+      );
+    };
+
+    const applyResendPendingNotice = () => {
+      // R8: target the active bubble (may already be canonical UUID).
+      // Keep pending under that key so CTA is 重新发送, not /retry.
+      const activeId = activeAssistantId();
+      const pending =
+        pendingSendByLocalAssistantRef.current.get(activeId) ??
+        pendingSendByLocalAssistantRef.current.get(tempAssistantId);
+      if (pending) {
+        rekeyPendingSend(
+          pendingSendByLocalAssistantRef.current,
+          tempAssistantId,
+          activeId,
+        );
+      }
+      setTurnNotices((prev) => {
+        const next = { ...prev };
+        delete next[tempAssistantId];
+        next[activeId] = projectSendFailureNotice({
+          messageId: activeId,
+          message: PENDING_SUBMISSION_RESEND_MESSAGE,
+          target: "pending",
+        });
+        return next;
+      });
+      setMessages((current) =>
+        current.map((message) =>
+          messageMatchesActiveAssistant(
+            message.id,
+            activeId,
+            tempAssistantId,
+          )
+            ? { ...message, status: "failed" }
+            : message,
+        ),
+      );
+      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+    };
+
+    const reconcileSubmission = async (): Promise<boolean> => {
+      const reconcileUrl = scopedReaderAskUrl(
+        browserAskSubmissionPath(threadId, clientSubmissionId),
+      );
+      const pollOnce = async (): Promise<ReconcileSnap | null> => {
+        const reconcileRes = await fetch(reconcileUrl, {
+          method: "GET",
+          headers: { accept: "application/json" },
+        });
+        if (!reconcileRes.ok) {
+          return null;
+        }
+        return (await reconcileRes.json()) as ReconcileSnap;
+      };
+      let snap = await pollOnce();
+      // Poll streaming OR claimed up to 8 × 500ms. Never fabricate completed.
+      for (
+        let i = 0;
+        i < 8 &&
+        (snap?.status === "streaming" || snap?.status === "claimed");
+        i += 1
+      ) {
+        await new Promise((r) => setTimeout(r, 500));
+        snap = await pollOnce();
+      }
+      // R8: update the active assistant bubble (UUID after message.started).
+      const activeId = activeAssistantId();
+      if (
+        snap?.status === "completed" &&
+        snap.assistant_message &&
+        typeof snap.assistant_message.id === "string" &&
+        isPersistedAssistantMessageId(snap.assistant_message.id) &&
+        typeof snap.assistant_message.content_md === "string"
+      ) {
+        const asst = snap.assistant_message;
+        const userId =
+          typeof snap.user_message_id === "string"
+            ? snap.user_message_id
+            : tempUserId;
+        clearThisPending(asst.id as string, activeId);
+        setMessages((current) =>
+          current.map((message) => {
+            if (
+              messageMatchesActiveAssistant(
+                message.id,
+                activeId,
+                tempAssistantId,
+              ) ||
+              message.id === asst.id
+            ) {
+              return {
+                ...message,
+                id: asst.id as string,
+                status: "completed",
+                content_md: asst.content_md ?? "",
+                reasoning_md: asst.reasoning_md ?? message.reasoning_md,
+                reasoning_status:
+                  (asst.reasoning_status as typeof message.reasoning_status) ??
+                  "completed",
+                agentic_citations:
+                  (asst.agentic_citations as typeof message.agentic_citations) ??
+                  null,
+                agentic_answer_blocks:
+                  (asst.agentic_answer_blocks as typeof message.agentic_answer_blocks) ??
+                  null,
+              };
+            }
+            if (
+              message.id === tempUserId ||
+              (typeof snap.user_message_id === "string" &&
+                message.id === snap.user_message_id)
+            ) {
+              return { ...message, id: userId };
+            }
+            return message;
+          }),
+        );
+        setTurnNotices((prev) => {
+          const next = { ...prev };
+          delete next[tempAssistantId];
+          delete next[activeId];
+          delete next[asst.id as string];
+          return next;
+        });
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "ok" });
+        return true;
+      }
+      if (
+        (snap?.status === "failed" || snap?.status === "cancelled") &&
+        typeof snap.assistant_message_id === "string" &&
+        isPersistedAssistantMessageId(snap.assistant_message_id)
+      ) {
+        const asstId = snap.assistant_message_id;
+        // Clear recovery — escalate to regenerate (persisted), not resend.
+        clearThisPending(asstId, activeId);
+        setMessages((current) =>
+          current.map((message) =>
+            messageMatchesActiveAssistant(
+              message.id,
+              activeId,
+              tempAssistantId,
+            ) || message.id === asstId
+              ? {
+                  ...message,
+                  id: asstId,
+                  status:
+                    snap.status === "cancelled" ? "interrupted" : "failed",
+                  content_md:
+                    snap.assistant_message?.content_md ??
+                    message.content_md ??
+                    "",
+                }
+              : message,
+          ),
+        );
+        setTurnNotices((prev) => {
+          const next = { ...prev };
+          delete next[tempAssistantId];
+          delete next[activeId];
+          next[asstId] = projectSendFailureNotice({
+            messageId: asstId,
+            message: PENDING_SUBMISSION_RESEND_MESSAGE,
+            target: "persisted",
+          });
+          return next;
+        });
+        dispatchAgenticActivity({
+          type: "terminal",
+          finalStatus: snap.status === "cancelled" ? "cancelled" : "failed",
+        });
+        return true;
+      }
+      if (snap?.action_hint === "reask" || snap?.status === "not_found") {
+        clearThisPending(activeId);
+        setTurnNotices((prev) => {
+          const next = { ...prev };
+          delete next[tempAssistantId];
+          next[activeId] = projectSendFailureNotice({
+            messageId: activeId,
+            message: "无法确认原执行链路，请重新提问。",
+            target: "pending",
+          });
+          return next;
+        });
+        setMessages((current) =>
+          current.map((message) =>
+            messageMatchesActiveAssistant(
+              message.id,
+              activeId,
+              tempAssistantId,
+            )
+              ? { ...message, status: "failed" }
+              : message,
+          ),
+        );
+        dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+        return true;
+      }
+      if (
+        snap?.status === "claimed" ||
+        snap?.status === "streaming" ||
+        snap?.action_hint === "resend" ||
+        snap?.action_hint === "wait"
+      ) {
+        applyResendPendingNotice();
+        return true;
+      }
+      return false;
+    };
+
     try {
       const requestBody: ReaderAskMessageStreamRequestDto = {
         content,
@@ -5037,8 +5373,10 @@ export function AiWorkspacePanel({
         entry_action: entryAction,
         model: effectiveSelectedModelKey,
         web_search_mode: webSearchMode,
+        client_submission_id: clientSubmissionId,
       };
-      const response = await fetch(scopedReaderAskUrl(`/api/web/reader-ask/threads/${threadId}/messages/stream`), {
+      // ASK-RETRY-CONTRACT-R0 — browser path from the shared path builder.
+      const response = await fetch(scopedReaderAskUrl(browserAskStreamPath(threadId)), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -5050,15 +5388,26 @@ export function AiWorkspacePanel({
         throw new Error(errorText || "发送消息失败。");
       }
 
-      await consumeReaderAskSse(
+      const streamResult = await consumeReaderAskSse(
         response,
         createSseMessageHandler(
           tempAssistantId,
           (updater) => setMessages(updater),
           (assignedId) => {
             streamingAssistantIdRef.current = assignedId;
+            // R8: rekey pending recovery to canonical UUID — do NOT delete
+            // until trusted terminal / successful hydrate (EOF path needs it).
+            rekeyPendingSend(
+              pendingSendByLocalAssistantRef.current,
+              tempAssistantId,
+              assignedId,
+            );
             setMessages((current) =>
-              current.map((message) => (message.id === tempAssistantId ? { ...message, id: assignedId } : message)),
+              current.map((message) =>
+                message.id === tempAssistantId
+                  ? { ...message, id: assignedId }
+                  : message,
+              ),
             );
           },
           (errorMsg) => {
@@ -5068,11 +5417,22 @@ export function AiWorkspacePanel({
             // hand-crafting a notice. Fall back to tempAssistantId when
             // the server errors before assigning a canonical message id.
             const streamingId = streamingAssistantIdRef.current ?? tempAssistantId;
+            const stillPending = !isPersistedAssistantMessageId(streamingId);
+            // Preserve typed stream error copy (e.g. insufficient credits)
+            // when the server already projected a friendly message; only
+            // fall back to the pending-submission copy when the error is
+            // generic / unavailable.
+            const noticeMessage =
+              stillPending &&
+              (errorMsg === ASK_UNAVAILABLE_MESSAGE || !errorMsg?.trim())
+                ? PENDING_SUBMISSION_RESEND_MESSAGE
+                : errorMsg || PENDING_SUBMISSION_RESEND_MESSAGE;
             setTurnNotices((prev) => ({
               ...prev,
               [streamingId]: projectSendFailureNotice({
                 messageId: streamingId,
-                message: errorMsg,
+                message: noticeMessage,
+                target: stillPending ? "pending" : "persisted",
               }),
             }));
           },
@@ -5115,33 +5475,55 @@ export function AiWorkspacePanel({
         controller.signal,
         turnMetricsRef.current ?? undefined,
       );
-      onClearAttachments();
+
+      // R7: unknown outcome → reconcile. Trusted completed/terminal/abort
+      // do not extra-GET. User abort is handled in catch, not here.
+      const needsReconcile =
+        streamResult.kind === "submission_reconcile" ||
+        streamResult.kind === "eof" ||
+        streamResult.kind === "parse_error";
+
+      if (needsReconcile) {
+        const hydrated = await reconcileSubmission();
+        if (!hydrated) {
+          applyResendPendingNotice();
+        }
+      } else if (
+        streamResult.kind === "completed" ||
+        streamResult.kind === "terminal" ||
+        streamResult.kind === "interrupted"
+      ) {
+        // Trusted terminal — clear recovery; do not GET reconcile.
+        clearThisPending(streamingAssistantIdRef.current);
+        onClearAttachments();
+      }
     } catch (error) {
-      // User-initiated stop: abort the SSE stream without showing an error.
-      // Mark the assistant message as "interrupted" so the UI reflects the
-      // user's intent rather than a system failure.
+      // User-initiated stop: no submission reconcile (intentional cancel).
       if (isAbortError(error)) {
+        const activeId = activeAssistantId();
+        clearThisPending(activeId);
         setMessages((current) =>
           current.map((message) =>
-            message.id === tempAssistantId ? { ...message, status: "interrupted" } : message,
+            messageMatchesActiveAssistant(
+              message.id,
+              activeId,
+              tempAssistantId,
+            )
+              ? { ...message, status: "interrupted" }
+              : message,
           ),
         );
         dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
       } else {
-        // ASK-UX-MOBILE-R3 — send failure (network / non-ok / thrown).
-        // Use the canonical projector. The message is always typed copy
-        // from ask-error-messages.ts via toUserFacingErrorMessage.
-        setTurnNotices((prev) => ({
-          ...prev,
-          [tempAssistantId]: projectSendFailureNotice({
-            messageId: tempAssistantId,
-            message: toUserFacingErrorMessage(error, ASK_UNAVAILABLE_MESSAGE),
-          }),
-        }));
-        setMessages((current) =>
-          current.map((message) => (message.id === tempAssistantId ? { ...message, status: "failed" } : message)),
-        );
-        dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+        // R7: non-abort transport failure → same reconcileSubmission helper.
+        try {
+          const hydrated = await reconcileSubmission();
+          if (!hydrated) {
+            applyResendPendingNotice();
+          }
+        } catch {
+          applyResendPendingNotice();
+        }
       }
     } finally {
       if (sseAbortRef.current === controller) {
@@ -5177,6 +5559,54 @@ export function AiWorkspacePanel({
 
   async function handleSend(content: string) {
     await sendMessage({ content });
+  }
+
+  /**
+   * ASK-RETRY-CONTRACT-R1 — resend a pending/optimistic submission.
+   * Replays the retained SendRequest with the same client_submission_id
+   * (server-side idempotent claim). Never calls `/retry`.
+   */
+  async function handleResend(assistantMessageId: string) {
+    // R8: key may be local-assistant-* or canonical UUID after rekey.
+    const pending =
+      pendingSendByLocalAssistantRef.current.get(assistantMessageId) ?? null;
+    if (!pending || sending) {
+      return;
+    }
+    // Clear the failed bubble pair, then re-send with the same submission id
+    // so the server can reconcile rather than create a duplicate turn.
+    setTurnNotices((prev) => {
+      if (!prev[assistantMessageId]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[assistantMessageId];
+      return next;
+    });
+    setMessages((current) =>
+      current.filter(
+        (message) =>
+          message.id !== assistantMessageId &&
+          message.id !== pending.localUserId &&
+          message.id !== pending.localAssistantId,
+      ),
+    );
+    clearPendingSendKeys(
+      pendingSendByLocalAssistantRef.current,
+      assistantMessageId,
+      pending.localAssistantId,
+    );
+    await sendMessage({
+      content: pending.content,
+      // Attachments were serialized for wire; resend uses the stored wire
+      // shape through the same serialize path when options.attachments is
+      // provided as the already-serialized list is accepted by the stream
+      // body builder above. Re-hydrate is not required for wire-only resend.
+      attachments: pending.attachments as unknown as ReaderAskAttachment[],
+      entryAction: pending.entryAction,
+      clearComposer: false,
+      clientSubmissionId: pending.clientSubmissionId,
+    });
   }
 
   /** Stop the in-flight SSE stream (user clicked the stop button). */
@@ -5215,16 +5645,36 @@ export function AiWorkspacePanel({
     });
   }
 
-  /** Regenerate (not resume/continue) the assistant answer for a given message. */
+  /** Regenerate (not resume/continue) a persisted assistant answer. */
   async function handleRetry(messageId: string) {
     if (!activeThreadId || sending) {
       return;
     }
+    // ASK-RETRY-CONTRACT-R1: local/pending assistants must never hit /retry.
+    const target = resolveRetryTarget(messageId);
+    if (target?.kind === "pending_submission") {
+      await handleResend(messageId);
+      return;
+    }
+    if (target?.kind !== "persisted_assistant") {
+      return;
+    }
+    // Concurrent double-click regenerate: at most one in-flight retry per id.
+    if (activeRetryMessageIdsRef.current.has(messageId)) {
+      return;
+    }
+    activeRetryMessageIdsRef.current.add(messageId);
     // Preserve original content so we can restore it if retry fails
     const originalMessage = messages.find((m) => m.id === messageId);
     const originalContentMd = originalMessage?.content_md ?? "";
     const originalReasoningMd = originalMessage?.reasoning_md ?? "";
     const originalReasoningStatus = originalMessage?.reasoning_status ?? "idle";
+    // ASK-RETRY-CONTRACT-R3: keep prior canonical answer visible during
+    // regenerate until the new run commits. Do not blank a completed answer.
+    const keepCanonicalUntilSuccess =
+      originalMessage?.status === "completed" ||
+      (originalMessage?.status === "interrupted" &&
+        Boolean(originalContentMd.trim()));
 
     // ASK-WEB-G1-R3: Retry body must NOT carry `web_search_mode`. The FastAPI
     // Retry schema is `extra="forbid"` with only `model` accepted; sending
@@ -5252,10 +5702,16 @@ export function AiWorkspacePanel({
           ? {
               ...message,
               status: "streaming",
-              // For interrupted messages, temporarily keep the partial content visible
-              // until the regenerated answer starts streaming in. This is NOT resume/continue.
-              content_md: message.status === "interrupted" ? message.content_md : "",
-              regenerate_preview: message.status === "interrupted",
+              // ASK-RETRY-CONTRACT-R3: keep prior canonical answer visible
+              // until the new run succeeds. Interrupted partials and
+              // completed answers both stay as content_md fallback; only
+              // a blank prior answer starts empty.
+              content_md: keepCanonicalUntilSuccess
+                ? message.content_md
+                : message.status === "interrupted"
+                  ? message.content_md
+                  : "",
+              regenerate_preview: keepCanonicalUntilSuccess || message.status === "interrupted",
               // ASK-TURN-LIFECYCLE R2 — reset the provisional preview slot
               // for the new generation. The previous canonical answer
               // (if any) stays in `content_md` as the display fallback
@@ -5298,14 +5754,19 @@ export function AiWorkspacePanel({
     );
 
     try {
+      // ASK-RETRY-CONTRACT-R0: Browser ABI is `/retry` only. Upstream
+      // `/retry/stream` is BFF→FastAPI exclusive.
       const response = await fetch(
-        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/messages/${messageId}/retry/stream`),
+        scopedReaderAskUrl(browserAskRetryPath(activeThreadId, messageId)),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           // ASK-WEB-G1-R3: only `model` is sent. The backend replays the
           // persisted `web_search_mode` from the original user message
           // metadata after ownership verification — no client input.
+          // ASK-RETRY-CONTRACT-R3: model is the thread's selected model
+          // already bound to this turn; body.model is accepted for
+          // compatibility but must not invent a new lane.
           body: JSON.stringify({
             model: effectiveSelectedModelKey,
           }),
@@ -5395,12 +5856,14 @@ export function AiWorkspacePanel({
         );
         dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
       } else {
-        // ASK-UX-MOBILE-R3 — retry failure. Use the canonical projector.
+        // ASK-RETRY-CONTRACT-R3 — restore prior canonical answer; transport
+        // failure uses Prompt Kit action CTA (重新生成), not a blank bubble.
         setTurnNotices((prev) => ({
           ...prev,
           [messageId]: projectSendFailureNotice({
             messageId: messageId,
             message: toUserFacingErrorMessage(error, ASK_UNAVAILABLE_MESSAGE),
+            target: "persisted",
           }),
         }));
         setMessages((current) =>
@@ -5408,7 +5871,13 @@ export function AiWorkspacePanel({
             message.id === messageId
               ? {
                   ...message,
-                  status: "failed",
+                  // Prefer interrupted when we still have a prior answer to
+                  // show; failed only when there was nothing to restore.
+                  status: originalContentMd.trim()
+                    ? originalMessage?.status === "completed"
+                      ? "completed"
+                      : "interrupted"
+                    : "failed",
                   // Restore original content so the user doesn't lose the previous answer
                   content_md: originalContentMd,
                   // ASK-TURN-LIFECYCLE R2 — drop any partial provisional
@@ -5417,6 +5886,7 @@ export function AiWorkspacePanel({
                   provisional_content_md: null,
                   reasoning_md: originalReasoningMd,
                   reasoning_status: originalReasoningStatus,
+                  regenerate_preview: false,
                 }
               : message,
           ),
@@ -5424,6 +5894,7 @@ export function AiWorkspacePanel({
         dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
       }
     } finally {
+      activeRetryMessageIdsRef.current.delete(messageId);
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
       }
@@ -5676,6 +6147,8 @@ export function AiWorkspacePanel({
                 onSelectDisambiguationCandidate={handleSelectDisambiguationCandidate}
                 onSelectAssetDisambiguationCandidate={handleSelectAssetDisambiguationCandidate}
                 onRetry={handleRetry}
+                onResend={handleResend}
+                resolveRetryTarget={resolveRetryTarget}
                 onJumpToAttachment={onJumpToAttachment}
                 onAnnotationFeedback={onAnnotationFeedback}
                 analysisRecordId={analysisRecordId}

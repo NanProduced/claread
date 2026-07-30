@@ -138,11 +138,17 @@ describe("R0 TurnLifecycle contract", () => {
 
   it("trusted terminal event names are typed and exclude unknown events", () => {
     expect(TRUSTED_TERMINAL_EVENT_NAMES).toEqual(
-      new Set(["message.completed", "agentic.terminal", "message.interrupted"]),
+      new Set([
+        "message.completed",
+        "agentic.terminal",
+        "message.interrupted",
+        "submission.reconcile",
+      ]),
     );
     expect(isTrustedTerminalEvent("agentic.future_signal")).toBe(false);
     expect(isTrustedTerminalEvent("message.delta")).toBe(false);
     expect(isTrustedTerminalEvent("agentic.progress")).toBe(false);
+    expect(isTrustedTerminalEvent("submission.reconcile")).toBe(true);
   });
 
   it("stateForFinalStatus maps typed values correctly", () => {

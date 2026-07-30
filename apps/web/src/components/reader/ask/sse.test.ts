@@ -718,6 +718,86 @@ describe("consumeReaderAskSse", () => {
       expect(result.kind).toBe("eof");
     });
   });
+
+  describe("R6 submission.reconcile logical terminal", () => {
+    const RECONCILE_COMPLETED = {
+      client_submission_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+      thread_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1",
+      status: "completed",
+      user_message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2",
+      assistant_message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee3",
+      terminal_code: "submission_completed",
+      action_hint: "none",
+      claim_generation: 1,
+    };
+
+    it("returns submission_reconcile as awaitable LogicalTerminalResult (not eof-only)", async () => {
+      const events: ReaderAskStreamEnvelopeDto[] = [];
+      const response = makeSseResponse([
+        `event: submission.reconcile\ndata: ${JSON.stringify(RECONCILE_COMPLETED)}\n\n`,
+      ]);
+      const result = await consumeReaderAskSse(
+        response,
+        (event) => events.push(event),
+      );
+
+      expect(result.kind).toBe("submission_reconcile");
+      expect(result.finalStatus).toBe("ok");
+      expect(result.submissionReconcile?.status).toBe("completed");
+      expect(result.submissionReconcile?.clientSubmissionId).toBe(
+        RECONCILE_COMPLETED.client_submission_id,
+      );
+      expect(result.submissionReconcile?.assistantMessageId).toBe(
+        RECONCILE_COMPLETED.assistant_message_id,
+      );
+      // Event is still dispatched for observability.
+      expect(events.find((e) => e.event === "submission.reconcile")).toBeDefined();
+    });
+
+    it("failed reconcile maps finalStatus=failed without agentic identity", async () => {
+      const payload = {
+        ...RECONCILE_COMPLETED,
+        status: "failed",
+        terminal_code: "submission_failed",
+        action_hint: "retry",
+      };
+      const result = await consumeReaderAskSse(
+        makeSseResponse([
+          `event: submission.reconcile\ndata: ${JSON.stringify(payload)}\n\n`,
+        ]),
+        () => {},
+      );
+      expect(result.kind).toBe("submission_reconcile");
+      expect(result.finalStatus).toBe("failed");
+    });
+
+    it("cancelled reconcile maps finalStatus=cancelled", async () => {
+      const payload = {
+        ...RECONCILE_COMPLETED,
+        status: "cancelled",
+        terminal_code: "submission_cancelled",
+        action_hint: "retry",
+      };
+      const result = await consumeReaderAskSse(
+        makeSseResponse([
+          `event: submission.reconcile\ndata: ${JSON.stringify(payload)}\n\n`,
+        ]),
+        () => {},
+      );
+      expect(result.kind).toBe("submission_reconcile");
+      expect(result.finalStatus).toBe("cancelled");
+    });
+
+    it("malformed reconcile payload is parse_error", async () => {
+      const result = await consumeReaderAskSse(
+        makeSseResponse([
+          `event: submission.reconcile\ndata: ${JSON.stringify({ status: "completed" })}\n\n`,
+        ]),
+        () => {},
+      );
+      expect(result.kind).toBe("parse_error");
+    });
+  });
 });
 
 describe("agentic payload type guards", () => {

@@ -34,6 +34,10 @@ services:
       - ../migrations/0022_ai_usage_events_invocation_key.sql:/docker-entrypoint-initdb.d/0022_ai_usage_events_invocation_key.sql:ro
       - ../migrations/0023_stable_document_blocks_text_constraint_extend.sql:/docker-entrypoint-initdb.d/0023_stable_document_blocks_text_constraint_extend.sql:ro
       - ../migrations/0024_reader_ask_turn_runs_reasoning_projection.sql:/docker-entrypoint-initdb.d/0024_reader_ask_turn_runs_reasoning_projection.sql:ro
+      # ASK-RETRY-CONTRACT-R2/R4: client_submission_id claim table (after 0024).
+      # 0020/0025 intentionally not mounted here (pre-existing residual, not this task).
+      - ../migrations/0026_reader_ask_client_submission_idempotency.sql:/docker-entrypoint-initdb.d/0026_reader_ask_client_submission_idempotency.sql:ro
+      - ../migrations/0027_reader_ask_client_submission_claim_generation.sql:/docker-entrypoint-initdb.d/0027_reader_ask_client_submission_claim_generation.sql:ro
       - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]

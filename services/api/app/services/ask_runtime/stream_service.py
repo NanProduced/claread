@@ -230,6 +230,7 @@ async def _stream_rr_message(
     existing_assistant_message: dict[str, Any] | None = None,
     run_info: dict[str, Any] | None = None,
     run_history: list[dict[str, Any]] | None = None,
+    submission_hook: Any | None = None,
 ) -> AsyncIterator[str]:
     start_perf = perf_counter()
     runtime_state = ReaderAskRuntimeState(
@@ -247,6 +248,9 @@ async def _stream_rr_message(
     usage_summary: dict[str, Any] | None = None
     selected_model_option = None
     stream_runtime = None
+    # R6: track whether we already fired a real terminal so finally can
+    # cancel only when the stream died without completed/failed.
+    submission_terminal_status: str | None = None
 
     try:
         context = await rr_context_svc.build_reading_record_context(
@@ -272,6 +276,9 @@ async def _stream_rr_message(
         await ensure_credit_account(user_id)
         remaining = await check_quota(user_id)
         if remaining < selected_model_option.billing.reserved_points:
+            submission_terminal_status = "failed"
+            if submission_hook is not None:
+                await submission_hook.mark("failed")  # may fail; finally retries
             yield stream_events_svc.encode_sse(
                 stream_events_svc.EVENT_ERROR,
                 stream_events_svc.insufficient_credits_payload(
@@ -297,6 +304,9 @@ async def _stream_rr_message(
         )
         if reservation is None:
             remaining = await check_quota(user_id)
+            submission_terminal_status = "failed"
+            if submission_hook is not None:
+                await submission_hook.mark("failed")  # may fail; finally retries
             yield stream_events_svc.encode_sse(
                 stream_events_svc.EVENT_ERROR,
                 stream_events_svc.insufficient_credits_payload(
@@ -340,6 +350,18 @@ async def _stream_rr_message(
                     submission_mode=submission_mode,
                 ),
             )
+        # Bind assistant id for CAS terminal updates once the pair exists.
+        if (
+            submission_hook is not None
+            and submission_hook.assistant_message_id is None
+            and assistant_message is not None
+        ):
+            try:
+                submission_hook.assistant_message_id = UUID(
+                    str(assistant_message["id"])
+                )
+            except (ValueError, TypeError, KeyError):
+                pass
 
         turn_run = await repo.create_turn_run_for_reading_record(
             message_id=_parse_uuid(assistant_message["id"], "assistant message id is invalid"),
@@ -781,10 +803,23 @@ async def _stream_rr_message(
             output=output,
             usage_event_id=usage_event_id,
         )
+        submission_terminal_status = "completed"
+        if submission_hook is not None:
+            # R7: remember real terminal first; mark may fail transiently.
+            await submission_hook.mark("completed")
         yield stream_events_svc.encode_sse(
             stream_events_svc.EVENT_MESSAGE_COMPLETED,
             payload.model_dump(mode="json"),
         )
+    except (asyncio.CancelledError, GeneratorExit):
+        # Client/BFF disconnect — cancel only if no stronger terminal yet.
+        if submission_hook is not None and submission_terminal_status is None:
+            submission_terminal_status = "cancelled"
+            try:
+                await submission_hook.mark("cancelled")
+            except Exception:  # noqa: BLE001
+                pass
+        raise
     except Exception as exc:
         if reservation is not None and reservation.total_points > 0:
             await refund_reserved_points(
@@ -815,6 +850,9 @@ async def _stream_rr_message(
                 status="failed",
                 failed_at=datetime.now(UTC),
             )
+        submission_terminal_status = "failed"
+        if submission_hook is not None:
+            await submission_hook.mark("failed")
         if isinstance(exc, HTTPException):
             yield stream_events_svc.encode_sse(
                 stream_events_svc.EVENT_ERROR,
@@ -826,6 +864,20 @@ async def _stream_rr_message(
             stream_events_svc.EVENT_ERROR,
             stream_events_svc.reader_ask_failed_payload(detail),
         )
+    finally:
+        # R7: compensate terminal sync. Prefer intended real terminal
+        # (completed/failed/cancelled) over fabricating cancelled after
+        # a failed first write. Never demote completed → cancelled.
+        if submission_hook is not None:
+            try:
+                if submission_terminal_status is not None:
+                    await submission_hook.ensure_synced(
+                        fallback=submission_terminal_status,  # type: ignore[arg-type]
+                    )
+                elif not submission_hook.synced:
+                    await submission_hook.ensure_synced(fallback="cancelled")
+            except Exception:  # noqa: BLE001
+                pass
 
 
 async def stream_thread_message(
@@ -834,7 +886,41 @@ async def stream_thread_message(
     reading_record_id: UUID,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
+    existing_user_message: dict[str, Any] | None = None,
+    existing_assistant_message: dict[str, Any] | None = None,
+    client_submission_id: Any | None = None,
+    claim_generation: int | None = None,
 ) -> AsyncIterator[str]:
+    """Legacy RR stream. When pair was pre-created by R5/R6 gateway, pass it in.
+
+    R6: ``client_submission_id`` / ``claim_generation`` drive an internal
+    ``SubmissionTerminalHook`` so completed / failed / cancelled always
+    sync the durable submission row (never parse public SSE text).
+    """
+    from app.services.reader_record_ask.submission_gateway import (
+        SubmissionTerminalHook,
+    )
+
+    submission_hook: SubmissionTerminalHook | None = None
+    if client_submission_id is not None:
+        asst_id: UUID | None = None
+        if existing_assistant_message is not None and existing_assistant_message.get(
+            "id"
+        ):
+            try:
+                asst_id = UUID(str(existing_assistant_message["id"]))
+            except (ValueError, TypeError):
+                asst_id = None
+        submission_hook = SubmissionTerminalHook(
+            thread_id=thread_id,
+            client_submission_id=(
+                client_submission_id
+                if isinstance(client_submission_id, UUID)
+                else UUID(str(client_submission_id))
+            ),
+            claim_generation=claim_generation,
+            assistant_message_id=asst_id,
+        )
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
@@ -849,6 +935,9 @@ async def stream_thread_message(
         thread=thread,
         request=request,
         history_messages=history_messages,
+        existing_user_message=existing_user_message,
+        existing_assistant_message=existing_assistant_message,
+        submission_hook=submission_hook,
     ):
         yield chunk
 

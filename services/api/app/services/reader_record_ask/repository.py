@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 # to fabricate a ``committed`` row — only ``failed`` or ``cancelled``.
 RECONCILE_STALE_TERMINAL_REASON = "stale_stream_reconciled"
 
+
+class SubmissionIdempotencyUnavailable(RuntimeError):
+    """Raised when reader_ask_client_submissions is missing (0026 not applied)."""
+
+    def __init__(self, *, cause: BaseException | None = None) -> None:
+        super().__init__(
+            "submission_idempotency_unavailable: migration 0026 not applied"
+        )
+        self.cause = cause
+
 # ASK-TURN-LIFECYCLE R1: default wall-clock threshold after which a
 # streaming ``reader_ask_turn_runs`` row is considered orphaned. The
 # in-process lifecycle hook (``_StreamLifecycleContext``) is the
@@ -251,28 +261,48 @@ class ReaderRecordAskRepository:
         envelope_fingerprint: str,
         envelope_snapshot: dict[str, Any],
         status: str = "streaming",
+        run_attempt: int = 1,
+        supersedes_run_id: UUID | None = None,
     ) -> dict[str, Any]:
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
             async with conn.transaction():
+                # Concurrent regenerate guard: refuse a second streaming
+                # claim when another turn_run already owns this message.
+                if supersedes_run_id is not None:
+                    active = await conn.fetchval(
+                        """
+                        SELECT 1
+                        FROM reader_ask_turn_runs
+                        WHERE message_id = $1
+                          AND status = 'streaming'
+                        LIMIT 1
+                        """,
+                        message_id,
+                    )
+                    if active is not None:
+                        raise RuntimeError(
+                            "agentic turn run already streaming for message"
+                        )
                 row = await conn.fetchrow(
                     """
                     INSERT INTO reader_ask_turn_runs (
                         message_id, thread_id, user_id, analysis_record_id,
                         reading_record_id, base_id, generation, turn_id,
-                        run_attempt, status, execution_version,
+                        run_attempt, supersedes_run_id, status, execution_version,
                         envelope_fingerprint, envelope_snapshot_json,
                         started_at, created_at, updated_at
                     )
                     VALUES (
                         $1, $2, $3, NULL,
                         $4, $5, $6, $7,
-                        1, $8, $9,
-                        $10, $11::jsonb,
-                        $12, $12, $12
+                        $8, $9, $10, $11,
+                        $12, $13::jsonb,
+                        $14, $14, $14
                     )
-                    RETURNING id, status, execution_version, envelope_fingerprint
+                    RETURNING id, status, execution_version, envelope_fingerprint,
+                              run_attempt, supersedes_run_id
                     """,
                     message_id,
                     thread_id,
@@ -281,6 +311,8 @@ class ReaderRecordAskRepository:
                     base_id,
                     generation,
                     turn_id,
+                    run_attempt,
+                    supersedes_run_id,
                     status,
                     EXECUTION_VERSION_AGENTIC_V2,
                     envelope_fingerprint,
@@ -309,6 +341,12 @@ class ReaderRecordAskRepository:
             "status": row["status"],
             "execution_version": row["execution_version"],
             "envelope_fingerprint": row["envelope_fingerprint"],
+            "run_attempt": row.get("run_attempt"),
+            "supersedes_run_id": (
+                str(row["supersedes_run_id"])
+                if row.get("supersedes_run_id") is not None
+                else None
+            ),
         }
 
     async def complete_agentic_turn_run(
@@ -390,12 +428,28 @@ class ReaderRecordAskRepository:
                     else None
                 )
                 if row is not None and owns_message:
+                    meta_row = await conn.fetchrow(
+                        """
+                        SELECT metadata_json
+                        FROM reader_ask_messages
+                        WHERE id = $1
+                        """,
+                        message_id,
+                    )
+                    raw_meta = (
+                        meta_row.get("metadata_json") if meta_row else None
+                    )
+                    meta: dict[str, Any] = (
+                        dict(raw_meta) if isinstance(raw_meta, dict) else {}
+                    )
+                    meta.pop("retry_fallback", None)
                     await conn.execute(
                         """
                         UPDATE reader_ask_messages
                         SET status = 'completed',
                             content_md = $2,
                             current_turn_run_id = $3,
+                            metadata_json = $5::jsonb,
                             updated_at = $4
                         WHERE id = $1
                           AND status = 'streaming'
@@ -404,6 +458,19 @@ class ReaderRecordAskRepository:
                         message_id,
                         answer_text,
                         turn_run_id,
+                        now,
+                        jsonb_param(meta),
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE reader_ask_client_submissions
+                        SET status = 'completed',
+                            lease_expires_at = NULL,
+                            updated_at = $2
+                        WHERE assistant_message_id = $1
+                          AND status IN ('claimed', 'streaming')
+                        """,
+                        message_id,
                         now,
                     )
         if row is None:
@@ -526,21 +593,93 @@ class ReaderRecordAskRepository:
                     now,
                 )
                 if row is not None and owns_message:
-                    await conn.execute(
+                    # ASK-RETRY-CONTRACT-R4: if regenerate stored a fallback
+                    # canonical answer, restore it instead of blanking.
+                    meta_row = await conn.fetchrow(
                         """
-                        UPDATE reader_ask_messages
-                        SET status = 'failed',
-                            content_md = '',
-                            current_turn_run_id = $2,
-                            updated_at = $3
+                        SELECT metadata_json, content_md
+                        FROM reader_ask_messages
                         WHERE id = $1
-                          AND status = 'streaming'
-                          AND current_turn_run_id = $2
                         """,
                         message_id,
-                        turn_run_id,
-                        now,
                     )
+                    raw_meta = (
+                        meta_row.get("metadata_json") if meta_row else None
+                    )
+                    meta: dict[str, Any] = (
+                        dict(raw_meta) if isinstance(raw_meta, dict) else {}
+                    )
+                    fallback = meta.get("retry_fallback")
+                    if isinstance(fallback, dict) and (
+                        fallback.get("content_md") or ""
+                    ).strip():
+                        restore_status = fallback.get("status") or "completed"
+                        if restore_status not in {
+                            "completed",
+                            "interrupted",
+                            "failed",
+                        }:
+                            restore_status = "completed"
+                        fallback_run = fallback.get("current_turn_run_id")
+                        meta.pop("retry_fallback", None)
+                        await conn.execute(
+                            """
+                            UPDATE reader_ask_messages
+                            SET status = $2,
+                                content_md = $3,
+                                current_turn_run_id = $4,
+                                metadata_json = $5::jsonb,
+                                updated_at = $6
+                            WHERE id = $1
+                              AND status = 'streaming'
+                              AND current_turn_run_id = $7
+                            """,
+                            message_id,
+                            restore_status,
+                            str(fallback.get("content_md") or ""),
+                            (
+                                UUID(str(fallback_run))
+                                if fallback_run
+                                else turn_run_id
+                            ),
+                            jsonb_param(meta),
+                            now,
+                            turn_run_id,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            UPDATE reader_ask_messages
+                            SET status = 'failed',
+                                content_md = '',
+                                current_turn_run_id = $2,
+                                updated_at = $3
+                            WHERE id = $1
+                              AND status = 'streaming'
+                              AND current_turn_run_id = $2
+                            """,
+                            message_id,
+                            turn_run_id,
+                            now,
+                        )
+                # Always sync client submission terminal when we know the message.
+                await conn.execute(
+                    """
+                    UPDATE reader_ask_client_submissions
+                    SET status = $2,
+                        lease_expires_at = NULL,
+                        updated_at = $3
+                    WHERE assistant_message_id = $1
+                      AND status IN ('claimed', 'streaming')
+                    """,
+                    message_id,
+                    (
+                        "cancelled"
+                        if final_status == "cancelled"
+                        else "failed"
+                    ),
+                    now,
+                )
         if row is None:
             logger.info(
                 "terminal_agentic_turn_run skipped: turn_run_id=%s already terminal",
@@ -887,6 +1026,11 @@ class ReaderRecordAskRepository:
         ``metadata_json IS NULL`` surface as ``{}`` — the caller treats
         absent ``web_search_mode`` as ``"disabled"`` (fail-closed).
 
+        ASK-RETRY-CONTRACT-R3: assistant dict also carries
+        ``metadata_json`` and the current turn_run ``execution_version``
+        (when present) so retry preflight can resolve the immutable lane
+        without reading the live feature flag.
+
         Ownership of the thread is enforced by the caller via ``get_thread``
         before this method is invoked; this method only reads message rows
         scoped by ``thread_id``.
@@ -895,11 +1039,17 @@ class ReaderRecordAskRepository:
         async with pool.acquire() as conn:
             assistant_row = await conn.fetchrow(
                 """
-                SELECT id, thread_id, role, status, content_md, created_at
-                FROM reader_ask_messages
-                WHERE id = $1
-                  AND thread_id = $2
-                  AND role = 'assistant'
+                SELECT m.id, m.thread_id, m.role, m.status, m.content_md,
+                       m.created_at, m.metadata_json, m.current_turn_run_id,
+                       tr.execution_version AS turn_run_execution_version,
+                       tr.id AS turn_run_id,
+                       tr.run_attempt AS turn_run_attempt
+                FROM reader_ask_messages m
+                LEFT JOIN reader_ask_turn_runs tr
+                  ON tr.id = m.current_turn_run_id
+                WHERE m.id = $1
+                  AND m.thread_id = $2
+                  AND m.role = 'assistant'
                 """,
                 message_id,
                 thread_id,
@@ -920,12 +1070,28 @@ class ReaderRecordAskRepository:
                 thread_id,
                 assistant_row["created_at"],
             )
+        raw_assistant_metadata = assistant_row.get("metadata_json")
+        assistant_metadata: dict[str, Any] = (
+            dict(raw_assistant_metadata)
+            if isinstance(raw_assistant_metadata, dict)
+            else {}
+        )
         assistant_msg = {
             "id": str(assistant_row["id"]),
             "thread_id": str(assistant_row["thread_id"]),
             "role": assistant_row["role"],
             "status": assistant_row["status"],
             "content_md": assistant_row["content_md"],
+            "metadata_json": assistant_metadata,
+            "turn_run_execution_version": assistant_row.get(
+                "turn_run_execution_version"
+            ),
+            "turn_run_id": (
+                str(assistant_row["turn_run_id"])
+                if assistant_row.get("turn_run_id") is not None
+                else None
+            ),
+            "turn_run_attempt": assistant_row.get("turn_run_attempt"),
         }
         if user_row is None:
             return assistant_msg, None
@@ -951,34 +1117,553 @@ class ReaderRecordAskRepository:
         *,
         message_id: UUID,
     ) -> dict[str, Any]:
-        """Reset an assistant message to 'streaming' for an agentic retry.
+        """Begin regenerate without discarding the prior canonical answer.
 
-        Clears ``content_md`` and flips ``status`` back to ``streaming`` so
-        the new turn_run can repopulate it. Returns the reset row. Caller
-        must have already verified the message belongs to the user's thread
-        via ``get_assistant_message_with_preceding_user_message``.
+        ASK-RETRY-CONTRACT-R4:
+        - Keeps ``content_md`` as the visible fallback until a new run
+          successfully completes.
+        - Snapshots prior status / content / current_turn_run_id into
+          ``metadata_json.retry_fallback`` for failure restore.
+        - Does **not** clear ``current_turn_run_id`` until a new streaming
+          run is claimed (caller creates the new run next). A concurrent
+          second regenerate is refused via FOR UPDATE + active streaming
+          turn_run check on create.
         """
         pool = self._pool_or_raise()
         now = datetime.now(UTC)
         async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                UPDATE reader_ask_messages
-                SET status = 'streaming',
-                    content_md = '',
-                    current_turn_run_id = NULL,
-                    updated_at = $2
-                WHERE id = $1
-                RETURNING id, thread_id, role, status, content_md
-                """,
-                message_id,
-                now,
-            )
-        assert row is not None
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, thread_id, role, status, content_md,
+                           current_turn_run_id, metadata_json
+                    FROM reader_ask_messages
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    message_id,
+                )
+                if row is None:
+                    raise RuntimeError("assistant message not found for retry")
+                # Refuse if another regenerate already has a streaming run.
+                active = await conn.fetchval(
+                    """
+                    SELECT 1
+                    FROM reader_ask_turn_runs
+                    WHERE message_id = $1
+                      AND status = 'streaming'
+                    LIMIT 1
+                    """,
+                    message_id,
+                )
+                if active is not None and row["status"] == "streaming":
+                    raise RuntimeError(
+                        "agentic turn run already streaming for message"
+                    )
+                raw_meta = row.get("metadata_json")
+                meta: dict[str, Any] = (
+                    dict(raw_meta) if isinstance(raw_meta, dict) else {}
+                )
+                meta["retry_fallback"] = {
+                    "status": row["status"],
+                    "content_md": row["content_md"] or "",
+                    "current_turn_run_id": (
+                        str(row["current_turn_run_id"])
+                        if row["current_turn_run_id"] is not None
+                        else None
+                    ),
+                }
+                updated = await conn.fetchrow(
+                    """
+                    UPDATE reader_ask_messages
+                    SET status = 'streaming',
+                        metadata_json = $2::jsonb,
+                        updated_at = $3
+                    WHERE id = $1
+                    RETURNING id, thread_id, role, status, content_md,
+                              current_turn_run_id
+                    """,
+                    message_id,
+                    jsonb_param(meta),
+                    now,
+                )
+        assert updated is not None
         return {
-            "id": str(row["id"]),
-            "thread_id": str(row["thread_id"]),
-            "role": row["role"],
-            "status": row["status"],
-            "content_md": row["content_md"],
+            "id": str(updated["id"]),
+            "thread_id": str(updated["thread_id"]),
+            "role": updated["role"],
+            "status": updated["status"],
+            "content_md": updated["content_md"],
+            "current_turn_run_id": (
+                str(updated["current_turn_run_id"])
+                if updated["current_turn_run_id"] is not None
+                else None
+            ),
+            "retry_fallback": meta.get("retry_fallback"),
         }
+
+    def _raise_if_table_missing(self, exc: BaseException) -> None:
+        """Map missing-table errors to typed SubmissionIdempotencyUnavailable."""
+        msg = str(exc).lower()
+        sqlstate = getattr(exc, "sqlstate", None)
+        # asyncpg UndefinedTableError sqlstate 42P01
+        if sqlstate == "42P01" or (
+            "reader_ask_client_submissions" in msg
+            and ("does not exist" in msg or "undefined" in msg)
+        ):
+            raise SubmissionIdempotencyUnavailable(cause=exc) from exc
+
+    async def ensure_submission_message_pair(
+        self,
+        *,
+        thread_id: UUID,
+        user_id: UUID,
+        client_submission_id: UUID,
+        content_md: str,
+        user_metadata: dict[str, Any],
+        assistant_metadata: dict[str, Any],
+        orphan_lease_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """R5: atomic claim + user/assistant pair + bind in one transaction.
+
+        Model invocation must happen ONLY after this method returns with
+        ``may_create_model=True``. Duplicate keys return existing pair
+        without creating messages or allowing a second model call.
+
+        Orphan reclaim: only for ``claimed`` rows with **no** bound
+        messages and expired lease — never deletes a row that already
+        has a message pair. Reclaim bumps ``claim_generation`` (CAS).
+        """
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        lease = now + timedelta(seconds=orphan_lease_seconds)
+
+        def _msg_dict(row: Any) -> dict[str, Any]:
+            return {
+                "id": str(row["id"]),
+                "thread_id": str(row["thread_id"]),
+                "role": row["role"],
+                "status": row["status"],
+                "content_md": row["content_md"] or "",
+            }
+
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    existing = await conn.fetchrow(
+                        """
+                        SELECT thread_id, client_submission_id, user_id,
+                               user_message_id, assistant_message_id, status,
+                               claim_generation, lease_expires_at
+                        FROM reader_ask_client_submissions
+                        WHERE thread_id = $1
+                          AND client_submission_id = $2
+                        FOR UPDATE
+                        """,
+                        thread_id,
+                        client_submission_id,
+                    )
+
+                    if existing is not None:
+                        has_pair = (
+                            existing["user_message_id"] is not None
+                            and existing["assistant_message_id"] is not None
+                        )
+                        if has_pair:
+                            return {
+                                "may_create_model": False,
+                                "status": existing["status"],
+                                "claim_generation": int(
+                                    existing["claim_generation"] or 1
+                                ),
+                                "user_message_id": str(
+                                    existing["user_message_id"]
+                                ),
+                                "assistant_message_id": str(
+                                    existing["assistant_message_id"]
+                                ),
+                                "user_message": None,
+                                "assistant_message": None,
+                                "terminal_code": f"submission_{existing['status']}",
+                            }
+
+                        # claimed without pair
+                        lease_at = existing.get("lease_expires_at")
+                        lease_expired = lease_at is None or lease_at <= now
+                        if (
+                            existing["status"] == "claimed"
+                            and not has_pair
+                            and lease_expired
+                        ):
+                            # Reclaim: bump generation; do NOT delete if
+                            # messages somehow appear mid-way (re-check).
+                            old_gen = int(existing["claim_generation"] or 1)
+                            reclaimed = await conn.fetchrow(
+                                """
+                                UPDATE reader_ask_client_submissions
+                                SET claim_generation = $3,
+                                    lease_expires_at = $4,
+                                    user_id = $5,
+                                    updated_at = $6
+                                WHERE thread_id = $1
+                                  AND client_submission_id = $2
+                                  AND status = 'claimed'
+                                  AND user_message_id IS NULL
+                                  AND assistant_message_id IS NULL
+                                  AND claim_generation = $7
+                                RETURNING claim_generation
+                                """,
+                                thread_id,
+                                client_submission_id,
+                                old_gen + 1,
+                                lease,
+                                user_id,
+                                now,
+                                old_gen,
+                            )
+                            if reclaimed is None:
+                                return {
+                                    "may_create_model": False,
+                                    "status": "claimed",
+                                    "claim_generation": old_gen,
+                                    "user_message_id": None,
+                                    "assistant_message_id": None,
+                                    "terminal_code": "submission_in_progress",
+                                }
+                            claim_gen = int(reclaimed["claim_generation"])
+                        elif existing["status"] == "claimed" and not has_pair:
+                            return {
+                                "may_create_model": False,
+                                "status": "claimed",
+                                "claim_generation": int(
+                                    existing["claim_generation"] or 1
+                                ),
+                                "user_message_id": None,
+                                "assistant_message_id": None,
+                                "terminal_code": "submission_in_progress",
+                            }
+                        else:
+                            # streaming without pair should not happen; fail closed
+                            return {
+                                "may_create_model": False,
+                                "status": existing["status"],
+                                "claim_generation": int(
+                                    existing["claim_generation"] or 1
+                                ),
+                                "user_message_id": (
+                                    str(existing["user_message_id"])
+                                    if existing["user_message_id"]
+                                    else None
+                                ),
+                                "assistant_message_id": (
+                                    str(existing["assistant_message_id"])
+                                    if existing["assistant_message_id"]
+                                    else None
+                                ),
+                                "terminal_code": "submission_in_progress",
+                            }
+                    else:
+                        # R6: INSERT ON CONFLICT DO NOTHING — never catch
+                        # UniqueViolation and continue in the same txn
+                        # (Postgres aborts the transaction on 23505).
+                        try:
+                            inserted = await conn.fetchrow(
+                                """
+                                INSERT INTO reader_ask_client_submissions (
+                                    thread_id, client_submission_id, user_id,
+                                    status, claim_generation, lease_expires_at,
+                                    created_at, updated_at
+                                )
+                                VALUES ($1, $2, $3, 'claimed', 1, $4, $5, $5)
+                                ON CONFLICT (thread_id, client_submission_id)
+                                DO NOTHING
+                                RETURNING claim_generation
+                                """,
+                                thread_id,
+                                client_submission_id,
+                                user_id,
+                                lease,
+                                now,
+                            )
+                        except Exception as exc:
+                            self._raise_if_table_missing(exc)
+                            raise
+                        if inserted is None:
+                            # Concurrent winner owns the row — lock and read.
+                            raced = await conn.fetchrow(
+                                """
+                                SELECT status, claim_generation,
+                                       user_message_id, assistant_message_id
+                                FROM reader_ask_client_submissions
+                                WHERE thread_id = $1
+                                  AND client_submission_id = $2
+                                FOR UPDATE
+                                """,
+                                thread_id,
+                                client_submission_id,
+                            )
+                            if raced is None:
+                                raise RuntimeError(
+                                    "submission conflict row vanished"
+                                )
+                            if (
+                                raced["user_message_id"] is not None
+                                and raced["assistant_message_id"] is not None
+                            ):
+                                return {
+                                    "may_create_model": False,
+                                    "status": raced["status"],
+                                    "claim_generation": int(
+                                        raced["claim_generation"] or 1
+                                    ),
+                                    "user_message_id": str(
+                                        raced["user_message_id"]
+                                    ),
+                                    "assistant_message_id": str(
+                                        raced["assistant_message_id"]
+                                    ),
+                                    "terminal_code": f"submission_{raced['status']}",
+                                }
+                            return {
+                                "may_create_model": False,
+                                "status": raced["status"],
+                                "claim_generation": int(
+                                    raced["claim_generation"] or 1
+                                ),
+                                "terminal_code": "submission_in_progress",
+                            }
+                        claim_gen = int(inserted["claim_generation"])
+
+                    # Create user + assistant + bind in same transaction.
+                    user_row = await conn.fetchrow(
+                        """
+                        INSERT INTO reader_ask_messages (
+                            thread_id, role, status, content_md,
+                            context_anchors_json, citations_json,
+                            action_proposals_json, tool_trace_json,
+                            metadata_json, created_at, updated_at
+                        )
+                        VALUES (
+                            $1, 'user', 'completed', $2,
+                            '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                            $3::jsonb, $4, $4
+                        )
+                        RETURNING id, thread_id, role, status, content_md
+                        """,
+                        thread_id,
+                        content_md,
+                        jsonb_param(user_metadata),
+                        now,
+                    )
+                    asst_row = await conn.fetchrow(
+                        """
+                        INSERT INTO reader_ask_messages (
+                            thread_id, role, status, content_md,
+                            context_anchors_json, citations_json,
+                            action_proposals_json, tool_trace_json,
+                            metadata_json, created_at, updated_at
+                        )
+                        VALUES (
+                            $1, 'assistant', 'streaming', '',
+                            '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+                            $2::jsonb, $3, $3
+                        )
+                        RETURNING id, thread_id, role, status, content_md
+                        """,
+                        thread_id,
+                        jsonb_param(assistant_metadata),
+                        now,
+                    )
+                    assert user_row is not None and asst_row is not None
+                    bound = await conn.fetchrow(
+                        """
+                        UPDATE reader_ask_client_submissions
+                        SET user_message_id = $3,
+                            assistant_message_id = $4,
+                            status = 'streaming',
+                            lease_expires_at = NULL,
+                            updated_at = $5
+                        WHERE thread_id = $1
+                          AND client_submission_id = $2
+                          AND claim_generation = $6
+                          AND user_message_id IS NULL
+                          AND assistant_message_id IS NULL
+                        RETURNING claim_generation, status
+                        """,
+                        thread_id,
+                        client_submission_id,
+                        user_row["id"],
+                        asst_row["id"],
+                        now,
+                        claim_gen,
+                    )
+                    if bound is None:
+                        # Stale generation — another reclaim won. Do not
+                        # leave unbound messages dangling as submission
+                        # ownership; fail closed for this owner.
+                        raise RuntimeError(
+                            "submission bind CAS failed (stale claim_generation)"
+                        )
+                    await conn.execute(
+                        """
+                        UPDATE reader_ask_threads
+                        SET last_message_at = $2, updated_at = $2
+                        WHERE id = $1
+                        """,
+                        thread_id,
+                        now,
+                    )
+                    user_msg = _msg_dict(user_row)
+                    asst_msg = _msg_dict(asst_row)
+                    return {
+                        "may_create_model": True,
+                        "status": "streaming",
+                        "claim_generation": claim_gen,
+                        "user_message_id": user_msg["id"],
+                        "assistant_message_id": asst_msg["id"],
+                        "user_message": user_msg,
+                        "assistant_message": asst_msg,
+                        "terminal_code": None,
+                    }
+        except SubmissionIdempotencyUnavailable:
+            raise
+        except Exception as exc:
+            self._raise_if_table_missing(exc)
+            raise
+
+    async def mark_client_submission_terminal(
+        self,
+        *,
+        status: str,
+        thread_id: UUID | None = None,
+        client_submission_id: UUID | None = None,
+        assistant_message_id: UUID | None = None,
+        claim_generation: int | None = None,
+    ) -> int:
+        """Mark submission terminal. Returns affected row count (CAS)."""
+        if status not in {"completed", "failed", "cancelled"}:
+            raise ValueError(f"invalid submission terminal status: {status}")
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        try:
+            async with pool.acquire() as conn:
+                if (
+                    thread_id is not None
+                    and client_submission_id is not None
+                ):
+                    if claim_generation is not None:
+                        result = await conn.execute(
+                            """
+                            UPDATE reader_ask_client_submissions
+                            SET status = $3,
+                                lease_expires_at = NULL,
+                                updated_at = $4
+                            WHERE thread_id = $1
+                              AND client_submission_id = $2
+                              AND claim_generation = $5
+                              AND status IN ('claimed', 'streaming')
+                            """,
+                            thread_id,
+                            client_submission_id,
+                            status,
+                            now,
+                            claim_generation,
+                        )
+                    else:
+                        result = await conn.execute(
+                            """
+                            UPDATE reader_ask_client_submissions
+                            SET status = $3,
+                                lease_expires_at = NULL,
+                                updated_at = $4
+                            WHERE thread_id = $1
+                              AND client_submission_id = $2
+                              AND status IN ('claimed', 'streaming')
+                            """,
+                            thread_id,
+                            client_submission_id,
+                            status,
+                            now,
+                        )
+                elif assistant_message_id is not None:
+                    result = await conn.execute(
+                        """
+                        UPDATE reader_ask_client_submissions
+                        SET status = $2,
+                            lease_expires_at = NULL,
+                            updated_at = $3
+                        WHERE assistant_message_id = $1
+                          AND status IN ('claimed', 'streaming')
+                        """,
+                        assistant_message_id,
+                        status,
+                        now,
+                    )
+                else:
+                    return 0
+                # asyncpg returns "UPDATE N"
+                try:
+                    return int(str(result).split()[-1])
+                except (ValueError, IndexError):
+                    return 0
+        except Exception as exc:
+            self._raise_if_table_missing(exc)
+            raise
+
+    async def get_client_submission(
+        self,
+        *,
+        thread_id: UUID,
+        client_submission_id: UUID,
+    ) -> dict[str, Any] | None:
+        pool = self._pool_or_raise()
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT thread_id, client_submission_id, user_id,
+                           user_message_id, assistant_message_id, status,
+                           claim_generation
+                    FROM reader_ask_client_submissions
+                    WHERE thread_id = $1
+                      AND client_submission_id = $2
+                    """,
+                    thread_id,
+                    client_submission_id,
+                )
+        except Exception as exc:
+            self._raise_if_table_missing(exc)
+            raise
+        if row is None:
+            return None
+        return {
+            "thread_id": str(row["thread_id"]),
+            "client_submission_id": str(row["client_submission_id"]),
+            "user_message_id": (
+                str(row["user_message_id"])
+                if row["user_message_id"] is not None
+                else None
+            ),
+            "assistant_message_id": (
+                str(row["assistant_message_id"])
+                if row["assistant_message_id"] is not None
+                else None
+            ),
+            "status": row["status"],
+            "claim_generation": (
+                int(row["claim_generation"])
+                if row.get("claim_generation") is not None
+                else 1
+            ),
+        }
+
+    # Backward-compatible aliases
+    async def claim_client_submission(self, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError(
+            "claim_client_submission is removed; use ensure_submission_message_pair"
+        )
+
+    async def bind_client_submission_messages(self, **kwargs: Any) -> None:
+        raise RuntimeError(
+            "bind_client_submission_messages is removed; bind is atomic in ensure"
+        )

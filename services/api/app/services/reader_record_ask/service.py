@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal  # noqa: F401 — Literal used in _stream_legacy_or_agentic
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -298,20 +298,41 @@ async def _resolve_agentic_execution(
         ) from None
 
 
+@dataclass(slots=True, frozen=True)
+class SendPreparedResult:
+    """R6: everything required before StreamingResponse is constructed.
+
+    ``submission`` is the durable ensure result (or None for pre-R2
+    clients without client_submission_id). Raising here produces a real
+    HTTP 4xx/503 — never HTTP 200 + SSE error for missing tables.
+    """
+
+    reading_record_id: UUID
+    thread_id: UUID
+    execution: ReaderRecordAskExecutionConfig | None
+    lane: Literal["agentic", "legacy"]
+    submission: Any  # SubmissionEnsureResult | None
+    model_option_key: str | None
+
+
 async def prepare_reading_record_ask_message(
     *,
     user_id: UUID,
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
     thread_id: UUID | None = None,
-) -> tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None]:
-    """Validate anchor/thread and resolve execution config before StreamingResponse.
+) -> SendPreparedResult:
+    """Validate + resolve execution + durable submission BEFORE stream.
 
-    Returns ``(reading_record_id, thread_id, execution)``. Raising here
-    yields a real HTTP 4xx/503 (e.g. unknown model key, unconfigured
-    provider) instead of an SSE error frame. For the legacy path,
-    execution is None — stream_service resolves its own model.
+    R6: ``ensure_submission_for_send`` runs here so missing 0026 table
+    surfaces as HTTP 503, not SSE error after StreamingResponse starts.
     """
+    from app.services.reader_record_ask.submission_gateway import (
+        SubmissionEnsureResult,
+        build_retry_snapshot,
+        ensure_submission_for_send,
+    )
+
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
     await _validate_reading_record_anchor(
         user_id=user_id,
@@ -327,39 +348,68 @@ async def prepare_reading_record_ask_message(
     else:
         resolved_thread_id = thread_id
 
-    if not get_settings().reader_record_ask_agentic_enabled:
-        return parsed_record_id, resolved_thread_id, None
+    agentic = get_settings().reader_record_ask_agentic_enabled
+    lane: Literal["agentic", "legacy"] = "agentic" if agentic else "legacy"
+    execution: ReaderRecordAskExecutionConfig | None = None
+    model_option_key: str | None = request.model
 
-    option = await thread_service.resolve_and_persist_thread_model_option(
-        user_id=user_id,
+    if agentic:
+        option = await thread_service.resolve_and_persist_thread_model_option(
+            user_id=user_id,
+            thread_id=resolved_thread_id,
+            requested_key=request.model,
+            reading_record_id=parsed_record_id,
+        )
+        execution = await _resolve_agentic_execution(
+            option,
+            web_search_mode=request.web_search_mode,
+        )
+        model_option_key = execution.option_key
+        if request.web_search_mode == "allowed":
+            capability = execution.web_search_capability
+            if (
+                capability is None
+                or not capability.enabled_for_turn
+                or execution.web_search_backend is None
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "web_search_unavailable",
+                        "message": "Web Search is temporarily unavailable for this model.",
+                    },
+                )
+
+    web_mode = (
+        request.web_search_mode
+        if isinstance(getattr(request, "web_search_mode", None), str)
+        else "disabled"
+    )
+    retry_snapshot = build_retry_snapshot(
+        lane=lane,
+        model_option_key=model_option_key,
+        web_search_mode=web_mode,
+        route_identity="reader_record_ask",
+    )
+
+    # Durable claim+pair+bind BEFORE StreamingResponse (R6 P0).
+    submission: SubmissionEnsureResult | None = await ensure_submission_for_send(
+        repo=ReaderRecordAskRepository(),
         thread_id=resolved_thread_id,
-        requested_key=request.model,
+        user_id=user_id,
+        client_submission_id=request.client_submission_id,
+        content_md=request.content,
+        retry_snapshot=retry_snapshot,
+    )
+
+    return SendPreparedResult(
         reading_record_id=parsed_record_id,
+        thread_id=resolved_thread_id,
+        execution=execution,
+        lane=lane,
+        submission=submission,
+        model_option_key=model_option_key,
     )
-    execution = await _resolve_agentic_execution(
-        option,
-        web_search_mode=request.web_search_mode,
-    )
-    # G3-R3: when the user requested ``web_search_mode="allowed"`` but
-    # the resolved capability is unavailable OR the adapter could not
-    # construct a real backend, fail-closed with a typed 503 BEFORE
-    # the StreamingResponse starts. Never silently stream a turn that
-    # promised Web Search but cannot deliver it.
-    if request.web_search_mode == "allowed":
-        capability = execution.web_search_capability
-        if (
-            capability is None
-            or not capability.enabled_for_turn
-            or execution.web_search_backend is None
-        ):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "web_search_unavailable",
-                    "message": "Web Search is temporarily unavailable for this model.",
-                },
-            )
-    return parsed_record_id, resolved_thread_id, execution
 
 
 async def _stream_legacy_or_agentic(
@@ -370,19 +420,77 @@ async def _stream_legacy_or_agentic(
     request: ReaderRecordAskMessageRequest,
     execution: ReaderRecordAskExecutionConfig | None = None,
     lifecycle: StreamLifecycleHook | None = None,
+    prepared: SendPreparedResult | None = None,
 ) -> AsyncIterator[str]:
-    """Dispatch to agentic path when flag is on; never fall back on agentic failure."""
-    if not get_settings().reader_record_ask_agentic_enabled:
+    """Dispatch agentic/legacy using pre-stream prepared submission (R6).
+
+    Generator must NOT re-claim or re-create pairs. Model only runs when
+    prepared.submission is None (pre-R2) or may_create_model=True.
+    """
+    from app.services.reader_record_ask.sse import encode_sse
+
+    if prepared is not None:
+        ensure = prepared.submission
+        lane = prepared.lane
+        model_option_key = prepared.model_option_key
+        execution = prepared.execution
+        thread_id = prepared.thread_id
+        reading_record_id = prepared.reading_record_id
+    else:
+        # Defensive fallback for tests that skip prepare — still not ideal.
+        ensure = None
+        lane = (
+            "agentic"
+            if get_settings().reader_record_ask_agentic_enabled
+            else "legacy"
+        )
+        model_option_key = (
+            execution.option_key if execution is not None else request.model
+        )
+
+    if ensure is not None and ensure.stop_model:
+        yield encode_sse(
+            "submission.reconcile",
+            {
+                "client_submission_id": ensure.client_submission_id,
+                "thread_id": ensure.thread_id,
+                "status": ensure.status,
+                "user_message_id": ensure.user_message_id,
+                "assistant_message_id": ensure.assistant_message_id,
+                "terminal_code": ensure.terminal_code,
+                "claim_generation": ensure.claim_generation,
+                "action_hint": (
+                    "wait"
+                    if ensure.status == "streaming"
+                    else "retry"
+                    if ensure.status in {"failed", "cancelled"}
+                    else "resend"
+                    if ensure.status in {"claimed", "not_found"}
+                    else "none"
+                ),
+            },
+        )
+        return
+
+    precreated_user = ensure.user_message if ensure else None
+    precreated_asst = ensure.assistant_message if ensure else None
+    claim_gen = ensure.claim_generation if ensure else None
+    client_sub_id = request.client_submission_id
+
+    if lane == "legacy":
         async for chunk in stream_service.stream_thread_message(
             user_id=user_id,
             reading_record_id=reading_record_id,
             thread_id=thread_id,
             request=request,
+            existing_user_message=precreated_user,
+            existing_assistant_message=precreated_asst,
+            client_submission_id=client_sub_id,
+            claim_generation=claim_gen,
         ):
             yield chunk
         return
 
-    # Agentic path: re-load facts for envelope (validation already done).
     facts = await _load_snapshot_facts(
         user_id=user_id,
         reading_record_id=reading_record_id,
@@ -394,24 +502,9 @@ async def _stream_legacy_or_agentic(
     model = execution.model if execution is not None else None
     model_settings = execution.model_settings() if execution is not None else None
     usage_limits = execution.usage_limits if execution is not None else None
-    # ASK-WEB-G1-R1: forward the resolved web search capability so the
-    # production stream can auto-wire the FakeWebSearchBackend + a fresh
-    # WebEvidenceRegistry bound to the envelope fingerprint. When
-    # ``web_search_mode="disabled"`` (or unset) the resolver returns
-    # ``None`` and the runtime must NOT mount the ``search_web`` tool.
     web_search_capability = (
         execution.web_search_capability if execution is not None else None
     )
-    # G3-R3: forward the real provider backend produced by the registry.
-    # When ``None`` (capability not granted / adapter unverified) the
-    # production stream auto-wires a fake backend only in tests; in
-    # production the ``search_web`` tool is not mounted.
-    #
-    # Defensive invariant: when ``web_search_capability`` is ``None``
-    # (disabled mode), the backend MUST also be ``None`` — even if a
-    # buggy resolver ever returned a non-None backend with a disabled
-    # capability. The runtime must never mount ``search_web`` for a
-    # disabled turn.
     resolved_backend = (
         execution.web_search_backend if execution is not None else None
     )
@@ -427,6 +520,11 @@ async def _stream_legacy_or_agentic(
         facts=facts,
         request_anchor=request.anchor,
         validated_anchor=None,
+        client_submission_id=client_sub_id,
+        existing_user_message=precreated_user,
+        existing_assistant_message=precreated_asst,
+        claim_generation=claim_gen,
+        model_option_key=model_option_key,
         stable_document_id=None,
         model=model,
         model_settings=model_settings,
@@ -443,7 +541,7 @@ async def send_reading_record_ask_message(
     user_id: UUID,
     reading_record_id: str,
     request: ReaderRecordAskMessageRequest,
-    prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
+    prepared: SendPreparedResult | None = None,
     lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
@@ -452,14 +550,14 @@ async def send_reading_record_ask_message(
             reading_record_id=reading_record_id,
             request=request,
         )
-    parsed_record_id, resolved_thread_id, execution = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
-        reading_record_id=parsed_record_id,
-        thread_id=resolved_thread_id,
+        reading_record_id=prepared.reading_record_id,
+        thread_id=prepared.thread_id,
         request=request,
-        execution=execution,
+        execution=prepared.execution,
         lifecycle=lifecycle,
+        prepared=prepared,
     ):
         yield chunk
 
@@ -470,7 +568,7 @@ async def stream_reading_record_ask_thread_message(
     reading_record_id: str,
     thread_id: UUID,
     request: ReaderRecordAskMessageRequest,
-    prepared: tuple[UUID, UUID, ReaderRecordAskExecutionConfig | None] | None = None,
+    prepared: SendPreparedResult | None = None,
     lifecycle: StreamLifecycleHook | None = None,
 ) -> AsyncIterator[str]:
     if prepared is None:
@@ -480,14 +578,14 @@ async def stream_reading_record_ask_thread_message(
             request=request,
             thread_id=thread_id,
         )
-    parsed_record_id, resolved_thread_id, execution = prepared
     async for chunk in _stream_legacy_or_agentic(
         user_id=user_id,
-        reading_record_id=parsed_record_id,
-        thread_id=resolved_thread_id,
+        reading_record_id=prepared.reading_record_id,
+        thread_id=prepared.thread_id,
         request=request,
-        execution=execution,
+        execution=prepared.execution,
         lifecycle=lifecycle,
+        prepared=prepared,
     ):
         yield chunk
 
@@ -501,40 +599,72 @@ async def prepare_reading_record_ask_retry(
 ) -> RetryPreparedResult:
     """Retry preflight — runs before the StreamingResponse starts.
 
-    Mirrors :func:`prepare_reading_record_ask_message` for the retry
-    path. Completes the same five preflight stages so a config-
-    unavailable option surfaces as a typed HTTP 503 (or 422 / 400)
-    before any SSE byte is written:
+    ASK-RETRY-CONTRACT-R3 preflight order (immutable lane firewall):
 
-    1. ``reading_record_id`` UUID parsing;
-    2. agentic feature flag decision (``mode``);
-    3. snapshot facts load (only required for the agentic path);
-    4. persisted option resolution via ``thread_service``;
-    5. ``resolve_reader_record_ask_execution``.
+    1. Validate reading_record_id / thread / message ownership;
+    2. Load target assistant + preceding user message;
+    3. Resolve persisted retry lane from message / turn_run
+       ``execution_version`` (never the live feature flag);
+    4. Enter only that lane's Adapter;
+    5. Missing / untrusted lane → typed 409 (no cross-chain guess).
 
-    Legacy retry keeps the original ``stream_service.retry_thread_message``
-    behavior, but ``mode`` is fixed here so the generator cannot drift
-    branches after the response has started.
+    The live ``reader_record_ask_agentic_enabled`` flag only decides the
+    default lane for *new* submissions. Historical retry must replay the
+    original lane.
 
     ASK-WEB-G1-R2: when ``message_id`` is provided, the preflight loads
     the persisted user message metadata and replays the original turn's
     ``web_search_mode`` (the **resolved** value persisted at send time,
-    not the raw request toggle). This is the single source of truth for
-    retry capability — the runtime must NOT fall back to the current UI
-    toggle. If the persisted metadata does not carry ``web_search_mode``
-    (legacy rows persisted before G1-R2), the replay defaults to
-    ``"disabled"`` (fail-closed). When the persisted mode is
-    ``"allowed"`` but the provider is no longer wired (or the resolver
-    returns ``enabled_for_turn=False`` for any reason), the resolver
-    returns a typed unavailable capability — retry never silently
-    switches to a fake backend or another provider.
+    not the raw request toggle). Fail-closed to ``disabled`` when absent.
     """
+    from app.services.reader_record_ask.repository import ReaderRecordAskRepository
+
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    if not get_settings().reader_record_ask_agentic_enabled:
-        # Legacy mode still loads facts for parity with the previous
-        # behavior — retry_thread_message does not accept facts but
-        # the prior generator called _load_snapshot_facts first to
-        # produce the same 404/400 error before streaming.
+    if message_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "retry_target_missing",
+                "message": "Retry requires a persisted assistant message id.",
+            },
+        )
+
+    # 1–2: ownership + load assistant / user pair.
+    repo = ReaderRecordAskRepository()
+    thread = await repo.get_thread(
+        user_id=user_id,
+        thread_id=thread_id,
+        reading_record_id=parsed_record_id,
+    )
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Reader ask thread not found")
+    assistant_msg, user_msg = await repo.get_assistant_message_with_preceding_user_message(
+        thread_id=thread_id,
+        message_id=message_id,
+    )
+    if assistant_msg is None or user_msg is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Retried assistant message or its preceding user message was not found",
+        )
+
+    # 3: resolve immutable retry lane from persisted facts only.
+    lane = _resolve_persisted_retry_lane(
+        assistant_msg=assistant_msg,
+        user_msg=user_msg,
+    )
+    if lane is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "retry_lane_unknown",
+                "message": "无法确认这轮回答的执行链路，请新建提问，不要跨链重试。",
+            },
+        )
+
+    if lane == "legacy":
+        # Facts load preserves the historical 404/400 surface for missing
+        # records without entering the agentic adapter.
         await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
         return RetryPreparedResult(
             reading_record_id=parsed_record_id,
@@ -543,33 +673,37 @@ async def prepare_reading_record_ask_retry(
             execution=None,
         )
 
-    # Agentic mode: preflight facts + option + execution config so the
-    # generator never re-resolves any of them.
+    # Agentic lane: preflight facts + execution from the *persisted*
+    # retry snapshot model option (never current UI / thread selection /
+    # retry body model).
     facts = await _load_snapshot_facts(
         user_id=user_id,
         reading_record_id=parsed_record_id,
     )
+    snapshot_model_key = _extract_snapshot_model_option_key(
+        assistant_msg=assistant_msg,
+        user_msg=user_msg,
+    )
+    if lane == "agentic" and not snapshot_model_key:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "retry_snapshot_incomplete",
+                "message": "无法确认原模型配置，请重新提问。",
+                "action_hint": "reask",
+            },
+        )
     option = await thread_service.resolve_and_persist_thread_model_option(
         user_id=user_id,
         thread_id=thread_id,
-        requested_key=None,
+        requested_key=snapshot_model_key,
         reading_record_id=parsed_record_id,
     )
 
-    # ASK-WEB-G1-R2: replay the original turn's persisted
-    # ``web_search_mode`` so retry uses the same capability truth as
-    # the original send. The persisted value is the **resolved** mode
-    # (``allowed`` only when a real provider was wired and
-    # ``enabled_for_turn=True`` at send time), not the raw UI toggle.
-    # When ``message_id`` is None (defensive — caller did not supply
-    # the retry target) or the metadata has no ``web_search_mode``
-    # (legacy row), the replay defaults to ``"disabled"`` fail-closed.
-    replayed_web_search_mode: WebSearchMode = _DEFAULT_REPLAY_WEB_SEARCH_MODE
-    if message_id is not None:
-        replayed_web_search_mode = await _load_replayed_web_search_mode(
-            thread_id=thread_id,
-            message_id=message_id,
-        )
+    replayed_web_search_mode: WebSearchMode = await _load_replayed_web_search_mode(
+        thread_id=thread_id,
+        message_id=message_id,
+    )
 
     execution = await _resolve_agentic_execution(
         option,
@@ -595,6 +729,87 @@ async def prepare_reading_record_ask_retry(
         facts=facts,
         execution=execution,
     )
+
+
+def _extract_snapshot_model_option_key(
+    *,
+    assistant_msg: dict[str, Any],
+    user_msg: dict[str, Any],
+) -> str | None:
+    """Model option key from immutable retry snapshot only."""
+    for blob in (
+        assistant_msg.get("metadata_json") or {},
+        user_msg.get("metadata_json") or {},
+    ):
+        if not isinstance(blob, dict):
+            continue
+        snap = blob.get("retry_snapshot")
+        if isinstance(snap, dict):
+            key = snap.get("model_option_key")
+            if isinstance(key, str) and key.strip():
+                return key.strip()
+        key2 = blob.get("model_option_key")
+        if isinstance(key2, str) and key2.strip():
+            return key2.strip()
+    return None
+
+
+def _resolve_persisted_retry_lane(
+    *,
+    assistant_msg: dict[str, Any],
+    user_msg: dict[str, Any],
+) -> RetryMode | None:
+    """Return agentic/legacy from persisted facts; None if untrusted.
+
+    Preference order:
+    1. current turn_run.execution_version (agentic versions);
+    2. assistant metadata.execution_version;
+    3. user metadata.execution_version;
+    4. explicit legacy markers / absence of agentic claim → legacy when
+       the turn predates agentic metadata but is a valid completed pair.
+
+    Never consults the live feature flag.
+    """
+    from app.services.reader_record_ask.history_projection import (
+        is_agentic_execution_version,
+    )
+
+    def _meta(msg: dict[str, Any]) -> dict[str, Any]:
+        raw = msg.get("metadata_json") or {}
+        return raw if isinstance(raw, dict) else {}
+
+    a_meta = _meta(assistant_msg)
+    u_meta = _meta(user_msg)
+    a_snap = a_meta.get("retry_snapshot") if isinstance(a_meta.get("retry_snapshot"), dict) else {}
+    u_snap = u_meta.get("retry_snapshot") if isinstance(u_meta.get("retry_snapshot"), dict) else {}
+
+    candidates: list[Any] = [
+        a_snap.get("retry_lane"),
+        u_snap.get("retry_lane"),
+        a_snap.get("execution_version"),
+        u_snap.get("execution_version"),
+        assistant_msg.get("turn_run_execution_version"),
+        a_meta.get("execution_version"),
+        u_meta.get("execution_version"),
+        a_meta.get("retry_lane"),
+        u_meta.get("retry_lane"),
+    ]
+    for value in candidates:
+        if value is None or value == "":
+            continue
+        if is_agentic_execution_version(value) or value in {
+            "agentic",
+            "reader_record_ask_agentic",
+        }:
+            return "agentic"
+        if value in {"legacy", "reader_record_ask_legacy", "reader_ask_legacy"}:
+            return "legacy"
+        # Unknown non-empty token → fail-closed (do not guess).
+        return None
+
+    # ASK-RETRY-CONTRACT-R4: no trusted snapshot/lane → fail-closed.
+    # Never guess legacy for null/missing metadata (would cross-chain).
+    return None
 
 
 async def _load_replayed_web_search_mode(
