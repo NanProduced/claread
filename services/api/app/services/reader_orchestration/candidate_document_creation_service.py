@@ -628,6 +628,10 @@ def _build_candidate_blocks(
         )
         for index, draft in enumerate(drafts)
     ]
+    # Single semantic classification seam — do not copy rules here.
+    from .semantic_classifier import attach_semantic_to_stable_blocks
+
+    blocks = attach_semantic_to_stable_blocks(blocks)
     return blocks, title
 
 

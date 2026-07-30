@@ -165,6 +165,12 @@ class InputDocumentNormalizer:
             )
             for index, draft in enumerate(drafts)
         ]
+        # Single semantic classification seam (semantic_classifier.py).
+        # Every new freeze-bound block receives contract_version, including
+        # structural types with content_role=null. Rules are not copied here.
+        from .semantic_classifier import attach_semantic_to_stable_blocks
+
+        blocks = attach_semantic_to_stable_blocks(blocks)
 
         return NormalizedInputDocument(
             source_type=request.source_type,

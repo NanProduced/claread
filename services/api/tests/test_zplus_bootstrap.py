@@ -129,9 +129,20 @@ async def test_bootstrap_creates_plan_windows_and_jobs(
             assert job is not None
             assert job["job_type"] == ZPLUS_GRAMMAR_JOB_TYPE
             assert job["target_type"] == "unit_range"
-            assert job["operation_fingerprint"] == ZPLUS_GRAMMAR_OPERATION_FINGERPRINT
+            job_input = job["input_json"]
+            assert job_input["semantic_contract_version"] is None
+            assert (
+                job_input["automatic_layer_policy_resolver_version"] == "legacy_open"
+            )
+            assert job_input["automatic_layer_name"] == "grammar_note"
+            assert job_input["semantic_policy_mode"] == "enforce"
+            assert job["operation_fingerprint"] == (
+                f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:"
+                f"{job_input['strategy_hash']}:"
+                "sem:legacy:legacy_open:mode:enforce"
+            )
             assert job["status"] == "queued"
-            assert job["input_json"]["plan_id"] == str(result.plan_id)
+            assert job_input["plan_id"] == str(result.plan_id)
 
 
 async def test_bootstrap_idempotent_skips_existing_active_plan(

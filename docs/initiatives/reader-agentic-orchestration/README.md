@@ -97,6 +97,7 @@
 | `modules/reader-record-plate-surface-ui.md` | `/app/reader-record/{recordId}` UI/UX 目标方案：模式、marks/cues、selection toolbar、用户资产、Ask context、移动端 action sheet | 修改 Reader Record 页面 UI/UX、marks 视觉、selection 行为或移动端交互 |
 | `modules/local-real-chain-runbook.md` | D5/D6 本地真实链路 runbook：三进程启动、model profile env、worker CLI、DB 诊断、fail-closed 行为 | 本地实跑 reader enhancement 主链路或排障 |
 | `modules/local-article-rag-runbook.md` | Article RAG 本地运维 runbook：配置、worker 启动、lifecycle status、失败码、真实 smoke gate | 本地实跑 Article RAG 或排障 |
+| `modules/semantic-automatic-layer-policy.md` | Semantic role 分类、automatic T/V/G/S 产品矩阵、off/shadow/enforce 冻结 mode、job fence 与 USER_EXPLICIT section 身份 | 修改 automatic bootstrap 过滤、worker fence、aside/blockquote 语义策略 |
 
 ### 前端两文件边界切分
 

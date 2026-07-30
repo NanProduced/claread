@@ -626,6 +626,26 @@ export interface ReaderSourceBlockNodeDto {
   tableIsHeader?: boolean | null;
   /** L1: per-cell alignment for `table_cell`, else `null`. */
   tableAlignment?: "left" | "center" | "right" | "default" | null;
+  /**
+   * P3 automatic-policy projection (backend-only truth).
+   * Expresses whether the system will *automatically* generate a layer —
+   * never whether a job is loading / published / failed. Absent on legacy
+   * snapshots (no semantic contract). UI must not re-derive role via regex.
+   */
+  contentRole?:
+    | "prose"
+    | "quotation"
+    | "source_callout"
+    | "citation_reference"
+    | "prompt_question"
+    | "link_only"
+    | null;
+  automaticLayerPolicy?: {
+    translation: boolean;
+    vocabulary: boolean;
+    grammarNote: boolean;
+    sentenceAnalysis: boolean;
+  } | null;
 }
 
 export type ReaderSourceBlockChildNodeDto =

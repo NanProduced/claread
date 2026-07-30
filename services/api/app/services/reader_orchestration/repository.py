@@ -37,6 +37,10 @@ from app.schemas.reader_orchestration import (
 )
 
 from ._text import sanitize_failure_message
+from .automatic_layer_policy import (
+    AutomaticLayerPolicy,
+    build_reading_unit_metadata_json,
+)
 from .base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
@@ -58,6 +62,22 @@ from .base_builder import (
     validate_reading_base_build_result,
 )
 from .span_recorder import parse_trace_id_from_envelope
+
+
+def _unit_metadata_json(unit: BuiltReadingUnit) -> dict[str, Any]:
+    """Persist sentence_provider + versioned automatic-layer semantic policy."""
+    policy = (
+        AutomaticLayerPolicy.from_mapping(unit.automatic_layer_policy)
+        if unit.automatic_layer_policy is not None
+        else None
+    )
+    return build_reading_unit_metadata_json(
+        sentence_provider=unit.sentence_provider,
+        contract_version=unit.semantic_contract_version,
+        content_role=unit.content_role,
+        automatic_layer_policy=policy,
+        resolver_version=unit.automatic_layer_policy_resolver_version,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,11 +388,7 @@ class ReaderOrchestrationRepository:
                 unit.base_start_utf16,
                 unit.base_end_utf16,
                 unit.text_hash,
-                jsonb_param(
-                    {"sentence_provider": unit.sentence_provider}
-                    if unit.sentence_provider
-                    else {}
-                ),
+                jsonb_param(_unit_metadata_json(unit)),
             )
 
     async def insert_anchor_segments(
@@ -1127,7 +1143,7 @@ class ReaderOrchestrationRepository:
         unit_rows = await conn.fetch(
             """
             SELECT unit_id, order_index, unit_type, boundary_quality,
-                   base_start_utf16, base_end_utf16, text_hash
+                   base_start_utf16, base_end_utf16, text_hash, metadata_json
             FROM reading_units
             WHERE reading_record_id = $1
               AND base_id = $2
@@ -1245,6 +1261,10 @@ class ReaderOrchestrationRepository:
             # happened at freeze time and is stored in reading_units /
             # navigation_json). Only the stable-only fields are re-derived,
             # each from its authoritative source — no second canonical truth.
+            #
+            # Range mismatch / duplicate / invalid range fail-open: the
+            # unit keeps its persisted metadata_json semantic policy and
+            # does NOT invent all-false automatic layers.
             matched_block = stable_annotations_by_range.get(
                 (int(row["base_start_utf16"]), int(row["base_end_utf16"]))
             )
@@ -1259,6 +1279,7 @@ class ReaderOrchestrationRepository:
             table_alignment: str | None = None
             table_alignments: tuple[str, ...] | None = None
             table_header_rows: int | None = None
+            block_payload: dict[str, Any] = {}
             if matched_block is not None:
                 stable_block_type = str(matched_block["block_type"])
                 stable_block_id = str(matched_block["block_id"])
@@ -1282,6 +1303,30 @@ class ReaderOrchestrationRepository:
                 elif stable_block_type == "table":
                     table_alignments = _extract_alignments(block_payload)
                     table_header_rows = _extract_header_rows(block_payload)
+
+            # Semantic policy: prefer unit metadata recorded at freeze;
+            # re-resolve only with the **recorded** resolver version
+            # (never latest). Missing metadata → legacy (None fields).
+            from .automatic_layer_policy import policy_from_unit_metadata
+
+            unit_meta = ensure_json_object(row["metadata_json"])
+            resolved_semantic = policy_from_unit_metadata(
+                unit_meta,
+                block_type=stable_block_type,
+                payload_json=block_payload or None,
+                prefer_recorded=True,
+            )
+            semantic_contract_version: str | None = None
+            content_role: str | None = None
+            automatic_layer_policy: dict[str, bool] | None = None
+            automatic_layer_policy_resolver_version: str | None = None
+            if not resolved_semantic.is_legacy:
+                semantic_contract_version = resolved_semantic.contract_version
+                content_role = resolved_semantic.content_role
+                automatic_layer_policy = resolved_semantic.policy.as_dict()
+                automatic_layer_policy_resolver_version = (
+                    resolved_semantic.resolver_version
+                )
 
             units.append(
                 BuiltReadingUnit(
@@ -1307,6 +1352,12 @@ class ReaderOrchestrationRepository:
                     table_alignment=table_alignment,
                     table_alignments=table_alignments,
                     table_header_rows=table_header_rows,
+                    semantic_contract_version=semantic_contract_version,
+                    content_role=content_role,
+                    automatic_layer_policy=automatic_layer_policy,
+                    automatic_layer_policy_resolver_version=(
+                        automatic_layer_policy_resolver_version
+                    ),
                 )
             )
             navigation_units.append(

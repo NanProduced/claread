@@ -1,7 +1,7 @@
 # Stable Reading Document、Canonical Text Layer 与 Reading Units
 
 > 状态：`D6 文档型 Reader 修订`
-> 最后更新：2026-06-25
+> 最后更新：2026-07-26（同步 `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md` G0 frozen 状态：stable block-level structure facts 已落地；`code_block` / `table` / `table_row` / `table_cell` 的 `default_route` 已改为 `main_reading`）
 > 范围：稳定阅读文档、规范文本层、不可变阅读单位、文本坐标和 `article_ready` gate。
 
 ## 核心不变量
@@ -59,11 +59,12 @@ D6+ Stable Reading Document 还需要冻结 stable block facts。建议 block mo
 - interpretation policy：`main_reading`、`rag_ask_only`、`metadata_only` 等
 - extraction warnings / quality flags
 
-table、image、footnote 不应静默丢弃：
+table、image、footnote 不应静默丢弃（`default_route` 以 `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md` Clause 4 为单一事实源）：
 
-- table block 保留 cell text 和结构；默认进入 RAG/Ask，主解析不按普通段落处理。
-- image block 保留 source artifact、caption/alt/OCR text；OCR text 由用户确认后决定是否进入主阅读流。
-- footnote block 保留脚注正文和正文 reference 关系；默认可进入 RAG/Ask，主解析低优先级。
+- table block 保留 cell text 和结构；`table` / `table_row` / `table_cell` 的 `default_route` 均为 `main_reading`（CONTRACT 2026-07-25 re-frozen），`table` / `table_row` wrapper 的 `rag_eligible=false`，RAG 只针对 `table_cell` 叶子。
+- image block 保留 source artifact、caption/alt/OCR text；`image` 的 `default_route=metadata_only`，`image_ocr` 的 `default_route=rag_ask_only`；OCR text 由用户确认后决定是否进入主阅读流。
+- footnote block 保留脚注正文和正文 reference 关系；`default_route=rag_ask_only`，主解析低优先级。
+- code block 的 `default_route=main_reading`、`rag_eligible=true`（CONTRACT 2026-07-25 re-frozen）。
 
 ## 文本坐标
 
@@ -115,7 +116,7 @@ D4 默认 builder：
 
 - plain text 没有空行时，整段正文会先成为一个 structure block，再成为一个 unit。
 - sentence / clause / fallback 只生成 unit 内部 Anchor Segments，不会自动提升为独立 unit。
-- Markdown 标记（如 `#`、`-`、`>`）当前只作为 canonical text 的一部分保留，并影响 `heading` / `list` / `quote` 的 heuristic unit type；Stable Reading Document contract 尚未落地独立 block-level structure facts。
+- Markdown 标记（如 `#`、`-`、`>`）当前只作为 canonical text 的一部分保留，并影响 `heading` / `list` / `quote` 的 heuristic unit type；Stable Reading Document 的 block-level structure facts 已由 `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md` G0 frozen 落地（`StableDocumentBlock` / `StableBlockAnnotation` / `default_route` / `rag_eligible`），新 Markdown 输入经 `markdown_source_parser.py` 产出结构化 blocks，不再依赖 heuristic。
 
 D4 ID 口径：
 

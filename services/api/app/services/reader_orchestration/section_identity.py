@@ -5,8 +5,8 @@ No I/O, no jobs, no LLM. node_id / outline_revision never enter identity or keys
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 SECTION_TARGET_KEY_VERSION = "unit_range_v1"
 _VERSION_PREFIX = f"{SECTION_TARGET_KEY_VERSION}|"
@@ -286,6 +286,43 @@ def try_build_section_identity(
     )
 
 
+def parse_section_identity_mapping(raw: object) -> SectionIdentity:
+    """Parse ``input_json.section_identity`` object fail-closed.
+
+    Requires non-empty ``record_id`` / ``base_id`` / ``start_unit_id`` /
+    ``end_unit_id`` and int ``generation >= 1``. Anchors are optional
+    (null/empty → None). Does not expand unit ranges (no ordered universe).
+    """
+    if not isinstance(raw, Mapping):
+        raise SectionIdentityError("section_identity must be an object")
+    record_id = _require_nonempty_str(raw.get("record_id"), "record_id")
+    base_id = _require_nonempty_str(raw.get("base_id"), "base_id")
+    generation_raw = raw.get("generation")
+    if (
+        not isinstance(generation_raw, int)
+        or isinstance(generation_raw, bool)
+        or generation_raw < 1
+    ):
+        raise SectionIdentityError("generation must be int >= 1")
+    start_unit_id = _require_nonempty_str(raw.get("start_unit_id"), "start_unit_id")
+    end_unit_id = _require_nonempty_str(raw.get("end_unit_id"), "end_unit_id")
+    sa = raw.get("start_anchor_segment_id")
+    ea = raw.get("end_anchor_segment_id")
+    if sa is not None and not isinstance(sa, str):
+        raise SectionIdentityError("start_anchor_segment_id must be str or null")
+    if ea is not None and not isinstance(ea, str):
+        raise SectionIdentityError("end_anchor_segment_id must be str or null")
+    return SectionIdentity(
+        record_id=record_id,
+        base_id=base_id,
+        generation=generation_raw,
+        start_unit_id=start_unit_id,
+        end_unit_id=end_unit_id,
+        start_anchor_segment_id=sa or None,
+        end_anchor_segment_id=ea or None,
+    )
+
+
 __all__ = [
     "SECTION_TARGET_KEY_VERSION",
     "SectionIdentity",
@@ -297,5 +334,6 @@ __all__ = [
     "encode_section_target_key",
     "expand_closed_unit_range",
     "normalize_section_anchors",
+    "parse_section_identity_mapping",
     "try_build_section_identity",
 ]

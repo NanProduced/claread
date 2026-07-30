@@ -23,10 +23,12 @@
  *
  * 提交：Cmd/Ctrl+Enter 拦截触发 onSubmit 回调。
  *
- * C1.2 placeholder 修复：
+ * C1.2 placeholder（R3 修订：中文双行、与正文共用排版坐标）：
  * - 移除 PlateContent 自带 placeholder（与父组件 overlay 重叠）。
- * - 父组件 AnalyzeSubmitForm 在 `!text.trim()` 时渲染 overlay 提示，
- *   是 placeholder 的单一真相源；本组件不再重复渲染。
+ * - placeholder / placeholderSub 由 PlateContent 的 before:/after: 伪元素
+ *   绘制，定位与正文 padding 原点一致，主文案与首行 caret 同 baseline；
+ *   辅助行在 focus 后淡出；两者 pointer-events-none，不拦截点击/选择/
+ *   粘贴。表单层不再渲染任何 placeholder overlay。
  *
  * C1.3 可见降级：
  * - 初值与 setValue 使用 `deserializeMarkdownToBlocksWithStatus`，
@@ -126,6 +128,7 @@ import {
   lintMarkdownInput,
   type MarkdownLintResult,
 } from "./markdown-lint";
+import { collectScrollableAncestors, createArticleStartScrollRestorer } from "./paste-scroll-restore";
 
 // ---------------------------------------------------------------------------
 // 最小 element / leaf component（自包含，不耦合 reader 上下文）
@@ -134,7 +137,7 @@ import {
 
 function MarkdownParagraph({ children, attributes }: PlateElementProps) {
   return (
-    <p {...attributes} className="my-3">
+    <p {...attributes} className="my-2.5">
       {children}
     </p>
   );
@@ -143,12 +146,12 @@ function MarkdownParagraph({ children, attributes }: PlateElementProps) {
 function MarkdownHeading({ children, element, attributes }: PlateElementProps) {
   const type = (element as { type?: string }).type ?? "h6";
   const sizeClass: Record<string, string> = {
-    h1: "text-2xl font-bold mt-6 mb-2 leading-tight",
-    h2: "text-xl font-bold mt-5 mb-2 leading-tight",
-    h3: "text-lg font-semibold mt-4 mb-2 leading-snug",
-    h4: "text-base font-semibold mt-3 mb-1 leading-snug",
-    h5: "text-sm font-semibold mt-3 mb-1 leading-snug",
-    h6: "text-sm font-semibold mt-3 mb-1 leading-snug uppercase tracking-wide",
+    h1: "mb-3 mt-8 text-[1.875rem] font-semibold leading-[1.2] tracking-[-0.025em]",
+    h2: "mb-3 mt-7 text-2xl font-semibold leading-[1.24] tracking-[-0.02em]",
+    h3: "mb-2 mt-6 text-xl font-semibold leading-[1.3] tracking-[-0.015em]",
+    h4: "mb-2 mt-5 text-[1.08rem] font-semibold leading-[1.4]",
+    h5: "mb-1.5 mt-4 text-base font-semibold leading-[1.45]",
+    h6: "mb-1.5 mt-4 text-base font-medium leading-[1.45] text-ink-soft",
   };
   const className = sizeClass[type] ?? sizeClass.h6;
   const Component = type as React.ElementType;
@@ -163,7 +166,7 @@ function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
   return (
     <blockquote
       {...attributes}
-      className="my-3 border-l-4 border-hairline pl-4 italic text-ink-soft"
+      className="my-4 border-l-2 border-hairline py-0.5 pl-4 text-ink-soft"
     >
       {children}
     </blockquote>
@@ -172,7 +175,7 @@ function MarkdownBlockquote({ children, attributes }: PlateElementProps) {
 
 function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ul {...attributes} className="my-3 list-disc pl-6">
+    <ul {...attributes} className="my-3 list-disc pl-6 marker:text-subtle [&_li+li]:mt-1">
       {children}
     </ul>
   );
@@ -180,14 +183,14 @@ function MarkdownUnorderedList({ children, attributes }: PlateElementProps) {
 
 function MarkdownOrderedList({ children, attributes }: PlateElementProps) {
   return (
-    <ol {...attributes} className="my-3 list-decimal pl-6">
+    <ol {...attributes} className="my-3 list-decimal pl-6 marker:text-subtle [&_li+li]:mt-1">
       {children}
     </ol>
   );
 }
 
 function MarkdownListItem({ children, attributes }: PlateElementProps) {
-  return <li {...attributes} className="my-1 pl-1">{children}</li>;
+  return <li {...attributes} className="pl-1">{children}</li>;
 }
 
 function MarkdownListContent({ children, attributes }: PlateElementProps) {
@@ -198,7 +201,7 @@ function MarkdownCodeBlock({ children, attributes }: PlateElementProps) {
   return (
     <pre
       {...attributes}
-      className="my-3 overflow-x-auto rounded-md bg-surface/60 p-3 font-mono text-sm leading-relaxed"
+      className="my-4 overflow-x-auto rounded-[8px] border border-hairline/70 bg-surface-raised/55 p-4 font-mono text-[0.875rem] leading-[1.65]"
     >
       <code>{children}</code>
     </pre>
@@ -227,12 +230,11 @@ function MarkdownHr({ children, attributes }: PlateElementProps) {
 
 function MarkdownTable({ children, attributes }: PlateElementProps) {
   return (
-    <table
-      {...attributes}
-      className="my-3 w-full border-collapse border border-hairline text-sm"
-    >
-      <tbody>{children}</tbody>
-    </table>
+    <div {...attributes} className="my-4 overflow-x-auto rounded-[8px] border border-hairline/75">
+      <table className="w-full min-w-[36rem] border-collapse text-[0.875rem] leading-[1.55]">
+        <tbody>{children}</tbody>
+      </table>
+    </div>
   );
 }
 
@@ -246,14 +248,14 @@ function MarkdownTableCell({ children, attributes, element }: PlateElementProps)
     return (
       <th
         {...attributes}
-        className="border border-hairline bg-surface/40 px-3 py-1.5 text-left font-semibold"
+        className="border-b border-r border-hairline bg-surface-raised/65 px-3 py-2 text-left font-semibold last:border-r-0"
       >
         {children}
       </th>
     );
   }
   return (
-    <td {...attributes} className="border border-hairline px-3 py-1.5 text-left">
+    <td {...attributes} className="border-b border-r border-hairline px-3 py-2 text-left last:border-r-0">
       {children}
     </td>
   );
@@ -267,7 +269,7 @@ function MarkdownLink({ children, element, attributes }: PlateElementProps) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-lens-blue underline underline-offset-2"
+      className="break-words text-lens-blue underline decoration-lens-blue/45 underline-offset-2 hover:decoration-lens-blue"
     >
       {children}
     </a>
@@ -452,6 +454,13 @@ export interface MarkdownTextInputProps {
   onDegraded?: (result: DeserializeMarkdownResult) => void;
   /** 透传给 Editor 的 className */
   className?: string;
+  /** 由 PlateContent 自身绘制的空态提示，避免表单层额外 overlay。 */
+  placeholder?: string;
+  /**
+   * 空态辅助文案（第二行），渲染在主文案下方；编辑器 focus 后淡出，
+   * 与 placeholder 一样不拦截点击/选择/粘贴。
+   */
+  placeholderSub?: string;
   id?: string;
   /**
    * R1：contenteditable 不是 labelable 元素，`<label for>` 不能可靠命名它。
@@ -468,7 +477,19 @@ export const MarkdownTextInput = forwardRef<
   MarkdownTextInputHandle,
   MarkdownTextInputProps
 >(function MarkdownTextInput(
-  { initialValue, onChange, onSubmit, onLintResult, onDegraded, className, id, ariaLabelledBy, ariaDescribedBy },
+  {
+    initialValue,
+    onChange,
+    onSubmit,
+    onLintResult,
+    onDegraded,
+    className,
+    placeholder,
+    placeholderSub,
+    id,
+    ariaLabelledBy,
+    ariaDescribedBy,
+  },
   ref,
 ) {
   // C1.3 + R2 Phase 3: 挂载时用带状态 deserialize，失败时兜底为纯文本段落，
@@ -484,6 +505,9 @@ export const MarkdownTextInput = forwardRef<
   // 导致父组件重复显示可见错误提示。
   const [initialResult] = useState<DeserializeMarkdownResult>(
     () => deserializeMarkdownToBlocksWithStatus(initialValue ?? ""),
+  );
+  const [isEmpty, setIsEmpty] = useState(
+    () => !hasTextContent(initialResult.blocks),
   );
   const initialDegradedNotifiedRef = useRef(false);
 
@@ -542,6 +566,12 @@ export const MarkdownTextInput = forwardRef<
   const pasteQuietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // R1：上一次处理过的 editor value 引用，用于跳过仅 selection 变化。
   const lastValueRef = useRef<Value | null>(null);
+  // 工作台滚动模型：PlateContent 是桌面端唯一的正文滚动容器（外层卡片
+  // 高度被 h-dvh 链锁定）。整篇粘贴后浏览器会 reveal 文末 caret——桌面端
+  // 表现为编辑器内滚到底，移动端表现为 window 跳底。这里在粘贴后两帧内
+  // 把正文滚回开头并恢复 window 原滚动位置；Plate 逻辑 selection 保持
+  // 不动，只纠正可视位置。
+  const contentElRef = useRef<HTMLDivElement | null>(null);
 
   const armPasteQuietReset = useCallback((interval: number) => {
     if (pasteQuietTimerRef.current) {
@@ -719,6 +749,7 @@ export const MarkdownTextInput = forwardRef<
         // 然后同步 fire 空态回调，保证父状态立即与 editor 一致。
         cancelPendingSerialize();
         editor.tf.setValue([]);
+        setIsEmpty(true);
         // C1.4: 清空时重置粘贴保真状态
         lastPastedTextRef.current = null;
         dirtyRef.current = false;
@@ -732,6 +763,7 @@ export const MarkdownTextInput = forwardRef<
         // C1.3: setValue 使用带状态 deserialize，失败时通知父组件。
         const result = deserializeMarkdownToBlocksWithStatus(markdown);
         editor.tf.setValue(result.blocks as never[]);
+        setIsEmpty(!hasTextContent(result.blocks));
         onDegradedRef.current?.(result);
         // C1.4: programmatic setValue 重置粘贴保真状态
         lastPastedTextRef.current = null;
@@ -792,6 +824,7 @@ export const MarkdownTextInput = forwardRef<
     }
     // 轻状态判断：基于 editor.children 文本语义，不执行完整 Markdown serialize。
     const isEmpty = !hasTextContent(changedEditor.children);
+    setIsEmpty(isEmpty);
     const wasEmpty = lastSentMdRef.current.length === 0;
     const isEmptyTransition = wasEmpty !== isEmpty;
     if (isEmptyTransition) {
@@ -818,6 +851,15 @@ export const MarkdownTextInput = forwardRef<
   };
 
 
+  /**
+   * 整篇粘贴（空编辑器）后把可视位置纠正到文章开头；完整语义见
+   * paste-scroll-restore.ts。逻辑 selection 不动，只动可视滚动。
+   */
+  const resolveScrollElement = () =>
+    contentElRef.current ??
+    (id ? document.getElementById(id) : null) ??
+    (editor.api.toDOMNode(editor) as HTMLDivElement | null);
+
   const handlePaste = (event: ClipboardEvent) => {
     const plain = event.clipboardData?.getData("text/plain") ?? "";
     const html = event.clipboardData?.getData("text/html") ?? "";
@@ -825,6 +867,20 @@ export const MarkdownTextInput = forwardRef<
       return;
     }
 
+    const pasteIntoEmptyEditor = !hasTextContent(editor.children);
+    const previousWindowScrollY = window.scrollY;
+    const previousAncestorTops = pasteIntoEmptyEditor
+      ? collectScrollableAncestors(resolveScrollElement()).map((el) => el.scrollTop)
+      : [];
+    const restoreArticleStartScroll = createArticleStartScrollRestorer({
+      getScrollElement: resolveScrollElement,
+      // 正文容器之外的可滚动祖先（如 lg 桌面端的页面 main）：高度链失守
+      // 时 reveal caret 滚的是它们，一并纳入恢复。
+      getScrollableAncestors: () =>
+        collectScrollableAncestors(resolveScrollElement()),
+      getWindowScrollY: () => window.scrollY,
+      restoreWindowScroll: (top) => window.scrollTo({ top }),
+    });
     // 仅纯 Markdown 粘贴保留 byte-exact 原文。富 HTML 的 text/plain
     // companion 通常缺少标题、列表、表格等结构；提交源必须由清洗并
     // deserialize 后的 Plate Value 序列化得到。
@@ -847,6 +903,10 @@ export const MarkdownTextInput = forwardRef<
         const fallback = deserializeMarkdownToBlocksWithStatus(plain);
         editor.tf.insertFragment(fallback.blocks as never[]);
       }
+    }
+
+    if (pasteIntoEmptyEditor) {
+      restoreArticleStartScroll(previousWindowScrollY, previousAncestorTops);
     }
   };
 
@@ -871,13 +931,27 @@ export const MarkdownTextInput = forwardRef<
   return (
     <Plate editor={editor} onChange={handleEditorChange}>
       <PlateContent
+        ref={contentElRef}
         id={id}
+        aria-placeholder={placeholder}
+        data-empty={isEmpty ? "true" : "false"}
+        data-placeholder={placeholder}
+        data-placeholder-sub={placeholderSub}
         aria-labelledby={ariaLabelledBy}
         aria-describedby={ariaDescribedBy}
         className={cn(
           "min-h-0 flex-1 resize-none overflow-y-auto bg-transparent",
-          "whitespace-pre-wrap break-words outline-none",
-          "[&_strong]:font-bold",
+          "relative whitespace-pre-wrap break-words outline-none",
+          // 文档首块不从段落 margin 开始：caret/placeholder 的排版原点
+          // 就是 padding 原点，二者 baseline 严格一致。
+          "[&>[data-slate-node=element]:first-child]:mt-0",
+          // 空态主文案：定位与正文 padding 原点一致，不设置字体属性，
+          // 完整继承 PlateContent 的 font/leading —— 与首行 caret 同
+          // baseline、同文档宽度。pointer-events-none，不拦截交互。
+          "before:pointer-events-none before:absolute before:left-5 before:top-6 before:text-muted-foreground/78 before:content-[attr(data-placeholder)] data-[empty=false]:before:hidden has-[[data-slate-string]]:before:hidden sm:before:left-[max(2rem,calc(50%-24rem))] sm:before:top-8",
+          // 空态辅助文案：主文案下一行，focus 后淡出，同样不拦截交互。
+          "after:pointer-events-none after:absolute after:left-5 after:top-[calc(1.5rem+1.68em)] after:text-[0.82rem] after:leading-[1.68] after:text-muted-foreground/60 after:content-[attr(data-placeholder-sub)] after:transition-opacity after:duration-200 focus:after:opacity-0 data-[empty=false]:after:hidden has-[[data-slate-string]]:after:hidden motion-reduce:after:transition-none sm:after:left-[max(2rem,calc(50%-24rem))] sm:after:top-[calc(2rem+1.68em)]",
+          "[&_strong]:font-semibold",
           className,
         )}
         onBeforeInput={(event) => {

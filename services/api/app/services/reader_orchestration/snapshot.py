@@ -570,6 +570,21 @@ def _project_stable_block_fields(unit: BuiltReadingUnit) -> dict[str, object]:
     }
     if unit.stable_block_id is not None:
         fields["stableBlockId"] = unit.stable_block_id
+    # P3: automatic-policy projection only — does not imply job loading /
+    # published / error. Legacy units omit these keys when no contract.
+    if unit.semantic_contract_version is not None:
+        fields["contentRole"] = unit.content_role
+        if unit.automatic_layer_policy is not None:
+            fields["automaticLayerPolicy"] = {
+                "translation": bool(unit.automatic_layer_policy.get("translation")),
+                "vocabulary": bool(unit.automatic_layer_policy.get("vocabulary")),
+                "grammarNote": bool(unit.automatic_layer_policy.get("grammar_note")),
+                "sentenceAnalysis": bool(
+                    unit.automatic_layer_policy.get("sentence_analysis")
+                ),
+            }
+        else:
+            fields["automaticLayerPolicy"] = None
     return fields
 
 

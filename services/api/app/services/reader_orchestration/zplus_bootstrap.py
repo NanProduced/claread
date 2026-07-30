@@ -25,10 +25,20 @@ from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 
 from .analysis_anchor_view import AnalysisAnchorView, load_analysis_anchor_views
+from .automatic_layer_policy import (
+    AutomaticLayerTargetUnit,
+    build_semantic_fence_input_fields,
+    compose_semantic_fingerprint_token,
+    filter_units_for_any_grammar,
+    generation_semantic_fence_from_targets,
+    get_automatic_layer_policy_mode,
+    policy_from_unit_metadata,
+)
 from .job_bootstrap import (
-    _LockedActiveBaseState,
     _build_strategy_metadata,
+    _compose_operation_fingerprint,
     _load_locked_active_base_state,
+    _LockedActiveBaseState,
 )
 from .window_planner import PlannedWindow, WindowFormationConfig, plan_windows
 
@@ -123,6 +133,46 @@ class ZPlusBootstrapService:
         # ``load_analysis_anchor_views`` acquires its own connection internally,
         # so it cannot share the transaction connection.
         anchor_views = await load_analysis_anchor_views(pool, base_id=base_id)
+
+        # Mode-aware automatic grammar policy (same seam as compact/grouped).
+        # off/shadow keep all units; enforce drops grammar-disallowed units.
+        unit_ids = {v.unit_id for v in anchor_views}
+        if unit_ids:
+            async with pool.acquire() as meta_conn:
+                meta_rows = await meta_conn.fetch(
+                    """
+                    SELECT unit_id, order_index, metadata_json
+                    FROM reading_units
+                    WHERE base_id = $1
+                      AND unit_id = ANY($2::text[])
+                    ORDER BY order_index ASC
+                    """,
+                    base_id,
+                    list(unit_ids),
+                )
+            unit_maps: list[dict[str, object]] = []
+            for row in meta_rows:
+                meta = row["metadata_json"]
+                if hasattr(meta, "keys"):
+                    meta = dict(meta)
+                elif not isinstance(meta, dict):
+                    meta = {}
+                unit_maps.append(
+                    {
+                        "unit_id": str(row["unit_id"]),
+                        "order_index": int(row["order_index"] or 0),
+                        "metadata_json": meta,
+                    }
+                )
+            kept = filter_units_for_any_grammar(
+                unit_maps,
+                mode=get_automatic_layer_policy_mode(),
+                record_id=str(record_id),
+            )
+            allowed_unit_ids = {str(u["unit_id"]) for u in kept}
+            anchor_views = tuple(
+                v for v in anchor_views if v.unit_id in allowed_unit_ids
+            )
 
         # 2. Plan windows (pure algorithm, no IO).
         config = WindowFormationConfig()
@@ -281,6 +331,53 @@ class ZPlusBootstrapService:
         )
         window_budget = _compute_window_budget()
 
+        # Semantic fence from target unit metadata (recorded versions).
+        unit_meta_rows = await conn.fetch(
+            """
+            SELECT unit_id, order_index, metadata_json
+            FROM reading_units
+            WHERE base_id = $1
+              AND unit_id = ANY($2::text[])
+            ORDER BY order_index ASC
+            """,
+            state.base_id,
+            list(window.target_unit_ids),
+        )
+        typed_targets: list[AutomaticLayerTargetUnit] = []
+        for ur in unit_meta_rows:
+            meta = ur["metadata_json"]
+            if hasattr(meta, "keys"):
+                meta = dict(meta)
+            elif not isinstance(meta, dict):
+                meta = {}
+            resolved = policy_from_unit_metadata(meta)
+            typed_targets.append(
+                AutomaticLayerTargetUnit(
+                    unit_id=str(ur["unit_id"]),
+                    order_index=int(ur["order_index"] or 0),
+                    metadata_json=meta,
+                    contract_version=resolved.contract_version,
+                    resolver_version=(
+                        "legacy_open" if resolved.is_legacy else resolved.resolver_version
+                    ),
+                    content_role=resolved.content_role,
+                    policy=resolved.policy,
+                )
+            )
+        semantic_fence = generation_semantic_fence_from_targets(typed_targets)
+        frozen_mode = get_automatic_layer_policy_mode()
+        semantic_token = compose_semantic_fingerprint_token(
+            semantic_fence, mode=frozen_mode
+        )
+        operation_fingerprint = _compose_operation_fingerprint(
+            ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+            state.strategy,
+            semantic_token=semantic_token,
+        )
+        fence_fields = build_semantic_fence_input_fields(
+            semantic_fence, layer="grammar_note", mode=frozen_mode
+        )
+
         # 1. reader_runs row (per-window-run).
         run_row = await conn.fetchrow(
             """
@@ -305,6 +402,7 @@ class ZPlusBootstrapService:
                     "layer_types": ["grammar_note", "sentence_analysis"],
                     "strategy": strategy_metadata,
                     "trace_id": str(trace_id),
+                    **fence_fields,
                 }
             ),
             ZPLUS_POLICY_VERSION,
@@ -332,12 +430,13 @@ class ZPlusBootstrapService:
             "record_id": str(state.record_id),
             "base_id": str(state.base_id),
             "expected_generation": state.expected_generation,
+            **fence_fields,
         }
 
         input_signature = (
             f"{state.base_id}:{state.record_id}:{state.expected_generation}:"
-            f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:{window_id}:"
-            f"{state.strategy.strategy_hash}"
+            f"{operation_fingerprint}:{window_id}:"
+            f"{state.strategy.strategy_hash}:{semantic_token}"
         )
         input_hash = hashlib.sha256(input_signature.encode("utf-8")).hexdigest()
 
@@ -365,8 +464,8 @@ class ZPlusBootstrapService:
             ZPLUS_TARGET_TYPE,
             str(window_id),
             state.expected_generation,
-            ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-            f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:{window_id}",
+            operation_fingerprint,
+            f"{operation_fingerprint}:{window_id}",
             input_hash,
             jsonb_param(input_json),
             ZPLUS_DEFAULT_MAX_ATTEMPTS,

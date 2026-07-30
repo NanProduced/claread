@@ -10,25 +10,32 @@ Does **not** insert when translation budget is already exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from app.database import connection as db_connection
+from app.services.reader_orchestration.automatic_layer_policy import (
+    SemanticFenceConstructionError,
+)
 from app.services.reader_orchestration.execution_budget import ExecutionBudget
 from app.services.reader_orchestration.job_bootstrap import (
+    _LAYER_NAME_BY_JOB_TYPE,
     DEFAULT_TRANSLATION_MAX_ATTEMPTS,
     DEFAULT_TRANSLATION_TARGET_LANGUAGE,
     TRANSLATION_BATCH_JOB_TYPE,
     TRANSLATION_BATCH_TARGET_SCOPE,
     TRANSLATION_RUN_TYPE,
     TRANSLATION_TRIGGER_KIND,
-    _LockedActiveBaseState,
-    _LAYER_NAME_BY_JOB_TYPE,
     _compose_operation_fingerprint,
     _insert_unit_range_job,
     _load_locked_active_base_state,
+    _LockedActiveBaseState,
+    _semantic_fingerprint_token,
+    _semantic_input_fields,
+    build_semantic_fence_from_unit_maps,
 )
 from app.services.reader_orchestration.section_candidates import (
     OutlineNodeInput,
@@ -44,11 +51,11 @@ from app.services.reader_orchestration.section_lane import (
     TRANSLATION_SECTION_POLICY_VERSION,
 )
 from app.services.reader_orchestration.section_request_planner import (
+    REASON_TRANSLATION_BUDGET_EXHAUSTED,
     ExplicitSectionIntent,
     PlanOutcomeKind,
-    REASON_TRANSLATION_BUDGET_EXHAUSTED,
-    SectionPlanResult,
     SectionPlannerFacts,
+    SectionPlanResult,
     plan_explicit_section_request,
 )
 
@@ -56,9 +63,12 @@ REASON_ALREADY_QUEUED = "section_job_already_queued"
 # Client may omit layer_family (server fills translation) but must not
 # forge a non-translation family to bypass translation overlap gates.
 REASON_LAYER_FAMILY_NOT_TRANSLATION = "layer_family_not_translation"
+# Multi-unit section with mixed semantic contract or resolver versions
+# across target units: bootstrap must fail closed rather than pick one.
+REASON_SEMANTIC_FENCE_INCONSISTENT = "semantic_fence_inconsistent"
 
 
-class SectionBootstrapOutcome(str, Enum):
+class SectionBootstrapOutcome(StrEnum):
     ADMITTED = "admitted"
     NO_OP = "no_op"
     REJECT = "reject"
@@ -175,9 +185,35 @@ class SectionTranslationBootstrapService:
                     )
 
                 target_key = encode_section_target_key(plan.identity)
+
+                # Build semantic fence from real target unit metadata via the
+                # single shared builder (same seam as automatic bootstrap).
+                # Fail closed when the shared builder cannot produce a single
+                # fence identity: section identity must not be used to invent
+                # a hybrid fence that hides cross-unit policy disagreement.
+                # The shared builder raises before any reader_jobs / reader_runs
+                # row is persisted, so no half-legitimate job survives.
+                target_unit_maps = await self._load_target_unit_maps(
+                    conn, state=state, target_unit_ids=plan.target_unit_ids
+                )
+                try:
+                    semantic_fence = build_semantic_fence_from_unit_maps(
+                        target_unit_maps
+                    )
+                except SemanticFenceConstructionError:
+                    return SectionTranslationBootstrapResult(
+                        outcome=SectionBootstrapOutcome.REJECT,
+                        reason=REASON_SEMANTIC_FENCE_INCONSISTENT,
+                        plan=plan,
+                        target_unit_ids=plan.target_unit_ids,
+                        target_key=target_key,
+                    )
+
+                semantic_token = _semantic_fingerprint_token(semantic_fence)
                 operation_fingerprint = _compose_operation_fingerprint(
                     TRANSLATION_SECTION_OPERATION_FINGERPRINT,
                     state.strategy,
+                    semantic_token=semantic_token,
                 )
 
                 existing = await conn.fetchrow(
@@ -245,6 +281,7 @@ class SectionTranslationBootstrapService:
                         "trace_id": str(trace_id),
                         "request_origin": SECTION_REQUEST_ORIGIN,
                         "section_identity": section_identity_payload,
+                        **_semantic_input_fields(semantic_fence, layer="translation"),
                     },
                     input_signature_suffix=(
                         f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -263,6 +300,7 @@ class SectionTranslationBootstrapService:
                         "client_outline_revision": (
                             plan.audit.client_outline_revision if plan.audit else None
                         ),
+                        **_semantic_input_fields(semantic_fence, layer="translation"),
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
                     target_key_override=target_key,
@@ -493,6 +531,59 @@ class SectionTranslationBootstrapService:
         )
         return active is not None
 
+    async def _load_target_unit_maps(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        state: _LockedActiveBaseState,
+        target_unit_ids: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        """Load target unit metadata maps for semantic fence construction.
+
+        Reads only units that fall within ``target_unit_ids`` for the active
+        base/generation. Returns a list in the same shape as
+        :func:`_semantic_fence_from_unit_maps` expects (``unit_id``,
+        ``order_index``, ``metadata_json``).
+        """
+        if not target_unit_ids:
+            return []
+        rows = await conn.fetch(
+            """
+            SELECT unit_id, order_index, metadata_json
+            FROM reading_units
+            WHERE reading_record_id = $1
+              AND base_id = $2
+              AND unit_id = ANY($3::text[])
+            ORDER BY order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+            list(target_unit_ids),
+        )
+        maps: list[dict[str, Any]] = []
+        for row in rows:
+            raw_meta = row["metadata_json"]
+            if hasattr(raw_meta, "keys"):
+                meta = dict(raw_meta)
+            elif isinstance(raw_meta, str):
+                import json
+
+                try:
+                    parsed = json.loads(raw_meta)
+                    meta = parsed if isinstance(parsed, dict) else {}
+                except json.JSONDecodeError:
+                    meta = {}
+            else:
+                meta = raw_meta if isinstance(raw_meta, dict) else {}
+            maps.append(
+                {
+                    "unit_id": str(row["unit_id"]),
+                    "order_index": int(row["order_index"]),
+                    "metadata_json": meta,
+                }
+            )
+        return maps
+
 
 def parse_trusted_outline_payload(
     raw: object,
@@ -594,6 +685,7 @@ def parse_trusted_outline_payload(
 __all__ = [
     "REASON_ALREADY_QUEUED",
     "REASON_LAYER_FAMILY_NOT_TRANSLATION",
+    "REASON_SEMANTIC_FENCE_INCONSISTENT",
     "REASON_TRANSLATION_BUDGET_EXHAUSTED",
     "SectionBootstrapOutcome",
     "SectionTranslationBootstrapResult",

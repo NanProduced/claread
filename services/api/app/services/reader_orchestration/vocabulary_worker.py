@@ -40,6 +40,11 @@ from app.services.analysis.prompting.prompt_loader import (
     load_agent_instructions,
 )
 
+from .automatic_layer_policy import (
+    SemanticFenceError,
+    is_semantic_fence_failure_code,
+    validate_automatic_job_semantic_fence,
+)
 from .job_bootstrap import (
     VOCABULARY_BATCH_JOB_TYPE,
     VOCABULARY_BATCH_TARGET_SCOPE,
@@ -1299,6 +1304,29 @@ class VocabularyWorkerService:
             )
             raise
         except VocabularyExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1537,6 +1565,29 @@ class VocabularyWorkerService:
             )
             raise
         except VocabularyExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1686,7 +1737,8 @@ class VocabularyWorkerService:
             base_text = str(row["base_text"])
             unit_rows = await conn.fetch(
                 """
-                SELECT unit_id, order_index, base_start_utf16, base_end_utf16, text_hash
+                SELECT unit_id, order_index, base_start_utf16, base_end_utf16,
+                       text_hash, metadata_json
                 FROM reading_units
                 WHERE reading_record_id = $1
                   AND base_id = $2
@@ -1697,6 +1749,31 @@ class VocabularyWorkerService:
                 row["base_id"],
                 target_unit_ids,
             )
+            try:
+                meta_list = []
+                for ur in unit_rows:
+                    um = ur["metadata_json"]
+                    if hasattr(um, "keys"):
+                        um = dict(um)
+                    elif not isinstance(um, dict):
+                        um = {}
+                    meta_list.append(um)
+                validate_automatic_job_semantic_fence(
+                    job_input=input_json if isinstance(input_json, dict) else {},
+                    layer="vocabulary",
+                    unit_metadata_list=meta_list,
+                    operation_fingerprint=str(row["operation_fingerprint"]),
+                    trusted_record_id=str(row["reading_record_id"]),
+                    trusted_base_id=str(row["base_id"]),
+                    trusted_generation=int(row["expected_generation"]),
+                )
+            except SemanticFenceError as exc:
+                raise VocabularyExecutionError(
+                    str(exc),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code=exc.code,
+                ) from exc
             if len(unit_rows) != len(target_unit_ids):
                 missing = set(target_unit_ids) - {
                     str(r["unit_id"]) for r in unit_rows
@@ -1939,7 +2016,8 @@ class VocabularyWorkerService:
                        unit.order_index,
                        unit.base_start_utf16,
                        unit.base_end_utf16,
-                       unit.text_hash
+                       unit.text_hash,
+                       unit.metadata_json
                 FROM reader_jobs job
                 JOIN reading_bases base
                   ON base.id = job.base_id
@@ -1954,6 +2032,31 @@ class VocabularyWorkerService:
             )
             if row is None:
                 raise LookupError(f"reader job {job_id} not found")
+
+            try:
+                unit_meta = row["metadata_json"]
+                if hasattr(unit_meta, "keys"):
+                    unit_meta = dict(unit_meta)
+                elif not isinstance(unit_meta, dict):
+                    unit_meta = {}
+                validate_automatic_job_semantic_fence(
+                    job_input=row["input_json"]
+                    if isinstance(row["input_json"], dict)
+                    else {},
+                    layer="vocabulary",
+                    unit_metadata_list=[unit_meta],
+                    operation_fingerprint=str(row["operation_fingerprint"]),
+                    trusted_record_id=str(row["reading_record_id"]),
+                    trusted_base_id=str(row["base_id"]),
+                    trusted_generation=int(row["expected_generation"]),
+                )
+            except SemanticFenceError as exc:
+                raise VocabularyExecutionError(
+                    str(exc),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code=exc.code,
+                ) from exc
 
             base_text = str(row["base_text"])
             source_text = slice_by_utf16_offsets(

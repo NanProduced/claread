@@ -37,6 +37,11 @@ from app.services.analysis.prompting.prompt_loader import (
     load_agent_instructions,
 )
 
+from .automatic_layer_policy import (
+    SemanticFenceError,
+    is_semantic_fence_failure_code,
+    validate_automatic_job_semantic_fence,
+)
 from .job_bootstrap import (
     DEFAULT_TRANSLATION_TARGET_LANGUAGE,
     TRANSLATION_BATCH_JOB_TYPE,
@@ -1269,6 +1274,31 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                # Typed supersede: fence mismatch or automatic layer disallowed.
+                # Never call the model under a reinterpreted policy.
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1496,6 +1526,29 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1637,7 +1690,8 @@ class TranslationWorkerService:
             base_text = str(row["base_text"])
             unit_rows = await conn.fetch(
                 """
-                SELECT unit_id, order_index, base_start_utf16, base_end_utf16, text_hash
+                SELECT unit_id, order_index, base_start_utf16, base_end_utf16,
+                       text_hash, metadata_json
                 FROM reading_units
                 WHERE reading_record_id = $1
                   AND base_id = $2
@@ -1648,6 +1702,83 @@ class TranslationWorkerService:
                 row["base_id"],
                 target_unit_ids,
             )
+            # Full base unit order for section geometry (expand_closed_unit_range).
+            universe_rows = await conn.fetch(
+                """
+                SELECT unit_id, order_index
+                FROM reading_units
+                WHERE reading_record_id = $1
+                  AND base_id = $2
+                ORDER BY order_index ASC
+                """,
+                row["reading_record_id"],
+                row["base_id"],
+            )
+            ordered_units = [
+                {"unit_id": str(ur["unit_id"]), "order_index": int(ur["order_index"])}
+                for ur in universe_rows
+            ]
+            # Anchor ownership map for claimed section anchors (DB facts only).
+            anchor_to_unit: dict[str, str] = {}
+            identity_raw = (
+                input_json.get("section_identity")
+                if isinstance(input_json, dict)
+                else None
+            )
+            if isinstance(identity_raw, dict):
+                cand_anchors = [
+                    identity_raw.get("start_anchor_segment_id"),
+                    identity_raw.get("end_anchor_segment_id"),
+                ]
+                anchor_ids = [
+                    str(a) for a in cand_anchors if isinstance(a, str) and a
+                ]
+                if anchor_ids:
+                    arows = await conn.fetch(
+                        """
+                        SELECT anchor_segment_id, unit_id
+                        FROM anchor_segments
+                        WHERE reading_record_id = $1
+                          AND base_id = $2
+                          AND anchor_segment_id = ANY($3::text[])
+                        """,
+                        row["reading_record_id"],
+                        row["base_id"],
+                        anchor_ids,
+                    )
+                    anchor_to_unit = {
+                        str(ar["anchor_segment_id"]): str(ar["unit_id"]) for ar in arows
+                    }
+            try:
+                meta_list = []
+                for ur in unit_rows:
+                    um = ur["metadata_json"]
+                    if hasattr(um, "keys"):
+                        um = dict(um)
+                    elif not isinstance(um, dict):
+                        um = {}
+                    meta_list.append(um)
+                loaded_unit_ids = [str(ur["unit_id"]) for ur in unit_rows]
+                validate_automatic_job_semantic_fence(
+                    job_input=input_json if isinstance(input_json, dict) else {},
+                    layer="translation",
+                    unit_metadata_list=meta_list,
+                    operation_fingerprint=str(row["operation_fingerprint"]),
+                    trusted_record_id=str(row["reading_record_id"]),
+                    trusted_base_id=str(row["base_id"]),
+                    trusted_generation=int(row["expected_generation"]),
+                    trusted_target_key=str(row["target_key"] or ""),
+                    trusted_loaded_unit_ids=loaded_unit_ids,
+                    trusted_base_ordered_units=ordered_units,
+                    trusted_anchor_to_unit=anchor_to_unit,
+                )
+            except SemanticFenceError as exc:
+                raise TranslationExecutionError(
+                    str(exc),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code=exc.code,
+                ) from exc
             if len(unit_rows) != len(target_unit_ids):
                 missing = set(target_unit_ids) - {
                     str(r["unit_id"]) for r in unit_rows
@@ -1890,7 +2021,8 @@ class TranslationWorkerService:
                        unit.order_index,
                        unit.base_start_utf16,
                        unit.base_end_utf16,
-                       unit.text_hash
+                       unit.text_hash,
+                       unit.metadata_json
                 FROM reader_jobs job
                 JOIN reading_bases base
                   ON base.id = job.base_id
@@ -1906,6 +2038,43 @@ class TranslationWorkerService:
             )
             if row is None:
                 raise LookupError(f"reader job {job_id} not found")
+
+            try:
+                unit_meta = row["metadata_json"]
+                if hasattr(unit_meta, "keys"):
+                    unit_meta = dict(unit_meta)
+                elif not isinstance(unit_meta, dict):
+                    unit_meta = {}
+                unit_key = str(row["target_key"] or "")
+                # Per-unit automatic jobs rarely claim section_v1; when they
+                # do, geometry bind uses the single unit as universe/loaded.
+                single_universe = (
+                    [{"unit_id": unit_key, "order_index": int(row["order_index"] or 0)}]
+                    if unit_key
+                    else []
+                )
+                validate_automatic_job_semantic_fence(
+                    job_input=row["input_json"]
+                    if isinstance(row["input_json"], dict)
+                    else {},
+                    layer="translation",
+                    unit_metadata_list=[unit_meta],
+                    operation_fingerprint=str(row["operation_fingerprint"]),
+                    trusted_record_id=str(row["reading_record_id"]),
+                    trusted_base_id=str(row["base_id"]),
+                    trusted_generation=int(row["expected_generation"]),
+                    trusted_target_key=unit_key,
+                    trusted_loaded_unit_ids=[unit_key] if unit_key else [],
+                    trusted_base_ordered_units=single_universe,
+                    trusted_anchor_to_unit={},
+                )
+            except SemanticFenceError as exc:
+                raise TranslationExecutionError(
+                    str(exc),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code=exc.code,
+                ) from exc
 
             base_text = str(row["base_text"])
             source_text = slice_by_utf16_offsets(

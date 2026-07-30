@@ -254,6 +254,14 @@ class BuiltReadingUnit:
     table_alignment: str | None = None
     table_alignments: tuple[str, ...] | None = None
     table_header_rows: int | None = None
+    # Semantic automatic-layer policy (versioned projection of stable
+    # ``payload_json.semantic``). Legacy units (no contract_version) leave
+    # these None. ``content_role`` may be None even with a contract marker
+    # (heading/code/table). Policy is materialised into metadata_json.
+    semantic_contract_version: str | None = None
+    content_role: str | None = None
+    automatic_layer_policy: dict[str, bool] | None = None
+    automatic_layer_policy_resolver_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,18 +545,17 @@ def _build_reading_base_core(
 
         # A5: when a stable block annotation exactly matches this
         # unit's UTF-16 range, project the stable block_type and
-        # payload onto the unit. The stable block_type is stored in
-        # the separate ``stable_block_type`` column (nullable, no DB
-        # CHECK constraint) and in the snapshot payload's
-        # ``stableBlockType`` field. ``unit_type`` is only overridden
-        # for ``heading`` — the legacy CHECK constraint on
-        # ``reading_units.unit_type`` (migration 0001) allows only
-        # ``body`` / ``heading`` / ``list`` / ``quote`` / ``unknown``
-        # / ``fallback``, so new block types like ``paragraph`` /
-        # ``list_item`` / ``blockquote`` / ``table*`` / ``code_block``
-        # MUST NOT be written to ``unit_type``. ``heading`` is the
-        # one exception because (a) it is in the legacy allowed set
-        # and (b) downstream consumers (A6 semantic-outline skip
+        # payload onto the unit. There is no ``stable_block_type`` DB
+        # column — the field lives on the in-memory ``BuiltReadingUnit``
+        # and is re-joined on snapshot reload via exact UTF-16 range.
+        # ``unit_type`` is only overridden for ``heading`` — the legacy
+        # CHECK constraint on ``reading_units.unit_type`` (migration 0001)
+        # allows only ``body`` / ``heading`` / ``list`` / ``quote`` /
+        # ``unknown`` / ``fallback``, so new block types like
+        # ``paragraph`` / ``list_item`` / ``blockquote`` / ``table*`` /
+        # ``code_block`` MUST NOT be written to ``unit_type``. ``heading``
+        # is the one exception because (a) it is in the legacy allowed
+        # set and (b) downstream consumers (A6 semantic-outline skip
         # decision in ``job_bootstrap.py``, feature extractor, B4
         # outline projector) key off ``unit_type == "heading"`` to
         # detect Markdown headings. For all other stable block types
@@ -568,6 +575,10 @@ def _build_reading_base_core(
         table_alignment: str | None = None
         table_alignments: tuple[str, ...] | None = None
         table_header_rows: int | None = None
+        semantic_contract_version: str | None = None
+        content_role: str | None = None
+        automatic_layer_policy: dict[str, bool] | None = None
+        automatic_layer_policy_resolver_version: str | None = None
         if matched_annotation is not None:
             stable_block_type = matched_annotation.block_type
             stable_block_id = matched_annotation.block_id
@@ -590,6 +601,22 @@ def _build_reading_base_core(
             elif matched_annotation.block_type == "table":
                 table_alignments = _extract_alignments(payload)
                 table_header_rows = _extract_header_rows(payload)
+            # Semantic contract → versioned automatic layer policy (materialised
+            # into reading_units.metadata_json). Uses the recorded contract on
+            # the block; never invents all-false on missing version.
+            from .automatic_layer_policy import resolve_policy_for_stable_block
+
+            resolved_policy = resolve_policy_for_stable_block(
+                block_type=matched_annotation.block_type,
+                payload_json=payload,
+            )
+            if not resolved_policy.is_legacy:
+                semantic_contract_version = resolved_policy.contract_version
+                content_role = resolved_policy.content_role
+                automatic_layer_policy = resolved_policy.policy.as_dict()
+                automatic_layer_policy_resolver_version = (
+                    resolved_policy.resolver_version
+                )
             # Re-derive the label so a stable heading still produces a
             # heading label even when the heuristic would have
             # classified it as body.
@@ -620,6 +647,12 @@ def _build_reading_base_core(
             table_alignment=table_alignment,
             table_alignments=table_alignments,
             table_header_rows=table_header_rows,
+            semantic_contract_version=semantic_contract_version,
+            content_role=content_role,
+            automatic_layer_policy=automatic_layer_policy,
+            automatic_layer_policy_resolver_version=(
+                automatic_layer_policy_resolver_version
+            ),
         )
         units.append(built_unit)
         navigation_units.append(

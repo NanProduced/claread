@@ -582,3 +582,28 @@ Normal paragraph with **bold** and *italic*.`;
     expect(serialized).toContain("*italic*");
   });
 });
+
+describe("workbench scroll & placeholder contract", () => {
+  it("owns the two-line Chinese placeholder on PlateContent via data attributes", () => {
+    const ref = createRef<MarkdownTextInputHandle>();
+    const utils = render(
+      <MarkdownTextInput
+        ref={ref}
+        id="analysis-text"
+        initialValue=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        placeholder="粘贴英文文章，或直接开始输入"
+        placeholderSub="支持网页、Markdown、PDF、TXT"
+      />,
+    );
+    const editorEl = utils.container.querySelector("#analysis-text") as HTMLElement;
+    expect(editorEl.getAttribute("data-placeholder")).toBe("粘贴英文文章，或直接开始输入");
+    expect(editorEl.getAttribute("data-placeholder-sub")).toBe("支持网页、Markdown、PDF、TXT");
+    expect(editorEl.getAttribute("aria-placeholder")).toBe("粘贴英文文章，或直接开始输入");
+    // 桌面端正文是唯一滚动容器（工作台高度链的末端）。
+    expect(editorEl.className).toContain("overflow-y-auto");
+    expect(editorEl.className).toContain("min-h-0");
+    expect(editorEl.className).toContain("flex-1");
+  });
+});

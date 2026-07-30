@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -60,6 +61,13 @@ class Settings(BaseSettings):
     reader_worker_max_jobs: int = 48
     reader_worker_lease_duration_seconds: int = 120
     reader_worker_lease_owner_prefix: str = "reader-enhancement-worker"
+    # Automatic layer semantic policy rollout mode for Reader bootstrap:
+    #   off     — no filter (pre-policy behaviour); worker executes all targets
+    #   shadow  — keep all targets + would-skip logs; worker executes all
+    #   enforce — real filter / typed-supersede (default after 2026-07-29)
+    # Frozen into each automatic job at creation; workers use the job mode.
+    # Illegal values fail Settings construction (no silent fallback).
+    reader_automatic_layer_policy_mode: Literal["off", "shadow", "enforce"] = "enforce"
     # Reading Record Ask agentic lane (default OFF — dual-path coexistence).
     # When true, validated Reading Record Ask message streams use the
     # independent reader_record_ask agent runtime instead of ask_runtime.

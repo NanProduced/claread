@@ -86,13 +86,16 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from app.database.json_compat import jsonb_param
 from app.contracts.annotation import utf16_code_unit_length
+from app.database.json_compat import jsonb_param
 from app.schemas.reader_documents import StableDocumentBlock
+from app.services.reader_orchestration.automatic_layer_policy import (
+    AutomaticLayerPolicy,
+    build_reading_unit_metadata_json,
+)
 from app.services.reader_orchestration.base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
-    NavigationUnitFact,
     ReadingBaseBuildResult,
     StableBlockAnnotation,
     build_reading_base_from_canonical_text,
@@ -1049,9 +1052,8 @@ async def _insert_reading_unit(
     The SQL column order mirrors the existing
     ``repository.insert_reading_units`` so behavior and params stay
     consistent. ``metadata_json`` carries the R7-1 ``sentence_provider``
-    tag when the unit's anchor segments came from the sentence stage
-    (spaCy main path or named regex v2 fallback); it is empty for
-    clause / fallback-window units.
+    tag and, for new generations with a semantic contract, the versioned
+    automatic layer policy projection.
     """
     await conn.execute(
         """
@@ -1078,11 +1080,23 @@ async def _insert_reading_unit(
         unit.base_start_utf16,
         unit.base_end_utf16,
         unit.text_hash,
-        jsonb_param(
-            {"sentence_provider": unit.sentence_provider}
-            if unit.sentence_provider
-            else {}
-        ),
+        jsonb_param(_unit_metadata_json(unit)),
+    )
+
+
+def _unit_metadata_json(unit: BuiltReadingUnit) -> dict[str, Any]:
+    """Persist sentence_provider + versioned automatic-layer semantic policy."""
+    policy = (
+        AutomaticLayerPolicy.from_mapping(unit.automatic_layer_policy)
+        if unit.automatic_layer_policy is not None
+        else None
+    )
+    return build_reading_unit_metadata_json(
+        sentence_provider=unit.sentence_provider,
+        contract_version=unit.semantic_contract_version,
+        content_role=unit.content_role,
+        automatic_layer_policy=policy,
+        resolver_version=unit.automatic_layer_policy_resolver_version,
     )
 
 

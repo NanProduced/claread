@@ -548,7 +548,11 @@ async def test_policy_hash_change_changes_fingerprint(
             expected_base = job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT
         else:
             expected_base = job_bootstrap.TRANSLATION_OPERATION_FINGERPRINT
-        expected_fp = f"{expected_base}:{modified_strategy.strategy_hash}"
+        expected_fp = job_bootstrap._compose_operation_fingerprint(
+            expected_base,
+            modified_strategy,
+            semantic_token="sem:legacy:legacy_open:mode:enforce",
+        )
         assert job["operation_fingerprint"] == expected_fp
         assert job["operation_fingerprint"] != real_fingerprint
 
@@ -2432,7 +2436,13 @@ async def _load_run_metadata(
 
 
 def _expected_fingerprint(base: str, strategy: ReaderVariantStrategy) -> str:
-    return job_bootstrap._compose_operation_fingerprint(base, strategy)
+    # Plain-text strategy fixtures produce legacy units (no semantic
+    # contract_version). Fingerprint includes frozen policy mode.
+    return job_bootstrap._compose_operation_fingerprint(
+        base,
+        strategy,
+        semantic_token="sem:legacy:legacy_open:mode:enforce",
+    )
 
 
 async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(

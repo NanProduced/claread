@@ -706,6 +706,22 @@ def _strip_html_tags(content: str) -> str:
     return re.sub(r"<[^>]+>", "", content).strip()
 
 
+# Notion / clipboard <aside> containers: detect on raw HTML (before strip)
+# so the semantic classifier can map to source_callout. Ordinary <div>
+# must not match.
+_HTML_ASIDE_OPEN_RE = re.compile(r"<\s*aside\b", re.IGNORECASE)
+_HTML_ASIDE_CLOSE_RE = re.compile(r"<\s*/\s*aside\s*>", re.IGNORECASE)
+# Stable payload key consumed only by semantic_classifier (single role seam).
+SOURCE_SEMANTIC_HINT_HTML_ASIDE = "html_aside"
+
+
+def _html_raw_is_aside(raw_html_chunks: list[str]) -> bool:
+    joined = "".join(raw_html_chunks)
+    return bool(
+        _HTML_ASIDE_OPEN_RE.search(joined) and _HTML_ASIDE_CLOSE_RE.search(joined)
+    )
+
+
 # Known HTML tag names (WHATWG standard elements). A bare inline tag whose
 # name is NOT in this set (``<T>``, ``<name>``) is treated as plain-text
 # placeholder content (``vector<T>``, template arguments), not as HTML —
@@ -957,19 +973,24 @@ class MarkdownSourceParser:
                 flags.has_raw_html = True
                 agg_start_map = token.map
                 agg_texts: list[str] = []
+                raw_html_chunks: list[str] = []
                 agg_end_map = token.map
                 j = i
                 while j < len(tokens):
                     t = tokens[j]
                     if t.type == "html_block":
+                        raw_html_chunks.append(t.content or "")
                         stripped = _strip_html_tags(t.content)
                         if stripped:
                             agg_texts.append(stripped)
                         if t.map:
                             agg_end_map = t.map
                         is_closing = t.content.strip().startswith("</")
+                        # Self-contained <aside>...</aside> must not absorb the
+                        # following prose paragraph into the same block.
+                        is_complete_aside = _html_raw_is_aside([t.content or ""])
                         j += 1
-                        if is_closing:
+                        if is_closing or is_complete_aside:
                             break
                         continue
                     elif t.type == "paragraph_open":
@@ -1003,12 +1024,20 @@ class MarkdownSourceParser:
                 else:
                     final_range = _resolve_range(src_start, flags)
 
+                # Notion/clipboard <aside>: preserve a stable semantic hint
+                # for the single classifier seam. Prefer blockquote so the
+                # structure is not treated as ordinary prose. Plain <div>
+                # never sets the hint.
+                is_aside = _html_raw_is_aside(raw_html_chunks)
+                payload: dict[str, Any] = {"extracted_from": "html_block"}
+                if is_aside:
+                    payload["source_semantic_hint"] = SOURCE_SEMANTIC_HINT_HTML_ASIDE
                 blocks.append(
                     ParsedBlock(
                         block_id=f"b{order_index + 1}",
-                        block_type="paragraph",
+                        block_type="blockquote" if is_aside else "paragraph",
                         text_content=" ".join(t for t in agg_texts if t).strip(),
-                        payload_json={"extracted_from": "html_block"},
+                        payload_json=payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=final_range,

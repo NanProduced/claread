@@ -1,7 +1,7 @@
 # Input Adapter 与 Candidate Document
 
 > 状态：`D6 输入链路第一轮实现校准`
-> 最后更新：2026-06-28
+> 最后更新：2026-07-26（同步 `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md` 2026-07-25 re-frozen：`code_block` / `table` / `table_row` / `table_cell` 的 `default_route` 已改为 `main_reading`）
 > 范围：用户输入如何转成 Claread 可阅读、可渲染、可解析的 Stable Reading Document。
 
 ## 目标
@@ -163,6 +163,8 @@ D4 不实现 Candidate Document UI。D6+ 实现高影响输入确认体验。
 
 ### block_type 枚举（与后端 schema/migration 一致）
 
+> **与 CONTRACT.md 对齐说明**：`default_route` 与 `rag_eligible` 以 `services/api/tests/fixtures/markdown_structured_source/CONTRACT.md` Clause 4 为单一事实源。下表"默认进入 canonical text"列对齐 CONTRACT 2026-07-25 re-frozen：`code_block` / `table` / `table_row` / `table_cell` 的 `default_route` 已从早期的 `rag_ask_only` / `metadata_only` 改为 `main_reading`。
+
 | block_type | text_content | 默认进入 canonical text | 说明 |
 |------------|--------------|----------------------|------|
 | `paragraph` | 段落纯文本 | 是 | 原文段落 |
@@ -170,14 +172,14 @@ D4 不实现 Candidate Document UI。D6+ 实现高影响输入确认体验。
 | `list_item` | 项纯文本（不含 `-` / `1.` marker） | 是 | grouping 放 payload_json |
 | `blockquote` | 引用纯文本 | 是 | |
 | `caption` | 图表说明纯文本 | 是 | |
-| `table` | — | 否 | 容器，由 table_row/table_cell 组成 |
-| `table_row` | — | 否 | |
-| `table_cell` | 单元格纯文本 | 否 | |
-| `footnote` | 脚注纯文本 | 否 | 除非 Candidate confirm 显式提升 |
-| `image` | — | 否 | 图片 URL 放 payload_json |
-| `image_ocr` | OCR 识别纯文本 | 否 | 除非 Candidate confirm 显式提升 |
-| `code_block` | 纯代码文本（不含 ``` 围栏） | 否 | 语言放 payload_json.language |
-| `unknown` | 原始文本兜底 | 否 | |
+| `table` | — | 是（容器，无 text_content 直接贡献） | 容器，由 table_row/table_cell 组成；`default_route=main_reading`、`rag_eligible=false`（RAG 只针对 table_cell 叶子） |
+| `table_row` | — | 是（容器，无 text_content 直接贡献） | `default_route=main_reading`、`rag_eligible=false` |
+| `table_cell` | 单元格纯文本 | 是 | `default_route=main_reading`、`rag_eligible=true` |
+| `footnote` | 脚注纯文本 | 否 | `default_route=rag_ask_only`；除非 Candidate confirm 显式提升 |
+| `image` | — | 否 | `default_route=metadata_only`；图片 URL 放 payload_json |
+| `image_ocr` | OCR 识别纯文本 | 否 | `default_route=rag_ask_only`；除非 Candidate confirm 显式提升 |
+| `code_block` | 纯代码文本（不含 ``` 围栏） | 是 | `default_route=main_reading`、`rag_eligible=true`；语言放 payload_json.language |
+| `unknown` | 原始文本兜底 | 否 | `default_route=metadata_only` |
 
 > `divider` 文档希望有但后端 schema/migration 当前缺，待补。补上前用 `unknown` + payload_json 兜底。
 > `degraded block notice` / `page/source artifact reference` 不做成正文 block，放入对应 block 的 `payload_json` / `source_refs_json` / `quality_json`。
@@ -219,8 +221,9 @@ D4 不实现 Candidate Document UI。D6+ 实现高影响输入确认体验。
 
 所有 `interpretation_policy.default_route == "main_reading"` 的 block 都用 `\n\n` 连接进入 canonical text：
 
-- 默认进入：`paragraph` / `heading` / `list_item` / `blockquote` / `caption`
-- 默认不进入：`table` / `table_row` / `table_cell` / `image` / `image_ocr` / `footnote` / `code_block` / `unknown`，除非 Candidate confirm 显式提升
+- 默认进入：`paragraph` / `heading` / `list_item` / `blockquote` / `caption` / `table_cell` / `code_block`
+- 容器型 `default_route == "main_reading"` 但无 `text_content`：`table` / `table_row`（不直接贡献文本，但其叶子 `table_cell` 进入）
+- 默认不进入：`image` / `image_ocr`（`metadata_only` / `rag_ask_only`）、`footnote`（`rag_ask_only`）、`unknown`（`metadata_only`），除非 Candidate confirm 显式提升
 
 canonical text 不含 Markdown 语法字符（`#` / `-` / `>` / ``` ``` ``` / GFM 表格语法 / 脚注语法不进入 offset 基准）。
 

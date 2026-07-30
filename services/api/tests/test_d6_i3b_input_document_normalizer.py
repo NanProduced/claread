@@ -105,7 +105,10 @@ def test_markdown_heading_becomes_heading_block_and_title() -> None:
     assert normalized.title == "Weekly Review"
     assert heading.block_type == "heading"
     assert heading.text_content == "Weekly Review"
-    assert heading.payload_json == {"level": 1}
+    assert heading.payload_json["level"] == 1
+    # semantic_contract_v1 activation marker (role null for heading).
+    assert heading.payload_json["semantic"]["contract_version"] == "semantic_contract_v1"
+    assert heading.payload_json["semantic"]["content_role"] is None
 
 
 def test_unordered_list_items_share_list_id_and_ordinals() -> None:
@@ -230,7 +233,11 @@ def test_divider_becomes_unknown_metadata_only_block() -> None:
     )
 
     assert divider_block.text_content is None
-    assert divider_block.payload_json == {}
+    assert set(divider_block.payload_json.keys()) == {"semantic"}
+    assert (
+        divider_block.payload_json["semantic"]["contract_version"]
+        == "semantic_contract_v1"
+    )
     assert divider_block.interpretation_policy.default_route == "metadata_only"
 
 
@@ -404,7 +411,11 @@ def test_pasted_text_with_markdown_heading_upgrades_to_markdown_path() -> None:
         block for block in normalized.blocks if block.block_type == "heading"
     )
     assert heading_block.text_content == "Weekly Review"
-    assert heading_block.payload_json == {"level": 3}
+    assert heading_block.payload_json["level"] == 3
+    assert (
+        heading_block.payload_json["semantic"]["contract_version"]
+        == "semantic_contract_v1"
+    )
     for block in normalized.blocks:
         assert block.quality_json["parser_name"]
         assert block.quality_json["parser_version"]

@@ -18,7 +18,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -44,6 +44,11 @@ from app.schemas.reader_orchestration import (
 from app.services.analysis.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
+)
+from app.services.reader_orchestration.automatic_layer_policy import (
+    SemanticFenceError,
+    is_semantic_fence_failure_code,
+    validate_automatic_job_semantic_fence,
 )
 from app.services.reader_orchestration.grammar_candidate_policy import (
     validate_dedup_hint,
@@ -1112,8 +1117,39 @@ class GrammarWindowWorkerService:
         if preflight == PreflightResult.ALREADY_TERMINAL:
             return {"status": "already_terminal"}
 
-        # 2. load window context (target anchors + source text)
-        context = await self._load_window_context(claim.job_id)
+        # 2. load window context (target anchors + source text + semantic fence)
+        try:
+            context = await self._load_window_context(claim.job_id)
+        except GrammarWindowExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                # Mirror other workers: mark the parent run superseded.
+                async with self.get_pool().acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE reader_runs
+                        SET status = 'superseded',
+                            failure_class = $2,
+                            failure_code = $3,
+                            finished_at = $4
+                        WHERE id = $1
+                        """,
+                        claim.run_id,
+                        exc.failure_class,
+                        exc.failure_code,
+                        datetime.now(UTC),
+                    )
+                return {
+                    "status": "superseded",
+                    "failure_code": exc.failure_code,
+                    "executor_calls": 0,
+                }
+            raise
 
         # 3. LLM call with heartbeat (§8.6). R7-3: the renewal loop is
         # the shared LeaseHeartbeat implementation (same manager as the
@@ -1202,6 +1238,8 @@ class GrammarWindowWorkerService:
                 SELECT job.input_json,
                        job.base_id,
                        job.reading_record_id,
+                       job.expected_generation,
+                       job.operation_fingerprint,
                        base.text AS base_text
                 FROM reader_jobs job
                 JOIN reading_bases base
@@ -1220,6 +1258,48 @@ class GrammarWindowWorkerService:
 
             base_id = job_row["base_id"]
             base_text = str(job_row["base_text"])
+
+            # Semantic fence before model: target unit metadata vs job fence.
+            target_unit_ids = list(input_data.get("target_unit_ids") or [])
+            if target_unit_ids:
+                unit_meta_rows = await conn.fetch(
+                    """
+                    SELECT unit_id, metadata_json
+                    FROM reading_units
+                    WHERE base_id = $1
+                      AND unit_id = ANY($2::text[])
+                    """,
+                    base_id,
+                    target_unit_ids,
+                )
+                meta_list: list[dict[str, Any]] = []
+                for ur in unit_meta_rows:
+                    um = ur["metadata_json"]
+                    if hasattr(um, "keys"):
+                        um = dict(um)
+                    elif not isinstance(um, dict):
+                        um = {}
+                    meta_list.append(um)
+                try:
+                    validate_automatic_job_semantic_fence(
+                        job_input=input_data if isinstance(input_data, dict) else {},
+                        layer="grammar_note",
+                        layers_any=("grammar_note", "sentence_analysis"),
+                        unit_metadata_list=meta_list,
+                        operation_fingerprint=str(
+                            job_row["operation_fingerprint"] or ""
+                        ),
+                        trusted_record_id=str(job_row["reading_record_id"]),
+                        trusted_base_id=str(job_row["base_id"]),
+                        trusted_generation=int(job_row["expected_generation"]),
+                    )
+                except SemanticFenceError as exc:
+                    raise GrammarWindowExecutionError(
+                        str(exc),
+                        retryable=False,
+                        failure_class="validation",
+                        failure_code=exc.code,
+                    ) from exc
 
             target_anchor_ids: list[str] = list(
                 input_data.get("target_anchor_ids", [])

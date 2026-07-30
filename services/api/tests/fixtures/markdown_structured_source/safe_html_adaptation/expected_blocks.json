@@ -76,12 +76,24 @@
     },
     {
       "block_id": "b7",
-      "block_type": "paragraph",
-      "text_content": "This aside carries a genuine reading note about the chapter summary. The final paragraph adds enough natural English words so the suitability gate sees a genuine reading document rather than a short suspicious snippet, and it keeps the discussion focused on learning value for the reader.",
-      "payload_json": {"extracted_from": "html_block"},
+      "block_type": "blockquote",
+      "text_content": "This aside carries a genuine reading note about the chapter summary.",
+      "payload_json": {
+        "extracted_from": "html_block",
+        "source_semantic_hint": "html_aside"
+      },
       "parent_block_id": null,
       "order_index": 6,
-      "source_range": {"line_start": 17, "line_end": 19}
+      "source_range": {"line_start": 17, "line_end": 17}
+    },
+    {
+      "block_id": "b8",
+      "block_type": "paragraph",
+      "text_content": "The final paragraph adds enough natural English words so the suitability gate sees a genuine reading document rather than a short suspicious snippet, and it keeps the discussion focused on learning value for the reader.",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 7,
+      "source_range": {"line_start": 19, "line_end": 19}
     }
   ]
 }

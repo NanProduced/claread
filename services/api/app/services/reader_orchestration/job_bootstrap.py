@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,6 +12,16 @@ import asyncpg
 from app.config.settings import Settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.services.reader_orchestration.automatic_layer_policy import (
+    AutomaticLayerName,
+    AutomaticLayerTargetUnit,
+    build_semantic_fence_input_fields,
+    compose_semantic_fingerprint_token,
+    filter_units_for_automatic_layer,
+    generation_semantic_fence_from_targets,
+    get_automatic_layer_policy_mode,
+    policy_from_unit_metadata,
+)
 from app.services.reader_orchestration.document_feature_extractor import (
     ArticleRoute,
     DocumentFeatureProfile,
@@ -208,6 +218,8 @@ _LAYER_NAME_BY_JOB_TYPE: dict[str, str] = {
 def _compose_operation_fingerprint(
     base: str,
     strategy: ReaderVariantStrategy,
+    *,
+    semantic_token: str | None = None,
 ) -> str:
     """Compose a job operation fingerprint that covers the strategy hash.
 
@@ -217,8 +229,124 @@ def _compose_operation_fingerprint(
     ensures that a policy text change does not silently reuse old job output:
     the ``reader_jobs.operation_fingerprint`` column differs, so the
     idempotency NOT EXISTS check treats the new fingerprint as a missing job.
+
+    ``semantic_token`` (contract/resolver versions) is appended so automatic
+    layer policy upgrades fence queued/retry jobs without reinterpreting them
+    under a newer resolver.
     """
-    return f"{base}:{strategy.strategy_hash}"
+    composed = f"{base}:{strategy.strategy_hash}"
+    if semantic_token:
+        return f"{composed}:{semantic_token}"
+    return composed
+
+
+def _ensure_metadata_dict(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if hasattr(raw, "keys"):
+        return dict(raw)
+    return {}
+
+
+def _unit_rows_to_maps(rows: Any) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        item: dict[str, Any] = {
+            "unit_id": str(row["unit_id"]),
+            "order_index": int(row["order_index"]),
+            "metadata_json": _ensure_metadata_dict(row.get("metadata_json")),
+        }
+        if "text_hash" in row and row["text_hash"] is not None:
+            item["text_hash"] = str(row["text_hash"])
+        if "base_start_utf16" in row and row["base_start_utf16"] is not None:
+            item["base_start_utf16"] = int(row["base_start_utf16"])
+        if "base_end_utf16" in row and row["base_end_utf16"] is not None:
+            item["base_end_utf16"] = int(row["base_end_utf16"])
+        if "unit_type" in row and row["unit_type"] is not None:
+            item["unit_type"] = str(row["unit_type"])
+        result.append(item)
+    return result
+
+
+def _filter_units_for_layer(
+    rows: Any,
+    layer: AutomaticLayerName,
+    *,
+    record_id: UUID | str | None = None,
+    generation: int | None = None,
+) -> list[dict[str, Any]]:
+    """Shared pre-planning filter for all automatic bootstrap topologies.
+
+    Mode is read from the single settings key
+    ``reader_automatic_layer_policy_mode`` (off | shadow | enforce).
+    """
+    return filter_units_for_automatic_layer(
+        _unit_rows_to_maps(rows),
+        layer,
+        mode=get_automatic_layer_policy_mode(),
+        record_id=str(record_id) if record_id is not None else None,
+        generation=generation,
+    )
+
+
+def build_semantic_fence_from_unit_maps(
+    units: list[dict[str, Any]],
+) -> dict[str, str | None]:
+    """Public shared seam: build a semantic fence from raw unit maps.
+
+    Single source of truth for both automatic bootstrap and explicit-section
+    bootstrap. Delegates to :func:`generation_semantic_fence_from_targets`
+    and raises :class:`SemanticFenceConstructionError` when target units
+    carry mixed contract / resolver versions, or a mix of legacy and
+    semantic units. Bootstrap callers MUST catch this error and fail closed
+    before persisting any reader_jobs / reader_runs row.
+    """
+    typed: list[AutomaticLayerTargetUnit] = []
+    for unit in units:
+        resolved = policy_from_unit_metadata(unit.get("metadata_json") or {})
+        typed.append(
+            AutomaticLayerTargetUnit(
+                unit_id=str(unit["unit_id"]),
+                order_index=int(unit.get("order_index") or 0),
+                metadata_json=dict(unit.get("metadata_json") or {}),
+                contract_version=resolved.contract_version,
+                resolver_version=(
+                    "legacy_open" if resolved.is_legacy else resolved.resolver_version
+                ),
+                content_role=resolved.content_role,
+                policy=resolved.policy,
+            )
+        )
+    return generation_semantic_fence_from_targets(typed)
+
+
+# Backwards-compat alias for in-tree callers that still import the private
+# name. New code should call :func:`build_semantic_fence_from_unit_maps`
+# directly; this alias exists only to keep the cross-module import surface
+# stable during the convergence refactor.
+_semantic_fence_from_unit_maps = build_semantic_fence_from_unit_maps
+
+
+def _semantic_input_fields(
+    fence: dict[str, str | None],
+    *,
+    layer: AutomaticLayerName | str,
+) -> dict[str, Any]:
+    """Freeze current policy mode into job input/fingerprint identity."""
+    return build_semantic_fence_input_fields(
+        fence,
+        layer=layer,
+        mode=get_automatic_layer_policy_mode(),
+    )
+
+
+def _semantic_fingerprint_token(fence: dict[str, str | None]) -> str:
+    return compose_semantic_fingerprint_token(
+        fence,
+        mode=get_automatic_layer_policy_mode(),
+    )
 
 
 def _build_strategy_metadata(
@@ -724,14 +852,14 @@ SemanticOutlineRequestEligibility = Callable[["_LockedActiveBaseState"], bool]
 
 
 def default_semantic_outline_request_eligibility(
-    state: "_LockedActiveBaseState",
+    state: _LockedActiveBaseState,
 ) -> bool:
     """Default: do not request outline jobs (explicit opt-in only)."""
     return False
 
 
 def allow_semantic_outline_request_eligibility(
-    state: "_LockedActiveBaseState",
+    state: _LockedActiveBaseState,
 ) -> bool:
     """Controlled / test DI seam only — never wire as production default.
 
@@ -964,27 +1092,16 @@ class TranslationJobBootstrapService:
                     # so envelope still carries the linkage. Tests that don't
                     # care about tracing can omit the parameter.
                     trace_id = uuid4()
-                operation_fingerprint = _compose_operation_fingerprint(
-                    TRANSLATION_OPERATION_FINGERPRINT, state.strategy
-                )
-                await _supersede_stale_fingerprint_jobs(
-                    conn,
-                    record_id=state.record_id,
-                    base_id=state.base_id,
-                    expected_generation=state.expected_generation,
-                    job_type=TRANSLATION_JOB_TYPE,
-                    target_scope=TRANSLATION_TARGET_SCOPE,
-                    current_fingerprint=operation_fingerprint,
-                )
 
-                unit_row = await conn.fetchrow(
+                unit_rows = await conn.fetch(
                     """
                     SELECT
                         u.unit_id,
                         u.order_index,
                         u.base_start_utf16,
                         u.base_end_utf16,
-                        u.text_hash
+                        u.text_hash,
+                        u.metadata_json
                     FROM reading_units u
                     WHERE u.reading_record_id = $1
                       AND u.base_id = $2
@@ -1000,14 +1117,36 @@ class TranslationJobBootstrapService:
                             AND layer.status = 'published'
                       )
                     ORDER BY u.order_index ASC
-                    LIMIT 1
                     """,
                     state.record_id,
                     state.base_id,
                     state.expected_generation,
                 )
-                if unit_row is None:
+                allowed_units = _filter_units_for_layer(
+                    unit_rows,
+                    "translation",
+                    record_id=state.record_id,
+                    generation=state.expected_generation,
+                )
+                if not allowed_units:
                     raise ValueError("no untranslated reading unit is available")
+                unit_row = allowed_units[0]
+                semantic_fence = _semantic_fence_from_unit_maps(allowed_units)
+                semantic_token = _semantic_fingerprint_token(semantic_fence)
+                operation_fingerprint = _compose_operation_fingerprint(
+                    TRANSLATION_OPERATION_FINGERPRINT,
+                    state.strategy,
+                    semantic_token=semantic_token,
+                )
+                await _supersede_stale_fingerprint_jobs(
+                    conn,
+                    record_id=state.record_id,
+                    base_id=state.base_id,
+                    expected_generation=state.expected_generation,
+                    job_type=TRANSLATION_JOB_TYPE,
+                    target_scope=TRANSLATION_TARGET_SCOPE,
+                    current_fingerprint=operation_fingerprint,
+                )
 
                 existing_job = await conn.fetchrow(
                     """
@@ -1062,6 +1201,7 @@ class TranslationJobBootstrapService:
                         "target_unit_id": str(unit_row["unit_id"]),
                         "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                         "trace_id": str(trace_id),
+                        **_semantic_input_fields(semantic_fence, layer='translation'),
                     },
                     input_signature_suffix=(
                         f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}"
@@ -1069,6 +1209,7 @@ class TranslationJobBootstrapService:
                     input_json={
                         "base_language": state.base_language,
                         "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+                        **_semantic_input_fields(semantic_fence, layer='translation'),
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_JOB_TYPE],
                 )
@@ -1120,25 +1261,14 @@ class VocabularyJobBootstrapService:
                 )
                 if trace_id is None:
                     trace_id = uuid4()
-                operation_fingerprint = _compose_operation_fingerprint(
-                    VOCABULARY_OPERATION_FINGERPRINT, state.strategy
-                )
-                await _supersede_stale_fingerprint_jobs(
-                    conn,
-                    record_id=state.record_id,
-                    base_id=state.base_id,
-                    expected_generation=state.expected_generation,
-                    job_type=VOCABULARY_JOB_TYPE,
-                    target_scope=VOCABULARY_TARGET_SCOPE,
-                    current_fingerprint=operation_fingerprint,
-                )
 
-                unit_row = await conn.fetchrow(
+                unit_rows = await conn.fetch(
                     """
                     SELECT
                         u.unit_id,
                         u.order_index,
-                        u.text_hash
+                        u.text_hash,
+                        u.metadata_json
                     FROM reading_units u
                     WHERE u.reading_record_id = $1
                       AND u.base_id = $2
@@ -1154,14 +1284,36 @@ class VocabularyJobBootstrapService:
                             AND layer.status = 'published'
                       )
                     ORDER BY u.order_index ASC
-                    LIMIT 1
                     """,
                     state.record_id,
                     state.base_id,
                     state.expected_generation,
                 )
-                if unit_row is None:
+                allowed_units = _filter_units_for_layer(
+                    unit_rows,
+                    "vocabulary",
+                    record_id=state.record_id,
+                    generation=state.expected_generation,
+                )
+                if not allowed_units:
                     raise ValueError("no unprocessed vocabulary reading unit is available")
+                unit_row = allowed_units[0]
+                semantic_fence = _semantic_fence_from_unit_maps(allowed_units)
+                semantic_token = _semantic_fingerprint_token(semantic_fence)
+                operation_fingerprint = _compose_operation_fingerprint(
+                    VOCABULARY_OPERATION_FINGERPRINT,
+                    state.strategy,
+                    semantic_token=semantic_token,
+                )
+                await _supersede_stale_fingerprint_jobs(
+                    conn,
+                    record_id=state.record_id,
+                    base_id=state.base_id,
+                    expected_generation=state.expected_generation,
+                    job_type=VOCABULARY_JOB_TYPE,
+                    target_scope=VOCABULARY_TARGET_SCOPE,
+                    current_fingerprint=operation_fingerprint,
+                )
 
                 existing_job = await conn.fetchrow(
                     """
@@ -1216,11 +1368,13 @@ class VocabularyJobBootstrapService:
                         "target_unit_id": str(unit_row["unit_id"]),
                         "layer_type": "vocabulary",
                         "trace_id": str(trace_id),
+                        **_semantic_input_fields(semantic_fence, layer='vocabulary'),
                     },
                     input_signature_suffix=f"{state.base_language}:vocabulary:1",
                     input_json={
                         "base_language": state.base_language,
                         "layer_type": "vocabulary",
+                        **_semantic_input_fields(semantic_fence, layer='vocabulary'),
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_JOB_TYPE],
                 )
@@ -1272,25 +1426,16 @@ class GrammarJobBootstrapService:
                 )
                 if trace_id is None:
                     trace_id = uuid4()
-                operation_fingerprint = _compose_operation_fingerprint(
-                    GRAMMAR_OPERATION_FINGERPRINT, state.strategy
-                )
-                await _supersede_stale_fingerprint_jobs(
-                    conn,
-                    record_id=state.record_id,
-                    base_id=state.base_id,
-                    expected_generation=state.expected_generation,
-                    job_type=GRAMMAR_JOB_TYPE,
-                    target_scope=GRAMMAR_TARGET_SCOPE,
-                    current_fingerprint=operation_fingerprint,
-                )
 
-                unit_row = await conn.fetchrow(
+                # Pre-filter candidates for semantic policy before fingerprint.
+                # Succeeded-job exclusion still applied after fingerprint is known.
+                candidate_rows = await conn.fetch(
                     """
                     SELECT
                         u.unit_id,
                         u.order_index,
-                        u.text_hash
+                        u.text_hash,
+                        u.metadata_json
                     FROM reading_units u
                     WHERE u.reading_record_id = $1
                       AND u.base_id = $2
@@ -1305,28 +1450,67 @@ class GrammarJobBootstrapService:
                             AND layer.target_key = u.unit_id
                             AND layer.status = 'published'
                       )
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM reader_jobs job
-                          WHERE job.reading_record_id = u.reading_record_id
-                            AND job.base_id = u.base_id
-                            AND job.job_type = $4
-                            AND job.target_type = $5
-                            AND job.target_key = u.unit_id
-                            AND job.expected_generation = $3
-                            AND job.operation_fingerprint = $6
-                            AND job.status = 'succeeded'
-                      )
                     ORDER BY u.order_index ASC
-                    LIMIT 1
                     """,
                     state.record_id,
                     state.base_id,
                     state.expected_generation,
-                    GRAMMAR_JOB_TYPE,
-                    GRAMMAR_TARGET_SCOPE,
-                    operation_fingerprint,
                 )
+                from app.services.reader_orchestration.automatic_layer_policy import (
+                    filter_units_for_any_grammar,
+                )
+                merged = filter_units_for_any_grammar(
+                    _unit_rows_to_maps(candidate_rows),
+                    mode=get_automatic_layer_policy_mode(),
+                    record_id=str(state.record_id),
+                    generation=state.expected_generation,
+                )
+                if not merged:
+                    raise ValueError("no unprocessed grammar reading unit is available")
+                semantic_fence = _semantic_fence_from_unit_maps(merged)
+                semantic_token = _semantic_fingerprint_token(semantic_fence)
+                operation_fingerprint = _compose_operation_fingerprint(
+                    GRAMMAR_OPERATION_FINGERPRINT,
+                    state.strategy,
+                    semantic_token=semantic_token,
+                )
+                await _supersede_stale_fingerprint_jobs(
+                    conn,
+                    record_id=state.record_id,
+                    base_id=state.base_id,
+                    expected_generation=state.expected_generation,
+                    job_type=GRAMMAR_JOB_TYPE,
+                    target_scope=GRAMMAR_TARGET_SCOPE,
+                    current_fingerprint=operation_fingerprint,
+                )
+                # Drop units that already have a succeeded job for this fingerprint.
+                unit_row = None
+                for candidate in merged:
+                    succeeded = await conn.fetchval(
+                        """
+                        SELECT 1
+                        FROM reader_jobs job
+                        WHERE job.reading_record_id = $1
+                          AND job.base_id = $2
+                          AND job.job_type = $3
+                          AND job.target_type = $4
+                          AND job.target_key = $5
+                          AND job.expected_generation = $6
+                          AND job.operation_fingerprint = $7
+                          AND job.status = 'succeeded'
+                        LIMIT 1
+                        """,
+                        state.record_id,
+                        state.base_id,
+                        GRAMMAR_JOB_TYPE,
+                        GRAMMAR_TARGET_SCOPE,
+                        candidate["unit_id"],
+                        state.expected_generation,
+                        operation_fingerprint,
+                    )
+                    if succeeded is None:
+                        unit_row = candidate
+                        break
                 if unit_row is None:
                     raise ValueError("no unprocessed grammar reading unit is available")
 
@@ -1383,11 +1567,13 @@ class GrammarJobBootstrapService:
                         "target_unit_id": str(unit_row["unit_id"]),
                         "layer_types": ["grammar_note", "sentence_analysis"],
                         "trace_id": str(trace_id),
+                        **_semantic_input_fields(semantic_fence, layer='grammar_note'),
                     },
                     input_signature_suffix=f"{state.base_language}:grammar_bundle:1",
                     input_json={
                         "base_language": state.base_language,
                         "layer_types": ["grammar_note", "sentence_analysis"],
+                        **_semantic_input_fields(semantic_fence, layer='grammar_note'),
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[GRAMMAR_JOB_TYPE],
                 )
@@ -1662,18 +1848,7 @@ class EnhancementJobBootstrapService:
         """
         if trace_id is None:
             trace_id = uuid4()
-        operation_fingerprint = _compose_operation_fingerprint(
-            VOCABULARY_BATCH_OPERATION_FINGERPRINT, state.strategy
-        )
-        await _supersede_stale_fingerprint_jobs(
-            conn,
-            record_id=state.record_id,
-            base_id=state.base_id,
-            expected_generation=state.expected_generation,
-            job_type=VOCABULARY_BATCH_JOB_TYPE,
-            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
-            current_fingerprint=operation_fingerprint,
-        )
+        # Load unpublished units first so the semantic fence can enter the fingerprint.
         # Load unpublished units with their UTF-16 char length for windowing.
         # ``base_end_utf16 - base_start_utf16`` matches the worker's
         # ``slice_by_utf16_offsets`` unit text length exactly.
@@ -1683,7 +1858,8 @@ class EnhancementJobBootstrapService:
                 u.unit_id,
                 u.order_index,
                 u.base_start_utf16,
-                u.base_end_utf16
+                u.base_end_utf16,
+                u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -1704,15 +1880,37 @@ class EnhancementJobBootstrapService:
             state.base_id,
             state.expected_generation,
         )
-        if not rows:
+        allowed = _filter_units_for_layer(
+            rows,
+            "vocabulary",
+            record_id=state.record_id,
+            generation=state.expected_generation,
+        )
+        if not allowed:
             return []
+        semantic_fence = _semantic_fence_from_unit_maps(allowed)
+        semantic_token = _semantic_fingerprint_token(semantic_fence)
+        operation_fingerprint = _compose_operation_fingerprint(
+            VOCABULARY_BATCH_OPERATION_FINGERPRINT,
+            state.strategy,
+            semantic_token=semantic_token,
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
         window_units = [
             VocabularyWindowUnit(
                 unit_id=str(row["unit_id"]),
                 order_index=int(row["order_index"]),
                 text_length=int(row["base_end_utf16"]) - int(row["base_start_utf16"]),
             )
-            for row in rows
+            for row in allowed
         ]
         windows = plan_vocabulary_windows(window_units)
         results: list[VocabularyBootstrapResult] = []
@@ -1765,6 +1963,7 @@ class EnhancementJobBootstrapService:
                     "window_id": window.window_id,
                     "article_route": route.value,
                     "document_features": _route_document_features(state),
+                    **_semantic_input_fields(semantic_fence, layer='vocabulary'),
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:vocabulary:window:{window.window_id}:1:batch"
@@ -1776,6 +1975,7 @@ class EnhancementJobBootstrapService:
                     "layer_type": "vocabulary",
                     "window_id": window.window_id,
                     "article_route": route.value,
+                    **_semantic_input_fields(semantic_fence, layer='vocabulary'),
                 },
                 layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
                 target_key_override=window_target_key,
@@ -1992,21 +2192,9 @@ class EnhancementJobBootstrapService:
             fingerprint_base = GRAMMAR_BATCH_OPERATION_FINGERPRINT
             policy_version = GRAMMAR_BATCH_POLICY_VERSION
             route_suffix = "short"
-        operation_fingerprint = _compose_operation_fingerprint(
-            fingerprint_base, state.strategy
-        )
-        await _supersede_stale_fingerprint_jobs(
-            conn,
-            record_id=state.record_id,
-            base_id=state.base_id,
-            expected_generation=state.expected_generation,
-            job_type=GRAMMAR_BATCH_JOB_TYPE,
-            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
-            current_fingerprint=operation_fingerprint,
-        )
         rows = await conn.fetch(
             """
-            SELECT u.unit_id, u.order_index, u.text_hash
+            SELECT u.unit_id, u.order_index, u.text_hash, u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -2027,9 +2215,34 @@ class EnhancementJobBootstrapService:
             state.base_id,
             state.expected_generation,
         )
-        if not rows:
+        from app.services.reader_orchestration.automatic_layer_policy import (
+            filter_units_for_any_grammar,
+        )
+        allowed = filter_units_for_any_grammar(
+            _unit_rows_to_maps(rows),
+            mode=get_automatic_layer_policy_mode(),
+            record_id=str(state.record_id),
+            generation=state.expected_generation,
+        )
+        if not allowed:
             return []
-        target_unit_ids = [str(row["unit_id"]) for row in rows]
+        target_unit_ids = [str(row["unit_id"]) for row in allowed]
+        semantic_fence = _semantic_fence_from_unit_maps(allowed)
+        semantic_token = _semantic_fingerprint_token(semantic_fence)
+        operation_fingerprint = _compose_operation_fingerprint(
+            fingerprint_base,
+            state.strategy,
+            semantic_token=semantic_token,
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=GRAMMAR_BATCH_JOB_TYPE,
+            target_scope=GRAMMAR_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
 
         existing_job = await conn.fetchrow(
             """
@@ -2076,6 +2289,7 @@ class EnhancementJobBootstrapService:
                 "trace_id": str(trace_id),
                 "article_route": route.value,
                 "document_features": _route_document_features(state),
+                **_semantic_input_fields(semantic_fence, layer='grammar_note'),
             },
             input_signature_suffix=(
                 f"{state.base_language}:grammar_bundle:{route_suffix}:batch"
@@ -2086,6 +2300,7 @@ class EnhancementJobBootstrapService:
                 "base_language": state.base_language,
                 "layer_types": ["grammar_note", "sentence_analysis"],
                 "article_route": route.value,
+                **_semantic_input_fields(semantic_fence, layer='grammar_note'),
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[GRAMMAR_BATCH_JOB_TYPE],
         )
@@ -2146,21 +2361,9 @@ class EnhancementJobBootstrapService:
             fingerprint_base = TRANSLATION_BATCH_OPERATION_FINGERPRINT
             policy_version = TRANSLATION_BATCH_POLICY_VERSION
             route_suffix = "short"
-        operation_fingerprint = _compose_operation_fingerprint(
-            fingerprint_base, state.strategy
-        )
-        await _supersede_stale_fingerprint_jobs(
-            conn,
-            record_id=state.record_id,
-            base_id=state.base_id,
-            expected_generation=state.expected_generation,
-            job_type=TRANSLATION_BATCH_JOB_TYPE,
-            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
-            current_fingerprint=operation_fingerprint,
-        )
         rows = await conn.fetch(
             """
-            SELECT u.unit_id, u.order_index, u.text_hash
+            SELECT u.unit_id, u.order_index, u.text_hash, u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -2181,9 +2384,31 @@ class EnhancementJobBootstrapService:
             state.base_id,
             state.expected_generation,
         )
-        if not rows:
+        allowed = _filter_units_for_layer(
+            rows,
+            "translation",
+            record_id=state.record_id,
+            generation=state.expected_generation,
+        )
+        if not allowed:
             return []
-        target_unit_ids = [str(row["unit_id"]) for row in rows]
+        target_unit_ids = [str(row["unit_id"]) for row in allowed]
+        semantic_fence = _semantic_fence_from_unit_maps(allowed)
+        semantic_token = _semantic_fingerprint_token(semantic_fence)
+        operation_fingerprint = _compose_operation_fingerprint(
+            fingerprint_base,
+            state.strategy,
+            semantic_token=semantic_token,
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_scope=TRANSLATION_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
 
         existing_job = await conn.fetchrow(
             """
@@ -2233,6 +2458,7 @@ class EnhancementJobBootstrapService:
                 "trace_id": str(trace_id),
                 "article_route": route.value,
                 "document_features": _route_document_features(state),
+                **_semantic_input_fields(semantic_fence, layer='translation'),
             },
             input_signature_suffix=(
                 f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -2244,6 +2470,7 @@ class EnhancementJobBootstrapService:
                 "base_language": state.base_language,
                 "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                 "article_route": route.value,
+                **_semantic_input_fields(semantic_fence, layer='translation'),
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
         )
@@ -2307,8 +2534,26 @@ class EnhancementJobBootstrapService:
         """
         if trace_id is None:
             trace_id = uuid4()
+        # Supersede MUST run before the unpublished-units query because that
+        # query excludes units already targeted by any active translate_article
+        # job (any fingerprint). Without superseding first, a strategy/policy
+        # upgrade would see zero candidates and never rotate jobs.
+        meta_rows = await conn.fetch(
+            """
+            SELECT unit_id, order_index, metadata_json
+            FROM reading_units
+            WHERE reading_record_id = $1 AND base_id = $2
+            ORDER BY order_index ASC
+            """,
+            state.record_id,
+            state.base_id,
+        )
+        semantic_fence = _semantic_fence_from_unit_maps(_unit_rows_to_maps(meta_rows))
+        semantic_token = _semantic_fingerprint_token(semantic_fence)
         operation_fingerprint = _compose_operation_fingerprint(
-            TRANSLATION_BATCH_OPERATION_FINGERPRINT, state.strategy
+            TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+            state.strategy,
+            semantic_token=semantic_token,
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
@@ -2347,7 +2592,8 @@ class EnhancementJobBootstrapService:
                 u.unit_id,
                 u.order_index,
                 u.base_start_utf16,
-                u.base_end_utf16
+                u.base_end_utf16,
+                u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -2396,7 +2642,13 @@ class EnhancementJobBootstrapService:
             TRANSLATION_JOB_TYPE,
             TRANSLATION_TARGET_SCOPE,
         )
-        if not rows:
+        allowed = _filter_units_for_layer(
+            rows,
+            "translation",
+            record_id=state.record_id,
+            generation=state.expected_generation,
+        )
+        if not allowed:
             return []
         window_units = [
             TranslationWindowUnit(
@@ -2404,7 +2656,7 @@ class EnhancementJobBootstrapService:
                 order_index=int(row["order_index"]),
                 text_length=int(row["base_end_utf16"]) - int(row["base_start_utf16"]),
             )
-            for row in rows
+            for row in allowed
         ]
         windows = plan_translation_windows(window_units)
         results: list[TranslationBootstrapResult] = []
@@ -2457,6 +2709,7 @@ class EnhancementJobBootstrapService:
                     "window_id": window.window_id,
                     "article_route": route.value,
                     "document_features": _route_document_features(state),
+                    **_semantic_input_fields(semantic_fence, layer='translation'),
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -2469,6 +2722,7 @@ class EnhancementJobBootstrapService:
                     "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                     "window_id": window.window_id,
                     "article_route": route.value,
+                    **_semantic_input_fields(semantic_fence, layer='translation'),
                 },
                 layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
                 target_key_override=window_target_key,
@@ -2521,21 +2775,9 @@ class EnhancementJobBootstrapService:
             fingerprint_base = VOCABULARY_BATCH_OPERATION_FINGERPRINT
             policy_version = VOCABULARY_BATCH_POLICY_VERSION
             route_suffix = "short"
-        operation_fingerprint = _compose_operation_fingerprint(
-            fingerprint_base, state.strategy
-        )
-        await _supersede_stale_fingerprint_jobs(
-            conn,
-            record_id=state.record_id,
-            base_id=state.base_id,
-            expected_generation=state.expected_generation,
-            job_type=VOCABULARY_BATCH_JOB_TYPE,
-            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
-            current_fingerprint=operation_fingerprint,
-        )
         rows = await conn.fetch(
             """
-            SELECT u.unit_id, u.order_index, u.text_hash
+            SELECT u.unit_id, u.order_index, u.text_hash, u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -2556,9 +2798,31 @@ class EnhancementJobBootstrapService:
             state.base_id,
             state.expected_generation,
         )
-        if not rows:
+        allowed = _filter_units_for_layer(
+            rows,
+            "vocabulary",
+            record_id=state.record_id,
+            generation=state.expected_generation,
+        )
+        if not allowed:
             return []
-        target_unit_ids = [str(row["unit_id"]) for row in rows]
+        target_unit_ids = [str(row["unit_id"]) for row in allowed]
+        semantic_fence = _semantic_fence_from_unit_maps(allowed)
+        semantic_token = _semantic_fingerprint_token(semantic_fence)
+        operation_fingerprint = _compose_operation_fingerprint(
+            fingerprint_base,
+            state.strategy,
+            semantic_token=semantic_token,
+        )
+        await _supersede_stale_fingerprint_jobs(
+            conn,
+            record_id=state.record_id,
+            base_id=state.base_id,
+            expected_generation=state.expected_generation,
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_scope=VOCABULARY_BATCH_TARGET_SCOPE,
+            current_fingerprint=operation_fingerprint,
+        )
 
         existing_job = await conn.fetchrow(
             """
@@ -2602,6 +2866,7 @@ class EnhancementJobBootstrapService:
                 "base_id": str(state.base_id),
                 "target_scope": VOCABULARY_BATCH_TARGET_SCOPE,
                 "target_unit_ids": target_unit_ids,
+                **_semantic_input_fields(semantic_fence, layer='vocabulary'),
                 "layer_type": "vocabulary",
                 "trace_id": str(trace_id),
                 "article_route": route.value,
@@ -2616,6 +2881,7 @@ class EnhancementJobBootstrapService:
                 "base_language": state.base_language,
                 "layer_type": "vocabulary",
                 "article_route": route.value,
+                **_semantic_input_fields(semantic_fence, layer='vocabulary'),
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[VOCABULARY_BATCH_JOB_TYPE],
         )

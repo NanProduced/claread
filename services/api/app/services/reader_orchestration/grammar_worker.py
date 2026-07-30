@@ -53,6 +53,11 @@ from app.services.reader_orchestration.grammar_candidate_policy import (
     validate_dedup_hint,
 )
 
+from .automatic_layer_policy import (
+    SemanticFenceError,
+    is_semantic_fence_failure_code,
+    validate_automatic_job_semantic_fence,
+)
 from .job_bootstrap import (
     GRAMMAR_BATCH_JOB_TYPE,
     GRAMMAR_BATCH_TARGET_SCOPE,
@@ -1076,6 +1081,29 @@ class GrammarBundleWorkerService:
             )
             raise
         except GrammarExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             if exc.retryable:
                 available_at = datetime.now(UTC) + retry_delay
                 await self._job_runtime.transition(
@@ -1194,7 +1222,8 @@ class GrammarBundleWorkerService:
                        unit.order_index,
                        unit.base_start_utf16,
                        unit.base_end_utf16,
-                       unit.text_hash
+                       unit.text_hash,
+                       unit.metadata_json
                 FROM reader_jobs job
                 JOIN reading_bases base
                   ON base.id = job.base_id
@@ -1209,6 +1238,32 @@ class GrammarBundleWorkerService:
             )
             if row is None:
                 raise LookupError(f"reader job {job_id} not found")
+
+            try:
+                unit_meta = row["metadata_json"]
+                if hasattr(unit_meta, "keys"):
+                    unit_meta = dict(unit_meta)
+                elif not isinstance(unit_meta, dict):
+                    unit_meta = {}
+                validate_automatic_job_semantic_fence(
+                    job_input=row["input_json"]
+                    if isinstance(row["input_json"], dict)
+                    else {},
+                    layer="grammar_note",
+                    layers_any=("grammar_note", "sentence_analysis"),
+                    unit_metadata_list=[unit_meta],
+                    operation_fingerprint=str(row["operation_fingerprint"]),
+                    trusted_record_id=str(row["reading_record_id"]),
+                    trusted_base_id=str(row["base_id"]),
+                    trusted_generation=int(row["expected_generation"]),
+                )
+            except SemanticFenceError as exc:
+                raise GrammarExecutionError(
+                    str(exc),
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code=exc.code,
+                ) from exc
 
             base_text = str(row["base_text"])
             source_text = slice_by_utf16_offsets(
@@ -1619,6 +1674,29 @@ class GrammarBundleWorkerService:
         try:
             context = await self._load_batch_job_context(claim.job_id)
         except GrammarExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._job_runtime.transition(
+                    job_id=claim.job_id,
+                    target_status="superseded",
+                    lease_token=claim.lease_token,
+                    rationale_code=exc.failure_code,
+                )
+                await self._mark_run_status(
+                    claim.run_id,
+                    status="superseded",
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                    finished_at=datetime.now(UTC),
+                )
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
+                return GrammarBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="superseded",
+                )
             await self._record_batch_failed_usage_event(
                 context=context,
                 error_code=exc.failure_code,
@@ -1985,11 +2063,13 @@ class GrammarBundleWorkerService:
             base_text = str(job_row["base_text"])
 
             units: list[GrammarBatchUnitContext] = []
+            batch_meta_list: list[dict[str, Any]] = []
             for unit_id in target_unit_ids:
                 unit_row = await conn.fetchrow(
                     """
                     SELECT unit_id, order_index,
-                           base_start_utf16, base_end_utf16, text_hash
+                           base_start_utf16, base_end_utf16, text_hash,
+                           metadata_json
                     FROM reading_units
                     WHERE reading_record_id = $1
                       AND base_id = $2
@@ -2006,6 +2086,12 @@ class GrammarBundleWorkerService:
                         failure_class="validation",
                         failure_code="batch_unit_not_found",
                     )
+                um = unit_row["metadata_json"]
+                if hasattr(um, "keys"):
+                    um = dict(um)
+                elif not isinstance(um, dict):
+                    um = {}
+                batch_meta_list.append(um)
                 source_text = slice_by_utf16_offsets(
                     base_text,
                     int(unit_row["base_start_utf16"]),
@@ -2090,6 +2176,25 @@ class GrammarBundleWorkerService:
                         anchor_segments=tuple(anchor_segments),
                     )
                 )
+
+        try:
+            validate_automatic_job_semantic_fence(
+                job_input=input_json if isinstance(input_json, dict) else {},
+                layer="grammar_note",
+                layers_any=("grammar_note", "sentence_analysis"),
+                unit_metadata_list=batch_meta_list,
+                operation_fingerprint=str(job_row["operation_fingerprint"]),
+                trusted_record_id=str(job_row["reading_record_id"]),
+                trusted_base_id=str(job_row["base_id"]),
+                trusted_generation=int(job_row["expected_generation"]),
+            )
+        except SemanticFenceError as exc:
+            raise GrammarExecutionError(
+                str(exc),
+                retryable=False,
+                failure_class="validation",
+                failure_code=exc.code,
+            ) from exc
 
         strategy_metadata = _validate_grammar_strategy_metadata(input_json)
         envelope_json = job_row["envelope_json"] or {}
