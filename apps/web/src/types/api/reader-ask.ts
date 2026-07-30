@@ -508,6 +508,70 @@ export interface ReaderAskMessageDto {
   updated_at: string;
 }
 
+/**
+ * ASK-COT — one frozen agentic process step, captured from the pure
+ * `reduceAgenticActivityEvent` output at turn settle time. Redeclared
+ * here so the DTO layer never imports component modules.
+ *
+ * Privacy: no tool args, queries, URLs, evidence handles, fingerprints,
+ * raw errors, or server summary copy (see agentic-activity.ts privacy
+ * header). Step labels are fixed typed mapping at project time.
+ *
+ * Internal control fields (for deterministic same-session reprojection
+ * only — never public DOM / view-model / server wire):
+ * - `sequence`, `toolName`, `activityId`, `attemptCount`, `callSequence`
+ *
+ * This type is UI-memory only; it is not a server DTO and must not be
+ * written to the wire or cold history.
+ */
+export type AgenticProcessSnapshotStep = {
+  /** Internal: reducer sequence for order-stable reprojection. */
+  sequence: number;
+  phase:
+    | "agent_running"
+    | "reading_context"
+    | "searching_article"
+    | "searching_web"
+    | "composing_answer"
+    | "validating_evidence";
+  activity: "started" | "completed" | "unavailable" | "failed";
+  elapsedMs: number;
+  /** Internal: tool identity for fold / upsert rules. */
+  toolName: "read_range" | "search_current_article" | "search_web" | null;
+  status: "running" | "ok" | "unavailable" | "failed" | null;
+  durationMs: number | null;
+  /** Internal: web-search activity id for attempt upsert. */
+  activityId: "web_search" | null;
+  /** Internal: authoritative attempt count when present. */
+  attemptCount: number | null;
+  /** Internal: authoritative call sequence when present. */
+  callSequence: number | null;
+};
+
+/**
+ * ASK-COT — in-memory-only frozen snapshot of the agentic process for one
+ * settled turn, written by AiWorkspacePanel when the stream ends (before
+ * the live activity state resets to idle). Lets a completed/interrupted
+ * bubble keep showing its typed process (Chain of Thought) until reload.
+ *
+ * - NEVER serialized to the server, DTO wire, or DOM (UI-state only).
+ * - Cold history NEVER carries it: `normalizeReaderAskMessages` nulls it
+ *   in both branches; a reloaded v2 turn renders reasoning-only (G3 —
+ *   cold process steps are not persisted yet).
+ * - Written whenever `run_started` was observed (turnRunId present), even
+ *   with zero progress steps, so reasoning-only v2 turns stay detectable
+ *   after settle (the hot path never sets `execution_version`).
+ * - Steps retain internal control fields for reprojection; projected
+ *   public view models strip them.
+ */
+export type AgenticProcessSnapshot = {
+  execution_version: typeof READER_ASK_AGENTIC_EXECUTION_VERSION;
+  status: "completed" | "failed" | "cancelled" | "running" | "degraded";
+  elapsedMs: number;
+  hasUnavailable: boolean;
+  steps: AgenticProcessSnapshotStep[];
+};
+
 export interface ReaderAskMessageUiStateDto {
   replan_status?: "idle" | "replanning" | null;
   compacting?: boolean | null;
@@ -597,6 +661,19 @@ export interface ReaderAskMessageUiStateDto {
    * - `null` / `false` / missing ⇒ not truncated; render normally.
    */
   reasoning_truncated?: boolean | null;
+  /**
+   * ASK-COT — in-memory-only frozen snapshot of the agentic process for
+   * this settled turn (see {@link AgenticProcessSnapshot}). Written by
+   * AiWorkspacePanel when the SSE stream ends, before the live activity
+   * state resets to idle, so completed/interrupted bubbles keep showing
+   * their typed Chain of Thought until reload.
+   *
+   * - NEVER serialized to the server (UI-state only).
+   * - Cold history NEVER carries it: `normalizeReaderAskMessages` nulls
+   *   it in both branches; a reloaded v2 turn renders reasoning-only.
+   * - `handleRetry` clears it when a new attempt starts.
+   */
+  agentic_process_snapshot?: AgenticProcessSnapshot | null;
 }
 
 export type ReaderAskUiMessageDto = ReaderAskMessageDto & ReaderAskMessageUiStateDto;

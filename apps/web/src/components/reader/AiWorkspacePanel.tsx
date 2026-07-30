@@ -102,6 +102,7 @@ import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestion
 import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
 import { TaskProcessCard } from "@/components/reader/ask-chat/TaskProcessCard";
 import { ToolChipRow } from "@/components/reader/ask-chat/ToolChipRow";
+import { TurnProcessDisclosure } from "@/components/reader/ask-chat/turn-process";
 import {
   readerCommandControl,
   readerPanelItem,
@@ -172,13 +173,12 @@ import {
 } from "./ask/agentic-evidence";
 import { AgenticWebSources } from "./ask/agentic-web-sources";
 import {
-  agenticActivityAriaLabel,
   createIdleAgenticActivityState,
-  isAgenticActivityVisible,
   reduceAgenticActivityEvent,
   type AgenticActivityEvent,
   type AgenticActivityState,
 } from "./ask/agentic-activity";
+import { buildAgenticProcessSnapshot } from "./ask/agentic-process-projection";
 import {
   consumeReaderAskSse,
   isReaderAskAgenticCompletedPayload,
@@ -826,16 +826,26 @@ export function createSseMessageHandler(
   // to decide whether to fire onOptionalToolWarning at completed time.
   // Reset on run_started so it never bleeds across turns.
   let optionalToolUnavailable = false;
-  // ASK-REASONING-R2: strict identity/seq state machine for
+  // ASK-REASONING-R2 / ASK-COT-B1-R1: strict identity/seq state machine for
   // agentic.reasoning.* (one stream per handler instance). `started`
   // (seq === 0) establishes the turn identity binding; delta/completed
   // must match that identity exactly and carry seq === lastSeq + 1 —
   // duplicates, gaps, out-of-order frames, foreign-turn frames, and
-  // repeated started frames are all ignored. A null seq means no started
-  // has been accepted yet, so delta/completed are dropped until then.
-  // Once completed is accepted the stream is frozen: later deltas are
-  // dropped so the displayed text never exceeds the persisted projection
-  // (hot≡cold invariant).
+  // repeated started frames are all ignored. Once completed is accepted
+  // the stream is frozen: later deltas are dropped so the displayed text
+  // never exceeds the persisted projection (hot≡cold invariant).
+  //
+  // ASK-COT: the backend documents that a delta MAY arrive without a
+  // preceding started frame (production_stream.py L1151). That seam is
+  // retained, but fail-closed:
+  // - active run identity triple must match exactly;
+  // - without a binding, the first accepted delta requires seq === 1
+  //   (seq > 1 rejects, establishes no binding, cannot complete);
+  // - after binding, strict seq === lastSeq + 1;
+  // - completed-only with no already-accepted reasoning text does not
+  //   create a completed reasoning display (no hot≡cold claim);
+  // - missing frames stay no-display or interrupted, never completed.
+  // A late started after synthesis stays ignored (binding established).
   let agenticReasoningBinding: {
     messageId: string;
     threadId: string;
@@ -843,6 +853,11 @@ export function createSseMessageHandler(
   } | null = null;
   let agenticReasoningLastSeq: number | null = null;
   let agenticReasoningCompleted = false;
+  // A started frame only establishes identity; it carries no text. A
+  // completed frame may promise persisted content, but the client must not
+  // mark the hot view completed unless it accepted at least one non-empty
+  // projected delta itself. Otherwise hot and cold would disagree.
+  let agenticReasoningHasAcceptedText = false;
   // R3 P1b: identity of the active run, captured when agentic.run_started
   // is accepted. agentic.reasoning.started must match this exactly to
   // establish a reasoning binding — foreign / stale-turn started frames are
@@ -1187,30 +1202,57 @@ export function createSseMessageHandler(
     if (event.event === "agentic.reasoning.delta") {
       if (isReaderAskAgenticReasoningDeltaPayload(event.data)) {
         const payload = event.data;
-        const binding = agenticReasoningBinding;
-        // Requires an accepted started, no accepted completed (stream
-        // frozen), exact identity match (foreign turns dropped), and
-        // seq === lastSeq + 1 (duplicates, gaps and out-of-order frames
-        // dropped).
-        if (
-          binding === null ||
-          agenticReasoningLastSeq === null ||
-          agenticReasoningCompleted
-        ) {
+        // A completed frame freezes the stream regardless of binding.
+        if (agenticReasoningCompleted) {
           return;
         }
-        if (
-          payload.message_id !== binding.messageId ||
-          payload.thread_id !== binding.threadId ||
-          payload.turn_run_id !== binding.turnRunId
-        ) {
-          return;
+        let binding = agenticReasoningBinding;
+        if (binding === null || agenticReasoningLastSeq === null) {
+          // ASK-COT-B1-R1: tolerate a delta without a preceding started by
+          // synthesizing the binding from the active run identity.
+          // Fail-closed: exact identity triple required; without an
+          // accepted run_started the frame is dropped. First delta without
+          // a binding must be seq === 1 — seq > 1 rejects and does not
+          // establish a binding (cannot later claim completed).
+          if (
+            activeRunIdentity === null ||
+            payload.message_id !== activeRunIdentity.messageId ||
+            payload.thread_id !== activeRunIdentity.threadId ||
+            payload.turn_run_id !== activeRunIdentity.turnRunId
+          ) {
+            return;
+          }
+          if (payload.seq !== 1) {
+            return;
+          }
+          binding = {
+            messageId: payload.message_id,
+            threadId: payload.thread_id,
+            turnRunId: payload.turn_run_id,
+          };
+          agenticReasoningBinding = binding;
+          agenticReasoningLastSeq = payload.seq;
+        } else {
+          // Established binding: exact identity match (foreign turns
+          // dropped) and contiguous seq (duplicates, gaps, out-of-order
+          // frames dropped).
+          if (
+            payload.message_id !== binding.messageId ||
+            payload.thread_id !== binding.threadId ||
+            payload.turn_run_id !== binding.turnRunId
+          ) {
+            return;
+          }
+          if (payload.seq !== agenticReasoningLastSeq + 1) {
+            return;
+          }
+          agenticReasoningLastSeq = payload.seq;
         }
-        if (payload.seq !== agenticReasoningLastSeq + 1) {
-          return;
-        }
-        agenticReasoningLastSeq = payload.seq;
         const delta = payload.delta;
+        // The payload guard requires a non-empty delta. Record acceptance
+        // synchronously rather than reading React state, because the visible
+        // append is rAF-batched and a completed event may follow immediately.
+        agenticReasoningHasAcceptedText = true;
         // Batched via rAF like message.delta / legacy reasoning.delta.
         commitStreamingMessageUpdate((messages) =>
           messages.map((message) =>
@@ -1230,16 +1272,23 @@ export function createSseMessageHandler(
     if (event.event === "agentic.reasoning.completed") {
       if (isReaderAskAgenticReasoningCompletedPayload(event.data)) {
         const payload = event.data;
-        const binding = agenticReasoningBinding;
-        // Requires started + exact identity + contiguous seq + content.
         // At most one completed is accepted per stream.
+        if (agenticReasoningCompleted) {
+          return;
+        }
+        const binding = agenticReasoningBinding;
+        // ASK-COT-B1-R1: completed-only (no accepted started/delta and no
+        // already-accepted reasoning text) must not create a completed
+        // reasoning display. Missing frames stay no-display / interrupted;
+        // never claim hot≡cold completed from a bare completed frame.
         if (
           binding === null ||
           agenticReasoningLastSeq === null ||
-          agenticReasoningCompleted
+          !agenticReasoningHasAcceptedText
         ) {
           return;
         }
+        // Established binding: identity + contiguous seq + content.
         if (
           payload.message_id !== binding.messageId ||
           payload.thread_id !== binding.threadId ||
@@ -2240,6 +2289,9 @@ function normalizeReaderAskMessages(
         // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
         // preview. Only the canonical `content_md` is persisted server-side.
         provisional_content_md: null,
+        // ASK-COT — the process snapshot is in-memory only; cold history
+        // can never carry it (defensive: the server never sends it).
+        agentic_process_snapshot: null,
       } as ReaderAskUiMessageDto;
     }
 
@@ -2296,6 +2348,9 @@ function normalizeReaderAskMessages(
       // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
       // preview. Only the canonical `content_md` is persisted server-side.
       provisional_content_md: null,
+      // ASK-COT — cold v2 turns render reasoning-only; the typed process
+      // steps are session-memory only and never persist across reload.
+      agentic_process_snapshot: null,
     } as ReaderAskUiMessageDto;
   });
 }
@@ -3346,41 +3401,15 @@ function AssistantStreamingIndicator({
   reasoningStatus,
   compacting,
   replanStatus,
-  agenticActivity,
 }: {
   hasAnswerContent: boolean;
   reasoningStatus: ReaderAskMessageDto["reasoning_status"];
   compacting?: boolean;
   replanStatus?: ReaderAskMessageUiStateDto["replan_status"];
-  agenticActivity?: AgenticActivityState | null;
 }) {
-  if (agenticActivity && isAgenticActivityVisible(agenticActivity)) {
-    const title = agenticActivity.currentSummary ?? "Ask Claread 正在工作";
-    return (
-      <div
-        data-testid="ask-agentic-activity"
-        data-activity-status={agenticActivity.status}
-        data-activity-phase={agenticActivity.currentPhase ?? ""}
-        data-activity-sequence={String(agenticActivity.lastSequence)}
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-label={agenticActivityAriaLabel(agenticActivity)}
-        className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
-      >
-        <span
-          aria-hidden="true"
-          data-testid="ask-agentic-activity-pulse"
-          className={cn(
-            "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lens-blue/80",
-            "motion-safe:animate-pulse",
-            "motion-reduce:animate-none",
-          )}
-        />
-        <span className="truncate font-medium text-ink-soft">{title}</span>
-      </div>
-    );
-  }
+  // ASK-COT: the agentic activity row moved into the turn-scoped Chain of
+  // Thought (TurnProcessDisclosure) for v2 turns. This indicator keeps the
+  // legacy lane fallbacks only (compacting / replan / legacy streaming).
 
   const title = compacting
     ? "正在压缩上下文"
@@ -3560,6 +3589,19 @@ function MessageBubble({
   const agenticCitationItems = hasAgenticAnswerBlocks
     ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
     : [];
+  // ASK-COT — agentic v2 turns converge reasoning + activity into one
+  // turn-scoped Chain of Thought (TurnProcessDisclosure). Detection:
+  // hot settled (snapshot present), cold history (execution_version), or
+  // live v2 (streaming with a non-idle activity bound to this bubble —
+  // idle means run_started has not arrived yet, so the legacy fallback
+  // row covers the pre-run gap exactly like today). Legacy lanes keep
+  // ReasoningPanel + AssistantStreamingIndicator + ToolTraceBlock.
+  const isAgenticV2Turn =
+    message.agentic_process_snapshot != null ||
+    message.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION ||
+    (message.status === "streaming" &&
+      agenticActivity != null &&
+      agenticActivity.status !== "idle");
 
   return (
     <div
@@ -3578,27 +3620,44 @@ function MessageBubble({
                     key={`${message.id}-${block.kind}-${index}`}
                     className="px-0.5"
                     reasoning={
-                      <AssistantReasoningBlock
-                        reasoningMd={message.reasoning_md}
-                        reasoningStatus={message.reasoning_status}
-                        reasoningTruncated={message.reasoning_truncated}
-                      />
+                      isAgenticV2Turn ? undefined : (
+                        <AssistantReasoningBlock
+                          reasoningMd={message.reasoning_md}
+                          reasoningStatus={message.reasoning_status}
+                          reasoningTruncated={message.reasoning_truncated}
+                        />
+                      )
                     }
                     process={
-                      <>
-                        {message.status === "streaming" ? (
-                          <AssistantStreamingIndicator
-                            hasAnswerContent={hasAnswerContent}
-                            reasoningStatus={message.reasoning_status}
-                            compacting={message.compacting ?? false}
-                            replanStatus={message.replan_status}
-                            agenticActivity={agenticActivity}
-                          />
-                        ) : null}
-                        {message.status === "streaming" && message.tool_trace.length > 0 ? (
-                          <ToolTraceBlock entries={message.tool_trace} />
-                        ) : null}
-                      </>
+                      isAgenticV2Turn ? (
+                        <TurnProcessDisclosure
+                          activity={
+                            message.status === "streaming"
+                              ? (agenticActivity ?? null)
+                              : null
+                          }
+                          snapshot={message.agentic_process_snapshot ?? null}
+                          reasoningMd={message.reasoning_md}
+                          reasoningStatus={message.reasoning_status}
+                          reasoningTruncated={message.reasoning_truncated}
+                          citations={agenticCitationItems}
+                          isStreaming={message.status === "streaming"}
+                        />
+                      ) : (
+                        <>
+                          {message.status === "streaming" ? (
+                            <AssistantStreamingIndicator
+                              hasAnswerContent={hasAnswerContent}
+                              reasoningStatus={message.reasoning_status}
+                              compacting={message.compacting ?? false}
+                              replanStatus={message.replan_status}
+                            />
+                          ) : null}
+                          {message.status === "streaming" && message.tool_trace.length > 0 ? (
+                            <ToolTraceBlock entries={message.tool_trace} />
+                          ) : null}
+                        </>
+                      )
                     }
                     answer={
                       <div className="space-y-2">
@@ -4054,6 +4113,14 @@ export function AiWorkspacePanel({
   const [agenticActivity, setAgenticActivity] = useState<AgenticActivityState>(
     () => createIdleAgenticActivityState(),
   );
+  // ASK-COT — synchronous mirror of the activity state. The reducer is
+  // pure and dispatches are serialized per SSE event, so computing the
+  // next state from the mirror keeps it current regardless of React
+  // batching. The per-turn `finally` blocks read it to persist the
+  // frozen process snapshot BEFORE the live state resets to idle.
+  const agenticActivityMirrorRef = useRef<AgenticActivityState>(
+    createIdleAgenticActivityState(),
+  );
   const [modelOptions, setModelOptions] = useState<ReaderAskModelOptionSummaryDto[]>([]);
   const [defaultModelKey, setDefaultModelKey] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
@@ -4095,7 +4162,34 @@ export function AiWorkspacePanel({
   const turnMetricsRef = useRef<TurnLifecycleMetrics | null>(null);
 
   const dispatchAgenticActivity = (event: AgenticActivityEvent) => {
-    setAgenticActivity((current) => reduceAgenticActivityEvent(current, event));
+    const next = reduceAgenticActivityEvent(agenticActivityMirrorRef.current, event);
+    agenticActivityMirrorRef.current = next;
+    setAgenticActivity(next);
+  };
+
+  // ASK-COT — persist the frozen process snapshot onto the settled
+  // message. Reads the synchronous mirror (never React state — rAF
+  // batching could lag the last dispatch). `buildAgenticProcessSnapshot`
+  // returns null when no run identity was bound (legacy lanes, failures
+  // before run_started), so legacy turns never carry a snapshot.
+  const persistAgenticProcessSnapshot = () => {
+    const finalActivity = agenticActivityMirrorRef.current;
+    const snapshotMessageId =
+      finalActivity.messageId ?? streamingAssistantIdRef.current;
+    if (snapshotMessageId == null) {
+      return;
+    }
+    const snapshot = buildAgenticProcessSnapshot(finalActivity);
+    if (snapshot == null) {
+      return;
+    }
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === snapshotMessageId
+          ? { ...message, agentic_process_snapshot: snapshot }
+          : message,
+      ),
+    );
   };
 
   // Abort in-flight SSE and reset init guard when panel closes or component unmounts
@@ -5053,15 +5147,13 @@ export function AiWorkspacePanel({
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
       }
-      // Hide activity indicator once the stream ends (completed/terminal already
-      // froze the state; reset to idle so a completed answer is not stuck loading).
-      setAgenticActivity((current) =>
-        current.status === "running" || current.status === "degraded"
-          ? createIdleAgenticActivityState()
-          : current.status === "completed" || current.status === "failed" || current.status === "cancelled"
-            ? createIdleAgenticActivityState()
-            : current,
-      );
+      // ASK-COT — persist the frozen process snapshot before the live
+      // activity resets, so the settled bubble keeps its typed Chain of
+      // Thought (completed/terminal already froze the reducer state).
+      persistAgenticProcessSnapshot();
+      // Hide activity indicator once the stream ends (reset to idle so a
+      // completed answer is not stuck loading).
+      dispatchAgenticActivity({ type: "reset" });
       streamingAssistantIdRef.current = null;
       setSending(false);
       // ASK-TURN-LIFECYCLE R3 — composer is interactive again. Log the
@@ -5197,6 +5289,9 @@ export function AiWorkspacePanel({
               agentic_evidence_scope: null,
               agentic_answer_blocks: null,
               agentic_citations: null,
+              // ASK-COT — the old attempt's frozen process must not
+              // survive into the retry (new turn_run_id ⇒ new run).
+              agentic_process_snapshot: null,
             }
           : message,
       ),
@@ -5332,7 +5427,10 @@ export function AiWorkspacePanel({
       if (sseAbortRef.current === controller) {
         sseAbortRef.current = null;
       }
-      setAgenticActivity(() => createIdleAgenticActivityState());
+      // ASK-COT — persist the frozen process snapshot before reset
+      // (same contract as sendMessage's finally block).
+      persistAgenticProcessSnapshot();
+      dispatchAgenticActivity({ type: "reset" });
       streamingAssistantIdRef.current = null;
       setSending(false);
       // ASK-TURN-LIFECYCLE R3 — composer is interactive again. Log

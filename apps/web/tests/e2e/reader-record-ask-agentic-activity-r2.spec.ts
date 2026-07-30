@@ -588,8 +588,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       "data-activity-phase",
     );
     expect(phase).toBe("composing_answer");
+    // Fixed typed live label (ASK-COT-B1-R1) — never server summary copy.
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
-      "正在组织回答",
+      "组织回答",
     );
 
     await releaseAll(page);
@@ -630,7 +631,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     );
     const summary = await page.locator('[data-testid="ask-agentic-activity"]').textContent();
     expect(phase).toBe("composing_answer");
-    expect(summary).toContain("正在组织回答");
+    // Fixed typed label only.
+    expect(summary).toContain("组织回答");
+    expect(summary).not.toContain("正在组织回答");
     expect(summary).not.toContain("乱序的阅读");
     expect(summary).not.toContain("重复的搜索");
 
@@ -680,7 +683,11 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     await submitQuestion(page, "测试问题");
     await waitForActivityStatus(page, "degraded");
+    // CoT live header uses fixed typed label; warning copy is NOT owned by CoT.
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
+      "检索文章",
+    );
+    await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
       "文章搜索暂不可用",
     );
 
@@ -1159,7 +1166,8 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toBeVisible();
 
     const pulseAnimation = await page.evaluate(() => {
-      const pulse = document.querySelector('[data-testid="ask-agentic-activity-pulse"]');
+      // ASK-COT: the pulse glyph moved into the Chain of Thought header.
+      const pulse = document.querySelector('[data-testid="ask-turn-process-pulse"]');
       if (!pulse) return null;
       const style = window.getComputedStyle(pulse);
       return {
@@ -1246,8 +1254,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     await submitQuestion(page, "reasoning 流式测试问题");
 
-    // Reasoning appears collapsed by default (shimmer trigger, no auto-open).
-    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    // ASK-COT: reasoning now lives inside the turn-scoped Chain of
+    // Thought — collapsed by default (shimmer trigger, no auto-open).
+    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
     await expect(trigger).toBeVisible({ timeout: 10_000 });
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
 
@@ -1255,7 +1264,7 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     // Scope to :visible so stale hidden Radix nodes from remounts (the
     // streaming→completed layout swap re-keys the message block) are ignored.
     await trigger.click();
-    const visibleContent = page.locator('[data-slot="reasoning-content"]:visible');
+    const visibleContent = page.locator('[data-slot="chain-of-thought-content"]:visible');
     await expect(visibleContent).toContainText("先判断句子主干。", { timeout: 10_000 });
 
     // Release delta2 only (completed / message.completed stay gated): the
@@ -1266,8 +1275,8 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     });
 
     // Release the rest: the answer completes. The completed layout re-keys
-    // the message block into a default-collapsed reasoning panel, which
-    // remains fully reviewable on re-expand.
+    // the message block into a default-collapsed Chain of Thought (frozen
+    // snapshot), which remains fully reviewable on re-expand.
     await releaseAll(page);
     await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
       "主要观点",
@@ -1275,7 +1284,7 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     );
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await trigger.click();
-    await expect(page.locator('[data-slot="reasoning-content"]:visible')).toContainText(
+    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
       "先判断句子主干。再确认从句关系。",
       { timeout: 10_000 },
     );
@@ -1303,11 +1312,23 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // No reasoning events ⇒ no reasoning element, no empty placeholder.
+    // ASK-COT: no reasoning events ⇒ the Chain of Thought still carries
+    // the typed activity steps, but NO reasoning section and the settled
+    // copy says 处理过程 (never 思考过程). No empty reasoning placeholder.
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    const cot = page.locator('[data-testid="ask-turn-process"]');
+    await expect(cot).toBeVisible();
+    await expect(cot).toContainText("处理过程");
+    await expect(cot).not.toContainText("思考过程");
+    // Steps live inside the collapsed content — expand before counting.
+    await cot.locator('[data-slot="chain-of-thought-trigger"]').click();
+    await expect(cot.locator("[data-step-status]").first()).toBeVisible({
+      timeout: 10_000,
+    });
+    expect(await cot.locator("[data-step-status]").count()).toBeGreaterThan(0);
+    expect(await cot.locator('[data-testid="ask-turn-process-reasoning"]').count()).toBe(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain("本轮模型未返回可展示的思考内容");
-    expect(pageContent).not.toContain("思考过程");
   });
 
   test("20. Reasoning 投影泄漏扫描", async ({ page }) => {
@@ -1332,10 +1353,10 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // Projected text is reviewable.
-    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    // Projected text is reviewable inside the Chain of Thought.
+    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
     await trigger.click();
-    await expect(page.locator('[data-slot="reasoning-content"]')).toContainText(
+    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
       "检查〔引用〕的范围后得出结论。",
       { timeout: 10_000 },
     );
@@ -1377,6 +1398,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     // Foreign reasoning is ignored ⇒ no reasoning element, no foreign text.
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    // ASK-COT: run_started was observed but neither steps nor reasoning
+    // materialized ⇒ the disclosure renders no empty shell at all.
+    await expect(page.locator('[data-testid="ask-turn-process"]')).toHaveCount(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain("外来思考");
   });
@@ -1405,12 +1429,13 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // Reasoning frozen as interrupted: trigger present, projected text
-    // preserved and re-expandable.
-    const trigger = page.locator('[data-slot="reasoning-trigger"]');
+    // ASK-COT: reasoning frozen as interrupted inside the Chain of
+    // Thought — trigger present, projected text preserved and
+    // re-expandable (never marked completed).
+    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
     await expect(trigger).toBeVisible({ timeout: 10_000 });
     await trigger.click();
-    await expect(page.locator('[data-slot="reasoning-content"]:visible')).toContainText(
+    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
       "部分投影思考。",
       { timeout: 10_000 },
     );
@@ -1477,7 +1502,14 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       "主要观点",
       { timeout: 10_000 },
     );
+    // Unlock signal: the composer textarea is interactive without waiting
+    // for transport EOF.
     await expect(page.locator('[data-ask-composer-textarea="true"]')).toBeEnabled();
+    // The send button is disabled while the input is empty (composer
+    // contract since the stop-generation control, 503df1c4) — typing a
+    // follow-up re-enables it, proving the composer is fully interactive
+    // after the terminal.
+    await page.fill('[data-ask-composer-textarea="true"]', "后续问题");
     await expect(page.locator('button[aria-label="发送"]')).toBeEnabled();
   });
 });

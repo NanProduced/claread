@@ -3648,13 +3648,181 @@ describe("createSseMessageHandler – agentic reasoning projection", () => {
     expect(getMessages()[0].reasoning_md).toBeNull();
   });
 
-  it("ignores a delta that arrives before any started (R2 strict gating)", () => {
+  it("ignores a delta before started when no active run identity exists (fail-closed)", () => {
     const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
 
     handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "直接到达。") });
     flushRaf();
     expect(getMessages()[0].reasoning_md).toBeNull();
     expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+
+  it("ASK-COT: accepts a delta without started once run_started bound the identity (seq===1)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+        web_search_mode: "disabled",
+      },
+    });
+
+    // Backend documents deltas may arrive without a preceding started
+    // (production_stream.py L1151) — binding is synthesized only for seq===1.
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "无started。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "续接。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("无started。续接。");
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+
+    // Strict contiguity resumes after synthesis: gap dropped, seq 3 kept.
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(4, "缺口。") });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(3, "连续。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("无started。续接。连续。");
+
+    // completed stays contiguous from the synthesized baseline.
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(4) });
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("ASK-COT-B1-R1: first delta seq>1 without binding is rejected (no binding, no completed)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    // First delta jumps to seq=3 → reject, no binding established.
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(3, "缺口帧。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    // Later completed seq=4 still cannot complete (no binding, no accepted text).
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(4) });
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+  });
+
+  it("ASK-COT-B1-R1: completed-only without accepted reasoning text does not create completed", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(1) });
+    // Fail-closed: no hot≡cold completed claim without accepted text/binding.
+    expect(getMessages()[0].reasoning_status).toBeNull();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+  });
+
+  it("ASK-COT-B1-R2: started-only reasoning cannot complete without an accepted delta", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    expect(getMessages()[0].reasoning_md).toBe("");
+
+    // A started frame binds identity but carries no visible projection. If
+    // every delta is missing, accepting completed would falsely claim that
+    // the empty hot view equals the persisted cold reasoning projection.
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(1) });
+    expect(getMessages()[0].reasoning_status).toBe("streaming");
+    expect(getMessages()[0].reasoning_md).toBe("");
+
+    // The answer terminal owns the fallback: an incomplete projection is
+    // interrupted, never promoted to a replayable completed reasoning state.
+    handler({ event: "message.completed", data: agenticMessageCompleted() });
+    expect(getMessages()[0].reasoning_status).toBe("interrupted");
+    expect(getMessages()[0].reasoning_md).toBeNull();
+  });
+
+  it("ASK-COT-B1-R1: run_started → delta seq=1 → completed works without started frame", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "思考。") });
+    flushRaf();
+    handler({ event: "agentic.reasoning.completed", data: completedPayload(2) });
+    expect(getMessages()[0].reasoning_md).toBe("思考。");
+    expect(getMessages()[0].reasoning_status).toBe("completed");
+  });
+
+  it("ASK-COT: foreign-identity delta without started is still dropped", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    handler({
+      event: "agentic.reasoning.delta",
+      data: { ...deltaPayload(1, "外turn。"), turn_run_id: "run-OTHER" },
+    });
+    handler({
+      event: "agentic.reasoning.completed",
+      data: { ...completedPayload(1), thread_id: "thread-OTHER" },
+    });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBeNull();
+    expect(getMessages()[0].reasoning_status).toBeNull();
+  });
+
+  it("ASK-COT: a late started after synthesis is ignored (binding established)", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(1, "甲。") });
+    // Late started must not reset the synthesized seq baseline.
+    handler({ event: "agentic.reasoning.started", data: startedPayload() });
+    handler({ event: "agentic.reasoning.delta", data: deltaPayload(2, "乙。") });
+    flushRaf();
+    expect(getMessages()[0].reasoning_md).toBe("甲。乙。");
   });
 
   it("ignores started with seq !== 0", () => {
@@ -3726,7 +3894,7 @@ describe("createSseMessageHandler – agentic reasoning projection", () => {
     expect(getMessages()[0].reasoning_status).toBe("completed");
   });
 
-  it("ignores completed that arrives before any started", () => {
+  it("ignores completed before started when no active run identity exists", () => {
     const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
 
     handler({ event: "agentic.reasoning.completed", data: completedPayload(1) });
@@ -5794,6 +5962,43 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     expect(normalized.agentic_answer_blocks).toBeNull();
     expect(normalized.agentic_web_search).toBeNull();
   });
+
+  it("ASK-COT: cold history never carries an agentic process snapshot (both branches)", () => {
+    // Agentic v2 branch.
+    const [agenticCold] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "回答。",
+        execution_version: "reader_record_ask_agentic_v2",
+        final_status: "ok",
+        // A forged snapshot from any source must never survive hydration.
+        agentic_process_snapshot: {
+          execution_version: "reader_record_ask_agentic_v2",
+          status: "completed",
+          elapsedMs: 1000,
+          hasUnavailable: false,
+          steps: [],
+        },
+      } as never),
+    ]);
+    expect(agenticCold.agentic_process_snapshot).toBeNull();
+
+    // Legacy branch.
+    const [legacyCold] = normalizeReaderAskMessages([
+      createAssistantMessage({
+        status: "completed",
+        content_md: "旧回答。",
+        agentic_process_snapshot: {
+          execution_version: "reader_record_ask_agentic_v2",
+          status: "completed",
+          elapsedMs: 500,
+          hasUnavailable: false,
+          steps: [],
+        },
+      } as never),
+    ]);
+    expect(legacyCold.agentic_process_snapshot).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -6724,5 +6929,403 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
     // The turn error text appears exactly once (only in the turn notice, not
     // duplicated in a composer banner).
     expect(screen.getAllByText("回答生成失败，请稍后重试。")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-COT — Chain of Thought convergence (B1)
+//
+// v2 turns converge reasoning + activity into one turn-scoped disclosure:
+// - live: TurnProcessDisclosure driven by the live activity state;
+// - settled (same session): frozen snapshot persisted before the idle reset;
+// - cold history: reasoning-only (snapshots never persist);
+// - legacy lanes keep ReasoningPanel + ToolTrace untouched;
+// - warnings/errors stay the SystemMessage turn notice's sole property.
+// ---------------------------------------------------------------------------
+
+describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
+  const VERSION = "reader_record_ask_agentic_v2";
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(consumeReaderAskSse).mockReset();
+    vi.mocked(consumeReaderAskSse).mockImplementation(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  function agenticCompletedPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      execution_version: VERSION,
+      final_status: "ok" as const,
+      answer_text: "已完成回答。",
+      answer_blocks: [{ text: "已完成回答。", citation_ids: [] }],
+      citations: [],
+      knowledge_mode: null,
+      source_status: null,
+      web_search: null,
+      message_id: "msg-assistant-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      ...overrides,
+    };
+  }
+
+  function runStartedPayload() {
+    return {
+      execution_version: VERSION,
+      message_id: "msg-assistant-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      has_initial_selection: false,
+      web_search_mode: "disabled" as const,
+    };
+  }
+
+  function reasoningPayloads() {
+    const identity = {
+      execution_version: VERSION,
+      message_id: "msg-assistant-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+    };
+    return {
+      started: {
+        ...identity,
+        seq: 0,
+        projection_policy_version: "reasoning_projection_v1",
+      },
+      delta: { ...identity, seq: 1, delta: "已脱敏思考。" },
+      completed: {
+        ...identity,
+        seq: 2,
+        has_content: true,
+        truncated: false,
+        projection_policy_version: "reasoning_projection_v1",
+      },
+    };
+  }
+
+  async function sendTurn() {
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  }
+
+  it("settled v2 turn keeps a frozen Chain of Thought (snapshot persisted before idle reset)", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "agentic.run_started", data: runStartedPayload() });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          sequence: 1,
+          phase: "reading_context",
+          activity: "started",
+          summary: "正在读取文章上下文",
+          elapsed_ms: 500,
+          tool_name: "read_range",
+          status: "running",
+        },
+      });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          sequence: 2,
+          phase: "reading_context",
+          activity: "completed",
+          summary: "已读取相关上下文",
+          elapsed_ms: 1200,
+          tool_name: "read_range",
+          status: "ok",
+          duration_ms: 700,
+        },
+      });
+      const reasoning = reasoningPayloads();
+      onEvent({ event: "agentic.reasoning.started", data: reasoning.started });
+      onEvent({ event: "agentic.reasoning.delta", data: reasoning.delta });
+      onEvent({ event: "agentic.reasoning.completed", data: reasoning.completed });
+      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+    await sendTurn();
+    await waitFor(() => {
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
+    });
+
+    // The settled CoT persists after the live activity reset to idle.
+    const cot = await screen.findByTestId("ask-turn-process");
+    expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
+    expect(cot.textContent).toContain("思考过程 · 1s");
+    // The live activity row is gone (replaced by the settled disclosure).
+    expect(screen.queryByTestId("ask-agentic-activity")).toBeNull();
+    // The legacy reasoning disclosure is not rendered for v2 turns.
+    expect(cot.closest("[data-message-role='assistant']")?.querySelector("[data-slot='reasoning']"))
+      .toBeNull();
+
+    // Expanding shows the frozen typed step (fixed label) and the projected reasoning.
+    fireEvent.click(screen.getByRole("button", { name: "本轮回答已完成" }));
+    expect(screen.getByText("读取文章")).not.toBeNull();
+    // Server summary must not appear in CoT DOM.
+    expect(screen.queryByText("已读取相关上下文")).toBeNull();
+    expect(screen.queryByText("正在读取文章上下文")).toBeNull();
+    expect(screen.getByTestId("ask-turn-process-reasoning").textContent)
+      .toContain("已脱敏思考。");
+
+    // Leak scan: the CoT subtree carries no internals.
+    const serialized = cot.innerHTML;
+    for (const leaked of [
+      "evh_",
+      "turn_run_id",
+      "projection_policy_version",
+      "envelope_fingerprint",
+      "run-1",
+      "已读取相关上下文",
+      "正在读取文章上下文",
+    ]) {
+      expect(serialized, `CoT DOM must not contain ${leaked}`).not.toContain(leaked);
+    }
+  });
+
+  it("non-ok terminal freezes steps as interrupted; the warning stays with the SystemMessage notice", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "agentic.run_started", data: runStartedPayload() });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          sequence: 1,
+          phase: "composing_answer",
+          activity: "started",
+          summary: "正在组织回答",
+          elapsed_ms: 800,
+          status: "running",
+        },
+      });
+      onEvent({
+        event: "agentic.terminal",
+        data: {
+          execution_version: VERSION,
+          final_status: "failed",
+          message_id: "msg-assistant-1",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          terminal_reason: "agent_run_failed",
+        },
+      });
+      onEvent({
+        event: "message.interrupted",
+        data: {
+          execution_version: VERSION,
+          final_status: "failed",
+          message_id: "msg-assistant-1",
+          thread_id: "thread-1",
+          turn_run_id: "run-1",
+          terminal_reason: "agent_run_failed",
+        },
+      });
+      return makeLogicalTerminalResult("terminal", { finalStatus: "failed" });
+    });
+
+    renderPanel();
+    await sendTurn();
+
+    // SystemMessage notice owns the error copy.
+    const turnNotice = await screen.findByTestId("ask-turn-notice");
+    expect(turnNotice.textContent).toContain("回答生成失败，请稍后重试。");
+
+    // The CoT keeps the safe process, frozen, never a success.
+    const cot = await screen.findByTestId("ask-turn-process");
+    expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
+    fireEvent.click(within(cot).getByRole("button"));
+    const step = within(cot)
+      .getByText("组织回答")
+      .closest("[data-step-status]");
+    expect(step?.getAttribute("data-step-status")).toBe("interrupted");
+    // No error/terminal/server-summary copy leaks into the CoT.
+    expect(cot.textContent).not.toContain("agent_run_failed");
+    expect(cot.textContent).not.toContain("回答生成失败");
+    expect(cot.textContent).not.toContain("正在组织回答");
+  });
+
+  it("retry clears the previous attempt's snapshot before the new run", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "agentic.run_started", data: runStartedPayload() });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          sequence: 1,
+          phase: "agent_running",
+          activity: "completed",
+          summary: "分析完成",
+          elapsed_ms: 900,
+          status: "ok",
+          duration_ms: 900,
+        },
+      });
+      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+    await sendTurn();
+    await waitFor(() => {
+      expect(screen.getByText("处理过程 · 1s")).not.toBeNull();
+    });
+
+    // Retry wipes the old attempt's frozen process immediately. (The retry
+    // endpoint is unrouted in mockFetch, so the retry itself fails — the
+    // catch path restores the original answer; either way the snapshot
+    // must stay cleared and no CoT may linger from attempt 1.)
+    fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
+    await waitFor(() => {
+      expect(screen.queryByText("处理过程 · 1s")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+  });
+
+  it("cold v2 history renders a reasoning-only Chain of Thought (no steps)", async () => {
+    const baseFetch = mockFetch();
+    const coldAssistant = {
+      id: "msg-cold-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "completed",
+      content_md: "冷答案。",
+      submission_mode: "chat",
+      resolved_intent: "explain",
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+      execution_version: VERSION,
+      final_status: "ok",
+      reasoning_md: "冷推理文本。",
+      reasoning_status: "completed",
+      reasoning_truncated: false,
+      agentic_answer_blocks: [{ text: "冷答案。", citation_ids: [] }],
+      agentic_citations: [],
+      agentic_web_search: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/web/reader-ask/threads/thread-1") {
+          return jsonResponse({
+            id: "thread-1",
+            record_id: "record-1",
+            title: "Ask Claread",
+            is_default: true,
+            selected_model: null,
+            archived_at: null,
+            created_at: "2026-05-20T00:00:00Z",
+            updated_at: "2026-05-20T00:00:00Z",
+            last_message_at: "2026-05-20T00:00:00Z",
+            messages: [
+              {
+                id: "msg-cold-0",
+                thread_id: "thread-1",
+                role: "user",
+                status: "completed",
+                content_md: "冷问题。",
+                submission_mode: "chat",
+                resolved_intent: "explain",
+                citations: [],
+                action_proposals: [],
+                tool_trace: [],
+                evidence: [],
+                trace_summary: null,
+                disambiguation: null,
+                external_asset_disambiguation: null,
+                response_cards: [],
+                supplement_candidates: [],
+                persisted_supplements: [],
+                created_at: "2026-05-20T00:00:00Z",
+                updated_at: "2026-05-20T00:00:00Z",
+              },
+              coldAssistant,
+            ],
+          });
+        }
+        return baseFetch(input, init);
+      }),
+    );
+
+    renderPanel();
+
+    const cot = await screen.findByTestId("ask-turn-process");
+    expect(cot.textContent).toContain("思考过程");
+    fireEvent.click(within(cot).getByRole("button"));
+    expect(screen.getByTestId("ask-turn-process-reasoning").textContent)
+      .toContain("冷推理文本。");
+    // Cold history carries no activity steps (known contract gap G3).
+    expect(cot.querySelector("[data-step-status]")).toBeNull();
+    // Legacy reasoning disclosure is not doubled in.
+    expect(cot.querySelector("[data-slot='reasoning']")).toBeNull();
+  });
+
+  it("legacy lanes keep ReasoningPanel and never render the CoT", async () => {
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "reasoning.started", data: { message_id: "msg-assistant-1" } });
+      onEvent({
+        event: "reasoning.delta",
+        data: { message_id: "msg-assistant-1", delta: "legacy thinking" },
+      });
+      onEvent({ event: "reasoning.completed", data: { message_id: "msg-assistant-1" } });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    renderPanel();
+    await sendTurn();
+    await waitFor(() => {
+      expect(screen.getByText("解释完成。")).not.toBeNull();
+    });
+
+    // Legacy reasoning disclosure rendered; CoT never appears.
+    const bubble = screen
+      .getByText("解释完成。")
+      .closest("[data-message-role='assistant']");
+    expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
   });
 });
