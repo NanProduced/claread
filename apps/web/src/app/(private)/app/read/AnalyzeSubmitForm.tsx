@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, BookOpen, Check, ChevronDown, FileCheck2, FileText, FileUp, ImageIcon, RefreshCw, Target, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ChevronDown, FileText, FileUp, ImageIcon, RefreshCw, X } from "lucide-react";
 import Image from "next/image";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
+import { ReadingPlanFields } from "@/components/composed";
 import { Button } from "@/components/primitives/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/primitives/popover";
 import { cn } from "@/lib/cn";
@@ -13,9 +14,7 @@ import {
   type ReaderArtifactPipelineStatusSafeDto,
 } from "@/lib/reader-orchestration/status-mapper";
 import {
-  READER_RECORD_READING_GOAL_OPTIONS,
-  READER_RECORD_READING_VARIANT_OPTIONS,
-  READER_RECORD_DEFAULT_READING_VARIANT_BY_GOAL,
+  formatReadingPlanSummary,
   type ReadingDefaultState,
   type ReaderRecordReadingGoal,
   type ReaderRecordReadingVariant,
@@ -50,10 +49,10 @@ import {
   type MarkdownLintResult,
 } from "./markdown-lint";
 import {
-  detectMarkdownMarkers,
   readPageSubmitEndpoint,
   readPageSubmitRequestBody,
 } from "./submit-mode";
+import { formatApproxWordCount } from "@/lib/word-count";
 
 type SubmitState =
   | { kind: "idle" }
@@ -88,12 +87,6 @@ type SubmitState =
   | { kind: "resume-return-to-library"; message: string }
   | { kind: "resume-failed"; recordId: string; message: string };
 
-type ReaderCandidateResumeErrorCode =
-  | "candidate_not_found"
-  | "candidate_conflict_open_reader"
-  | "candidate_conflict_return_to_library"
-  | "upstream_unavailable";
-
 type ReaderCandidateResumePayload = ReaderCandidateDocumentReadResult;
 
 type UnifiedSubmitPayload =
@@ -106,16 +99,12 @@ type SourceFileKind = "pdf" | "markdown" | "text" | "image";
 interface SourceFileDescriptor {
   kind: SourceFileKind;
   sourceKind: ArtifactSourceKind;
-  label: string;
-  badge: string;
-  previewStatus: string;
 }
 
 interface AttachedSource {
   file: File;
   sourceKind: ArtifactSourceKind;
   descriptor: SourceFileDescriptor;
-  previewUrl: string | null;
 }
 
 type PipelineOutcome = ReaderArtifactPipelineStatusSafeDto["outcome"];
@@ -143,18 +132,14 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/gif",
 ]);
 
-const SHORT_DESC: Record<string, string> = {
-  daily_reading: "自然读懂",
-  academic: "术语与结构",
-  exam: "长难句与考点",
-};
-
-const GOAL_ICONS: Record<string, React.ElementType> = {
-  daily_reading: BookOpen,
-  academic: FileText,
-  exam: Target,
-};
-
+/**
+ * 阅读方案的两个维度与解析链路合同一一对应（不改 API）：
+ * - 阅读目标 ↔ reading_goal："daily_reading" 日常阅读 / "exam" 备考精读
+ *   （academic 已被新版解析链路移除，不出现在选项中）。
+ * - 阅读方案（日常阅读层级 / 备考目标）↔ reading_variant：日常阅读为入门/进阶/精读，
+ *   备考精读为高考/四六级/考研/专四专八/雅思托福。
+ * 选项文案统一取自 reading-defaults 的 READER_RECORD_* 合同常量。
+ */
 function isBffError(value: ReaderArtifactPipelineStatusResult): value is ReaderPlateBffError {
   return value.ok === false;
 }
@@ -233,29 +218,12 @@ function normalizedMimeType(file: File): string {
   return (file.type || "").split(";")[0]?.trim().toLowerCase() ?? "";
 }
 
-function imageBadge(extension: string, mimeType: string): string {
-  if (extension === "jpeg") {
-    return "JPG";
-  }
-  if (extension) {
-    return extension.toUpperCase();
-  }
-  const subtype = mimeType.split("/")[1] ?? "";
-  return subtype === "jpeg" ? "JPG" : subtype.toUpperCase() || "IMG";
-}
-
 function describeSourceFile(file: File): SourceFileDescriptor | null {
   const extension = sourceFileExtension(file.name);
   const mimeType = normalizedMimeType(file);
 
   if (extension === "pdf" || mimeType === "application/pdf") {
-    return {
-      kind: "pdf",
-      sourceKind: "file",
-      label: "PDF 文档",
-      badge: "PDF",
-      previewStatus: "PDF 待提取",
-    };
+    return { kind: "pdf", sourceKind: "file" };
   }
 
   if (
@@ -264,33 +232,15 @@ function describeSourceFile(file: File): SourceFileDescriptor | null {
     mimeType === "text/markdown" ||
     mimeType === "text/x-markdown"
   ) {
-    return {
-      kind: "markdown",
-      sourceKind: "file",
-      label: "Markdown 文档",
-      badge: "MD",
-      previewStatus: "Markdown 待提取",
-    };
+    return { kind: "markdown", sourceKind: "file" };
   }
 
   if (extension === "txt" || mimeType === "text/plain") {
-    return {
-      kind: "text",
-      sourceKind: "file",
-      label: "TXT 文本",
-      badge: "TXT",
-      previewStatus: "TXT 待提取",
-    };
+    return { kind: "text", sourceKind: "file" };
   }
 
   if (SUPPORTED_IMAGE_EXTENSIONS.has(extension) || SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
-    return {
-      kind: "image",
-      sourceKind: "image",
-      label: "图片 OCR",
-      badge: imageBadge(extension, mimeType),
-      previewStatus: "图片待提取",
-    };
+    return { kind: "image", sourceKind: "image" };
   }
 
   return null;
@@ -324,71 +274,6 @@ function shouldLintSourceFileInBrowser(file: File): boolean {
 
 function hasFileTransfer(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types ?? []).includes("Files");
-}
-
-function GoalCard({
-  goal,
-  active,
-  onSelect,
-}: {
-  goal: { value: string; label: string };
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const Icon = GOAL_ICONS[goal.value] || BookOpen;
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onSelect}
-      className={`group relative flex w-full flex-col items-center justify-center gap-2.5 rounded-[14px] border p-3 pt-4 text-center transition-all duration-300 ease-out focus-ring ${
-        active
-          ? "border-transparent bg-surface-raised shadow-[var(--app-panel-shadow-quiet)] ring-1 ring-ink/5"
-          : "border-transparent bg-transparent hover:bg-ink/[0.03]"
-      }`}
-    >
-      {active && (
-        <div className="absolute right-2 top-2 flex h-[1.1rem] w-[1.1rem] items-center justify-center rounded-full bg-lens-blue text-white shadow-sm">
-          <Check className="h-[0.7rem] w-[0.7rem]" strokeWidth={3} />
-        </div>
-      )}
-      <div className="flex flex-col items-center gap-0.5">
-        <span className={`font-sans text-[0.85rem] tracking-tight ${active ? "font-semibold text-ink" : "font-medium text-ink/80 group-hover:text-ink"}`}>
-          {goal.label}
-        </span>
-        <span className="font-sans text-[0.72rem] tracking-wide text-muted-foreground">{SHORT_DESC[goal.value]}</span>
-      </div>
-      <div className={`mt-0.5 flex h-7 w-7 items-center justify-center transition-colors duration-300 ${active ? "text-ink/80" : "text-subtle group-hover:text-muted-foreground"}`}>
-        <Icon className="h-[1.15rem] w-[1.15rem]" strokeWidth={1.5} />
-      </div>
-    </button>
-  );
-}
-
-function VariantPill({
-  variant,
-  active,
-  onSelect,
-}: {
-  variant: { value: string; label: string };
-  active: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onSelect}
-      className={`relative flex min-h-[2.25rem] w-full items-center justify-center gap-1.5 rounded-[8px] border px-1 transition-all duration-300 ease-out focus-ring ${
-        active
-          ? "border-lens-blue/30 bg-lens-blue/6 text-ink ring-1 ring-lens-blue/20"
-          : "border-hairline/60 bg-transparent text-muted-foreground hover:border-hairline hover:bg-ink/[0.03] hover:text-ink"
-      }`}
-    >
-      <span className={`text-[0.78rem] tracking-tight ${active ? "font-semibold" : "font-medium"}`}>{variant.label}</span>
-      {active && <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-lens-blue" />}
-    </button>
-  );
 }
 
 function ApertureCornerSubmitButton({
@@ -756,16 +641,24 @@ export function AnalysisLoadingStatusBar({
   );
 }
 
+const SOURCE_FORMAT_SHORT_LABELS: Record<SourceFileKind, string> = {
+  pdf: "PDF",
+  markdown: "Markdown",
+  text: "TXT",
+  image: "图片",
+};
+
+/**
+ * 上传文件状态：压缩成单一文件行（图标 + 文件名 + 格式 · 大小 + 更换/移除）。
+ * 不重复解释流程状态（格式待处理提示、提交后动作说明），不提供无判断
+ * 价值的装饰性预览卡。
+ */
 function SourceFilePreview({
   source,
-  imagePreviewUrl,
-  hasTextDraft,
   onReplace,
   onRemove,
 }: {
   source: AttachedSource;
-  imagePreviewUrl: string | null;
-  hasTextDraft: boolean;
   onReplace: () => void;
   onRemove: () => void;
 }) {
@@ -775,84 +668,37 @@ function SourceFilePreview({
   return (
     <div
       data-testid="source-file-preview"
-      className="relative z-10 flex min-h-0 flex-1 items-center px-8 py-8 sm:px-14 sm:py-10 xl:px-20 xl:py-12"
+      className="relative z-10 flex min-h-0 flex-1 flex-col px-5 py-5 sm:px-8 sm:py-6"
     >
-      <div className="mx-auto grid w-full max-w-[60rem] gap-7 lg:grid-cols-[minmax(0,1fr)_14rem] lg:items-center lg:gap-10">
-        <div className="min-w-0 font-sans">
-          <div
-            data-testid="attached-source"
-            className="max-w-[46rem] border-y border-hairline/70 py-5"
-          >
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface/70 text-ink">
-                {isImage ? (
-                  <ImageIcon aria-hidden className="h-4.5 w-4.5" />
-                ) : (
-                  <FileText aria-hidden className="h-4.5 w-4.5" />
-                )}
-              </span>
-              <div className="min-w-0">
-                <p
-                  className="max-w-[44rem] break-words text-[0.96rem] font-semibold leading-6 text-ink"
-                  title={source.file.name}
-                >
-                  {source.file.name}
-                </p>
-                <p className="mt-1 text-[0.76rem] font-medium text-muted-foreground">
-                  {descriptor.label} · {formatFileSize(source.file.size)} · 点击开始透读后提取正文
-                </p>
-                {hasTextDraft ? (
-                  <p className="mt-2 text-[0.74rem] font-medium text-subtle">
-                    移除文件后可继续编辑原文本。
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-2 font-sans">
-            <Button type="button" variant="secondary" size="sm" onClick={onReplace}>
-              替换文件
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
-              移除文件
-            </Button>
-          </div>
-        </div>
-
-        <div className="relative min-h-[12rem] overflow-hidden rounded-[10px] border border-hairline/70 bg-surface-raised/32">
-          {isImage && imagePreviewUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- object URLs from local files are not suitable for next/image.
-            <img
-              src={imagePreviewUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-contain p-4"
-              data-testid="source-image-preview"
-            />
+      <div
+        data-testid="attached-source"
+        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-3 border-b border-hairline/70 pb-5 font-sans"
+      >
+        <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-ink/10 bg-surface/70 text-ink">
+          {isImage ? (
+            <ImageIcon aria-hidden className="h-4.5 w-4.5" />
           ) : (
-            <div className="flex h-full min-h-[12rem] flex-col justify-between p-5">
-              <div className="flex items-center justify-between gap-4 font-sans">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-hairline/70 bg-surface/76 text-ink">
-                  <FileCheck2 aria-hidden className="h-5 w-5" />
-                </span>
-                <span className="rounded-full border border-hairline/70 bg-surface/58 px-2.5 py-1 text-[0.68rem] font-bold tracking-[0.12em] text-muted-foreground">
-                  {descriptor.badge}
-                </span>
-              </div>
-              <div className="space-y-3" aria-hidden="true">
-                {[0.82, 0.66, 0.74, 0.52, 0.62].map((width, index) => (
-                  <span
-                    key={index}
-                    className="block h-px rounded-full bg-ink/18"
-                    style={{ width: `${width * 100}%` }}
-                  />
-                ))}
-              </div>
-              <p className="font-sans text-[0.76rem] font-semibold text-muted-foreground">
-                {descriptor.previewStatus}
-              </p>
-            </div>
+            <FileText aria-hidden className="h-4.5 w-4.5" />
           )}
+        </span>
+        <div className="min-w-0 flex-1 basis-48">
+          <p
+            className="truncate text-[0.94rem] font-semibold leading-6 text-ink"
+            title={source.file.name}
+          >
+            {source.file.name}
+          </p>
+          <p className="mt-0.5 text-[0.76rem] font-medium text-muted-foreground">
+            {SOURCE_FORMAT_SHORT_LABELS[descriptor.kind]} · {formatFileSize(source.file.size)}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={onReplace}>
+            更换
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+            移除
+          </Button>
         </div>
       </div>
     </div>
@@ -878,6 +724,7 @@ export function AnalyzeSubmitForm({
   const defaults = normalizeReaderRecordReadingDefaults({ readingGoal: initialGoal, readingVariant: initialVariant });
   const [readingGoal, setReadingGoal] = useState<ReaderRecordReadingGoal>(defaults.readingGoal);
   const [readingVariant, setReadingVariant] = useState<ReaderRecordReadingVariant>(defaults.readingVariant);
+  const [isReadingPlanOpen, setReadingPlanOpen] = useState(false);
   const [state, setState] = useState<SubmitState>({ kind: "idle" });
   const [isCandidateDialogOpen, setCandidateDialogOpen] = useState(false);
   // Phase 1 / P0: 输入端预警 lint 结果（非阻塞，后端仍是 fail-closed 单一真相源）
@@ -893,10 +740,8 @@ export function AnalyzeSubmitForm({
     state.kind === "artifact-polling";
   const isSubmitting: boolean = isWaiting;
   const isReadyToSubmit = Boolean(attachedSource || text.trim().length > 0);
-  const hasMarkdownMarkers = useMemo(
-    () => !attachedSource && text.trim().length > 0 && detectMarkdownMarkers(text),
-    [attachedSource, text],
-  );
+  // 状态栏只呈现近似词数（基于已 debounce 的 text，不恢复逐键 serialize）。
+  const approxWordCount = useMemo(() => formatApproxWordCount(text), [text]);
 
   // L2/L3：编辑器有内容（或进入 Content Check）后收起 Hero，编辑器成首屏主任务。
   const { setHasContent } = useReadPageUi();
@@ -941,7 +786,6 @@ export function AnalyzeSubmitForm({
   useEffect(() => {
     return () => {
       stopPolling();
-      revokePreviewUrl(attachedSourceRef.current);
     };
   }, []);
 
@@ -952,29 +796,16 @@ export function AnalyzeSubmitForm({
     }
   }
 
-  function revokePreviewUrl(source: AttachedSource | null) {
-    if (source?.previewUrl) {
-      URL.revokeObjectURL(source.previewUrl);
-    }
-  }
-
   function setCurrentAttachedSource(source: AttachedSource | null) {
-    revokePreviewUrl(attachedSourceRef.current);
     attachedSourceRef.current = source;
     setAttachedSource(source);
   }
 
   function makeAttachedSource(file: File, descriptor: SourceFileDescriptor): AttachedSource {
-    const sourceKind = descriptor.sourceKind;
-    const previewUrl =
-      sourceKind === "image" && typeof URL.createObjectURL === "function"
-        ? URL.createObjectURL(file)
-        : null;
     return {
       file,
-      sourceKind,
+      sourceKind: descriptor.sourceKind,
       descriptor,
-      previewUrl,
     };
   }
 
@@ -1592,10 +1423,16 @@ export function AnalyzeSubmitForm({
     }
   }
 
-  const selectedGoalLabel = READER_RECORD_READING_GOAL_OPTIONS.find((option) => option.value === readingGoal)?.label;
-  const selectedVariantLabel = READER_RECORD_READING_VARIANT_OPTIONS[readingGoal].find(
-    (option) => option.value === readingVariant,
-  )?.label;
+  const readingPlanSummary = formatReadingPlanSummary(
+    readingGoal,
+    readingVariant,
+  );
+
+  function handleReadingPlanChange(nextPlan: ReadingDefaultState) {
+    setReadingGoal(nextPlan.readingGoal);
+    setReadingVariant(nextPlan.readingVariant);
+  }
+
   const loadingStageTitle =
     state.kind === "artifact-uploading" || state.kind === "artifact-polling"
       ? "正在提取这份来源"
@@ -1606,7 +1443,7 @@ export function AnalyzeSubmitForm({
       : "正在透读";
 
   return (
-    <div className="flex min-h-0 flex-1 w-full flex-col overflow-y-auto">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       <input
         ref={fileInputRef}
         type="file"
@@ -1678,7 +1515,12 @@ export function AnalyzeSubmitForm({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "group/manuscript relative flex min-h-[24rem] flex-1 w-full shrink-0 flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus-within:bg-surface/58 focus-within:shadow-[var(--app-panel-shadow-quiet)] focus-within:ring-lens-blue/28 lg:min-h-[32rem] lg:shrink 2xl:min-h-[36rem]",
+            "group/manuscript relative flex w-full flex-col overflow-hidden rounded-[10px] bg-surface/40 ring-1 ring-hairline/35 transition-[box-shadow,background-color] duration-200 ease-out focus-within:bg-surface/58 focus-within:shadow-[var(--app-panel-shadow-quiet)] focus-within:ring-lens-blue/28",
+            // 文件已附着时编辑器不渲染：卡片收敛到文件行 + 状态栏的紧凑
+            // 高度，不保留编辑器大小的空白；其余状态保持工作台稳定高度。
+            attachedSource && !isWaiting
+              ? "shrink-0"
+              : "min-h-[24rem] flex-1 lg:min-h-[26rem]",
             isDragActive && "bg-lens-blue-soft/40 ring-lens-blue/34 shadow-[var(--app-panel-shadow-quiet)]",
           )}
         >
@@ -1691,24 +1533,6 @@ export function AnalyzeSubmitForm({
               }
             }}
           />
-          {!attachedSource ? (
-            <>
-              <div className="pointer-events-none absolute left-4 top-5 h-[calc(100%-2.5rem)] w-px bg-hairline/75 transition-colors duration-300 group-focus-within/manuscript:bg-lens-blue/28 xl:left-5" />
-              <div className="pointer-events-none absolute left-8 top-9 h-[3.4rem] w-[2px] bg-ink/22 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-focus-within/manuscript:h-[4.4rem] group-focus-within/manuscript:bg-lens-blue/58 sm:left-12 xl:left-14" />
-            </>
-          ) : null}
-
-          {!isWaiting && !attachedSource && !text.trim() ? (
-            <div aria-hidden="true" className="pointer-events-none absolute left-10 top-8 z-10 max-w-[26rem] sm:left-14 xl:left-16 xl:top-10">
-              <p className="font-reading text-[1.16rem] leading-tight text-ink/78 xl:text-[1.28rem]">
-                Paste an English article here
-              </p>
-              <p className="mt-2 max-w-[21rem] font-sans text-[0.78rem] leading-6 text-muted-foreground">
-                粘贴英文文章，或拖入 PDF / Markdown / TXT / 图片。
-              </p>
-            </div>
-          ) : null}
-
           {isDragActive && !isWaiting ? (
             <div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-[12px] border border-dashed border-lens-blue/42 bg-lens-blue-soft/60 backdrop-blur-[2px]">
               <div className="flex flex-col items-center gap-3 text-center font-sans">
@@ -1730,8 +1554,6 @@ export function AnalyzeSubmitForm({
           ) : attachedSource ? (
             <SourceFilePreview
               source={attachedSource}
-              imagePreviewUrl={attachedSource.previewUrl}
-              hasTextDraft={text.trim().length > 0}
               onReplace={openFilePicker}
               onRemove={clearAttachedSource}
             />
@@ -1741,6 +1563,8 @@ export function AnalyzeSubmitForm({
               id="analysis-text"
               ariaLabelledBy="analysis-text-label"
               ariaDescribedBy="analysis-text-hint"
+              placeholder="粘贴英文文章，或直接开始输入"
+              placeholderSub="支持网页、Markdown、PDF、TXT"
               initialValue={text}
               onChange={(markdown) => {
                 setText(markdown);
@@ -1757,7 +1581,7 @@ export function AnalyzeSubmitForm({
                 }
               }}
               onSubmit={() => void handleSubmit()}
-              className="relative z-10 px-10 py-8 font-reading text-[1.08rem] leading-[1.9] text-ink placeholder:text-transparent sm:px-14 sm:text-[1.14rem] xl:px-16 xl:py-10 xl:text-[1.17rem] selection:bg-lens-blue/15 selection:text-ink"
+              className="relative z-10 px-5 py-6 font-sans text-base leading-[1.68] text-ink sm:px-[max(2rem,calc(50%-24rem))] sm:py-8 selection:bg-lens-blue/15 selection:text-ink"
             />
           )}
 
@@ -1778,7 +1602,7 @@ export function AnalyzeSubmitForm({
             </button>
           )}
 
-          <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-10 xl:mx-14">
+          <div className="relative z-20 mx-5 mb-4 shrink-0 border-t border-hairline/68 px-0 pt-3 sm:mx-8">
             {isWaiting ? (
               <AnalysisLoadingStatusBar
                 messagePrefix={waitingMessagePrefix}
@@ -1786,136 +1610,93 @@ export function AnalyzeSubmitForm({
             ) : (
               <div
                 data-testid="read-source-primary-actions"
-                className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                className="min-w-0 space-y-2.5"
               >
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 font-sans">
-                    {!attachedSource ? (
-                      <button
-                        type="button"
-                        className="focus-ring group/source inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap px-0 text-[0.78rem] font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
-                        onClick={openFilePicker}
-                      >
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
-                          <FileUp aria-hidden className="h-3.5 w-3.5" />
-                        </span>
-                        <span>上传文件</span>
-                      </button>
-                    ) : (
-                      <div className="inline-flex min-h-9 items-center gap-2 text-[0.78rem] font-semibold text-ink">
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink">
-                          <FileCheck2 aria-hidden className="h-3.5 w-3.5" />
-                        </span>
-                        <span>文件来源已就绪</span>
-                      </div>
-                    )}
-
-                    {/* L2/L3：字数 / 格式识别 / 预警与 CTA 整合到单一 footer status rail。 */}
-                    <div
-                      data-testid="read-source-status-row"
-                      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2"
+                <div
+                  data-testid="read-source-status-row"
+                  className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs"
+                >
+                  {!attachedSource && approxWordCount ? (
+                    <span
+                      className="font-medium text-subtle"
+                      title={`共 ${text.trim().length.toLocaleString("zh-CN")} 字符`}
                     >
-                      {!attachedSource && text.trim().length > 0 ? (
-                        <span className="font-sans text-[0.72rem] font-medium text-subtle">
-                          {text.trim().length.toLocaleString("en-US")} chars
-                        </span>
-                      ) : null}
+                      {approxWordCount}
+                    </span>
+                  ) : null}
 
-                      {hasMarkdownMarkers ? (
-                        <span
-                          data-testid="read-source-markdown-hint"
-                          className="font-sans text-[0.72rem] font-medium text-lens-blue"
-                          title="检测到 Markdown 标记（#、代码块、表格、列表等）。后端将按 Markdown 解析。"
-                        >
-                          将作为 Markdown 解析
-                        </span>
-                      ) : null}
+                  {lintResult.hasDangerousContent ? (
+                    <span
+                      data-testid="read-source-lint-warning"
+                      className="inline-flex items-center gap-1 font-semibold text-feedback-warning"
+                      title={summarizeLintWarnings(lintResult.warnings)}
+                    >
+                      <AlertTriangle aria-hidden className="h-3 w-3" />
+                      有 {lintResult.warnings.length} 处格式需要确认
+                    </span>
+                  ) : null}
 
-                      {lintResult.hasDangerousContent ? (
-                        <span
-                          data-testid="read-source-lint-warning"
-                          className="inline-flex items-center gap-1 font-sans text-[0.72rem] font-semibold text-feedback-warning"
-                          title={summarizeLintWarnings(lintResult.warnings)}
-                        >
-                          <AlertTriangle aria-hidden className="h-3 w-3" />
-                          {summarizeLintWarnings(lintResult.warnings)}
-                        </span>
-                      ) : null}
+                  {!attachedSource && degradedMessage ? (
+                    <span
+                      data-testid="read-source-degraded-hint"
+                      className="inline-flex items-center gap-1 font-semibold text-feedback-warning"
+                      title={degradedMessage}
+                    >
+                      <AlertTriangle aria-hidden className="h-3 w-3" />
+                      部分格式已按纯文本显示
+                    </span>
+                  ) : null}
+                </div>
 
-                      {!attachedSource && degradedMessage ? (
-                        <span
-                          data-testid="read-source-degraded-hint"
-                          className="inline-flex items-center gap-1 font-sans text-[0.72rem] font-semibold text-feedback-warning"
-                          title={degradedMessage}
-                        >
-                          <AlertTriangle aria-hidden className="h-3 w-3" />
-                          {degradedMessage}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  {!attachedSource ? (
+                    <button
+                      type="button"
+                      className="focus-ring group/source inline-flex min-h-9 shrink-0 items-center gap-2 self-start whitespace-nowrap px-0 text-sm font-medium leading-none text-ink transition-colors duration-200 hover:text-lens-blue"
+                      onClick={openFilePicker}
+                    >
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] border border-ink/12 bg-surface/54 text-ink transition-colors duration-200 group-hover/source:border-lens-blue/34 group-hover/source:text-lens-blue">
+                        <FileUp aria-hidden className="h-3.5 w-3.5" />
+                      </span>
+                      <span>上传文件</span>
+                    </button>
+                  ) : null}
 
-                  <div className="flex min-w-0 flex-col items-stretch gap-2 sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
-                    <Popover>
+                  <div className="flex min-w-0 flex-col items-stretch gap-2 sm:ml-auto sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
+                    <Popover
+                      open={isReadingPlanOpen}
+                      onOpenChange={setReadingPlanOpen}
+                    >
                       <PopoverTrigger asChild>
                         <button
                           type="button"
-                          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-transparent px-3 font-sans text-[0.8rem] font-medium leading-none text-muted-foreground transition-colors duration-200 hover:bg-surface/46 hover:text-ink data-[state=open]:bg-surface/60 data-[state=open]:text-ink"
+                          aria-label={`阅读方案：${readingPlanSummary}`}
+                          className="focus-ring inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--cl-radius-control-sm)] border border-transparent bg-surface-raised/50 px-3 text-sm font-normal leading-none text-ink transition-colors duration-150 hover:border-hairline hover:bg-surface-raised data-[state=open]:border-hairline data-[state=open]:bg-surface motion-reduce:transition-none"
                         >
-                          <span>
-                            模式：{selectedGoalLabel}
-                            {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
-                          </span>
-                          <ChevronDown aria-hidden className="h-3.5 w-3.5" />
+                          <span>{readingPlanSummary}</span>
+                          <ChevronDown aria-hidden className="h-3.5 w-3.5 text-subtle" />
                         </button>
                       </PopoverTrigger>
                       <PopoverContent
                         align="end"
                         side="top"
-                        sideOffset={14}
-                        className="w-[min(420px,calc(100vw-2rem))] rounded-[20px] border border-hairline/78 bg-surface p-4 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=top]:slide-in-from-bottom-2"
+                        sideOffset={12}
+                        collisionPadding={16}
+                        aria-labelledby="reading-plan-popover-title"
+                        className="w-[min(320px,calc(100vw-2rem))] rounded-[var(--cl-radius-panel)] border border-hairline/78 bg-surface p-4 shadow-[var(--app-panel-shadow-quiet)] data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none"
                       >
-                      <div className="flex items-center justify-between gap-4 px-1.5 pb-2 font-sans">
-                        <p className="text-[0.85rem] font-semibold tracking-tight text-ink">透读模式</p>
-                        <span className="max-w-[14rem] truncate text-right text-[0.72rem] font-medium tracking-tight text-muted-foreground">
-                          当前：{selectedGoalLabel}
-                          {selectedVariantLabel && selectedVariantLabel !== "学术通用" ? ` · ${selectedVariantLabel}` : ""}
-                        </span>
-                      </div>
+                        <h3
+                          id="reading-plan-popover-title"
+                          className="sr-only"
+                        >
+                          选择本次阅读的方案
+                        </h3>
 
-                      <div className="mt-1 flex gap-2">
-                        {READER_RECORD_READING_GOAL_OPTIONS.map((goal) => (
-                          <div key={goal.value} className="flex-1">
-                            <GoalCard
-                              goal={goal}
-                              active={goal.value === readingGoal}
-                              onSelect={() => {
-                                setReadingGoal(goal.value);
-                                const variants = READER_RECORD_READING_VARIANT_OPTIONS[goal.value];
-                                if (!variants.find((v) => v.value === readingVariant)) {
-                                  setReadingVariant(READER_RECORD_DEFAULT_READING_VARIANT_BY_GOAL[goal.value] || variants[0].value);
-                                }
-                              }}
-                            />
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="mt-4 min-h-[7rem] px-1 pb-0.5">
-                        <div className="mb-3 flex items-center gap-3">
-                          <span className="shrink-0 text-[0.72rem] font-semibold tracking-tight text-muted-foreground/90">细分方式</span>
-                          <div className="h-px flex-1 bg-hairline/60" />
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          {READER_RECORD_READING_VARIANT_OPTIONS[readingGoal].map((variant) => (
-                            <VariantPill
-                              key={variant.value}
-                              variant={variant}
-                              active={variant.value === readingVariant}
-                              onSelect={() => setReadingVariant(variant.value)}
-                            />
-                          ))}
-                        </div>
-                      </div>
+                        <ReadingPlanFields
+                          value={{ readingGoal, readingVariant }}
+                          onValueChange={handleReadingPlanChange}
+                          idPrefix="article-reading-plan"
+                        />
                       </PopoverContent>
                     </Popover>
 
@@ -1925,6 +1706,7 @@ export function AnalyzeSubmitForm({
                       onClick={handleSubmit}
                     />
                   </div>
+                </div>
               </div>
             )}
           </div>

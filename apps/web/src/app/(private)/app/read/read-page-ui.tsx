@@ -3,11 +3,13 @@
 /**
  * 输入页 UI 状态（L2/L3 三段统一）。
  *
- * - Hero 弱化/收起：编辑器有内容（或进入 Content Check）后，Hero 从
- *   首屏大标题收起为单行眉题，编辑器成为首屏主任务。状态由
- *   AnalyzeSubmitForm 通过 `useReadPageUi().setHasContent` 上报。
- * - 动效合同：收起/展开 200ms（阶段 2 动效窗口 160-240ms），
- *   prefers-reduced-motion 下关闭过渡即时切换。
+ * - Hero 形态收缩：编辑器有内容（或进入 Content Check）后，Hero 从首屏
+ *   大标题收缩为同一品牌身份的紧凑形态（"Paste to Begin" + "Bring it
+ *   to Claread."），不再切换成另一个标题。状态由 AnalyzeSubmitForm 通过
+ *   `useReadPageUi().setHasContent` 上报。
+ * - 动效合同：height（grid-rows）/ font-size / opacity / translate 联合
+ *   过渡 250ms（设计窗口 220-280ms），prefers-reduced-motion 下全部关闭、
+ *   即时切换。
  * - Provider 缺省时 useReadPageUi 返回 no-op（单测/其他页面直接渲染
  *   AnalyzeSubmitForm 不需要包 Provider）。
  */
@@ -50,9 +52,12 @@ export function ReadPageUiProvider({ children }: { children: ReactNode }) {
   );
 }
 
+const HERO_TRANSITION_MS = "duration-[250ms]";
+
 /**
- * 可收起的输入页 Hero。`hasContent` 时压缩为单行眉题（高度/透明度
- * 200ms 过渡），把首屏让位给编辑器。
+ * 同一个 Hero 的两种形态：完整（空状态，报刊感大标题两行）与紧凑（有
+ * 内容，主标题缩小、副标题与辅助文案收起）。两形态共享 "Paste to Begin"
+ * 眉题与 "Bring it to Claread." 主标题，收缩是同一身份的形变而非替换。
  */
 export function ReadPageHero() {
   const { hasContent } = useReadPageUi();
@@ -60,44 +65,53 @@ export function ReadPageHero() {
     <div
       data-testid="read-page-hero"
       data-collapsed={hasContent ? "true" : "false"}
-      className={cn(
-        "max-w-[58rem] overflow-hidden transition-all duration-200 ease-out motion-reduce:transition-none",
-        hasContent ? "mb-2 opacity-90" : "mb-0",
-      )}
+      className="max-w-[56rem]"
     >
-      <span
-        className={cn(
-          "inline-block text-[0.72rem] font-bold tracking-[0.14em] text-lens-blue transition-all duration-200 motion-reduce:transition-none",
-          hasContent ? "mb-0" : "mb-3",
-        )}
-      >
+      <span className="inline-block text-xs font-bold tracking-[0.14em] text-lens-blue">
         Paste to Begin
       </span>
       <h1
+        data-testid="read-page-hero-title"
         className={cn(
-          "font-headline font-semibold tracking-[-0.035em] text-ink transition-all duration-200 ease-out motion-reduce:transition-none",
+          "font-headline font-semibold text-ink",
+          "transition-[font-size,line-height,letter-spacing,margin] ease-out motion-reduce:transition-none",
+          HERO_TRANSITION_MS,
           hasContent
-            ? "text-[1.05rem] leading-[1.2] tracking-[-0.01em]"
-            : "text-[clamp(2.5rem,4.3vw,4.5rem)] leading-[0.94]",
+            ? "mt-2 text-xl leading-tight tracking-[-0.018em] sm:text-2xl xl:text-[1.75rem]"
+            : "mt-3 text-5xl leading-[0.96] tracking-[-0.035em] sm:text-6xl xl:text-7xl",
         )}
       >
-        {hasContent ? (
-          <span className="block">Bring it to Claread.</span>
-        ) : (
-          <>
-            <span className="block">Bring it to Claread.</span>
-            <span className="mt-1 block">Read It Deeply.</span>
-          </>
-        )}
+        Bring it to Claread.
       </h1>
-      <p
+
+      <div
         className={cn(
-          "max-w-[28rem] overflow-hidden font-reading text-[1.08rem] leading-[1.65] text-muted-foreground transition-all duration-200 ease-out motion-reduce:transition-none sm:text-[1.12rem]",
-          hasContent ? "mt-0 max-h-0 opacity-0" : "mt-4 max-h-24 opacity-100",
+          "grid transition-[grid-template-rows] ease-out motion-reduce:transition-none",
+          HERO_TRANSITION_MS,
+          hasContent ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
         )}
       >
-        从粘贴开始，进入深度阅读。
-      </p>
+        <div className="min-h-0 overflow-hidden">
+          <div
+            data-testid="read-page-hero-detail"
+            aria-hidden={hasContent}
+            className={cn(
+              "transition-[opacity,transform] ease-out motion-reduce:transition-none motion-reduce:transform-none",
+              HERO_TRANSITION_MS,
+              hasContent
+                ? "pointer-events-none -translate-y-2 opacity-0"
+                : "translate-y-0 opacity-100",
+            )}
+          >
+            <span className="mt-1 block font-headline text-5xl font-semibold leading-[0.96] tracking-[-0.035em] text-ink sm:text-6xl xl:text-7xl">
+              Read It Deeply.
+            </span>
+            <p className="mt-4 max-w-[28rem] pb-1 font-sans text-[0.98rem] leading-[1.65] text-muted-foreground">
+              从粘贴开始，进入深度阅读。
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

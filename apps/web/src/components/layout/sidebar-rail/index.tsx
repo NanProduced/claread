@@ -6,6 +6,7 @@ import {
   FileText,
   Library,
   LogOut,
+  Newspaper,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -31,6 +32,7 @@ import {
   appReadRoute,
   appReadResumeCandidateRoute,
   appVocabularyRoute,
+  dailyRoute,
   homeRoute,
   loginRouteBase,
 } from "@/lib/routes";
@@ -44,6 +46,13 @@ import type { AppShellVariant, AppSidebarMode } from "../app-shell/app-shell-con
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
 
 const newReadItem = { href: appReadRoute, label: "新解读", icon: Plus } as const;
+
+/**
+ * 每日精读是无需登录的公共编辑精选产品入口，不是输入页附属功能。
+ * 它在私有侧栏主导航中固定存在，与"新解读"等核心入口同级，不随
+ * /app/read 的推荐数据有无而出现或消失。
+ */
+const dailyItem = { href: dailyRoute, label: "每日精读", icon: Newspaper } as const;
 
 const workspaceItems = [
   { href: appLibraryRoute, label: "全部阅读记录", icon: Library },
@@ -273,7 +282,7 @@ export function SidebarRail({
             </button>
           </div>
 
-          <div className="mt-3 px-1">
+          <div className="mt-3 flex flex-col gap-0.5 px-1">
             <Link
               href={newReadItem.href}
               className={cn(
@@ -291,6 +300,27 @@ export function SidebarRail({
               />
               <span className="truncate">{newReadItem.label}</span>
             </Link>
+            {(() => {
+              const DailyIcon = dailyItem.icon;
+              const dailyActive = isSidebarActive(pathname, dailyItem.href as Route);
+              return (
+                <Link
+                  href={dailyItem.href}
+                  className={cn(navItemClassName(dailyActive), "rounded-[7px]")}
+                  aria-current={dailyActive ? "page" : undefined}
+                >
+                  <DailyIcon
+                    aria-hidden="true"
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      dailyActive ? "text-ink" : "text-muted-foreground group-hover:text-ink group-focus-visible:text-ink",
+                    )}
+                    strokeWidth={dailyActive ? 2.25 : 2}
+                  />
+                  <span className="truncate">{dailyItem.label}</span>
+                </Link>
+              );
+            })()}
           </div>
 
           <nav className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="阅读导航">
@@ -420,7 +450,7 @@ export function SidebarRail({
       </aside>
 
       <nav
-        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
+        className="app-nav-surface fixed inset-x-0 bottom-0 z-40 grid grid-cols-7 border-t border-hairline px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[var(--app-mobile-nav-shadow)] md:hidden"
         aria-label="移动端导航"
       >
         <button
@@ -431,7 +461,7 @@ export function SidebarRail({
           <Search aria-hidden="true" className="h-4 w-4" />
           <span>搜索</span>
         </button>
-        {[newReadItem, ...workspaceItems].map((item) => {
+        {[newReadItem, dailyItem, ...workspaceItems].map((item) => {
           const Icon = item.icon;
           const active = isSidebarActive(pathname, item.href);
 

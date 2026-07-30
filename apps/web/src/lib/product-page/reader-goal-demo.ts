@@ -1,12 +1,19 @@
-export type ReaderGoalDemoId = "daily_reading" | "exam" | "academic";
+import {
+  getReadingGoalOption,
+  getReadingVariantOption,
+} from "@/lib/reading-defaults";
+
+export type ReaderGoalDemoId = "daily_reading" | "exam";
 
 export type ReaderGoalDemoVariantId =
   | "beginner_reading"
+  | "intermediate_reading"
   | "intensive_reading"
+  | "gaokao"
   | "cet"
   | "kaoyan"
-  | "ielts_toefl"
-  | "academic_general";
+  | "tem"
+  | "ielts_toefl";
 
 export type ReaderGoalAnnotationLayout = "upper-margin" | "middle-margin" | "lower-margin";
 
@@ -74,23 +81,22 @@ const examSourceIelts: ReaderDemoTextSegment[] = [
   { text: "." },
 ];
 
-const academicSource: ReaderDemoTextSegment[] = [
-  { text: "After sentence boundaries are established", highlight: true },
-  { text: ", goal-specific notes are grounded against the original text before they enter the reader scene." },
-];
-
 export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
   {
     id: "daily_reading",
-    title: "Daily Reading",
-    description: "日常阅读先保留原文节奏，再在真正卡住的词、短语和句子关系上展开。",
+    title: getReadingGoalOption("daily_reading")?.label ?? "日常阅读",
+    description:
+      getReadingGoalOption("daily_reading")?.description ??
+      "兼顾理解、词汇与表达积累，适合持续阅读。",
     defaultVariantId: "intensive_reading",
     variants: [
       {
         id: "beginner_reading",
         label: "入门",
         headline: "入门：先让句意成立",
-        description: "更直白地拆句，少用术语，先让句意成立。",
+        description:
+          getReadingVariantOption("daily_reading", "beginner_reading")
+            ?.description ?? "更直白地拆解句意，适合建立阅读信心。",
         preview: {
           sourceKey: "daily-reading-principle",
           annotationLayout: "upper-margin",
@@ -103,10 +109,31 @@ export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
         },
       },
       {
+        id: "intermediate_reading",
+        label: "进阶",
+        headline: "进阶：兼顾理解与表达积累",
+        description:
+          getReadingVariantOption("daily_reading", "intermediate_reading")
+            ?.description ?? "平衡理解、词汇与语法，适合日常使用。",
+        preview: {
+          sourceKey: "daily-reading-principle",
+          annotationLayout: "middle-margin",
+          source: dailySourceIntensive,
+          translation:
+            "Claread 不把文章变成简短答案，而是保留每个句子，只在有助于理解时展开语法。",
+          note: {
+            label: "表达积累",
+            note: "先理解主句，再观察 keeps 与 opens 如何组织产品原则，同时积累可复用的表达方式。",
+          },
+        },
+      },
+      {
         id: "intensive_reading",
         label: "精读",
         headline: "精读：看结构如何承载意思",
-        description: "更关注结构如何承载意义，保留用词和表达的细节。",
+        description:
+          getReadingVariantOption("daily_reading", "intensive_reading")
+            ?.description ?? "深入分析语法、结构与表达细节。",
         preview: {
           sourceKey: "daily-reading-principle",
           annotationLayout: "middle-margin",
@@ -122,15 +149,38 @@ export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
   },
   {
     id: "exam",
-    title: "Exam Reading",
-    description: "考试阅读会把解释重点转到定位、改写、长难句主干和结构信号。",
+    title: getReadingGoalOption("exam")?.label ?? "备考精读",
+    description:
+      getReadingGoalOption("exam")?.description ??
+      "围绕考试要求，突出长难句、考点与题感。",
     defaultVariantId: "kaoyan",
     variants: [
+      {
+        id: "gaokao",
+        label: "高考",
+        headline: "高考：先抓核心语法与题型",
+        description:
+          getReadingVariantOption("exam", "gaokao")?.description ??
+          "聚焦中学核心词汇、语法与阅读题型。",
+        preview: {
+          sourceKey: "exam-reading-difficulty",
+          annotationLayout: "middle-margin",
+          source: examSourceCet,
+          translation:
+            "对备考学生来说，难点不是每个词都不认识，而是关键信息藏在很长的结构里。",
+          note: {
+            label: "核心语法",
+            note: "先识别 not A but B 的对比骨架，再把修饰语放回句子，减少被表层长句干扰。",
+          },
+        },
+      },
       {
         id: "cet",
         label: "四六级",
         headline: "四六级：先定位结构信号",
-        description: "提速定位，识别 not A but B、同义替换和关键信息块。",
+        description:
+          getReadingVariantOption("exam", "cet")?.description ??
+          "聚焦主干信息、同义替换与常见考点。",
         preview: {
           sourceKey: "exam-reading-difficulty",
           annotationLayout: "middle-margin",
@@ -146,7 +196,9 @@ export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
         id: "kaoyan",
         label: "考研",
         headline: "考研：先拆长难句主干",
-        description: "优先拆长难句层次，先找主干，再处理修饰和嵌套。",
+        description:
+          getReadingVariantOption("exam", "kaoyan")?.description ??
+          "聚焦长难句结构、篇章逻辑与深层推理。",
         preview: {
           sourceKey: "exam-reading-difficulty",
           annotationLayout: "middle-margin",
@@ -159,10 +211,31 @@ export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
         },
       },
       {
+        id: "tem",
+        label: "专四专八",
+        headline: "专四专八：辨析高级语法与表达",
+        description:
+          getReadingVariantOption("exam", "tem")
+            ?.description ?? "聚焦高级语法、修辞与语言表达。",
+        preview: {
+          sourceKey: "exam-reading-difficulty",
+          annotationLayout: "middle-margin",
+          source: examSourceKaoyan,
+          translation:
+            "对备考学生来说，难点不是每个词都不认识，而是关键信息藏在很长的结构里。",
+          note: {
+            label: "结构与表达",
+            note: "在识别主干后继续观察修饰层次和表达选择，区分语法正确与表达精确。",
+          },
+        },
+      },
+      {
         id: "ielts_toefl",
         label: "雅思托福",
         headline: "雅思托福：识别题干与答案落差",
-        description: "服务信息提取，说明结构在题目判断和改写中的作用。",
+        description:
+          getReadingVariantOption("exam", "ielts_toefl")?.description ??
+          "聚焦学术语境、信息定位与题型判断。",
         preview: {
           sourceKey: "exam-reading-difficulty",
           annotationLayout: "lower-margin",
@@ -171,31 +244,6 @@ export const readerGoalDemoSections: ReaderGoalDemoSection[] = [
           note: {
             label: "题干与答案落差",
             note: "雅思托福题干常把注意力放在表层难点上，但真正答案可能藏在结构里。这里要顺着 hidden inside 去找信息落点。",
-          },
-        },
-      },
-    ],
-  },
-  {
-    id: "academic",
-    title: "Academic Reading",
-    beta: true,
-    description: "学术模式正在打磨中，方向是术语、逻辑关系和论证结构回到原文位置。",
-    defaultVariantId: "academic_general",
-    variants: [
-      {
-        id: "academic_general",
-        label: "Academic General",
-        headline: "Academic Beta：把术语和逻辑锚回原文",
-        description: "Beta，先展示术语、时序和解释性笔记如何锚定到原文。",
-        preview: {
-          sourceKey: "academic-reading-policy",
-          annotationLayout: "upper-margin",
-          source: academicSource,
-          translation: "在句子边界建立之后，面向目标的笔记会先和原文校验，再进入阅读场景。",
-          note: {
-            label: "after + 主句",
-            note: "after 把流程顺序固定下来：先建立句子边界，再生成并校验笔记。这个关系说明解释不是脱离原文自由发挥。",
           },
         },
       },

@@ -1,9 +1,10 @@
-import { Library, Plus, Settings, BookMarked } from "lucide-react";
+import { Library, Newspaper, Plus, Settings, BookMarked } from "lucide-react";
 import type { SettingsSection } from "@/components/settings/settings-dialog-history";
 import {
   appReadRoute,
   appLibraryRoute,
   appVocabularyRoute,
+  dailyRoute,
 } from "@/lib/routes";
 import type { CommandPaletteCommand } from "./command-palette-types";
 
@@ -18,6 +19,13 @@ export function getPageCommands(
       icon: Plus,
       group: "pages",
       onSelect: () => navigate(appReadRoute),
+    },
+    {
+      id: "page-daily",
+      label: "每日精读",
+      icon: Newspaper,
+      group: "pages",
+      onSelect: () => navigate(dailyRoute),
     },
     {
       id: "page-library",

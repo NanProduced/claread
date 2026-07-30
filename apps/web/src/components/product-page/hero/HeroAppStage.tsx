@@ -62,6 +62,7 @@ import {
   type HeroReaderMode,
   type HeroReaderRecord,
 } from "@/lib/hero/hero-app-stage-data";
+import { getReadingGoalOption } from "@/lib/reading-defaults";
 import { buildHeroLookupFromIntent, buildHeroLookupFromMarkId } from "@/lib/hero/hero-lookups";
 
 type HeroAppView = "compose" | "reader" | "library" | "vocabulary";
@@ -139,9 +140,22 @@ const intakeMethods = [
 ];
 
 const goalOptions = [
-  { id: "daily_reading", label: "日常阅读", desc: "自然读懂", icon: BookOpen },
-  { id: "exam", label: "考试阅读", desc: "长难句与考点", icon: Sparkles },
-  { id: "academic", label: "Academic", desc: "术语与结构", icon: FileText },
+  {
+    id: "daily_reading",
+    label: getReadingGoalOption("daily_reading")?.label ?? "日常阅读",
+    desc:
+      getReadingGoalOption("daily_reading")?.description ??
+      "兼顾理解、词汇与表达积累，适合持续阅读。",
+    icon: BookOpen,
+  },
+  {
+    id: "exam",
+    label: getReadingGoalOption("exam")?.label ?? "备考精读",
+    desc:
+      getReadingGoalOption("exam")?.description ??
+      "围绕考试要求，突出长难句、考点与题感。",
+    icon: Sparkles,
+  },
 ];
 
 const heroDailyPicks: HeroDailyPick[] = [
@@ -194,8 +208,8 @@ const heroRecords: HeroRecordListItem[] = [
     id: "academic-absence",
     title: "Chronic absence and the hidden cost of missed instruction",
     statusLabel: "解析结果",
-    goalLabel: "学术阅读",
-    variantLabel: "通用",
+    goalLabel: "日常阅读",
+    variantLabel: "精读",
     sourceLabel: "网页导入",
     excerpt:
       "Missing 10% of school days in a year is a primary cause of low academic achievement.",

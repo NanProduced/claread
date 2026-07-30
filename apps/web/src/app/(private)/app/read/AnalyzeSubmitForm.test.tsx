@@ -115,7 +115,6 @@ vi.mock("./MarkdownTextInput", async (importOriginal) => {
           // 真实组件的 flush 返回 lint/提交共用的单一 Markdown 快照。
           flush: () => valueRef.current,
         }),
-        // eslint-disable-next-line react-hooks/exhaustive-deps
         [id, onDegraded],
       );
 
@@ -523,8 +522,8 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     render(
       <AnalyzeSubmitForm
-        readingGoal="academic"
-        readingVariant="academic_general"
+        readingGoal={"academic" as never}
+        readingVariant={"academic_general" as never}
       />,
     );
 
@@ -825,10 +824,9 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(screen.queryByPlaceholderText("Paste an English article here")).toBeNull();
     expect(screen.getByTestId("source-file-preview")).toBeTruthy();
     expect(screen.getByTestId("attached-source").textContent).toContain("paper.md");
-    expect(screen.getByTestId("attached-source").textContent).toContain("Markdown 文档");
-    expect(screen.getByTestId("source-file-preview").textContent).toContain("MD");
-    expect(screen.getByRole("button", { name: "替换文件" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "移除文件" })).toBeTruthy();
+    expect(screen.getByTestId("attached-source").textContent).toContain("Markdown · ");
+    expect(screen.getByRole("button", { name: "更换" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "移除" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "开始透读" })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -854,7 +852,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     expect(screen.queryByPlaceholderText("Paste an English article here")).toBeNull();
     expect(screen.getByTestId("source-file-preview")).toBeTruthy();
     expect(screen.getByTestId("attached-source").textContent).toContain("scan.png");
-    expect(screen.getByTestId("attached-source").textContent).toContain("图片 OCR");
+    expect(screen.getByTestId("attached-source").textContent).toContain("图片 · ");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1358,7 +1356,7 @@ describe("阶段 3: submit lint 非阻断提示", () => {
 
     // 附件就绪后点击开始透读
     await waitFor(() => {
-      expect(screen.getByText("PDF 待提取")).toBeTruthy();
+      expect(screen.getByText(/PDF · /)).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "开始透读" }));
@@ -1397,9 +1395,10 @@ describe("unified read intake source guards", () => {
     expect(source).toContain("validateSourceFile");
     expect(source).toContain("source-file-input");
     expect(source).toContain("attached-source");
-    expect(source).toContain("descriptor.badge");
-    expect(source).toContain("break-words");
-    expect(source).not.toContain("truncate text-[0.94rem]");
+    // 上传状态压缩为单一文件行：格式短标签 + 大小，无装饰性预览卡。
+    expect(source).toContain("SOURCE_FORMAT_SHORT_LABELS");
+    expect(source).not.toContain("descriptor.badge");
+    expect(source).not.toContain("待提取");
     expect(source).not.toContain("intakeMethods");
     expect(source).not.toContain("上传图片");
     expect(source).not.toContain("onSelectFileSource");
@@ -2126,4 +2125,85 @@ describe("resume_candidate entry (S4)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(navigationMock.push).not.toHaveBeenCalled();
   });
+});
+
+// ---------------------------------------------------------------------------
+// 阅读方案弹层（Reading Plan popover）
+// ---------------------------------------------------------------------------
+
+describe("阅读方案弹层", () => {
+  function renderPlanForm(goal: "daily_reading" | "exam" = "daily_reading", variant: "intermediate_reading" | "gaokao" = "intermediate_reading") {
+    return render(
+      <AnalyzeSubmitForm readingGoal={goal} readingVariant={variant} />,
+    );
+  }
+
+  it("trigger 直接读出当前 reading_goal × reading_variant", () => {
+    renderPlanForm("daily_reading");
+    expect(screen.getByRole("button", { name: /阅读方案：日常阅读 · 进阶/ })).toBeTruthy();
+
+    cleanup();
+    renderPlanForm("exam", "gaokao");
+    expect(screen.getByRole("button", { name: /阅读方案：备考精读 · 高考/ })).toBeTruthy();
+  });
+
+  it("使用命名 dialog、阅读目标与完整可见的备考目标 radio", () => {
+    renderPlanForm("exam", "gaokao");
+    fireEvent.click(screen.getByRole("button", { name: /阅读方案：备考精读 · 高考/ }));
+
+    expect(screen.getByRole("dialog", { name: "选择本次阅读的方案" })).toBeTruthy();
+    const group = screen.getByRole("radiogroup", { name: "阅读目标" });
+    const radios = Array.from(group.querySelectorAll('[role="radio"]'));
+    expect(radios).toHaveLength(2);
+    expect(radios[0].textContent).toContain("日常阅读");
+    expect(radios[1].textContent).toContain("备考精读");
+    expect(radios[0].getAttribute("aria-checked")).toBe("false");
+    expect(radios[1].getAttribute("aria-checked")).toBe("true");
+
+    const targetGroup = screen.getByRole("radiogroup", { name: "阅读方案" });
+    expect(targetGroup.querySelectorAll('[role="radio"]')).toHaveLength(5);
+    expect(screen.getByRole("radio", { name: "高考" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "考研" }));
+    expect(screen.getByText("拆解长难句与篇章逻辑，强化深层推理。")).toBeTruthy();
+  });
+
+  it("日常阅读只展示三个阅读层级，切换 goal 时使用该目标的默认值", () => {
+    renderPlanForm("daily_reading");
+    fireEvent.click(screen.getByRole("button", { name: /阅读方案：日常阅读 · 进阶/ }));
+
+    const levelGroup = screen.getByRole("radiogroup", { name: "阅读方案" });
+    expect(levelGroup.querySelectorAll('[role="radio"]')).toHaveLength(3);
+    expect(screen.getByRole("radio", { name: "进阶" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByRole("radio", { name: /学术/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: /备考精读/ }));
+    expect(screen.getByRole("radio", { name: "四六级" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("button", { name: /阅读方案：备考精读 · 四六级/ })).toBeTruthy();
+
+    expect(
+      screen.getByRole("radiogroup", { name: "阅读方案" }).querySelectorAll('[role="radio"]'),
+    ).toHaveLength(5);
+    expect(screen.queryByRole("radio", { name: /^学术摘要(?:\s|$)/ })).toBeNull();
+  });
+
+  it("radio rows 支持方向键移动选中与焦点（ARIA radio 键盘模式）", () => {
+    renderPlanForm("daily_reading");
+    fireEvent.click(screen.getByRole("button", { name: /阅读方案：日常阅读 · 进阶/ }));
+
+    const group = screen.getByRole("radiogroup", { name: "阅读目标" });
+    const daily = screen.getByRole("radio", { name: /日常阅读/ }) as HTMLButtonElement;
+    // roving tabindex：仅选中行在 Tab 序中。
+    expect(daily.tabIndex).toBe(0);
+    expect((screen.getByRole("radio", { name: /备考精读/ }) as HTMLButtonElement).tabIndex).toBe(-1);
+
+    fireEvent.keyDown(group, { key: "ArrowDown" });
+    const exam = screen.getByRole("radio", { name: /备考精读/ }) as HTMLButtonElement;
+    expect(exam.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(exam);
+    expect(exam.tabIndex).toBe(0);
+
+    fireEvent.keyDown(group, { key: "ArrowUp" });
+    expect(screen.getByRole("radio", { name: /日常阅读/ }).getAttribute("aria-checked")).toBe("true");
+  });
+
 });

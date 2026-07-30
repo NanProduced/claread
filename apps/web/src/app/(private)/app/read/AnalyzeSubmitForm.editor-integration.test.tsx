@@ -6,8 +6,9 @@
  * AnalyzeSubmitForm.test.tsx 把编辑器 mock 成 textarea，无法覆盖真实
  * contenteditable 的状态一致性。本套件**不做该 mock**：渲染真实 Plate
  * 编辑器，通过 candidate 恢复流（localStorage → setValue）向真实编辑器
- * 注入结构化 Markdown，断言 placeholder / CTA ready+disabled / chars /
- * Markdown hint / clear / 提交 / 无障碍关系在单一状态源下保持一致。
+ * 注入结构化 Markdown，断言 placeholder / CTA ready+disabled / 近似词数 /
+ * 状态栏静默合同（无"已保留文档结构"噪音）/ clear / 提交 / 无障碍关系在
+ * 单一状态源下保持一致。
  *
  * 用户级粘贴与 Ctrl/Cmd+Enter 的浏览器行为由 Phase 5 Playwright 验收
  * 覆盖（jsdom 不支持 beforeinput，无法驱动 Slate 真实 DOM 管线）。
@@ -160,9 +161,11 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   it("structured Markdown in the real editor drives placeholder, CTA, chars, hint, clear and DOM semantics", async () => {
     await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
 
-    // placeholder 消失（内容已渲染）。
+    // placeholder 状态关闭（内容已渲染）。
     await waitFor(() => {
-      expect(screen.queryByText("Paste an English article here")).toBeNull();
+      expect(
+        document.querySelector("#analysis-text")?.getAttribute("data-empty"),
+      ).toBe("false");
     });
 
     // CTA 进入 ready 且 enabled。
@@ -170,11 +173,10 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     expect(cta.getAttribute("data-ready")).toBe("true");
     expect(cta.disabled).toBe(false);
 
-    // chars 计数出现。
-    expect(screen.getByText(/chars$/)).toBeTruthy();
-
-    // Markdown 标记 hint 出现。
-    expect(screen.getByTestId("read-source-markdown-hint")).toBeTruthy();
+    // 状态栏只呈现近似词数；不再出现字符计数与"已保留文档结构"噪音。
+    expect(screen.getByText(/^约 \d+ 词$/)).toBeTruthy();
+    expect(screen.queryByText(/字符$/)).toBeNull();
+    expect(screen.queryByText("已保留文档结构")).toBeNull();
 
     // 清空按钮出现。
     expect(screen.getByTitle("清空")).toBeTruthy();
@@ -197,14 +199,16 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Paste an English article here")).toBeTruthy();
+      expect(
+        document.querySelector("#analysis-text")?.getAttribute("data-empty"),
+      ).toBe("true");
     });
     const cta = getSubmitButton();
     expect(cta.getAttribute("data-ready")).toBe("false");
     expect(cta.disabled).toBe(true);
     expect(screen.queryByTitle("清空")).toBeNull();
-    expect(screen.queryByText(/chars$/)).toBeNull();
-    expect(screen.queryByTestId("read-source-markdown-hint")).toBeNull();
+    expect(screen.queryByText(/词$/)).toBeNull();
+    expect(screen.queryByText("已保留文档结构")).toBeNull();
   });
 
   it("submits structured content from the real editor to the unified endpoint", async () => {
@@ -260,15 +264,30 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     expect(hintEl?.textContent?.trim()).toBeTruthy();
   });
 
-  it("keeps the visual placeholder out of the accessibility tree once labelled", () => {
+  it("keeps the placeholder owned by PlateContent without a duplicate form overlay", () => {
     renderForm();
 
     const surface = document.querySelector("[data-testid='read-source-input']") as HTMLElement;
-    // 视觉 placeholder overlay 与程序化名称/描述不得形成重复无障碍节点。
-    const overlay = Array.from(surface.querySelectorAll("div")).find((d) =>
-      d.textContent?.includes("Paste an English article here"),
+    const editorEl = surface.querySelector("#analysis-text") as HTMLElement;
+    expect(editorEl?.getAttribute("aria-labelledby")).toBe("analysis-text-label");
+    expect(editorEl.getAttribute("aria-placeholder")).toBe(
+      "粘贴英文文章，或直接开始输入",
     );
-    expect(overlay, "visual placeholder overlay must exist").toBeTruthy();
-    expect(overlay?.getAttribute("aria-hidden")).toBe("true");
+    expect(editorEl.getAttribute("data-empty")).toBe("true");
+    expect(editorEl.getAttribute("data-placeholder")).toBe(
+      "粘贴英文文章，或直接开始输入",
+    );
+    // 空态辅助文案由 PlateContent 的 after: 伪元素绘制，中文界面不再
+    // 出现纯英文占位提示。
+    expect(editorEl.getAttribute("data-placeholder-sub")).toBe(
+      "支持网页、Markdown、PDF、TXT",
+    );
+    expect(
+      Array.from(surface.children).some(
+        (child) =>
+          child !== editorEl &&
+          child.textContent?.includes("Paste an English article here"),
+      ),
+    ).toBe(false);
   });
 });

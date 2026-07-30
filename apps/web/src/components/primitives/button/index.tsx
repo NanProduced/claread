@@ -29,12 +29,14 @@ const buttonVariants = cva(
           // system grows an action-primary-solid token, swap here.
           "rounded-full bg-ink text-[#FFFFFF] shadow-[0_4px_18px_rgba(17,17,17,0.08)] hover:-translate-y-[1px] hover:bg-ink-soft hover:shadow-[0_6px_24px_rgba(17,17,17,0.15)]",
         secondary:
-          // Dark gradient shell with semantic foreground fallback. The dark:
-          // override routes through the shadcn-compatible `--foreground`
-          // token; in the Paper/Light themes the explicit text-white class
-          // wins. We pin `text-action-secondary-foreground` so the Paper
-          // semantic resolves consistently without a dark: override.
-          "rounded-[0.82rem] border-[var(--app-secondary-border)] [background-image:var(--app-secondary-gradient)] text-action-secondary-foreground shadow-[var(--app-secondary-shadow)] hover:-translate-y-[0.5px] hover:[background-image:var(--app-secondary-gradient-hover)] hover:shadow-[var(--app-secondary-shadow-hover)] dark:text-foreground",
+          // Neutral chip routed through the --action-secondary token pair
+          // (light: paper surface + ink text; dark: raised surface + soft
+          // white text). The legacy near-black gradient shell is removed:
+          // it paired a dark background with the light-theme ink foreground
+          // (#151515 on #161616), rendering label text invisible in light
+          // theme, and it read as a primary action, which the design system
+          // forbids for secondary behavior.
+          "rounded-[0.82rem] border-border-subtle bg-action-secondary text-action-secondary-foreground shadow-none hover:-translate-y-[0.5px] hover:border-border-strong hover:shadow-[var(--app-panel-shadow-quiet)]",
         outline:
           "app-control-surface rounded-[0.82rem] border-border-subtle text-text-primary hover:border-border-strong hover:text-text-secondary",
         subtle:

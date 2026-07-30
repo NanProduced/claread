@@ -293,6 +293,27 @@ describe("User menu settings entries (desktop)", () => {
   });
 });
 
+describe("每日精读 public entry", () => {
+  it("always exposes a 每日精读 link to /daily in the desktop rail", () => {
+    render(<SidebarRail pathname="/app/library" sidebarMode="locked" />);
+
+    const dailyLinks = screen
+      .getAllByRole("link", { name: /每日精读/ })
+      .filter((link) => link.getAttribute("href") === "/daily");
+    // Desktop rail + mobile bottom nav both carry the entry.
+    expect(dailyLinks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("marks the 每日精读 entry as current when on /daily", () => {
+    render(<SidebarRail pathname="/daily" sidebarMode="locked" />);
+
+    const current = screen
+      .getAllByRole("link", { name: /每日精读/ })
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("Mobile settings entry", () => {
   it("renders a user menu trigger in the mobile bottom nav", () => {
     const { container } = render(<SidebarRail pathname="/app/library" sidebarMode="closed" />);

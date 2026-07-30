@@ -66,13 +66,17 @@ describe("Button semantic token consumption", () => {
     expect(cls).not.toContain("[background-image:var(--app-primary-gradient)] text-white");
   });
 
-  it("secondary CTA routes text to action-secondary-foreground and keeps dark gradient", () => {
+  it("secondary chip routes background and text through the action-secondary token pair", () => {
     const cls = classOf("secondary");
+    // Invisible-text regression: the legacy dark gradient shell paired a
+    // near-black background with the light-theme ink foreground (#151515 on
+    // #161616), hiding the label in upload / Content Check / Candidate
+    // actions. The variant must keep background and foreground on the same
+    // semantic pair so light and dark themes both stay legible.
+    expect(cls).toContain("bg-action-secondary");
     expect(cls).toContain("text-action-secondary-foreground");
-    expect(cls).toContain("[background-image:var(--app-secondary-gradient)]");
-    // Legacy raw `text-white` literal must not be present anymore.
-    expect(cls).not.toContain("text-white ");
-    expect(cls).not.toContain(" text-white");
+    expect(cls).not.toContain("[background-image:var(--app-secondary-gradient)]");
+    expect(cls).not.toContain("dark:text-foreground");
   });
 
   it("danger variant routes text to feedback-error and keeps gradient", () => {
