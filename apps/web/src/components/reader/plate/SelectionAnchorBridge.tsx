@@ -67,33 +67,79 @@ export function SelectionAnchorBridge({
       return;
     }
 
-    // 优先使用 Plate editor.selection（由 Plate 的 onDOMSelectionChange 同步）。
-    // 在 jsdom 测试中，editor.selection 可能未及时同步，此时降级用
-    // editor.api.toSlateRange(domSelection) 计算选区。
-    let workingSelection: TRange | null = selection ?? editor.selection ?? null;
+    // Reader readonly 表面的唯一选区真相是原生 DOM selection。处理顺序：
+    // 1. 折叠/空 → null
+    // 2. 选区位于 Reader document 外 → null（不回退 editor.selection，避免
+    //    旧 editor.selection 在工具栏已关闭后被复活）
+    // 3. 有效 native selection → 优先 toSlateRange 转换为 Slate range
+    // 4. 转换失败 → 回退 editor.selection（此时 native 仍在 document 内）
+    // 5. 不向 editor.selection 反向写入选区
+    const domSelection = window.getSelection();
+    const hasNonCollapsedNativeSelection =
+      !!domSelection &&
+      domSelection.rangeCount > 0 &&
+      !domSelection.isCollapsed;
 
-    if (!workingSelection) {
-      const domSelection = window.getSelection();
-      if (
-        domSelection &&
-        domSelection.rangeCount > 0 &&
-        !domSelection.isCollapsed &&
-        typeof editor.api?.toSlateRange === "function"
-      ) {
-        try {
-          const slateRange = editor.api.toSlateRange(domSelection, {
-            exactMatch: false,
-            suppressThrow: true,
-          } as never);
-          if (slateRange && typeof slateRange === "object") {
-            workingSelection = slateRange as TRange;
-          }
-        } catch {
-          // toSlateRange 在异常 DOM 状态下可能抛错，降级为 null
+    if (!hasNonCollapsedNativeSelection) {
+      onChange(null);
+      return;
+    }
+
+    // 显式检查 native selection 是否位于 Reader document 内。
+    // `.reader-record-plate-document` 是 ReaderRecordPlateSurface 渲染的
+    // Plate document 根节点。选区落在侧栏、Ask 面板、Quick Peek 等区域时
+    // anchorNode / focusNode 不是该根节点的后代，必须视为"无选区"以关闭
+    // 工具栏。两个端点都必须在文档内，防止跨边界选区（从 Reader 拖到侧栏）
+    // 残留旧 editor.selection 被复活。
+    // 测试/无根节点环境下退化为不拦截，由 toSlateRange 与
+    // readReaderRecordSelectionFromEditor 兜底。
+    const readerDocRoot = document.querySelector(".reader-record-plate-document");
+    const anchorNode = domSelection!.anchorNode;
+    const focusNode = domSelection!.focusNode;
+    const insideReaderDocument = readerDocRoot
+      ? !!anchorNode &&
+        !!focusNode &&
+        readerDocRoot.contains(anchorNode) &&
+        readerDocRoot.contains(focusNode)
+      : true;
+
+    if (!insideReaderDocument) {
+      onChange(null);
+      return;
+    }
+
+    // 优先把 native DOM selection 转换为 Slate range。只有转换失败才回退
+    // editor.selection（此时 native 仍在 document 内，editor.selection 可能
+    // 滞后但仍指向有效 Slate 范围）。全程不向 editor.selection 反向写入选区。
+    let workingSelection: TRange | null = null;
+
+    if (typeof editor.api?.toSlateRange === "function") {
+      try {
+        const slateRange = editor.api.toSlateRange(domSelection!, {
+          exactMatch: false,
+          suppressThrow: true,
+        } as never);
+        if (slateRange && typeof slateRange === "object") {
+          workingSelection = slateRange as TRange;
         }
+      } catch {
+        // toSlateRange 在异常 DOM 状态下可能抛错，降级到 editor.selection
       }
     }
 
+    if (!workingSelection) {
+      workingSelection = selection ?? editor.selection ?? null;
+    }
+
+    if (!workingSelection) {
+      onChange(null);
+      return;
+    }
+
+    // readReaderRecordSelectionFromEditor 做最终校验：
+    // - 选区在 editor.children 外（editor.api.nodes 返回空）→ null
+    // - 选区跨非 source block → null
+    // - 选区折叠 → null
     const result = readReaderRecordSelectionFromEditor(
       editor,
       snapshot,

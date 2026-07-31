@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from uuid import UUID
 
+from app.agents.grammar_agent import GrammarAgentDeps
 from app.database import connection as db_connect
 from app.llm.agent_runner import extract_run_usage
-from app.agents.grammar_agent import GrammarAgentDeps
 from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
 from app.schemas.internal.drafts import draft_to_annotation
 from app.schemas.reader_ask import (
@@ -58,12 +59,18 @@ class ReadingRecordAskContext:
     legacy_anchor: ReaderAskAnchorRef | None
     page_identity: ReaderAskPageIdentity
     resolved_context_input: ReaderAskResolvedContextInput
+    # ASK-UX-COT-COMPOSER-R3 P2 — the full gate-validated focus set
+    # (≤3; primary first). Legacy lane receives the same set as the
+    # agentic lane; empty tuple = no focus selections.
+    focus_anchors: tuple[ReaderAskReadingRecordAnchor, ...] = ()
 
 
 def _sentence_text_map(facts: LoadedReaderSnapshotFacts) -> dict[str, str]:
     sentence_texts: dict[str, list[tuple[int, str]]] = {}
     for segment in facts.build_result.anchor_segments:
-        sentence_texts.setdefault(segment.sentence_id, []).append((segment.order_index, segment.text))
+        sentence_texts.setdefault(segment.sentence_id, []).append(
+            (segment.order_index, segment.text)
+        )
     return {
         sentence_id: "".join(text for _, text in sorted(parts, key=lambda item: item[0])).strip()
         for sentence_id, parts in sentence_texts.items()
@@ -132,6 +139,22 @@ def _synthetic_legacy_anchor(
     )
 
 
+def resolve_focus_anchors(request: Any) -> list[ReaderAskReadingRecordAnchor]:
+    """R3 P2 — effective anchor set for a legacy-lane request.
+
+    Plural ``focus_anchors`` wins when present; the singular ``anchor``
+    is the legacy fallback only. Mirrors the agentic-lane resolver so
+    both lanes see the identical set (never merged).
+    """
+    plural = getattr(request, "focus_anchors", None)
+    if plural is not None:
+        return list(plural)
+    singular = getattr(request, "anchor", None)
+    if singular is not None:
+        return [singular]
+    return []
+
+
 def _build_page_identity(
     *,
     facts: LoadedReaderSnapshotFacts,
@@ -156,16 +179,25 @@ def _build_resolved_context_input(
     legacy_anchor: ReaderAskAnchorRef | None,
     reading_record_anchor: ReaderAskReadingRecordAnchor | None,
     facts: LoadedReaderSnapshotFacts,
+    extra_focus_legacy_anchors: Sequence[ReaderAskAnchorRef] = (),
+    focus_anchors: Sequence[ReaderAskReadingRecordAnchor] = (),
 ) -> ReaderAskResolvedContextInput:
     overview = _resolve_overview(facts)
+    local_context: dict[str, Any] = {}
+    if reading_record_anchor is not None:
+        local_context["reading_record_anchor"] = reading_record_anchor.model_dump(
+            mode="json"
+        )
+    if focus_anchors:
+        # R3 P2 — the full validated focus set (canonical dumps) so the
+        # legacy resolved context carries every user-pinned selection.
+        local_context["focus_anchors"] = [
+            anchor.model_dump(mode="json") for anchor in focus_anchors
+        ]
     current_record_context = ReaderAskCurrentRecordContext(
         record_id=page_identity.record_id,
         record_title=facts.record.title,
-        local_context=(
-            {"reading_record_anchor": reading_record_anchor.model_dump(mode="json")}
-            if reading_record_anchor is not None
-            else None
-        ),
+        local_context=local_context or None,
         record_insights=[],
         article_overview=cast(str | None, overview["overview"]),
         article_overview_status=cast(str | None, overview["status"]),
@@ -173,11 +205,15 @@ def _build_resolved_context_input(
         article_overview_confidence=cast(str | None, overview["confidence"]),
         source_labels=["article_overview"] if overview["overview"] else [],
     )
+    anchors: list[ReaderAskAnchorRef] = []
+    if legacy_anchor is not None:
+        anchors.append(legacy_anchor)
+    anchors.extend(extra_focus_legacy_anchors)
     return planner.build_resolved_context_input(
         page_identity=page_identity,
         entry_action=entry_action,
         attachments=[],
-        anchors=[legacy_anchor] if legacy_anchor is not None else [],
+        anchors=anchors,
         current_record_context=current_record_context,
         external_record_contexts=[],
         external_asset_contexts=[],
@@ -191,7 +227,19 @@ async def build_reading_record_context(
     request_anchor: ReaderAskReadingRecordAnchor | None,
     entry_action: ReaderAskEntryAction,
     repository: ReaderOrchestrationRepository | None = None,
+    focus_anchors: Sequence[ReaderAskReadingRecordAnchor] | None = None,
 ) -> ReadingRecordAskContext:
+    """Build the legacy-lane Reading Record Ask context.
+
+    R3 P2: ``focus_anchors`` is the full effective anchor set (plural
+    contract; the singular ``request_anchor`` is its first entry when
+    present). EVERY anchor is gate-validated against the live record /
+    base / generation / document — any failure raises (fail-closed),
+    exactly like the agentic lane's route-level gate. The additional
+    anchors (beyond the primary) enter the legacy planner context as
+    extra anchor refs plus canonical ``local_context.focus_anchors``
+    dumps.
+    """
     repo = repository or ReaderOrchestrationRepository()
     async with db_connect.acquire_connection() as conn:
         facts = await repo.load_snapshot_facts(
@@ -201,7 +249,25 @@ async def build_reading_record_context(
         )
         validated_anchor: ValidatedReadingRecordAnchor | None = None
         legacy_anchor: ReaderAskAnchorRef | None = None
-        if request_anchor is not None:
+        extra_focus_legacy: list[ReaderAskAnchorRef] = []
+        if focus_anchors:
+            validated_set: list[
+                tuple[ReaderAskReadingRecordAnchor, ValidatedReadingRecordAnchor]
+            ] = []
+            for anchor in focus_anchors:
+                validated = await load_validated_reading_record_anchor(
+                    conn,
+                    repository=repo,
+                    user_id=user_id,
+                    anchor=anchor,
+                )
+                validated_set.append((anchor, validated))
+            primary_anchor, primary_validated = validated_set[0]
+            validated_anchor = primary_validated
+            legacy_anchor = _synthetic_legacy_anchor(primary_validated, primary_anchor)
+            for anchor, validated in validated_set[1:]:
+                extra_focus_legacy.append(_synthetic_legacy_anchor(validated, anchor))
+        elif request_anchor is not None:
             validated_anchor = await load_validated_reading_record_anchor(
                 conn,
                 repository=repo,
@@ -222,6 +288,8 @@ async def build_reading_record_context(
         legacy_anchor=legacy_anchor,
         reading_record_anchor=request_anchor,
         facts=facts,
+        extra_focus_legacy_anchors=tuple(extra_focus_legacy),
+        focus_anchors=tuple(focus_anchors) if focus_anchors else (),
     )
     bundle = ReadingRecordRuntimeBundle(
         record_id=reading_record_id,
@@ -240,6 +308,7 @@ async def build_reading_record_context(
         legacy_anchor=legacy_anchor,
         page_identity=page_identity,
         resolved_context_input=resolved_context_input,
+        focus_anchors=tuple(focus_anchors) if focus_anchors else (),
     )
 
 
@@ -251,7 +320,11 @@ def build_record_context_payload(
 ) -> dict[str, Any]:
     rows = _sentence_rows(context.facts)
     sentence_lookup = {row["sentence_id"]: row for row in rows}
-    active_sentence_id = target_sentence_id or context.legacy_anchor.sentence_id if context.legacy_anchor else target_sentence_id
+    active_sentence_id = (
+        target_sentence_id or context.legacy_anchor.sentence_id
+        if context.legacy_anchor
+        else target_sentence_id
+    )
     active_anchor = None
     if active_sentence_id and active_sentence_id in sentence_lookup:
         target = sentence_lookup[active_sentence_id]

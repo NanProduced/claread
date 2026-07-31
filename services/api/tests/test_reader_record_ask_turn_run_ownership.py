@@ -119,4 +119,6 @@ def test_turn_run_ownership_is_fenced_at_every_message_write() -> None:
     assert 'owner["current_turn_run_id"] == turn_run_id' in complete_source
     assert "current_turn_run_id = $3" in complete_source
     assert "current_turn_run_id = $2" in terminal_source
-    assert "current_turn_run_id = NULL" in reset_source
+    assert 'meta["retry_fallback"]' in reset_source
+    assert '"current_turn_run_id"' in reset_source
+    assert "current_turn_run_id = NULL" not in reset_source

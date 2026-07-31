@@ -1112,6 +1112,24 @@ class ReaderRecordAskRepository:
         }
         return assistant_msg, user_msg
 
+    async def get_message_status(
+        self,
+        *,
+        message_id: UUID,
+    ) -> str | None:
+        """Load one message status without crossing into the legacy repository."""
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            status = await conn.fetchval(
+                """
+                SELECT status
+                FROM reader_ask_messages
+                WHERE id = $1
+                """,
+                message_id,
+            )
+        return str(status) if status is not None else None
+
     async def reset_assistant_message_for_retry(
         self,
         *,

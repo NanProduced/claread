@@ -1,0 +1,1223 @@
+import { expect, test, type Page } from "@playwright/test";
+
+/**
+ * Reader selection floating toolbar — real native-selection e2e.
+ *
+ * This spec drives the REAL /app/reader-record/{recordId} page (not the
+ * /e2e-plate-spike harness) with real Chromium native selections created via
+ * `locator.selectText()` (programmatic Selection API, not a raw pointer
+ * drag). Plate/Slate intercepts `mousedown` with `preventDefault()` in
+ * readonly mode, which blocks the browser from initiating a drag-based text
+ * selection, so `selectText()` is the faithful way to create a genuine
+ * native browser selection that fires `selectionchange`. It verifies the P0
+ * fix: the selection-actions toolbar appears after the user selects stable
+ * source text, and dismisses on Escape / blank click / out-of-document
+ * selection.
+ *
+ * The fixture covers multiple stable block types (paragraph, heading,
+ * markdown blockquote, list_item, table_cell, source_callout) so the
+ * toolbar is exercised across the full Markdown projection surface, plus a
+ * translation block (non-source) negative case and a cross-anchor selection.
+ *
+ * BFF routes are mocked at the network layer via page.route — no backend
+ * dependency. Auth uses CLAREAD_PHONE_AUTH_PROVIDER=mock (code 888888).
+ */
+
+const RECORD_ID = "sel-toolbar-rec-1";
+const BASE_ID = "sel-toolbar-base-1";
+
+const ARTICLE_TEXT =
+  "Institutional memory shapes policy choices in subtle ways. " +
+  "A scarce few can turn passion into a stable income, but most simply adapt.";
+
+const HEADING_TEXT = "Markets reward patience over time.";
+const BLOCKQUOTE_TEXT = "Patience is the quiet engine of sustainable growth.";
+const LIST_ITEM_TEXT = "Compounding turns small gains into large outcomes.";
+const TABLE_CELL_TEXT = "Steady effort compounds daily.";
+const CALLOUT_TEXT = "Remember that risk scales with time horizon.";
+
+const TRANSLATION_TEXT = "制度记忆以微妙的方式塑造政策选择。";
+
+// ---------------------------------------------------------------------------
+// Snapshot fixture — multiple stable block types + one translation block.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a reader_unit node (with a single reader_source_block carrying
+ * `stableBlockType` metadata) plus its navigation-unit and anchor-segment
+ * entries. The returned pieces are assembled by `makeSnapshot` into the
+ * three parallel arrays (`navigation.units`, `anchor_segments`, `value`).
+ *
+ * `stableBlockType` / `headingLevel` / `contentRole` are camelCase DTO
+ * fields on `reader_source_block` (A5/B2 stable block metadata). All other
+ * fields mirror the existing paragraph unit shape.
+ */
+function buildStableSourceUnit(params: {
+  unitId: string;
+  orderIndex: number;
+  segmentId: string;
+  text: string;
+  baseStart: number;
+  stableBlockType: string;
+  headingLevel?: number;
+  contentRole?: string;
+}) {
+  const {
+    unitId,
+    orderIndex,
+    segmentId,
+    text,
+    baseStart,
+    stableBlockType,
+    headingLevel,
+    contentRole,
+  } = params;
+  const baseEnd = baseStart + text.length;
+
+  const navigationUnit = {
+    unit_id: unitId,
+    order_index: orderIndex,
+    unit_type: "body" as const,
+    boundary_quality: "normal" as const,
+    base_start_utf16: baseStart,
+    base_end_utf16: baseEnd,
+    text_hash: `hash_${unitId}`,
+    hash_algorithm: "fnv1a32-utf16" as const,
+  };
+
+  const anchorSegment = {
+    anchor_segment_id: segmentId,
+    sentence_id: segmentId,
+    paragraph_id: unitId,
+    unit_id: unitId,
+    order_index: orderIndex,
+    unit_order_index: orderIndex,
+    segment_type: "sentence" as const,
+    boundary_quality: "normal" as const,
+    base_start_utf16: baseStart,
+    base_end_utf16: baseEnd,
+    unit_start_utf16: 0,
+    unit_end_utf16: text.length,
+    text_hash: `hash_${segmentId}`,
+    hash_algorithm: "fnv1a32-utf16" as const,
+  };
+
+  const sourceBlock: Record<string, unknown> = {
+    type: "reader_source_block",
+    owner: "stable",
+    base_id: BASE_ID,
+    unit_id: unitId,
+    stableBlockType,
+    base_start_utf16: baseStart,
+    base_end_utf16: baseEnd,
+  };
+  if (headingLevel !== undefined) {
+    sourceBlock.headingLevel = headingLevel;
+  }
+  if (contentRole !== undefined) {
+    sourceBlock.contentRole = contentRole;
+  }
+  sourceBlock.children = [
+    {
+      type: "reader_anchor_segment",
+      owner: "stable",
+      base_id: BASE_ID,
+      unit_id: unitId,
+      anchor_segment_id: segmentId,
+      sentence_id: segmentId,
+      segment_type: "sentence",
+      boundary_quality: "normal",
+      base_start_utf16: baseStart,
+      base_end_utf16: baseEnd,
+      unit_start_utf16: 0,
+      unit_end_utf16: text.length,
+      text_hash: `hash_${segmentId}`,
+      hash_algorithm: "fnv1a32-utf16",
+      children: [
+        {
+          text,
+          owner: "stable",
+          lock_source: true,
+          source_role: "segment_text",
+          base_start_utf16: baseStart,
+          base_end_utf16: baseEnd,
+          anchor_segment_id: segmentId,
+          segment_start_utf16: 0,
+          segment_end_utf16: text.length,
+          reader_vocabulary_marks: [],
+          reader_grammar_note_marks: [],
+        },
+      ],
+    },
+  ];
+
+  const valueUnit = {
+    type: "reader_unit",
+    owner: "stable",
+    base_id: BASE_ID,
+    unit_id: unitId,
+    order_index: orderIndex,
+    unit_type: "body",
+    boundary_quality: "normal",
+    base_start_utf16: baseStart,
+    base_end_utf16: baseEnd,
+    text_hash: `hash_${unitId}`,
+    hash_algorithm: "fnv1a32-utf16",
+    children: [sourceBlock],
+  };
+
+  return { navigationUnit, anchorSegment, valueUnit };
+}
+
+function makeSnapshot() {
+  // Sequential, non-overlapping UTF-16 offsets across all units.
+  const u1Start = 0;
+  const u1End = u1Start + ARTICLE_TEXT.length;
+  const u2Start = u1End;
+  const u2End = u2Start + HEADING_TEXT.length;
+  const u3Start = u2End;
+  const u3End = u3Start + BLOCKQUOTE_TEXT.length;
+  const u4Start = u3End;
+  const u4End = u4Start + LIST_ITEM_TEXT.length;
+  const u5Start = u4End;
+  const u5End = u5Start + TABLE_CELL_TEXT.length;
+  const u6Start = u5End;
+  const u6End = u6Start + CALLOUT_TEXT.length;
+
+  const heading = buildStableSourceUnit({
+    unitId: "u2",
+    orderIndex: 2,
+    segmentId: "s2",
+    text: HEADING_TEXT,
+    baseStart: u2Start,
+    stableBlockType: "heading",
+    headingLevel: 2,
+  });
+
+  const blockquote = buildStableSourceUnit({
+    unitId: "u3",
+    orderIndex: 3,
+    segmentId: "s3",
+    text: BLOCKQUOTE_TEXT,
+    baseStart: u3Start,
+    stableBlockType: "blockquote",
+  });
+
+  const listItem = buildStableSourceUnit({
+    unitId: "u4",
+    orderIndex: 4,
+    segmentId: "s4",
+    text: LIST_ITEM_TEXT,
+    baseStart: u4Start,
+    stableBlockType: "list_item",
+  });
+
+  const tableCell = buildStableSourceUnit({
+    unitId: "u5",
+    orderIndex: 5,
+    segmentId: "s5",
+    text: TABLE_CELL_TEXT,
+    baseStart: u5Start,
+    stableBlockType: "table_cell",
+  });
+
+  const sourceCallout = buildStableSourceUnit({
+    unitId: "u6",
+    orderIndex: 6,
+    segmentId: "s6",
+    text: CALLOUT_TEXT,
+    baseStart: u6Start,
+    stableBlockType: "blockquote",
+    contentRole: "source_callout",
+  });
+
+  return {
+    schema_kind: "reader_plate_snapshot",
+    snapshot_id: `snap_${RECORD_ID}`,
+    snapshot_taken_at: "2026-07-04T00:00:00Z",
+    last_event_sequence: 1,
+    record_id: RECORD_ID,
+    record: {
+      title: "Selection Toolbar Fixture",
+      display_title_zh: null,
+      title_generation_status: "pending",
+      title_generation_error_code: null,
+      title_generation_error_message: null,
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+      created_at: "2026-07-04T00:00:00Z",
+      source_type: "text",
+      source_metadata: {},
+      generation: 1,
+      product_state: "readable_enhancing",
+      readiness_state: "article_ready",
+    },
+    base: {
+      base_id: BASE_ID,
+      content_sha256: "b".repeat(64),
+      canonicalizer_version: "1.0.0",
+      builder_version: "1.0.0",
+      segmenter_version: "1.0.0",
+      hash_algorithm: "fnv1a32-utf16",
+      text_length_utf16: u6End,
+    },
+    navigation: {
+      units: [
+        {
+          unit_id: "u1",
+          order_index: 1,
+          unit_type: "body",
+          boundary_quality: "normal",
+          base_start_utf16: u1Start,
+          base_end_utf16: u1End,
+          text_hash: "hash_u1",
+          hash_algorithm: "fnv1a32-utf16",
+        },
+        heading.navigationUnit,
+        blockquote.navigationUnit,
+        listItem.navigationUnit,
+        tableCell.navigationUnit,
+        sourceCallout.navigationUnit,
+      ],
+    },
+    anchor_segments: [
+      {
+        anchor_segment_id: "s1",
+        sentence_id: "s1",
+        paragraph_id: "u1",
+        unit_id: "u1",
+        order_index: 1,
+        unit_order_index: 1,
+        segment_type: "sentence",
+        boundary_quality: "normal",
+        base_start_utf16: u1Start,
+        base_end_utf16: u1End,
+        unit_start_utf16: 0,
+        unit_end_utf16: ARTICLE_TEXT.length,
+        text_hash: "hash_s1",
+        hash_algorithm: "fnv1a32-utf16",
+      },
+      heading.anchorSegment,
+      blockquote.anchorSegment,
+      listItem.anchorSegment,
+      tableCell.anchorSegment,
+      sourceCallout.anchorSegment,
+    ],
+    value: [
+      // u1 — paragraph (stableBlockType: "paragraph") + translation group.
+      {
+        type: "reader_unit",
+        owner: "stable",
+        base_id: BASE_ID,
+        unit_id: "u1",
+        order_index: 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: u1Start,
+        base_end_utf16: u1End,
+        text_hash: "hash_u1",
+        hash_algorithm: "fnv1a32-utf16",
+        children: [
+          {
+            type: "reader_source_block",
+            owner: "stable",
+            base_id: BASE_ID,
+            unit_id: "u1",
+            stableBlockType: "paragraph",
+            base_start_utf16: u1Start,
+            base_end_utf16: u1End,
+            children: [
+              {
+                type: "reader_anchor_segment",
+                owner: "stable",
+                base_id: BASE_ID,
+                unit_id: "u1",
+                anchor_segment_id: "s1",
+                sentence_id: "s1",
+                segment_type: "sentence",
+                boundary_quality: "normal",
+                base_start_utf16: u1Start,
+                base_end_utf16: u1End,
+                unit_start_utf16: 0,
+                unit_end_utf16: ARTICLE_TEXT.length,
+                text_hash: "hash_s1",
+                hash_algorithm: "fnv1a32-utf16",
+                children: [
+                  {
+                    text: ARTICLE_TEXT,
+                    owner: "stable",
+                    lock_source: true,
+                    source_role: "segment_text",
+                    base_start_utf16: u1Start,
+                    base_end_utf16: u1End,
+                    anchor_segment_id: "s1",
+                    segment_start_utf16: 0,
+                    segment_end_utf16: ARTICLE_TEXT.length,
+                    reader_vocabulary_marks: [],
+                    reader_grammar_note_marks: [],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "reader_translation_group",
+            owner: "system_ai",
+            layer_id: "layer_tr_1",
+            layer_version: 1,
+            base_id: BASE_ID,
+            unit_id: "u1",
+            target_scope: "unit",
+            target_key: "u1",
+            group_id: "group_tr_1",
+            covered_anchor_segment_ids: ["s1"],
+            source_text_hash: "hash_u1",
+            children: [{ text: TRANSLATION_TEXT }],
+          },
+        ],
+      },
+      heading.valueUnit,
+      blockquote.valueUnit,
+      listItem.valueUnit,
+      tableCell.valueUnit,
+      sourceCallout.valueUnit,
+    ],
+    enhancement_layers: [],
+    parsed_decisions: [],
+    user_assets: [],
+    ask_supplements: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mock helpers
+// ---------------------------------------------------------------------------
+
+async function mockBff(page: Page) {
+  const snapshot = makeSnapshot();
+
+  await page.route(
+    `**/api/web/reader-plate/${RECORD_ID}/snapshot`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, ...snapshot }),
+      });
+    },
+  );
+
+  await page.route(
+    `**/api/web/reader-plate/${RECORD_ID}/events**`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          reading_record_id: RECORD_ID,
+          after_sequence: 1,
+          next_after_sequence: 1,
+          last_event_sequence: 1,
+          has_more: false,
+          truncated: false,
+          reload_required: false,
+          reload_reason: null,
+          events: [],
+        }),
+      });
+    },
+  );
+
+  await page.route(
+    `**/api/web/reader-plate/records/${RECORD_ID}/article-rag-index/status`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, status: "unavailable" }),
+      });
+    },
+  );
+
+  await page.route("**/api/web/dict/lookup**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, kind: "empty", query: "" }),
+    });
+  });
+
+  await page.route("**/api/web/dict/entry**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, kind: "empty", query: "" }),
+    });
+  });
+}
+
+async function loginAndNavigate(page: Page) {
+  await page.route("**/api/web/auth/phone/request-code", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, message: "mock" }),
+    });
+  });
+
+  await page.route("**/api/web/auth/phone/verify-code", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: {
+        "set-cookie":
+          "claread_web_phone=13800138000; Path=/; SameSite=Lax; HttpOnly",
+      },
+      body: JSON.stringify({
+        ok: true,
+        phone: "13800138000",
+        message: "ok",
+      }),
+    });
+  });
+
+  const targetPath = `/app/reader-record/${RECORD_ID}`;
+  await page.goto(`/login?next=${encodeURIComponent(targetPath)}`);
+  await page.getByLabel("手机号").fill("13800138000");
+  await page.getByRole("button", { name: "发送验证码" }).click();
+  await page.getByLabel("验证码").fill("888888");
+  await page.getByRole("button", { name: "登录并继续" }).click();
+  await page.waitForURL(`**${targetPath}`);
+
+  // Wait for the Plate surface to mount and source text to render.
+  await expect(
+    page.locator('[data-testid="reader-record-plate-surface"]'),
+  ).toBeVisible();
+  await expect(page.getByText(ARTICLE_TEXT, { exact: true })).toBeVisible();
+}
+
+/**
+ * Select source text using the browser's native Selection API via
+ * `locator.selectText()`. This creates a REAL native selection (not a mock)
+ * that fires `selectionchange` events — exercising the full
+ * SelectionAnchorBridge → activeSelection → toolbar pipeline.
+ *
+ * We use `selectText()` instead of raw `page.mouse` drag because Plate/Slate
+ * intercepts `mousedown` with `preventDefault()` even in readonly mode,
+ * which blocks the browser from initiating a drag-based text selection.
+ * `selectText()` bypasses the mousedown handler and sets the Selection
+ * directly, which is still a genuine native browser selection.
+ */
+async function selectSourceText(page: Page): Promise<string> {
+  const paragraph = page
+    .locator('[data-reader-record-node="paragraph"]')
+    .first();
+  await expect(paragraph).toBeVisible();
+  await paragraph.selectText();
+
+  // Return the browser's native selection text for verification.
+  return page.evaluate(() => window.getSelection()?.toString() ?? "");
+}
+
+/**
+ * Select text inside a specific stable block type via `locator.selectText()`.
+ *
+ * `stableBlockType` maps directly to the `data-reader-record-stable-block-type`
+ * DOM attribute emitted by the stable-block projection components:
+ *   paragraph / heading / blockquote / list_item / table_cell / source_callout
+ *
+ * Same native-selection pattern as `selectSourceText` — fires `selectionchange`
+ * through SelectionAnchorBridge → activeSelection → toolbar.
+ */
+async function selectTextInBlock(
+  page: Page,
+  stableBlockType: string,
+): Promise<string> {
+  const block = page
+    .locator(
+      `[data-reader-record-stable-block-type="${stableBlockType}"]`,
+    )
+    .first();
+  await expect(block).toBeVisible();
+  await block.selectText();
+  return page.evaluate(() => window.getSelection()?.toString() ?? "");
+}
+
+/**
+ * Modify the source selection via KEYBOARD.
+ *
+ * Readonly Slate renders `contenteditable="false"`, so the editor surface is
+ * not focusable and the browser cannot place a caret via keyboard — genuine
+ * Shift+Arrow caret selection from scratch is therefore impossible without
+ * making the Reader editable (which the task explicitly forbids). This is a
+ * real product limitation of readonly Slate, not a toolbar bug.
+ *
+ * To still exercise the keyboard path through the toolbar pipeline, we first
+ * establish a native selection (selectText), then drive it with genuine
+ * keyboard input: `Shift+ArrowLeft` re-shapes the selection and fires
+ * `selectionchange` through SelectionAnchorBridge → activeSelection →
+ * toolbar. This verifies keyboard input drives the selection and the toolbar
+ * tracks it, which is the faithful keyboard-acceptance test given the
+ * `contenteditable="false"` constraint.
+ */
+async function keyboardShapeSelection(page: Page): Promise<string> {
+  const paragraph = page
+    .locator('[data-reader-record-node="paragraph"]')
+    .first();
+  await expect(paragraph).toBeVisible();
+  await paragraph.selectText();
+
+  // Genuine keyboard input: shrink the selection from the focus end with
+  // Shift+ArrowLeft. Each keypress fires selectionchange.
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+
+  return page.evaluate(() => window.getSelection()?.toString() ?? "");
+}
+
+/**
+ * Select a specific phrase within the source paragraph using the browser
+ * Selection API. This creates a genuine native selection (fires
+ * `selectionchange`) scoped to the requested phrase — not the whole
+ * paragraph — so re-selecting a different phrase verifies the toolbar tracks
+ * the latest selection and does not reuse stale anchor data from a previous
+ * selection.
+ */
+async function selectPhrase(page: Page, phrase: string): Promise<string> {
+  const selected = await page.evaluate((target) => {
+    const doc = document.querySelector(".reader-record-plate-document");
+    if (!doc) return "";
+    const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+    let node: Text | null = null;
+    while (walker.nextNode()) {
+      const text = walker.currentNode as Text;
+      if (text.data.includes(target)) {
+        node = text;
+        break;
+      }
+    }
+    if (!node) return "";
+    const start = node.data.indexOf(target);
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + target.length);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return sel.toString();
+  }, phrase);
+  return selected;
+}
+
+/**
+ * Select text in a element OUTSIDE `.reader-record-plate-document`. This
+ * simulates the user selecting text in the page chrome (title, sidebar, Ask
+ * panel) and verifies the toolbar closes because the selection is outside
+ * the Reader document.
+ *
+ * To make the test deterministic across page layouts (the Reader page may
+ * have very little selectable text outside the Plate document), we mount a
+ * temporary probe element on `document.body` — never inside the Reader
+ * document root — and select its text node. The probe is kept mounted until
+ * the caller removes it via `cleanupProbeOutsideReaderDocument` so the
+ * Selection API's anchorNode stays valid while SelectionAnchorBridge
+ * inspects it.
+ */
+async function selectTextOutsideReaderDocument(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const doc = document.querySelector(".reader-record-plate-document");
+    if (!doc) return "";
+
+    const sel = window.getSelection()!;
+
+    // Try to find existing selectable text outside the Reader document first
+    // (page title, header, etc.). Verify the selection actually yields text —
+    // sidebar/nav text often lives inside `user-select: none` containers, in
+    // which case addRange succeeds but toString() returns "".
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let candidate: Text | null = null;
+    while (walker.nextNode()) {
+      const text = walker.currentNode as Text;
+      if (text.data.trim().length < 3) continue;
+      if (doc.contains(text)) continue;
+      candidate = text;
+      const range = document.createRange();
+      range.selectNodeContents(candidate);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      if (sel.toString().trim().length > 0) {
+        return sel.toString();
+      }
+      // Selection came back empty — likely user-select:none. Keep scanning.
+    }
+
+    // No existing selectable text found outside the Reader document. Mount a
+    // probe element on document.body (outside the Reader document) so we
+    // always have a selectable text node to test the out-of-document dismissal
+    // path. Explicitly set `user-select: text` to override any inherited
+    // `user-select: none` from the body or app shell.
+    const probe = document.createElement("div");
+    probe.id = "__reader-selection-outside-probe";
+    probe.textContent = "outside-reader-document-probe";
+    probe.style.position = "fixed";
+    probe.style.top = "0";
+    probe.style.left = "0";
+    probe.style.zIndex = "9999";
+    probe.style.background = "white";
+    probe.style.padding = "4px";
+    probe.style.userSelect = "text";
+    probe.style.webkitUserSelect = "text";
+    document.body.appendChild(probe);
+
+    const probeNode = probe.firstChild as Text;
+    if (!probeNode) return "";
+    const range = document.createRange();
+    range.selectNodeContents(probeNode);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return sel.toString();
+  });
+}
+
+/**
+ * Remove the probe element mounted by `selectTextOutsideReaderDocument`.
+ */
+async function cleanupProbeOutsideReaderDocument(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.getElementById("__reader-selection-outside-probe")?.remove();
+  });
+}
+
+const TOOLBAR_LOCATOR = '[data-reader-record-floating-toolbar="selection-actions"]';
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+test.describe("Reader selection floating toolbar (native selection)", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockBff(page);
+    await loginAndNavigate(page);
+  });
+
+  test("native text selection shows selection-actions toolbar with all 5 buttons", async ({
+    page,
+  }) => {
+    const selectedText = await selectSourceText(page);
+    expect(selectedText.trim().length, "native selection should produce text").toBeGreaterThan(
+      0,
+    );
+
+    // The toolbar should appear (SelectionAnchorBridge → activeSelection → show).
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // The paragraph block should carry the stable-block-type attribute.
+    const paragraphBlock = page.locator(
+      '[data-reader-record-stable-block-type="paragraph"]',
+    );
+    await expect(paragraphBlock).toBeVisible();
+
+    // All 5 action buttons should be present.
+    for (const actionId of ["ask", "lookup", "copy", "highlight", "note"]) {
+      await expect(
+        page.locator(`[data-reader-record-toolbar-action="${actionId}"]`),
+      ).toBeVisible();
+    }
+
+    // The toolbar should be within the viewport (not off-screen).
+    const toolbarBox = await toolbar.boundingBox();
+    expect(toolbarBox, "toolbar must have a bounding box").not.toBeNull();
+    const tb = toolbarBox!;
+    const viewport = page.viewportSize()!;
+    expect(tb.x, "toolbar left >= 0").toBeGreaterThanOrEqual(0);
+    expect(tb.y, "toolbar top >= 0").toBeGreaterThanOrEqual(0);
+    expect(
+      tb.x + tb.width,
+      "toolbar right <= viewport width",
+    ).toBeLessThanOrEqual(viewport.width);
+    expect(
+      tb.y + tb.height,
+      "toolbar bottom <= viewport height",
+    ).toBeLessThanOrEqual(viewport.height);
+
+    // Toolbar should not overlap the selected text vertically (it flips above
+    // or below, not on top of the selection).
+    const paragraph = page
+      .locator('[data-reader-record-node="paragraph"]')
+      .first();
+    const paraBox = await paragraph.boundingBox();
+    expect(paraBox).not.toBeNull();
+    const pb = paraBox!;
+    // The toolbar bottom should be at or above the paragraph top, OR the
+    // toolbar top should be at or below the paragraph bottom. I.e. no
+    // vertical overlap with the paragraph's vertical center band.
+    const toolbarAbove = tb.y + tb.height <= pb.y + 4;
+    const toolbarBelow = tb.y >= pb.y + pb.height - 4;
+    expect(
+      toolbarAbove || toolbarBelow,
+      "toolbar should flip above or below the selected text, not overlap it",
+    ).toBeTruthy();
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-visible.png",
+    });
+  });
+
+  test("keyboard input (Shift+Arrow) shapes the selection and keeps the toolbar", async ({ page }) => {
+    const selectedText = await keyboardShapeSelection(page);
+    expect(selectedText.trim().length, "keyboard-shaped selection should produce text").toBeGreaterThan(
+      0,
+    );
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-keyboard.png",
+    });
+  });
+
+  test("copy button click does not collapse selection before action fires", async ({
+    page,
+  }) => {
+    await selectSourceText(page);
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // The copy button should be enabled (canCopySelection only needs text).
+    const copyButton = page.locator(
+      '[data-reader-record-toolbar-action="copy"]',
+    );
+    await expect(copyButton).toBeEnabled();
+
+    // Click copy — the onPointerDown preventDefault keeps the native
+    // selection alive so handleCopy can read activeSelection. Per the
+    // acceptance criterion "点击不丢选区", copy must NOT collapse the
+    // selection, so the toolbar stays visible after the action.
+    await copyButton.click();
+
+    // The toolbar should remain visible — the selection is preserved.
+    await expect(toolbar).toBeVisible({ timeout: 5000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-after-copy.png",
+    });
+  });
+
+  test("Escape dismisses the toolbar", async ({ page }) => {
+    await selectSourceText(page);
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.keyboard.press("Escape");
+
+    // The Escape handler clears the native selection, which cascades through
+    // SelectionAnchorBridge → activeSelection → toolbar hidden.
+    await expect(toolbar).toHaveCount(0, { timeout: 5000 });
+  });
+
+  test("blank click dismisses the toolbar, re-select shows it again", async ({
+    page,
+  }) => {
+    await selectSourceText(page);
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // Click on empty space (outside the paragraph and toolbar) to collapse
+    // the native selection.
+    await page.mouse.click(10, 10);
+
+    await expect(toolbar).toHaveCount(0, { timeout: 5000 });
+
+    // Re-select — toolbar should appear again.
+    await selectSourceText(page);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+  });
+
+  test("390px mobile viewport — toolbar appears and stays in viewport", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    // Re-navigate after viewport change to ensure layout is correct.
+    await page.reload();
+    await expect(
+      page.locator('[data-testid="reader-record-plate-surface"]'),
+    ).toBeVisible();
+
+    await selectSourceText(page);
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    const tb = (await toolbar.boundingBox())!;
+    const vp = page.viewportSize()!;
+    expect(tb.x).toBeGreaterThanOrEqual(0);
+    expect(tb.y).toBeGreaterThanOrEqual(0);
+    expect(tb.x + tb.width).toBeLessThanOrEqual(vp.width);
+    expect(tb.y + tb.height).toBeLessThanOrEqual(vp.height);
+  });
+
+  test("re-selecting a different phrase keeps toolbar visible and uses the new selection (A→B)", async ({
+    page,
+  }) => {
+    // Grant clipboard permissions so we can verify copy actually writes B.
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+
+    // Phrase A: select "Institutional memory" at the start of the paragraph.
+    const phraseA = "Institutional memory";
+    const textA = await selectPhrase(page, phraseA);
+    expect(textA, "phrase A native selection should match").toBe(phraseA);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // Capture the toolbar position for phrase A — used to prove the toolbar
+    // re-positions for B rather than staying pinned to A's location.
+    const boxA = (await toolbar.boundingBox())!;
+
+    // Phrase B: select "stable income" later in the same paragraph. This is a
+    // genuine re-select: removeAllRanges + addRange fires selectionchange,
+    // SelectionAnchorBridge recomputes activeSelection from the new native
+    // selection, and the toolbar must track B — not reuse A's anchor.
+    const phraseB = "stable income";
+    const textB = await selectPhrase(page, phraseB);
+    expect(textB, "phrase B native selection should match").toBe(phraseB);
+
+    // Toolbar must stay visible (not dismissed by the re-select).
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // The native selection must now be B, not A. Because the action handlers
+    // (copy/highlight/note/lookup/ask) read from activeSelection which is
+    // derived from the native selection via SelectionAnchorBridge, a native
+    // selection of B guarantees copy/anchor use B and A is not reused.
+    const nativeAfterB = await page.evaluate(
+      () => window.getSelection()?.toString() ?? "",
+    );
+    expect(nativeAfterB, "native selection must be B after re-select").toBe(
+      phraseB,
+    );
+    expect(
+      nativeAfterB,
+      "native selection must NOT contain phrase A after re-select",
+    ).not.toContain(phraseA);
+
+    // Click copy — onPointerDown preventDefault keeps the native selection
+    // alive so handleCopy reads activeSelection (which is B). Verify the
+    // clipboard actually receives B, not A.
+    const copyButton = page.locator(
+      '[data-reader-record-toolbar-action="copy"]',
+    );
+    await expect(copyButton).toBeEnabled();
+    await copyButton.click();
+
+    // Read the clipboard. The copy handler writes activeSelection.selectedText
+    // (=== B) to the clipboard. If A were reused, the clipboard would contain
+    // A instead.
+    const clipboardText = await page.evaluate(() =>
+      navigator.clipboard.readText(),
+    );
+    expect(clipboardText, "clipboard must contain phrase B (not A)").toBe(
+      phraseB,
+    );
+    expect(
+      clipboardText,
+      "clipboard must NOT contain phrase A",
+    ).not.toContain(phraseA);
+
+    // Toolbar should remain visible — selection preserved after copy.
+    await expect(toolbar).toBeVisible({ timeout: 5000 });
+
+    // The toolbar should have moved to track B (different vertical position
+    // than when A was selected), proving it re-anchored rather than staying
+    // pinned to A.
+    const boxB = (await toolbar.boundingBox())!;
+    expect(
+      Math.abs(boxB.y - boxA.y),
+      "toolbar should re-position for phrase B (different y than A)",
+    ).toBeGreaterThan(2);
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-reselect-a-to-b.png",
+    });
+  });
+
+  test("selection outside the Reader document closes the toolbar", async ({
+    page,
+  }) => {
+    // First establish a selection inside the Reader document so the toolbar
+    // is visible.
+    await selectSourceText(page);
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // Now select text outside `.reader-record-plate-document` (page chrome:
+    // title, header, etc.). SelectionAnchorBridge must detect that the
+    // native selection's anchorNode is not inside the Reader document root
+    // and dismiss the toolbar — it must NOT fall back to a stale
+    // editor.selection that would keep the toolbar alive with the old
+    // anchor.
+    const outsideText = await selectTextOutsideReaderDocument(page);
+    expect(
+      outsideText.trim().length,
+      "should have selected some text outside the Reader document",
+    ).toBeGreaterThan(0);
+
+    await expect(toolbar, "toolbar must close when selection leaves the document").toHaveCount(
+      0,
+      { timeout: 5000 },
+    );
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-closed-outside-doc.png",
+    });
+
+    await cleanupProbeOutsideReaderDocument(page);
+  });
+
+  // -------------------------------------------------------------------------
+  // Stable block type coverage — toolbar appears across all Markdown blocks.
+  // -------------------------------------------------------------------------
+
+  test("heading block selection shows toolbar", async ({ page }) => {
+    const selectedText = await selectTextInBlock(page, "heading");
+    expect(
+      selectedText.trim().length,
+      "heading native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-heading.png",
+    });
+  });
+
+  test("markdown blockquote selection shows toolbar", async ({ page }) => {
+    const selectedText = await selectTextInBlock(page, "blockquote");
+    expect(
+      selectedText.trim().length,
+      "blockquote native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-blockquote.png",
+    });
+  });
+
+  test("list_item selection shows toolbar", async ({ page }) => {
+    const selectedText = await selectTextInBlock(page, "list_item");
+    expect(
+      selectedText.trim().length,
+      "list_item native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-list_item.png",
+    });
+  });
+
+  test("table_cell selection shows toolbar", async ({ page }) => {
+    const selectedText = await selectTextInBlock(page, "table_cell");
+    expect(
+      selectedText.trim().length,
+      "table_cell native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-table_cell.png",
+    });
+  });
+
+  test("source_callout selection shows toolbar", async ({ page }) => {
+    const selectedText = await selectTextInBlock(page, "source_callout");
+    expect(
+      selectedText.trim().length,
+      "source_callout native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-source_callout.png",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Negative case — translation block is non-source, toolbar must NOT appear.
+  // -------------------------------------------------------------------------
+
+  test("translation block selection does NOT show toolbar", async ({ page }) => {
+    // The translation text lives inside the reader_translation_group (non-source).
+    // Select it via the native Selection API (same approach as selectPhrase)
+    // scoped to the translation lane.
+    const selected = await page.evaluate((target) => {
+      const doc = document.querySelector(".reader-record-plate-document");
+      if (!doc) return "";
+      const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+      let node: Text | null = null;
+      while (walker.nextNode()) {
+        const text = walker.currentNode as Text;
+        if (text.data.includes(target)) {
+          node = text;
+          break;
+        }
+      }
+      if (!node) return "";
+      const start = node.data.indexOf(target);
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, start + target.length);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return sel.toString();
+    }, TRANSLATION_TEXT);
+
+    expect(
+      selected.trim().length,
+      "translation native selection should produce text",
+    ).toBeGreaterThan(0);
+
+    // Wait 2 seconds to confirm the toolbar does not appear for non-source
+    // (translation) selections.
+    await page.waitForTimeout(2000);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar, "toolbar must NOT appear for translation selection").toHaveCount(
+      0,
+      { timeout: 3000 },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-anchor selection — toolbar stays for copy/Ask per multi_text contract.
+  // -------------------------------------------------------------------------
+
+  test("cross-anchor selection across paragraph and heading shows toolbar", async ({
+    page,
+  }) => {
+    // Select text spanning from the end of the paragraph to the start of the
+    // heading using the browser Selection API (Range). This creates a
+    // cross-anchor selection that spans two anchor segments. Per the
+    // multi_text contract, cross-anchor selection should keep the toolbar
+    // available for copy/Ask.
+    const selected = await page.evaluate(() => {
+      const doc = document.querySelector(".reader-record-plate-document");
+      if (!doc) return "";
+
+      const paragraph = doc.querySelector(
+        '[data-reader-record-node="paragraph"]',
+      );
+      const heading = doc.querySelector(
+        '[data-reader-record-stable-block-type="heading"]',
+      );
+      if (!paragraph || !heading) return "";
+
+      // Find the last text node in the paragraph and the first text node
+      // in the heading.
+      const paraWalker = document.createTreeWalker(
+        paragraph,
+        NodeFilter.SHOW_TEXT,
+      );
+      let lastParaText: Text | null = null;
+      let node: Text | null = null;
+      while (paraWalker.nextNode()) {
+        node = paraWalker.currentNode as Text;
+        if (node.data.trim().length > 0) {
+          lastParaText = node;
+        }
+      }
+      if (!lastParaText) return "";
+
+      const headingWalker = document.createTreeWalker(
+        heading,
+        NodeFilter.SHOW_TEXT,
+      );
+      let firstHeadingText: Text | null = null;
+      while (headingWalker.nextNode()) {
+        const t = headingWalker.currentNode as Text;
+        if (t.data.trim().length > 0) {
+          firstHeadingText = t;
+          break;
+        }
+      }
+      if (!firstHeadingText) return "";
+
+      // Range from the last 10 chars of the paragraph to the first 10 chars
+      // of the heading — a genuine cross-anchor span.
+      const paraStart = Math.max(0, lastParaText.data.length - 10);
+      const headingEnd = Math.min(firstHeadingText.data.length, 10);
+
+      const range = document.createRange();
+      range.setStart(lastParaText, paraStart);
+      range.setEnd(firstHeadingText, headingEnd);
+
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return sel.toString();
+    });
+
+    expect(
+      selected.trim().length,
+      "cross-anchor selection should produce text",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar, "toolbar should appear for cross-anchor selection").toBeVisible({
+      timeout: 8000,
+    });
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-cross-anchor.png",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Dark mode — toolbar must be readable with an opaque background.
+  // -------------------------------------------------------------------------
+
+  test("dark mode — toolbar is readable with opaque background", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+
+    const selectedText = await selectSourceText(page);
+    expect(
+      selectedText.trim().length,
+      "native selection should produce text in dark mode",
+    ).toBeGreaterThan(0);
+
+    const toolbar = page.locator(TOOLBAR_LOCATOR);
+    await expect(toolbar).toBeVisible({ timeout: 8000 });
+
+    // Verify the toolbar has an opaque background (not transparent) so it is
+    // readable in dark mode. The computed background-color must NOT be
+    // rgba(0, 0, 0, 0) (fully transparent).
+    const bgColor = await toolbar.evaluate((el) => {
+      return window.getComputedStyle(el).backgroundColor;
+    });
+    expect(
+      bgColor,
+      "toolbar background-color must not be transparent in dark mode",
+    ).not.toBe("rgba(0, 0, 0, 0)");
+
+    await page.screenshot({
+      path: "test-results/reader-selection-toolbar-dark-mode.png",
+    });
+  });
+});

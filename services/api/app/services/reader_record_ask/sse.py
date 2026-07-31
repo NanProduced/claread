@@ -32,6 +32,11 @@ EVENT_AGENTIC_TERMINAL = "agentic.terminal"
 EVENT_AGENTIC_REASONING_STARTED = "agentic.reasoning.started"
 EVENT_AGENTIC_REASONING_DELTA = "agentic.reasoning.delta"
 EVENT_AGENTIC_REASONING_COMPLETED = "agentic.reasoning.completed"
+# Thread-memory lifecycle. These always precede reasoning.started for a turn.
+EVENT_CONTEXT_COMPACTION_STARTED = "context.compaction.started"
+EVENT_CONTEXT_COMPACTION_COMPLETED = "context.compaction.completed"
+EVENT_CONTEXT_COMPACTION_FAILED = "context.compaction.failed"
+EVENT_CONTEXT_COMPACTION_FALLBACK = "context.compaction.fallback"
 
 
 def encode_sse(event: str, data: dict[str, Any]) -> str:

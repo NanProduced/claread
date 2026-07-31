@@ -67,6 +67,27 @@ async function waitForPortClosed(port: number, host: string, timeoutMs: number):
   throw new Error(`[ask-activity-r2] Test port ${port} remained open after cleanup.`);
 }
 
+async function stopWindowsPortListener(port: number): Promise<void> {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$listenerPids = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
+    "foreach ($listenerPid in $listenerPids) {",
+    "  if ($listenerPid -gt 0) {",
+    "    Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue",
+    "  }",
+    "}",
+  ].join("; ");
+  const killer = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    shell: false,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  await new Promise<void>((resolve) => {
+    killer.once("exit", () => resolve());
+    killer.once("error", () => resolve());
+  });
+}
+
 function startServer(
   command: string,
   args: string[],
@@ -75,13 +96,7 @@ function startServer(
   cwd: string,
 ): ChildProcess {
   console.log(`[${label}] Starting: ${command} ${args.join(" ")} (cwd=${cwd})`);
-  const isWindows = process.platform === "win32";
-  const executable = isWindows ? (process.env.ComSpec ?? "cmd.exe") : command;
-  const spawnArgs = isWindows
-    ? ["/d", "/s", "/c", [command, ...args].join(" ")]
-    : args;
-
-  const child = spawn(executable, spawnArgs, {
+  const child = spawn(command, args, {
     cwd,
     env,
     shell: false,
@@ -116,21 +131,18 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       if (!pid || pid <= 0) continue;
       console.log(`[ask-activity-r2] Shutting down PID ${pid} ...`);
       child.removeAllListeners("exit");
-      if (process.platform === "win32") {
-        const killer = spawn("taskkill.exe", ["/T", "/F", "/PID", String(pid)], {
-          shell: false,
-          stdio: "ignore",
-          windowsHide: true,
-        });
-        await new Promise<void>((resolve) => {
-          killer.once("exit", () => resolve());
-          killer.once("error", () => resolve());
-        });
-      } else {
-        child.kill("SIGTERM");
-      }
+      child.kill(process.platform === "win32" ? undefined : "SIGTERM");
     }
-    await waitForPortClosed(ENABLED_PORT, HOST, 15_000);
+    if (
+      process.platform === "win32" &&
+      (await isPortAcceptingConnections(ENABLED_PORT, HOST))
+    ) {
+      // Next dev delegates the listener to a worker process. Stop only the
+      // listener on this suite's exclusively reserved port; startup refuses
+      // to reuse a pre-existing listener, so this cannot target another suite.
+      await stopWindowsPortListener(ENABLED_PORT);
+    }
+    await waitForPortClosed(ENABLED_PORT, HOST, 30_000);
   };
 
   try {
@@ -141,8 +153,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
 
     const enabled = startServer(
-      "pnpm",
-      ["exec", "next", "dev", "--hostname", HOST, "--port", String(ENABLED_PORT)],
+      process.execPath,
+      [
+        path.resolve(webRoot, "node_modules/next/dist/bin/next"),
+        "dev",
+        "--hostname",
+        HOST,
+        "--port",
+        String(ENABLED_PORT),
+      ],
       {
         ...process.env,
         CLAREAD_PHONE_AUTH_PROVIDER: "mock",

@@ -49,7 +49,7 @@ interface ReaderFloatingSurfaceProps {
   children: ReactNode;
   className?: string;
   floatingRef?: (node: HTMLDivElement | null) => void;
-  chrome?: "lookup" | "bare";
+  chrome?: "lookup" | "bare" | "selection-toolbar";
 }
 
 type ReaderFloatingSurfaceDivProps = ReaderFloatingSurfaceProps &

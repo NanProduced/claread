@@ -682,15 +682,81 @@ def validate_reasoning_snapshot(payload: Any) -> dict[str, Any] | None:
     return payload
 
 
-class ReasoningProjectorObserver:
-    """Approved reasoning projector wired as the turn's ThinkingObserver.
+class UserSafeReasoningObserver:
+    """Fail-closed observer for provider-private reasoning.
 
-    Publishes ONLY the deterministic projection, as
+    Provider reasoning is not a user-facing explanation. Even after secret
+    redaction it can contain internal self-instructions, response-schema
+    names, tool strategy, and other implementation details that are
+    confusing for Ask Claread's language-learning audience. The public
+    process UI is therefore driven exclusively by typed lifecycle events.
+
+    This observer intentionally discards reasoning at ingress. It emits no
+    SSE reasoning events, retains no text, and produces no persistence
+    payload. Keeping the full ThinkingObserver/host API makes the safety
+    boundary explicit without changing provider transports.
+    """
+
+    def __init__(
+        self,
+        *,
+        emit: Callable[[RuntimeEvent], None],
+        message_id: str,
+        thread_id: str,
+        turn_run_id: str,
+        char_cap: int = DEFAULT_PROJECTION_CHAR_CAP,
+    ) -> None:
+        del emit, message_id, thread_id, turn_run_id, char_cap
+
+    def on_analysis_started(self) -> None:
+        return None
+
+    def on_reasoning_delta(self, text: str) -> None:
+        del text
+        return None
+
+    def on_analysis_finished(self) -> None:
+        return None
+
+    def advance_round(self) -> None:
+        return None
+
+    @property
+    def started(self) -> bool:
+        return False
+
+    @property
+    def has_content(self) -> bool:
+        return False
+
+    @property
+    def projection_text(self) -> str:
+        return ""
+
+    @property
+    def truncated(self) -> bool:
+        return False
+
+    def persistence_payload(self) -> None:
+        return None
+
+    def build_completed_event(self) -> None:
+        return None
+
+
+class ReasoningProjectorObserver:
+    """Legacy v1 reasoning projector retained for data-validation tests.
+
+    It publishes the deterministic redaction as
     ``AgenticReasoningStartedEvent`` / ``AgenticReasoningDeltaEvent`` via
     the injected sink. ``started`` fires only when the first non-empty
     projected increment exists — a provider that returns no non-empty
-    reasoning produces no events at all. Raw reasoning is never logged,
-    persisted, or published by this class.
+    reasoning produces no events at all.
+
+    Redaction is not a user-safe explanation: ordinary model self-talk can
+    remain after secrets and internal identifiers are removed. Production
+    must use :class:`UserSafeReasoningObserver`; this class is not wired to
+    an Ask Claread request path.
 
     ``AgenticReasoningCompletedEvent`` is built by
     :meth:`build_completed_event` and emitted by the host only after the
@@ -835,6 +901,7 @@ __all__ = [
     "IncrementalRedactor",
     "ReasoningProjectionBuffer",
     "ReasoningProjectorObserver",
+    "UserSafeReasoningObserver",
     "redact_reasoning_text",
     "validate_reasoning_snapshot",
 ]

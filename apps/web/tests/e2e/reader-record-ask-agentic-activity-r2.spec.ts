@@ -588,9 +588,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       "data-activity-phase",
     );
     expect(phase).toBe("composing_answer");
-    // Fixed typed live label (ASK-COT-B1-R1) — never server summary copy.
+    // Fixed typed live label (R3: 正在整理回答) — never server summary copy.
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
-      "组织回答",
+      "整理回答",
     );
 
     await releaseAll(page);
@@ -631,8 +631,8 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     );
     const summary = await page.locator('[data-testid="ask-agentic-activity"]').textContent();
     expect(phase).toBe("composing_answer");
-    // Fixed typed label only.
-    expect(summary).toContain("组织回答");
+    // Fixed typed label only (R3: 正在整理回答).
+    expect(summary).toContain("整理回答");
     expect(summary).not.toContain("正在组织回答");
     expect(summary).not.toContain("乱序的阅读");
     expect(summary).not.toContain("重复的搜索");
@@ -683,8 +683,13 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     await submitQuestion(page, "测试问题");
     await waitForActivityStatus(page, "degraded");
-    // CoT live header uses fixed typed label; warning copy is NOT owned by CoT.
+    // R3: searching_article is an INTERNAL stage — its label never appears
+    // in the live header; the header falls back to the learner-facing
+    // label. Warning copy is NOT owned by CoT either way.
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
+      "正在整理回答",
+    );
+    await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
       "检索文章",
     );
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
@@ -1312,13 +1317,14 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // ASK-COT: no reasoning events ⇒ the Chain of Thought still carries
-    // the typed activity steps, but NO reasoning section and the settled
-    // copy says 处理过程 (never 思考过程). No empty reasoning placeholder.
+    // R3: no reasoning events ⇒ the Chain of Thought still carries the
+    // host lifecycle steps (理解问题 → 整理回答), but NO reasoning section
+    // and the settled one-liner (never 思考过程). No empty reasoning
+    // placeholder.
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
     const cot = page.locator('[data-testid="ask-turn-process"]');
     await expect(cot).toBeVisible();
-    await expect(cot).toContainText("处理过程");
+    await expect(cot).toContainText("已整理回答");
     await expect(cot).not.toContainText("思考过程");
     // Steps live inside the collapsed content — expand before counting.
     await cot.locator('[data-slot="chain-of-thought-trigger"]').click();
@@ -1398,9 +1404,13 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     // Foreign reasoning is ignored ⇒ no reasoning element, no foreign text.
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
-    // ASK-COT: run_started was observed but neither steps nor reasoning
-    // materialized ⇒ the disclosure renders no empty shell at all.
-    await expect(page.locator('[data-testid="ask-turn-process"]')).toHaveCount(0);
+    // R3: the accepted run still preserves the host lifecycle summary
+    // (理解问题 → 整理回答) — but NO reasoning section materializes from
+    // the foreign frames, and no foreign text leaks.
+    const cot = page.locator('[data-testid="ask-turn-process"]');
+    await expect(cot).toBeVisible();
+    await expect(cot).toContainText("已整理回答");
+    expect(await cot.locator('[data-testid="ask-turn-process-reasoning"]').count()).toBe(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain("外来思考");
   });

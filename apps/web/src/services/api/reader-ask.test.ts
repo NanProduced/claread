@@ -138,6 +138,9 @@ describe("reader-ask API transport", () => {
       // web_search_mode so the host can decide capability without
       // guessing. Default is "disabled" when the caller omits it.
       web_search_mode: "disabled",
+      // ASK-RETRY-CONTRACT-R2: submission identity always forwarded
+      // (null when the caller omits it).
+      client_submission_id: null,
       anchor: {
         record_id: "reading-record-1",
         base_id: "base-1",
@@ -152,7 +155,139 @@ describe("reader-ask API transport", () => {
         text_hash: "9fd7545a",
         hash_algorithm: "fnv1a32-utf16",
       },
+      // ASK-UX-COT-COMPOSER-R3 P2: the plural contract carries the same
+      // single anchor for a single-selection turn.
+      focus_anchors: [
+        {
+          record_id: "reading-record-1",
+          base_id: "base-1",
+          generation: 2,
+          unit_id: "unit-1",
+          anchor_segment_id: "seg-1",
+          scope: "stable_source",
+          offset_unit: "utf16",
+          start_offset: 0,
+          end_offset: 6,
+          selected_text: "memory",
+          text_hash: "9fd7545a",
+          hash_algorithm: "fnv1a32-utf16",
+        },
+      ],
     });
+  });
+
+  it("forwards EVERY selection anchor via focus_anchors (no first-anchor loss)", async () => {
+    const anchorFor = (
+      segment: string,
+      start: number,
+      end: number,
+      hash: string,
+      text: string,
+    ) => ({
+      record_id: "reading-record-1",
+      base_id: "base-1",
+      generation: 2,
+      unit_id: "unit-1",
+      anchor_segment_id: segment,
+      scope: "stable_source",
+      offset_unit: "utf16",
+      start_offset: start,
+      end_offset: end,
+      selected_text: text,
+      text_hash: hash,
+      hash_algorithm: "fnv1a32-utf16",
+    });
+    const selectionAttachment = (
+      id: string,
+      anchor: Record<string, unknown>,
+    ) => ({
+      kind: "text_selection" as const,
+      subtype: "text_range" as const,
+      label: String(anchor.selected_text),
+      selected_text: String(anchor.selected_text),
+      target_key: `record:reading-record-1:range:${id}`,
+      metadata: {
+        source_surface: "selection_toolbar" as const,
+        reading_record_anchor: anchor,
+      },
+    });
+    await createUpstreamReadingRecordAskStream(
+      "reading-record-1",
+      "thread-1",
+      {
+        content: "Compare these passages",
+        entry_action: "ask_about_this",
+        model: null,
+        page_identity: {
+          record_id: "reading-record-1",
+          title: "Reading Record",
+          surface: "reader",
+          source: "reader_2_0",
+          available_context_capabilities: ["record_context"],
+          has_article_overview: false,
+          has_sentence_entries: true,
+          has_annotations: false,
+          has_reader_notes: false,
+        },
+        attachments: [
+          selectionAttachment("seg-auto", anchorFor("seg-1", 0, 6, "aaaaaaaa", "自动选区")),
+          selectionAttachment("seg-m1", anchorFor("seg-2", 10, 20, "bbbbbbbb", "固定选区一")),
+          selectionAttachment("seg-m2", anchorFor("seg-3", 30, 40, "cccccccc", "固定选区二")),
+          selectionAttachment("seg-m3", anchorFor("seg-4", 50, 60, "dddddddd", "固定选区三")),
+          // Duplicate anchor identity (different display text) must be
+          // deduped by fingerprint, not by text.
+          selectionAttachment("seg-dup", anchorFor("seg-1", 0, 6, "aaaaaaaa", "重复锚点")),
+        ],
+      },
+      "session-token",
+    );
+
+    const [, init] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body)) as {
+      anchor: Record<string, unknown>;
+      focus_anchors: Record<string, unknown>[];
+    };
+    // The auto slot plus all THREE manual slots are forwarded. The
+    // duplicate fingerprint is deduped without silently dropping a visible
+    // composer chip.
+    expect(body.focus_anchors).toHaveLength(4);
+    expect(body.focus_anchors.map((a) => a.anchor_segment_id)).toEqual([
+      "seg-1",
+      "seg-2",
+      "seg-3",
+      "seg-4",
+    ]);
+    // Legacy singular field carries the primary (first) anchor.
+    expect(body.anchor).toMatchObject({ anchor_segment_id: "seg-1" });
+  });
+
+  it("sends null focus_anchors when no attachment carries an anchor", async () => {
+    await createUpstreamReadingRecordAskStream(
+      "reading-record-1",
+      "thread-1",
+      {
+        content: "A plain question",
+        entry_action: "ask_about_this",
+        model: null,
+        page_identity: {
+          record_id: "reading-record-1",
+          title: "Reading Record",
+          surface: "reader",
+          source: "reader_2_0",
+          available_context_capabilities: ["record_context"],
+          has_article_overview: false,
+          has_sentence_entries: true,
+          has_annotations: false,
+          has_reader_notes: false,
+        },
+        attachments: [],
+      },
+      "session-token",
+    );
+    const [, init] = vi.mocked(global.fetch).mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(body.anchor).toBeNull();
+    expect(body.focus_anchors).toBeNull();
   });
 
   it("strips BFF-only and stale metadata before forwarding generic Reader Ask", async () => {

@@ -38,6 +38,7 @@ services:
       # 0020/0025 intentionally not mounted here (pre-existing residual, not this task).
       - ../migrations/0026_reader_ask_client_submission_idempotency.sql:/docker-entrypoint-initdb.d/0026_reader_ask_client_submission_idempotency.sql:ro
       - ../migrations/0027_reader_ask_client_submission_claim_generation.sql:/docker-entrypoint-initdb.d/0027_reader_ask_client_submission_claim_generation.sql:ro
+      - ../migrations/0028_reader_ask_thread_memory.sql:/docker-entrypoint-initdb.d/0028_reader_ask_thread_memory.sql:ro
       - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]

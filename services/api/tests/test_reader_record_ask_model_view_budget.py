@@ -27,7 +27,9 @@ from app.services.reader_record_ask.model_view_budget import (
     RESERVE_CONTROL,
     RESERVE_EXPAND,
     RESERVE_MAP,
+    RESERVE_MEMORY,
     RESERVE_RAG,
+    RESERVE_RECENT_HISTORY,
     RESERVE_REQUEST_FRAME,
     RESERVE_SELECTION,
     BudgetChargeDenied,
@@ -86,13 +88,13 @@ def _chars(n: int) -> object:
 
 
 # ---------------------------------------------------------------------------
-# Budget: seven accounts + hard caps
+# Budget: nine accounts + hard caps
 # ---------------------------------------------------------------------------
 
 
-def test_account_reserves_sum_to_96k_cap() -> None:
+def test_account_reserves_sum_to_128k_cap() -> None:
     assert sum(ACCOUNT_RESERVES.values()) == MODEL_VISIBLE_TURN_PAYLOAD_CAP
-    assert MODEL_VISIBLE_TURN_PAYLOAD_CAP == 96_000
+    assert MODEL_VISIBLE_TURN_PAYLOAD_CAP == 128_000
     assert ACCOUNT_RESERVES == {
         "request_frame": RESERVE_REQUEST_FRAME,
         "selection": RESERVE_SELECTION,
@@ -101,14 +103,18 @@ def test_account_reserves_sum_to_96k_cap() -> None:
         "expand": RESERVE_EXPAND,
         "rag": RESERVE_RAG,
         "control": RESERVE_CONTROL,
+        "memory": RESERVE_MEMORY,
+        "recent_history": RESERVE_RECENT_HISTORY,
     }
-    assert RESERVE_REQUEST_FRAME == 16_000
+    assert RESERVE_REQUEST_FRAME == 12_000
     assert RESERVE_SELECTION == 6_000
-    assert RESERVE_BASELINE == 14_000
+    assert RESERVE_BASELINE == 12_000
     assert RESERVE_MAP == 6_000
-    assert RESERVE_EXPAND == 30_000
-    assert RESERVE_RAG == 20_000
+    assert RESERVE_EXPAND == 24_000
+    assert RESERVE_RAG == 16_000
     assert RESERVE_CONTROL == 4_000
+    assert RESERVE_MEMORY == 8_000
+    assert RESERVE_RECENT_HISTORY == 40_000
 
 
 def test_per_account_hard_cap_denies_without_mutating() -> None:

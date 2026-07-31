@@ -1222,8 +1222,38 @@ class TestReaderRecordAskBudgetCapture:
             yield "event: message.completed\ndata: {}\n\n"
 
         message_id = uuid4()
+        repo = MagicMock()
+        repo.get_thread = AsyncMock(return_value={"id": THREAD_ID})
+        persisted_snapshot = {
+            "retry_lane": "agentic",
+            "execution_version": "reader_record_ask_agentic_v2",
+            "model_option_key": "deepseek-pro",
+            "web_search_mode": "disabled",
+        }
+        repo.get_assistant_message_with_preceding_user_message = AsyncMock(
+            return_value=(
+                {
+                    "metadata_json": {"retry_snapshot": persisted_snapshot},
+                    "turn_run_execution_version": "reader_record_ask_agentic_v2",
+                },
+                {
+                    "metadata_json": {
+                        "retry_snapshot": persisted_snapshot,
+                        "web_search_mode": "disabled",
+                    }
+                },
+            )
+        )
 
         with (
+            patch(
+                "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+                return_value=repo,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+                return_value=repo,
+            ),
             patch(
                 "app.services.reader_record_ask.service.get_settings",
             ) as mock_settings,
@@ -1251,6 +1281,7 @@ class TestReaderRecordAskBudgetCapture:
                 user_id=UUID(USER_ID),
                 reading_record_id=RECORD_ID,
                 thread_id=UUID(THREAD_ID),
+                message_id=message_id,
             )
             chunks = [
                 chunk
@@ -1304,8 +1335,32 @@ class TestReaderRecordAskBudgetCapture:
             yield "event: message.completed\ndata: {}\n\n"
 
         message_id = uuid4()
+        repo = MagicMock()
+        repo.get_thread = AsyncMock(return_value={"id": THREAD_ID})
+        repo.get_assistant_message_with_preceding_user_message = AsyncMock(
+            return_value=(
+                {
+                    "metadata_json": {
+                        "retry_snapshot": {"retry_lane": "legacy"}
+                    }
+                },
+                {
+                    "metadata_json": {
+                        "retry_snapshot": {"retry_lane": "legacy"}
+                    }
+                },
+            )
+        )
 
         with (
+            patch(
+                "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+                return_value=repo,
+            ),
+            patch(
+                "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+                return_value=repo,
+            ),
             patch(
                 "app.services.reader_record_ask.service.get_settings",
             ) as mock_settings,
@@ -1327,6 +1382,7 @@ class TestReaderRecordAskBudgetCapture:
                 user_id=UUID(USER_ID),
                 reading_record_id=RECORD_ID,
                 thread_id=UUID(THREAD_ID),
+                message_id=message_id,
             )
             chunks = [
                 chunk

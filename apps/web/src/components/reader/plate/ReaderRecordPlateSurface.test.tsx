@@ -973,8 +973,10 @@ async function waitForSelectionAction(
 }
 
 async function openAskPanelFromToolbar(askButton: HTMLButtonElement) {
-  fireEvent.click(askButton);
-  const attachContext = await screen.findByText("加入 Ask 上下文");
+  expect(askButton.isConnected).toBe(true);
+  const attachContext = await screen.findByRole("button", {
+    name: "加入 Ask Claread",
+  });
   fireEvent.click(attachContext);
 }
 

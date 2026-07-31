@@ -28,10 +28,19 @@ def build_envelope_from_facts(
     facts: Any,
     request_anchor: Any | None,
     validated_anchor: Any | None = None,
+    focus_anchors: Any | None = None,
     stable_document_id: UUID | None = None,
     web_search_mode: WebSearchMode = "disabled",
 ) -> ReadingRecordAskContextEnvelope:
-    """Construct envelope after route-level record/anchor validation."""
+    """Construct envelope after route-level record/anchor validation.
+
+    R3 P2: ``focus_anchors`` is the full canonical anchor set (≤4,
+    already gate-validated by the service layer). Each entry is mapped to
+    an :class:`EnvelopeInitialAnchor` (unit-local offsets + validated
+    text/hash). Base-relative spans are only derived for the primary
+    ``request_anchor`` / ``validated_anchor`` pair — focus entries carry
+    ``None`` base spans (never fabricated).
+    """
     base = facts.build_result.base
     record = facts.record
     initial: EnvelopeInitialAnchor | None = None
@@ -53,6 +62,21 @@ def build_envelope_from_facts(
             base_start_utf16=base_start,
             base_end_utf16=base_end,
         )
+    envelope_focus: tuple[EnvelopeInitialAnchor, ...] | None = None
+    if focus_anchors:
+        mapped: list[EnvelopeInitialAnchor] = []
+        for entry in focus_anchors:
+            mapped.append(
+                EnvelopeInitialAnchor(
+                    unit_id=str(entry.unit_id),
+                    anchor_segment_id=str(entry.anchor_segment_id),
+                    start_offset=int(entry.start_offset),
+                    end_offset=int(entry.end_offset),
+                    selected_text=str(entry.selected_text),
+                    text_hash=str(entry.text_hash),
+                )
+            )
+        envelope_focus = tuple(mapped)
     return build_context_envelope(
         VerifiedEnvelopeInput(
             user_id=user_id,
@@ -64,6 +88,7 @@ def build_envelope_from_facts(
             product_state=str(record.product_state),
             readiness_state=str(record.readiness_state),
             initial_anchor=initial,
+            focus_anchors=envelope_focus,
             visible_range=None,
             can_read_range=True,
             can_search_current_article=True,

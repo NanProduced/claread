@@ -25,6 +25,26 @@ This module compiles a persisted option into a single
   version + fingerprint) — never API key, body, raw reasoning,
   user / record identity, or provider raw payload.
 
+R1A extension
+-------------
+When ``settings.reader_record_ask_memory_enabled`` is true, the resolver
+also compiles a :class:`CompactorBudgetConfig` placeholder for the
+thread-memory compactor (R2 will wire the actual model call). R1A only
+compiles the config; the compactor is **not** invoked in R1A.
+
+H9 handling convention
+----------------------
+- ``response_format`` is documented on :class:`CompactorBudgetConfig` for
+  observability but is **not** forwarded to the provider wire directly.
+  The actual response format is derived by PydanticAI from the
+  compactor agent's ``output_type`` (same mechanism as the main answer
+  agent). The field exists only so an operator can audit which schema
+  the compactor will use.
+- ``thinking_enabled`` is explicitly ``False`` for the compactor. The
+  compactor does **not** reuse the main answer's thinking-enabled model
+  profile; it uses its own non-thinking model settings (R2 will wire
+  the actual ``ModelSettings``).
+
 Fail-closed contract
 --------------------
 When the selected option cannot resolve to a buildable model, the
@@ -91,6 +111,41 @@ class ReaderRecordAskExecutionUnavailable(RuntimeError):
         super().__init__(f"execution_unavailable option={option_key}: {reason}")
         self.option_key = option_key
         self.reason = reason
+
+
+@dataclass(frozen=True, slots=True)
+class CompactorBudgetConfig:
+    """R1A: thread-memory compactor budget placeholder (H9 handling).
+
+    R1A compiles this config but does **not** invoke the compactor.
+    R2 will consume it to build the compactor ``Model`` + ``ModelSettings``
+    + ``UsageLimits`` and call the PydanticAI compactor agent.
+
+    H9 convention
+    --------------
+    - ``response_format`` is documented here for observability only. The
+      actual wire response format is derived by PydanticAI from the
+      compactor agent's ``output_type`` (same mechanism as the main
+      answer agent). This field is **not** forwarded to the provider
+      wire directly; it exists so an operator can audit which schema
+      the compactor will produce.
+    - ``thinking_enabled`` is explicitly ``False``. The compactor does
+      not reuse the main answer's thinking-enabled model profile — it
+      uses its own non-thinking model settings (R2 will wire the
+      actual ``ModelSettings``).
+    - ``model_profile`` is the fixed Reader Ask *profile name*
+      ``ask-main-deepseek-v4-flash``.  ``deepseek-v4-flash`` is the product
+      option/model key and cannot be passed to the profile router directly.
+      The compactor remains independent of the learner-selected answer model.
+    """
+
+    model_profile: str = "ask-main-deepseek-v4-flash"
+    max_output_tokens: int = 2048  # §5 compactor_output_cap_tokens
+    timeout_seconds: float = 10.0  # §5 compactor_timeout_seconds
+    retry_count: int = 1  # §5 retry_count (共 2 次；2 次失败即 emergency)
+    thinking_enabled: bool = False  # H9: 显式 disabled，不复用主答 thinking profile
+    # H9: 仅文档化；实际 response_format 由 PydanticAI output_type 派生。
+    response_format: str = "json_object"
 
 
 class ReaderRecordAskExecutionSnapshot(BaseModel):
@@ -219,6 +274,12 @@ class ReaderRecordAskExecutionConfig:
     # persisted model option + web_search_mode so the backend identity
     # is deterministic.
     web_search_backend: WebSearchBackend | None = field(default=None, repr=False)
+    # R1A: thread-memory compactor budget placeholder. ``None`` when
+    # ``settings.reader_record_ask_memory_enabled`` is False (default —
+    # the assembly path behaves exactly as today). When non-None, R2
+    # will consume this to build and invoke the compactor agent. R1A
+    # only compiles the config; the compactor is NOT invoked.
+    compactor_budget: CompactorBudgetConfig | None = None
 
     def model_settings(self) -> ModelSettings | None:
         """Return a fresh ``ModelSettings`` copy of the provider settings.
@@ -472,12 +533,21 @@ def resolve_reader_record_ask_execution(
         snapshot=snapshot,
         web_search_capability=web_search_capability,
         web_search_backend=web_search_backend,
+        # R1A: compile compactor budget placeholder when memory lane is
+        # enabled. R1A does NOT invoke the compactor — R2 will consume
+        # this config to build and call the compactor agent.
+        compactor_budget=(
+            CompactorBudgetConfig()
+            if cfg.reader_record_ask_memory_enabled
+            else None
+        ),
     )
 
 
 __all__ = [
     "EXECUTION_CONFIG_POLICY_VERSION",
     "WEB_SEARCH_CAPABILITY_POLICY_VERSION",
+    "CompactorBudgetConfig",
     "ReaderRecordAskExecutionConfig",
     "ReaderRecordAskExecutionSnapshot",
     "ReaderRecordAskExecutionUnavailable",

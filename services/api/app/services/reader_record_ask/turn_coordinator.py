@@ -7,11 +7,19 @@ Narrow public surface
 - :meth:`TurnCoordinator.search_current_article` → :class:`MeteredToolReturn`
 - :meth:`TurnCoordinator.search_web` → :class:`MeteredToolReturn`
 
-Owns registry, six-account budget, renderer, fence, pointer ledger,
+Owns registry, nine-account budget, renderer, fence, pointer ledger,
 selection expansion session, map expander, RAG identity, and search
 counter. Outer initial-assembly transaction is plan-then-commit with
 host-only rollback receipts; once ``agent.run`` begins the assembly is
 committed and is never refunded because the model already saw content.
+
+R1A extension
+-------------
+When ``memory_enabled=True`` the coordinator loads a thread-memory
+snapshot (CAS-checked against canonical messages; emergency-rebuilt on
+mismatch) and passes it to the prompt builder so a memory data block is
+injected into the user message. When ``False`` (default) the assembly
+path behaves exactly as today — no memory loading, no injection.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 from xml.sax.saxutils import escape as _xml_escape_web
 
 if TYPE_CHECKING:
@@ -42,6 +51,14 @@ if TYPE_CHECKING:
     from app.services.reader_orchestration.map_source_material_provider import (
         MapSourceMaterial,
         MapSourceMaterialProvider,
+    )
+
+    # R1.5 P0-1: typed store/adapter — coordinator no longer depends on Any.
+    from app.services.reader_record_ask.thread_memory.repository import (
+        ThreadMemoryRepository,
+    )
+    from app.services.reader_record_ask.thread_memory.schema import (
+        ThreadMemorySnapshot,
     )
 
 from app.services.reader_record_ask.answer_block_provenance import ArticleScope
@@ -84,6 +101,10 @@ from app.services.reader_record_ask.evidence_transaction import (
     rollback_charged_observation,
 )
 from app.services.reader_record_ask.fence import FenceFn, StaticGenerationFence
+from app.services.reader_record_ask.focus_selection_model_view import (
+    FocusSelectionBudgetExhausted,
+    assemble_focus_selections_section,
+)
 from app.services.reader_record_ask.model_view_budget import (
     ModelViewBudgetError,
     ModelViewRenderer,
@@ -249,13 +270,23 @@ class HostBudgetExhausted(Exception):
 
     Raised from tool paths when even a minimal safe tool-view cannot be
     charged, and from assemble when request-frame cannot fit. Runtime /
-    production_stream map this to ``terminal_reason="budget_exhausted"``.
+    production_stream map this to ``terminal_reason="budget_exhausted"`.
     """
 
     def __init__(self, *, account: str, reason: str = "budget_exhausted") -> None:
         self.account = account
         self.reason = reason
         super().__init__(f"host_budget_exhausted account={account} reason={reason}")
+
+
+class _FenceFailure(Exception):
+    """R1.6 P1-1: sentinel raised when ``check_all_bindings`` crashes.
+
+    The caller (``_load_memory_snapshot``) catches this and skips memory
+    injection entirely — old bindings must NEVER be reused because they
+    may carry a stale ``validity_check='valid'`` from a previous run.
+    The Ask pipeline continues normally without memory.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +327,12 @@ class TurnAssembly:
     baseline_result: BaselineModelViewResult
     map_result: ArticleMapResult
     available_handle_ids: tuple[str, ...]
+    # ASK-UX-COT-COMPOSER-R3 P2 — rendered focus selections section
+    # (additional user-pinned anchors beyond the primary selection),
+    # charged to the selection account. Empty when absent / no fit.
+    # Appended to the model-visible user prompt by the runtime; excluded
+    # from the request_frame trusted surface (untrusted article text).
+    focus_selections_text: str = ""
 
 
 @dataclass
@@ -305,10 +342,17 @@ class _OuterTxnReceipt:
     selection_result: SelectionModelViewResult | None = None
     selection_observation: ServerEvidenceObservation | None = None
     selection_charge: int = 0
+    # R3 P2: focus selections charged to the shared selection account
+    # (registry-free; refunded as plain chars on outer rollback).
+    focus_charge: int = 0
     baseline_result: BaselineModelViewResult | None = None
     map_result: ArticleMapResult | None = None
     map_charge: int = 0
     request_frame_charge: int = 0
+    # R1A: memory account charge for outer-transaction rollback. ``0``
+    # when no memory snapshot was injected (flag off / empty thread).
+    memory_charge: int = 0
+    recent_history_charge: int = 0
     # Server-only map cursor issue markers from this assembly (parallel to
     # issued cursors). Outer rollback uses
     # ``ledger.rollback_transition_by_marker`` only — never raw token pop.
@@ -340,9 +384,36 @@ class TurnCoordinator:
         max_web_search_calls: int | None = None,
         web_search_deadline_seconds: float = WEB_SEARCH_TURN_DEADLINE_SECONDS,
         monotonic_clock: Callable[[], float] | None = None,
+        # R1A: thread-memory integration. When ``memory_enabled`` is True
+        # the coordinator loads a thread-memory snapshot (via
+        # ``memory_repository``) and passes it to the prompt builder so a
+        # memory data block is injected. When False (default) the
+        # assembly path behaves exactly as today. ``memory_repository``
+        # and ``thread_id`` are required when ``memory_enabled`` is True.
+        # R1.5 P0-1: ``memory_repository`` is typed (no longer ``Any``);
+        # ``thread_id`` is a UUID string. Repository calls are keyword-only.
+        memory_enabled: bool = False,
+        memory_repository: ThreadMemoryRepository | None = None,
+        thread_id: str | UUID | None = None,
+        # R2 production manager. Direct coordinator tests keep the R1
+        # deterministic path unless explicitly enabled.
+        memory_manager_enabled: bool = False,
+        memory_compactor: Any | None = None,
+        memory_event_sink: Callable[[Any], None] | None = None,
+        memory_settings: Any | None = None,
     ) -> None:
         if not isinstance(user_message, str):
             raise TypeError("user_message must be str")
+        # R1A: validate memory integration parameters.
+        if memory_enabled:
+            if memory_repository is None:
+                raise ValueError(
+                    "memory_repository is required when memory_enabled=True"
+                )
+            if not thread_id:
+                raise ValueError(
+                    "thread_id is required when memory_enabled=True"
+                )
         self.envelope = envelope
         self.document_access = document_access
         self.user_message = user_message  # exact; never strip
@@ -351,6 +422,17 @@ class TurnCoordinator:
         self.fence: FenceFn = fence or StaticGenerationFence(
             live_generation=envelope.record_generation
         )
+        # R1A: thread-memory integration state. ``memory_enabled=False``
+        # means the coordinator never touches the thread_memory package —
+        # zero behavioral drift from the pre-R1A assembly path.
+        self.memory_enabled = memory_enabled
+        self.memory_repository = memory_repository
+        self.thread_id = thread_id
+        self.memory_manager_enabled = memory_manager_enabled
+        self.memory_compactor = memory_compactor
+        self.memory_event_sink = memory_event_sink
+        self.memory_settings = memory_settings
+        self._recent_history_view: RenderedModelView | None = None
         if evidence_registry is not None:
             if evidence_registry.envelope_fingerprint != envelope.envelope_fingerprint:
                 raise ValueError(
@@ -446,12 +528,251 @@ class TurnCoordinator:
     # Public: assemble
     # ------------------------------------------------------------------
 
+    async def _load_memory_snapshot(self) -> ThreadMemorySnapshot | None:
+        """R1.5: load + CAS-check + fence-rebuild + validate the snapshot.
+
+        Runs **before** the outer commit transaction so no budget /
+        registry / ledger mutation happens during memory loading. The
+        snapshot is passed to ``_commit_assembly`` which forwards it to
+        the prompt builder for injection.
+
+        Behavior when ``memory_enabled=False``: returns ``None``
+        immediately — zero behavioral drift from the pre-R1A path, and
+        **zero repository I/O** (no repository constructed, no DB call).
+
+        R1.5 P0-1/P0-4 hardening (replaces the R1A advisory-only flow):
+            1. Convert ``self.thread_id`` (str) → :class:`UUID`; reject
+               non-UUID values (fail-soft → None, no injection).
+            2. Load snapshot via keyword-only ``get_thread_memory_snapshot``.
+               Repository now returns a typed :class:`ThreadMemorySnapshot`
+               (parsed from ``snapshot_json``);异版/非法 JSON → None →
+               deterministic rebuild, never injected as-is.
+            3. CAS check: ``compute_watermark(canonical_messages)`` vs
+               ``snapshot.watermark``. Mismatch → emergency rebuild.
+            4. Fence rebuild: ``check_all_bindings`` returns a NEW list
+               of bindings with updated ``validity_check``. Rebuild each
+               episode's ``source_bindings`` with the returned list so
+               render sees accurate ``status='invalid'`` markers. Failed
+               article facts degrade to ``prior_mention`` at render time
+               WITHOUT retaining citation_ids (R0.1 §8.1).
+            5. Allowlist validate: ``validate_snapshot`` strips facts
+               whose ``source_ids`` are not in the Host allowlist or
+               whose article facts lack a Host binding. If stripped
+               ratio > 20% → reject the whole snapshot and fall back to
+               emergency_full_snapshot (deterministic rebuild). If the
+               rebuild also fails validation → return None (window
+               fallback; R1 does not inject memory).
+        """
+        if not self.memory_enabled or self.memory_repository is None or not self.thread_id:
+            return None
+
+        if self.memory_manager_enabled:
+            try:
+                thread_uuid = UUID(str(self.thread_id))
+            except (ValueError, TypeError, AttributeError):
+                return None
+            from app.services.reader_record_ask.thread_memory.manager import (
+                ThreadMemoryManager,
+            )
+
+            manager_kwargs: dict[str, Any] = {
+                "repository": self.memory_repository,
+                "renderer": self.renderer,
+                "event_sink": self.memory_event_sink,
+                "settings": self.memory_settings,
+            }
+            if self.memory_compactor is not None:
+                manager_kwargs["compactor"] = self.memory_compactor
+            prepared = await ThreadMemoryManager(
+                **manager_kwargs
+            ).prepare_context(
+                thread_id=thread_uuid,
+                fence_context={
+                    "reading_record_id": str(
+                        self.envelope.reading_record_id
+                    ),
+                    "current_generation": int(
+                        self.envelope.record_generation
+                    ),
+                    "current_base_id": str(self.envelope.base_id),
+                },
+            )
+            self._recent_history_view = prepared.recent_history_view
+            return prepared.snapshot
+
+        # R1.5 P0-1: unify UUID thread_id; repository requires UUID.
+        try:
+            thread_uuid = UUID(str(self.thread_id))
+        except (ValueError, TypeError, AttributeError):
+            # Non-UUID thread_id → fail-soft: no memory injection.
+            return None
+
+        # Lazy import — thread_memory package owns schema/allowlist/
+        # emergency/fence. Kept lazy so flag=False never imports them.
+        from app.services.reader_record_ask.thread_memory.allowlist import (
+            build_host_bindings,
+            compute_watermark,
+        )
+        from app.services.reader_record_ask.thread_memory.emergency import (
+            emergency_full_snapshot,
+        )
+
+        repo = self.memory_repository
+        # One PostgreSQL repeatable-read snapshot owns all memory inputs.
+        # Three independent repository calls could mix an old snapshot with
+        # messages/bindings from a concurrently completed regenerate.
+        canonical_view = await repo.load_canonical_memory_view(
+            thread_id=thread_uuid
+        )
+        if canonical_view is None:
+            return None
+        snapshot = canonical_view.snapshot
+        canonical_messages = list(canonical_view.canonical_messages)
+        ok_turn_runs = list(canonical_view.ok_turn_runs)
+
+        # R1.6 P0-2: Host binding map — the single source of truth for
+        # binding content. Derived from canonical ok turn runs.
+        host_bindings = build_host_bindings(ok_turn_runs)
+
+        if snapshot is None:
+            # No persisted snapshot (fresh thread / 异版 fail-soft) →
+            # deterministic rebuild from canonical messages.
+            snapshot = emergency_full_snapshot(
+                canonical_messages=canonical_messages,
+                ok_turn_runs=ok_turn_runs,
+                thread_id=str(self.thread_id),
+                host_bindings=host_bindings,
+            )
+            if snapshot is None or not snapshot.episodes:
+                return None
+        else:
+            # CAS check: watermark mismatch → stale snapshot → rebuild.
+            current_watermark = compute_watermark(canonical_messages)
+            if current_watermark != snapshot.watermark:
+                snapshot = emergency_full_snapshot(
+                    canonical_messages=canonical_messages,
+                    ok_turn_runs=ok_turn_runs,
+                    thread_id=str(self.thread_id),
+                    host_bindings=host_bindings,
+                )
+                if snapshot is None or not snapshot.episodes:
+                    return None
+
+        # R1.5 P0-4: fence rebuild — use check_all_bindings RETURN VALUE
+        # to rebuild episode bindings. The old code discarded the return
+        # value, so render never saw ``status='invalid'`` markers and
+        # failed article facts were NOT degraded to prior_mention.
+        #
+        # R1.6 P1-1: if check_all_bindings raises, the ENTIRE memory
+        # snapshot is NOT injected — return None. Old validity_check
+        # must NEVER be reused (it may carry a stale 'valid' status).
+        fence_context = {
+            "reading_record_id": str(self.envelope.reading_record_id),
+            "current_generation": int(self.envelope.record_generation),
+            "current_base_id": str(self.envelope.base_id),
+        }
+        try:
+            snapshot = await self._rebuild_fence_and_validate(
+                snapshot,
+                host_bindings=host_bindings,
+                canonical_messages=canonical_messages,
+                ok_turn_runs=ok_turn_runs,
+                fence_context=fence_context,
+            )
+        except _FenceFailure:
+            # Fence crashed → no validity info → skip memory injection.
+            return None
+        if snapshot is None:
+            return None
+
+        if not snapshot.episodes or all(
+            not ep.structured_facts for ep in snapshot.episodes
+        ):
+            return None
+
+        return snapshot
+
+    async def _rebuild_fence_and_validate(
+        self,
+        snapshot: ThreadMemorySnapshot,
+        *,
+        host_bindings: dict[str, Any],
+        canonical_messages: list[dict[str, Any]],
+        ok_turn_runs: list[dict[str, Any]],
+        fence_context: dict[str, Any],
+    ) -> ThreadMemorySnapshot | None:
+        """Fence rebuild + allowlist validate, with emergency fallback.
+
+        R1.6 P1-1: raises ``_FenceFailure`` if ``check_all_bindings``
+        raises — the caller must skip memory injection entirely.
+
+        R1.6 P0-2: ``validate_snapshot`` receives the Host binding map
+        (not just an id set) so tampered bindings are rejected.
+        """
+        from app.services.reader_record_ask.thread_memory.allowlist import (
+            build_allowlist,
+        )
+        from app.services.reader_record_ask.thread_memory.emergency import (
+            emergency_full_snapshot,
+        )
+        from app.services.reader_record_ask.thread_memory.preparation import (
+            prepare_snapshot_for_model,
+        )
+
+        allowlist = build_allowlist(canonical_messages, ok_turn_runs)
+
+        # The thread_memory package owns the ordering invariant:
+        # Host materialization -> live fence -> final validation.  In
+        # particular, do not inspect/fence snapshot-provided bindings here;
+        # a snapshot may omit them while facts reference real Host IDs.
+        try:
+            snapshot, metrics = await prepare_snapshot_for_model(
+                snapshot,
+                host_bindings=host_bindings,
+                allowlist=allowlist,
+                fence_context=fence_context,
+            )
+        except Exception as exc:
+            raise _FenceFailure() from exc
+        if not metrics.get("rejected"):
+            return snapshot
+
+        # --- Emergency fallback: rebuild + re-validate.
+        rebuilt = emergency_full_snapshot(
+            canonical_messages=canonical_messages,
+            ok_turn_runs=ok_turn_runs,
+            thread_id=str(self.thread_id),
+            host_bindings=host_bindings,
+        )
+        if rebuilt is None or not rebuilt.episodes:
+            return None
+
+        try:
+            rebuilt, m2 = await prepare_snapshot_for_model(
+                rebuilt,
+                host_bindings=host_bindings,
+                allowlist=allowlist,
+                fence_context=fence_context,
+            )
+        except Exception as exc:
+            raise _FenceFailure() from exc
+        if m2.get("rejected"):
+            return None
+        return rebuilt
+
     async def assemble_turn(self) -> TurnAssembly:
         """Plan (no mutation) then commit outer transaction.
 
         Request-frame excess fail-closes **before** any durable mutation
         that would leave residual registry/ledger/budget state (and before
         agent.run). The full original user question is never truncated.
+
+        R1A: when ``memory_enabled`` is True, the thread-memory snapshot
+        is loaded (CAS-checked + fence-checked) before the outer commit.
+        The snapshot is forwarded to ``_commit_assembly`` which passes it
+        to ``mint_turn_frame_prompt_capability`` for memory-block
+        injection. When False, no snapshot is loaded — behavior equals
+        today.
         """
         if self._assembled and self._assembly is not None:
             return self._assembly
@@ -481,10 +802,22 @@ class TurnCoordinator:
         # assemble_article_map() call.
         material = await self._load_map_source_material()
 
+        # R1A: load thread-memory snapshot (CAS + fence checked) before
+        # the outer commit. ``None`` when memory_enabled=False or the
+        # thread has no prior turns. Loaded here (async) so the sync
+        # ``_commit_assembly`` can inject it without I/O.
+        memory_snapshot = await self._load_memory_snapshot()
+
         # ---- outer commit (selection → baseline → map → request_frame) ----
         receipt = _OuterTxnReceipt()
         try:
-            assembly = self._commit_assembly(scope=scope, material=material, receipt=receipt)
+            assembly = self._commit_assembly(
+                scope=scope,
+                material=material,
+                receipt=receipt,
+                memory_snapshot=memory_snapshot,
+                recent_history_view=self._recent_history_view,
+            )
         except ModelViewBudgetError as exc:
             self._rollback_outer(receipt)
             raise HostBudgetExhausted(
@@ -576,6 +909,8 @@ class TurnCoordinator:
         scope: DocumentScopeSnapshot,
         material: MapSourceMaterial | None,
         receipt: _OuterTxnReceipt,
+        memory_snapshot: Any = None,
+        recent_history_view: RenderedModelView | None = None,
     ) -> TurnAssembly:
         envelope = self.envelope
         fp = envelope.envelope_fingerprint
@@ -612,6 +947,33 @@ class TurnCoordinator:
                 if selection.rendered_untrusted_block is not None
                 else 0
             )
+
+        # 1b) R3 P2 — focus selections: the user-pinned anchors BEYOND the
+        # primary selection (envelope.focus_anchors[1:]; the primary is
+        # already the selection block above). Shares the selection account;
+        # per-snippet fail-soft (a snippet that no longer fits is dropped,
+        # never a turn abort). Emphasis semantics live in the fixed
+        # framing text — never in client-supplied copy.
+        extra_focus_anchors = (
+            envelope.focus_anchors[1:]
+            if envelope.focus_anchors and len(envelope.focus_anchors) > 1
+            else ()
+        )
+        try:
+            focus_selections_text, focus_charge = (
+                assemble_focus_selections_section(
+                    focus_anchors=extra_focus_anchors,
+                    budget=self.budget,
+                    renderer=self.renderer,
+                )
+            )
+        except FocusSelectionBudgetExhausted as exc:
+            self._rollback_outer(receipt)
+            raise HostBudgetExhausted(
+                account="selection",
+                reason="focus_context_budget_exhausted",
+            ) from exc
+        receipt.focus_charge = focus_charge
 
         # 2) Baseline inject (renderer-only).
         baseline = assemble_baseline_model_view(
@@ -740,12 +1102,28 @@ class TurnCoordinator:
                 baseline_prompt=baseline_prompt,
                 map_prompt=map_prompt,
                 charge=True,
+                # R1A: forward the thread-memory snapshot. When None
+                # (flag off or empty thread) the prompt builder skips
+                # memory injection — behavior equals today.
+                memory_snapshot=memory_snapshot,
+                recent_history_view=recent_history_view,
             )
         except ModelViewBudgetError:
             # Leave residual cleanup to caller via receipt.
             raise
 
         receipt.request_frame_charge = turn_frame.request_frame_charge_cost
+        # R1A: record the memory charge for outer-transaction rollback.
+        # The memory account is charged inside
+        # ``mint_turn_frame_prompt_capability`` via ``_build_memory_section``.
+        # On rollback (``_rollback_outer``) the memory charge is refunded
+        # alongside selection / baseline / map / request_frame.
+        receipt.memory_charge = (
+            self.budget.spent("memory") if memory_snapshot is not None else 0
+        )
+        receipt.recent_history_charge = self.budget.spent(
+            "recent_history"
+        )
 
         # 8) Selection expansion session (only when expandable injected).
         if selection.status == "injected" and selection.selection.expandable and selected_text:
@@ -771,6 +1149,7 @@ class TurnCoordinator:
             baseline_result=baseline,
             map_result=map_result,
             available_handle_ids=tuple(handle_ids),
+            focus_selections_text=focus_selections_text,
         )
         return assembly
 
@@ -787,6 +1166,34 @@ class TurnCoordinator:
         """
         # Stable failure codes only — no body / token / marker / repr.
         unproven: list[str] = []
+
+        if receipt.recent_history_charge > 0:
+            try:
+                spent = self.budget.spent("recent_history")
+                if spent >= receipt.recent_history_charge:
+                    self.budget._refund_chars(  # noqa: SLF001
+                        "recent_history",
+                        receipt.recent_history_charge,
+                    )
+                elif spent > 0:
+                    unproven.append("recent_history_refund")
+            except Exception:  # noqa: BLE001
+                unproven.append("recent_history_refund")
+
+        # R1A: memory refund (if charged). Refunded first because the
+        # memory charge happens before the request_frame charge inside
+        # ``mint_turn_frame_prompt_capability``; reverse-order cleanup.
+        if receipt.memory_charge > 0:
+            try:
+                spent = self.budget.spent("memory")
+                if spent >= receipt.memory_charge:
+                    self.budget._refund_chars(  # noqa: SLF001
+                        "memory", receipt.memory_charge
+                    )
+                elif spent > 0:
+                    unproven.append("memory_refund")
+            except Exception:  # noqa: BLE001
+                unproven.append("memory_refund")
 
         # 1) Request-frame refund (if charged).
         if receipt.request_frame_charge > 0:
@@ -853,6 +1260,16 @@ class TurnCoordinator:
                 )
             except Exception:  # noqa: BLE001
                 unproven.append("selection_refund")
+
+        # 4b) R3 P2 focus selections — registry-free chars on the shared
+        # selection account; refund after the selection observation rollback.
+        if receipt.focus_charge > 0:
+            if self.budget.spent("selection") >= receipt.focus_charge:
+                self.budget._refund_chars(  # noqa: SLF001
+                    "selection", receipt.focus_charge
+                )
+            else:
+                unproven.append("focus_refund")
 
         if unproven:
             # Prefer the first unproven domain; never embed markers/tokens.

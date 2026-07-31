@@ -31,18 +31,21 @@ export const ReaderPlateKit = [
 /**
  * Reader Record Plate Kit — ReaderRecordPlateSurface 专用 plugin 列表
  *
- * 与 ReaderPlateKit 的区别：不注册 ReaderLeafKit（vocabulary / grammar /
- * user_highlight / user_note leaf plugin）。这些 mark 的视觉和交互全部由
- * ReaderRecordPlateSurface 的 renderLeaf 在外层 span 统一承载，避免
- * 嵌套 mark-hit wrapper 干扰浏览器原生 selection 落点。
- *
- * 保留：MarkdownKit / ReaderBlocksKit / FloatingToolbarKit / CommentKit /
- * CursorOverlayKit。
+ * 与 ReaderPlateKit 的区别：
+ * - 不注册 ReaderLeafKit（vocabulary / grammar / user_highlight / user_note
+ *   leaf plugin）。这些 mark 的视觉和交互全部由 ReaderRecordPlateSurface
+ *   的 renderLeaf 在外层 span 统一承载，避免嵌套 mark-hit wrapper 干扰
+ *   浏览器原生 selection 落点。
+ * - 不注册 FloatingToolbarKit。Reader 选区工具栏改由
+ *   ReaderRecordPlateSurface 内部通过 useReaderFloatingLayer +
+ *   ReaderFloatingSurface + ReaderFloatingToolbarButtons 渲染，以
+ *   activeSelection（SelectionAnchorBridge 产出）为唯一显示与定位真相，
+ *   不再依赖 Plate editor.selection（readonly 下与原生 selection 不可靠同步）。
+ *   保留 MarkdownKit / ReaderBlocksKit / CommentKit / CursorOverlayKit。
  */
 export const ReaderRecordPlateKit = [
   ...MarkdownKit,
   ...ReaderBlocksKit,
-  ...FloatingToolbarKit,
   ...CommentKit,
   ...CursorOverlayKit,
 ];

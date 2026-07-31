@@ -57,6 +57,7 @@ from app.services.reader_record_ask.runtime_events import (
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
+    ContextCompactionEvent,
     RunStartedEvent,
 )
 from app.services.reader_record_ask.sse import (
@@ -66,6 +67,8 @@ from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
+    EVENT_CONTEXT_COMPACTION_COMPLETED,
+    EVENT_CONTEXT_COMPACTION_STARTED,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
@@ -334,6 +337,43 @@ class _FakeRepo:
             self.heartbeat_calls.append(turn_run_id)
 
 
+def _configure_retry_pair(
+    repo: _FakeRepo,
+    *,
+    lane: str,
+    model_option_key: str | None = None,
+) -> UUID:
+    assistant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    snapshot = {
+        "retry_contract_version": "reader_ask_retry_v1",
+        "retry_lane": lane,
+        "execution_version": (
+            EXECUTION_VERSION_AGENTIC_V2 if lane == "agentic" else None
+        ),
+        "model_option_key": model_option_key,
+        "web_search_mode": "disabled",
+        "route_identity": "reader_record_ask",
+    }
+    metadata = {"retry_snapshot": snapshot}
+    repo.retry_assistant = {
+        "id": str(assistant_id),
+        "thread_id": str(_THREAD),
+        "role": "assistant",
+        "status": "completed",
+        "content_md": "old",
+        "metadata_json": metadata,
+    }
+    repo.retry_user = {
+        "id": str(UUID("55555555-5555-5555-5555-555555555555")),
+        "thread_id": str(_THREAD),
+        "role": "user",
+        "status": "completed",
+        "content_md": "original question",
+        "metadata_json": metadata,
+    }
+    return assistant_id
+
+
 def _parse_sse(chunks: list[str]) -> list[tuple[str, dict]]:
     events: list[tuple[str, dict]] = []
     for chunk in chunks:
@@ -381,8 +421,9 @@ async def test_flag_off_uses_legacy_stream_service() -> None:
             side_effect=_legacy,
         ) as mock_legacy:
             with patch(
-                "app.services.reader_record_ask.service._validate_reading_record_anchor",
+                "app.services.reader_record_ask.service._validate_reading_record_anchors",
                 new_callable=AsyncMock,
+                return_value=[],
             ):
                 with patch(
                     "app.services.reader_record_ask.service._ensure_default_thread",
@@ -417,8 +458,9 @@ async def test_flag_on_does_not_call_legacy_stream() -> None:
             new_callable=AsyncMock,
         ) as mock_legacy:
             with patch(
-                "app.services.reader_record_ask.service._validate_reading_record_anchor",
+                "app.services.reader_record_ask.service._validate_reading_record_anchors",
                 new_callable=AsyncMock,
+                return_value=[],
             ):
                 with patch(
                     "app.services.reader_record_ask.service._ensure_default_thread",
@@ -2339,6 +2381,65 @@ async def _stream_with_run_async(
 
 
 @pytest.mark.asyncio
+async def test_context_compaction_sse_precedes_agentic_work_and_is_safe() -> None:
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(
+            ContextCompactionEvent(
+                phase="started",
+                detail_code=None,
+                attempt_count=0,
+                elapsed_ms=0,
+            )
+        )
+        sink(
+            ContextCompactionEvent(
+                phase="completed",
+                detail_code="provider_exception-not-whitelisted",
+                attempt_count=1,
+                elapsed_ms=42,
+            )
+        )
+        sink(
+            RunStartedEvent(
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+                has_initial_selection=True,
+            )
+        )
+        return _ok_run_result(kwargs)
+
+    events, _repo = await _stream_with_run_async(_run)
+    names = [name for name, _ in events]
+    assert names.index(EVENT_CONTEXT_COMPACTION_STARTED) < names.index(
+        EVENT_CONTEXT_COMPACTION_COMPLETED
+    )
+    # The outer stream binds agentic.run_started before runtime assembly.
+    # Compaction still finishes before the first projected work/reasoning
+    # event, which is the product contract: no answer work runs against an
+    # uncompacted context.
+    assert names.index(EVENT_AGENTIC_RUN_STARTED) < names.index(
+        EVENT_CONTEXT_COMPACTION_STARTED
+    )
+    assert names.index(EVENT_CONTEXT_COMPACTION_COMPLETED) < names.index(
+        EVENT_AGENTIC_PROGRESS
+    )
+
+    payload = next(
+        data
+        for name, data in events
+        if name == EVENT_CONTEXT_COMPACTION_COMPLETED
+    )
+    assert payload["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
+    assert payload["message_id"]
+    assert payload["thread_id"] == str(_THREAD)
+    assert payload["turn_run_id"]
+    assert payload["detail_code"] is None
+    serialized = json.dumps(payload)
+    for leaked in ("query", "url", "transcript", "provider_exception-not-whitelisted"):
+        assert leaked not in serialized
+
+
+@pytest.mark.asyncio
 async def test_analysis_phase_events_no_longer_emit_reasoning_lifecycle() -> None:
     """AnalysisStarted/Finished map to agentic.progress only.
 
@@ -2374,9 +2475,12 @@ async def test_analysis_phase_events_no_longer_emit_reasoning_lifecycle() -> Non
 
 
 @pytest.mark.asyncio
-async def test_agentic_reasoning_events_on_successful_run() -> None:
-    """Provider reasoning streams as agentic.reasoning.* with strict seq,
-    identity binding, and persist-before-completed ordering."""
+async def test_provider_reasoning_is_not_public_on_successful_run() -> None:
+    """Provider-private reasoning never enters SSE or persistence.
+
+    The learner-facing process remains available through typed progress
+    events; successful answer streaming/completion is unaffected.
+    """
     first_chunk = "先分析句子主干。" * 60  # > holdback → several deltas
     second_chunk = "再确认从句关系。"
 
@@ -2400,55 +2504,17 @@ async def test_agentic_reasoning_events_on_successful_run() -> None:
     events, repo = await _stream_with_run_async(_run)
     names = [name for name, _ in events]
 
-    # Exactly one started, at least one delta, exactly one completed.
-    started = [d for n, d in events if n == EVENT_AGENTIC_REASONING_STARTED]
-    deltas = [d for n, d in events if n == EVENT_AGENTIC_REASONING_DELTA]
-    completed = [d for n, d in events if n == EVENT_AGENTIC_REASONING_COMPLETED]
-    assert len(started) == 1
-    assert len(deltas) >= 2
-    assert len(completed) == 1
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
+    assert EVENT_AGENTIC_REASONING_COMPLETED not in names
+    assert EVENT_AGENTIC_PROGRESS in names
+    assert EVENT_MESSAGE_COMPLETED in names
 
-    # Strict monotonic seq: started=0, deltas 1..n, completed=n+1.
-    assert started[0]["seq"] == 0
-    seqs = [d["seq"] for d in deltas]
-    assert seqs == list(range(1, len(deltas) + 1))
-    assert completed[0]["seq"] == len(deltas) + 1
-    assert completed[0]["has_content"] is True
-    assert completed[0]["truncated"] is False
-    assert completed[0]["projection_policy_version"] == "reasoning_projection_v1"
-
-    # Identity binding: all three events agree with agentic.run_started.
-    run_started = next(d for n, d in events if n == EVENT_AGENTIC_RUN_STARTED)
-    for data in [*started, *deltas, *completed]:
-        assert data["message_id"] == run_started["message_id"]
-        assert data["thread_id"] == run_started["thread_id"]
-        assert data["turn_run_id"] == run_started["turn_run_id"]
-
-    # Ordering: run_started < reasoning.started < deltas <
-    # reasoning.completed < message.completed.
-    assert names.index(EVENT_AGENTIC_RUN_STARTED) < names.index(
-        EVENT_AGENTIC_REASONING_STARTED
-    )
-    assert names.index(EVENT_AGENTIC_REASONING_STARTED) < names.index(
-        EVENT_AGENTIC_REASONING_DELTA
-    )
-    assert names.index(EVENT_AGENTIC_REASONING_COMPLETED) > max(
-        i for i, n in enumerate(names) if n == EVENT_AGENTIC_REASONING_DELTA
-    )
-    assert names.index(EVENT_AGENTIC_REASONING_COMPLETED) < names.index(
-        EVENT_MESSAGE_COMPLETED
-    )
-
-    # Hot/cold golden invariant: concat(SSE deltas) == persisted text.
-    streamed_text = "".join(d["delta"] for d in deltas)
-    assert streamed_text == first_chunk + second_chunk
+    wire = json.dumps([data for _, data in events], ensure_ascii=False)
+    assert first_chunk not in wire
+    assert second_chunk not in wire
     assert len(repo.completed_writes) == 1
-    persisted = repo.completed_writes[0]["reasoning_projection"]
-    assert persisted is not None
-    assert persisted["text"] == streamed_text
-    assert persisted["char_count"] == len(streamed_text)
-    assert persisted["truncated"] is False
-    assert persisted["projection_policy_version"] == "reasoning_projection_v1"
+    assert repo.completed_writes[0]["reasoning_projection"] is None
 
     # No legacy reasoning lifecycle on the agentic path.
     assert "reasoning.started" not in names
@@ -2456,19 +2522,25 @@ async def test_agentic_reasoning_events_on_successful_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agentic_reasoning_scrubs_sentinels_before_sse_and_db(
+async def test_provider_reasoning_is_discarded_before_sse_db_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Raw internal sentinels never reach SSE, persistence, or logs."""
+    """Secrets and ordinary model self-talk are both private."""
     evh = "evh_0123456789abcdef0123456789abcdef"
     key = "sk-liveKEYMATERIAL0123456789"
+    self_talk = (
+        "The user asks in Chinese. I should answer in Chinese. "
+        "The response should be a grounded_answer and I can cite the evidence handle."
+    )
 
     async def _run(**kwargs):
         observer = kwargs["thinking_observer"]
         sink = kwargs["event_sink"]
         sink(AnalysisStartedEvent())
         observer.on_analysis_started()
-        observer.on_reasoning_delta(f"检查 {evh}，使用 {key}。" + "补" * 400)
+        observer.on_reasoning_delta(
+            f"检查 {evh}，使用 {key}。{self_talk}" + "补" * 400
+        )
         observer.on_analysis_finished()
         sink(AnalysisFinishedEvent())
         return _ok_run_result(kwargs)
@@ -2481,13 +2553,14 @@ async def test_agentic_reasoning_scrubs_sentinels_before_sse_and_db(
     )
     assert evh not in wire
     assert key not in wire
-    assert "〔引用〕" in wire
+    assert self_talk not in wire
+    assert "grounded_answer" not in wire
+    assert "evidence handle" not in wire
     persisted = repo.completed_writes[0]["reasoning_projection"]
-    assert persisted is not None
-    assert evh not in persisted["text"]
-    assert key not in persisted["text"]
+    assert persisted is None
     assert evh not in caplog.text
     assert key not in caplog.text
+    assert self_talk not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2529,10 +2602,9 @@ async def test_agentic_reasoning_failed_run_no_completed_no_persist() -> None:
     events, repo = await _stream_with_run_async(_run)
     names = [name for name, _ in events]
 
-    # Deltas were visible in-session...
-    assert EVENT_AGENTIC_REASONING_STARTED in names
-    assert EVENT_AGENTIC_REASONING_DELTA in names
-    # ...but no completion promise, no completed answer.
+    # Provider-private reasoning stays absent on failure too.
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
     assert EVENT_AGENTIC_REASONING_COMPLETED not in names
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
@@ -2578,7 +2650,8 @@ async def test_agentic_reasoning_cancel_no_completed_no_persist() -> None:
     events = _parse_sse(chunks)
     names = [name for name, _ in events]
 
-    assert EVENT_AGENTIC_REASONING_STARTED in names
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
     assert EVENT_AGENTIC_REASONING_COMPLETED not in names
     assert EVENT_MESSAGE_COMPLETED not in names
     assert repo.completed_writes == []
@@ -2602,8 +2675,8 @@ async def test_agentic_reasoning_persist_failure_no_completed() -> None:
     events, _ = await _stream_with_run_async(_run, repo=repo)
     names = [name for name, _ in events]
 
-    assert EVENT_AGENTIC_REASONING_STARTED in names
-    assert EVENT_AGENTIC_REASONING_DELTA in names
+    assert EVENT_AGENTIC_REASONING_STARTED not in names
+    assert EVENT_AGENTIC_REASONING_DELTA not in names
     assert EVENT_AGENTIC_REASONING_COMPLETED not in names
     assert EVENT_MESSAGE_COMPLETED not in names
     terminal = next(d for n, d in events if n == EVENT_AGENTIC_TERMINAL)
@@ -2664,11 +2737,22 @@ async def test_message_delta_streams_answer_text_on_success() -> None:
 
     # Exactly two message.delta events carrying the raw increments.
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    # R4-2: each delta carries a generation_id attributing it to the
-    # current answer generation. The first generation is id=0.
+    # ASK-UX-HISTORY-COT-R2 P0-4: each delta now carries full turn
+    # identity (execution_version / message_id / thread_id / turn_run_id)
+    # so the frontend activeRunIdentity guard can attribute it to the
+    # owning turn. Without these fields the client rejects every delta
+    # and no streaming preview accumulates. The identity must match the
+    # run_started frame exactly.
+    run_started = next(d for n, d in events if n == EVENT_AGENTIC_RUN_STARTED)
+    expected_identity = {
+        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+        "message_id": run_started["message_id"],
+        "thread_id": run_started["thread_id"],
+        "turn_run_id": run_started["turn_run_id"],
+    }
     assert deltas == [
-        {"delta": "Hello", "generation_id": 0},
-        {"delta": " world", "generation_id": 0},
+        {"delta": "Hello", "generation_id": 0, **expected_identity},
+        {"delta": " world", "generation_id": 0, **expected_identity},
     ]
 
     # Final completed DTO carries the full answer.
@@ -2726,8 +2810,18 @@ async def test_message_delta_partial_then_failure_no_completed() -> None:
     names = [name for name, _ in events]
 
     deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
-    # R4-2: delta carries generation_id for current answer generation.
-    assert deltas == [{"delta": "partial", "generation_id": 0}]
+    # ASK-UX-HISTORY-COT-R2 P0-4: delta carries full turn identity so the
+    # frontend activeRunIdentity guard accepts it. The message_id /
+    # turn_run_id are server-minted UUIDs; assert shape + thread binding
+    # rather than exact values (this path raises before completed).
+    assert len(deltas) == 1
+    delta = deltas[0]
+    assert delta["delta"] == "partial"
+    assert delta["generation_id"] == 0
+    assert delta["execution_version"] == EXECUTION_VERSION_AGENTIC_V2
+    assert delta["thread_id"] == str(_THREAD)
+    assert isinstance(delta["message_id"], str) and delta["message_id"]
+    assert isinstance(delta["turn_run_id"], str) and delta["turn_run_id"]
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
     assert EVENT_MESSAGE_INTERRUPTED in names
@@ -2947,19 +3041,30 @@ async def test_retry_service_flag_off_uses_legacy_stream() -> None:
         async def _legacy(**kwargs):
             yield encode_sse("message.completed", {"legacy": True})
 
+        repo = _FakeRepo()
+        msg_id = _configure_retry_pair(repo, lane="legacy")
         with patch(
             "app.services.reader_record_ask.service._load_snapshot_facts",
             new_callable=AsyncMock,
             return_value=_fake_facts(),
         ):
-            with patch(
-                "app.services.reader_record_ask.service.stream_service.retry_thread_message",
-                side_effect=_legacy,
-            ) as mock_legacy:
+            with (
+                patch(
+                    "app.services.reader_record_ask.service.stream_service.retry_thread_message",
+                    side_effect=_legacy,
+                ) as mock_legacy,
+                patch(
+                    "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+                    return_value=repo,
+                ),
+                patch(
+                    "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+                    return_value=repo,
+                ),
+            ):
                 from app.schemas.reader_ask import ReaderAskMessageRetryRequest
                 from app.services.reader_record_ask import service as svc
 
-                msg_id = uuid4()
                 chunks = []
                 async for c in svc.retry_reading_record_ask_message(
                     user_id=_USER,
@@ -2992,21 +3097,11 @@ async def test_retry_service_flag_on_uses_agentic_path() -> None:
                 new_callable=AsyncMock,
             ) as mock_legacy:
                 repo = _FakeRepo()
-                existing_assistant_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
-                repo.retry_assistant = {
-                    "id": str(existing_assistant_id),
-                    "thread_id": str(_THREAD),
-                    "role": "assistant",
-                    "status": "completed",
-                    "content_md": "old",
-                }
-                repo.retry_user = {
-                    "id": str(UUID("55555555-5555-5555-5555-555555555555")),
-                    "thread_id": str(_THREAD),
-                    "role": "user",
-                    "status": "completed",
-                    "content_md": "original question",
-                }
+                existing_assistant_id = _configure_retry_pair(
+                    repo,
+                    lane="agentic",
+                    model_option_key="deepseek-v4-flash",
+                )
 
                 async def _run(**kwargs):
                     env = kwargs["envelope"]
@@ -3040,43 +3135,50 @@ async def test_retry_service_flag_on_uses_agentic_path() -> None:
                             "app.services.reader_record_ask.production_stream.run_reading_record_ask",
                             side_effect=_run,
                         ):
-                            with patch(
-                                "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
-                                return_value=repo,
-                            ):
-                                with patch(
-                                    # ASK-WEB-G1-R3: preflight _load_replayed_web_search_mode
-                                    # constructs its own repo in service.py — patch the
-                                    # symbol in the service namespace so the test's fake
-                                    # repo is used for the persisted-metadata replay.
+                            with (
+                                patch(
+                                    "app.services.reader_record_ask.production_stream.ReaderRecordAskRepository",
+                                    return_value=repo,
+                                ),
+                                # Retry preflight imports the repository class
+                                # inside the function, while metadata replay
+                                # uses the service module binding. Patch both.
+                                patch(
                                     "app.services.reader_record_ask.service.ReaderRecordAskRepository",
                                     return_value=repo,
-                                ):
-                                    with patch(
-                                        "app.services.reader_record_ask.production_stream.resolve_agentic_model",
-                                        return_value=_function_model("agentic retry answer"),
-                                    ):
-                                        with patch(
-                                            "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
-                                            new_callable=AsyncMock,
-                                            return_value=_DOC,
-                                        ):
-                                            from app.schemas.reader_ask import (
-                                                ReaderAskMessageRetryRequest,
-                                            )
-                                            from app.services.reader_record_ask import (
-                                                service as svc,
-                                            )
+                                ),
+                                patch(
+                                    "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+                                    return_value=repo,
+                                ),
+                                patch(
+                                    "app.services.reader_record_ask.production_stream.resolve_agentic_model",
+                                    return_value=_function_model(
+                                        "agentic retry answer"
+                                    ),
+                                ),
+                                patch(
+                                    "app.services.reader_record_ask.production_stream.load_active_stable_document_id",
+                                    new_callable=AsyncMock,
+                                    return_value=_DOC,
+                                ),
+                            ):
+                                from app.schemas.reader_ask import (
+                                    ReaderAskMessageRetryRequest,
+                                )
+                                from app.services.reader_record_ask import (
+                                    service as svc,
+                                )
 
-                                            chunks = []
-                                            async for c in svc.retry_reading_record_ask_message(
-                                                user_id=_USER,
-                                                reading_record_id=str(_RECORD),
-                                                thread_id=_THREAD,
-                                                message_id=existing_assistant_id,
-                                                request=ReaderAskMessageRetryRequest(),
-                                            ):
-                                                chunks.append(c)
+                                chunks = []
+                                async for c in svc.retry_reading_record_ask_message(
+                                    user_id=_USER,
+                                    reading_record_id=str(_RECORD),
+                                    thread_id=_THREAD,
+                                    message_id=existing_assistant_id,
+                                    request=ReaderAskMessageRetryRequest(),
+                                ):
+                                    chunks.append(c)
                 # Legacy retry never called.
                 assert mock_legacy.call_count == 0
                 events = _parse_sse(chunks)
@@ -3169,6 +3271,12 @@ async def test_retry_replay_allowed_requires_ready_adapter_before_stream() -> No
         web_search_capability=unavailable_capability,
     )
     option = MagicMock(key="ask-fast")
+    repo = _FakeRepo()
+    message_id = _configure_retry_pair(
+        repo,
+        lane="agentic",
+        model_option_key="ask-fast",
+    )
 
     with (
         patch("app.services.reader_record_ask.service.get_settings") as settings,
@@ -3192,6 +3300,14 @@ async def test_retry_replay_allowed_requires_ready_adapter_before_stream() -> No
             new_callable=AsyncMock,
             return_value=execution,
         ),
+        patch(
+            "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
+        patch(
+            "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
     ):
         settings.return_value.reader_record_ask_agentic_enabled = True
         with pytest.raises(HTTPException) as exc_info:
@@ -3199,7 +3315,7 @@ async def test_retry_replay_allowed_requires_ready_adapter_before_stream() -> No
                 user_id=_USER,
                 reading_record_id=str(_RECORD),
                 thread_id=_THREAD,
-                message_id=UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                message_id=message_id,
             )
 
     assert exc_info.value.status_code == 503
@@ -3507,6 +3623,8 @@ async def test_send_allowed_with_unavailable_capability_raises_503_pre_stream() 
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "search the web for latest news"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
@@ -3572,6 +3690,8 @@ async def test_send_allowed_with_none_capability_raises_503_pre_stream() -> None
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "search the web for latest news"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
@@ -3651,6 +3771,8 @@ async def test_send_allowed_with_capability_but_no_backend_raises_503() -> None:
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "search the web"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
@@ -3713,6 +3835,8 @@ async def test_send_disabled_mode_does_not_raise_503() -> None:
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "regular question"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
@@ -3751,8 +3875,9 @@ async def test_send_disabled_mode_does_not_raise_503() -> None:
     # No exception — prepared tuple returned.
     assert result is not None
     # Capability and backend are both None (disabled mode).
-    parsed_record_id, thread_id, prepared_execution = result
-    assert prepared_execution is execution
+    assert result.reading_record_id == _RECORD
+    assert result.thread_id == _THREAD
+    assert result.execution is execution
 
 
 @pytest.mark.asyncio
@@ -3796,6 +3921,8 @@ async def test_send_propagates_web_search_backend_to_stream_agentic() -> None:
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "search the web"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
@@ -3899,8 +4026,13 @@ async def test_retry_propagates_web_search_backend_to_retry_agentic() -> None:
         captured.update(kwargs)
         yield "event: message.completed\ndata: {}\n\n"
 
-    message_id = uuid4()
     pro_option = MagicMock(key="deepseek-pro")
+    repo = _FakeRepo()
+    message_id = _configure_retry_pair(
+        repo,
+        lane="agentic",
+        model_option_key="deepseek-pro",
+    )
 
     with (
         patch("app.services.reader_record_ask.service.get_settings") as settings,
@@ -3928,12 +4060,21 @@ async def test_retry_propagates_web_search_backend_to_retry_agentic() -> None:
             "app.services.reader_record_ask.production_stream.retry_agentic_thread_message",
             side_effect=_fake_retry,
         ),
+        patch(
+            "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
+        patch(
+            "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
     ):
         settings.return_value.reader_record_ask_agentic_enabled = True
         prepared = await prepare_reading_record_ask_retry(
             user_id=_USER,
             reading_record_id=str(_RECORD),
             thread_id=_THREAD,
+            message_id=message_id,
         )
         chunks = [
             chunk
@@ -4007,12 +4148,19 @@ async def test_send_retry_symmetric_backend_identity_for_same_option() -> None:
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "search the web"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"
     request.web_search_mode = "allowed"
 
-    message_id = uuid4()
+    repo = _FakeRepo()
+    message_id = _configure_retry_pair(
+        repo,
+        lane="agentic",
+        model_option_key="ask-fast",
+    )
 
     # Send path
     with (
@@ -4080,12 +4228,21 @@ async def test_send_retry_symmetric_backend_identity_for_same_option() -> None:
             "app.services.reader_record_ask.production_stream.retry_agentic_thread_message",
             side_effect=_fake_retry,
         ),
+        patch(
+            "app.services.reader_record_ask.service.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
+        patch(
+            "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
+            return_value=repo,
+        ),
     ):
         settings.return_value.reader_record_ask_agentic_enabled = True
         prepared = await prepare_reading_record_ask_retry(
             user_id=_USER,
             reading_record_id=str(_RECORD),
             thread_id=_THREAD,
+            message_id=message_id,
         )
         chunks = [
             chunk
@@ -4140,6 +4297,8 @@ async def test_send_with_disabled_mode_does_not_forward_backend() -> None:
 
     request = MagicMock()
     request.anchor = None
+    request.focus_anchors = None
+    request.client_submission_id = None
     request.content = "regular question"
     request.entry_action = "ask_about_this"
     request.model = "ask-fast"

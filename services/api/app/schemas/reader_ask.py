@@ -930,8 +930,21 @@ class ReaderRecordAskMessageRequest(BaseModel):
     """D6-A6: new Reading Record Ask message request contract.
 
     This is intentionally separate from ``ReaderAskMessageStreamRequest``.
-    It accepts a Reading Record anchor and never accepts an
+    It accepts Reading Record anchors and never accepts an
     ``analysis_record_id`` disguised as ``record_id``.
+
+    ASK-UX-COT-COMPOSER-R3 P2 — plural focus anchors:
+    - ``focus_anchors`` is the canonical multi-selection field (≤4: one
+      auto-ingested selection plus up to three user-pinned selections). New
+      Web clients send every auto/manual selection anchor here.
+    - ``anchor`` (singular) is retained ONLY as the legacy compatibility
+      entry for old single-selection callers. When ``focus_anchors`` is
+      present it wins; the singular field is never silently merged in
+      addition. Each provided anchor is independently gate-validated
+      (record/base/generation/document) and ANY invalid, unauthorized,
+      or stale anchor fails the whole request closed — never partially
+      accepted before the model call.
+    - Reader-only fields never appear on the generic analysis request.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -939,6 +952,9 @@ class ReaderRecordAskMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
     entry_action: ReaderAskEntryAction = "ask_about_this"
     anchor: ReaderAskReadingRecordAnchor | None = None
+    focus_anchors: list[ReaderAskReadingRecordAnchor] | None = Field(
+        default=None, max_length=4
+    )
     model: str | None = None
     # User-visible Web Search authorization (G1-R1). ``allowed`` only grants
     # turn capability; it never forces a search. The agent decides whether

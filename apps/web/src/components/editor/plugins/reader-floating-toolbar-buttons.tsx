@@ -1,10 +1,11 @@
 /**
  * Reader Floating Toolbar Buttons — Reader Record Plate 的默认划选工具栏
  *
- * 五个按钮：
+ * 六个按钮：
  * - 查词（Search）
  * - 复制（Copy）
- * - Ask（MessageSquare）
+ * - Ask（Sparkles）
+ * - 加入 Ask（MessageSquarePlus）
  * - 高亮（Highlighter）
  * - 笔记（NotebookPen）
  *
@@ -22,7 +23,7 @@ import {
   BookOpenText,
   Copy,
   Highlighter,
-  MessageSquare,
+  MessageSquarePlus,
   NotebookPen,
   Search,
   Sparkles,
@@ -51,6 +52,19 @@ export interface ReaderToolbarActionState {
 
 export interface ReaderToolbarActions {
   onAsk: () => void;
+  /**
+   * ASK-UX-COT-COMPOSER-R3 P1 — pin the current selection into the Ask
+   * composer's manual selection slots (auto→manual promotion or append,
+   * anchor-fingerprint dedupe, max 3). Hosts that do not implement the
+   * selection-slot model fall back to {@link onAsk}.
+   */
+  onPinSelectionToAsk?: () => void;
+  /**
+   * Disabled state for the pin action (independent of `state.ask`): set
+   * when the manual selection cap is reached for a not-yet-pinned
+   * selection. Carries the user-facing reason.
+   */
+  pinSelectionState?: ReaderToolbarActionState;
   onAskSubmit?: (request: {
     content: string;
     entryAction?: ReaderAskEntryActionDto;
@@ -80,7 +94,7 @@ const toolbarGroupClassName = "items-center";
 const toolbarButtonClassName =
   "rounded-[8px] text-ink/80 transition-colors hover:bg-lens-blue-soft/35 hover:text-ink active:bg-lens-blue-soft/50 disabled:cursor-not-allowed disabled:opacity-40";
 const toolbarShortcutClassName =
-  "ml-1 inline-flex min-w-0 items-center rounded bg-background/14 px-1.5 py-0.5 font-sans text-[10px] font-semibold leading-none text-background/78";
+  "ml-1 inline-flex min-w-0 items-center rounded bg-background/14 px-1.5 py-0.5 font-sans text-xs font-semibold leading-none text-background/78";
 
 function actionState(
   actions: ReaderToolbarActions | null,
@@ -266,7 +280,7 @@ export function ReaderAskToolbarButton() {
       data-reader-record-ask-toolbar={open ? "open" : "closed"}
       data-plate-focus="true"
     >
-      <AIMenu open={open && !state.disabled} onOpenChange={setOpen}>
+      <AIMenu open={open} onOpenChange={setOpen}>
         <AIMenuAnchor>
           <span>
             <ToolbarButton
@@ -344,29 +358,48 @@ export function ReaderAskToolbarButton() {
                   </span>
                 </AIMenuItem>
               ))}
-              <AIMenuItem
-                value="加入 Ask 上下文"
-                onSelect={() => {
-                  actions?.onAsk();
-                  setOpen(false);
-                }}
-                data-reader-record-ask-attach-context="true"
-              >
-                <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-lens-blue">
-                  <MessageSquare className="size-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-medium leading-5 text-foreground">加入 Ask 上下文</span>
-                  <span className="block truncate text-xs leading-4 text-muted-foreground">
-                    打开 Ask 面板后继续输入
-                  </span>
-                </span>
-              </AIMenuItem>
             </AIMenuList>
           </AIMenuCommand>
         </AIMenuContent>
       </AIMenu>
     </div>
+  );
+}
+
+export function ReaderPinAskToolbarButton() {
+  const actions = useContext(ReaderToolbarActionsContext);
+  const askState = actionState(actions, "ask");
+  const pinState = actions?.pinSelectionState;
+  const state: ReaderToolbarActionState = {
+    disabled: askState.disabled || Boolean(pinState?.disabled),
+    reason: askState.disabled ? askState.reason : pinState?.reason,
+  };
+
+  return (
+    <ToolbarButton
+      className={`${toolbarButtonClassName} gap-1.5 px-3 text-lens-blue hover:bg-lens-blue-soft/50 hover:text-lens-blue active:bg-lens-blue-soft/65`}
+      size="default"
+      tooltip={toolbarTooltip("加入 Ask Claread", state)}
+      aria-label="加入 Ask Claread"
+      data-reader-record-action="pin-ask"
+      data-reader-record-ask-pin-selection="true"
+      data-reader-record-disabled-reason={state.disabled ? state.reason : undefined}
+      disabled={state.disabled}
+      onPointerDown={preventFocusLoss.onPointerDown}
+      onClick={() => {
+        if (state.disabled || !actions) {
+          return;
+        }
+        if (actions.onPinSelectionToAsk) {
+          actions.onPinSelectionToAsk();
+        } else {
+          actions.onAsk();
+        }
+      }}
+    >
+      <MessageSquarePlus className="size-4" />
+      <span className="text-sm font-medium">加入 Ask</span>
+    </ToolbarButton>
   );
 }
 
@@ -402,10 +435,21 @@ export function ReaderFloatingToolbarButtons() {
     return null;
   }
 
+  // 不在此处包 <Toolbar>：调用方负责提供 Toolbar root（Radix
+  // ToolbarPrimitive.Root = RovingFocusGroup 上下文）。ToolbarButton
+  // (ToolbarPrimitive.Button = RovingFocusGroupItem) 必须有 RovingFocusGroup
+  // 祖先，否则会抛 "RovingFocusGroupItem must be used within
+  // RovingFocusGroup" 并清空原生选区。两条调用路径各自提供 root：
+  // - ReaderRecordPlateSurface（Reader-owned）：在 ReaderFloatingSurface 内
+  //   显式包 <Toolbar>，data-reader-record-floating-toolbar="selection-actions"
+  // - 旧 FloatingToolbarKit：通过 <FloatingToolbar> 已提供 <Toolbar>，
+  //   此处再包一层会导致 <Toolbar><Toolbar></Toolbar></Toolbar> 嵌套
+  //   role=toolbar / RovingFocusGroup。
   return (
     <>
       <ToolbarGroup className={toolbarGroupClassName} data-reader-record-toolbar-layout="ask-first">
         <ReaderAskToolbarButton />
+        <ReaderPinAskToolbarButton />
       </ToolbarGroup>
       <ToolbarGroup className={toolbarGroupClassName}>
         <ReaderLookupToolbarButton />

@@ -505,10 +505,12 @@ for (const viewport of VIEWPORTS) {
         timeout: 10_000,
       });
       // Fixed typed step label — never server summary copy.
-      await expect(settledContent).toContainText("读取文章");
+      await expect(settledContent).toContainText("阅读本文");
       expect(await settledContent.innerText()).not.toContain("已读取相关上下文");
-      // Settled copy: reasoning present ⇒ 思考过程.
-      await expect(cotRoot(page)).toContainText("思考过程");
+      // R3: settled copy is the process one-liner (article turn); the
+      // reasoning section (思考要点) lives inside the same disclosure.
+      await expect(cotRoot(page)).toContainText("已根据当前文章整理");
+      await expect(settledContent).toContainText("思考要点");
 
       // Leak scan over the whole page text.
       const pageText = await page.evaluate(() => document.body.innerText);
@@ -531,7 +533,13 @@ for (const viewport of VIEWPORTS) {
       await cotTrigger(page).click();
       const steps = cotRoot(page).locator("[data-step-status]");
       await expect(steps.first()).toBeVisible({ timeout: 10_000 });
-      expect(await steps.count()).toBeGreaterThanOrEqual(5);
+      // R3 learner steps: 理解问题 (host) → 阅读本文 → 网页查询 → 整理回答.
+      // Internal stages (检索文章 / 核对依据) never appear.
+      expect(await steps.count()).toBe(4);
+      await expect(steps.first()).toContainText("理解问题");
+      await expect(steps.last()).toContainText("整理回答");
+      expect(await cotRoot(page).innerText()).not.toContain("检索文章");
+      expect(await cotRoot(page).innerText()).not.toContain("核对依据");
 
       // Exactly one scroll owner — zero nested scrollable descendants.
       expect(await nestedScrollableCount(page)).toBe(0);
@@ -591,11 +599,11 @@ for (const viewport of VIEWPORTS) {
       await cotTrigger(page).click();
       const steps = cotRoot(page).locator("[data-step-status]");
       const composing = cotRoot(page).locator("[data-step-status='interrupted']");
-      await expect(composing).toContainText("组织回答");
-      // The unfinished step is interrupted — and NOTHING is rendered as a
-      // fresh success: only the already-ok step keeps `complete`.
-      expect(await cotRoot(page).locator("[data-step-status='complete']").count()).toBe(1);
-      expect(await steps.count()).toBe(2);
+      await expect(composing).toContainText("整理回答");
+      // R3: the unfinished composing step is interrupted — the only
+      // `complete` marks are the host 理解问题 and the ok 阅读本文 step.
+      expect(await cotRoot(page).locator("[data-step-status='complete']").count()).toBe(2);
+      expect(await steps.count()).toBe(3);
       // Terminal explanation / server summary never leaks into the CoT.
       expect(await cotRoot(page).innerText()).not.toContain("回答生成失败");
       expect(await cotRoot(page).innerText()).not.toContain("正在组织回答");
@@ -603,7 +611,78 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator('button[aria-label="发送"]')).toBeVisible();
     });
 
-    test("no reasoning and no progress renders no shell", async ({ page }) => {
+    test("context compaction stays inside the same disclosure and precedes answer work", async ({
+      page,
+    }) => {
+      await loginAndOpenHarness(page);
+      const compactionIdentity = {
+        execution_version: EXECUTION_VERSION,
+        message_id: MESSAGE_ID,
+        thread_id: THREAD_ID,
+        turn_run_id: TURN_RUN_ID,
+        attempt_count: 1,
+      };
+      await setScript(page, [
+        { event: "agentic.run_started", data: runStartedPayload() },
+        {
+          event: "context.compaction.started",
+          data: {
+            ...compactionIdentity,
+            detail_code: null,
+            elapsed_ms: 0,
+          },
+          hold: true,
+        },
+        {
+          event: "context.compaction.completed",
+          data: {
+            ...compactionIdentity,
+            detail_code: "provider_exception-must-not-enter-ui",
+            elapsed_ms: 820,
+          },
+        },
+        {
+          event: "agentic.progress",
+          data: progressPayload(1, "composing_answer", "正在组织回答", {
+            status: "running",
+          }),
+        },
+        { event: "message.completed", data: completedPayload() },
+      ]);
+      await submitQuestion(page, "压缩上下文后继续回答");
+
+      await expect(cotTrigger(page)).toContainText("正在压缩上下文", {
+        timeout: 10_000,
+      });
+      await cotTrigger(page).click();
+      const runningCompaction = cotRoot(page)
+        .locator("[data-step-status='active']")
+        .filter({ hasText: "正在压缩上下文" });
+      await expect(runningCompaction).toBeVisible();
+      await expect(lastBubble(page)).not.toContainText(SHORT_ANSWER);
+
+      await releaseAll(page);
+      await expect(lastBubble(page)).toContainText(SHORT_ANSWER, {
+        timeout: 10_000,
+      });
+      await expect(cotRoot(page)).toHaveAttribute(
+        "data-turn-process-state",
+        "settled",
+      );
+      await expect(cotTrigger(page)).toHaveAttribute("aria-expanded", "false");
+      await cotTrigger(page).click();
+      const completedCompaction = cotRoot(page)
+        .locator("[data-step-status='complete']")
+        .filter({ hasText: "上下文已压缩" });
+      await expect(completedCompaction).toBeVisible();
+      const pageText = await page.evaluate(() => document.body.innerText);
+      expect(pageText).not.toContain("provider_exception-must-not-enter-ui");
+      expect(await page.locator('[data-testid="ask-turn-process"]').count()).toBe(1);
+    });
+
+    test("R3: pure-answer turn (no reasoning, no progress) keeps the 理解问题 → 整理回答 summary", async ({
+      page,
+    }) => {
       await loginAndOpenHarness(page);
       await setScript(page, [
         { event: "agentic.run_started", data: runStartedPayload() },
@@ -612,7 +691,18 @@ for (const viewport of VIEWPORTS) {
       await submitQuestion(page, "无过程问题");
       await expect(lastBubble(page)).toContainText(SHORT_ANSWER, { timeout: 10_000 });
 
-      await expect(lastBubble(page).locator('[data-testid="ask-turn-process"]')).toHaveCount(0);
+      // R1-rework/R3: EVERY successful answer preserves the learner-facing
+      // summary — no tool steps to show, but the host lifecycle pair is
+      // provable and the disclosure is a real collapse control.
+      const cot = lastBubble(page).locator('[data-testid="ask-turn-process"]');
+      await expect(cot).toHaveCount(1);
+      await expect(cot).toContainText("已整理回答");
+      await cotTrigger(page).click();
+      const steps = cot.locator("[data-step-status]");
+      expect(await steps.count()).toBe(2);
+      await expect(steps.first()).toContainText("理解问题");
+      await expect(steps.last()).toContainText("整理回答");
+      // The legacy reasoning disclosure never appears for v2 turns.
       await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
     });
 

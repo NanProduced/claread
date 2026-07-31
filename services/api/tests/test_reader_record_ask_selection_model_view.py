@@ -944,7 +944,10 @@ def test_absent_and_budget_denied_carry_no_seed() -> None:
     # Budget denial: fill the selection account so nothing fits.
     budget = _budget()
     renderer = _renderer()
-    budget.charge("selection", renderer.render_plain("f" * 2499))
+    budget.charge(
+        "selection",
+        renderer.render_plain("f" * (RESERVE_SELECTION - 1)),
+    )
     denied = assemble_selection_model_view(
         canonical_selected_text="x" * 3000,
         envelope_fingerprint=_FINGERPRINT,

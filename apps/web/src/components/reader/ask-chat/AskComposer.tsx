@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { SystemMessage } from "@/components/ui/system-message";
 import { userFacingErrorMessage } from "../ask/ask-error-messages";
+import { cn } from "@/lib/cn";
 import type { WebSearchModeDto } from "@/types/api/reader-ask";
 
 type AskComposerProps = {
@@ -90,24 +91,33 @@ function AskComposerSurface({
         }
         return onSubmit(value);
       }}
-      className="w-full rounded-md border-border/70 bg-background shadow-none"
+      // P1 — quiet low-elevation surface: very light border, no shadow,
+      // no heavy ring. The composer recedes; focus + send own the blue.
+      className="w-full rounded-lg border-border/50 bg-muted/30 shadow-none transition-colors focus-within:border-border/80"
     >
       {hasContextStrip ? (
-        <PromptInputHeader className="w-full flex-wrap gap-1.5 border-b border-border/60 px-3 py-2">
+        // ASK-UX-COT-COMPOSER-R3 P1 — the context strip is a fixed,
+        // horizontally scrollable row: chips never wrap-stack and squeeze
+        // the textarea (mobile), and no second vertical scroll owner is
+        // created. Chips are shrink-0; overflow scrolls sideways.
+        <PromptInputHeader
+          className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto border-b border-border/40 px-3 py-2 [scrollbar-width:thin]"
+          data-ask-context-strip="true"
+        >
           {contextStrip}
         </PromptInputHeader>
       ) : null}
 
       <PromptInputTextarea
         placeholder={placeholder}
-        className="min-h-[4rem] text-[15px] leading-6 placeholder:text-muted-foreground"
+        className="min-h-[4rem] bg-transparent text-[15px] leading-6 placeholder:text-muted-foreground"
         disabled={sending}
         onFocus={onTextareaFocus}
         onBlur={onTextareaBlur}
         data-ask-composer-textarea="true"
       />
 
-      <PromptInputFooter className="w-full items-center justify-between gap-2 px-3 pb-3 pt-0.5">
+      <PromptInputFooter className="w-full items-center justify-between gap-2 px-3 pb-2.5 pt-0.5">
         <PromptInputTools>
           {actionMenu ? (
             <PromptInputActionMenu
@@ -145,19 +155,18 @@ function AskComposerSurface({
               onClick={() =>
                 onWebSearchModeChange?.(webSearchEnabled ? "disabled" : "allowed")
               }
-              className="inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs font-medium shadow-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3"
-              style={
+              // R2.3 — web toggle is a secondary control: neutral muted
+              // surface when on (not primary blue — blue is reserved for
+              // focus + send), quiet border when off. Blue appears only
+              // in the focus-visible ring.
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs font-medium shadow-none transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-3",
                 webSearchEnabled
-                  ? {
-                      backgroundColor: "hsl(var(--primary) / 0.1)",
-                      borderColor: "hsl(var(--primary) / 0.22)",
-                      color: "hsl(var(--primary))",
-                    }
-                  : {
-                      borderColor: "hsl(var(--border) / 0.7)",
-                      color: "hsl(var(--muted-foreground) / 0.7)",
-                    }
-              }
+                  ? "border-border bg-muted text-foreground"
+                  : "border-border/70 text-muted-foreground/70 hover:bg-muted/40 hover:text-muted-foreground",
+              )}
             >
               <Globe aria-hidden="true" />
               <span>联网搜索 · {webSearchEnabled ? "开" : "关"}</span>
@@ -224,7 +233,15 @@ export function AskComposer({
   return (
     <div className="shrink-0 bg-background px-4 pb-3 pt-1.5">
       {displayErrorMessage ? (
-        <SystemMessage className="mb-2.5 rounded-md px-3 py-2 text-xs leading-5" variant="error">
+        // R2.4 — composer banner errors are recoverable (network/retry/
+        // capability). Use warning+fill for a low-disturbance amber surface
+        // instead of a full red border. Only unrecoverable validation
+        // errors (not currently surfaced here) would use variant="error".
+        <SystemMessage
+          className="mb-2.5 rounded-md px-3 py-2 text-xs leading-5"
+          variant="warning"
+          fill
+        >
           {displayErrorMessage}
         </SystemMessage>
       ) : null}

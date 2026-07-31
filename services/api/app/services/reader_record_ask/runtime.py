@@ -59,6 +59,7 @@ from app.services.reader_record_ask.runtime_deps import (
 )
 from app.services.reader_record_ask.runtime_events import (
     ComposingAnswerEvent,
+    ContextCompactionEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -157,6 +158,18 @@ async def run_reading_record_ask(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
+    # R1.5 P0-2: thread-memory integration. When ``memory_enabled=False``
+    # (default) the coordinator never touches the thread_memory package —
+    # zero behavioral drift, zero DB I/O, prompt字节级不含 memory. When
+    # ``True`` the coordinator loads + CAS-checks + fence-rebuilds +
+    # validates a deterministic snapshot (R1 path; no model call).
+    # ``memory_repository`` and ``thread_id`` are required when ``True``.
+    memory_enabled: bool = False,
+    memory_repository: Any | None = None,
+    thread_id: str | None = None,
+    memory_manager_enabled: bool = False,
+    memory_compactor: Any | None = None,
+    memory_settings: Any | None = None,
 ) -> ReadingRecordAskRunResult:
     """Run the independent Reading Record Ask agent once, then finalize.
 
@@ -196,6 +209,18 @@ async def run_reading_record_ask(
     if observation is not None:
         observation.execution_stage = "baseline_assembly"
 
+    def _emit_memory_event(event: Any) -> None:
+        if event_sink is None:
+            return
+        event_sink(
+            ContextCompactionEvent(
+                phase=event.kind,
+                detail_code=event.detail_code,
+                attempt_count=event.attempt_count,
+                elapsed_ms=event.elapsed_ms,
+            )
+        )
+
     coordinator = TurnCoordinator(
         envelope=envelope,
         document_access=document_access,
@@ -211,6 +236,15 @@ async def run_reading_record_ask(
         web_search_capability=web_search_capability,
         web_search_backend=web_search_backend,
         web_evidence_registry=web_evidence_registry,
+        memory_enabled=memory_enabled,
+        memory_repository=memory_repository,
+        thread_id=thread_id,
+        memory_manager_enabled=memory_manager_enabled,
+        memory_compactor=memory_compactor,
+        memory_event_sink=(
+            _emit_memory_event if memory_manager_enabled else None
+        ),
+        memory_settings=memory_settings,
     )
 
     try:
@@ -307,6 +341,9 @@ async def run_reading_record_ask(
         selection_prompt=assembly.selection_result.prompt_capability,
         baseline_prompt=assembly.baseline_result.prompt_capability,
         map_prompt=assembly.map_result.prompt_capability,
+        # R3 P2 — append the coordinator-rendered focus selections block
+        # (untrusted article text; emphasis, not restriction).
+        focus_section=assembly.focus_selections_text,
     )
 
     # G1-b4: conditionally mount the ``search_web`` tool. The flag is

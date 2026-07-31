@@ -236,6 +236,15 @@ class ReadingRecordAskContextEnvelope(BaseModel):
     )
 
     initial_anchor: EnvelopeInitialAnchor | None = None
+    # ASK-UX-COT-COMPOSER-R3 P2 — the full canonical user-focus anchor set
+    # (≤4: one auto + three pinned, gate-validated). ``initial_anchor`` is the primary selection
+    # (focus_anchors[0] when the plural field is present); the remaining
+    # anchors enter the model view as additional focus selections.
+    # ``None`` = legacy single-anchor / no-anchor turns (fingerprint and
+    # behavior identical to the pre-plural contract).
+    focus_anchors: tuple[EnvelopeInitialAnchor, ...] | None = Field(
+        default=None, max_length=4
+    )
     # Missing client viewport stays ``None``; do not invent a range.
     visible_range: EnvelopeVisibleRange | None = None
 
@@ -351,6 +360,10 @@ class VerifiedEnvelopeInput(BaseModel):
     product_state: str = Field(min_length=1)
     readiness_state: str = Field(min_length=1)
     initial_anchor: EnvelopeInitialAnchor | None = None
+    # R3 P2 — full canonical focus anchor set (≤4); see the envelope field.
+    focus_anchors: tuple[EnvelopeInitialAnchor, ...] | None = Field(
+        default=None, max_length=4
+    )
     # Pass through only when the client supplied a *validated* range.
     # Omit or set ``None`` when absent — never invent a full-document range.
     visible_range: EnvelopeVisibleRange | None = None
@@ -395,6 +408,7 @@ def compute_envelope_fingerprint(
     initial_anchor: EnvelopeInitialAnchor | None,
     visible_range: EnvelopeVisibleRange | None,
     web_search_mode: WebSearchMode = "disabled",
+    focus_anchors: tuple[EnvelopeInitialAnchor, ...] | None = None,
 ) -> str:
     """Deterministic SHA-256 hex fingerprint for persistence / generation fence.
 
@@ -407,6 +421,11 @@ def compute_envelope_fingerprint(
     retry / replay observes the same toggle. Provider / protocol
     readiness (:class:`ResolvedWebSearchCapability`) is excluded — it
     may change across retry without rewriting the fence identity.
+
+    R3 P2: the canonical focus anchor set (when non-empty) is part of the
+    fence identity — a different user focus selection is a different turn
+    context. Empty/absent focus keeps the payload byte-identical to the
+    pre-plural contract, so legacy fingerprints are stable.
     """
     payload: dict[str, Any] = {
         "envelope_version": envelope_version,
@@ -426,6 +445,12 @@ def compute_envelope_fingerprint(
         ),
         "web_search_mode": web_search_mode,
     }
+    # R3 P2 — include the focus set only when non-empty so legacy
+    # (no focus) fingerprints stay byte-identical.
+    if focus_anchors:
+        payload["focus_anchors"] = [
+            anchor.model_dump(mode="json") for anchor in focus_anchors
+        ]
     return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
 
 
@@ -445,6 +470,7 @@ def build_context_envelope(verified: VerifiedEnvelopeInput) -> ReadingRecordAskC
         initial_anchor=verified.initial_anchor,
         visible_range=verified.visible_range,
         web_search_mode=verified.web_search_mode,
+        focus_anchors=verified.focus_anchors,
     )
     capabilities = EnvelopeCapabilityState(
         product_state=verified.product_state,
@@ -466,6 +492,7 @@ def build_context_envelope(verified: VerifiedEnvelopeInput) -> ReadingRecordAskC
         stable_document_id=verified.stable_document_id,
         base_content_sha256=verified.base_content_sha256,
         initial_anchor=verified.initial_anchor,
+        focus_anchors=verified.focus_anchors,
         visible_range=verified.visible_range,
         capabilities=capabilities,
     )

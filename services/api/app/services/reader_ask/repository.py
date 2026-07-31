@@ -96,7 +96,17 @@ def _message_row_to_dict(row: Any) -> dict[str, Any]:
             turn_run_status=row.get("current_turn_run_status"),
         )
 
-    if claims_agentic_payload(hydrated_output) or claims_agentic_payload(metadata):
+    # ASK-UX-HISTORY-COT-R2 P0-1: quarantine is scoped to assistant rows
+    # only. User messages carry ``execution_version`` in metadata as a
+    # retry-snapshot marker (see submission_gateway.build_retry_snapshot),
+    # but they have no ``current_turn_run_id``, no ``user_visible_output_json``,
+    # and no legacy evidence/citations channel to leak. Quarantining them
+    # wipes the user's plain ``content_md`` to "" and renders an empty
+    # bubble on cold load. Only assistant rows can claim an agentic output
+    # payload that needs isolation when the DB column is missing.
+    if row["role"] == "assistant" and (
+        claims_agentic_payload(hydrated_output) or claims_agentic_payload(metadata)
+    ):
         # Untrusted agentic claim without a matching DB column: isolate so
         # agentic rag_citation internals cannot leak via legacy evidence.
         return quarantine_untrusted_agentic_claim(

@@ -12,7 +12,6 @@ Without those conditions the module is skipped — unit tests in
 from __future__ import annotations
 
 import os
-from uuid import uuid4
 
 import pytest
 
@@ -29,13 +28,6 @@ pytestmark = pytest.mark.skipif(
 async def test_concurrent_same_submission_key_one_pair() -> None:
     """Two concurrent ensures: only one user/assistant pair."""
     from app.database import connection as db_connection
-    from app.services.reader_record_ask.repository import (
-        ReaderRecordAskRepository,
-    )
-    from app.services.reader_record_ask.submission_gateway import (
-        build_retry_snapshot,
-        ensure_submission_for_send,
-    )
 
     if db_connection.DB_POOL is None:
         pytest.skip("DB pool not initialized")

@@ -17,9 +17,6 @@ from app.schemas.reader_record_ask_stream import (
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskTerminalDTO,
 )
-from app.services.reader_record_ask.reasoning_projection import (
-    validate_reasoning_snapshot,
-)
 
 AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V2
 AGENTIC_EXECUTION_VERSIONS = frozenset(
@@ -148,31 +145,17 @@ def _sanitize_turn_run_for_wire(turn_run: dict[str, Any] | None) -> dict[str, An
 def _safe_reasoning_projection(
     turn_run: dict[str, Any] | None
 ) -> tuple[str | None, bool | None]:
-    """Extract the visible reasoning text + truncated flag, fail-closed.
+    """Retire persisted v1 provider reasoning at the public boundary.
 
-    ASK-REASONING-R1/R2: delegates to the canonical snapshot validator
-    shared with the write path — exact policy version, exact key set,
-    non-empty text within quota, exact char_count, strict bool truncated,
-    and byte-invariant re-projection (no raw sentinel may have reached the
-    stored shape). Any invalid snapshot yields no reasoning element at
-    all — never a degraded display of the raw payload.
-
-    ASK-TURN-LIFECYCLE R4-4: returns ``(text, truncated)`` so cold history
-    restores both ``reasoning_md`` and ``reasoning_truncated`` from the
-    same validated snapshot. ``(None, None)`` when no valid projection
-    exists — frontend renders no reasoning element.
-
-    Returns ``(text, truncated)`` where ``text`` is the visible projection
-    string (or None) and ``truncated`` is True/False (or None).
+    ``reasoning_projection_v1`` redacted secrets and internal identifiers,
+    but could still preserve ordinary model self-talk such as response
+    strategy or schema names. That content is not suitable for Ask
+    Claread's learner-facing UI. Cold history therefore fails closed for
+    every legacy reasoning snapshot. Typed lifecycle steps remain the
+    single user-visible process representation.
     """
-    if not isinstance(turn_run, dict):
-        return None, None
-    validated = validate_reasoning_snapshot(
-        turn_run.get("reasoning_projection_json")
-    )
-    if validated is None:
-        return None, None
-    return validated["text"], validated["truncated"]
+    del turn_run
+    return None, None
 
 
 def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | None:

@@ -46,21 +46,31 @@ from typing import Any, Literal, cast
 from xml.sax.saxutils import escape as _xml_escape
 
 # ---------------------------------------------------------------------------
-# Cap + seven-account reserves (sum == MODEL_VISIBLE_TURN_PAYLOAD_CAP)
+# Cap + nine-account reserves (sum == MODEL_VISIBLE_TURN_PAYLOAD_CAP)
 # ---------------------------------------------------------------------------
+# Text-only Ask R2: keep one character ledger (no parallel token ledger).
+# The 128K cap leaves the tool/document reserves unchanged while giving
+# conversation memory a 40K recent window and 8K compacted-memory window.
+# For Claread's bilingual text-only workload this delays normal compaction
+# until roughly the 21st compact turn, while oversized turns still compact
+# earlier at the hard character cap.
 
-MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 96_000
+MODEL_VISIBLE_TURN_PAYLOAD_CAP: int = 128_000
 
 # The separate ``control`` reserve guarantees a bounded model-visible result
 # when a content account fills up. Content exhaustion is therefore fail-soft;
 # only exhaustion of this safety/control channel remains a hard turn abort.
-RESERVE_REQUEST_FRAME: int = 16_000
+RESERVE_REQUEST_FRAME: int = 12_000
 RESERVE_SELECTION: int = 6_000
-RESERVE_BASELINE: int = 14_000
+RESERVE_BASELINE: int = 12_000
 RESERVE_MAP: int = 6_000
-RESERVE_EXPAND: int = 30_000
-RESERVE_RAG: int = 20_000
+RESERVE_EXPAND: int = 24_000
+RESERVE_RAG: int = 16_000
 RESERVE_CONTROL: int = 4_000
+# memory stores bounded episode facts; recent_history stores complete recent
+# user/assistant turns verbatim. Both are renderer-minted, XML-fenced data.
+RESERVE_MEMORY: int = 8_000
+RESERVE_RECENT_HISTORY: int = 40_000
 
 BudgetAccountName = Literal[
     "request_frame",
@@ -70,6 +80,8 @@ BudgetAccountName = Literal[
     "expand",
     "rag",
     "control",
+    "memory",
+    "recent_history",
 ]
 
 ACCOUNT_RESERVES: dict[BudgetAccountName, int] = {
@@ -80,6 +92,8 @@ ACCOUNT_RESERVES: dict[BudgetAccountName, int] = {
     "expand": RESERVE_EXPAND,
     "rag": RESERVE_RAG,
     "control": RESERVE_CONTROL,
+    "memory": RESERVE_MEMORY,
+    "recent_history": RESERVE_RECENT_HISTORY,
 }
 
 assert sum(ACCOUNT_RESERVES.values()) == MODEL_VISIBLE_TURN_PAYLOAD_CAP
@@ -316,7 +330,7 @@ def _dump_canonical_json(payload: Mapping[str, Any]) -> str:
 
 
 class ModelVisibleTurnBudget:
-    """Six-account char budget for one Ask turn's model-visible payload.
+    """Nine-account char budget for one Ask turn's model-visible payload.
 
     Spill across accounts is forbidden. Each public charge is checked against
     the account reserve **and** the turn total cap, and must carry a

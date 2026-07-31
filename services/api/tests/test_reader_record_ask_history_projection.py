@@ -524,6 +524,97 @@ def test_message_row_to_dict_legacy_row_unchanged() -> None:
     assert message["evidence"]
 
 
+def test_message_row_to_dict_user_message_preserves_content_md_with_agentic_metadata() -> None:
+    """ASK-UX-HISTORY-COT-R2 P0-1: cold-loaded user messages must keep
+    their ``content_md`` even when ``metadata_json`` carries an
+    ``execution_version`` marker from the retry snapshot.
+
+    Real shape (see submission_gateway.ensure_submission_for_send +
+    repository.ensure_submission_message_pair):
+    - role='user', status='completed', content_md=<user text>
+    - metadata_json has execution_version='reader_record_ask_agentic_v2'
+      (retry snapshot marker, not an agentic output payload claim)
+    - current_turn_run_id is NULL — user messages never own a turn run
+
+    Previously the quarantine branch fired on
+    ``claims_agentic_payload(metadata)`` and wiped content_md to "",
+    producing an empty user bubble on cold load.
+    """
+    row = {
+        "id": "msg-user-1",
+        "thread_id": "thread-1",
+        "role": "user",
+        "status": "completed",
+        "content_md": "这篇文章的主旨是什么？",
+        "context_anchors_json": [],
+        "citations_json": [],
+        "action_proposals_json": [],
+        "tool_trace_json": [],
+        "metadata_json": {
+            "retry_contract_version": "ask_retry_contract_r5",
+            "retry_lane": "agentic",
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            "model_option_key": None,
+            "route_identity": None,
+            "web_search_mode": "disabled",
+            "retry_snapshot": {
+                "retry_contract_version": "ask_retry_contract_r5",
+                "retry_lane": "agentic",
+                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            },
+        },
+        "message_current_turn_run_id": None,
+        "usage_event_id": None,
+        "created_at": "2026-07-14T00:00:00+00:00",
+        "updated_at": "2026-07-14T00:00:00+00:00",
+        "current_turn_run_id": None,
+        "current_turn_run_user_id": None,
+        "current_turn_run_analysis_record_id": None,
+        "current_turn_run_reading_record_id": None,
+        "current_turn_run_base_id": None,
+        "current_turn_run_generation": None,
+        "current_turn_run_turn_id": None,
+        "current_turn_run_run_attempt": None,
+        "current_turn_run_supersedes_run_id": None,
+        "current_turn_run_status": None,
+        "current_turn_run_resolved_intent": None,
+        "user_visible_output_json": None,
+        "usage_summary_json": None,
+        "current_turn_run_usage_event_id": None,
+        "current_turn_run_started_at": None,
+        "current_turn_run_completed_at": None,
+        "current_turn_run_failed_at": None,
+        "current_turn_run_created_at": None,
+        "current_turn_run_updated_at": None,
+        "current_turn_run_execution_version": None,
+        "current_turn_run_final_status": None,
+        "current_turn_run_terminal_reason": None,
+        "current_turn_run_resolved_evidence_json": None,
+        "current_turn_run_envelope_fingerprint": None,
+        "eval_trace_turn_run_id": None,
+        "trace_schema_version": None,
+        "planning_snapshot_json": None,
+        "capability_trace_json": None,
+        "action_audit_json": None,
+        "supplement_audit_json": None,
+        "metrics_json": None,
+        "eval_trace_created_at": None,
+        "eval_trace_updated_at": None,
+    }
+    message = _message_row_to_dict(row)
+
+    assert message["role"] == "user"
+    assert message["status"] == "completed"
+    # content_md must be preserved verbatim — not wiped by quarantine.
+    assert message["content_md"] == "这篇文章的主旨是什么？"
+    # No agentic-projection fields should be synthesized for user rows.
+    assert message.get("execution_version") is None
+    assert message.get("agentic_answer_blocks") is None
+    assert message.get("agentic_citations") is None
+    assert message["evidence"] == []
+    ReaderAskMessage.model_validate(message)
+
+
 # ---------------------------------------------------------------------------
 # ASK-REASONING-R1: cold-history reasoning projection
 # ---------------------------------------------------------------------------
@@ -536,8 +627,8 @@ _REASONING_PROJECTION = {
 }
 
 
-def test_ok_turn_projects_persisted_reasoning_into_semantic_fields() -> None:
-    """Cold history reuses reasoning_md / reasoning_status (no parallel state)."""
+def test_ok_turn_does_not_restore_legacy_provider_reasoning() -> None:
+    """Cold history retires v1 provider reasoning fail-closed."""
     projected = project_agentic_history_message(
         **_base_kwargs(
             current_turn_run={
@@ -547,8 +638,12 @@ def test_ok_turn_projects_persisted_reasoning_into_semantic_fields() -> None:
             }
         )
     )
-    assert projected["reasoning_md"] == _REASONING_PROJECTION["text"]
-    assert projected["reasoning_status"] == "completed"
+    assert projected["reasoning_md"] is None
+    assert projected["reasoning_status"] is None
+    assert projected["reasoning_truncated"] is None
+    assert _REASONING_PROJECTION["text"] not in json.dumps(
+        projected, ensure_ascii=False
+    )
     # The raw JSONB payload never rides on the wire turn_run dict.
     assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
     blob = json.dumps(projected, ensure_ascii=False)

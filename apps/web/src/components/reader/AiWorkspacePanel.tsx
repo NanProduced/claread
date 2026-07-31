@@ -7,6 +7,7 @@ import {
   Copy,
   FileText,
   GitBranch,
+  Globe,
   LoaderCircle,
   MessageSquare,
   PencilLine,
@@ -151,7 +152,6 @@ import type {
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
-  ReaderAskFollowUpSuggestionDto,
   ReaderAskUiMessageDto,
   WebSearchModeDto,
 } from "@/types/api/reader-ask";
@@ -182,6 +182,7 @@ import { buildAgenticProcessSnapshot } from "./ask/agentic-process-projection";
 import {
   consumeReaderAskSse,
   isReaderAskAgenticCompletedPayload,
+  isReaderAskContextCompactionPayload,
   isReaderAskAgenticProgressPayload,
   isReaderAskAgenticReasoningCompletedPayload,
   isReaderAskAgenticReasoningDeltaPayload,
@@ -196,7 +197,6 @@ import {
   CLARIFICATION_CONTEXT_MISSING_MESSAGE,
   OPTIONAL_TOOL_WARNING_MESSAGE,
   PENDING_SUBMISSION_RESEND_MESSAGE,
-  formatAgenticTerminalMessage,
   formatStreamErrorMessage,
   interruptedBubbleMessage,
   toUserFacingErrorMessage,
@@ -792,12 +792,6 @@ function createStreamingCommit(updateMessage: MessageUpdater) {
   };
 }
 
-function formatAgenticTerminalError(
-  payload: ReaderAskAgenticTerminalPayloadDto,
-): string {
-  return formatAgenticTerminalMessage(payload, { dev: isDevMode() });
-}
-
 function agenticTerminalMessageStatus(
   finalStatus: ReaderAskAgenticTerminalStatusDto,
 ): "failed" | "interrupted" {
@@ -844,6 +838,11 @@ export function createSseMessageHandler(
   // to decide whether to fire onOptionalToolWarning at completed time.
   // Reset on run_started so it never bleeds across turns.
   let optionalToolUnavailable = false;
+  let contextCompactionIdentity: {
+    messageId: string;
+    threadId: string;
+    turnRunId: string;
+  } | null = null;
   // ASK-REASONING-R2 / ASK-COT-B1-R1: strict identity/seq state machine for
   // agentic.reasoning.* (one stream per handler instance). `started`
   // (seq === 0) establishes the turn identity binding; delta/completed
@@ -1090,6 +1089,60 @@ export function createSseMessageHandler(
   }
 
   return function handleSseEvent(event: ReaderAskStreamEnvelopeDto) {
+    if (
+      event.event === "context.compaction.started" ||
+      event.event === "context.compaction.completed" ||
+      event.event === "context.compaction.failed" ||
+      event.event === "context.compaction.fallback"
+    ) {
+      if (!isReaderAskContextCompactionPayload(event.data)) {
+        return;
+      }
+      const payload = event.data;
+      if (event.event === "context.compaction.started") {
+        if (payload.message_id !== currentMessageId) {
+          currentMessageId = payload.message_id;
+          onMessageIdAssigned?.(payload.message_id);
+        }
+        contextCompactionIdentity = {
+          messageId: payload.message_id,
+          threadId: payload.thread_id,
+          turnRunId: payload.turn_run_id,
+        };
+      } else if (
+        contextCompactionIdentity == null ||
+        contextCompactionIdentity.messageId !== payload.message_id ||
+        contextCompactionIdentity.threadId !== payload.thread_id ||
+        contextCompactionIdentity.turnRunId !== payload.turn_run_id
+      ) {
+        return;
+      }
+      const status =
+        event.event === "context.compaction.started"
+          ? "running"
+          : event.event === "context.compaction.completed"
+            ? "completed"
+            : event.event === "context.compaction.fallback"
+              ? "fallback"
+              : "failed";
+      commitStreamingMessageUpdate(
+        (messages) =>
+          messages.map((message) =>
+            message.id === currentMessageId
+              ? {
+                  ...message,
+                  context_compaction: {
+                    status,
+                    elapsedMs: payload.elapsed_ms,
+                  },
+                }
+              : message,
+          ),
+        true,
+      );
+      return;
+    }
+
     // Agentic-only progress events are non-terminal. They update the activity
     // indicator only — never complete or fail the assistant bubble.
     if (event.event === "agentic.run_started") {
@@ -1958,24 +2011,85 @@ function LiveSelectionChip({
   );
 }
 
-function CurrentRecordChip({ recordTitle }: { recordTitle?: string | null }) {
-  if (!recordTitle?.trim()) {
-    return null;
-  }
-
+/**
+ * ASK-UX-COT-COMPOSER-R3 P1 — permanent current-article composer chip.
+ * Renders the page-authoritative record title (snapshot.record.title via
+ * the `recordTitle` prop — never the thread title) as a non-removable
+ * document chip, first in the strip. It visualizes the implicit "current
+ * article" context only: it constructs no attachment, never enters
+ * provenance, and is never injected into the model again (the article is
+ * already the ambient context server-side).
+ */
+function CurrentArticleChip({ title }: { title: string }) {
   return (
-    <Attachments variant="inline" className="max-w-full">
+    <Attachments variant="inline" className="max-w-full shrink-0">
       <Attachment
         data={sourceDocumentPart(
-          `record:${recordTitle}`,
-          recordTitle,
+          "current-article",
+          title,
           "application/vnd.claread.record",
         )}
-        className="max-w-full"
-        title={recordTitle}
+        className="max-w-full cursor-default"
+        data-ask-current-article-chip="true"
+        title={`当前文章：${title}`}
+        aria-label={`当前文章：${title}`}
       >
-        <AttachmentPreview fallbackIcon={<FileText className="h-3.5 w-3.5 text-subtle" />} />
+        <AttachmentPreview fallbackIcon={<FileText className="h-3 w-3 text-muted-foreground" />} />
         <AttachmentInfo className="max-w-[12rem] text-xs sm:max-w-[15rem]" />
+      </Attachment>
+    </Attachments>
+  );
+}
+
+/**
+ * ASK-UX-COT-COMPOSER-R3 P1 — composer chip for an auto/manual selection
+ * slot. Quote icon + truncated source text; each chip is independently
+ * removable via the slot callback. Selection identity (dedupe/promote)
+ * is owned by the surface via the anchor fingerprint — never the label.
+ */
+function SelectionContextChip({
+  attachment,
+  slot,
+  onRemove,
+}: {
+  attachment: ReaderAskAttachment;
+  slot: "auto" | "manual";
+  onRemove?: (attachmentKey: string) => void;
+}) {
+  const attachmentKey = askAttachmentKey(attachment);
+  const preferredText = attachment.selectedText?.trim() || askAttachmentLabel(attachment);
+  const displayLabel =
+    preferredText.length <= 44
+      ? preferredText
+      : `${preferredText.slice(0, 43).trimEnd()}…`;
+  const slotLabel = slot === "auto" ? "自动选区" : "固定选区";
+
+  return (
+    <Attachments
+      variant="inline"
+      className="max-w-full shrink-0"
+      onPointerDown={(event) => {
+        // Protect the native selection from collapsing when interacting
+        // with the strip.
+        event.preventDefault();
+      }}
+    >
+      <Attachment
+        data={sourceDocumentPart(attachmentKey, displayLabel)}
+        onRemove={onRemove ? () => onRemove(attachmentKey) : undefined}
+        className="max-w-full"
+        data-ask-selection-slot={slot}
+        onPointerDown={(event) => {
+          event.preventDefault();
+        }}
+        title={`${slotLabel}：${preferredText}`}
+        aria-label={`${slotLabel}：${preferredText}`}
+      >
+        <AttachmentPreview fallbackIcon={<Quote className="h-3 w-3 text-muted-foreground" />} />
+        <AttachmentInfo className="max-w-[12rem] text-xs sm:max-w-[15rem]" />
+        {onRemove ? (
+          <AttachmentRemove label={`移除${slotLabel}：${preferredText}`} />
+        ) : null}
       </Attachment>
     </Attachments>
   );
@@ -1998,6 +2112,12 @@ function AskProvenanceLine({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = details.length > 0;
+  // ASK-UX-HISTORY-COT-R2 P0-2: render nothing when there is no explicit
+  // context (no selection, no notes). The current article is implicit
+  // and must not surface as a default provenance row.
+  if (!summary && !hasDetails) {
+    return null;
+  }
   const summaryClassName =
     "inline-flex max-w-full items-center gap-1 text-[11px] leading-4 text-muted-foreground";
 
@@ -2310,6 +2430,7 @@ function normalizeReaderAskMessages(
         // ASK-COT — the process snapshot is in-memory only; cold history
         // can never carry it (defensive: the server never sends it).
         agentic_process_snapshot: null,
+        context_compaction: null,
       } as ReaderAskUiMessageDto;
     }
 
@@ -2369,6 +2490,7 @@ function normalizeReaderAskMessages(
       // ASK-COT — cold v2 turns render reasoning-only; the typed process
       // steps are session-memory only and never persist across reload.
       agentic_process_snapshot: null,
+      context_compaction: null,
     } as ReaderAskUiMessageDto;
   });
 }
@@ -3015,9 +3137,9 @@ function DisambiguationCards({
       </PlanHeader>
       <PlanContent>
         <Attachments variant="list" className="w-full gap-2">
-          {disambiguation.candidates.map((candidate) => (
+          {disambiguation.candidates.map((candidate, index) => (
             <Attachment
-              key={candidate.record_id}
+              key={`${candidate.record_id}:${index}`}
               data={sourceDocumentPart(candidate.record_id, candidate.title || candidate.record_id)}
             >
               <AttachmentPreview />
@@ -3065,9 +3187,9 @@ function AssetDisambiguationCards({
       </PlanHeader>
       <PlanContent>
         <Attachments variant="list" className="w-full gap-2">
-          {assetDisambiguation.candidates.map((candidate) => (
+          {assetDisambiguation.candidates.map((candidate, index) => (
             <Attachment
-              key={`${candidate.asset_type}:${candidate.asset_id}`}
+              key={`${candidate.asset_type}:${candidate.asset_id}:${index}`}
               data={sourceDocumentPart(candidate.asset_id, candidate.title || candidate.asset_id)}
             >
               <AttachmentPreview />
@@ -3539,8 +3661,6 @@ function AssistantReasoningBlock({
 
 function MessageBubble({
   item,
-  currentRecordId,
-  pageIdentity,
   pendingActionId,
   deletingSupplementId,
   supplementNotice,
@@ -3551,19 +3671,15 @@ function MessageBubble({
   onRetry,
   onResend,
   resolveRetryTarget,
-  onJumpToAttachment,
   onAnnotationFeedback,
   analysisRecordId,
   onPickFollowUpSuggestion,
   agenticActivity,
-  onNavigateAgenticSource,
-  onAnnounce,
   turnNotice,
   onDismissTurnNotice,
+  isAgenticCapable,
 }: {
   item: AskPanelConversationItem;
-  currentRecordId: string;
-  pageIdentity: ReaderAskPageIdentity;
   pendingActionId: string | null;
   deletingSupplementId: string | null;
   supplementNotice: string | null;
@@ -3581,15 +3697,19 @@ function MessageBubble({
   resolveRetryTarget: (
     messageId: string,
   ) => ReturnType<typeof classifyRetryTarget>;
-  onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
   onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
   analysisRecordId?: string;
   onPickFollowUpSuggestion?: (prompt: string) => void;
   agenticActivity?: AgenticActivityState | null;
-  onNavigateAgenticSource?: NavigateAgenticSource;
-  onAnnounce?: (message: string) => void;
   turnNotice?: AskSystemNotice | null;
   onDismissTurnNotice?: (messageId: string) => void;
+  /**
+   * ASK-UX-HISTORY-COT-R2 P0-3 — true when the host panel routes sends
+   * through the Reading Record Ask stream (the agentic v2 lane when the
+   * backend flag is on). Analysis-scope callers are the explicit legacy
+   * lane and keep AssistantStreamingIndicator at T0.
+   */
+  isAgenticCapable?: boolean;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -3617,16 +3737,24 @@ function MessageBubble({
   // ASK-COT — agentic v2 turns converge reasoning + activity into one
   // turn-scoped Chain of Thought (TurnProcessDisclosure). Detection:
   // hot settled (snapshot present), cold history (execution_version), or
-  // live v2 (streaming with a non-idle activity bound to this bubble —
-  // idle means run_started has not arrived yet, so the legacy fallback
-  // row covers the pre-run gap exactly like today). Legacy lanes keep
-  // ReasoningPanel + AssistantStreamingIndicator + ToolTraceBlock.
+  // live v2 (streaming with an activity bound to this bubble).
+  //
+  // ASK-UX-HISTORY-COT-R2 P0-3: for agentic-capable panels (Reading Record
+  // Ask), the optimistic assistant message enters TurnProcessDisclosure at
+  // T0 — the moment the bubble is created with a bound (even idle)
+  // activity. We must NOT wait for agentic.run_started to switch from the
+  // old AssistantStreamingIndicator, or the user sees a two-line status
+  // card flash before the typed process disclosure takes over. The idle
+  // activity is still bound to this bubble (see the prop passing in the
+  // render site), so `agenticActivity != null` is the T0 signal.
+  // Analysis-scope (explicit legacy lane) keeps the old indicator at T0
+  // because `isAgenticCapable` is false there.
   const isAgenticV2Turn =
     message.agentic_process_snapshot != null ||
     message.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION ||
     (message.status === "streaming" &&
       agenticActivity != null &&
-      agenticActivity.status !== "idle");
+      (isAgenticCapable || agenticActivity.status !== "idle"));
 
   return (
     <div
@@ -3636,7 +3764,10 @@ function MessageBubble({
       className={cn("flex flex-col gap-3", isAssistant ? "items-start" : "items-end")}
     >
       {isAssistant ? (
-        <div className="min-w-0 w-full space-y-4">
+        // P1 — vertical rhythm between answer/process/sources/actions.
+        // 4/8 spacing: tighter than the old space-y-4, so the process
+        // disclosure sits closer to the answer it belongs to.
+        <div className="min-w-0 w-full space-y-3">
           {blocks.map((block, index) => {
             switch (block.kind) {
               case "answer":
@@ -3662,11 +3793,17 @@ function MessageBubble({
                               : null
                           }
                           snapshot={message.agentic_process_snapshot ?? null}
+                          citations={agenticCitationItems}
+                          isStreaming={message.status === "streaming"}
+                          // ASK-UX-COT-COMPOSER-R3 — v2 reasoning lives
+                          // INSIDE the turn disclosure (思考要点), never a
+                          // second card above the answer. Only the server
+                          // safe projection fields are forwarded; raw
+                          // provider reasoning never exists on the DTO.
                           reasoningMd={message.reasoning_md}
                           reasoningStatus={message.reasoning_status}
                           reasoningTruncated={message.reasoning_truncated}
-                          citations={agenticCitationItems}
-                          isStreaming={message.status === "streaming"}
+                          contextCompaction={message.context_compaction ?? null}
                         />
                       ) : (
                         <>
@@ -3958,13 +4095,17 @@ function MessageBubble({
                 {messageOperationSummary(message)}
               </MessageContent>
             ) : (
-              <MessageContent className="text-[14.5px]">
-                <MessageResponse className="ask-message-response whitespace-pre-wrap text-[14.5px] leading-[1.78]">
+              // P1 — user message: compact tonal surface, no thick border.
+              // bg-secondary + rounded-lg from MessageContent is the right
+              // baseline; tighten padding for a quieter, more scannable
+              // rhythm against the frameless assistant answer.
+              <MessageContent className="text-[14.5px] px-3.5 py-2.5">
+                <MessageResponse className="ask-message-response whitespace-pre-wrap text-[14.5px] leading-[1.7]">
                   {message.content_md}
                 </MessageResponse>
               </MessageContent>
             )}
-            <div className="flex items-center justify-end gap-2 pr-1 opacity-70 transition-opacity group-hover:opacity-100">
+            <div className="flex items-center justify-end gap-2 pr-1 opacity-0 transition-opacity group-hover:opacity-70">
               <span className="text-[10px] text-muted-foreground">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
               </span>
@@ -3978,9 +4119,20 @@ function MessageBubble({
 function StarterState({
   attachments,
   onPickPrompt,
+  webSearchCapable,
 }: {
   attachments: ReaderAskAttachment[];
-  onPickPrompt: (prompt: string, entryAction: ReaderAskEntryActionDto) => void;
+  onPickPrompt: (
+    prompt: string,
+    entryAction: ReaderAskEntryActionDto,
+    webSearchOverride?: WebSearchModeDto,
+  ) => void;
+  /**
+   * R2.1 — when true, the model's provider declares web search capability,
+   * so the empty state surfaces a 4th "查询相关资料" suggestion. When
+   * false, the suggestion is hidden (no no-op affordance).
+   */
+  webSearchCapable: boolean;
 }) {
   const starterMode: StarterMode = (() => {
     const selectionAttachment = attachments.find((attachment) => attachment.kind === "text_selection");
@@ -4008,7 +4160,11 @@ function StarterState({
         ? "当前选区"
         : null;
   const contextPreview = contextAttachment?.selectedText?.trim() ?? null;
-  const suggestions = [
+  // R2.1 — article-oriented suggestions. The 4th slot is conditionally
+  // swapped: "查询相关资料" appears only when the selected model's provider
+  // declares web search capability. Otherwise the exercise prompt stays.
+  // Total stays within 2–4 per R2.1.
+  const baseSuggestions = [
     {
       prompt: starterContent.prompts[0],
       entryAction: "ask_about_this" as const,
@@ -4030,14 +4186,30 @@ function StarterState({
       iconClassName: "text-structure-green",
       badgeClassName: "bg-structure-green/12",
     },
-    {
-      prompt: starterContent.prompts[3],
-      entryAction: "ask_about_this" as const,
-      icon: PencilLine,
-      iconClassName: "text-vocab-amber",
-      badgeClassName: "bg-vocab-amber/14",
-    },
   ];
+  const suggestions = webSearchCapable
+    ? [
+        ...baseSuggestions,
+        {
+          prompt: "查询这篇文章相关的其他资料。",
+          entryAction: "ask_about_this" as const,
+          icon: Globe,
+          iconClassName: "text-context-blue",
+          badgeClassName: "bg-context-blue/12",
+          // R2.1 — signals the host to enable web search for this send.
+          webSearchOverride: "allowed" as const,
+        },
+      ]
+    : [
+        ...baseSuggestions,
+        {
+          prompt: starterContent.prompts[3],
+          entryAction: "ask_about_this" as const,
+          icon: PencilLine,
+          iconClassName: "text-vocab-amber",
+          badgeClassName: "bg-vocab-amber/14",
+        },
+      ];
 
   return (
     <PromptSuggestions
@@ -4065,6 +4237,20 @@ export interface AiWorkspacePanelProps {
   hideClosedLauncher?: boolean;
   recordTitle?: string | null;
   attachments: ReaderAskAttachment[];
+  /**
+   * ASK-UX-COT-COMPOSER-R3 P1 — Reading Record composer selection slots.
+   * `autoSelectionAttachment` is the 0/1 auto-ingested stable single-range
+   * source selection (removable, replaced by the next new selection);
+   * `manualSelectionAttachments` are toolbar-pinned selections (≤3,
+   * anchor-fingerprint deduped). Both ride along on send as explicit
+   * focus context but never enter provenance as "当前文章" — the current
+   * article is the fixed implicit context, visualized by the permanent
+   * article chip only.
+   */
+  autoSelectionAttachment?: ReaderAskAttachment | null;
+  manualSelectionAttachments?: ReaderAskAttachment[];
+  onRemoveAutoSelection?: () => void;
+  onRemoveManualSelection?: (attachmentKey: string) => void;
   liveContextAttachment?: ReaderAskAttachment | null;
   pendingQuickActionRequest?: ReaderAskQuickActionRequest | null;
   hideLauncherOnMobile?: boolean;
@@ -4106,6 +4292,10 @@ export function AiWorkspacePanel({
   layout = "overlay",
   onChangeSurface,
   attachments,
+  autoSelectionAttachment = null,
+  manualSelectionAttachments,
+  onRemoveAutoSelection,
+  onRemoveManualSelection,
   liveContextAttachment = null,
   pageIdentity,
   pendingQuickActionRequest,
@@ -4134,7 +4324,6 @@ export function AiWorkspacePanel({
   analysisRecordId,
   capacityDowngradeNotice,
   onDismissCapacityDowngradeNotice,
-  onNavigateAgenticSource,
   hasSidecarCapacity = true,
 }: AiWorkspacePanelProps) {
   const isFloatingSurface = surface === "floating";
@@ -4347,26 +4536,51 @@ export function AiWorkspacePanel({
     ? visibleContextAttachments.filter((attachment) => askAttachmentKey(attachment) !== askAttachmentKey(liveContextAttachment))
     : visibleContextAttachments;
 
-  const hasProvenancePageIdentity = Boolean(recordTitle?.trim());
+  // ASK-UX-COT-COMPOSER-R3 P1 — page-authoritative article title for the
+  // permanent composer chip (snapshot.record.title via the recordTitle
+  // prop; pageIdentity as a defensive fallback). Never the thread title.
+  const currentArticleChipTitle =
+    recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
+
+  // R3 P1 — RR selection slots (auto 0/1 + manual ≤3) ride along on send
+  // as explicit focus context. Analysis scope keeps its legacy
+  // live-selection-only behavior.
+  const selectionSlotAttachments = isReadingRecordScope
+    ? [
+        ...(autoSelectionAttachment ? [autoSelectionAttachment] : []),
+        ...(manualSelectionAttachments ?? []),
+      ]
+    : [];
+
+  // ASK-UX-HISTORY-COT-R2 P0-2: the current article is fixed implicit
+  // context — it must NOT produce a default "基于：当前文章" provenance
+  // row. Only explicit selections / attachments / other articles surface
+  // in provenance. When nothing is explicit, the provenance line does
+  // not render at all (no "仅按你的问题回答" noise). The page identity
+  // title remains the single source of truth for the reader header; it
+  // is never echoed here as an attachment label.
   const hasProvenanceLiveSelection = Boolean(liveContextAttachment);
   const provenanceNoteCount = composerContextAttachments.length;
   const provenanceParts: string[] = [];
-  if (hasProvenancePageIdentity) {
-    provenanceParts.push("当前文章");
-  }
   if (hasProvenanceLiveSelection) {
     provenanceParts.push("选中句");
+  }
+  // R3 P1 — explicit RR selections (auto/manual slots) surface in
+  // provenance; the implicit current article never does.
+  if (selectionSlotAttachments.length > 0) {
+    provenanceParts.push(
+      selectionSlotAttachments.length === 1
+        ? "选中段"
+        : `${selectionSlotAttachments.length} 处选区`,
+    );
   }
   if (provenanceNoteCount > 0) {
     provenanceParts.push(`${provenanceNoteCount} 条笔记`);
   }
   const provenanceJoinedParts = provenanceParts.join(" · ");
   const provenanceSummary =
-    provenanceParts.length > 0 ? `基于：${provenanceJoinedParts}` : "仅按你的问题回答";
+    provenanceParts.length > 0 ? `基于：${provenanceJoinedParts}` : "";
   const provenanceDetails: Array<{ label: string; value: string }> = [];
-  if (recordTitle?.trim()) {
-    provenanceDetails.push({ label: "当前文章", value: recordTitle.trim() });
-  }
   if (liveContextAttachment) {
     const selectionText = liveContextAttachment.selectedText?.trim();
     provenanceDetails.push({
@@ -4374,6 +4588,13 @@ export function AiWorkspacePanel({
       value: truncateProvenanceDetail(selectionText || askAttachmentLabel(liveContextAttachment)),
     });
   }
+  selectionSlotAttachments.forEach((attachment, index) => {
+    const selectionText = attachment.selectedText?.trim();
+    provenanceDetails.push({
+      label: selectionSlotAttachments.length === 1 ? "选中段" : `选区 ${index + 1}`,
+      value: truncateProvenanceDetail(selectionText || askAttachmentLabel(attachment)),
+    });
+  });
   composerContextAttachments.forEach((attachment, index) => {
     provenanceDetails.push({
       label: `笔记 ${index + 1}`,
@@ -4445,7 +4666,7 @@ export function AiWorkspacePanel({
     );
   }
 
-  async function fetchContextRecords(query: string) {
+  const fetchContextRecords = useCallback(async (query: string) => {
     if (!supportsRelatedRecordContext) {
       return { items: [] } satisfies ReaderAskContextRecordSearchResponseDto;
     }
@@ -4454,7 +4675,7 @@ export function AiWorkspacePanel({
       undefined,
       "上下文文章搜索失败。",
     );
-  }
+  }, [recordId, supportsRelatedRecordContext]);
 
   async function fetchModelOptions() {
     return fetchJson<ReaderAskModelOptionListResponseDto>(
@@ -4546,7 +4767,12 @@ export function AiWorkspacePanel({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [contextPickerOpen, contextSearch.query, recordId, supportsRelatedRecordContext]);
+  }, [
+    contextPickerOpen,
+    contextSearch.query,
+    fetchContextRecords,
+    supportsRelatedRecordContext,
+  ]);
 
   // Set loading state when panel opens (before fetch starts)
   const [prevOpenForLoading, setPrevOpenForLoading] = useState(open);
@@ -4914,6 +5140,7 @@ export function AiWorkspacePanel({
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
+      attachmentMode: "exact",
       entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
       clearComposer: false,
     });
@@ -4953,6 +5180,7 @@ export function AiWorkspacePanel({
     await sendMessage({
       content: priorUserMessage.content_md,
       attachments: nextAttachments,
+      attachmentMode: "exact",
       entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
       clearComposer: false,
     });
@@ -4961,11 +5189,26 @@ export function AiWorkspacePanel({
   async function sendMessage(options?: {
     content?: string;
     attachments?: ReaderAskAttachment[];
+    /**
+     * `merge_current` is the normal Composer contract: visible persistent
+     * selection slots are part of the request even when a quick action
+     * supplies additional attachments. `exact` is reserved for replaying a
+     * previously persisted/pending turn (resend or disambiguation), where
+     * current draft chips must not mutate the historical request.
+     */
+    attachmentMode?: "merge_current" | "exact";
     entryAction?: ReaderAskEntryActionDto;
     submissionMode?: "chat" | "quick_action";
     clearComposer?: boolean;
     /** R2: reuse a prior client_submission_id on resend (idempotent claim). */
     clientSubmissionId?: string;
+    /**
+     * R2.1 — per-send web search mode override. When provided, this wins
+     * over the panel-level ``webSearchMode`` state for this single send
+     * (used by the empty-state "查询相关资料" suggestion). The panel state
+     * is also updated to match so the composer toggle reflects the choice.
+     */
+    webSearchModeOverride?: WebSearchModeDto;
   }) {
     const content = (options?.content ?? "").trim();
     if (!content || sending) {
@@ -4980,14 +5223,26 @@ export function AiWorkspacePanel({
       return;
     }
 
-    // Only auto-merge liveContextAttachment when the caller does not explicitly
-    // provide attachments. Explicit options.attachments means the caller (quick
-    // action, HITP candidate, etc.) has already defined the complete context set.
+    const attachmentMode = options?.attachmentMode ?? "merge_current";
+    // The transient live selection remains implicit only for ordinary sends
+    // without an explicit attachment set. Reading-record Composer selection
+    // slots are different: they are persistent, visible user context and are
+    // merged below unless this is an exact historical replay.
     const includeLiveContext = options?.attachments === undefined;
     const baseAttachments = options?.attachments ?? attachments;
-    const usedAttachments = includeLiveContext && liveContextAttachment
+    const withLiveContext =
+      attachmentMode === "merge_current" &&
+      includeLiveContext &&
+      liveContextAttachment
       ? mergeAttachments(baseAttachments, [liveContextAttachment])
       : baseAttachments;
+    // ASK-UX-COT-COMPOSER-R3 P1 — RR selection slots (auto first, then
+    // manual) merge into the send context the same way; they persist
+    // after sending (draft selections survive the message).
+    const usedAttachments =
+      attachmentMode === "merge_current" && selectionSlotAttachments.length > 0
+        ? mergeAttachments(withLiveContext, selectionSlotAttachments)
+        : withLiveContext;
     const entryAction = options?.entryAction ?? defaultEntryAction();
     const submissionMode = options?.submissionMode ?? "chat";
     const now = Date.now();
@@ -5002,12 +5257,18 @@ export function AiWorkspacePanel({
       (typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `00000000-0000-4000-8000-${String(now).padStart(12, "0").slice(-12)}`);
+    // R2.1 — per-send override wins; fall back to panel-level state.
+    const effectiveWebSearchMode =
+      options?.webSearchModeOverride ?? webSearchMode;
+    if (options?.webSearchModeOverride && options.webSearchModeOverride !== webSearchMode) {
+      setWebSearchMode(options.webSearchModeOverride);
+    }
     const pendingRequest: PendingSendRequest = {
       content,
       attachments: usedAttachments.map(serializeAttachment),
       entryAction: entryAction,
       model: effectiveSelectedModelKey,
-      webSearchMode: webSearchMode,
+      webSearchMode: effectiveWebSearchMode,
       clientSubmissionId,
       localUserId: tempUserId,
       localAssistantId: tempAssistantId,
@@ -5046,7 +5307,7 @@ export function AiWorkspacePanel({
       // backend can persist it as message metadata and replay the original
       // turn capability on retry (server-side source of truth). Absent on
       // cold history; retry resolves the mode from persisted metadata only.
-      web_search_mode: webSearchMode,
+      web_search_mode: effectiveWebSearchMode,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -5081,6 +5342,7 @@ export function AiWorkspacePanel({
       reasoning_status: "idle",
       follow_up_suggestions: [],
       compacting: false,
+      context_compaction: null,
       regenerate_preview: false,
       usage_event_id: null,
       // No article_rag sidecar until message.completed arrives — streaming
@@ -5372,7 +5634,7 @@ export function AiWorkspacePanel({
         attachments: usedAttachments.map(serializeAttachment),
         entry_action: entryAction,
         model: effectiveSelectedModelKey,
-        web_search_mode: webSearchMode,
+        web_search_mode: effectiveWebSearchMode,
         client_submission_id: clientSubmissionId,
       };
       // ASK-RETRY-CONTRACT-R0 — browser path from the shared path builder.
@@ -5547,7 +5809,6 @@ export function AiWorkspacePanel({
       const metrics = turnMetricsRef.current;
       if (metrics !== null) {
         metrics.markComposerEnabled();
-        // eslint-disable-next-line no-console
         console.info(
           "[AskTurnLifecycle] metrics",
           JSON.stringify(metrics.toJSON()),
@@ -5603,6 +5864,7 @@ export function AiWorkspacePanel({
       // provided as the already-serialized list is accepted by the stream
       // body builder above. Re-hydrate is not required for wire-only resend.
       attachments: pending.attachments as unknown as ReaderAskAttachment[],
+      attachmentMode: "exact",
       entryAction: pending.entryAction,
       clearComposer: false,
       clientSubmissionId: pending.clientSubmissionId,
@@ -5737,6 +5999,7 @@ export function AiWorkspacePanel({
               reasoning_md: "",
               follow_up_suggestions: [],
               compacting: false,
+              context_compaction: null,
               // Clear any prior article_rag sidecar so streaming doesn't
               // render stale citations from the previous attempt.
               article_rag: null,
@@ -5910,7 +6173,6 @@ export function AiWorkspacePanel({
       const metrics = turnMetricsRef.current;
       if (metrics !== null) {
         metrics.markComposerEnabled();
-        // eslint-disable-next-line no-console
         console.info(
           "[AskTurnLifecycle] retry metrics",
           JSON.stringify(metrics.toJSON()),
@@ -6122,10 +6384,12 @@ export function AiWorkspacePanel({
             emptyState={
               <StarterState
                 attachments={attachments}
-                onPickPrompt={(prompt, entryAction) => {
+                webSearchCapable={webSearchCapabilityAvailable}
+                onPickPrompt={(prompt, entryAction, webSearchOverride) => {
                   void sendMessage({
                     content: prompt,
                     entryAction,
+                    webSearchModeOverride: webSearchOverride,
                   });
                 }}
               />
@@ -6135,8 +6399,6 @@ export function AiWorkspacePanel({
               <MessageBubble
                 key={item.id}
                 item={item}
-                currentRecordId={recordId}
-                pageIdentity={pageIdentity}
                 pendingActionId={pendingActionId}
                 deletingSupplementId={pendingSupplementDeleteId}
                 supplementNotice={supplementNoticeMessageId === item.id ? supplementNotice : null}
@@ -6149,7 +6411,6 @@ export function AiWorkspacePanel({
                 onRetry={handleRetry}
                 onResend={handleResend}
                 resolveRetryTarget={resolveRetryTarget}
-                onJumpToAttachment={onJumpToAttachment}
                 onAnnotationFeedback={onAnnotationFeedback}
                 analysisRecordId={analysisRecordId}
                 onPickFollowUpSuggestion={(prompt) => {
@@ -6164,10 +6425,9 @@ export function AiWorkspacePanel({
                     ? agenticActivity
                     : null
                 }
-                onNavigateAgenticSource={onNavigateAgenticSource}
-                onAnnounce={setLiveAnnouncement}
                 turnNotice={turnNotices[item.id] ?? null}
                 onDismissTurnNotice={handleDismissTurnNotice}
+                isAgenticCapable={isReadingRecordScope}
               />
             ))}
           </ConversationShell>
@@ -6182,9 +6442,44 @@ export function AiWorkspacePanel({
         onStop={handleStop}
         placeholder={COMPOSER_PLACEHOLDER}
         contextStrip={
-          recordTitle || composerContextAttachments.length > 0 || liveContextAttachment ? (
+          isReadingRecordScope ? (
             <>
-              <CurrentRecordChip recordTitle={recordTitle} />
+              {/* ASK-UX-COT-COMPOSER-R3 P1 — Reading Record strip: the
+                  permanent current-article chip first (implicit context,
+                  page-authoritative title, non-removable), then the 0/1
+                  auto selection, then pinned manual selections, then
+                  other drafts (notes/refs). No "基于：当前文章"
+                  provenance — the chip is the visible hint. */}
+              <CurrentArticleChip title={currentArticleChipTitle} />
+              {autoSelectionAttachment ? (
+                <SelectionContextChip
+                  attachment={autoSelectionAttachment}
+                  slot="auto"
+                  onRemove={
+                    onRemoveAutoSelection ? () => onRemoveAutoSelection() : undefined
+                  }
+                />
+              ) : null}
+              {(manualSelectionAttachments ?? []).map((attachment) => (
+                <SelectionContextChip
+                  key={askAttachmentKey(attachment)}
+                  attachment={attachment}
+                  slot="manual"
+                  onRemove={onRemoveManualSelection}
+                />
+              ))}
+              <AttachmentChips
+                attachments={composerContextAttachments}
+                removable
+                onRemove={onRemoveAttachment}
+                onJump={onJumpToAttachment}
+                variant="composer"
+              />
+            </>
+          ) : composerContextAttachments.length > 0 || liveContextAttachment ? (
+            <>
+              {/* Analysis scope keeps the legacy strip: explicit
+                  attachments + live selection only. */}
               <AttachmentChips
                 attachments={composerContextAttachments}
                 removable

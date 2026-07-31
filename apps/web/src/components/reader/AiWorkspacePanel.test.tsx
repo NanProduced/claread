@@ -612,6 +612,11 @@ describe("AiWorkspacePanel", () => {
 
   it("sends only the current reader ask request shape", async () => {
     const onClearAttachments = vi.fn();
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
     render(
       <AiWorkspacePanel
         open
@@ -838,7 +843,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
   });
 
-  it("shows the current page chip and recent related-article search from the add menu", async () => {
+  it("ASK-UX-HISTORY-COT-R2 P0-2: no default current-article chip; add-menu related-article search still works", async () => {
     render(
       <AiWorkspacePanel
         open
@@ -856,7 +861,12 @@ describe("AiWorkspacePanel", () => {
       expect(global.fetch).toHaveBeenCalled();
     });
 
-    expect(screen.getByText("Test Reader")).not.toBeNull();
+    // P0-2: the current article is fixed implicit context — no default
+    // chip, no provenance row. The page identity title is the sole source
+    // of truth for the reader header and is never echoed as a chip here.
+    expect(screen.queryByText("Test Reader")).toBeNull();
+    expect(screen.queryByText(/基于：/)).toBeNull();
+
     await userEvent.click(screen.getByRole("button", { name: "添加其他文章" }));
 
     // Without forceMount, DropdownMenu content renders asynchronously after
@@ -1006,7 +1016,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+              id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -1337,7 +1347,7 @@ describe("AiWorkspacePanel", () => {
               updated_at: "2026-05-20T00:00:00Z",
             },
             {
-              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+              id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
               thread_id: "thread-1",
               role: "assistant",
               status: "completed",
@@ -2612,7 +2622,7 @@ describe("AiWorkspacePanel", () => {
           required_points: 10,
         },
       });
-      return makeLogicalTerminalResult("parse_error");
+      return makeLogicalTerminalResult("terminal", { finalStatus: "failed" });
     });
 
     render(
@@ -2881,7 +2891,11 @@ describe("AiWorkspacePanel", () => {
       },
     };
 
-    it("provenance shows article context when record title is present", async () => {
+    it("ASK-UX-HISTORY-COT-R2 P0-2: no provenance row when only the implicit current article is present (no explicit attachments)", async () => {
+      // The current article is fixed implicit context — it must NOT
+      // produce a default "基于：当前文章" provenance row. With no
+      // explicit selection / notes / other articles, the provenance
+      // line does not render at all.
       renderPanel({
         recordTitle: "Test Reader",
         attachments: [],
@@ -2892,10 +2906,12 @@ describe("AiWorkspacePanel", () => {
         expect(global.fetch).toHaveBeenCalled();
       });
 
-      expect(screen.getByText(/基于：当前文章/)).not.toBeNull();
+      expect(screen.queryByText(/基于：当前文章/)).toBeNull();
+      expect(screen.queryByText(/仅按你的问题回答/)).toBeNull();
+      expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("provenance shows selection and notes when live selection and attachments exist", async () => {
+    it("ASK-UX-HISTORY-COT-R2 P0-2: provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
       renderPanel({
         recordTitle: "Test Reader",
         liveContextAttachment: sentenceAttachment,
@@ -2907,11 +2923,13 @@ describe("AiWorkspacePanel", () => {
       });
 
       const summary = screen.getByText(/基于：/);
-      expect(summary.textContent).toContain("当前文章 · 选中句");
+      // The current article must NOT appear — only explicit context.
+      expect(summary.textContent).not.toContain("当前文章");
+      expect(summary.textContent).toContain("选中句");
       expect(summary.textContent).toContain("1 条笔记");
     });
 
-    it("provenance shows no-context state when nothing is present", async () => {
+    it("ASK-UX-HISTORY-COT-R2 P0-2: no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
       renderPanel({
         recordTitle: "",
         attachments: [],
@@ -2922,12 +2940,19 @@ describe("AiWorkspacePanel", () => {
         expect(global.fetch).toHaveBeenCalled();
       });
 
-      expect(screen.getByText("仅按你的问题回答")).not.toBeNull();
+      // No provenance line, no fallback "仅按你的问题回答" text.
+      expect(screen.queryByText("仅按你的问题回答")).toBeNull();
+      expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("keeps no-context provenance as static text instead of a dead disclosure button", async () => {
+    it("ASK-UX-HISTORY-COT-R2 P0-2: thread title differs from page title — page identity title is the sole article title source, never thread title", async () => {
+      // The thread title is a conversation label; the page identity
+      // recordTitle is the sole source of truth for the article title.
+      // The Ask panel must never echo the thread title as an attachment
+      // label or provenance "当前文章" row. With no explicit attachments,
+      // neither title surfaces in provenance/chips.
       renderPanel({
-        recordTitle: "",
+        recordTitle: "页面标题文章",
         attachments: [],
         liveContextAttachment: null,
       });
@@ -2936,8 +2961,9 @@ describe("AiWorkspacePanel", () => {
         expect(global.fetch).toHaveBeenCalled();
       });
 
-      const summary = screen.getByText("仅按你的问题回答");
-      expect(summary.closest("button")).toBeNull();
+      // No provenance row, no chip — the article is implicit.
+      expect(screen.queryByText(/基于：/)).toBeNull();
+      expect(screen.queryByText("页面标题文章")).toBeNull();
     });
 
     it("does not announce a sidecar switch until the effective surface actually changes", async () => {
@@ -3024,7 +3050,7 @@ describe("createSseMessageHandler – replan.started", () => {
       rafCallbacks.push(cb);
       return id;
     });
-    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    vi.stubGlobal("cancelAnimationFrame", () => {
       // no-op for tests
     });
   });
@@ -4160,6 +4186,75 @@ describe("createSseMessageHandler – context compression UX", () => {
     expect(getMessages()[0].compacting).toBe(true);
   });
 
+  it("projects the typed agentic compaction lifecycle without retaining diagnostics", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    const base = {
+      execution_version: "reader_record_ask_agentic_v2",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      attempt_count: 1,
+    };
+
+    handler({
+      event: "context.compaction.started",
+      data: { ...base, detail_code: null, elapsed_ms: 0 },
+    });
+    flushRaf();
+    expect(getMessages()[0].context_compaction).toEqual({
+      status: "running",
+      elapsedMs: 0,
+    });
+
+    handler({
+      event: "context.compaction.completed",
+      data: {
+        ...base,
+        detail_code: "provider_exception-must-not-enter-ui",
+        elapsed_ms: 840,
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].context_compaction).toEqual({
+      status: "completed",
+      elapsedMs: 840,
+    });
+    expect(JSON.stringify(getMessages()[0])).not.toContain(
+      "provider_exception-must-not-enter-ui",
+    );
+  });
+
+  it("ignores a foreign compaction terminal after binding started identity", () => {
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+    const base = {
+      execution_version: "reader_record_ask_agentic_v2",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      detail_code: null,
+      attempt_count: 0,
+      elapsed_ms: 0,
+    };
+    handler({ event: "context.compaction.started", data: base });
+    flushRaf();
+
+    handler({
+      event: "context.compaction.failed",
+      data: {
+        ...base,
+        turn_run_id: "foreign-run",
+        detail_code: "timeout",
+        elapsed_ms: 100,
+      },
+    });
+    flushRaf();
+
+    expect(getMessages()[0].context_compaction).toEqual({
+      status: "running",
+      elapsedMs: 0,
+    });
+  });
+
   it("resets compacting to false on message.delta", () => {
     const { handler, getMessages } = setupHandler([
       makeStreamingAssistant({ compacting: true }),
@@ -4173,6 +4268,115 @@ describe("createSseMessageHandler – context compression UX", () => {
     // not content_md.
     expect(getMessages()[0].provisional_content_md).toBe("开始回答");
     expect(getMessages()[0].content_md).toBe("");
+  });
+
+  it("ASK-UX-HISTORY-COT-R2 P0-4: after run_started, delta without turn identity is rejected; delta with matching identity + generation_id is accepted", () => {
+    // Regression for the streaming contract: the backend message.delta
+    // MUST carry message_id / thread_id / turn_run_id / generation_id so
+    // the frontend activeRunIdentity guard (set on agentic.run_started)
+    // can attribute it. Without identity the guard rejects every delta
+    // and provisional_content_md never accumulates — the bubble jumps
+    // straight from empty to the canonical completed answer (no real
+    // streaming). See production_stream.py AnswerDeltaEvent branch.
+    const VERSION = "reader_record_ask_agentic_v2";
+    const { handler, getMessages } = setupHandler([makeStreamingAssistant()]);
+
+    // Establish activeRunIdentity + activeGenerationId=0.
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+
+    // Old backend shape — delta carries NO identity fields. The guard
+    // must reject it (foreign frame) so stale/cross-turn text cannot
+    // leak into the provisional preview.
+    handler({
+      event: "message.delta",
+      data: { delta: "无身份", generation_id: 0 },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBeNull();
+
+    // Matching identity + generation_id=0 → accepted, accumulates.
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        generation_id: 0,
+        delta: "片段一",
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBe("片段一");
+
+    // Foreign identity → rejected, preview unchanged.
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-OTHER",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        generation_id: 0,
+        delta: "外turn",
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBe("片段一");
+
+    // preview_reset bumps active generation to 1, clears provisional.
+    handler({
+      event: "message.preview_reset",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        generation_id: 1,
+        reason: "tool_result_boundary",
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBe("");
+
+    // Stale generation_id=0 → rejected (post-reset only gen=1 passes).
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        generation_id: 0,
+        delta: "旧gen",
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBe("");
+
+    // Matching identity + generation_id=1 → accepted, accumulates fresh.
+    handler({
+      event: "message.delta",
+      data: {
+        execution_version: VERSION,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        generation_id: 1,
+        delta: "新gen片段",
+      },
+    });
+    flushRaf();
+    expect(getMessages()[0].provisional_content_md).toBe("新gen片段");
   });
 
   it("resets compacting to false on message.completed", () => {
@@ -4347,13 +4551,6 @@ describe("createSseMessageHandler – agentic stream", () => {
       onOptionalToolWarning,
     };
   }
-
-  const agenticEvidenceScope = {
-    reading_record_id: "record-1",
-    base_id: "base-1",
-    record_generation: 1,
-    stable_document_id: "doc-stable-1",
-  };
 
   const agenticCompleted = {
     execution_version: "reader_record_ask_agentic_v2" as const,
@@ -5045,34 +5242,6 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
     );
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-
-  const agenticSearchHitEvidence = [
-    {
-      kind: "search_hit" as const,
-      source_tool: "search_current_article",
-      snippet: "climate change impacts",
-      rag_citation: {
-        rag_substrate_id: "substrate-secret",
-        index_run_id: "index-run-secret",
-        index_version: "v1",
-        plan_content_sha256: "plan-sha-secret",
-        source_scope: "main_reading_text" as const,
-        block_type: "paragraph",
-        chunk_id: "chunk-1",
-        content_sha256: "content-sha-secret",
-        canonical_text_start_utf16: 10,
-        canonical_text_end_utf16: 42,
-        snippet: "climate change impacts",
-        score: 0.91,
-        stable_document_id: "doc-stable-secret",
-        base_id: "base-secret",
-        record_generation: 1,
-        block_ids: ["b1"],
-        unit_ids: ["u1"],
-        anchor_segment_ids: ["s1"],
-      },
-    },
-  ];
 
   const agenticCompletedCitations = [
     {
@@ -6013,6 +6182,99 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     ]);
     expect(legacyCold.agentic_process_snapshot).toBeNull();
   });
+
+  // -------------------------------------------------------------------------
+  // ASK-UX-HISTORY-COT-R2 P0-1: cold-loaded user messages must keep their
+  // content_md. The real persisted shape is: role='user', status='completed',
+  // content_md=<user text>, NO execution_version on the message DTO (it lives
+  // only in metadata_json as a retry-snapshot marker; the history projector
+  // does not promote it onto user rows because user messages never own a
+  // turn_run). The backend quarantine fix (repository.py) scopes isolation to
+  // assistant rows; this test guards the frontend normalization contract so
+  // a regression in either layer cannot silently render an empty user bubble.
+  // -------------------------------------------------------------------------
+
+  it("preserves user message content_md on cold reload (real user + v2 assistant shape)", () => {
+    const userMessage = {
+      ...createAssistantMessage(),
+      id: "msg-user-1",
+      role: "user" as const,
+      status: "completed" as const,
+      content_md: "这篇文章的主旨是什么？",
+      // User messages never carry execution_version on the DTO — it is only
+      // in metadata_json server-side. Omit it to match the real wire shape.
+      execution_version: undefined,
+      agentic_evidence: null,
+      agentic_evidence_scope: null,
+      agentic_answer_blocks: null,
+      agentic_citations: null,
+      agentic_web_search: null,
+      article_rag: null,
+      evidence: [],
+    } as ReaderAskUiMessageDto;
+
+    const assistantMessage = createAssistantMessage({
+      id: "msg-assistant-1",
+      role: "assistant",
+      content_md: "这篇文章讨论了气候变化的影响。",
+      status: "completed",
+      execution_version: "reader_record_ask_agentic_v2",
+      final_status: "ok",
+      agentic_answer_blocks: [
+        { text: "这篇文章讨论了气候变化的影响。", citation_ids: ["c1"] },
+      ],
+      agentic_citations: [
+        { citation_id: "c1", source_kind: "article", snippet: "climate change" },
+      ],
+    });
+
+    const [normalizedUser, normalizedAssistant] = normalizeReaderAskMessages([
+      userMessage,
+      assistantMessage,
+    ]);
+
+    // User message: content_md preserved verbatim — not wiped.
+    expect(normalizedUser.role).toBe("user");
+    expect(normalizedUser.status).toBe("completed");
+    expect(normalizedUser.content_md).toBe("这篇文章的主旨是什么？");
+    // User messages take the legacy branch (no execution_version), so
+    // agentic UI state is cleared but content is untouched.
+    expect(normalizedUser.execution_version ?? null).toBeNull();
+    expect(normalizedUser.agentic_evidence).toBeNull();
+    expect(normalizedUser.agentic_answer_blocks).toBeNull();
+
+    // Paired assistant message still normalizes as agentic v2 history.
+    expect(normalizedAssistant.role).toBe("assistant");
+    expect(normalizedAssistant.content_md).toBe("这篇文章讨论了气候变化的影响。");
+    expect(normalizedAssistant.execution_version).toBe("reader_record_ask_agentic_v2");
+  });
+
+  it("does not treat a user message with stale agentic fields as agentic history", () => {
+    // Defensive: even if a user message somehow carries agentic_evidence
+    // (e.g. a prior-session leak), the absence of execution_version must
+    // route it through the legacy branch so content_md is preserved and
+    // the raw evidence is cleared.
+    const userMessage = {
+      ...createAssistantMessage(),
+      id: "msg-user-stale",
+      role: "user" as const,
+      status: "completed" as const,
+      content_md: "请总结第二段。",
+      execution_version: undefined,
+      agentic_evidence: searchHitEvidence,
+      agentic_evidence_scope: historyScope,
+    } as ReaderAskUiMessageDto;
+
+    const [normalized] = normalizeReaderAskMessages([userMessage]);
+
+    expect(normalized.role).toBe("user");
+    expect(normalized.content_md).toBe("请总结第二段。");
+    // Legacy branch clears agentic state without touching content.
+    expect(normalized.execution_version ?? null).toBeNull();
+    expect(normalized.agentic_evidence).toBeNull();
+    expect(normalized.agentic_evidence_scope).toBeNull();
+    expect(normalized.agentic_answer_blocks).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -6447,7 +6709,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
           user_message: "当前积分不足，本轮请求未发送给模型。",
         },
       });
-      return makeLogicalTerminalResult("parse_error");
+      return makeLogicalTerminalResult("terminal", { finalStatus: "failed" });
     });
 
     renderPanel();
@@ -6803,7 +7065,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
           terminal_reason: "agent_run_failed",
         },
       });
-      return makeLogicalTerminalResult("parse_error");
+      return makeLogicalTerminalResult("terminal", { finalStatus: "failed" });
     });
 
     renderPanel();
@@ -6920,7 +7182,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () =
           terminal_reason: "agent_run_failed",
         },
       });
-      return makeLogicalTerminalResult("parse_error");
+      return makeLogicalTerminalResult("terminal", { finalStatus: "failed" });
     });
 
     renderPanel();
@@ -7093,23 +7355,32 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     // The settled CoT persists after the live activity reset to idle.
     const cot = await screen.findByTestId("ask-turn-process");
     expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
-    expect(cot.textContent).toContain("思考过程 · 1s");
+    expect(cot.textContent).toContain("已根据当前文章整理 · 1s");
     // The live activity row is gone (replaced by the settled disclosure).
     expect(screen.queryByTestId("ask-agentic-activity")).toBeNull();
     // The legacy reasoning disclosure is not rendered for v2 turns.
     expect(cot.closest("[data-message-role='assistant']")?.querySelector("[data-slot='reasoning']"))
       .toBeNull();
 
-    // Expanding shows the frozen typed step (fixed label) and the projected reasoning.
+    // Expanding shows the frozen typed steps (fixed labels) AND the safe
+    // reasoning projection (R3: 思考要点 lives inside the same disclosure).
     fireEvent.click(screen.getByRole("button", { name: "本轮回答已完成" }));
-    expect(screen.getByText("读取文章")).not.toBeNull();
+    expect(screen.getByText("阅读本文")).not.toBeNull();
+    // R3: the full learner narrative survives settle — 理解问题 → 阅读本文
+    // → 整理回答 (composing-answer is no longer hidden after completion).
+    expect(screen.getByText("理解问题")).not.toBeNull();
+    expect(screen.getByText("整理回答")).not.toBeNull();
     // Server summary must not appear in CoT DOM.
     expect(screen.queryByText("已读取相关上下文")).toBeNull();
     expect(screen.queryByText("正在读取文章上下文")).toBeNull();
-    expect(screen.getByTestId("ask-turn-process-reasoning").textContent)
-      .toContain("已脱敏思考。");
+    // R3: the server-safe reasoning projection renders as 思考要点 inside
+    // the disclosure — still no SECOND (legacy) reasoning card.
+    const reasoningSection = screen.getByTestId("ask-turn-process-reasoning");
+    expect(reasoningSection.textContent).toContain("思考要点");
+    expect(reasoningSection.textContent).toContain("已脱敏思考。");
 
-    // Leak scan: the CoT subtree carries no internals.
+    // Leak scan: the CoT subtree carries no internals. (The safe reasoning
+    // text itself is approved content — the server redactor owns it.)
     const serialized = cot.innerHTML;
     for (const leaked of [
       "evh_",
@@ -7133,9 +7404,9 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
         data: {
           execution_version: VERSION,
           sequence: 1,
-          phase: "composing_answer",
+          phase: "reading_context",
           activity: "started",
-          summary: "正在组织回答",
+          summary: "正在阅读本文上下文",
           elapsed_ms: 800,
           status: "running",
         },
@@ -7177,13 +7448,13 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
     fireEvent.click(within(cot).getByRole("button"));
     const step = within(cot)
-      .getByText("组织回答")
+      .getByText("阅读本文")
       .closest("[data-step-status]");
     expect(step?.getAttribute("data-step-status")).toBe("interrupted");
     // No error/terminal/server-summary copy leaks into the CoT.
     expect(cot.textContent).not.toContain("agent_run_failed");
     expect(cot.textContent).not.toContain("回答生成失败");
-    expect(cot.textContent).not.toContain("正在组织回答");
+    expect(cot.textContent).not.toContain("正在阅读本文上下文");
   });
 
   it("retry clears the previous attempt's snapshot before the new run", async () => {
@@ -7195,10 +7466,24 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
         data: {
           execution_version: VERSION,
           sequence: 1,
-          phase: "agent_running",
+          phase: "reading_context",
+          activity: "started",
+          summary: "正在阅读本文上下文",
+          elapsed_ms: 400,
+          tool_name: "read_range",
+          status: "running",
+        },
+      });
+      onEvent({
+        event: "agentic.progress",
+        data: {
+          execution_version: VERSION,
+          sequence: 2,
+          phase: "reading_context",
           activity: "completed",
-          summary: "分析完成",
+          summary: "已读取相关上下文",
           elapsed_ms: 900,
+          tool_name: "read_range",
           status: "ok",
           duration_ms: 900,
         },
@@ -7210,7 +7495,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     renderPanel();
     await sendTurn();
     await waitFor(() => {
-      expect(screen.getByText("处理过程 · 1s")).not.toBeNull();
+      expect(screen.getByText("已根据当前文章整理 · 1s")).not.toBeNull();
     });
 
     // Retry wipes the old attempt's frozen process immediately. (The retry
@@ -7219,7 +7504,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     // must stay cleared and no CoT may linger from attempt 1.)
     fireEvent.click(screen.getByRole("button", { name: "重新生成" }));
     await waitFor(() => {
-      expect(screen.queryByText("处理过程 · 1s")).toBeNull();
+      expect(screen.queryByText("已根据当前文章整理 · 1s")).toBeNull();
     });
     await waitFor(() => {
       expect(screen.getByText("已完成回答。")).not.toBeNull();
@@ -7305,15 +7590,27 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 
     renderPanel();
 
+    // R3 — cold v2 history (no activity, no snapshot) renders a
+    // reasoning-only disclosure when the persisted safe reasoning
+    // projection exists — never fabricated process steps.
+    await waitFor(() => {
+      expect(screen.getByText("冷答案。")).not.toBeNull();
+    });
     const cot = await screen.findByTestId("ask-turn-process");
+    expect(cot.getAttribute("data-turn-process-state")).toBe("settled");
     expect(cot.textContent).toContain("思考过程");
     fireEvent.click(within(cot).getByRole("button"));
-    expect(screen.getByTestId("ask-turn-process-reasoning").textContent)
-      .toContain("冷推理文本。");
-    // Cold history carries no activity steps (known contract gap G3).
+    const reasoningSection = within(cot).getByTestId("ask-turn-process-reasoning");
+    expect(reasoningSection.textContent).toContain("思考要点");
+    expect(reasoningSection.textContent).toContain("冷推理文本。");
+    // No fabricated process steps for cold history.
     expect(cot.querySelector("[data-step-status]")).toBeNull();
-    // Legacy reasoning disclosure is not doubled in.
-    expect(cot.querySelector("[data-slot='reasoning']")).toBeNull();
+    // Legacy reasoning disclosure is still absent for cold v2 history —
+    // reasoning lives inside the CoT disclosure only.
+    const bubble = screen
+      .getByText("冷答案。")
+      .closest("[data-message-role='assistant']");
+    expect(bubble?.querySelector("[data-slot='reasoning']")).toBeNull();
   });
 
   it("legacy lanes keep ReasoningPanel and never render the CoT", async () => {
@@ -7341,5 +7638,317 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
       .closest("[data-message-role='assistant']");
     expect(bubble?.querySelector("[data-slot='reasoning']")).not.toBeNull();
     expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // ASK-UX-HISTORY-COT-R2 P0-3: agentic v2 optimistic message enters
+  // TurnProcessDisclosure at T0 — the moment the bubble is created with a
+  // bound (even idle) activity. The old AssistantStreamingIndicator
+  // (two-line status card) must NOT flash before the typed disclosure
+  // takes over. Only the explicit legacy lane (analysis scope) keeps the
+  // old indicator at T0.
+  // -------------------------------------------------------------------------
+
+  it("agentic-capable panel renders TurnProcessDisclosure at T0 before run_started (no old status card)", async () => {
+    // Stall the SSE stream after message.started so the optimistic
+    // assistant message stays in the T0 state: streaming, idle activity,
+    // no execution_version, no snapshot. This is the exact window where
+    // the old code flashed AssistantStreamingIndicator before
+    // agentic.run_started switched to TurnProcessDisclosure.
+    let releaseStream: () => void = () => {};
+    const streamReleased = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      // Stall — never fire agentic.run_started. The optimistic message
+      // stays in T0 state.
+      await streamReleased;
+      onEvent({ event: "message.completed", data: agenticCompletedPayload() });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    // reading_record scope ⇒ isAgenticCapable=true ⇒ isAgenticV2Turn=true
+    // at T0 even with idle activity.
+    renderPanel({ recordScope: "reading_record" });
+    await sendTurn();
+
+    // T0: TurnProcessDisclosure is already rendered — the running header
+    // carries the R3 first lifecycle label "正在理解问题" (only the host
+    // 理解问题 step is provable before any wire phase arrives).
+    const cot = await screen.findByTestId("ask-turn-process");
+    expect(cot.getAttribute("data-turn-process-state")).toBe("running");
+    expect(cot.textContent).toContain("正在理解问题");
+
+    // The old two-line status card copy must NOT appear at T0.
+    expect(screen.queryByText("正在整理问题")).toBeNull();
+
+    // Release the stalled stream so the test can complete cleanly.
+    releaseStream();
+    await waitFor(() => {
+      expect(screen.getByText("已完成回答。")).not.toBeNull();
+    });
+  });
+
+  it("analysis-scope (legacy lane) keeps AssistantStreamingIndicator at T0 (no CoT)", async () => {
+    // Same T0 stall, but analysis scope ⇒ isAgenticCapable=false ⇒
+    // isAgenticV2Turn=false at T0 (idle activity). The old indicator
+    // is the correct owner for the explicit legacy lane.
+    let releaseStream: () => void = () => {};
+    const streamReleased = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
+      await streamReleased;
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+
+    // analysis scope (default) ⇒ isAgenticCapable=false.
+    renderPanel();
+    await sendTurn();
+
+    // T0: no TurnProcessDisclosure for the legacy lane.
+    expect(screen.queryByTestId("ask-turn-process")).toBeNull();
+
+    // The old indicator copy is present (正在整理问题 = no answer content,
+    // no reasoning streaming, not compacting, not replanning).
+    await waitFor(() => {
+      expect(screen.getByText("正在整理问题")).not.toBeNull();
+    });
+
+    releaseStream();
+    await waitFor(() => {
+      expect(screen.getByText("解释完成。")).not.toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASK-UX-COT-COMPOSER-R3 P1 — Reading Record composer selection slots
+// ---------------------------------------------------------------------------
+
+function rrSelectionAttachment(
+  id: string,
+  offsets: [number, number],
+  text: string,
+): ReaderAskAttachment {
+  return {
+    kind: "text_selection",
+    subtype: "text_range",
+    label: text,
+    selectedText: text,
+    targetKey: `seg-${id}`,
+    metadata: {
+      pageIdentity,
+      sourceSurface: "selection_toolbar",
+      entryAction: "ask_about_this",
+      readingRecordAnchor: {
+        record_id: "record-1",
+        base_id: "base-1",
+        generation: 3,
+        unit_id: "unit-1",
+        anchor_segment_id: `seg-${id}`,
+        scope: "stable_source",
+        offset_unit: "utf16",
+        start_offset: offsets[0],
+        end_offset: offsets[1],
+        selected_text: text,
+        text_hash: "9fd7545a",
+        hash_algorithm: "fnv1a32-utf16",
+      },
+    },
+  } as unknown as ReaderAskAttachment;
+}
+
+describe("ASK-UX-COT-COMPOSER-R3 P1 — RR composer selection slots", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", mockFetch());
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("always renders the non-removable current-article chip from the record title (never the thread title)", async () => {
+    const { container } = renderPanel({
+      recordScope: "reading_record",
+      recordTitle: "机构记忆与政策连续性",
+    });
+    const chip = await waitFor(() => {
+      const found = container.querySelector("[data-ask-current-article-chip]");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(chip.textContent).toContain("机构记忆与政策连续性");
+    expect(chip.getAttribute("aria-label")).toBe("当前文章：机构记忆与政策连续性");
+    // Non-removable: no remove button inside the chip.
+    expect(chip.querySelector("button")).toBeNull();
+    // No "基于：当前文章" provenance — the article is implicit context.
+    expect(container.textContent).not.toContain("基于：当前文章");
+  });
+
+  it("does not render the article chip outside reading_record scope", async () => {
+    const { container } = renderPanel({ recordScope: "analysis" });
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+    expect(container.querySelector("[data-ask-current-article-chip]")).toBeNull();
+  });
+
+  it("orders the strip: article chip first, then auto, then manual selections", async () => {
+    const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
+    const manual1 = rrSelectionAttachment("m1", [10, 16], "固定选区一");
+    const manual2 = rrSelectionAttachment("m2", [20, 26], "固定选区二");
+    const { container } = renderPanel({
+      recordScope: "reading_record",
+      autoSelectionAttachment: auto,
+      manualSelectionAttachments: [manual1, manual2],
+    });
+    const strip = await waitFor(() => {
+      const found = container.querySelector("[data-ask-context-strip]");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const markers = Array.from(
+      strip.querySelectorAll("[data-ask-current-article-chip],[data-ask-selection-slot]"),
+    );
+    expect(markers).toHaveLength(4);
+    expect(markers[0]?.getAttribute("data-ask-current-article-chip")).toBe("true");
+    expect(markers[1]?.getAttribute("data-ask-selection-slot")).toBe("auto");
+    expect(markers[2]?.getAttribute("data-ask-selection-slot")).toBe("manual");
+    expect(markers[3]?.getAttribute("data-ask-selection-slot")).toBe("manual");
+    expect(strip.textContent).toContain("自动选区文本");
+    expect(strip.textContent).toContain("固定选区一");
+    expect(strip.textContent).toContain("固定选区二");
+  });
+
+  it("auto and manual chips are independently removable via their slot callbacks", async () => {
+    const onRemoveAutoSelection = vi.fn();
+    const onRemoveManualSelection = vi.fn();
+    const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
+    const manual = rrSelectionAttachment("m1", [10, 16], "固定选区一");
+    renderPanel({
+      recordScope: "reading_record",
+      autoSelectionAttachment: auto,
+      manualSelectionAttachments: [manual],
+      onRemoveAutoSelection,
+      onRemoveManualSelection,
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "移除自动选区：自动选区文本" }),
+    );
+    expect(onRemoveAutoSelection).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "移除固定选区：固定选区一" }),
+    );
+    expect(onRemoveManualSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends auto + manual selections as explicit attachments and keeps them after send", async () => {
+    const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
+    const manual = rrSelectionAttachment("m1", [10, 16], "固定选区一");
+    const { container } = renderPanel({
+      recordScope: "reading_record",
+      autoSelectionAttachment: auto,
+      manualSelectionAttachments: [manual],
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "结合选区解释一下" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as {
+      attachments: Array<{
+        selected_text?: string | null;
+        metadata: { reading_record_anchor?: Record<string, unknown> | null };
+      }>;
+    };
+    // BOTH slots ride along — auto first, manual second. Never just the
+    // first anchor.
+    expect(body.attachments).toHaveLength(2);
+    expect(body.attachments[0]?.metadata.reading_record_anchor).toMatchObject({
+      anchor_segment_id: "seg-auto",
+      start_offset: 0,
+      end_offset: 6,
+    });
+    expect(body.attachments[1]?.metadata.reading_record_anchor).toMatchObject({
+      anchor_segment_id: "seg-m1",
+      start_offset: 10,
+      end_offset: 16,
+    });
+
+    // Draft selections persist after the message is sent — chips remain.
+    expect(container.querySelector("[data-ask-selection-slot='auto']")).not.toBeNull();
+    expect(container.querySelector("[data-ask-selection-slot='manual']")).not.toBeNull();
+  });
+
+  it("merges visible selections into a quick action with explicit attachments", async () => {
+    const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
+    const explicit = rrSelectionAttachment("quick", [30, 36], "快捷动作附件");
+    renderPanel({
+      recordScope: "reading_record",
+      autoSelectionAttachment: auto,
+      pendingQuickActionRequest: {
+        content: "解释选区",
+        attachments: [explicit],
+        entryAction: "ask_about_this",
+        submissionMode: "quick_action",
+      },
+    });
+
+    await waitFor(() => {
+      const streamCall = vi
+        .mocked(global.fetch)
+        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+      expect(streamCall).toBeTruthy();
+    });
+    const streamCall = vi
+      .mocked(global.fetch)
+      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
+    const body = JSON.parse(String(streamCall?.[1]?.body)) as {
+      attachments: Array<{
+        metadata: { reading_record_anchor?: { anchor_segment_id?: string } | null };
+      }>;
+    };
+    expect(
+      body.attachments.map(
+        (item) => item.metadata.reading_record_anchor?.anchor_segment_id,
+      ),
+    ).toEqual(["seg-quick", "seg-auto"]);
+  });
+
+  it("surfaces explicit selections in provenance but never the implicit article", async () => {
+    const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
+    const { container } = renderPanel({
+      recordScope: "reading_record",
+      autoSelectionAttachment: auto,
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("基于：选中段");
+    });
+    expect(container.textContent).not.toContain("基于：当前文章");
   });
 });

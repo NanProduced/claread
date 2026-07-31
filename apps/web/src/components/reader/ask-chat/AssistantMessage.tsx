@@ -25,20 +25,24 @@ export function AssistantMessage({
   children,
   className,
 }: AssistantMessageProps) {
+  // P1 — vertical rhythm: 4/8 spacing between process → answer → sources →
+  // actions. The content column stays narrow for readability; the assistant
+  // surface is frameless (no border, no bg), letting the answer text own
+  // the visual weight.
   const contentColumnClassName = "w-full max-w-[38rem]";
 
   return (
-    <Message from="assistant" className={cn("max-w-full gap-3", className)}>
+    <Message from="assistant" className={cn("max-w-full gap-2", className)}>
       {reasoning ? <div className={contentColumnClassName}>{reasoning}</div> : null}
-      {process ? <div className={contentColumnClassName}>{process}</div> : null}
+      {process ? <div className={cn(contentColumnClassName, "mb-1")}>{process}</div> : null}
       {answer ? <MessageContent className={contentColumnClassName}>{answer}</MessageContent> : null}
       {children ? (
-        <div className={cn(contentColumnClassName, "min-w-0 space-y-2.5")}>
+        <div className={cn(contentColumnClassName, "min-w-0 space-y-3")}>
           {children ? <div>{children}</div> : null}
         </div>
       ) : null}
       {footer ? (
-        <MessageToolbar className={cn(contentColumnClassName, "mt-0.5 justify-start")}>
+        <MessageToolbar className={cn(contentColumnClassName, "mt-1 justify-start")}>
           <div className="shrink-0">{footer}</div>
         </MessageToolbar>
       ) : null}

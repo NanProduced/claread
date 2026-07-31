@@ -21,6 +21,7 @@ from app.schemas.reader_ask import (
     ReaderAskActionConfirmResponse,
     ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
+    ReaderAskReadingRecordAnchor,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
     ReaderRecordAskActionConfirmRequest,
@@ -74,6 +75,11 @@ class RetryPreparedResult:
     mode: RetryMode
     facts: object | None
     execution: ReaderRecordAskExecutionConfig | None
+    # ASK-UX-COT-COMPOSER-R3 P2 — the replayed focus anchor set, parsed
+    # from the persisted retry snapshot and re-validated against the live
+    # document during preflight (fail-closed). ``None`` = legacy
+    # single-anchor / no-anchor turns.
+    focus_anchors: list[ReaderAskReadingRecordAnchor] | None = None
 
 
 def _parse_uuid(value: str, *, field: str) -> UUID:
@@ -159,33 +165,67 @@ async def _load_validated_anchor_raw(
         )
 
 
-async def _validate_reading_record_anchor(
+def resolve_request_focus_anchors(
+    request: ReaderRecordAskMessageRequest,
+) -> list[ReaderAskReadingRecordAnchor]:
+    """ASK-UX-COT-COMPOSER-R3 P2 — the effective anchor set for a request.
+
+    The plural ``focus_anchors`` field wins when present (it is the
+    canonical multi-selection contract; new Web clients send every
+    auto/manual selection anchor there). The singular ``anchor`` is the
+    legacy compatibility entry and is used ONLY when ``focus_anchors`` is
+    absent. The two are never merged — a plural request's singular field
+    is ignored so a stale first anchor cannot sneak back in.
+    """
+    raw_focus_anchors = getattr(request, "focus_anchors", None)
+    if isinstance(raw_focus_anchors, list):
+        return list(raw_focus_anchors)
+    raw_anchor = getattr(request, "anchor", None)
+    if raw_anchor is not None:
+        return [raw_anchor]
+    return []
+
+
+async def _validate_reading_record_anchors(
     *,
     user_id: UUID,
     reading_record_id: UUID,
     request: ReaderRecordAskMessageRequest,
-) -> None:
-    if request.anchor is None:
+) -> list[ReaderAskReadingRecordAnchor]:
+    """Gate EVERY effective anchor; fail the whole request closed.
+
+    R3 P2: each anchor is independently validated against the same
+    record / base / generation / document (ownership + staleness +
+    unit/segment/text match). ANY invalid, unauthorized, foreign, or
+    stale anchor aborts the request before the stream — there is no
+    partial acceptance followed by a model call.
+    """
+    anchors = resolve_request_focus_anchors(request)
+    if not anchors:
         await _load_snapshot_facts(user_id=user_id, reading_record_id=reading_record_id)
-        return
-    anchor_record_id = _parse_uuid(request.anchor.record_id, field="anchor.record_id")
-    if anchor_record_id != reading_record_id:
-        raise _reading_record_error(
-            code=ANCHOR_RECORD_ID_MISMATCH,
-            field="anchor.record_id",
-            message="anchor.record_id does not match the route reading_record_id",
-        )
-    try:
-        await _load_validated_anchor_raw(
-            user_id=user_id,
-            anchor=request.anchor,
-        )
-    except AnchorValidationError as exc:
-        raise _reading_record_error(
-            code=exc.code,
-            field="anchor",
-            message=exc.message,
-        ) from exc
+        return []
+    plural = request.focus_anchors is not None
+    for index, anchor in enumerate(anchors):
+        field = f"focus_anchors[{index}]" if plural else "anchor"
+        anchor_record_id = _parse_uuid(anchor.record_id, field=f"{field}.record_id")
+        if anchor_record_id != reading_record_id:
+            raise _reading_record_error(
+                code=ANCHOR_RECORD_ID_MISMATCH,
+                field=f"{field}.record_id",
+                message="anchor.record_id does not match the route reading_record_id",
+            )
+        try:
+            await _load_validated_anchor_raw(
+                user_id=user_id,
+                anchor=anchor,
+            )
+        except AnchorValidationError as exc:
+            raise _reading_record_error(
+                code=exc.code,
+                field=field,
+                message=exc.message,
+            ) from exc
+    return anchors
 
 
 async def _ensure_default_thread(
@@ -334,7 +374,7 @@ async def prepare_reading_record_ask_message(
     )
 
     parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    await _validate_reading_record_anchor(
+    validated_focus_anchors = await _validate_reading_record_anchors(
         user_id=user_id,
         reading_record_id=parsed_record_id,
         request=request,
@@ -390,6 +430,11 @@ async def prepare_reading_record_ask_message(
         model_option_key=model_option_key,
         web_search_mode=web_mode,
         route_identity="reader_record_ask",
+        # R3 P2 — persist the full validated focus set for regenerate replay.
+        focus_anchors=[
+            anchor.model_dump(mode="json") for anchor in validated_focus_anchors
+        ]
+        or None,
     )
 
     # Durable claim+pair+bind BEFORE StreamingResponse (R6 P0).
@@ -397,7 +442,11 @@ async def prepare_reading_record_ask_message(
         repo=ReaderRecordAskRepository(),
         thread_id=resolved_thread_id,
         user_id=user_id,
-        client_submission_id=request.client_submission_id,
+        client_submission_id=(
+            request.client_submission_id
+            if isinstance(getattr(request, "client_submission_id", None), UUID)
+            else None
+        ),
         content_md=request.content,
         retry_snapshot=retry_snapshot,
     )
@@ -512,14 +561,22 @@ async def _stream_legacy_or_agentic(
         resolved_backend if web_search_capability is not None else None
     )
 
+    # R3 P2 — the effective anchor set (plural focus_anchors, or the
+    # legacy singular anchor as fallback). The primary selection is the
+    # first anchor; the full set rides along for gate + model view +
+    # retry replay.
+    focus_anchors = resolve_request_focus_anchors(request)
+    primary_anchor = focus_anchors[0] if focus_anchors else None
+
     async for chunk in stream_agentic_thread_message(
         user_id=user_id,
         reading_record_id=reading_record_id,
         thread_id=thread_id,
         content=request.content,
         facts=facts,
-        request_anchor=request.anchor,
+        request_anchor=primary_anchor,
         validated_anchor=None,
+        focus_anchors=focus_anchors or None,
         client_submission_id=client_sub_id,
         existing_user_message=precreated_user,
         existing_assistant_message=precreated_asst,
@@ -709,6 +766,16 @@ async def prepare_reading_record_ask_retry(
         option,
         web_search_mode=replayed_web_search_mode,
     )
+    # R3 P2 — replay the persisted focus set; re-gated against the live
+    # document (fail-closed on staleness) before any model call.
+    replayed_focus_anchors = await _revalidate_snapshot_focus_anchors(
+        user_id=user_id,
+        reading_record_id=parsed_record_id,
+        raw_anchors=_extract_snapshot_focus_anchors(
+            assistant_msg=assistant_msg,
+            user_msg=user_msg,
+        ),
+    )
     if replayed_web_search_mode == "allowed":
         capability = execution.web_search_capability
         if (
@@ -728,6 +795,7 @@ async def prepare_reading_record_ask_retry(
         mode="agentic",
         facts=facts,
         execution=execution,
+        focus_anchors=replayed_focus_anchors,
     )
 
 
@@ -752,6 +820,89 @@ def _extract_snapshot_model_option_key(
         if isinstance(key2, str) and key2.strip():
             return key2.strip()
     return None
+
+
+def _extract_snapshot_focus_anchors(
+    *,
+    assistant_msg: dict[str, Any],
+    user_msg: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """ASK-UX-COT-COMPOSER-R3 P2 — focus anchors from the retry snapshot.
+
+    Assistant metadata wins (it carries the authoritative snapshot);
+    returns ``None`` when the original turn had no focus set.
+    """
+    for blob in (
+        assistant_msg.get("metadata_json") or {},
+        user_msg.get("metadata_json") or {},
+    ):
+        if not isinstance(blob, dict):
+            continue
+        snap = blob.get("retry_snapshot")
+        if isinstance(snap, dict) and snap.get("focus_anchors") is not None:
+            raw = snap.get("focus_anchors")
+            if isinstance(raw, list):
+                return [entry for entry in raw if isinstance(entry, dict)]
+    return None
+
+
+async def _revalidate_snapshot_focus_anchors(
+    *,
+    user_id: UUID,
+    reading_record_id: UUID,
+    raw_anchors: list[dict[str, Any]] | None,
+) -> list[ReaderAskReadingRecordAnchor] | None:
+    """Parse + re-gate the replayed focus set, fail-closed.
+
+    Regenerate replays the SAME focus the original turn saw, but the
+    document may have moved on (generation bump / reparse): every anchor
+    is re-validated against the live record/base/generation/document.
+    Any parse failure, foreign record, or stale/invalid anchor aborts
+    the retry with a typed 409 — never a partial model call.
+    """
+    if not raw_anchors:
+        return None
+    parsed: list[ReaderAskReadingRecordAnchor] = []
+    for index, entry in enumerate(raw_anchors):
+        try:
+            parsed.append(ReaderAskReadingRecordAnchor.model_validate(entry))
+        except Exception as exc:  # pydantic validation
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "retry_focus_invalid",
+                    "field": f"focus_anchors[{index}]",
+                    "message": "原选区快照无法解析，请重新提问。",
+                    "action_hint": "reask",
+                },
+            ) from exc
+    for index, anchor in enumerate(parsed):
+        anchor_record_id = _parse_uuid(
+            anchor.record_id, field=f"focus_anchors[{index}].record_id"
+        )
+        if anchor_record_id != reading_record_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "retry_focus_stale",
+                    "field": f"focus_anchors[{index}].record_id",
+                    "message": "原选区已失效，请重新提问。",
+                    "action_hint": "reask",
+                },
+            )
+        try:
+            await _load_validated_anchor_raw(user_id=user_id, anchor=anchor)
+        except AnchorValidationError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "retry_focus_stale",
+                    "field": f"focus_anchors[{index}]",
+                    "message": "原选区已失效，请重新提问。",
+                    "action_hint": "reask",
+                },
+            ) from exc
+    return parsed
 
 
 def _resolve_persisted_retry_lane(
@@ -996,6 +1147,8 @@ async def retry_reading_record_ask_message(
         model=execution.model,
         model_settings=execution.model_settings(),
         usage_limits=execution.usage_limits,
+        # R3 P2 — replay the same validated focus set as the original turn.
+        focus_anchors=prepared.focus_anchors,
         # ASK-WEB-G1-R1: forward the resolved web search capability so
         # retry uses the same execution truth as the original send. When
         # ``None`` (capability not granted on the original turn) the

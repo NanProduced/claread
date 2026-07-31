@@ -58,7 +58,7 @@ from app.services.reader_record_ask.production_wiring import (
 # cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
 # runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
 from app.services.reader_record_ask.reasoning_projection import (
-    ReasoningProjectorObserver,
+    UserSafeReasoningObserver,
 )
 from app.services.reader_record_ask.repository import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -77,6 +77,7 @@ from app.services.reader_record_ask.runtime_events import (
     AnswerDeltaEvent,
     AnswerPreviewResetEvent,
     ComposingAnswerEvent,
+    ContextCompactionEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -94,6 +95,10 @@ from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
+    EVENT_CONTEXT_COMPACTION_COMPLETED,
+    EVENT_CONTEXT_COMPACTION_FAILED,
+    EVENT_CONTEXT_COMPACTION_FALLBACK,
+    EVENT_CONTEXT_COMPACTION_STARTED,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
     EVENT_MESSAGE_INTERRUPTED,
@@ -101,6 +106,9 @@ from app.services.reader_record_ask.sse import (
     EVENT_MESSAGE_STARTED,
     EVENT_THREAD_READY,
     encode_sse,
+)
+from app.services.reader_record_ask.thread_memory.repository import (
+    ThreadMemoryRepository,
 )
 from app.services.reader_record_ask.tool_contracts import (
     TOOL_EXPAND_EVIDENCE,
@@ -305,6 +313,57 @@ TERMINAL_REASON_PERSIST_FAILED = "persist_failed"
 # Sentinel placed on the progress queue when the agent task finishes
 # (success or failure). Not a RuntimeEvent.
 _AGENT_DONE = object()
+_SAFE_COMPACTION_DETAIL_CODES = frozenset(
+    {
+        "ok",
+        "empty",
+        "draft_rejected",
+        "timeout",
+        "output_invalid",
+        "usage_limit",
+        "model_unavailable",
+        "provider_exception",
+        "storage_unavailable",
+        "canonical_view_unavailable",
+        "storage_write_failed",
+        "cas_conflict",
+        "snapshot_rejected",
+        "fence_failed",
+        "input_too_large",
+    }
+)
+
+
+def _encode_context_compaction_sse(
+    event: ContextCompactionEvent,
+    *,
+    message_id: str,
+    thread_id: UUID,
+    turn_run_id: str,
+) -> str:
+    event_name = {
+        "started": EVENT_CONTEXT_COMPACTION_STARTED,
+        "completed": EVENT_CONTEXT_COMPACTION_COMPLETED,
+        "failed": EVENT_CONTEXT_COMPACTION_FAILED,
+        "fallback": EVENT_CONTEXT_COMPACTION_FALLBACK,
+    }[event.phase]
+    detail_code = (
+        event.detail_code
+        if event.detail_code in _SAFE_COMPACTION_DETAIL_CODES
+        else None
+    )
+    return encode_sse(
+        event_name,
+        {
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            "message_id": message_id,
+            "thread_id": str(thread_id),
+            "turn_run_id": turn_run_id,
+            "detail_code": detail_code,
+            "attempt_count": event.attempt_count,
+            "elapsed_ms": event.elapsed_ms,
+        },
+    )
 
 # Public tools that may project named progress. expand_evidence is
 # deliberately **not** public — it maps to generic agent_running only.
@@ -1217,10 +1276,11 @@ async def _run_agentic_turn(
     # chokepoint for this turn. Receives raw provider reasoning via the
     # ThinkingObserver injection, publishes only the deterministic
     # redacted + quota-bounded projection as agentic.reasoning.* events.
-    # Raw reasoning never enters SSE/DTO/DB/logs. When the provider
-    # returns no non-empty reasoning it stays silent (no events, no
-    # persistence) and the UI renders no reasoning element.
-    reasoning_projector = ReasoningProjectorObserver(
+    # Provider-private reasoning is not a pedagogical explanation. It can
+    # contain self-instructions, schema names, and tool strategy even after
+    # secret redaction, so it is discarded at ingress. User-visible process
+    # state comes only from typed lifecycle events.
+    reasoning_projector = UserSafeReasoningObserver(
         emit=sink,
         message_id=assistant_msg["id"],
         thread_id=str(thread_id),
@@ -1238,6 +1298,18 @@ async def _run_agentic_turn(
     # DTO / SSE / DB surface. Logged only as aggregate counts on the
     # terminal/completed info line.
     runtime_observation = RuntimeObservation()
+    # R1.5 P0-2: thread-memory wiring. flag=false → do NOT construct the
+    # repository, do NOT pass memory params (zero DB I/O, prompt字节级
+    # 不含 memory). flag=true → construct ThreadMemoryRepository and pass
+    # memory_enabled=True so the production R2 manager owns atomic
+    # canonical read, bounded Flash compaction, deterministic fallback,
+    # CAS persistence, fence validation, and recent-history injection.
+    memory_settings = get_settings()
+    memory_enabled = bool(memory_settings.reader_record_ask_memory_enabled)
+    memory_repository: ThreadMemoryRepository | None = None
+    if memory_enabled:
+        memory_repository = ThreadMemoryRepository()
+
     agent_task = asyncio.create_task(
         run_agent(
             user_message=user_message,
@@ -1255,6 +1327,11 @@ async def _run_agentic_turn(
             web_search_capability=web_search_capability,
             web_search_backend=web_search_backend,
             web_evidence_registry=web_evidence_registry,
+            memory_enabled=memory_enabled,
+            memory_repository=memory_repository,
+            thread_id=str(thread_id) if memory_enabled else None,
+            memory_manager_enabled=memory_enabled,
+            memory_settings=memory_settings if memory_enabled else None,
         )
     )
 
@@ -1295,6 +1372,14 @@ async def _run_agentic_turn(
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, ContextCompactionEvent):
+                yield _encode_context_compaction_sse(
+                    item,
+                    message_id=assistant_msg["id"],
+                    thread_id=thread_id,
+                    turn_run_id=turn["id"],
                 )
                 continue
             if isinstance(item, AnswerPreviewResetEvent):
@@ -1340,12 +1425,27 @@ async def _run_agentic_turn(
                 # R4-2: include generation_id so the client can discard
                 # deltas from a stale generation after a preview_reset.
                 # R3: track first/last answer delta timestamps.
+                #
+                # ASK-UX-HISTORY-COT-R2 P0-4: include full turn identity
+                # (execution_version / message_id / thread_id / turn_run_id)
+                # so the frontend ``activeRunIdentity`` guard can attribute
+                # the delta to the owning turn. Without these fields the
+                # client guard (set on ``agentic.run_started``) rejects
+                # every delta as a foreign/stale frame, the provisional
+                # preview never accumulates, and the bubble jumps straight
+                # from empty to the canonical completed answer — i.e. no
+                # real streaming. This mirrors the ``message.preview_reset``
+                # wire contract (see AnswerPreviewResetEvent branch above).
                 metrics.mark_answer_delta()
                 yield encode_sse(
                     EVENT_MESSAGE_DELTA,
                     {
                         "delta": item.delta,
                         "generation_id": item.generation_id,
+                        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+                        "message_id": assistant_msg["id"],
+                        "thread_id": str(thread_id),
+                        "turn_run_id": turn["id"],
                     },
                 )
                 continue
@@ -1385,6 +1485,14 @@ async def _run_agentic_turn(
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
+                )
+                continue
+            if isinstance(item, ContextCompactionEvent):
+                yield _encode_context_compaction_sse(
+                    item,
+                    message_id=assistant_msg["id"],
+                    thread_id=thread_id,
+                    turn_run_id=turn["id"],
                 )
                 continue
             if isinstance(
@@ -2010,6 +2118,12 @@ async def stream_agentic_thread_message(
     facts: Any,
     request_anchor: Any | None,
     validated_anchor: Any | None = None,
+    # ASK-UX-COT-COMPOSER-R3 P2 — full canonical focus anchor set (≤4,
+    # route-gate-validated). ``request_anchor`` is the primary selection
+    # (the first anchor); the complete set enters the envelope fence and
+    # the model view, and is snapshotted for retry replay. ``None`` =
+    # legacy single-anchor turn (identical behavior to before).
+    focus_anchors: Any | None = None,
     stable_document_id: UUID | None = None,
     repository: ReaderRecordAskRepository | None = None,
     document_access: DocumentAccess | None = None,
@@ -2113,6 +2227,7 @@ async def stream_agentic_thread_message(
         facts=facts,
         request_anchor=request_anchor,
         validated_anchor=validated_anchor,
+        focus_anchors=focus_anchors,
         stable_document_id=resolved_stable_id,
         web_search_mode=effective_web_search_mode,
     )
@@ -2276,6 +2391,13 @@ async def stream_agentic_thread_message(
                 lane="agentic",
                 model_option_key=model_option_key,
                 web_search_mode=persisted_web_search_mode,
+                # R3 P2 — persist the full validated focus set (canonical
+                # dicts) so regenerate replays the same user focus.
+                focus_anchors=[
+                    entry.model_dump(mode="json") for entry in focus_anchors
+                ]
+                if focus_anchors
+                else None,
             )
             if model_option_key is None and client_submission_id is not None:
                 # Incomplete snapshot for a submission-bound turn is fail-closed.
@@ -2333,7 +2455,6 @@ async def stream_agentic_thread_message(
         """
         if client_submission_id is None or assistant_msg is None:
             return
-        from app.services.reader_ask import repository as ask_msg_repo
         from app.services.reader_record_ask.submission_gateway import (
             SubmissionTerminalHook,
         )
@@ -2356,10 +2477,7 @@ async def stream_agentic_thread_message(
         async def _load_msg_status() -> str | None:
             if asst_uuid is None:
                 return None
-            row = await ask_msg_repo.get_message(asst_uuid)
-            if row is None:
-                return None
-            return str(row.get("status") or "") or None
+            return await repo.get_message_status(message_id=asst_uuid)
 
         try:
             await apply_agentic_submission_terminal(
@@ -2554,6 +2672,9 @@ async def retry_agentic_thread_message(
     pointer_ledger: ExpansionPointerLedger | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
+    # R3 P2 — validated plural focus set replayed from the persisted retry
+    # snapshot. The retry facade re-gates every anchor before reaching here.
+    focus_anchors: Any | None = None,
     # ASK-WEB-G1-R1: retry must receive the same resolved web search
     # capability as the original send (callers resolve via
     # ``resolve_reader_record_ask_execution`` before calling). When
@@ -2597,6 +2718,7 @@ async def retry_agentic_thread_message(
         facts=facts,
         request_anchor=None,  # retry uses general document context
         validated_anchor=None,
+        focus_anchors=focus_anchors,
         stable_document_id=None,
         repository=repository,
         document_access=document_access,

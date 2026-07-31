@@ -505,7 +505,7 @@ def test_fit_uses_real_full_view_cost_not_fixed_2000() -> None:
     canonical = "z" * 5000
     session, budget, _registry = _session(canonical)
     renderer = _renderer()
-    filler = renderer.render_plain("f" * 2000)
+    filler = renderer.render_plain("f" * (RESERVE_EXPAND - 1800))
     budget.charge("expand", filler)
     remaining_before = budget.remaining("expand")
     assert remaining_before < RESERVE_EXPAND
@@ -523,6 +523,11 @@ def test_ampersand_heavy_body_shrinks_segment_by_escape_cost() -> None:
     # '&' escapes to '&amp;' (5 chars) — a plain-length fit would overflow.
     canonical = "s" * 2000 + "&" * 3000
     session, budget, _registry = _session(canonical)
+    renderer = _renderer()
+    budget.charge(
+        "expand",
+        renderer.render_plain("f" * (RESERVE_EXPAND - 4000)),
+    )
     outcome = session.expand(pointer=session.initial_pointer)
     assert outcome.kind == "ok"
     segment = outcome.segment_text

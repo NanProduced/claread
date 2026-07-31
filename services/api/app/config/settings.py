@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     # independent reader_record_ask agent runtime instead of ask_runtime.
     # Failures do not fall back to the legacy agent.
     reader_record_ask_agentic_enabled: bool = False
+    # R1A: Ask thread memory + compaction (default OFF — flag orthogonality
+    # with agentic lane; when OFF, assembly behaves exactly as today).
+    # When true, agentic Ask turns load a thread-memory snapshot, inject it
+    # as a data block, and compact under budget pressure. The low-cost
+    # compactor is guarded by deterministic Host validation and an emergency
+    # fallback; failures remain fail-soft for the user turn.
+    reader_record_ask_memory_enabled: bool = False
     # ASK-WEB-G1-R2: Web Search capability provider for reader_record_ask.
     # Empty string means "no provider wired" — the resolver returns a
     # disabled capability and the runtime must NOT mount ``search_web``.

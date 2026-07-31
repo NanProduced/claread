@@ -572,9 +572,26 @@ export type AgenticProcessSnapshot = {
   steps: AgenticProcessSnapshotStep[];
 };
 
+export type ReaderAskContextCompactionUiStatusDto =
+  | "running"
+  | "completed"
+  | "fallback"
+  | "failed";
+
+/**
+ * Same-session UI projection of context compaction. This is intentionally
+ * narrow: provider detail codes and transcript data never enter the message
+ * state or DOM. Cold history does not persist this process-only status.
+ */
+export interface ReaderAskContextCompactionUiStateDto {
+  status: ReaderAskContextCompactionUiStatusDto;
+  elapsedMs: number;
+}
+
 export interface ReaderAskMessageUiStateDto {
   replan_status?: "idle" | "replanning" | null;
   compacting?: boolean | null;
+  context_compaction?: ReaderAskContextCompactionUiStateDto | null;
   regenerate_preview?: boolean | null;
   /**
    * ASK-TURN-LIFECYCLE R2 — provisional answer preview accumulated from
@@ -870,6 +887,10 @@ export type ReaderAskStreamEventName =
   | "tool.completed"
   | "tool.failed"
   | "context.compacting"
+  | "context.compaction.started"
+  | "context.compaction.completed"
+  | "context.compaction.failed"
+  | "context.compaction.fallback"
   | "replan.started"
   | "message.interrupted"
   | "message.completed"
@@ -903,6 +924,20 @@ export interface ReaderAskSubmissionReconcileSseDto {
   terminal_code?: string | null;
   action_hint?: ReaderAskSubmissionReconcileDto["action_hint"];
   claim_generation?: number | null;
+}
+
+/**
+ * Agentic context-compaction lifecycle. `detail_code` is a server-whitelisted
+ * diagnostic and must not be rendered or copied into message UI state.
+ */
+export interface ReaderAskContextCompactionPayloadDto {
+  execution_version: ReaderAskAgenticExecutionVersionDto;
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  detail_code?: string | null;
+  attempt_count: number;
+  elapsed_ms: number;
 }
 
 /**
@@ -1229,6 +1264,14 @@ export type ReaderAskTypedStreamEnvelopeDto =
       data: ReaderAskAgenticReasoningCompletedPayloadDto;
     }
   | {
+      event:
+        | "context.compaction.started"
+        | "context.compaction.completed"
+        | "context.compaction.failed"
+        | "context.compaction.fallback";
+      data: ReaderAskContextCompactionPayloadDto;
+    }
+  | {
       event: "message.completed";
       data:
         | ReaderAskCompletedPayloadDto
@@ -1251,6 +1294,10 @@ export type ReaderAskTypedStreamEnvelopeDto =
         | "agentic.reasoning.started"
         | "agentic.reasoning.delta"
         | "agentic.reasoning.completed"
+        | "context.compaction.started"
+        | "context.compaction.completed"
+        | "context.compaction.failed"
+        | "context.compaction.fallback"
         | "message.completed"
         | "message.interrupted"
       >;
@@ -1689,6 +1736,31 @@ export function isReaderAskAgenticProgressPayload(
       "url" in payload ||
       "provider_payload" in payload ||
       "raw_payload" in payload
+    )
+  );
+}
+
+export function isReaderAskContextCompactionPayload(
+  data: unknown,
+): data is ReaderAskContextCompactionPayloadDto {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+  const payload = data as Record<string, unknown>;
+  return (
+    payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
+    typeof payload.message_id === "string" &&
+    typeof payload.thread_id === "string" &&
+    typeof payload.turn_run_id === "string" &&
+    isNonNegativeInt(payload.attempt_count) &&
+    isNonNegativeInt(payload.elapsed_ms) &&
+    (payload.detail_code == null || typeof payload.detail_code === "string") &&
+    !(
+      "query" in payload ||
+      "url" in payload ||
+      "provider_payload" in payload ||
+      "raw_payload" in payload ||
+      "transcript" in payload
     )
   );
 }

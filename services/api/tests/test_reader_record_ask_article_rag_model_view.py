@@ -292,7 +292,7 @@ def test_budget_fit_keeps_largest_hit_prefix() -> None:
     renderer = ModelViewRenderer()
     budget = ModelVisibleTurnBudget()
     # Leave room for about one hit view but not all three.
-    budget.charge("rag", renderer.render_plain("f" * 2600))
+    budget.charge("rag", renderer.render_plain("f" * (RESERVE_RAG - 500)))
     registry = EvidenceRegistry(_FINGERPRINT)
     result = assemble_rag_model_view(
         outcome=_ok_outcome(

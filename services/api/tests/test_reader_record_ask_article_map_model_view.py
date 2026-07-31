@@ -284,14 +284,15 @@ def test_map_fit_truncates_entries_and_labels_at_real_cost() -> None:
     renderer = ModelViewRenderer()
     budget = ModelVisibleTurnBudget()
     # Pre-exhaust the map account so only a subset fits.
-    budget.charge("map", renderer.render_plain("f" * 1200))
+    filler_cost = RESERVE_MAP - 400
+    budget.charge("map", renderer.render_plain("f" * filler_cost))
     result, budget, _r = _assemble(sources, budget=budget)
     assert result.status == "ok"
     assert result.entry_count < 5
     assert result.truncated is True
     # Spend equals the exact rendered block cost, within the reserve.
     assert result.rendered_block is not None
-    assert budget.spent("map") == 1200 + len(result.rendered_block.text)
+    assert budget.spent("map") == filler_cost + len(result.rendered_block.text)
     assert budget.spent("map") <= RESERVE_MAP
     # Every emitted label is clipped within the hard cap.
     for entry in result.entries:

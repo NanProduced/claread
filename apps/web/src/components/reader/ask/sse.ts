@@ -4,6 +4,7 @@ import type {
 } from "@/types/api/reader-ask";
 import {
   isReaderAskAgenticCompletedPayload,
+  isReaderAskContextCompactionPayload,
   isReaderAskAgenticProgressPayload,
   isReaderAskAgenticReasoningCompletedPayload,
   isReaderAskAgenticReasoningDeltaPayload,
@@ -25,6 +26,7 @@ import {
 
 export {
   isReaderAskAgenticCompletedPayload,
+  isReaderAskContextCompactionPayload,
   isReaderAskAgenticProgressPayload,
   isReaderAskAgenticReasoningCompletedPayload,
   isReaderAskAgenticReasoningDeltaPayload,

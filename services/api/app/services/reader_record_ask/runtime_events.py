@@ -74,6 +74,18 @@ class AnalysisFinishedEvent(BaseModel):
     type: Literal["analysis_finished"] = "analysis_finished"
 
 
+class ContextCompactionEvent(BaseModel):
+    """Safe pre-run memory-compaction lifecycle signal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["context_compaction"] = "context_compaction"
+    phase: Literal["started", "completed", "failed", "fallback"]
+    detail_code: str | None = Field(default=None, max_length=64)
+    attempt_count: int = Field(default=0, ge=0)
+    elapsed_ms: int = Field(default=0, ge=0)
+
+
 class AnswerDeltaEvent(BaseModel):
     """Safe streaming delta: answer_text prefix increment only (R4-A6).
 
@@ -317,6 +329,7 @@ RuntimeEvent = (
     | ToolResultEvent
     | AnalysisStartedEvent
     | AnalysisFinishedEvent
+    | ContextCompactionEvent
     | AnswerDeltaEvent
     | AnswerPreviewResetEvent
     | ComposingAnswerEvent

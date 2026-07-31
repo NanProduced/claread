@@ -16,6 +16,7 @@ Model invocation runs only after that transaction commits.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -83,8 +84,15 @@ def build_retry_snapshot(
     model_option_key: str | None,
     web_search_mode: str,
     route_identity: str | None = None,
+    focus_anchors: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Immutable retry snapshot persisted on user+assistant messages."""
+    """Immutable retry snapshot persisted on user+assistant messages.
+
+    ASK-UX-COT-COMPOSER-R3 P2 — ``focus_anchors`` persists the full
+    gate-validated anchor set (canonical dicts) so regenerate replays
+    exactly the user focus the original turn saw. Replay re-validates
+    every anchor against the live document (fail-closed on staleness).
+    """
     return {
         "retry_contract_version": RETRY_CONTRACT_VERSION,
         "retry_lane": lane,
@@ -96,6 +104,9 @@ def build_retry_snapshot(
         "model_option_key": model_option_key,
         "route_identity": route_identity,
         "web_search_mode": web_search_mode,
+        "focus_anchors": [dict(entry) for entry in focus_anchors]
+        if focus_anchors
+        else None,
         "snapshotted_at": datetime.now(UTC).isoformat(),
     }
 

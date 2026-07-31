@@ -35,7 +35,23 @@ interface ReaderRecordAskMessageRequestDto {
   content: string;
   entry_action?: ReaderAskEntryActionDto | null;
   model?: string | null;
+  /**
+   * Legacy single-selection compatibility entry. Old callers send one
+   * anchor here; new Web requests send the full set via `focus_anchors`
+   * (below) and keep this as the primary (first) anchor so a pre-plural
+   * backend still sees a selection. When `focus_anchors` is present the
+   * backend treats it as canonical and ignores this field beyond
+   * compatibility.
+   */
   anchor?: Record<string, unknown> | null;
+  /**
+   * ASK-UX-COT-COMPOSER-R3 P2 — canonical plural focus anchors (≤4:
+   * one auto-ingested selection plus up to three pinned selections):
+   * every auto/manual selection anchor the composer carries, in slot
+   * order (auto first, then pinned manuals). The backend gates each
+   * anchor fail-closed against the same record/base/generation/document.
+   */
+  focus_anchors?: Record<string, unknown>[] | null;
   /**
    * User-visible web search request mode (mirrors backend `WebSearchMode`).
    * Forwarded to the Reading Record Ask upstream so the host can decide
@@ -51,28 +67,66 @@ function readingRecordAskPath(recordId: string, suffix = ""): string {
   return `/reader/records/${encodeURIComponent(recordId)}/ask${suffix}`;
 }
 
-function readingRecordAnchorFromAttachments(
+/** ASK-UX-COT-COMPOSER-R3 P2 — transport cap mirrors the backend schema. */
+// One auto-ingested emphasis selection plus up to three user-pinned
+// selections.  This must match the visible composer slot contract.
+const MAX_READER_RECORD_FOCUS_ANCHORS = 4;
+
+/**
+ * Collect EVERY reading_record_anchor carried by the attachments —
+ * auto selection first, then pinned manual selections, in attachment
+ * order. Deduped by the canonical anchor identity (record/base/
+ * generation/unit/segment/offsets/hash — never display text) and capped
+ * at the transport maximum. R3 P2: this replaces the old first-anchor-
+ * wins extraction, which silently dropped selections 2..N.
+ */
+function readingRecordFocusAnchorsFromAttachments(
   attachments: ReaderAskAttachmentDto[],
-): Record<string, unknown> | null {
+): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const anchors: Record<string, unknown>[] = [];
   for (const attachment of attachments) {
     const candidate = (attachment.metadata as ReaderAskAttachmentDto["metadata"] & {
       reading_record_anchor?: unknown;
     }).reading_record_anchor;
-    if (candidate && typeof candidate === "object") {
-      return candidate as Record<string, unknown>;
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+    const anchor = candidate as Record<string, unknown>;
+    const fingerprint = JSON.stringify([
+      anchor.record_id,
+      anchor.base_id,
+      anchor.generation,
+      anchor.unit_id,
+      anchor.anchor_segment_id,
+      anchor.start_offset,
+      anchor.end_offset,
+      anchor.text_hash,
+    ]);
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+    seen.add(fingerprint);
+    anchors.push(anchor);
+    if (anchors.length >= MAX_READER_RECORD_FOCUS_ANCHORS) {
+      break;
     }
   }
-  return null;
+  return anchors;
 }
 
 function toReadingRecordAskMessageRequest(
   body: ReaderAskMessageStreamRequestDto,
 ): ReaderRecordAskMessageRequestDto {
+  // R3 P2 — forward ALL selection anchors (auto + manual), never just
+  // the first. `anchor` keeps the primary for pre-plural backends.
+  const focusAnchors = readingRecordFocusAnchorsFromAttachments(body.attachments);
   return {
     content: body.content,
     entry_action: body.entry_action ?? null,
     model: body.model ?? null,
-    anchor: readingRecordAnchorFromAttachments(body.attachments),
+    anchor: focusAnchors[0] ?? null,
+    focus_anchors: focusAnchors.length > 0 ? focusAnchors : null,
     // Forward the user-visible web search request mode so the host can
     // mount the `search_web` capability for this turn. Default to `disabled`
     // when omitted — `allowed` only grants capability, never forces a search.

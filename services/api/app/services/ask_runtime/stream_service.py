@@ -18,7 +18,6 @@ from app.schemas.reader_ask import (
     ReaderAskMessageRetryRequest,
     ReaderAskReadingRecordAnchor,
     ReaderAskResolvedIntent,
-    ReaderAskSubmissionMode,
     ReaderAskSupplementCandidate,
     ReaderRecordAskMessageRequest,
 )
@@ -253,11 +252,19 @@ async def _stream_rr_message(
     submission_terminal_status: str | None = None
 
     try:
+        # R3 P2 — the legacy lane receives the SAME focus set as the
+        # agentic lane (plural focus_anchors, or the singular legacy
+        # anchor as fallback); build_reading_record_context re-gates
+        # every anchor fail-closed against the live document.
+        legacy_focus_anchors = rr_context_svc.resolve_focus_anchors(request)
         context = await rr_context_svc.build_reading_record_context(
             user_id=user_id,
             reading_record_id=reading_record_id,
-            request_anchor=request.anchor,
+            request_anchor=(
+                legacy_focus_anchors[0] if legacy_focus_anchors else None
+            ),
             entry_action=request.entry_action,
+            focus_anchors=legacy_focus_anchors or None,
         )
         thread_id = _parse_uuid(thread["id"], "thread id is invalid")
         thread, selected_model_option = await _resolve_thread_model_option(

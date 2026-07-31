@@ -855,6 +855,8 @@ describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB
       url: null,
       sourceTitle: null,
       description: null,
+      publishedAt: null,
+      retrievedAt: null,
     });
   });
 
@@ -879,6 +881,8 @@ describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB
       url: "https://example.com/page",
       sourceTitle: "Example Page Title",
       description: "A short description of the page.",
+      publishedAt: null,
+      retrievedAt: null,
     });
   });
 
@@ -933,6 +937,8 @@ describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB
       url: null,
       sourceTitle: null,
       description: null,
+      publishedAt: null,
+      retrievedAt: null,
     });
   });
 
@@ -1066,6 +1072,8 @@ describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB
       [
         "citationId",
         "description",
+        "publishedAt",
+        "retrievedAt",
         "snippet",
         "sourceKind",
         "sourceTitle",

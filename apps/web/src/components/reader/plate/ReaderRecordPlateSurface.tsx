@@ -115,9 +115,17 @@ import {
 import { cn } from "@/lib/cn";
 
 import {
+  ReaderFloatingToolbarButtons,
   ReaderToolbarActionsProvider,
   type ReaderToolbarActions,
+  type ReaderToolbarActionState,
 } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
+import {
+  askSelectionAnchorFingerprint,
+  decideAutoSelectionIngest,
+  decidePinSelection,
+  MAX_MANUAL_ASK_SELECTIONS,
+} from "@/lib/reader-ask/selection-slots";
 import {
   ReaderFloatingSurface,
   useReaderFloatingLayer,
@@ -130,6 +138,7 @@ import { dictionaryLookupHistoryKey } from "../dictionary/shared";
 import type { DictionaryAIViewState } from "@/types/api/dict-ai";
 import { Plate, usePlateEditor, type RenderLeaf } from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
+import { Toolbar } from "@/components/ui/toolbar";
 import { ReaderRecordPlateKit } from "@/components/editor/plugins/reader-plate-kit";
 import {
   resolveReaderMarkVisual,
@@ -2743,6 +2752,16 @@ export function ReaderRecordPlateSurface({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setActiveGrammarItemId(null);
+        // Dismiss the selection-actions toolbar on Escape. Clearing the
+        // native selection cascades through SelectionAnchorBridge →
+        // activeSelection → toolbar visibility. We only do this when there
+        // is an active text selection; other floating UI (noteMenu /
+        // feedbackTarget / AIMenu) handle their own Escape via React
+        // stopPropagation, so this document-level handler won't fire for
+        // them.
+        if (activeSelectionRef.current?.selectedText.trim()) {
+          window.getSelection()?.removeAllRanges();
+        }
       }
     }
 
@@ -2753,6 +2772,46 @@ export function ReaderRecordPlateSurface({
         window.clearTimeout(grammarPulseTimerRef.current);
         grammarPulseTimerRef.current = null;
       }
+    };
+  }, []);
+
+  // 空白点击关闭选区工具栏：Chromium 中点击非聚焦的空白区域不会折叠
+  // contenteditable 内的原生选区，因此 SelectionAnchorBridge 不会收到
+  // selectionchange。这里在 pointerdown 阶段判断：若点击落在工具栏与
+  // 正文文档之外，则主动清空原生选区，经 bridge → activeSelection 级联
+  // 关闭工具栏（验收“空白点击…关闭”）。点击工具栏按钮（pointerdown
+  // preventDefault）与正文内新建选区不受影响。
+  useEffect(() => {
+    function handleBlankPointerDown(event: PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target || target.nodeType !== Node.ELEMENT_NODE) {
+        return;
+      }
+      const withinToolbar = (
+        target as Element
+      ).closest?.('[data-reader-record-floating-toolbar="selection-actions"]');
+      const withinDocument = (
+        target as Element
+      ).closest?.(".reader-record-plate-document");
+      if (withinToolbar || withinDocument) {
+        return;
+      }
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) {
+        sel.removeAllRanges();
+      }
+    }
+    window.document.addEventListener(
+      "pointerdown",
+      handleBlankPointerDown,
+      true,
+    );
+    return () => {
+      window.document.removeEventListener(
+        "pointerdown",
+        handleBlankPointerDown,
+        true,
+      );
     };
   }, []);
   const surfaceMode = readerSettings.mode;
@@ -3691,6 +3750,24 @@ export function ReaderRecordPlateSurface({
     [activeGrammarItemId, activeSentenceChunkId, hoverNoteAssetId, noteMenu],
   );
 
+  // Memoize the <Editor> (PlateContent) element so it does NOT re-render when
+  // activeSelection changes. When SelectionAnchorBridge fires onChange →
+  // setActiveSelection, ReaderRecordPlateSurface re-renders, but <Editor> is
+  // skipped because renderLeaf (its only changing prop) hasn't changed. This
+  // prevents Slate's internal restoreDomSelection layout effect from running
+  // and clearing the user's native DOM selection in readonly mode.
+  // See: P0 fix — toolbar not appearing after text selection.
+  const editorElement = useMemo(
+    () => (
+      <Editor
+        readOnly
+        disableDefaultStyles
+        renderLeaf={renderLeaf as never}
+      />
+    ),
+    [renderLeaf],
+  );
+
   const handleSettingsChange = useCallback((next: ReaderSettingsState) => {
     setReaderSettings(next);
     persistReaderSettings(next);
@@ -3707,8 +3784,9 @@ export function ReaderRecordPlateSurface({
     },
     [readerSettings],
   );
-  // SelectionToolbar 已迁移为 Plate FloatingToolbar（由 FloatingToolbarKit 在 render.afterEditable 渲染），
-  // toolbarOpen / toolbarFloating 不再需要，FloatingToolbar 通过 Plate editor selection 自动管理显示。
+  // SelectionToolbar 现由 selectionToolbarFloating + ReaderFloatingToolbarButtons
+  // 渲染（见 showSelectionToolbar），以 activeSelection 为唯一真相，不再使用
+  // Plate FloatingToolbarKit（readonly 下 editor.selection 不可靠同步）。
   const [highlightMenu, setHighlightMenu] = useState<{
     mark: ReaderRecordPlateUserHighlightMark;
     anchor: HTMLElement;
@@ -3887,6 +3965,40 @@ export function ReaderRecordPlateSurface({
     }
   }, [hasSidecarCapacity]);
   const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
+  // ASK-UX-COT-COMPOSER-R3 P1 — composer selection slots. auto: the latest
+  // legitimate stable single-range source selection (0/1), replaced by the
+  // next new selection and immune to highlight dismissal / Esc / blank
+  // clicks. manual: up to 3 pinned selections (toolbar "加入 Ask Claread"),
+  // anchor-fingerprint deduped, surviving panel toggles, highlight
+  // dismissal and message sends. Both are session-scoped drafts — page
+  // refresh starts clean (no persisted-draft pretense).
+  const [autoAskSelection, setAutoAskSelection] =
+    useState<ReaderAskAttachment | null>(null);
+  const [manualAskSelections, setManualAskSelections] = useState<
+    ReaderAskAttachment[]
+  >([]);
+  // Fingerprint the user ×-dismissed from the auto slot: the SAME still-
+  // active native selection must not auto reappear until a genuinely new
+  // fingerprint selection happens.
+  const dismissedAutoSelectionFingerprintRef = useRef<string | null>(null);
+  // Last fingerprint written to the auto slot (avoids rewrite churn when
+  // the bridge re-emits the same selection).
+  const lastAutoSelectionFingerprintRef = useRef<string | null>(null);
+  // Selection chips are bound to one immutable record/base/generation
+  // identity.  A page/base regeneration must never leave a visually valid
+  // chip that the backend will reject as stale (or, worse, attach to the next
+  // page).  Browser highlight dismissal does not clear slots; identity
+  // replacement does.
+  useEffect(() => {
+    setAutoAskSelection(null);
+    setManualAskSelections([]);
+    dismissedAutoSelectionFingerprintRef.current = null;
+    lastAutoSelectionFingerprintRef.current = null;
+  }, [
+    snapshot.record_id,
+    snapshot.base.base_id,
+    snapshot.record.generation,
+  ]);
   const [pendingAskRequest, setPendingAskRequest] =
     useState<PendingReaderRecordAskRequest | null>(null);
   const [articleFeedbackChoice, setArticleFeedbackChoice] =
@@ -3920,6 +4032,73 @@ export function ReaderRecordPlateSurface({
     collisionPadding: 10,
     strategy: "fixed",
   });
+
+  // --- Selection-actions floating toolbar ---
+  // Reader 选区工具栏：以 activeSelection（SelectionAnchorBridge 产出）为唯一
+  // 显示与定位真相，不依赖 Plate editor.selection（readonly 下与原生 selection
+  // 不可靠同步）。显示条件 = 有稳定选区文本 + rect 可用 + 无其他浮层抢占。
+  const showSelectionToolbar =
+    activeSelection !== null &&
+    activeSelection.selectedText.trim().length > 0 &&
+    activeSelection.rect !== null &&
+    !quickPeekOpen &&
+    highlightMenu === null &&
+    noteMenu === null &&
+    noteAnchorDraft === null &&
+    feedbackTarget === null;
+  const selectionToolbarFloating = useReaderFloatingLayer({
+    open: showSelectionToolbar,
+    placement: "top",
+    offsetPx: 8,
+    collisionPadding: 12,
+    strategy: "fixed",
+  });
+
+  // 定位 effect：activeSelection.rect 作为初始定位真相；滚动/缩放时重读
+  // 原生 selection 的 live rect（activeSelection.rect 的底层来源）以保持
+  // 工具栏跟随选区。flip/shift middleware 保证工具栏在视口内不遮挡选区。
+  useEffect(() => {
+    if (!showSelectionToolbar) {
+      return;
+    }
+    const initialRect = activeSelection?.rect ?? null;
+    if (!initialRect) {
+      return;
+    }
+
+    function getLiveSelectionRect(): DOMRect | null {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        return null;
+      }
+      return sel.getRangeAt(0).getBoundingClientRect();
+    }
+
+    function updateSelectionToolbarReference() {
+      const liveRect = getLiveSelectionRect();
+      const rect = liveRect ?? initialRect;
+      if (!rect) {
+        return;
+      }
+      selectionToolbarFloating.refs.setPositionReference?.({
+        getBoundingClientRect: () => rect,
+      });
+      selectionToolbarFloating.update?.();
+    }
+
+    updateSelectionToolbarReference();
+    window.addEventListener("resize", updateSelectionToolbarReference);
+    window.addEventListener("scroll", updateSelectionToolbarReference, true);
+    return () => {
+      window.removeEventListener("resize", updateSelectionToolbarReference);
+      window.removeEventListener("scroll", updateSelectionToolbarReference, true);
+    };
+  }, [
+    showSelectionToolbar,
+    activeSelection,
+    selectionToolbarFloating.refs,
+    selectionToolbarFloating.update,
+  ]);
 
   // 选区或激活笔记变化时，更新浮动层的 reference 元素
   useEffect(() => {
@@ -4499,6 +4678,49 @@ export function ReaderRecordPlateSurface({
     return null;
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
+  // ASK-UX-COT-COMPOSER-R3 P1 — auto-ingest a legitimate stable single-
+  // range source selection into the composer auto slot while Ask is open
+  // (also covers opening the panel with an active selection). Clearing
+  // the browser highlight / Esc / blank clicks merely null the bridge
+  // result — the chip is NOT cleared. A new fingerprint replaces the
+  // auto slot without touching manual selections, notes, or external
+  // attachments. A ×-dismissed fingerprint never reappears until a
+  // genuinely new fingerprint selection happens.
+  useEffect(() => {
+    if (!askOpen) {
+      return;
+    }
+    const decision = decideAutoSelectionIngest({
+      candidate: currentAskSelectionAttachment,
+      currentFingerprint: lastAutoSelectionFingerprintRef.current,
+      dismissedFingerprint: dismissedAutoSelectionFingerprintRef.current,
+    });
+    if (decision.kind !== "ingest") {
+      return;
+    }
+    // A new valid selection clears the dismissal — returning to the old
+    // range afterwards counts as a fresh selection again.
+    dismissedAutoSelectionFingerprintRef.current = null;
+    lastAutoSelectionFingerprintRef.current = decision.fingerprint;
+    setAutoAskSelection(decision.attachment);
+  }, [askOpen, currentAskSelectionAttachment]);
+
+  const handleRemoveAutoAskSelection = useCallback(() => {
+    setAutoAskSelection((current) => {
+      if (current) {
+        dismissedAutoSelectionFingerprintRef.current =
+          askSelectionAnchorFingerprint(current);
+      }
+      return null;
+    });
+  }, []);
+
+  const handleRemoveManualAskSelection = useCallback((attachmentKey: string) => {
+    setManualAskSelections((current) =>
+      current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey),
+    );
+  }, []);
+
   const openDictionaryRail = useCallback(() => {
     releaseSidebarForReadingTool();
     const lookupForRail = activeLookupSnapshot;
@@ -4657,6 +4879,62 @@ export function ReaderRecordPlateSurface({
   const handleRequestAI = useCallback(() => {
     openAskPanel(currentAskSelectionAttachment, null);
   }, [currentAskSelectionAttachment, openAskPanel]);
+
+  /**
+   * ASK-UX-COT-COMPOSER-R3 P1 — "加入 Ask Claread": pin the current
+   * selection into the manual slots. If it IS the current auto slot it is
+   * promoted (no duplicate chip); otherwise appended. Anchor-fingerprint
+   * dedupe; capped at {@link MAX_MANUAL_ASK_SELECTIONS}; opens the panel
+   * without disturbing other drafts.
+   */
+  const handlePinSelectionToAsk = useCallback(() => {
+    // Opening the toolbar menu moves focus away from the document and may
+    // collapse the native Selection before the menu item is chosen. The auto
+    // slot is the Host-owned frozen copy of that same selection, so it is the
+    // safe fallback for the explicit pin action.
+    const candidate = currentAskSelectionAttachment ?? autoAskSelection;
+    if (!candidate) {
+      return;
+    }
+    const decision = decidePinSelection({
+      candidate,
+      autoSelection: autoAskSelection,
+      manualSelections: manualAskSelections,
+    });
+    switch (decision.kind) {
+      case "noop":
+        return;
+      case "blocked-full":
+        return;
+      case "promote":
+        setAutoAskSelection(null);
+        setManualAskSelections((current) => [...current, candidate]);
+        break;
+      case "append":
+        setManualAskSelections((current) => [...current, candidate]);
+        break;
+      case "already-manual":
+        break;
+    }
+    // The pinned selection must not reappear in the auto slot while the
+    // same native selection is still active.
+    dismissedAutoSelectionFingerprintRef.current = decision.fingerprint;
+    lastAutoSelectionFingerprintRef.current = decision.fingerprint;
+    openAskPanel(undefined, null);
+  }, [autoAskSelection, currentAskSelectionAttachment, manualAskSelections, openAskPanel]);
+
+  const pinSelectionState = useMemo<ReaderToolbarActionState>(() => {
+    const decision = decidePinSelection({
+      candidate: currentAskSelectionAttachment ?? autoAskSelection,
+      autoSelection: autoAskSelection,
+      manualSelections: manualAskSelections,
+    });
+    const full = manualAskSelections.length >= MAX_MANUAL_ASK_SELECTIONS;
+    return {
+      disabled: decision.kind === "blocked-full",
+      reason: decision.kind === "blocked-full" || full ? "最多固定 3 个选区" : undefined,
+    };
+  }, [autoAskSelection, currentAskSelectionAttachment, manualAskSelections]);
 
   const handleDictionarySearch = useCallback(
     async (query: string) => {
@@ -5553,6 +5831,8 @@ export function ReaderRecordPlateSurface({
   const toolbarActions = useMemo<ReaderToolbarActions>(
     () => ({
       onAsk: () => handleAskFromSelection(),
+      onPinSelectionToAsk: () => handlePinSelectionToAsk(),
+      pinSelectionState,
       onAskSubmit: (request) => handleAskPromptFromSelection(request),
       onCopy: () => handleCopy(),
       onHighlight: () => handleHighlight(),
@@ -5563,6 +5843,8 @@ export function ReaderRecordPlateSurface({
     }),
     [
       handleAskFromSelection,
+      handlePinSelectionToAsk,
+      pinSelectionState,
       handleAskPromptFromSelection,
       handleCopy,
       handleHighlight,
@@ -5952,11 +6234,7 @@ export function ReaderRecordPlateSurface({
                         data-reader-record-mode={surfaceMode}
                         onCopyCapture={handleDocumentCopyCapture}
                       >
-                        <Editor
-                          readOnly
-                          disableDefaultStyles
-                          renderLeaf={renderLeaf as never}
-                        />
+                        {editorElement}
                       </EditorContainer>
                       <InlineCommentPanel
                         draftText={noteDraft}
@@ -5984,6 +6262,22 @@ export function ReaderRecordPlateSurface({
                         floatingStyles={commentFloating.floatingStyles as CSSProperties}
                       />
                     </Plate>
+                    {showSelectionToolbar ? (
+                      <ReaderFloatingSurface
+                        floatingRef={selectionToolbarFloating.refs.setFloating}
+                        style={selectionToolbarFloating.floatingStyles as CSSProperties}
+                        chrome="selection-toolbar"
+                        className="reader-record-floating-toolbar p-1 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
+                        data-reader-record-floating-toolbar="selection-actions"
+                      >
+                        <Toolbar
+                          className="items-center gap-0.5"
+                          aria-label="Reader 选区操作"
+                        >
+                          <ReaderFloatingToolbarButtons />
+                        </Toolbar>
+                      </ReaderFloatingSurface>
+                    ) : null}
                   </ReaderToolbarActionsProvider>
                 </ReaderSentenceAnalysisInteractionContext.Provider>
               </ReaderCalloutActionContext.Provider>
@@ -6035,6 +6329,10 @@ export function ReaderRecordPlateSurface({
           recordScope="reading_record"
           recordTitle={snapshot.record.title}
           attachments={askAttachments}
+          autoSelectionAttachment={autoAskSelection}
+          manualSelectionAttachments={manualAskSelections}
+          onRemoveAutoSelection={handleRemoveAutoAskSelection}
+          onRemoveManualSelection={handleRemoveManualAskSelection}
           pendingQuickActionRequest={pendingAskRequest}
           onRemoveAttachment={handleRemoveAskAttachment}
           onClearAttachments={() => setAskAttachments([])}
