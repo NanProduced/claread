@@ -9,7 +9,8 @@ import { expect, test, type Page } from "@playwright/test";
  * All BFF routes are mocked at the network layer — no backend.
  *
  * Scenario (per viewport, 1440×900 desktop + 390×844 mobile):
- *   1. open Ask → permanent current-article chip (record title);
+ *   1. open Ask → permanent current-article chip (same display title
+ *      truth as the reader masthead);
  *   2. select A → auto chip A;
  *   3. Escape clears the browser highlight but the auto chip survives;
  *   4. select B → auto chip becomes B (A replaced);
@@ -201,8 +202,11 @@ function makeSnapshot() {
     record_id: RECORD_ID,
     record: {
       title: RECORD_TITLE,
-      display_title_zh: null,
-      title_generation_status: "pending",
+      // Steady-state real record: the masthead shows the generated
+      // display title, and the Ask current-article chip must resolve
+      // the SAME truth (never raw record.title, never thread title).
+      display_title_zh: RECORD_TITLE,
+      title_generation_status: "succeeded",
       title_generation_error_code: null,
       title_generation_error_message: null,
       reading_goal: "daily_reading",
@@ -710,6 +714,46 @@ for (const viewport of [
       await expect(page.locator("[data-ask-selection-slot='auto']")).toHaveCount(1);
       await expect(page.locator("[data-ask-selection-slot='manual']")).toHaveCount(2);
       await expect(page.locator("[data-ask-current-article-chip]")).toBeVisible();
+    });
+
+    test("current-article chip follows the masthead title truth, never the import placeholder", async ({
+      page,
+    }) => {
+      await mockBff(page, []);
+      // Override the snapshot route (later registration wins): an
+      // import-era record whose generated title is still pending and
+      // whose stored title is the "Untitled Reading" placeholder.
+      const pendingSnapshot = {
+        ...makeSnapshot(),
+        record: {
+          ...makeSnapshot().record,
+          title: "Untitled Reading",
+          display_title_zh: null,
+          title_generation_status: "pending",
+        },
+      };
+      await page.route(
+        `**/api/web/reader-plate/${RECORD_ID}/snapshot`,
+        async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: true, ...pendingSnapshot }),
+          });
+        },
+      );
+      await loginAndNavigate(page);
+
+      await page.getByRole("button", { name: "打开 Ask Claread" }).click();
+      await expect(page.locator("[data-ask-composer-textarea]")).toBeVisible();
+      const articleChip = page.locator("[data-ask-current-article-chip]");
+      await expect(articleChip).toBeVisible();
+      // Pending title with a placeholder source title falls back to the
+      // generic learner-facing label — same truth as the masthead.
+      await expect(articleChip).toContainText("当前文章");
+      // The import placeholder never surfaces anywhere on the page.
+      await expect(articleChip).not.toContainText("Untitled Reading");
+      await expect(page.getByText("Untitled Reading")).toHaveCount(0);
     });
   });
 }

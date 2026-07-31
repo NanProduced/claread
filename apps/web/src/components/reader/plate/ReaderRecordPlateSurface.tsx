@@ -1812,6 +1812,31 @@ function resolveReaderRecordTitleState(
   return { kind: "empty" };
 }
 
+/**
+ * Single title truth for page-adjacent Ask UI.
+ *
+ * The reader masthead prefers the generated display title and only falls
+ * back to the imported source title for explicit migration/failed states.
+ * Composer chips must follow the same contract instead of reading
+ * `record.title` directly (which can still be the import placeholder
+ * "Untitled Reading").
+ */
+function resolveReaderRecordAskTitle(
+  record: ReaderPlateSnapshotDto["record"],
+): string {
+  const titleState = resolveReaderRecordTitleState(record);
+  if (
+    titleState.kind === "succeeded" ||
+    titleState.kind === "migration_fallback"
+  ) {
+    return titleState.title;
+  }
+  if (titleState.kind === "failed_retryable" && titleState.sourceTitle) {
+    return titleState.sourceTitle;
+  }
+  return "当前文章";
+}
+
 function ReaderRecordHeader({
   snapshot,
   surfaceMode,
@@ -2856,10 +2881,19 @@ export function ReaderRecordPlateSurface({
     snapshot.record.generation,
   ]);
 
+  const askRecordTitle = useMemo(
+    () => resolveReaderRecordAskTitle(snapshot.record),
+    [
+      snapshot.record.display_title_zh,
+      snapshot.record.title,
+      snapshot.record.title_generation_status,
+    ],
+  );
+
   const askPageIdentity = useMemo<ReaderAskPageIdentity>(
     () => ({
       recordId: snapshot.record_id,
-      recordTitle: snapshot.record.title,
+      recordTitle: askRecordTitle,
       surface: "reader",
       source: "reader_2_0",
       availableContextCapabilities: ["record_context"],
@@ -2879,7 +2913,7 @@ export function ReaderRecordPlateSurface({
       projectedSnapshot.user_assets,
       snapshot.anchor_segments.length,
       snapshot.enhancement_layers,
-      snapshot.record.title,
+      askRecordTitle,
       snapshot.record_id,
     ],
   );
@@ -6327,7 +6361,7 @@ export function ReaderRecordPlateSurface({
           pageIdentity={askPageIdentity}
           recordId={snapshot.record_id}
           recordScope="reading_record"
-          recordTitle={snapshot.record.title}
+          recordTitle={askRecordTitle}
           attachments={askAttachments}
           autoSelectionAttachment={autoAskSelection}
           manualSelectionAttachments={manualAskSelections}

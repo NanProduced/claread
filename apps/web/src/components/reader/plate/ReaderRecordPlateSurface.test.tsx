@@ -2769,6 +2769,40 @@ describe("ReaderRecordPlateSurface", () => {
     expect(titleEl?.dataset.readerRecordTitleState).toBe("succeeded");
   });
 
+  it("uses the same generated display title for the Ask current-article chip", async () => {
+    installReaderAskFetchMock();
+    const snapshot = makeSnapshot();
+    snapshot.record.title = "Untitled Reading";
+    snapshot.record.display_title_zh = "加拿大山火烟雾蔓延美国多州";
+    snapshot.record.title_generation_status = "succeeded";
+    const { container } = render(
+      <TooltipProvider>
+        <ReaderRecordPlateSurface snapshot={snapshot} />
+      </TooltipProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开 Ask Claread" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-ask-current-article-chip="true"]'),
+      ).not.toBeNull();
+    });
+    const chip = container.querySelector<HTMLElement>(
+      '[data-ask-current-article-chip="true"]',
+    );
+    if (!chip) {
+      throw new Error("Expected the Ask current-article chip to render");
+    }
+    expect(chip.getAttribute("aria-label")).toBe(
+      "当前文章：加拿大山火烟雾蔓延美国多州",
+    );
+    expect(chip.textContent).toContain("加拿大山火烟雾蔓延美国多州");
+    expect(chip.textContent).not.toContain("Untitled Reading");
+  });
+
   it("does not promote record.title to the succeeded masthead when display_title_zh is missing", () => {
     const snapshot = makeSnapshot();
     snapshot.record.display_title_zh = null;
