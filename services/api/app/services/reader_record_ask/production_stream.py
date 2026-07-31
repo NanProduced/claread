@@ -1237,6 +1237,16 @@ async def _run_agentic_turn(
     web_search_capability: ResolvedWebSearchCapability | None = None,
     web_search_backend: WebSearchBackend | None = None,
     web_evidence_registry: WebEvidenceRegistry | None = None,
+    # ASK-COMPACTION-INTEGRATED-R1: precise, default-real test seams.
+    # Production passes none of these (the flag + real repository + real
+    # Flash compactor are derived below); an integrated test that drives
+    # the real stream/core against real PostgreSQL injects a deterministic
+    # compactor and forces the memory lane on without touching settings or
+    # forming a second business chain. ``None`` ⇒ byte-identical production
+    # behavior, exactly like the existing ``model`` / ``run_fn`` seams.
+    memory_enabled_override: bool | None = None,
+    memory_compactor: Any | None = None,
+    memory_repository_override: Any | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -1340,10 +1350,14 @@ async def _run_agentic_turn(
     # canonical read, bounded Flash compaction, deterministic fallback,
     # CAS persistence, fence validation, and recent-history injection.
     memory_settings = get_settings()
-    memory_enabled = bool(memory_settings.reader_record_ask_memory_enabled)
+    memory_enabled = (
+        bool(memory_enabled_override)
+        if memory_enabled_override is not None
+        else bool(memory_settings.reader_record_ask_memory_enabled)
+    )
     memory_repository: ThreadMemoryRepository | None = None
     if memory_enabled:
-        memory_repository = ThreadMemoryRepository()
+        memory_repository = memory_repository_override or ThreadMemoryRepository()
 
     agent_task = asyncio.create_task(
         run_agent(
@@ -1366,6 +1380,7 @@ async def _run_agentic_turn(
             memory_repository=memory_repository,
             thread_id=str(thread_id) if memory_enabled else None,
             memory_manager_enabled=memory_enabled,
+            memory_compactor=memory_compactor,
             memory_settings=memory_settings if memory_enabled else None,
         )
     )
@@ -2197,6 +2212,12 @@ async def stream_agentic_thread_message(
     existing_assistant_message: dict[str, Any] | None = None,
     claim_generation: int | None = None,
     model_option_key: str | None = None,
+    # ASK-COMPACTION-INTEGRATED-R1: default-real test seams forwarded to
+    # ``_run_agentic_turn`` (see that helper for the contract). Production
+    # callers pass none of these.
+    memory_enabled_override: bool | None = None,
+    memory_compactor: Any | None = None,
+    memory_repository_override: Any | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -2655,6 +2676,9 @@ async def stream_agentic_thread_message(
             web_search_capability=effective_web_search_capability,
             web_search_backend=wired_web_search_backend,
             web_evidence_registry=wired_web_evidence_registry,
+            memory_enabled_override=memory_enabled_override,
+            memory_compactor=memory_compactor,
+            memory_repository_override=memory_repository_override,
         ):
             yield chunk
             # ASK-TURN-LIFECYCLE R1: mark terminal-emitted as soon as the
