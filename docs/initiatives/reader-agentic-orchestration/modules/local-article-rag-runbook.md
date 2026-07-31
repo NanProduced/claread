@@ -54,7 +54,7 @@ READER_ARTICLE_RAG_EMBEDDING_MODEL=""
 READER_ARTICLE_RAG_VECTOR_PROVIDER="zilliz"
 READER_ARTICLE_RAG_ZILLIZ_URI=""
 READER_ARTICLE_RAG_ZILLIZ_TOKEN=""
-READER_ARTICLE_RAG_ZILLIZ_COLLECTION="article_rag_index_v1"
+READER_ARTICLE_RAG_ZILLIZ_COLLECTION="article_rag_chunks"
 READER_ARTICLE_RAG_VECTOR_DIM=1024
 
 # Worker loop 调优（默认即可；只在排查 stale lease 或想减少 DB poll 频率时调）
@@ -70,7 +70,7 @@ READER_ARTICLE_RAG_SMOKE=false
 
 实际 key 放在 `services/api/.env`（不进 git），或者由外部 secret manager 注入。`rag-embedding-v4` 在 `services/api/config/model-profiles.json` 中解析到 `text-embedding-v4` / `dashscope_embedding`，该 provider 使用 `DASHSCOPE_API_KEY`。如果 `RAG_EMBEDDING_MODEL_PROFILE` 留空，运行时才会退回 deprecated `BAILIAN_API_KEY` / `BAILIAN_EMBEDDING_MODEL` 路径。换句话说：当且仅当 `READER_ARTICLE_RAG_EMBEDDING_PROVIDER=dashscope` 且 embedding route 或 legacy fallback 解析得到非空 key 时，I4D 工厂才会构造真实 `DashScopeArticleRagEmbeddingProvider`。
 
-Zilliz URI/token 支持本地复用 few-shot/Grammar RAG 的配置：`READER_ARTICLE_RAG_ZILLIZ_URI/TOKEN` 优先；二者为空时 fallback 到 `ZILLIZ_URI/TOKEN`。但 collection 不能复用 few-shot collection：`READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 必须保持 Article RAG 专用（例如 `article_rag_index_v1`），避免把文章 chunk 写进 `grammar_note_examples` / `sentence_analysis_examples`。
+Zilliz URI/token 支持本地复用 few-shot/Grammar RAG 的配置：`READER_ARTICLE_RAG_ZILLIZ_URI/TOKEN` 优先；二者为空时 fallback 到 `ZILLIZ_URI/TOKEN`。但 collection 不能复用 few-shot collection：`READER_ARTICLE_RAG_ZILLIZ_COLLECTION` 必须保持 Article RAG 专用（例如 `article_rag_chunks`），避免把文章 chunk 写进 `grammar_note_examples` / `sentence_analysis_examples`。
 
 ### Secret 红线
 
