@@ -582,16 +582,21 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     await setScript(page, buildSuccessScript({ holdBeforeComplete: true }));
 
     await submitQuestion(page, "测试问题");
-    await waitForActivityPhase(page, "composing_answer");
+    // R2.1 drops composing_answer progress (the answering step/phase only
+    // appears after a real identity-valid delta), so the latest reachable
+    // phase here is the article-evidence phase (searching_article).
+    await waitForActivityPhase(page, "searching_article");
 
     const phase = await page.locator('[data-testid="ask-agentic-activity"]').getAttribute(
       "data-activity-phase",
     );
-    expect(phase).toBe("composing_answer");
-    // Fixed typed live label (R3: 正在整理回答) — never server summary copy.
-    await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
-      "整理回答",
-    );
+    expect(phase).toBe("searching_article");
+    // Fixed typed live label (R2.1: 正在查找文章依据) — never the server
+    // summary copy.
+    const activity = page.locator('[data-testid="ask-agentic-activity"]');
+    await expect(activity).toContainText("查找文章依据");
+    await expect(activity).not.toContainText("正在搜索相关内容");
+    await expect(activity).not.toContainText("正在分析当前文章");
 
     await releaseAll(page);
   });
@@ -624,15 +629,17 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     ]);
 
     await submitQuestion(page, "测试问题");
-    await waitForActivityPhase(page, "composing_answer");
+    await waitForActivityPhase(page, "searching_article");
 
     const phase = await page.locator('[data-testid="ask-agentic-activity"]').getAttribute(
       "data-activity-phase",
     );
     const summary = await page.locator('[data-testid="ask-agentic-activity"]').textContent();
-    expect(phase).toBe("composing_answer");
-    // Fixed typed label only (R3: 正在整理回答).
-    expect(summary).toContain("整理回答");
+    expect(phase).toBe("searching_article");
+    // Fixed typed label only (R2.1: 正在查找文章依据); duplicate / out-of-order
+    // summaries never surface, and the dropped composing_answer summary does
+    // not regress the header.
+    expect(summary).toContain("查找文章依据");
     expect(summary).not.toContain("正在组织回答");
     expect(summary).not.toContain("乱序的阅读");
     expect(summary).not.toContain("重复的搜索");
@@ -683,11 +690,11 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     await submitQuestion(page, "测试问题");
     await waitForActivityStatus(page, "degraded");
-    // R3: searching_article is an INTERNAL stage — its label never appears
-    // in the live header; the header falls back to the learner-facing
-    // label. Warning copy is NOT owned by CoT either way.
+    // R2.1: searching_article maps to the learner-facing article-evidence
+    // label (正在查找文章依据); the internal stage name and the server summary
+    // never appear in the live header. Warning copy is not owned by CoT.
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
-      "正在整理回答",
+      "查找文章依据",
     );
     await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
       "检索文章",
@@ -926,7 +933,10 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     ]);
 
     await submitQuestion(page, "持续跟随问题");
-    await waitForActivityPhase(page, "composing_answer");
+    // R2.1 drops composing_answer progress, so the live phase at the hold is
+    // the article-evidence phase (reading_context); scroll follow is
+    // phase-independent.
+    await waitForActivityPhase(page, "reading_context");
     await waitForStreamWaiting(page);
 
     // Leave natural bottom while stream still open (real user wheel).
@@ -1079,7 +1089,10 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       },
       {
         event: "agentic.progress",
-        data: progressPayload(5, "composing_answer", "正在组织回答"),
+        data: progressPayload(5, "searching_article", "正在搜索相关内容", {
+          tool_name: "search_current_article",
+          status: "running",
+        }),
         hold: true,
       },
       {
@@ -1118,7 +1131,7 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     // Release higher-sequence progress while user is away from bottom.
     await releaseNext(page);
-    await waitForActivityPhase(page, "composing_answer");
+    await waitForActivityPhase(page, "searching_article");
     await waitForStreamWaiting(page);
 
     const sequenceAfterProgress = await page
@@ -1238,7 +1251,7 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
   // ASK-REASONING-R1: real reasoning projection UI acceptance
   // -------------------------------------------------------------------------
 
-  test("18. Reasoning 默认折叠 + 展开实时追加 + 完成后回看", async ({ page }) => {
+  test("18. Reasoning frames are fail-closed in v2 — no live append, no review", async ({ page }) => {
     await loginAndOpenHarness(page);
     await setScript(page, [
       { event: "agentic.run_started", data: runStartedPayload() },
@@ -1257,42 +1270,20 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
     ]);
 
-    await submitQuestion(page, "reasoning 流式测试问题");
+    await submitQuestion(page, "reasoning fail-closed 流式问题");
 
-    // ASK-COT: reasoning now lives inside the turn-scoped Chain of
-    // Thought — collapsed by default (shimmer trigger, no auto-open).
-    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
-    await expect(trigger).toBeVisible({ timeout: 10_000 });
-    await expect(trigger).toHaveAttribute("aria-expanded", "false");
-
-    // Expanding reveals the first projected delta (stream still held).
-    // Scope to :visible so stale hidden Radix nodes from remounts (the
-    // streaming→completed layout swap re-keys the message block) are ignored.
-    await trigger.click();
-    const visibleContent = page.locator('[data-slot="chain-of-thought-content"]:visible');
-    await expect(visibleContent).toContainText("先判断句子主干。", { timeout: 10_000 });
-
-    // Release delta2 only (completed / message.completed stay gated): the
-    // second delta appends live while the panel is still open.
-    await releaseNext(page);
-    await expect(visibleContent).toContainText("先判断句子主干。再确认从句关系。", {
-      timeout: 10_000,
-    });
-
-    // Release the rest: the answer completes. The completed layout re-keys
-    // the message block into a default-collapsed Chain of Thought (frozen
-    // snapshot), which remains fully reviewable on re-expand.
+    // v2 never renders provider reasoning — even when the wire carries
+    // agentic.reasoning.* frames. Fail-closed: no live append while held, no
+    // reviewable projection after settle, and the answer still completes.
     await releaseAll(page);
     await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
       "主要观点",
       { timeout: 10_000 },
     );
-    await expect(trigger).toHaveAttribute("aria-expanded", "false");
-    await trigger.click();
-    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
-      "先判断句子主干。再确认从句关系。",
-      { timeout: 10_000 },
-    );
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain("先判断句子主干。");
+    expect(pageContent).not.toContain("再确认从句关系。");
   });
 
   test("19. 无 reasoning 时不渲染任何 reasoning 元素", async ({ page }) => {
@@ -1317,27 +1308,21 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // R3: no reasoning events ⇒ the Chain of Thought still carries the
-    // host lifecycle steps (理解问题 → 整理回答), but NO reasoning section
-    // and the settled one-liner (never 思考过程). No empty reasoning
-    // placeholder.
+    // v2: agent_running is not a learner step and there is no reasoning
+    // section — the disclosure settles with zero fabricated steps.
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
     const cot = page.locator('[data-testid="ask-turn-process"]');
     await expect(cot).toBeVisible();
-    await expect(cot).toContainText("已整理回答");
+    await expect(cot).toHaveAttribute("data-turn-process-state", "settled");
     await expect(cot).not.toContainText("思考过程");
-    // Steps live inside the collapsed content — expand before counting.
     await cot.locator('[data-slot="chain-of-thought-trigger"]').click();
-    await expect(cot.locator("[data-step-status]").first()).toBeVisible({
-      timeout: 10_000,
-    });
-    expect(await cot.locator("[data-step-status]").count()).toBeGreaterThan(0);
+    expect(await cot.locator("[data-step-status]").count()).toBe(0);
     expect(await cot.locator('[data-testid="ask-turn-process-reasoning"]').count()).toBe(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain("本轮模型未返回可展示的思考内容");
   });
 
-  test("20. Reasoning 投影泄漏扫描", async ({ page }) => {
+  test("20. Reasoning 投影泄漏扫描 — fail-closed, projected text never renders", async ({ page }) => {
     await loginAndOpenHarness(page);
     // Deltas carry the already-projected text (neutral citation marker);
     // raw sentinels never enter the scripted wire.
@@ -1359,15 +1344,11 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // Projected text is reviewable inside the Chain of Thought.
-    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
-    await trigger.click();
-    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
-      "检查〔引用〕的范围后得出结论。",
-      { timeout: 10_000 },
-    );
-
+    // v2 drops reasoning frames entirely: the projected text never renders
+    // and none of the raw/internal sentinels leak into the DOM.
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain("检查〔引用〕的范围后得出结论。");
     expect(pageContent).not.toContain(ENVELOPE_FINGERPRINT);
     expect(pageContent).not.toContain("reasoning_content");
     expect(pageContent).not.toContain("evh_");
@@ -1402,20 +1383,19 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // Foreign reasoning is ignored ⇒ no reasoning element, no foreign text.
+    // v2 renders no reasoning at all; foreign frames establish no state and
+    // no foreign text leaks. The accepted turn settles with no fabricated
+    // steps (no progress / no delta in this script).
     await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
-    // R3: the accepted run still preserves the host lifecycle summary
-    // (理解问题 → 整理回答) — but NO reasoning section materializes from
-    // the foreign frames, and no foreign text leaks.
     const cot = page.locator('[data-testid="ask-turn-process"]');
     await expect(cot).toBeVisible();
-    await expect(cot).toContainText("已整理回答");
+    await expect(cot).toHaveAttribute("data-turn-process-state", "settled");
     expect(await cot.locator('[data-testid="ask-turn-process-reasoning"]').count()).toBe(0);
     const pageContent = await page.evaluate(() => document.body.innerText);
     expect(pageContent).not.toContain("外来思考");
   });
 
-  test("22. reasoning 未完成即 message.completed → interrupted 冻结且保留投影 (R3 P2)", async ({
+  test("22. reasoning 未完成即 message.completed — v2 fail-closed, nothing preserved", async ({
     page,
   }) => {
     await loginAndOpenHarness(page);
@@ -1426,9 +1406,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
         event: "agentic.reasoning.delta",
         data: reasoningDeltaPayload(1, "部分投影思考。"),
       },
-      // No reasoning.completed — the answer completes while reasoning is
-      // still streaming. message.completed must freeze it as interrupted
-      // (not force completed) while preserving the projected text.
+      // No reasoning.completed — the answer completes while reasoning would
+      // still be streaming. v2 renders no reasoning regardless, so nothing is
+      // preserved (fail-closed), and the answer still completes.
       { event: "message.completed", data: agenticCompletedPayload(SHORT_ANSWER) },
     ]);
 
@@ -1439,16 +1419,9 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
       { timeout: 10_000 },
     );
 
-    // ASK-COT: reasoning frozen as interrupted inside the Chain of
-    // Thought — trigger present, projected text preserved and
-    // re-expandable (never marked completed).
-    const trigger = page.locator('[data-slot="chain-of-thought-trigger"]');
-    await expect(trigger).toBeVisible({ timeout: 10_000 });
-    await trigger.click();
-    await expect(page.locator('[data-slot="chain-of-thought-content"]:visible')).toContainText(
-      "部分投影思考。",
-      { timeout: 10_000 },
-    );
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    const pageContent = await page.evaluate(() => document.body.innerText);
+    expect(pageContent).not.toContain("部分投影思考。");
   });
 
   test("23. preview reset 严格递增且不会被重复 reset 清空", async ({ page }) => {

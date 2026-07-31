@@ -397,13 +397,13 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
     // Running header carries the live phase label; expanded content shows
-    // the learner steps (理解问题 done, 阅读本文 in flight).
+    // the in-flight learner step (R2.1 contract labels; the v2 lane never
+    // renders provider reasoning here, so no reasoning text is expected).
     await expect(assistant.locator('[data-testid="ask-turn-process"]')).toContainText(
-      "正在阅读本文",
+      "正在查找文章依据",
     );
     const liveContent = assistant.locator('[data-slot="chain-of-thought-content"]:visible');
-    await expect(liveContent).toContainText("理解问题");
-    await expect(liveContent).toContainText("阅读本文");
+    await expect(liveContent).toContainText("查找文章依据");
 
     // --- completed lands — canonical replaces provisional ---
     await releaseNext(page);
@@ -434,10 +434,11 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
     const settledCot = assistant.locator('[data-testid="ask-turn-process"]');
     await expect(settledCot).toHaveAttribute("data-turn-process-state", "settled");
-    // 整理回答 is preserved after completion (complete), never hidden.
-    await expect(settledCot).toContainText("理解问题");
+    // The answer step is preserved after completion (complete), never
+    // hidden; the article-evidence step settled from the scripted progress.
+    await expect(settledCot).toContainText("查找文章依据");
     await expect(
-      settledCot.locator("[data-step-status='complete']").filter({ hasText: "整理回答" }),
+      settledCot.locator("[data-step-status='complete']").filter({ hasText: "生成回答" }),
     ).toBeVisible();
     // Hold past the auto-close delay: the user re-expand must persist.
     await page.waitForTimeout(1200);
@@ -479,7 +480,7 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
     const liveContent = assistant.locator('[data-slot="chain-of-thought-content"]:visible');
-    await expect(liveContent).toContainText("理解问题");
+    await expect(liveContent).toContainText("查找文章依据");
 
     // completed — canonical replaces provisional
     await releaseNext(page);
@@ -506,7 +507,7 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     const settledCot = assistant.locator('[data-testid="ask-turn-process"]');
     await expect(settledCot).toHaveAttribute("data-turn-process-state", "settled");
     await expect(
-      settledCot.locator("[data-step-status='complete']").filter({ hasText: "整理回答" }),
+      settledCot.locator("[data-step-status='complete']").filter({ hasText: "生成回答" }),
     ).toBeVisible();
     await page.waitForTimeout(1200);
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
