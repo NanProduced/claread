@@ -528,6 +528,31 @@ describe("isReaderAskAgenticProgressPayload — Web Search activity safety", () 
       }),
     ).toBe(false);
   });
+
+  it("accepts only the public outcome whitelist", () => {
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        activity: "started",
+        status: "running",
+        outcome: null,
+      }),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        activity: "completed",
+        status: "ok",
+        outcome: "empty",
+      }),
+    ).toBe(true);
+    expect(
+      isReaderAskAgenticProgressPayload({
+        ...safeWebSearchProgress,
+        outcome: "provider_detail",
+      }),
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

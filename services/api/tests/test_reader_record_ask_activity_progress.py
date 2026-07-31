@@ -30,6 +30,8 @@ from app.services.reader_record_ask.runtime import (
     run_reading_record_ask,
 )
 from app.services.reader_record_ask.runtime_events import (
+    AnalysisFinishedEvent,
+    AnalysisStartedEvent,
     ComposingAnswerEvent,
     FinalAnswerEvent,
     RunFinishedEvent,
@@ -37,6 +39,8 @@ from app.services.reader_record_ask.runtime_events import (
     ToolCallEvent,
     ToolResultEvent,
     ValidatingEvidenceEvent,
+    WebSearchCallEvent,
+    WebSearchResultEvent,
 )
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_PROGRESS,
@@ -218,6 +222,8 @@ def test_progress_projector_sequence_and_mapping() -> None:
     projector = _ProgressProjector(started_at=time.perf_counter())
     events = [
         RunStartedEvent(envelope_fingerprint="fp", has_initial_selection=True),
+        AnalysisStartedEvent(),
+        AnalysisFinishedEvent(),
         ToolCallEvent(
             tool_name="read_range",
             args={
@@ -249,19 +255,14 @@ def test_progress_projector_sequence_and_mapping() -> None:
     phases = [p.phase for p in projected]
     activities = [p.activity for p in projected]
     phase_activities = list(zip(phases, activities, strict=True))
-    assert phases[0] == "agent_running"
-    assert activities[0] == "started"
+    assert phases[:2] == ["analysis", "analysis"]
+    assert activities[:2] == ["started", "completed"]
     assert ("reading_context", "started") in phase_activities
     assert ("reading_context", "completed") in phase_activities
-    assert ("composing_answer", "started") in phase_activities
-    assert ("validating_evidence", "started") in phase_activities
-    # FinalAnswerEvent must not invent another validating started.
-    validating = [
-        (p.phase, p.activity)
+    assert all(
+        p.phase not in {"composing_answer", "validating_evidence"}
         for p in projected
-        if p.phase == "validating_evidence"
-    ]
-    assert validating == [("validating_evidence", "started")]
+    )
     sequences = [p.sequence for p in projected]
     assert sequences == list(range(1, len(sequences) + 1))
     assert all(p.elapsed_ms >= 0 for p in projected)
@@ -273,6 +274,89 @@ def test_progress_projector_sequence_and_mapping() -> None:
     blob = json.dumps([p.model_dump(mode="json") for p in projected])
     for secret in _SENSITIVE:
         assert secret not in blob
+
+
+def test_progress_projector_does_not_fabricate_analysis_from_run_started() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+
+    assert projector.project(
+        RunStartedEvent(envelope_fingerprint="fp", has_initial_selection=True)
+    ) == []
+
+    started = projector.project(AnalysisStartedEvent())
+    finished = projector.project(AnalysisFinishedEvent())
+
+    assert [(item.phase, item.activity, item.status) for item in started] == [
+        ("analysis", "started", "running")
+    ]
+    assert [(item.phase, item.activity, item.status) for item in finished] == [
+        ("analysis", "completed", "ok")
+    ]
+
+
+def test_article_tools_share_one_public_article_evidence_activity() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    projected = []
+    projected.extend(
+        projector.project(
+            ToolCallEvent(tool_name="expand_evidence", args={"pointer": "SECRET"})
+        )
+    )
+    projected.extend(
+        projector.project(
+            ToolResultEvent(
+                tool_name="expand_evidence",
+                status="ok",
+                summary="SECRET_BODY",
+                evidence_handle_ids=["SECRET_HANDLE"],
+                payloads={"text": "SECRET_BODY"},
+            )
+        )
+    )
+    projected.extend(
+        projector.project(
+            ToolCallEvent(tool_name="search_current_article", args={"query": "SECRET"})
+        )
+    )
+    projected.extend(
+        projector.project(
+            ToolResultEvent(
+                tool_name="search_current_article",
+                status="ok",
+                summary="SECRET_BODY",
+                evidence_handle_ids=["SECRET_HANDLE"],
+                payloads={"text": "SECRET_BODY"},
+            )
+        )
+    )
+
+    article = [item for item in projected if item.phase == "searching_article"]
+    assert [(item.activity, item.status) for item in article] == [
+        ("started", "running"),
+        ("completed", "ok"),
+        ("started", "running"),
+        ("completed", "ok"),
+    ]
+    assert {item.activity_id for item in article} == {"article_evidence"}
+    assert {item.tool_name for item in article} == {
+        "expand_evidence",
+        "search_current_article",
+    }
+    blob = json.dumps([item.model_dump(mode="json") for item in projected])
+    for secret in ("SECRET", "SECRET_BODY", "SECRET_HANDLE"):
+        assert secret not in blob
+
+
+def test_late_internal_composing_and_unclosed_validation_are_not_public_steps() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    assert projector.project(ComposingAnswerEvent()) == []
+    assert projector.project(ValidatingEvidenceEvent()) == []
 
 
 def test_progress_projector_unknown_status_fail_closed() -> None:
@@ -328,6 +412,101 @@ def test_progress_projector_unknown_status_fail_closed() -> None:
     assert "secret_internal_tool" not in blob
 
 
+@pytest.mark.parametrize(
+    ("raw_status", "expected_outcome"),
+    [
+        ("ok", "success"),
+        ("ready", "success"),
+        ("loaded", "success"),
+        ("empty", "empty"),
+        ("unavailable", "degraded"),
+        ("not_ready", "degraded"),
+        ("not_indexed", "degraded"),
+        ("indexing", "degraded"),
+        ("invalid", "failed"),
+        ("budget_exhausted", "failed"),
+        ("unknown_future_status", "failed"),
+    ],
+)
+def test_article_result_has_explicit_fail_closed_outcome(
+    raw_status: str, expected_outcome: str
+) -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    started = projector.project(
+        ToolCallEvent(tool_name="search_current_article", args={})
+    )
+    result = projector.project(
+        ToolResultEvent(
+            tool_name="search_current_article",
+            status=raw_status,
+            summary="PRIVATE_PROVIDER_SUMMARY",
+            duration_ms=7,
+        )
+    )
+
+    assert started[0].outcome is None
+    assert result[0].outcome == expected_outcome
+    assert result[0].model_dump(mode="json")["outcome"] == expected_outcome
+    assert "PRIVATE_PROVIDER_SUMMARY" not in json.dumps(
+        [item.model_dump(mode="json") for item in result]
+    )
+
+
+@pytest.mark.parametrize(
+    ("turn_outcome", "expected_outcome"),
+    [
+        ("completed", "success"),
+        ("no_results", "empty"),
+        ("unavailable", "degraded"),
+        ("timeout", "degraded"),
+        ("failed", "failed"),
+    ],
+)
+def test_web_result_has_public_outcome_and_started_is_null(
+    turn_outcome: str, expected_outcome: str
+) -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    started = projector.project(
+        WebSearchCallEvent(call_sequence=1, attempt_count=None)
+    )
+    result = projector.project(
+        WebSearchResultEvent(
+            call_sequence=1,
+            attempt_count=1,
+            outcome=turn_outcome,  # type: ignore[arg-type]
+            turn_outcome=turn_outcome,  # type: ignore[arg-type]
+            detail_code="PRIVATE_DETAIL_CODE",
+            duration_ms=9,
+        )
+    )
+
+    assert started[0].outcome is None
+    assert result[0].outcome == expected_outcome
+    assert result[0].model_dump(mode="json")["outcome"] == expected_outcome
+    wire = json.dumps([item.model_dump(mode="json") for item in result])
+    assert "PRIVATE_DETAIL_CODE" not in wire
+
+
+def test_generic_search_web_tool_events_are_ignored() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    assert projector.project(
+        ToolCallEvent(tool_name="search_web", args={"query": "PRIVATE_QUERY"})
+    ) == []
+    assert projector.project(
+        ToolResultEvent(
+            tool_name="search_web",
+            status="ok",
+            summary="PRIVATE_PROVIDER_SUMMARY",
+        )
+    ) == []
+
+
 def test_progress_projector_search_unavailable() -> None:
     import time
 
@@ -349,7 +528,7 @@ def test_progress_projector_search_unavailable() -> None:
     ):
         projected.extend(projector.project(event))
 
-    assert projected[0].phase == "agent_running"
+    assert projected[0].phase == "searching_article"
     search_events = [p for p in projected if p.phase == "searching_article"]
     assert [p.activity for p in search_events] == ["started", "unavailable"]
     assert search_events[1].summary == "当前文章检索暂不可用"
@@ -362,7 +541,7 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
     import time
 
     projector = _ProgressProjector(started_at=time.perf_counter())
-    # First ensure agent_running exists, then unknown tool should not spam it.
+    # Unknown tools are not learner-facing progress and must stay silent.
     projected = projector.project(
         RunStartedEvent(envelope_fingerprint="fp", has_initial_selection=False)
     )
@@ -372,8 +551,7 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
     projected.extend(
         projector.project(ToolCallEvent(tool_name="secret_internal_tool", args={"x": 2}))
     )
-    assert [p.phase for p in projected] == ["agent_running"]
-    assert all(p.tool_name is None for p in projected)
+    assert projected == []
     assert "secret_internal_tool" not in json.dumps(
         [p.model_dump(mode="json") for p in projected]
     )
@@ -381,29 +559,10 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
 
 @pytest.mark.asyncio
 async def test_validating_progress_arrives_before_finalizer_returns() -> None:
-    """validating_evidence/started must be visible while finalize is blocked."""
-    from app.services.reader_record_ask import runtime as runtime_mod
-
-    validating_seen = asyncio.Event()
-    finalize_released = asyncio.Event()
-    finalize_entered = asyncio.Event()
-    original_finalize = runtime_mod.finalize_agent_answer
-
-    async def blocked_finalize(**kwargs):
-        finalize_entered.set()
-        # Wait until the stream consumer observed validating progress.
-        await validating_seen.wait()
-        finalize_released.set()
-        return await original_finalize(**kwargs)
-
+    """Citation-check stays hidden until a real public completion exists."""
     repo = _FakeRepo()
-    chunks: list[str] = []
-    saw_validating = False
-
-    # MonkeyPatch is a pytest fixture, not a context manager — use unittest.
-    from unittest.mock import patch
-
-    with patch.object(runtime_mod, "finalize_agent_answer", side_effect=blocked_finalize):
+    chunks = [
+        c
         async for c in stream_agentic_thread_message(
             user_id=_USER,
             reading_record_id=_RECORD,
@@ -415,34 +574,14 @@ async def test_validating_progress_arrives_before_finalizer_returns() -> None:
             document_access=_access(),
             model=_function_model("answer after validation"),
             auto_wire_dependencies=False,
-        ):
-            chunks.append(c)
-            for name, payload in _parse_sse([c]):
-                if (
-                    name == EVENT_AGENTIC_PROGRESS
-                    and payload.get("phase") == "validating_evidence"
-                    and payload.get("activity") == "started"
-                ):
-                    saw_validating = True
-                    # Finalizer must still be blocked at this point.
-                    assert finalize_entered.is_set()
-                    assert not finalize_released.is_set()
-                    validating_seen.set()
-
-    assert saw_validating
-    assert finalize_released.is_set()
+        )
+    ]
     events = _parse_sse(chunks)
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     phases = [(p["phase"], p["activity"]) for p in progress]
-    # Fixed order: composing started → validating started → ... completed
-    compose_idx = phases.index(("composing_answer", "started"))
-    validate_idx = phases.index(("validating_evidence", "started"))
-    assert compose_idx < validate_idx
+    assert ("composing_answer", "started") not in phases
+    assert ("validating_evidence", "started") not in phases
     assert EVENT_MESSAGE_COMPLETED in [n for n, _ in events]
-    # No validating completed success progress is required; none should claim ok.
-    assert not any(
-        p["phase"] == "validating_evidence" and p.get("status") == "ok" for p in progress
-    )
 
 
 @pytest.mark.asyncio
@@ -564,10 +703,12 @@ async def test_progress_order_with_read_range() -> None:
     assert EVENT_MESSAGE_COMPLETED in names
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     phases = [(p["phase"], p["activity"]) for p in progress]
-    assert phases[0] == ("agent_running", "started")
+    assert phases[0] == ("reading_context", "started")
     assert ("reading_context", "started") in phases
     assert ("reading_context", "completed") in phases
-    assert any(p[0] in {"composing_answer", "validating_evidence"} for p in phases)
+    assert not any(
+        p[0] in {"composing_answer", "validating_evidence"} for p in phases
+    )
     sequences = [p["sequence"] for p in progress]
     assert sequences == list(range(1, len(sequences) + 1))
     assert all(p["elapsed_ms"] >= 0 for p in progress)
@@ -685,14 +826,16 @@ async def test_zero_tool_progress_sequence() -> None:
     events = _parse_sse(chunks)
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     phases = {p["phase"] for p in progress}
-    assert "agent_running" in phases
+    assert "agent_running" not in phases
     assert "reading_context" not in phases
     assert "searching_article" not in phases
-    assert "composing_answer" in phases or "validating_evidence" in phases
+    assert "composing_answer" not in phases
+    assert "validating_evidence" not in phases
     assert EVENT_MESSAGE_COMPLETED in [n for n, _ in events]
     sequences = [p["sequence"] for p in progress]
     assert sequences == sorted(sequences)
-    assert sequences[0] == 1
+    if sequences:
+        assert sequences[0] == 1
 
 
 @pytest.mark.asyncio
@@ -827,7 +970,7 @@ async def test_progress_privacy_no_sensitive_fields() -> None:
         assert secret not in blob
 
 
-def test_expand_evidence_unavailable_is_neutral_non_blocking_activity() -> None:
+def test_expand_evidence_unavailable_is_fail_closed_article_activity() -> None:
     import time
 
     projector = _ProgressProjector(started_at=time.perf_counter())
@@ -843,10 +986,10 @@ def test_expand_evidence_unavailable_is_neutral_non_blocking_activity() -> None:
     ):
         projected.extend(projector.project(event))
 
-    assert projected[-1].activity == "completed"
-    assert projected[-1].status == "ok"
-    assert projected[-1].summary == "已检查文章证据"
-    assert all("暂不可用" not in item.summary for item in projected)
+    assert projected[-1].activity == "unavailable"
+    assert projected[-1].status == "unavailable"
+    assert projected[-1].summary == "文章依据暂不可用"
+    assert projected[-1].activity_id == "article_evidence"
     # Ensure no raw tool arg keys leaked via the public progress projection.
     blob = "".join(item.model_dump_json() for item in projected)
     assert "evidence_handle_ids" not in blob
@@ -866,6 +1009,7 @@ async def test_cancel_cleans_agent_task_and_emits_terminal_once() -> None:
                     has_initial_selection=False,
                 )
             )
+            sink(AnalysisStartedEvent())
         started.set()
         await asyncio.sleep(3600)
         return ReadingRecordAskRunResult(final_text=None, finalized=None)

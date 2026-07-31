@@ -125,6 +125,7 @@ import type {
   ReaderAskAssetDisambiguationCandidateDto,
   ReaderAskAssetDisambiguationDto,
   ReaderAskAgenticCompletedPayloadDto,
+  ReaderAskAgenticProgressPayloadDto,
   ReaderAskAgenticTerminalPayloadDto,
   ReaderAskAgenticTerminalStatusDto,
   ReaderAskCompletedPayloadDto,
@@ -153,6 +154,7 @@ import type {
   ReaderAskThreadSummaryDto,
   ReaderAskToolTraceEntryDto,
   ReaderAskUiMessageDto,
+  ReaderAskWebSearchSummaryDto,
   WebSearchModeDto,
 } from "@/types/api/reader-ask";
 import {
@@ -173,8 +175,10 @@ import {
 } from "./ask/agentic-evidence";
 import { AgenticWebSources } from "./ask/agentic-web-sources";
 import {
+  aggregateArticleEvidenceOutcome,
   createIdleAgenticActivityState,
   reduceAgenticActivityEvent,
+  type AgenticActivityOutcome,
   type AgenticActivityEvent,
   type AgenticActivityState,
 } from "./ask/agentic-activity";
@@ -184,9 +188,6 @@ import {
   isReaderAskAgenticCompletedPayload,
   isReaderAskContextCompactionPayload,
   isReaderAskAgenticProgressPayload,
-  isReaderAskAgenticReasoningCompletedPayload,
-  isReaderAskAgenticReasoningDeltaPayload,
-  isReaderAskAgenticReasoningStartedPayload,
   isReaderAskAgenticRunStartedPayload,
   isReaderAskAgenticTerminalPayload,
 } from "./ask/sse";
@@ -799,6 +800,91 @@ function agenticTerminalMessageStatus(
   return finalStatus === "failed" ? "failed" : "interrupted";
 }
 
+type SynchronousOptionalActivityState = {
+  lastProgressSequence: number;
+  webSearchOutcome: AgenticActivityOutcome | null;
+  articleOutcomeObservations: AgenticActivityOutcome[];
+  settled: boolean;
+};
+
+function createSynchronousOptionalActivityState(): SynchronousOptionalActivityState {
+  return {
+    lastProgressSequence: 0,
+    webSearchOutcome: null,
+    articleOutcomeObservations: [],
+    settled: false,
+  };
+}
+
+function mapWebSearchSummaryOutcome(
+  summary: ReaderAskWebSearchSummaryDto,
+): AgenticActivityOutcome {
+  switch (summary.outcome) {
+    case "completed":
+      return "success";
+    case "no_results":
+      return "empty";
+    case "unavailable":
+    case "timeout":
+      return "degraded";
+    case "failed":
+      return "failed";
+  }
+}
+
+function recordSynchronousOptionalProgress(
+  state: SynchronousOptionalActivityState,
+  payload: ReaderAskAgenticProgressPayloadDto,
+): void {
+  if (state.settled) {
+    return;
+  }
+  const sequence = payload.sequence;
+  if (
+    sequence == null ||
+    !Number.isSafeInteger(sequence) ||
+    sequence <= state.lastProgressSequence
+  ) {
+    return;
+  }
+  state.lastProgressSequence = sequence;
+  if (payload.outcome == null) {
+    return;
+  }
+  if (payload.activity_id === "web_search") {
+    state.webSearchOutcome = payload.outcome;
+  } else if (payload.activity_id === "article_evidence") {
+    state.articleOutcomeObservations.push(payload.outcome);
+  }
+}
+
+function settleSynchronousOptionalActivity(
+  state: SynchronousOptionalActivityState,
+  webSearchSummary: ReaderAskWebSearchSummaryDto | null,
+): void {
+  // A valid message.completed Host summary is authoritative for web_search.
+  // A null summary means that no completed web search summary was supplied;
+  // preserve the last trusted live outcome instead of guessing success.
+  if (webSearchSummary !== null) {
+    state.webSearchOutcome = mapWebSearchSummaryOutcome(webSearchSummary);
+  }
+  state.settled = true;
+}
+
+function hasStableOptionalToolWarning(
+  state: SynchronousOptionalActivityState,
+): boolean {
+  const articleOutcome = aggregateArticleEvidenceOutcome(
+    state.articleOutcomeObservations,
+  );
+  return (
+    state.webSearchOutcome === "degraded" ||
+    state.webSearchOutcome === "failed" ||
+    articleOutcome === "degraded" ||
+    articleOutcome === "failed"
+  );
+}
+
 export function createSseMessageHandler(
   initialMessageId: string,
   updateMessage: MessageUpdater,
@@ -818,68 +904,34 @@ export function createSseMessageHandler(
     terminalReason: string | null;
   }) => void,
   // ASK-UX-MOBILE-R3 — canonical optional-tool warning callback. Fired
-  // from applyAgenticCompleted when the run succeeded (final_status=ok)
-  // but an optional tool produced an `unavailable` activity/status during
-  // agentic.progress. The panel uses projectOptionalToolWarning to build
+  // from applyAgenticCompleted only when the final public activity fold is
+  // degraded or failed. The panel uses projectOptionalToolWarning to build
   // a dismissible turn-scoped warning notice bound to the canonical
   // assistant message_id. This notice is the SOLE presentation owner for
   // the optional-tool warning — the Web activity / Sources area must not
-  // duplicate it. The flag is reset on run_started (per-turn).
+  // duplicate it. The synchronous fold is reset on run_started (per-turn).
   onOptionalToolWarning?: (args: { messageId: string }) => void,
 ) {
   let currentMessageId = initialMessageId;
   // Agentic terminal may arrive as both agentic.terminal and message.interrupted
   // with the same payload; only apply UI terminal side-effects once per stream.
   let agenticTerminalHandled = false;
-  // ASK-UX-MOBILE-R3 — tracks whether any optional tool produced an
-  // `unavailable` activity/status during the current run. Mirrors the
-  // hasUnavailable flag in agentic-activity.ts reducer (single source of
-  // truth for the activity state machine); this local flag is only used
-  // to decide whether to fire onOptionalToolWarning at completed time.
-  // Reset on run_started so it never bleeds across turns.
-  let optionalToolUnavailable = false;
+  // Synchronous, provider-neutral outcome fold for the warning decision.
+  // React activity reduction is intentionally separate: a completed frame
+  // can arrive before its async reducer update, so this handler keeps only
+  // the typed activity id, server sequence, and public outcome fields needed
+  // to settle the single SystemMessage warning.
+  let synchronousOptionalActivity = createSynchronousOptionalActivityState();
+  let optionalToolWarningFired = false;
   let contextCompactionIdentity: {
     messageId: string;
     threadId: string;
     turnRunId: string;
   } | null = null;
-  // ASK-REASONING-R2 / ASK-COT-B1-R1: strict identity/seq state machine for
-  // agentic.reasoning.* (one stream per handler instance). `started`
-  // (seq === 0) establishes the turn identity binding; delta/completed
-  // must match that identity exactly and carry seq === lastSeq + 1 —
-  // duplicates, gaps, out-of-order frames, foreign-turn frames, and
-  // repeated started frames are all ignored. Once completed is accepted
-  // the stream is frozen: later deltas are dropped so the displayed text
-  // never exceeds the persisted projection (hot≡cold invariant).
-  //
-  // ASK-COT: the backend documents that a delta MAY arrive without a
-  // preceding started frame (production_stream.py L1151). That seam is
-  // retained, but fail-closed:
-  // - active run identity triple must match exactly;
-  // - without a binding, the first accepted delta requires seq === 1
-  //   (seq > 1 rejects, establishes no binding, cannot complete);
-  // - after binding, strict seq === lastSeq + 1;
-  // - completed-only with no already-accepted reasoning text does not
-  //   create a completed reasoning display (no hot≡cold claim);
-  // - missing frames stay no-display or interrupted, never completed.
-  // A late started after synthesis stays ignored (binding established).
-  let agenticReasoningBinding: {
-    messageId: string;
-    threadId: string;
-    turnRunId: string;
-  } | null = null;
-  let agenticReasoningLastSeq: number | null = null;
-  let agenticReasoningCompleted = false;
-  // A started frame only establishes identity; it carries no text. A
-  // completed frame may promise persisted content, but the client must not
-  // mark the hot view completed unless it accepted at least one non-empty
-  // projected delta itself. Otherwise hot and cold would disagree.
-  let agenticReasoningHasAcceptedText = false;
   // R3 P1b: identity of the active run, captured when agentic.run_started
-  // is accepted. agentic.reasoning.started must match this exactly to
-  // establish a reasoning binding — foreign / stale-turn started frames are
-  // ignored. This is part of the same handler state machine (not a second
-  // parallel state).
+  // is accepted. Every v2 event that can mutate the turn must match this
+  // identity. Provider reasoning events are intentionally not part of the
+  // public v2 contract and are ignored at this boundary.
   let activeRunIdentity: {
     messageId: string;
     threadId: string;
@@ -893,6 +945,10 @@ export function createSseMessageHandler(
   // provisional_content_md; stale-generation deltas are discarded so
   // the provisional preview never mixes text from two generations.
   let activeGenerationId: number | null = null;
+  // Answering is a public lifecycle step only after the first identity-valid
+  // message.delta for the active generation. A preview reset starts a fresh
+  // generation and therefore permits one new answer_started event.
+  let answerGenerationStarted: number | null = null;
   const commitStreamingMessageUpdate = createStreamingCommit(updateMessage);
 
   function matchesActiveRunIdentity(payload: {
@@ -922,17 +978,21 @@ export function createSseMessageHandler(
       currentMessageId = payload.message_id;
       onMessageIdAssigned?.(payload.message_id);
     }
+    onAgenticActivity?.({ type: "answer_completed" });
     onAgenticActivity?.({ type: "completed" });
-    // ASK-UX-MOBILE-R3 — fire the canonical optional-tool warning when
-    // the run succeeded (final_status=ok by definition of the agentic
-    // completed path) but an optional tool was unavailable during the
-    // run. The panel projects a dismissible turn-scoped warning bound to
-    // the canonical assistant message_id. We fire this AFTER the message
-    // update is committed so the canonical id is already in place; the
-    // panel stores the notice keyed by message_id and renders it on the
-    // completed bubble (the render condition no longer swallows notices
-    // for status=completed — see MessageBubble).
-    if (optionalToolUnavailable && payload.message_id) {
+    settleSynchronousOptionalActivity(
+      synchronousOptionalActivity,
+      payload.web_search,
+    );
+    // The warning is derived from the final stable Host outcome, not from a
+    // historical unavailable frame. SystemMessage remains its only owner;
+    // the activity projection receives no warning copy or provider detail.
+    if (
+      !optionalToolWarningFired &&
+      payload.message_id &&
+      hasStableOptionalToolWarning(synchronousOptionalActivity)
+    ) {
+      optionalToolWarningFired = true;
       onOptionalToolWarning?.({ messageId: payload.message_id });
     }
     commitStreamingMessageUpdate((messages) =>
@@ -944,19 +1004,6 @@ export function createSseMessageHandler(
         ) {
           return message;
         }
-        // Preserve any streamed reasoning; agentic completed does not carry it.
-        const nextReasoningMd = message.reasoning_md || null;
-        // R3 P2: only an accepted agentic.reasoning.completed may mark
-        // reasoning completed. If reasoning was still streaming (or has
-        // visible text) when the answer completed, freeze it as
-        // interrupted — keep the session-visible projection, but do not
-        // claim replay equivalence with cold history. No reasoning ⇒ null
-        // (no placeholder is rendered).
-        const nextReasoningStatus = agenticReasoningCompleted
-          ? "completed"
-          : message.reasoning_status === "streaming" || nextReasoningMd
-            ? "interrupted"
-            : message.reasoning_status ?? null;
         return {
           ...message,
           id: payload.message_id,
@@ -977,8 +1024,10 @@ export function createSseMessageHandler(
           response_cards: message.response_cards ?? [],
           supplement_candidates: message.supplement_candidates ?? [],
           persisted_supplements: message.persisted_supplements ?? [],
-          reasoning_md: nextReasoningMd,
-          reasoning_status: nextReasoningStatus,
+          // Public v2 never stores or rehydrates provider reasoning.
+          reasoning_md: null,
+          reasoning_status: null,
+          reasoning_truncated: null,
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
@@ -1019,6 +1068,10 @@ export function createSseMessageHandler(
       currentMessageId = payload.message_id;
       onMessageIdAssigned?.(payload.message_id);
     }
+    onAgenticActivity?.({
+      type: "answer_interrupted",
+      finalStatus: payload.final_status,
+    });
     onAgenticActivity?.({
       type: "terminal",
       finalStatus: payload.final_status,
@@ -1067,14 +1120,10 @@ export function createSseMessageHandler(
           // half answer visible in the bubble.
           content_md: message.content_md,
           provisional_content_md: null,
-          // ASK-REASONING-R1: session-visible partial reasoning freezes as
-          // interrupted on agentic terminals (cancel / failure / budget /
-          // persist failure). Cold history never carries it — reload shows
-          // no reasoning for this turn.
-          reasoning_status:
-            message.reasoning_status === "streaming" || message.reasoning_md
-              ? "interrupted"
-              : message.reasoning_status,
+          // Public v2 never stores or rehydrates provider reasoning.
+          reasoning_md: null,
+          reasoning_status: null,
+          reasoning_truncated: null,
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
@@ -1151,18 +1200,36 @@ export function createSseMessageHandler(
           currentMessageId = event.data.message_id;
           onMessageIdAssigned?.(event.data.message_id);
         }
-        // R3 P1b: capture the active run identity that a later
-        // agentic.reasoning.started must match exactly.
+        // R3 P1b: capture the active run identity for subsequent public
+        // activity and answer lifecycle events.
         activeRunIdentity = {
           messageId: event.data.message_id,
           threadId: event.data.thread_id,
           turnRunId: event.data.turn_run_id,
         };
         activeGenerationId = 0;
-        // ASK-UX-MOBILE-R3 — reset optional-tool warning flag for the
-        // new turn. An unavailable optional tool in a previous turn must
-        // not bleed into this one.
-        optionalToolUnavailable = false;
+        answerGenerationStarted = null;
+        // Clear any stale reasoning-shaped fields before the v2 turn starts.
+        // The v2 lane exposes only public activity steps, never provider
+        // reasoning, even if a malformed or legacy payload is encountered.
+        commitStreamingMessageUpdate(
+          (messages) =>
+            messages.map((message) =>
+              message.id === currentMessageId
+                ? {
+                    ...message,
+                    reasoning_md: null,
+                    reasoning_status: null,
+                    reasoning_truncated: null,
+                  }
+                : message,
+            ),
+          true,
+        );
+        // Reset the synchronous outcome fold for the new turn. An outcome or
+        // warning from a previous turn must never bleed into this one.
+        synchronousOptionalActivity = createSynchronousOptionalActivityState();
+        optionalToolWarningFired = false;
         onAgenticActivity?.({
           type: "run_started",
           messageId: event.data.message_id ?? currentMessageId,
@@ -1174,32 +1241,11 @@ export function createSseMessageHandler(
 
     if (event.event === "agentic.progress") {
       if (isReaderAskAgenticProgressPayload(event.data)) {
-        const progressPayload = event.data as {
-          execution_version?: string | null;
-          sequence?: number | null;
-          phase?: string | null;
-          activity?: string | null;
-          summary?: string | null;
-          elapsed_ms?: number | null;
-          tool_name?: string | null;
-          status?: string | null;
-          duration_ms?: number | null;
-          activity_id?: "web_search" | null;
-          attempt_count?: number | null;
-          call_sequence?: number | null;
-        };
-        // ASK-UX-MOBILE-R3 — mirror agentic-activity.ts hasUnavailable
-        // logic: once an optional tool reports `unavailable` (activity
-        // or status), the flag stays true for the rest of the run. This
-        // local flag is the sole input to onOptionalToolWarning at
-        // completed time (the reducer state is async and may not have
-        // applied the latest progress when applyAgenticCompleted fires).
-        if (
-          progressPayload.activity === "unavailable" ||
-          progressPayload.status === "unavailable"
-        ) {
-          optionalToolUnavailable = true;
-        }
+        const progressPayload = event.data;
+        recordSynchronousOptionalProgress(
+          synchronousOptionalActivity,
+          progressPayload,
+        );
         onAgenticActivity?.({
           type: "progress",
           payload: progressPayload,
@@ -1215,185 +1261,14 @@ export function createSseMessageHandler(
       return;
     }
 
-    // ASK-REASONING-R1/R2: safe reasoning projection. The server-side
-    // chokepoint owns all redaction / quota — the client only appends.
-    // These events reuse the existing reasoning_md / reasoning_status
-    // semantic fields (no parallel UI state). started fires only when the
-    // provider produced non-empty projected reasoning, so a message with
-    // no reasoning never leaves idle state and renders no reasoning UI.
-    if (event.event === "agentic.reasoning.started") {
-      if (isReaderAskAgenticReasoningStartedPayload(event.data)) {
-        const payload = event.data;
-        // Strict rules: seq must be exactly 0 and a started may only be
-        // accepted once per stream (repeated started ignored).
-        if (payload.seq !== 0 || agenticReasoningLastSeq !== null) {
-          return;
-        }
-        // R3 P1b: the started must belong to the active run. If a trusted
-        // run_started was accepted, require an exact identity match; a
-        // foreign or stale-turn started is ignored (no state change). If no
-        // run_started has been seen yet, require at least a strict match to
-        // the current message id (fail-closed).
-        if (activeRunIdentity !== null) {
-          if (
-            payload.message_id !== activeRunIdentity.messageId ||
-            payload.thread_id !== activeRunIdentity.threadId ||
-            payload.turn_run_id !== activeRunIdentity.turnRunId
-          ) {
-            return;
-          }
-        } else if (payload.message_id !== currentMessageId) {
-          return;
-        }
-        // Establish the identity binding every later frame must match.
-        agenticReasoningBinding = {
-          messageId: payload.message_id,
-          threadId: payload.thread_id,
-          turnRunId: payload.turn_run_id,
-        };
-        agenticReasoningLastSeq = 0;
-        commitStreamingMessageUpdate(
-          (messages) =>
-            messages.map((message) =>
-              message.id === currentMessageId
-                ? {
-                    ...message,
-                    reasoning_status: "streaming",
-                    reasoning_md: message.reasoning_md ?? "",
-                    compacting: false,
-                  }
-                : message,
-            ),
-          true,
-        );
-      }
-      return;
-    }
-
-    if (event.event === "agentic.reasoning.delta") {
-      if (isReaderAskAgenticReasoningDeltaPayload(event.data)) {
-        const payload = event.data;
-        // A completed frame freezes the stream regardless of binding.
-        if (agenticReasoningCompleted) {
-          return;
-        }
-        let binding = agenticReasoningBinding;
-        if (binding === null || agenticReasoningLastSeq === null) {
-          // ASK-COT-B1-R1: tolerate a delta without a preceding started by
-          // synthesizing the binding from the active run identity.
-          // Fail-closed: exact identity triple required; without an
-          // accepted run_started the frame is dropped. First delta without
-          // a binding must be seq === 1 — seq > 1 rejects and does not
-          // establish a binding (cannot later claim completed).
-          if (
-            activeRunIdentity === null ||
-            payload.message_id !== activeRunIdentity.messageId ||
-            payload.thread_id !== activeRunIdentity.threadId ||
-            payload.turn_run_id !== activeRunIdentity.turnRunId
-          ) {
-            return;
-          }
-          if (payload.seq !== 1) {
-            return;
-          }
-          binding = {
-            messageId: payload.message_id,
-            threadId: payload.thread_id,
-            turnRunId: payload.turn_run_id,
-          };
-          agenticReasoningBinding = binding;
-          agenticReasoningLastSeq = payload.seq;
-        } else {
-          // Established binding: exact identity match (foreign turns
-          // dropped) and contiguous seq (duplicates, gaps, out-of-order
-          // frames dropped).
-          if (
-            payload.message_id !== binding.messageId ||
-            payload.thread_id !== binding.threadId ||
-            payload.turn_run_id !== binding.turnRunId
-          ) {
-            return;
-          }
-          if (payload.seq !== agenticReasoningLastSeq + 1) {
-            return;
-          }
-          agenticReasoningLastSeq = payload.seq;
-        }
-        const delta = payload.delta;
-        // The payload guard requires a non-empty delta. Record acceptance
-        // synchronously rather than reading React state, because the visible
-        // append is rAF-batched and a completed event may follow immediately.
-        agenticReasoningHasAcceptedText = true;
-        // Batched via rAF like message.delta / legacy reasoning.delta.
-        commitStreamingMessageUpdate((messages) =>
-          messages.map((message) =>
-            message.id === currentMessageId
-              ? {
-                  ...message,
-                  reasoning_status: "streaming",
-                  reasoning_md: `${message.reasoning_md ?? ""}${delta}`,
-                }
-              : message,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (event.event === "agentic.reasoning.completed") {
-      if (isReaderAskAgenticReasoningCompletedPayload(event.data)) {
-        const payload = event.data;
-        // At most one completed is accepted per stream.
-        if (agenticReasoningCompleted) {
-          return;
-        }
-        const binding = agenticReasoningBinding;
-        // ASK-COT-B1-R1: completed-only (no accepted started/delta and no
-        // already-accepted reasoning text) must not create a completed
-        // reasoning display. Missing frames stay no-display / interrupted;
-        // never claim hot≡cold completed from a bare completed frame.
-        if (
-          binding === null ||
-          agenticReasoningLastSeq === null ||
-          !agenticReasoningHasAcceptedText
-        ) {
-          return;
-        }
-        // Established binding: identity + contiguous seq + content.
-        if (
-          payload.message_id !== binding.messageId ||
-          payload.thread_id !== binding.threadId ||
-          payload.turn_run_id !== binding.turnRunId
-        ) {
-          return;
-        }
-        if (payload.seq !== agenticReasoningLastSeq + 1) {
-          return;
-        }
-        if (payload.has_content !== true) {
-          return;
-        }
-        agenticReasoningLastSeq = payload.seq;
-        agenticReasoningCompleted = true;
-        // Immediate: the projection is persisted server-side; from now on
-        // any reload returns the same text (collapsed, re-expandable).
-        // ASK-TURN-LIFECYCLE R3 — persist the typed truncation flag so the
-        // UI can surface "达到展示上限" without a marker in the body.
-        const reasoningTruncated = payload.truncated === true;
-        commitStreamingMessageUpdate(
-          (messages) =>
-            messages.map((message) =>
-              message.id === currentMessageId
-                ? {
-                    ...message,
-                    reasoning_status: "completed",
-                    reasoning_truncated: reasoningTruncated,
-                  }
-                : message,
-            ),
-          true,
-        );
-      }
+    // Provider reasoning is never a public v2 event. Keep the event names
+    // explicitly fail-closed so malformed or stale frames cannot enter
+    // message state, DOM, or the ChainOfThought projection.
+    if (
+      event.event === "agentic.reasoning.started" ||
+      event.event === "agentic.reasoning.delta" ||
+      event.event === "agentic.reasoning.completed"
+    ) {
       return;
     }
 
@@ -1460,6 +1335,7 @@ export function createSseMessageHandler(
         return;
       }
       activeGenerationId = resetGenerationId;
+      answerGenerationStarted = null;
       commitStreamingMessageUpdate((messages) =>
         messages.map((message) =>
           message.id === currentMessageId
@@ -1520,6 +1396,13 @@ export function createSseMessageHandler(
         // generation_id — discard (the matching preview_reset was
         // lost or arrived out of order).
         return;
+      }
+      if (activeRunIdentity !== null) {
+        const generationId = activeGenerationId ?? 0;
+        if (answerGenerationStarted !== generationId) {
+          answerGenerationStarted = generationId;
+          onAgenticActivity?.({ type: "answer_started", generationId });
+        }
       }
       // ASK-TURN-LIFECYCLE R2 — deltas accumulate into the provisional
       // preview slot only. `content_md` is reserved for the canonical
@@ -2480,6 +2363,11 @@ function normalizeReaderAskMessages(
       agentic_answer_blocks: finalAnswerBlocks,
       agentic_citations: finalCitations,
       agentic_web_search: finalWebSearch,
+      // Public v2 never hydrates provider reasoning, including payloads from
+      // older or malformed history rows.
+      reasoning_md: null,
+      reasoning_status: null,
+      reasoning_truncated: null,
       // Agentic path must not carry legacy article_rag sidecar.
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
@@ -2487,8 +2375,8 @@ function normalizeReaderAskMessages(
       // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
       // preview. Only the canonical `content_md` is persisted server-side.
       provisional_content_md: null,
-      // ASK-COT — cold v2 turns render reasoning-only; the typed process
-      // steps are session-memory only and never persist across reload.
+      // ASK-COT — cold v2 turns render the canonical answer only; the typed
+      // process steps are session-memory only and never persist across reload.
       agentic_process_snapshot: null,
       context_compaction: null,
     } as ReaderAskUiMessageDto;
@@ -3734,8 +3622,8 @@ function MessageBubble({
   const agenticCitationItems = hasAgenticAnswerBlocks
     ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
     : [];
-  // ASK-COT — agentic v2 turns converge reasoning + activity into one
-  // turn-scoped Chain of Thought (TurnProcessDisclosure). Detection:
+  // ASK-COT — agentic v2 turns converge public activity into one turn-scoped
+  // Chain of Thought (TurnProcessDisclosure). Detection:
   // hot settled (snapshot present), cold history (execution_version), or
   // live v2 (streaming with an activity bound to this bubble).
   //
@@ -3795,14 +3683,7 @@ function MessageBubble({
                           snapshot={message.agentic_process_snapshot ?? null}
                           citations={agenticCitationItems}
                           isStreaming={message.status === "streaming"}
-                          // ASK-UX-COT-COMPOSER-R3 — v2 reasoning lives
-                          // INSIDE the turn disclosure (思考要点), never a
-                          // second card above the answer. Only the server
-                          // safe projection fields are forwarded; raw
-                          // provider reasoning never exists on the DTO.
-                          reasoningMd={message.reasoning_md}
-                          reasoningStatus={message.reasoning_status}
-                          reasoningTruncated={message.reasoning_truncated}
+                          webSearchSummary={message.agentic_web_search ?? null}
                           contextCompaction={message.context_compaction ?? null}
                         />
                       ) : (

@@ -440,17 +440,27 @@ async def test_rag_port_none_zero_io_via_runtime():
 
 
 # ---------------------------------------------------------------------------
-# SSE expand generic activity
+# SSE expand_evidence article-evidence activity (R2.1 process contract)
 # ---------------------------------------------------------------------------
 
 
-def test_expand_progress_is_generic_agent_running_no_tool_name():
+def test_expand_progress_projects_first_class_article_evidence_activity():
+    """expand_evidence is a public article-evidence lifecycle step.
+
+    R2.1 process contract: article tools (read_range / search_current_article
+    / expand_evidence) share one stable ``article_evidence`` activity so the
+    learner sees a single "查找文章依据" step with typed outcomes, instead of
+    a generic agent_running row. Tool args (pointer) never reach the summary.
+    """
     projector = _ProgressProjector(started_at=0.0)
     call = ToolCallEvent(tool_name=TOOL_EXPAND_EVIDENCE, args={"pointer": "x"})
     out = projector.project(call)
     assert out
-    assert out[-1].phase == "agent_running"
-    assert out[-1].tool_name is None
+    assert out[-1].phase == "searching_article"
+    assert out[-1].activity == "started"
+    assert out[-1].tool_name == "expand_evidence"
+    assert out[-1].status == "running"
+    assert out[-1].activity_id == "article_evidence"
     assert "pointer" not in (out[-1].summary or "")
 
     result_ok = ToolResultEvent(
@@ -463,8 +473,14 @@ def test_expand_progress_is_generic_agent_running_no_tool_name():
     )
     out2 = projector.project(result_ok)
     assert out2[-1].activity == "completed"
-    assert out2[-1].tool_name is None
+    assert out2[-1].tool_name == "expand_evidence"
+    assert out2[-1].status == "ok"
+    assert out2[-1].outcome == "success"
+    assert out2[-1].activity_id == "article_evidence"
+    assert out2[-1].duration_ms == 5
 
+    # Stale evidence is surfaced as degraded/unavailable, never masked as a
+    # completed success — the article accumulator must observe real states.
     result_stale = ToolResultEvent(
         tool_name=TOOL_EXPAND_EVIDENCE,
         status="stale_evidence",
@@ -474,9 +490,10 @@ def test_expand_progress_is_generic_agent_running_no_tool_name():
         duration_ms=1,
     )
     out3 = projector.project(result_stale)
-    assert out3[-1].activity == "completed"
-    assert out3[-1].status == "ok"
-    assert out3[-1].summary == "已检查文章证据"
+    assert out3[-1].activity == "unavailable"
+    assert out3[-1].status == "unavailable"
+    assert out3[-1].outcome == "degraded"
+    assert out3[-1].activity_id == "article_evidence"
 
 
 def test_budget_exhausted_terminal_reason_constant():

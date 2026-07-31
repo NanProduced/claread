@@ -22,6 +22,7 @@ from app.config.settings import get_settings
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V2,
     ProgressActivity,
+    ProgressOutcome,
     ProgressPhase,
     ProgressStatus,
     ProgressToolName,
@@ -365,12 +366,38 @@ def _encode_context_compaction_sse(
         },
     )
 
-# Public tools that may project named progress. expand_evidence is
-# deliberately **not** public — it maps to generic agent_running only.
-# ASK-WEB-G1-R1: ``TOOL_SEARCH_WEB`` is public so the projector emits
-# ``searching_web`` phase + ``search_web`` tool_name progress events.
+
+def _encode_message_delta_sse(
+    event: AnswerDeltaEvent,
+    *,
+    message_id: str,
+    thread_id: UUID,
+    turn_run_id: str,
+) -> str:
+    """Encode every answer delta with the owning turn and generation."""
+    return encode_sse(
+        EVENT_MESSAGE_DELTA,
+        {
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            "message_id": message_id,
+            "thread_id": str(thread_id),
+            "turn_run_id": turn_run_id,
+            "generation_id": event.generation_id,
+            "delta": event.delta,
+        },
+    )
+
+
+# Public tools that may project named progress. The two production article
+# tools share one stable article-evidence activity; ``read_range`` remains a
+# compatibility input for legacy runtimes. Web Search has its own typed
+# lifecycle events and must never be projected through generic tool events.
 _PUBLIC_TOOL_NAMES: frozenset[str] = frozenset(
-    {TOOL_READ_RANGE, TOOL_SEARCH_CURRENT_ARTICLE, TOOL_SEARCH_WEB}
+    {
+        TOOL_READ_RANGE,
+        TOOL_SEARCH_CURRENT_ARTICLE,
+        TOOL_EXPAND_EVIDENCE,
+    }
 )
 
 _TOOL_RESULT_ACTIVITY: dict[str, ProgressActivity] = {
@@ -391,6 +418,26 @@ _TOOL_RESULT_ACTIVITY: dict[str, ProgressActivity] = {
     "empty": "completed",
     "not_indexed": "unavailable",
     "indexing": "unavailable",
+}
+
+_TOOL_RESULT_OUTCOME: dict[str, ProgressOutcome] = {
+    "ok": "success",
+    "ready": "success",
+    "loaded": "success",
+    "empty": "empty",
+    "unavailable": "degraded",
+    "not_ready": "degraded",
+    "not_indexed": "degraded",
+    "indexing": "degraded",
+    "disabled": "degraded",
+    "stale_evidence": "degraded",
+    "invalid_cursor": "failed",
+    "failed": "failed",
+    "invalid": "failed",
+    "budget_exhausted": "failed",
+    "error": "failed",
+    "stale": "failed",
+    "context_stale": "failed",
 }
 
 
@@ -810,6 +857,7 @@ class _ProgressProjector:
         summary: str,
         tool_name: ProgressToolName | None = None,
         status: ProgressStatus | None = None,
+        outcome: ProgressOutcome | None = None,
         duration_ms: int | None = None,
         activity_id: str | None = None,
         attempt_count: int | None = None,
@@ -828,6 +876,7 @@ class _ProgressProjector:
             elapsed_ms=elapsed,
             tool_name=tool_name,
             status=status,
+            outcome=outcome,
             duration_ms=duration_ms,
             activity_id=activity_id,
             attempt_count=attempt_count,
@@ -850,21 +899,16 @@ class _ProgressProjector:
         out: list[ReaderRecordAskProgressDTO] = []
 
         if isinstance(event, RunStartedEvent):
-            started = self.ensure_agent_started()
-            if started is not None:
-                out.append(started)
+            # Run identity is not evidence that the model has started
+            # analysis. Wait for the typed AnalysisStartedEvent instead.
             return out
 
         if isinstance(event, AnalysisStartedEvent):
-            # Safe phase only: generic activity, no reasoning text/length.
-            started = self.ensure_agent_started()
-            if started is not None:
-                out.append(started)
             out.append(
                 self._next(
-                    phase="agent_running",
+                    phase="analysis",
                     activity="started",
-                    summary="开始分析",
+                    summary="正在分析问题",
                     status="running",
                 )
             )
@@ -873,28 +917,31 @@ class _ProgressProjector:
         if isinstance(event, AnalysisFinishedEvent):
             out.append(
                 self._next(
-                    phase="agent_running",
+                    phase="analysis",
                     activity="completed",
-                    summary="分析完成",
+                    summary="已完成问题分析",
                     status="ok",
+                    outcome="success",
                 )
             )
             return out
 
         if isinstance(event, ToolCallEvent):
-            started = self.ensure_agent_started()
-            if started is not None:
-                out.append(started)
             tool = event.tool_name
-            # R4-A5-7: expand_evidence → generic agent_running only (no
-            # tool_name, no pointer/body/handle in progress).
+            if tool == TOOL_SEARCH_WEB:
+                # WebSearchCallEvent is the sole authoritative Web lifecycle.
+                # Generic tool events must not duplicate or masquerade as
+                # article evidence.
+                return out
             if tool == TOOL_EXPAND_EVIDENCE:
                 out.append(
                     self._next(
-                        phase="agent_running",
+                        phase="searching_article",
                         activity="started",
-                        summary="正在扩展证据",
+                        summary="正在查找文章依据",
+                        tool_name="expand_evidence",
                         status="running",
+                        activity_id="article_evidence",
                     )
                 )
                 return out
@@ -911,6 +958,7 @@ class _ProgressProjector:
                         summary="正在读取文章上下文",
                         tool_name="read_range",
                         status="running",
+                        activity_id="article_evidence",
                     )
                 )
             else:
@@ -922,49 +970,42 @@ class _ProgressProjector:
                         summary="正在检索当前文章",
                         tool_name="search_current_article",
                         status="running",
+                        activity_id="article_evidence",
                     )
                 )
             return out
 
         if isinstance(event, ToolResultEvent):
             tool = event.tool_name
+            if tool == TOOL_SEARCH_WEB:
+                # WebSearchResultEvent is the sole authoritative Web lifecycle.
+                return out
             # Fail-closed: unknown/future statuses never project as completed/ok.
             raw_status = str(event.status or "").lower()
             activity = _TOOL_RESULT_ACTIVITY.get(raw_status, "failed")
+            outcome = _TOOL_RESULT_OUTCOME.get(raw_status, "failed")
             duration = event.duration_ms if event.duration_ms is not None else None
             if tool == TOOL_EXPAND_EVIDENCE:
-                if activity == "unavailable":
-                    # Evidence expansion is an internal, fail-soft refinement.
-                    # When the pointer is stale or yields no additional text,
-                    # keep the user-facing activity neutral: the agent may
-                    # still answer from baseline/article/Web evidence. Raw
-                    # status remains available in the runtime event stream and
-                    # telemetry; only the public progress copy is de-noised.
-                    out.append(
-                        self._next(
-                            phase="agent_running",
-                            activity="completed",
-                            summary="已检查文章证据",
-                            status="ok",
-                            duration_ms=duration,
-                        )
-                    )
-                    return out
                 summary = {
                     "completed": "已扩展证据",
+                    "unavailable": "文章依据暂不可用",
                     "failed": "证据扩展失败",
                 }.get(activity, "证据扩展失败")
                 status: ProgressStatus = {
                     "completed": "ok",
+                    "unavailable": "unavailable",
                     "failed": "failed",
                 }.get(activity, "failed")  # type: ignore[assignment]
                 out.append(
                     self._next(
-                        phase="agent_running",
+                        phase="searching_article",
                         activity=activity,
                         summary=summary,
+                        tool_name="expand_evidence",
                         status=status,
+                        outcome=outcome,
                         duration_ms=duration,
+                        activity_id="article_evidence",
                     )
                 )
                 return out
@@ -986,7 +1027,9 @@ class _ProgressProjector:
                         summary=summary,
                         tool_name="read_range",
                         status=status,
+                        outcome=outcome,
                         duration_ms=duration,
+                        activity_id="article_evidence",
                     )
                 )
             elif tool == TOOL_SEARCH_CURRENT_ARTICLE:
@@ -1007,7 +1050,9 @@ class _ProgressProjector:
                         summary=summary,
                         tool_name="search_current_article",
                         status=status,
+                        outcome=outcome,
                         duration_ms=duration,
+                        activity_id="article_evidence",
                     )
                 )
             else:
@@ -1018,23 +1063,16 @@ class _ProgressProjector:
                         activity="failed",
                         summary="分析步骤失败",
                         status="failed",
+                        outcome="failed",
                         duration_ms=duration,
                     )
                 )
             return out
 
         if isinstance(event, ComposingAnswerEvent):
-            started = self.ensure_agent_started()
-            if started is not None:
-                out.append(started)
-            out.append(
-                self._next(
-                    phase="composing_answer",
-                    activity="started",
-                    summary="正在组织回答",
-                    status="running",
-                )
-            )
+            # Answering is owned by the first identity-valid message.delta on
+            # the client. This late host event is intentionally not public
+            # process truth.
             return out
 
         # ASK-WEB-G1-R1: Web Search call/result projection. The agent
@@ -1044,9 +1082,6 @@ class _ProgressProjector:
         # call sequence + typed outcome. The projector maps them to the
         # ``searching_web`` phase with ``search_web`` tool_name.
         if isinstance(event, WebSearchCallEvent):
-            started = self.ensure_agent_started()
-            if started is not None:
-                out.append(started)
             out.append(
                 self._next(
                     phase="searching_web",
@@ -1104,6 +1139,13 @@ class _ProgressProjector:
                     "unavailable" if turn_outcome == "timeout" else turn_outcome
                 )
             )
+            web_outcome: ProgressOutcome = {
+                "completed": "success",
+                "no_results": "empty",
+                "unavailable": "degraded",
+                "timeout": "degraded",
+                "failed": "failed",
+            }.get(turn_outcome, "failed")
             web_summary = {
                 "completed": "已完成网页搜索",
                 "no_results": "未找到相关网页结果",
@@ -1125,6 +1167,7 @@ class _ProgressProjector:
                     summary=web_summary,
                     tool_name="search_web",
                     status=web_status,
+                    outcome=web_outcome,
                     duration_ms=event.duration_ms,
                     activity_id="web_search",
                     attempt_count=event.attempt_count,
@@ -1134,14 +1177,9 @@ class _ProgressProjector:
             return out
 
         if isinstance(event, ValidatingEvidenceEvent):
-            out.append(
-                self._next(
-                    phase="validating_evidence",
-                    activity="started",
-                    summary="正在核对回答依据",
-                    status="running",
-                )
-            )
+            # The current backend has no public validation completion result.
+            # Keep the internal event for metrics/runtime observers, but do not
+            # expose an unfinishable citation-check step.
             return out
 
         if isinstance(event, FinalAnswerEvent):
@@ -1272,14 +1310,11 @@ async def _run_agentic_turn(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
-    # ASK-REASONING-R1: the single approved reasoning projection
-    # chokepoint for this turn. Receives raw provider reasoning via the
-    # ThinkingObserver injection, publishes only the deterministic
-    # redacted + quota-bounded projection as agentic.reasoning.* events.
-    # Provider-private reasoning is not a pedagogical explanation. It can
-    # contain self-instructions, schema names, and tool strategy even after
-    # secret redaction, so it is discarded at ingress. User-visible process
-    # state comes only from typed lifecycle events.
+    # ASK-REASONING-R1: the single approved ingress chokepoint for provider
+    # reasoning. UserSafeReasoningObserver deliberately discards the input:
+    # it emits no agentic.reasoning.* events and returns no persistence
+    # payload. User-visible process state comes only from typed lifecycle
+    # events.
     reasoning_projector = UserSafeReasoningObserver(
         emit=sink,
         message_id=assistant_msg["id"],
@@ -1437,16 +1472,11 @@ async def _run_agentic_turn(
                 # real streaming. This mirrors the ``message.preview_reset``
                 # wire contract (see AnswerPreviewResetEvent branch above).
                 metrics.mark_answer_delta()
-                yield encode_sse(
-                    EVENT_MESSAGE_DELTA,
-                    {
-                        "delta": item.delta,
-                        "generation_id": item.generation_id,
-                        "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                        "message_id": assistant_msg["id"],
-                        "thread_id": str(thread_id),
-                        "turn_run_id": turn["id"],
-                    },
+                yield _encode_message_delta_sse(
+                    item,
+                    message_id=assistant_msg["id"],
+                    thread_id=thread_id,
+                    turn_run_id=turn["id"],
                 )
                 continue
             # R3: validation_done marks the end of the agent run loop
@@ -1461,6 +1491,10 @@ async def _run_agentic_turn(
                     progress.model_dump(mode="json"),
                 )
 
+        # The done callback and a thread-safe sink callback may be scheduled in
+        # adjacent loop turns. Yield once so an event queued behind DONE is
+        # visible to the drain instead of being lost at the empty check.
+        await asyncio.sleep(0)
         # Drain any late events that arrived with/after DONE.
         while not event_queue.empty():
             try:
@@ -1514,8 +1548,11 @@ async def _run_agentic_turn(
                     # R4-A6: token-level answer_text increment (drain path).
                     # R3: track first/last answer delta timestamps.
                     metrics.mark_answer_delta()
-                    yield encode_sse(
-                        EVENT_MESSAGE_DELTA, {"delta": item.delta}
+                    yield _encode_message_delta_sse(
+                        item,
+                        message_id=assistant_msg["id"],
+                        thread_id=thread_id,
+                        turn_run_id=turn["id"],
                     )
                     continue
                 # R3: validation_done on drain path too.

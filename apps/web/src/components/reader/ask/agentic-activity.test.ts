@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import { describe, expect, it } from "vitest";
 import {
+  aggregateArticleEvidenceOutcome,
   agenticActivityAriaLabel,
   createIdleAgenticActivityState,
   isAgenticActivityVisible,
@@ -37,13 +38,160 @@ function runningState(): AgenticActivityState {
 }
 
 describe("reduceAgenticActivityEvent", () => {
-  it("starts running on run_started", () => {
+  it("binds a run without fabricating a learner step", () => {
     const next = runningState();
     expect(next.status).toBe("running");
-    expect(next.currentPhase).toBe("agent_running");
-    expect(next.currentSummary).toBe("正在分析当前文章");
+    expect(next.currentPhase).toBeNull();
+    expect(next.currentSummary).toBeNull();
+    expect(next.steps).toEqual([]);
     expect(next.messageId).toBe("msg-1");
     expect(isAgenticActivityVisible(next)).toBe(true);
+  });
+
+  it("accepts only real analysis lifecycle rows for 分析问题", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(state, progress(1, "analysis", "正在分析问题", {
+      activity: "started",
+      status: "running",
+    }));
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0].phase).toBe("analysis");
+
+    state = reduceAgenticActivityEvent(state, progress(2, "analysis", "已完成问题分析", {
+      activity: "completed",
+      status: "ok",
+    }));
+    expect(state.steps[0]).toMatchObject({
+      phase: "analysis",
+      activity: "completed",
+      status: "ok",
+    });
+  });
+
+  it("starts and settles answering only from explicit answer lifecycle events", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(state, { type: "answer_started", generationId: 0 });
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      phase: "composing_answer",
+      activity: "started",
+      status: "running",
+    });
+
+    state = reduceAgenticActivityEvent(state, { type: "answer_completed" });
+    expect(state.steps[0]).toMatchObject({
+      phase: "composing_answer",
+      activity: "completed",
+      status: "ok",
+    });
+  });
+
+  it("keeps server progress sequence separate from synthetic answer order", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "analysis", "正在分析问题", {
+        activity: "started",
+        status: "running",
+      }),
+    );
+    const analysisOrdinal = state.steps[0].localOrdinal;
+
+    state = reduceAgenticActivityEvent(state, {
+      type: "answer_started",
+      generationId: 0,
+    });
+    expect(state.lastSequence).toBe(1);
+    expect(state.steps[1].localOrdinal).toBeGreaterThan(analysisOrdinal);
+
+    state = reduceAgenticActivityEvent(state, { type: "answer_completed" });
+    expect(state.lastSequence).toBe(1);
+
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "正在查询网页", {
+        activity: "started",
+        tool_name: "search_web",
+        activity_id: "web_search",
+        status: "running",
+      }),
+    );
+    expect(state.lastSequence).toBe(2);
+    expect(state.steps.map((step) => step.phase)).toEqual([
+      "analysis",
+      "composing_answer",
+      "searching_web",
+    ]);
+
+    const duplicate = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_article", "不应覆盖网页步骤", {
+        activity: "started",
+        activity_id: "article_evidence",
+        status: "running",
+      }),
+    );
+    expect(duplicate).toEqual(state);
+  });
+
+  it("allows a new generation to recreate answering without consuming progress sequence", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(state, {
+      type: "answer_started",
+      generationId: 0,
+    });
+    state = reduceAgenticActivityEvent(state, {
+      type: "answer_completed",
+    });
+    state = reduceAgenticActivityEvent(state, {
+      type: "answer_started",
+      generationId: 1,
+    });
+    expect(state.lastSequence).toBe(0);
+    expect(state.steps[0].activity).toBe("started");
+
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_article", "正在查找文章依据", {
+        activity: "started",
+        tool_name: "search_current_article",
+        activity_id: "article_evidence",
+        status: "running",
+      }),
+    );
+    expect(state.lastSequence).toBe(1);
+    expect(state.steps.map((step) => step.activityId)).toEqual([
+      null,
+      "article_evidence",
+    ]);
+  });
+
+  it("upserts the article evidence activity across both production tools", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(state, progress(1, "searching_article", "正在查找文章依据", {
+      activity: "started",
+      tool_name: "expand_evidence",
+      activity_id: "article_evidence",
+      status: "running",
+    }));
+    state = reduceAgenticActivityEvent(state, progress(2, "searching_article", "已扩展证据", {
+      activity: "completed",
+      tool_name: "expand_evidence",
+      activity_id: "article_evidence",
+      status: "ok",
+    }));
+    state = reduceAgenticActivityEvent(state, progress(3, "searching_article", "正在查找文章依据", {
+      activity: "started",
+      tool_name: "search_current_article",
+      activity_id: "article_evidence",
+      status: "running",
+    }));
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      activityId: "article_evidence",
+      toolName: "search_current_article",
+      status: "running",
+    });
   });
 
   it("updates phase/summary by increasing sequence", () => {
@@ -90,21 +238,21 @@ describe("reduceAgenticActivityEvent", () => {
     let state = runningState();
     state = reduceAgenticActivityEvent(
       state,
-      progress(3, "composing_answer", "正在组织回答"),
+      progress(3, "analysis", "正在分析问题"),
     );
     const next = reduceAgenticActivityEvent(
       state,
       progress(2, "reading_context", "正在读取文章上下文"),
     );
     expect(next).toEqual(state);
-    expect(next.currentPhase).toBe("composing_answer");
+    expect(next.currentPhase).toBe("analysis");
   });
 
   it("ignores progress after completed", () => {
     let state = runningState();
     state = reduceAgenticActivityEvent(
       state,
-      progress(1, "composing_answer", "正在组织回答"),
+      { type: "answer_started", generationId: 0 },
     );
     state = reduceAgenticActivityEvent(state, { type: "completed" });
     const next = reduceAgenticActivityEvent(
@@ -112,7 +260,7 @@ describe("reduceAgenticActivityEvent", () => {
       progress(2, "validating_evidence", "正在核对回答依据"),
     );
     expect(next.status).toBe("completed");
-    expect(next.currentSummary).toBe("正在组织回答");
+    expect(next.currentSummary).toBe("正在生成回答");
     expect(isAgenticActivityVisible(next)).toBe(false);
   });
 
@@ -359,10 +507,10 @@ describe("reduceAgenticActivityEvent — searching_web phase + search_web tool (
         status: "running",
       }),
     );
-    state = reduceAgenticActivityEvent(
-      state,
-      progress(2, "composing_answer", "正在组织回答"),
-    );
+    state = reduceAgenticActivityEvent(state, {
+      type: "answer_started",
+      generationId: 0,
+    });
     expect(state.currentPhase).toBe("composing_answer");
     expect(state.currentToolName).toBeNull();
     expect(state.steps).toHaveLength(2);
@@ -510,5 +658,141 @@ describe("reduceAgenticActivityEvent — searching_web phase + search_web tool (
     expect(state.steps).toHaveLength(1);
     expect(state.steps[0].attemptCount).toBe(2);
     expect(state.steps[0].callSequence).toBe(2);
+  });
+
+  it("uses the latest non-null Host aggregate for web outcome", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "started", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+        outcome: null,
+        activity_id: "web_search",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "result", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        outcome: "empty",
+        activity_id: "web_search",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(3, "searching_web", "late degraded result", {
+        activity: "unavailable",
+        tool_name: "search_web",
+        status: "unavailable",
+        outcome: "degraded",
+        activity_id: "web_search",
+      }),
+    );
+
+    expect(state.steps[0]).toMatchObject({
+      outcome: "degraded",
+      activity: "unavailable",
+      status: "unavailable",
+    });
+
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(4, "searching_web", "successful retry", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        outcome: "success",
+        activity_id: "web_search",
+      }),
+    );
+    expect(state.steps[0].outcome).toBe("success");
+
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(5, "searching_web", "started again", {
+        activity: "started",
+        tool_name: "search_web",
+        status: "running",
+        outcome: null,
+        activity_id: "web_search",
+      }),
+    );
+    expect(state.steps[0].outcome).toBe("success");
+  });
+
+  it("does not let a lower or duplicate web sequence overwrite the Host result", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "网页超时", {
+        activity: "unavailable",
+        tool_name: "search_web",
+        status: "unavailable",
+        outcome: "degraded",
+        activity_id: "web_search",
+      }),
+    );
+    const older = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_web", "旧的空结果", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        outcome: "empty",
+        activity_id: "web_search",
+      }),
+    );
+    expect(older).toEqual(state);
+    const duplicate = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_web", "重复空结果", {
+        activity: "completed",
+        tool_name: "search_web",
+        status: "ok",
+        outcome: "empty",
+        activity_id: "web_search",
+      }),
+    );
+    expect(duplicate).toEqual(state);
+  });
+
+  it.each([
+    [["empty", "degraded"], "degraded"],
+    [["empty", "failed"], "degraded"],
+    [["success", "failed"], "success"],
+    [["empty", "empty"], "empty"],
+    [["failed", "failed"], "failed"],
+    [["unknown"], "degraded"],
+  ] as const)("aggregates article evidence %j as %s", (observations, expected) => {
+    expect(aggregateArticleEvidenceOutcome(observations)).toBe(expected);
+  });
+
+  it("keeps article confirmed outcome when a started/null row arrives", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "searching_article", "文章依据已找到", {
+        activity: "completed",
+        tool_name: "search_current_article",
+        activity_id: "article_evidence",
+        status: "ok",
+        outcome: "success",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "searching_article", "继续查找文章依据", {
+        activity: "started",
+        tool_name: "expand_evidence",
+        activity_id: "article_evidence",
+        status: "running",
+        outcome: null,
+      }),
+    );
+    expect(state.steps[0].outcome).toBe("success");
   });
 });

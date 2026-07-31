@@ -61,6 +61,7 @@ EvidenceKindPublic = Literal[
 
 ProgressPhase = Literal[
     "agent_running",
+    "analysis",
     "reading_context",
     "searching_article",
     "searching_web",
@@ -78,6 +79,7 @@ ProgressActivity = Literal[
 ProgressToolName = Literal[
     "read_range",
     "search_current_article",
+    "expand_evidence",
     "search_web",
 ]
 
@@ -87,6 +89,8 @@ ProgressStatus = Literal[
     "unavailable",
     "failed",
 ]
+
+ProgressOutcome = Literal["success", "empty", "degraded", "failed"]
 
 
 class ReaderRecordAskRagCitationPublic(BaseModel):
@@ -299,11 +303,14 @@ class ReaderRecordAskProgressDTO(BaseModel):
     elapsed_ms: int = Field(ge=0)
     tool_name: ProgressToolName | None = None
     status: ProgressStatus | None = None
+    # Public, provider-neutral result state. Started rows deliberately carry
+    # null; only typed result events may confirm an outcome.
+    outcome: ProgressOutcome | None = None
     duration_ms: int | None = Field(default=None, ge=0)
-    # Stable host-owned activity identity. Web Search retries/reformulations
-    # update ``web_search`` rather than creating additional UI steps; this
-    # is intentionally reusable by future Chain-of-Thought activity clients.
-    activity_id: Literal["web_search"] | None = None
+    # Stable host-owned activity identity. Article evidence tools share one
+    # activity, and Web Search retries/reformulations update one activity
+    # rather than creating additional UI steps.
+    activity_id: Literal["article_evidence", "web_search"] | None = None
     attempt_count: int | None = Field(default=None, ge=0)
     call_sequence: int | None = Field(default=None, ge=1)
 

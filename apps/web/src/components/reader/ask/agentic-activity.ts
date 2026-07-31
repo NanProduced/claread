@@ -9,6 +9,7 @@ export const AGENTIC_EXECUTION_VERSION = "reader_record_ask_agentic_v2" as const
 
 export type AgenticActivityPhase =
   | "agent_running"
+  | "analysis"
   | "reading_context"
   | "searching_article"
   | "searching_web"
@@ -21,6 +22,8 @@ export type AgenticActivityKind =
   | "unavailable"
   | "failed";
 
+export type AgenticActivityOutcome = "success" | "empty" | "degraded" | "failed";
+
 export type AgenticActivityStatus =
   | "idle"
   | "running"
@@ -32,11 +35,15 @@ export type AgenticActivityStatus =
 export type AgenticActivityToolName =
   | "read_range"
   | "search_current_article"
+  | "expand_evidence"
   | "search_web";
 
-export type AgenticActivityId = "web_search";
+export type AgenticActivityId = "article_evidence" | "web_search";
 
 export type AgenticActivityStep = {
+  /** Local UI order; never used as the server progress watermark. */
+  localOrdinal: number;
+  /** Server progress sequence, or the current watermark for a synthetic step. */
   sequence: number;
   phase: AgenticActivityPhase;
   activity: AgenticActivityKind;
@@ -44,6 +51,7 @@ export type AgenticActivityStep = {
   elapsedMs: number;
   toolName: AgenticActivityToolName | null;
   status: "running" | "ok" | "unavailable" | "failed" | null;
+  outcome: AgenticActivityOutcome | null;
   durationMs: number | null;
   activityId: AgenticActivityId | null;
   attemptCount: number | null;
@@ -54,6 +62,8 @@ export type AgenticActivityState = {
   status: AgenticActivityStatus;
   /** Last accepted monotonic sequence (0 when idle / reset). */
   lastSequence: number;
+  /** Next local order slot for first-seen steps and synthetic answering rows. */
+  nextLocalOrdinal: number;
   currentPhase: AgenticActivityPhase | null;
   currentSummary: string | null;
   currentActivity: AgenticActivityKind | null;
@@ -65,6 +75,8 @@ export type AgenticActivityState = {
   turnRunId: string | null;
   messageId: string | null;
   hasUnavailable: boolean;
+  /** Confirmed article evidence outcomes for the named article accumulator. */
+  articleOutcomeObservations: AgenticActivityOutcome[];
 };
 
 export type AgenticActivityProgressInput = {
@@ -76,6 +88,7 @@ export type AgenticActivityProgressInput = {
   elapsed_ms?: number | null;
   tool_name?: string | null;
   status?: string | null;
+  outcome?: string | null;
   duration_ms?: number | null;
   activity_id?: string | null;
   attempt_count?: number | null;
@@ -89,6 +102,12 @@ export type AgenticActivityEvent =
       messageId?: string | null;
       turnRunId?: string | null;
     }
+  | { type: "answer_started"; generationId?: number | null }
+  | { type: "answer_completed" }
+  | {
+      type: "answer_interrupted";
+      finalStatus?: "failed" | "cancelled" | "context_stale" | "invalid_citations" | string | null;
+    }
   | { type: "progress"; payload: AgenticActivityProgressInput }
   | { type: "completed" }
   | {
@@ -98,6 +117,7 @@ export type AgenticActivityEvent =
 
 const PHASES = new Set<AgenticActivityPhase>([
   "agent_running",
+  "analysis",
   "reading_context",
   "searching_article",
   "searching_web",
@@ -111,11 +131,15 @@ const ACTIVITIES = new Set<AgenticActivityKind>([
   "unavailable",
   "failed",
 ]);
-const ACTIVITY_IDS = new Set<AgenticActivityId>(["web_search"]);
+const ACTIVITY_IDS = new Set<AgenticActivityId>([
+  "article_evidence",
+  "web_search",
+]);
 
 const TOOLS = new Set<AgenticActivityToolName>([
   "read_range",
   "search_current_article",
+  "expand_evidence",
   "search_web",
 ]);
 
@@ -123,6 +147,12 @@ const STEP_STATUSES = new Set<NonNullable<AgenticActivityStep["status"]>>([
   "running",
   "ok",
   "unavailable",
+  "failed",
+]);
+const OUTCOMES = new Set<AgenticActivityOutcome>([
+  "success",
+  "empty",
+  "degraded",
   "failed",
 ]);
 
@@ -136,6 +166,7 @@ export function createIdleAgenticActivityState(): AgenticActivityState {
   return {
     status: "idle",
     lastSequence: 0,
+    nextLocalOrdinal: 0,
     currentPhase: null,
     currentSummary: null,
     currentActivity: null,
@@ -147,6 +178,7 @@ export function createIdleAgenticActivityState(): AgenticActivityState {
     turnRunId: null,
     messageId: null,
     hasUnavailable: false,
+    articleOutcomeObservations: [],
   };
 }
 
@@ -178,6 +210,56 @@ function asStepStatus(value: unknown): AgenticActivityStep["status"] {
   return typeof value === "string" && STEP_STATUSES.has(value as NonNullable<AgenticActivityStep["status"]>)
     ? (value as NonNullable<AgenticActivityStep["status"]>)
     : null;
+}
+
+function asOutcome(value: unknown): AgenticActivityOutcome | null {
+  return typeof value === "string" && OUTCOMES.has(value as AgenticActivityOutcome)
+    ? (value as AgenticActivityOutcome)
+    : null;
+}
+
+/**
+ * Aggregate the confirmed outcomes belonging to article_evidence.
+ *
+ * This is deliberately separate from web_search: article tools report
+ * evidence availability across several calls, so a successful call is
+ * authoritative even if a later call fails. Unknown values are fail-closed
+ * as degraded when callers use this helper directly; the wire reducer drops
+ * them before they can enter the observation list.
+ */
+export function aggregateArticleEvidenceOutcome(
+  observations: readonly unknown[],
+): AgenticActivityOutcome | null {
+  const confirmed: AgenticActivityOutcome[] = [];
+  let hasUnknown = false;
+  for (const observation of observations) {
+    if (observation == null) {
+      continue;
+    }
+    const outcome = asOutcome(observation);
+    if (outcome == null) {
+      hasUnknown = true;
+      continue;
+    }
+    confirmed.push(outcome);
+  }
+  if (confirmed.includes("success")) {
+    return "success";
+  }
+  if (hasUnknown || confirmed.includes("degraded")) {
+    return "degraded";
+  }
+  const kinds = new Set(confirmed);
+  if (kinds.size > 1) {
+    return "degraded";
+  }
+  if (kinds.has("empty")) {
+    return "empty";
+  }
+  if (kinds.has("failed")) {
+    return "failed";
+  }
+  return null;
 }
 
 function asNonNegativeInt(value: unknown): number | null {
@@ -227,12 +309,84 @@ export function reduceAgenticActivityEvent(
     return {
       ...createIdleAgenticActivityState(),
       status: "running",
-      currentPhase: "agent_running",
-      currentActivity: "started",
-      currentSummary: "正在分析当前文章",
-      currentStatus: "running",
       messageId: event.messageId ?? null,
       turnRunId: event.turnRunId ?? null,
+    };
+  }
+
+  if (event.type === "answer_started") {
+    if (state.status === "idle" || TERMINAL_STATUSES.has(state.status)) {
+      return state;
+    }
+    const localOrdinal = state.nextLocalOrdinal;
+    const existingIndex = state.steps.findIndex(
+      (step) => step.phase === "composing_answer",
+    );
+    const step: AgenticActivityStep = {
+      localOrdinal,
+      sequence: state.lastSequence,
+      phase: "composing_answer",
+      activity: "started",
+      summary: "正在生成回答",
+      elapsedMs: state.elapsedMs,
+      toolName: null,
+      status: "running",
+      outcome: null,
+      durationMs: null,
+      activityId: null,
+      attemptCount: null,
+      callSequence: null,
+    };
+    const steps =
+      existingIndex < 0
+        ? [...state.steps, step]
+        : state.steps.map((existing, index) =>
+            index === existingIndex ? step : existing,
+          );
+    return {
+      ...state,
+      status: state.hasUnavailable ? "degraded" : "running",
+      currentPhase: step.phase,
+      currentSummary: step.summary,
+      currentActivity: step.activity,
+      currentToolName: null,
+      currentStatus: step.status,
+      currentDurationMs: null,
+      steps,
+      nextLocalOrdinal: localOrdinal + 1,
+    };
+  }
+
+  if (event.type === "answer_completed" || event.type === "answer_interrupted") {
+    if (state.status === "idle" || TERMINAL_STATUSES.has(state.status)) {
+      return state;
+    }
+    const existingIndex = state.steps.findIndex(
+      (step) => step.phase === "composing_answer",
+    );
+    if (existingIndex < 0) {
+      return state;
+    }
+    const isCompleted = event.type === "answer_completed";
+    const existing = state.steps[existingIndex];
+    const step: AgenticActivityStep = {
+      ...existing,
+      activity: isCompleted ? "completed" : "failed",
+      summary: isCompleted ? "已生成回答" : "回答未能完成",
+      status: isCompleted ? "ok" : "failed",
+      outcome: isCompleted ? "success" : "failed",
+    };
+    return {
+      ...state,
+      currentPhase: step.phase,
+      currentSummary: step.summary,
+      currentActivity: step.activity,
+      currentToolName: null,
+      currentStatus: step.status,
+      currentDurationMs: step.durationMs,
+      steps: state.steps.map((item, index) =>
+        index === existingIndex ? step : item,
+      ),
     };
   }
 
@@ -256,7 +410,7 @@ export function reduceAgenticActivityEvent(
       return {
         ...createIdleAgenticActivityState(),
         status: failedStatus,
-        currentPhase: "agent_running",
+        currentPhase: null,
         currentActivity: "failed",
         currentSummary:
           failedStatus === "cancelled" ? "本轮回答已取消" : "本轮回答未能完成",
@@ -303,15 +457,52 @@ export function reduceAgenticActivityEvent(
   const activity = asActivity(payload.activity) ?? "started";
   const toolName = asToolName(payload.tool_name);
   const stepStatus = asStepStatus(payload.status);
+  const parsedOutcome = asOutcome(payload.outcome);
+  // The DTO guard rejects unknown outcomes. Keep this reducer fail-closed as
+  // well for direct callers and malformed scripted events: an explicit but
+  // unknown outcome is a failure, never an implicit success.
+  const incomingOutcome =
+    parsedOutcome ?? (payload.outcome == null ? null : "failed");
+  // These legacy/internal progress phases are not public lifecycle truth.
+  // Answering is driven by identity-valid message.delta events; citation
+  // checking is accepted only when a future backend sends a real result row.
+  if (phase === "composing_answer") {
+    return state;
+  }
+  if (phase === "validating_evidence" && stepStatus === "running") {
+    return state;
+  }
   const elapsedMs = asNonNegativeInt(payload.elapsed_ms) ?? state.elapsedMs;
   const durationMs = asNonNegativeInt(payload.duration_ms);
   const activityId = asActivityId(payload.activity_id);
+  const isArticleEvidenceActivity =
+    activityId === "article_evidence" ||
+    (activityId == null &&
+      (phase === "reading_context" || phase === "searching_article"));
   const existingActivityIndex =
-    activityId == null
-      ? -1
-      : state.steps.findIndex((existing) => existing.activityId === activityId);
+    activityId != null
+      ? state.steps.findIndex((existing) => existing.activityId === activityId)
+      : phase === "analysis"
+        ? state.steps.findIndex((existing) => existing.phase === phase)
+        : -1;
   const existingActivity =
     existingActivityIndex < 0 ? null : state.steps[existingActivityIndex];
+  const articleOutcomeObservations =
+    isArticleEvidenceActivity && incomingOutcome != null
+      ? [...state.articleOutcomeObservations, incomingOutcome]
+      : state.articleOutcomeObservations;
+  const outcome =
+    activityId === "web_search"
+      ? incomingOutcome ?? existingActivity?.outcome ?? null
+      : isArticleEvidenceActivity
+        ? aggregateArticleEvidenceOutcome(articleOutcomeObservations)
+        : incomingOutcome ?? existingActivity?.outcome ?? null;
+  const preserveConfirmedOutcome =
+    existingActivity?.outcome != null &&
+    outcome === existingActivity.outcome &&
+    (incomingOutcome == null ||
+      activityId === "web_search" ||
+      isArticleEvidenceActivity);
   const reportedAttemptCount = asNonNegativeInt(payload.attempt_count);
   const reportedCallSequence = asPositiveInt(payload.call_sequence);
   // A started event intentionally has no confirmed provider count. Keep the
@@ -326,15 +517,34 @@ export function reduceAgenticActivityEvent(
       ? (existingActivity?.callSequence ?? null)
       : Math.max(existingActivity?.callSequence ?? 0, reportedCallSequence);
 
+  const effectiveActivity = preserveConfirmedOutcome
+    ? existingActivity.activity
+    : activity;
+  const effectiveSummary = preserveConfirmedOutcome
+    ? existingActivity.summary
+    : summary;
+  const effectiveToolName = preserveConfirmedOutcome
+    ? existingActivity.toolName
+    : toolName;
+  const effectiveStatus = preserveConfirmedOutcome
+    ? existingActivity.status
+    : stepStatus;
+  const effectiveDurationMs =
+    durationMs ?? (preserveConfirmedOutcome ? existingActivity.durationMs : null);
   const step: AgenticActivityStep = {
+    localOrdinal:
+      existingActivity == null
+        ? state.nextLocalOrdinal
+        : existingActivity.localOrdinal,
     sequence,
     phase,
-    activity,
-    summary,
+    activity: effectiveActivity,
+    summary: effectiveSummary,
     elapsedMs,
-    toolName,
-    status: stepStatus,
-    durationMs,
+    toolName: effectiveToolName,
+    status: effectiveStatus,
+    outcome,
+    durationMs: effectiveDurationMs,
     activityId,
     attemptCount,
     callSequence,
@@ -342,11 +552,12 @@ export function reduceAgenticActivityEvent(
 
   const hasUnavailable =
     state.hasUnavailable ||
-    activity === "unavailable" ||
-    stepStatus === "unavailable";
+    effectiveActivity === "unavailable" ||
+    effectiveStatus === "unavailable" ||
+    outcome === "degraded";
 
   const nextStatus: AgenticActivityStatus =
-    activity === "failed" || stepStatus === "failed"
+    effectiveActivity === "failed" || effectiveStatus === "failed" || outcome === "failed"
       ? "running" // tool-level failure is not whole-turn failure; agent may continue
       : hasUnavailable
         ? "degraded"
@@ -364,14 +575,19 @@ export function reduceAgenticActivityEvent(
     status: nextStatus,
     lastSequence: sequence,
     currentPhase: phase,
-    currentSummary: summary,
-    currentActivity: activity,
-    currentToolName: toolName,
-    currentStatus: stepStatus,
-    currentDurationMs: durationMs,
+    currentSummary: effectiveSummary,
+    currentActivity: effectiveActivity,
+    currentToolName: effectiveToolName,
+    currentStatus: effectiveStatus,
+    currentDurationMs: effectiveDurationMs,
     elapsedMs,
     hasUnavailable,
     steps,
+    nextLocalOrdinal:
+      existingActivity == null
+        ? state.nextLocalOrdinal + 1
+        : state.nextLocalOrdinal,
+    articleOutcomeObservations,
   };
 }
 

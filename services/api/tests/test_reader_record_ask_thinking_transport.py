@@ -365,9 +365,9 @@ async def test_production_stream_analysis_phase_no_reasoning_leak():
 
     projector = _ProgressProjector(started_at=0.0)
     out1 = projector.project(AnalysisStartedEvent())
-    assert out1[-1].summary == "开始分析"
+    assert out1[-1].summary == "正在分析问题"
     out2 = projector.project(AnalysisFinishedEvent())
-    assert out2[-1].summary == "分析完成"
+    assert out2[-1].summary == "已完成问题分析"
     blob = json.dumps([p.model_dump(mode="json") for p in out1 + out2])
     assert _SENTINEL not in blob
 

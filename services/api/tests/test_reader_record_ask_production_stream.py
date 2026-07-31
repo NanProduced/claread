@@ -2406,6 +2406,8 @@ async def test_context_compaction_sse_precedes_agentic_work_and_is_safe() -> Non
                 has_initial_selection=True,
             )
         )
+        # RunStarted is identity only; this is the first real analysis event.
+        sink(AnalysisStartedEvent())
         return _ok_run_result(kwargs)
 
     events, _repo = await _stream_with_run_async(_run)
@@ -2776,6 +2778,70 @@ async def test_message_delta_streams_answer_text_on_success() -> None:
     for data in deltas:
         assert "reasoning_md" not in data
         assert "thinking" not in data
+
+
+@pytest.mark.asyncio
+async def test_message_delta_drain_after_done_keeps_full_wire_identity() -> None:
+    """A delta queued after the done sentinel still crosses the identity guard."""
+    import asyncio as _asyncio
+
+    repo = _FakeRepo()
+
+    async def _run(**kwargs):
+        sink = kwargs["event_sink"]
+        sink(AnalysisStartedEvent())
+        task = _asyncio.current_task()
+        assert task is not None
+
+        def _queue_late_delta(_done_task) -> None:
+            sink(AnswerDeltaEvent(delta="drained", generation_id=0))
+
+        # The production _AGENT_DONE callback is registered before this
+        # callback, so this event is intentionally placed behind the sentinel.
+        task.add_done_callback(_queue_late_delta)
+        return ReadingRecordAskRunResult(
+            final_text="drained",
+            finalized=FinalizedAskResult(
+                status="ok",
+                answer_text="drained",
+                resolved_evidence=(),
+                envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+            ),
+        )
+
+    chunks = [
+        c
+        async for c in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=repo,  # type: ignore[arg-type]
+            model=_function_model(),
+            run_fn=_run,
+            auto_wire_dependencies=False,
+            stable_document_id=_DOC,
+        )
+    ]
+    events = _parse_sse(chunks)
+    names = [name for name, _ in events]
+    run_started = next(data for name, data in events if name == EVENT_AGENTIC_RUN_STARTED)
+    deltas = [data for name, data in events if name == EVENT_MESSAGE_DELTA]
+
+    assert deltas == [
+        {
+            "execution_version": EXECUTION_VERSION_AGENTIC_V2,
+            "message_id": run_started["message_id"],
+            "thread_id": str(_THREAD),
+            "turn_run_id": run_started["turn_run_id"],
+            "generation_id": 0,
+            "delta": "drained",
+        }
+    ]
+    assert names.index(EVENT_AGENTIC_PROGRESS) < names.index(EVENT_MESSAGE_DELTA)
+    assert names.index(EVENT_MESSAGE_DELTA) < names.index(EVENT_MESSAGE_COMPLETED)
 
 
 @pytest.mark.asyncio

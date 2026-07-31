@@ -519,16 +519,20 @@ export interface ReaderAskMessageDto {
  *
  * Internal control fields (for deterministic same-session reprojection
  * only — never public DOM / view-model / server wire):
- * - `sequence`, `toolName`, `activityId`, `attemptCount`, `callSequence`
+ * - `localOrdinal`, `sequence`, `toolName`, `activityId`, `attemptCount`,
+ *   `callSequence`
  *
  * This type is UI-memory only; it is not a server DTO and must not be
  * written to the wire or cold history.
  */
 export type AgenticProcessSnapshotStep = {
-  /** Internal: reducer sequence for order-stable reprojection. */
+  /** Internal: local first-seen/synthetic order for stable reprojection. */
+  localOrdinal: number;
+  /** Internal: accepted server sequence (synthetic rows reuse the watermark). */
   sequence: number;
   phase:
     | "agent_running"
+    | "analysis"
     | "reading_context"
     | "searching_article"
     | "searching_web"
@@ -537,11 +541,18 @@ export type AgenticProcessSnapshotStep = {
   activity: "started" | "completed" | "unavailable" | "failed";
   elapsedMs: number;
   /** Internal: tool identity for fold / upsert rules. */
-  toolName: "read_range" | "search_current_article" | "search_web" | null;
+  toolName:
+    | "read_range"
+    | "search_current_article"
+    | "expand_evidence"
+    | "search_web"
+    | null;
   status: "running" | "ok" | "unavailable" | "failed" | null;
+  /** Public provider-neutral result state; null while the step is started. */
+  outcome: "success" | "empty" | "degraded" | "failed" | null;
   durationMs: number | null;
   /** Internal: web-search activity id for attempt upsert. */
-  activityId: "web_search" | null;
+  activityId: "article_evidence" | "web_search" | null;
   /** Internal: authoritative attempt count when present. */
   attemptCount: number | null;
   /** Internal: authoritative call sequence when present. */
@@ -1085,6 +1096,12 @@ export type WebSearchOutcomeDto =
   | "failed"
   | "timeout";
 
+export type ReaderAskAgenticProgressOutcomeDto =
+  | "success"
+  | "empty"
+  | "degraded"
+  | "failed";
+
 /**
  * Turn-level web search outcome summary (mirrors backend
  * `PublicWebSearchSummary`). Carried on the completed DTO so hot SSE, DB
@@ -1174,10 +1191,12 @@ export interface ReaderAskAgenticProgressPayloadDto {
   activity?: string | null;
   tool_name?: string | null;
   status?: string | null;
+  /** Strict public outcome; absent is accepted only for legacy frames. */
+  outcome?: ReaderAskAgenticProgressOutcomeDto | null;
   elapsed_ms?: number | null;
   duration_ms?: number | null;
-  /** Stable cross-attempt activity identity, currently only web_search. */
-  activity_id?: "web_search" | null;
+  /** Stable activity identity for article evidence and Web Search retries. */
+  activity_id?: "article_evidence" | "web_search" | null;
   /** Confirmed provider invocation count; null while a call is only started. */
   attempt_count?: number | null;
   /** Host tool invocation sequence within this search activity. */
@@ -1317,6 +1336,13 @@ const READER_ASK_AGENTIC_TERMINAL_STATUSES = new Set<string>([
   "invalid_citations",
   "failed",
   "cancelled",
+]);
+
+const READER_ASK_AGENTIC_PROGRESS_OUTCOMES = new Set<string>([
+  "success",
+  "empty",
+  "degraded",
+  "failed",
 ]);
 
 /**
@@ -1728,9 +1754,14 @@ export function isReaderAskAgenticProgressPayload(
     payload.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION &&
     typeof payload.phase === "string" &&
     typeof payload.summary === "string" &&
-    (payload.activity_id == null || payload.activity_id === "web_search") &&
+    (payload.activity_id == null ||
+      payload.activity_id === "article_evidence" ||
+      payload.activity_id === "web_search") &&
     (payload.attempt_count == null || isNonNegativeInt(payload.attempt_count)) &&
     (payload.call_sequence == null || isPositiveInt(payload.call_sequence)) &&
+    (payload.outcome == null ||
+      (typeof payload.outcome === "string" &&
+        READER_ASK_AGENTIC_PROGRESS_OUTCOMES.has(payload.outcome))) &&
     !(
       "query" in payload ||
       "url" in payload ||
