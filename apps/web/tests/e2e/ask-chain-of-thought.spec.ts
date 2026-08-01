@@ -8,8 +8,8 @@
  *  1. reasoning frames are fail-closed in v2 (no reasoning rendered); the
  *     progress-derived learner step + single-scroll-owner + composer + leak
  *     scan still hold;
- *  2. non-ok terminal freezes the in-flight answer step as interrupted —
- *     never a success checkmark;
+ *  2. non-ok terminal freezes the in-flight answer step as failed (cancelled
+ *     remains interrupted) — never a success checkmark;
  *  3. pure-answer turn renders a settled disclosure with NO fabricated
  *     steps (v2 only shows steps the host can prove) and no reasoning;
  *  4. web search step: attempt hint + non-interactive domain chips,
@@ -452,7 +452,7 @@ for (const viewport of VIEWPORTS) {
     // and its single-scroll-owner + composer-visible coverage now lives in
     // reader-record-ask-process-target-r0.spec.ts (see file header mapping).
 
-    test("non-ok terminal freezes the in-flight answer step as interrupted — never a success checkmark", async ({
+    test("failed terminal freezes the in-flight answer step as failed — never a success checkmark", async ({
       page,
     }) => {
       await loginAndOpenHarness(page);
@@ -493,10 +493,11 @@ for (const viewport of VIEWPORTS) {
       await expect(cotRoot(page)).toHaveAttribute("data-turn-process-state", "settled");
       await cotTrigger(page).click();
       const steps = cotRoot(page).locator("[data-step-status]");
-      const answering = cotRoot(page).locator("[data-step-status='interrupted']");
+      const answering = cotRoot(page).locator("[data-step-status='failed']");
       await expect(answering).toContainText("生成回答");
-      // The unfinished answer step is interrupted; the only `complete` mark is
-      // the ok article-evidence step (v2 synthesizes no host analysis step).
+      // A failed terminal marks the answer step failed; cancelled terminals
+      // use interrupted. The only complete mark is the ok article-evidence
+      // step (v2 synthesizes no host analysis step).
       expect(await cotRoot(page).locator("[data-step-status='complete']").count()).toBe(1);
       expect(await steps.count()).toBe(2);
       // Terminal explanation / server summary never leaks into the CoT.

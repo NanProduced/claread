@@ -5,7 +5,7 @@ In-process doubles + seeding helpers so an integration test can drive the
 PostgreSQL and assert the full compaction chain (compaction SSE → memory write
 → next-round prompt consumption) with zero real model calls.
 
-This is NOT a second business chain:
+This module lives under ``tests/`` and is NOT a second business chain:
 
 - The compactor double and the recording model double are injected through the
   existing default-real DI seams (``ThreadMemoryManager(compactor=...)``,
@@ -19,14 +19,10 @@ test can prove, by string search, that the compacted memory block reached the
 next round's model-visible prompt. The marker is plain ASCII and survives the
 memory renderer's XML escaping unchanged.
 
-Note on browser consumption: a provider-free *browser* compaction test would
-require a real user-owned Reading Record (the real ``production_stream`` loads
-snapshot facts for the session user), which without the LLM-driven intake flow
-needs either analysis-free record synthesis or owner-login scaffolding — both
-out of scope here and both racing the parallel Markdown runner's servers. The
-real server-side emission + persistence + next-round consumption is proven by
-the in-process integrated test; the real compaction *UI rendering* is proven by
-the R0 / Chain-of-Thought specs (real ``TurnProcessDisclosure`` component).
+Browser/BFF coverage is deliberately not claimed here. This helper proves the
+server-side production core with real PostgreSQL; UI rendering remains a
+separate scripted-browser evidence layer until the cutover test suite replaces
+the phase-numbered harnesses.
 """
 
 from __future__ import annotations

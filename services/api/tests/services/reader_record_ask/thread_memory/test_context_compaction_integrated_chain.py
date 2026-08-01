@@ -14,9 +14,9 @@ deterministic fake compactor and a deterministic fake (recording) answer model
 
 It also proves the fallback path (compactor failure → Host fallback → answer
 still completes) and the privacy contract (no raw transcript/query/URL/provider
-error in the SSE). Browser consumption of the same real SSE is covered by the
-companion Playwright spec (ask-context-compaction-integrated.spec.ts); this
-module covers the server-side depth that a browser cannot observe directly.
+error in the SSE). This module intentionally proves the server-side production
+core only. Browser/BFF coverage is tracked separately and must not be inferred
+from this test.
 
 No test code sinks ``ContextCompactionEvent`` directly: compaction is triggered
 solely by the real manager observing the seeded >20-pair history. The thread is
@@ -37,11 +37,10 @@ import pytest
 
 from app.config.settings import get_settings
 from app.database.connection import init_connection
-from app.services.reader_record_ask import _compaction_test_harness as harness
-from app.services.reader_record_ask.model_view_budget import ModelViewRenderer
 from app.services.reader_record_ask.evidence_expansion import (
     ExpansionPointerLedger,
 )
+from app.services.reader_record_ask.model_view_budget import ModelViewRenderer
 from app.services.reader_record_ask.production_stream import (
     stream_agentic_thread_message,
 )
@@ -50,13 +49,14 @@ from app.services.reader_record_ask.service import _load_snapshot_facts
 from app.services.reader_record_ask.thread_memory.compactor import (
     CompactorRunOutcome,
 )
-from app.services.reader_record_ask.thread_memory.manager import (
-    ThreadMemoryManager,
+from app.services.reader_record_ask.thread_memory.recent_history import (
+    partition_recent_history,
 )
 from app.services.reader_record_ask.thread_memory.repository import (
     ThreadMemoryRepository,
 )
-from app.services.reader_record_ask.thread_memory.render import render_memory_block
+
+from . import _compaction_test_harness as harness
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CLAREAD_RUN_THREAD_MEMORY_DB_TESTS") != "1",
@@ -174,41 +174,12 @@ async def test_real_integrated_compaction_chain_writes_and_is_consumed() -> None
             reading_record_id=reading_record_id,
         )
         repo = ReaderRecordAskRepository()
-        renderer = ModelViewRenderer()
         compactor = harness.make_marker_compactor()
 
-        fence_context = {
-            "reading_record_id": str(reading_record_id),
-            "current_generation": int(facts.record.generation),
-            "current_base_id": str(facts.build_result.base.base_id),
-        }
-
-        # --- Deterministic non-overlap + memory-block marker proof --------
-        events: list[Any] = []
-        prepared = await ThreadMemoryManager(
-            repository=ThreadMemoryRepository(),
-            renderer=renderer,
-            compactor=compactor,
-            event_sink=events.append,
-        ).prepare_context(thread_id=thread_id, fence_context=fence_context)
-        assert prepared.snapshot is not None
-        assert prepared.compaction_status == "completed"
-        assert prepared.recent_history_view is not None
-        episode = prepared.snapshot.episodes[0]
-        recent_ids = {m["id"] for m in prepared.recent_messages}
-        # The aged prefix (pair 1) is compacted, never also shipped as raw
-        # recent history — disjoint turn coverage, no double counting.
-        assert all(
-            mid not in recent_ids
-            for mid in (
-                str(UUID(int=int(thread_id.int) ^ 2)),
-                str(UUID(int=int(thread_id.int) ^ 3)),
-            )
-        )
-        memory_view = render_memory_block(prepared.snapshot, budget_chars=8000)
-        assert memory_view is not None
-        assert harness.COMPACTION_MARKER in memory_view.text
-        assert harness.RECENT_MARKER in prepared.recent_history_view.text
+        # The production stream must be the first writer. This makes the
+        # subsequent DB marker/version and next-turn prompt assertions causal:
+        # none can be satisfied by a direct manager pre-write.
+        assert await _memory_row(pool, thread_id) is None
 
         # --- Turn 1: real stream emits real compaction SSE + persists ------
         harness.clear_recorded_prompts()
@@ -260,7 +231,7 @@ async def test_real_integrated_compaction_chain_writes_and_is_consumed() -> None
 
         row = await _memory_row(pool, thread_id)
         assert row is not None, "memory snapshot must be persisted"
-        assert row["version"] >= 1
+        assert row["version"] == 1
         assert row["snapshot"]["watermark"]
         assert row["snapshot"]["episodes"], row["snapshot"]
         persisted_texts = [
@@ -269,6 +240,30 @@ async def test_real_integrated_compaction_chain_writes_and_is_consumed() -> None
             for fact in ep["structured_facts"]
         ]
         assert harness.COMPACTION_MARKER in persisted_texts
+
+        # Rebuild the canonical recent/aged partition without invoking the
+        # manager or writing memory again. The persisted episode covers only
+        # the aged prefix, while the newest seeded marker remains raw recent
+        # history; those message-id sets are disjoint.
+        canonical = await ThreadMemoryRepository().load_canonical_memory_view(
+            thread_id=thread_id
+        )
+        assert canonical is not None
+        partition = partition_recent_history(
+            canonical_messages=list(canonical.canonical_messages),
+            renderer=ModelViewRenderer(),
+            budget_chars=40_000,
+            recent_pairs=20,
+        )
+        assert partition.aged_messages
+        assert partition.rendered_view is not None
+        recent_ids = {str(message["id"]) for message in partition.recent_messages}
+        aged_ids = {str(message["id"]) for message in partition.aged_messages}
+        assert aged_ids.isdisjoint(recent_ids)
+        assert harness.RECENT_MARKER in partition.rendered_view.text
+        persisted_range = row["snapshot"]["episodes"][-1]["turn_range"]
+        assert persisted_range["start"] == 1
+        assert persisted_range["end"] >= 1
 
         # --- Turn 2: real runtime injects memory + recent into the prompt --
         harness.clear_recorded_prompts()

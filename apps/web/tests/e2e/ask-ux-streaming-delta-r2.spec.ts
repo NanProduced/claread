@@ -396,14 +396,21 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     await expect(trigger).toBeVisible();
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
-    // Running header carries the live phase label; expanded content shows
-    // the in-flight learner step (R2.1 contract labels; the v2 lane never
-    // renders provider reasoning here, so no reasoning text is expected).
+    // The first accepted delta makes answering the current live phase. The
+    // article tool had no explicit result, so supersession keeps it visible as
+    // interrupted rather than inventing completion.
     await expect(assistant.locator('[data-testid="ask-turn-process"]')).toContainText(
-      "正在查找文章依据",
+      "正在生成回答",
     );
     const liveContent = assistant.locator('[data-slot="chain-of-thought-content"]:visible');
-    await expect(liveContent).toContainText("查找文章依据");
+    await expect(
+      liveContent.locator("[data-step-status='interrupted']").filter({
+        hasText: "查找文章依据",
+      }),
+    ).toBeVisible();
+    await expect(
+      liveContent.locator("[data-step-status='active']").filter({ hasText: "生成回答" }),
+    ).toBeVisible();
 
     // --- completed lands — canonical replaces provisional ---
     await releaseNext(page);
@@ -480,7 +487,14 @@ test.describe("ASK-UX-HISTORY-COT-R2 P0-4 — real streaming delta proof", () =>
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
     const liveContent = assistant.locator('[data-slot="chain-of-thought-content"]:visible');
-    await expect(liveContent).toContainText("查找文章依据");
+    await expect(
+      liveContent.locator("[data-step-status='interrupted']").filter({
+        hasText: "查找文章依据",
+      }),
+    ).toBeVisible();
+    await expect(
+      liveContent.locator("[data-step-status='active']").filter({ hasText: "生成回答" }),
+    ).toBeVisible();
 
     // completed — canonical replaces provisional
     await releaseNext(page);

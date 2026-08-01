@@ -690,16 +690,19 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
 
     await submitQuestion(page, "测试问题");
     await waitForActivityStatus(page, "degraded");
-    // R2.1: searching_article maps to the learner-facing article-evidence
-    // label (正在查找文章依据); the internal stage name and the server summary
-    // never appear in the live header. Warning copy is not owned by CoT.
-    await expect(page.locator('[data-testid="ask-agentic-activity"]')).toContainText(
-      "查找文章依据",
-    );
-    await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
+    // With no active step after a degraded result, the header uses the neutral
+    // working copy. The typed article label and degraded outcome remain in the
+    // expanded process row; raw server summary never appears.
+    const activity = page.locator('[data-testid="ask-agentic-activity"]');
+    await expect(activity).toContainText("Ask Claread 正在工作");
+    await activity.click();
+    await expect(
+      page.locator("[data-step-status='degraded']").filter({ hasText: "查找文章依据" }),
+    ).toBeVisible();
+    await expect(activity).not.toContainText(
       "检索文章",
     );
-    await expect(page.locator('[data-testid="ask-agentic-activity"]')).not.toContainText(
+    await expect(page.locator('[data-testid="ask-turn-process"]')).not.toContainText(
       "文章搜索暂不可用",
     );
 
@@ -1275,6 +1278,11 @@ test.describe("R2.5 - Agentic Ask Activity Browser Acceptance", () => {
     // v2 never renders provider reasoning — even when the wire carries
     // agentic.reasoning.* frames. Fail-closed: no live append while held, no
     // reviewable projection after settle, and the answer still completes.
+    await waitForStreamWaiting(page);
+    await expect(page.locator('[data-slot="reasoning"]')).toHaveCount(0);
+    expect(await page.evaluate(() => document.body.innerText)).not.toContain(
+      "先判断句子主干。",
+    );
     await releaseAll(page);
     await expect(page.locator('[data-testid="ask-assistant-message"]')).toContainText(
       "主要观点",
