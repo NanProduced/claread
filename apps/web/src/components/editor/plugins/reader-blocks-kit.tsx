@@ -36,6 +36,7 @@ import type {
   ReaderMarkdownBlockquoteElement,
   ReaderParagraphElement,
   ReaderSentenceAnalysisChunkElement,
+  ReaderSourceCalloutElement,
   ReaderSentenceAnalysisElement,
   ReaderTableCellElement,
   ReaderTableElement,
@@ -54,11 +55,14 @@ import {
   READER_SENTENCE_ANALYSIS_CHUNK_TYPE,
   READER_SENTENCE_ANALYSIS_CHUNKS_TYPE,
   READER_SENTENCE_ANALYSIS_TYPE,
+  READER_SOURCE_CALLOUT_TYPE,
   READER_TABLE_CELL_TYPE,
   READER_TABLE_ROW_TYPE,
   READER_TABLE_TYPE,
 } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import { readerRecordNavigableNodeAttrs } from "@/lib/reader-plate/reader-record-dom-contract";
+import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
+import { isSafeCalloutEmoji } from "@/lib/source-callout/source-callout-display-icon";
 
 export const READER_CALLOUT_GROUP_TYPE = "reader_callout_group" as const;
 
@@ -488,6 +492,7 @@ function ReaderParagraphComponent({
         anchorSegmentId: data?.anchorSegmentId,
       })}
       data-reader-record-block-id={(element as unknown as ReaderParagraphElement).id}
+      data-reader-record-stable-block-type="paragraph"
       data-sentence-id={data?.sentenceId}
     >
       {children}
@@ -1263,7 +1268,7 @@ function ReaderStableMarkdownBlockquoteComponent({
       data-reader-record-block-id={
         (element as unknown as ReaderMarkdownBlockquoteElement).id
       }
-      data-reader-record-stable-block-type="markdown_blockquote"
+      data-reader-record-stable-block-type="blockquote"
       data-reader-record-markdown-node="blockquote"
     >
       {children}
@@ -1421,6 +1426,49 @@ export const ReaderStableCodeBlockPlugin = createPlatePlugin({
 export const ReaderStableMarkdownBlockquotePlugin = createPlatePlugin({
   key: READER_MARKDOWN_BLOCKQUOTE_TYPE,
   node: { isElement: true, component: ReaderStableMarkdownBlockquoteComponent },
+});
+
+function ReaderStableSourceCalloutComponent({
+  children,
+  element,
+  attributes,
+}: PlateElementProps) {
+  const data = (element as unknown as ReaderSourceCalloutElement).data;
+  const calloutIcon =
+    data?.calloutIcon && isSafeCalloutEmoji(data.calloutIcon)
+      ? data.calloutIcon
+      : "💡";
+
+  return (
+    <aside
+      {...attributes}
+      role="note"
+      className={`reader-record-plate-source-callout flex gap-3 rounded-lg border border-amber-200/60 bg-amber-50/80 px-4 py-3 text-ink not-italic dark:border-amber-400/20 dark:bg-amber-950/30 ${
+        attributes?.className ?? ""
+      }`.trim()}
+      {...readerRecordNavigableNodeAttrs({
+        nodeKind: "source_callout",
+        unitId: data?.unitId,
+        isUnitStart: data?.isUnitStart,
+        anchorSegmentId: data?.anchorSegmentId,
+      })}
+      data-reader-record-block-id={
+        (element as unknown as ReaderSourceCalloutElement).id
+      }
+      data-reader-record-stable-block-type="source_callout"
+      data-reader-record-markdown-node="aside"
+    >
+      <span aria-hidden="true" className="select-none text-base leading-relaxed text-amber-600 dark:text-amber-400">
+        {calloutIcon}
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </aside>
+  );
+}
+
+export const ReaderStableSourceCalloutPlugin = createPlatePlugin({
+  key: READER_SOURCE_CALLOUT_TYPE,
+  node: { isElement: true, component: ReaderStableSourceCalloutComponent },
 });
 
 export const ReaderStableTablePlugin = createPlatePlugin({
@@ -1887,14 +1935,15 @@ const markdownElementPlugins = [
   // `link` leaf plugin is separate — it serves the inline-marks projection
   // path. Both coexist without conflict (different node kinds: element vs
   // leaf, different keys: "a" vs "link").
-  // The `options.mode` field mirrors Plate's LinkPlugin contract so that
-  // shared UI (e.g. FloatingToolbar's `usePluginOption({ key: KEYS.link },
-  // "mode")`) does not crash with OPTION_UNDEFINED when the reader kit is
-  // mounted alongside the floating toolbar in tests or composed editors.
+  // NOTE: do NOT set `options.mode` here. Plate's LinkPlugin mode contract
+  // is "" | "edit" | "insert"; a static "inline" value is illegal and
+  // previously made the shared FloatingToolbar's link-open check (`!!mode`)
+  // permanently hide the toolbar. The link-open check now tests for
+  // "edit"/"insert" explicitly, and `usePluginOption` returning undefined
+  // is handled gracefully (treated as closed).
   createPlatePlugin({
     key: "a",
     node: { isElement: true, component: ReaderMarkdownLinkElement },
-    options: { mode: "inline" },
   }),
 ];
 
@@ -1940,6 +1989,14 @@ export const ReaderBlocksKit = [
   ReaderStableListItemPlugin,
   ReaderStableCodeBlockPlugin,
   ReaderStableMarkdownBlockquotePlugin,
+  ReaderStableSourceCalloutPlugin,
+  // source_callout（非 stable-block 路径）：当 enhancement children markdown
+  // 反序列化遇到 `<aside>` 或 GFM alert 时，SOURCE_CALLOUT_RULES 产出
+  // `{type:"source_callout"}` element。此处注册 SourceCalloutPlugin 让该
+  // type 有 component 可渲染，避免退化为默认渲染丢失 callout 视觉/语义。
+  // 与 ReaderStableSourceCalloutPlugin（key=reader_source_callout）并存：
+  // 后者服务 stable block projection，前者服务 markdown 直接反序列化。
+  SourceCalloutPlugin,
   ReaderStableTablePlugin,
   ReaderStableTableRowPlugin,
   ReaderStableTableCellPlugin,

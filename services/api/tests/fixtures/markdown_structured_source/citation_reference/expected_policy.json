@@ -1,0 +1,8 @@
+{
+  "fixture_name": "citation_reference",
+  "block_policies": [
+    {"block_id": "b1", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b2", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]},
+    {"block_id": "b3", "default_route": "main_reading", "rag_eligible": true, "allowed_source_scope": ["main_reading_text"]}
+  ]
+}

@@ -81,6 +81,49 @@ def test_bibliography_heading_chinese() -> None:
     assert results[1].shadow_only is False
 
 
+def test_reference_list_heading_citation_enforce() -> None:
+    """'Reference list' heading (without parenthetical) routes list_items to citation_reference."""
+    blocks = [
+        _block("heading", "Reference list", block_id="b1"),
+        _block("list_item", "Smith, J. Example paper. Journal, 2020.", block_id="b2"),
+        _block("paragraph", "[2] Jones et al. Another work.", block_id="b3"),
+    ]
+    results = classify_blocks(blocks)
+    assert results[0].content_role is None  # heading
+    assert results[1].content_role == "citation_reference"
+    assert results[1].shadow_only is False
+    assert "section_heading:references" in results[1].signals
+    assert results[2].content_role == "citation_reference"
+    assert results[2].shadow_only is False
+
+
+def test_reference_list_apa7_heading_citation_enforce() -> None:
+    """'Reference list (APA 7)' heading routes children to citation_reference."""
+    blocks = [
+        _block("heading", "Reference list (APA 7)", block_id="b1"),
+        _block("list_item", "Smith, J. (2020). Example paper.", block_id="b2"),
+    ]
+    results = classify_blocks(blocks)
+    assert results[1].content_role == "citation_reference"
+    assert results[1].shadow_only is False
+    assert "section_heading:references" in results[1].signals
+
+
+def test_reference_list_negative_body_text_stays_prose() -> None:
+    """Body text mentioning 'reference list' must not trigger citation
+    outside a reference section."""
+    blocks = [
+        _block("heading", "Discussion", block_id="b1"),
+        _block(
+            "paragraph",
+            "The reference list below contains the cited works.",
+            block_id="b2",
+        ),
+    ]
+    results = classify_blocks(blocks)
+    assert results[1].content_role == "prose"
+
+
 def test_weak_numbered_citation_is_shadow_only() -> None:
     blocks = [
         _block("paragraph", "Intro prose without a references heading.", block_id="b1"),

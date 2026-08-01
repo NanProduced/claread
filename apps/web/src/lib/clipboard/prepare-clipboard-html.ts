@@ -12,10 +12,17 @@
  *    解析走 `<template>`，script 不会执行；不引入重型依赖（无 DOMPurify）。
  *
  * 2. Notion callout 适配（`adaptNotionCallouts`）：
- *    - `<aside>` 与 class 含 `callout` 的块级容器（Notion 复制/导出的
- *      callout 表示）映射为 `<blockquote>`，保证 callout 内容以引用语义
- *      进入 Plate —— 可见、不静默丢失、不走 raw HTML 丢弃路径。
- *    - Source Callout 完整支持是 L3 范围，本模块只做语义降级映射。
+ *    - `<aside>` 保留原样（属性已在 sanitize 阶段清洗），由
+ *      `SourceCalloutPlugin` 的 HTML deserializer（`validNodeName: "ASIDE"`）
+ *      统一反序列化为 `source_callout` Plate element。
+ *    - class 含 `callout` 的块级容器（Notion 复制/导出的 `<div class="
+ *      callout">` / `<figure>` / `<section>`）重命名为 `<aside>`，保留
+ *      class 用于 callout kind 推断，丢弃其他属性。
+ *    - 不再转换为 GFM alert blockquote（`> [!NOTE]`），因为 Plate HTML
+ *      deserializer 路径不走 mdast rules，`[!NOTE]` 会作为可见文本进入
+ *      编辑器。canonical 表达统一为 `<aside>\n{inner}\n</aside>` raw HTML，
+ *      后端 `semantic_classifier` 通过 `source_semantic_hint:html_aside`
+ *      识别为 `content_role: source_callout`（T-only 自动策略）。
  *
  * 两个步骤都是纯字符串 → 字符串变换，可用 jsdom 单测。
  */
@@ -33,6 +40,28 @@ const URL_ATTRIBUTES = [
 ] as const;
 
 const DANGEROUS_URL_SCHEME = /^\s*(?:javascript|data|vbscript)\s*:/i;
+
+const SAFE_CLIPBOARD_URL_SCHEMES = new Set(["http", "https", "mailto"]);
+
+/**
+ * Shared clipboard URL contract used by sanitization and MIME fingerprinting.
+ * Relative URLs/anchors remain valid; explicit schemes are limited to the
+ * protocols accepted by the structured-source parser.
+ */
+export function normalizeClipboardHref(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || DANGEROUS_URL_SCHEME.test(trimmed)) return null;
+
+  const schemeMatch = trimmed.match(/^([a-z][a-z\d+.-]*):(.*)$/i);
+  if (!schemeMatch) return trimmed;
+
+  const scheme = schemeMatch[1]?.toLowerCase();
+  if (!scheme || !SAFE_CLIPBOARD_URL_SCHEMES.has(scheme)) return null;
+  return `${scheme}:${schemeMatch[2] ?? ""}`;
+}
 
 function parseIntoTemplate(html: string): HTMLTemplateElement {
   const template = document.createElement("template");
@@ -61,8 +90,11 @@ function sanitizeNode(root: ParentNode): void {
         continue;
       }
       if (URL_ATTRIBUTES.includes(name as (typeof URL_ATTRIBUTES)[number])) {
-        if (DANGEROUS_URL_SCHEME.test(attr.value)) {
+        const normalizedHref = normalizeClipboardHref(attr.value);
+        if (!normalizedHref) {
           el.removeAttribute(attr.name);
+        } else if (normalizedHref !== attr.value) {
+          el.setAttribute(attr.name, normalizedHref);
         }
       }
     }
@@ -84,9 +116,16 @@ export function sanitizeClipboardHtml(html: string): string {
 /** Notion callout 的 class 信号（复制粘贴与 HTML 导出两种来源）。 */
 const CALLOUT_CLASS_PATTERN = /(?:^|\s)(?:[\w-]*callout[\w-]*)(?:\s|$)/i;
 
+/**
+ * 判断一个元素是否是"callout 容器"——即需要被重命名为 `<aside>` 的
+ * `<div>` / `<figure>` / `<section>`（class 含 `callout`）。
+ *
+ * `<aside>` 本身已经是目标标签，不需要转换，返回 false。
+ */
 function isCalloutContainer(el: Element): boolean {
+  // <aside> 已经是目标标签，不重复处理
   if (el.tagName === "ASIDE") {
-    return true;
+    return false;
   }
   const tag = el.tagName;
   if (tag !== "DIV" && tag !== "FIGURE" && tag !== "SECTION") {
@@ -97,28 +136,42 @@ function isCalloutContainer(el: Element): boolean {
 }
 
 /**
- * 把 Notion callout 表示（`<aside>` / class 含 callout 的块容器）映射为
- * `<blockquote>` 语义。子内容保留（含 Notion 的 icon 文本），保证可见。
+ * 把 Notion callout 表示归一为 `<aside>` 元素，让 `SourceCalloutPlugin`
+ * 的 HTML deserializer 统一反序列化为 `source_callout` Plate element。
+ *
+ * - `<aside>`：保留原样（属性已在 sanitizeClipboardHtml 阶段清洗）。
+ * - `<div/figure/section class="callout*">`：重命名为 `<aside>`，仅保留
+ *   class 用于 callout kind 推断，丢弃其他属性。
+ *
+ * 不再转换为 GFM alert blockquote。原因：Plate HTML deserializer 路径
+ * 不经过 mdast rules，`[!NOTE]` marker 会作为可见文本进入编辑器。
+ * canonical 表达统一为 `<aside>` raw HTML，全链路由 `html_aside` hint
+ * 或 GFM alert marker（纯 Markdown 路径）识别为 source_callout。
  */
 export function adaptNotionCallouts(html: string): string {
   if (!html || !html.trim()) {
     return "";
   }
   const template = parseIntoTemplate(html);
-  // 反复扫描直到没有 callout 容器（处理嵌套 aside）
+  // 反复扫描直到没有 callout 容器（处理嵌套 callout div）
   for (;;) {
     const target = Array.from(
-      template.content.querySelectorAll("aside, div, figure, section"),
+      template.content.querySelectorAll("div, figure, section"),
     ).find(isCalloutContainer);
     if (!target) {
       break;
     }
-    const blockquote = document.createElement("blockquote");
-    // 保留子内容（搬移而非克隆，保持文本与内联结构）
-    while (target.firstChild) {
-      blockquote.appendChild(target.firstChild);
+    // 重命名为 <aside>，仅保留 class（用于 kind 推断），丢弃其他属性
+    const aside = document.createElement("aside");
+    const className = target.getAttribute("class") ?? "";
+    if (className) {
+      aside.setAttribute("class", className);
     }
-    target.replaceWith(blockquote);
+    // 搬移子内容（保持文本与内联结构）
+    while (target.firstChild) {
+      aside.appendChild(target.firstChild);
+    }
+    target.replaceWith(aside);
   }
   return template.innerHTML;
 }

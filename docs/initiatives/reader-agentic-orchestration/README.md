@@ -98,6 +98,7 @@
 | `modules/local-real-chain-runbook.md` | D5/D6 本地真实链路 runbook：三进程启动、model profile env、worker CLI、DB 诊断、fail-closed 行为 | 本地实跑 reader enhancement 主链路或排障 |
 | `modules/local-article-rag-runbook.md` | Article RAG 本地运维 runbook：配置、worker 启动、lifecycle status、失败码、真实 smoke gate | 本地实跑 Article RAG 或排障 |
 | `modules/semantic-automatic-layer-policy.md` | Semantic role 分类、automatic T/V/G/S 产品矩阵、off/shadow/enforce 冻结 mode、job fence 与 USER_EXPLICIT section 身份 | 修改 automatic bootstrap 过滤、worker fence、aside/blockquote 语义策略 |
+| `modules/markdown-adaptation-state.md` | Markdown Structured Source G0–G5 当前事实、能力矩阵、source callout 合同与验收证据 | 修改 Markdown 输入协商、Stable Block tree、Reader 投影、语义策略或结构化源验收 |
 
 ### 前端两文件边界切分
 

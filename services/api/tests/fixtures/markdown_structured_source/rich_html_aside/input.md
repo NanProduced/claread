@@ -1,0 +1,1 @@
+<aside class="notion-callout" onclick="alert(1)"><p><strong>Alignment</strong>: <em>emphasis</em>, <code>code</code> and <a href="https://example.com">a link</a>.</p><p>Second paragraph.</p><ul><li>First item</li><li>Second item</li></ul></aside>After the rich aside.

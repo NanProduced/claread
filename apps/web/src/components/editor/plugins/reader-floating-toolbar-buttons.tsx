@@ -23,6 +23,7 @@ import {
   BookOpenText,
   Copy,
   Highlighter,
+  Languages,
   MessageSquarePlus,
   NotebookPen,
   Search,
@@ -43,7 +44,13 @@ import {
 import { ToolbarButton, ToolbarGroup } from "@/components/ui/toolbar";
 import type { ReaderAskEntryActionDto } from "@/types/api/reader-ask";
 
-export type ReaderToolbarActionId = "lookup" | "copy" | "ask" | "highlight" | "note";
+export type ReaderToolbarActionId =
+  | "lookup"
+  | "copy"
+  | "translate"
+  | "ask"
+  | "highlight"
+  | "note";
 
 export interface ReaderToolbarActionState {
   disabled: boolean;
@@ -71,6 +78,7 @@ export interface ReaderToolbarActions {
     submissionMode?: "chat" | "quick_action";
   }) => void;
   onCopy: () => void;
+  onTranslate: () => void;
   onHighlight: () => void;
   onNote: () => void;
   onLookup: () => void;
@@ -92,7 +100,7 @@ const preventFocusLoss = {
 
 const toolbarGroupClassName = "items-center";
 const toolbarButtonClassName =
-  "rounded-[8px] text-ink/80 transition-colors hover:bg-lens-blue-soft/35 hover:text-ink active:bg-lens-blue-soft/50 disabled:cursor-not-allowed disabled:opacity-40";
+  "rounded-[8px] text-ink/80 transition-colors hover:bg-lens-blue-soft/35 hover:text-ink active:bg-lens-blue-soft/50 disabled:cursor-not-allowed disabled:opacity-40 max-[420px]:h-8 max-[420px]:min-w-8 max-[420px]:px-1.5";
 const toolbarShortcutClassName =
   "ml-1 inline-flex min-w-0 items-center rounded bg-background/14 px-1.5 py-0.5 font-sans text-xs font-semibold leading-none text-background/78";
 
@@ -184,6 +192,18 @@ export function ReaderCopyToolbarButton() {
       onAction={(actions) => actions.onCopy()}
     >
       <Copy className="size-4" />
+    </ReaderActionToolbarButton>
+  );
+}
+
+export function ReaderTranslateToolbarButton() {
+  return (
+    <ReaderActionToolbarButton
+      actionId="translate"
+      label="翻译"
+      onAction={(actions) => actions.onTranslate()}
+    >
+      <Languages className="size-4" />
     </ReaderActionToolbarButton>
   );
 }
@@ -454,6 +474,7 @@ export function ReaderFloatingToolbarButtons() {
       <ToolbarGroup className={toolbarGroupClassName}>
         <ReaderLookupToolbarButton />
         <ReaderCopyToolbarButton />
+        <ReaderTranslateToolbarButton />
       </ToolbarGroup>
       <ToolbarGroup className={toolbarGroupClassName}>
         <ReaderHighlightToolbarButton />

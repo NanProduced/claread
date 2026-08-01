@@ -1,0 +1,10 @@
+{
+  "fixture_name": "rich_html_aside",
+  "warnings": [
+    {"code": "raw_html_block", "message": "Raw HTML block detected; executable structure removed, text preserved as a plain paragraph.", "blocks_freeze": false, "classification": "adaptation_notice"}
+  ],
+  "unsupported": [
+    {"code": "raw_html", "message": "Raw HTML is not a first-class block type in the first phase; text is extracted but structure is not preserved."}
+  ],
+  "outcome": "stable_document_ready"
+}

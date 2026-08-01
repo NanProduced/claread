@@ -60,11 +60,20 @@ from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
 )
+from .section_lane import SECTION_REQUEST_ORIGIN
 from .span_recorder import (
     end_worker_span_execution_error,
     end_worker_span_fence_violation,
     end_worker_span_generic_exception,
     end_worker_span_success,
+)
+from .translation_prompt_profile import (
+    TRANSLATION_PROFILE_PROSE,
+    TRANSLATION_PROMPT_PROFILE_CONTRACT_VERSION,
+    TRANSLATION_PROMPT_PROFILE_VERSION,
+    build_translation_prompt_profile_contract,
+    get_translation_prompt_profile,
+    resolve_translation_prompt_profile_for_unit,
 )
 
 DEFAULT_TRANSLATION_RETRY_DELAY = timedelta(minutes=5)
@@ -129,7 +138,25 @@ _TRANSLATION_LAYER_NAME = "translation"
 _STRATEGY_METADATA_MISSING_CODE = "strategy_metadata_missing"
 _STRATEGY_HASH_MISMATCH_CODE = "strategy_hash_mismatch"
 _LAYER_POLICY_HASH_MISMATCH_CODE = "layer_policy_hash_mismatch"
+
+
+def _is_explicit_section_translation_input(input_json: object) -> bool:
+    """Return whether the already-fenced job is a USER_EXPLICIT section lane."""
+
+    return (
+        isinstance(input_json, Mapping)
+        and input_json.get("request_origin") == SECTION_REQUEST_ORIGIN
+    )
 _STRATEGY_VERSION_MISMATCH_CODE = "strategy_version_mismatch"
+_TRANSLATION_PROFILE_CONTRACT_MISMATCH_CODE = (
+    "translation_prompt_profile_contract_mismatch"
+)
+
+
+def _is_typed_translation_supersede_code(failure_code: str) -> bool:
+    return is_semantic_fence_failure_code(
+        failure_code
+    ) or failure_code == _TRANSLATION_PROFILE_CONTRACT_MISMATCH_CODE
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +198,13 @@ class TranslationJobContext:
     strategy_hash: str
     layer_policy_hash: str
     translation_prompt_lines: tuple[str, ...]
+    translation_prompt_profile_id: str = TRANSLATION_PROFILE_PROSE
+    translation_prompt_profile_version: str = TRANSLATION_PROMPT_PROFILE_VERSION
+    translation_prompt_profile_contract_version: str = (
+        TRANSLATION_PROMPT_PROFILE_CONTRACT_VERSION
+    )
+    translation_prompt_profile_manifest_hash: str = ""
+    translation_prompt_profile_fingerprint_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,6 +326,8 @@ class TranslationBatchUnitContext:
     source_text: str
     text_hash: str
     anchor_segments: tuple[TranslationAnchorSegmentTarget, ...]
+    translation_prompt_profile_id: str = TRANSLATION_PROFILE_PROSE
+    translation_prompt_profile_version: str = TRANSLATION_PROMPT_PROFILE_VERSION
 
 
 # Semantic translation group sizing for the batch path.
@@ -729,6 +765,12 @@ class TranslationBatchJobContext:
     strategy_hash: str
     layer_policy_hash: str
     translation_prompt_lines: tuple[str, ...]
+    translation_prompt_profile_contract_version: str = (
+        TRANSLATION_PROMPT_PROFILE_CONTRACT_VERSION
+    )
+    translation_prompt_profile_version: str = TRANSLATION_PROMPT_PROFILE_VERSION
+    translation_prompt_profile_manifest_hash: str = ""
+    translation_prompt_profile_fingerprint_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -962,6 +1004,7 @@ def hydrate_translation_batch_output(
 
 def _build_translation_batch_prompt(context: TranslationBatchJobContext) -> str:
     strategy_section = _format_translation_strategy_section_from_batch(context)
+    profile_section = _format_translation_profile_section_from_batch(context)
     grouping_section = _format_batch_grouping_contract_section()
     groups_section = _format_batch_translation_groups_section(context)
     return (
@@ -978,6 +1021,7 @@ def _build_translation_batch_prompt(context: TranslationBatchJobContext) -> str:
         f"source_language: {context.source_language}\n"
         f"target_language: {context.target_language}\n"
         f"{strategy_section}"
+        f"{profile_section}"
         f"{grouping_section}"
         "Return only the structured TranslationBatchGenerationOutput.\n"
         "Each unit must appear exactly once in units[] with its unit_id and "
@@ -998,6 +1042,43 @@ def _format_translation_strategy_section_from_batch(
         return ""
     rendered = "\n".join(context.translation_prompt_lines)
     return f"<strategy>\n{rendered}\n</strategy>\n"
+
+
+def _format_translation_profile_section_from_batch(
+    context: TranslationBatchJobContext,
+) -> str:
+    """Render profile selection explicitly for every batch unit.
+
+    A short/structured article batch can contain headings, prose, quotations,
+    and callouts together.  The prompt therefore declares the profile for
+    each unit instead of silently applying whichever role happened to be
+    loaded first.  This keeps one LLM call structurally auditable without
+    collapsing distinct role contracts.
+    """
+
+    profiles = [
+        get_translation_prompt_profile(unit.translation_prompt_profile_id)
+        for unit in context.units
+    ]
+    profile_ids = {profile.profile_id for profile in profiles}
+    mode = "per_unit" if len(profile_ids) > 1 else "uniform"
+    lines = [
+        "<translation_prompt_profiles>",
+        f"profile_version: {TRANSLATION_PROMPT_PROFILE_VERSION}",
+        f"profile_mode: {mode}",
+        "Each unit below has an explicit profile. Do not apply one unit's profile to another unit.",
+    ]
+    for unit, profile in zip(context.units, profiles, strict=True):
+        lines.extend(
+            [
+                f'<unit_profile unit_id="{unit.unit_id}">',
+                f"profile_id: {profile.profile_id}",
+                *[f"- {line}" for line in profile.prompt_lines],
+                "</unit_profile>",
+            ]
+        )
+    lines.append("</translation_prompt_profiles>")
+    return "\n".join(lines) + "\n"
 
 
 def _format_batch_grouping_contract_section() -> str:
@@ -1061,6 +1142,7 @@ def _build_batch_quality_json(
     execution: TranslationBatchExecutionResult,
     *,
     unit_count: int,
+    context: TranslationBatchJobContext | None = None,
 ) -> dict[str, Any]:
     quality_json: dict[str, Any] = {
         "unit_count": unit_count,
@@ -1076,6 +1158,23 @@ def _build_batch_quality_json(
         quality_json["model_provider"] = execution.model_provider
     if execution.model_name is not None:
         quality_json["model_name"] = execution.model_name
+    if context is not None and context.translation_prompt_profile_manifest_hash:
+        quality_json.update(
+            {
+                "translation_prompt_profile_contract_version": (
+                    context.translation_prompt_profile_contract_version
+                ),
+                "translation_prompt_profile_version": (
+                    context.translation_prompt_profile_version
+                ),
+                "translation_prompt_profile_manifest_hash": (
+                    context.translation_prompt_profile_manifest_hash
+                ),
+                "translation_prompt_profile_fingerprint_hash": (
+                    context.translation_prompt_profile_fingerprint_hash
+                ),
+            }
+        )
     return quality_json
 
 
@@ -1228,7 +1327,11 @@ class TranslationWorkerService:
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
                 output=output,
-                quality_json=_build_quality_json(output, execution),
+                quality_json=_build_quality_json(
+                    output,
+                    execution,
+                    context=context,
+                ),
             )
             event_id = await self._record_usage_event(
                 context=context,
@@ -1274,7 +1377,7 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
-            if is_semantic_fence_failure_code(exc.failure_code):
+            if _is_typed_translation_supersede_code(exc.failure_code):
                 # Typed supersede: fence mismatch or automatic layer disallowed.
                 # Never call the model under a reinterpreted policy.
                 await self._job_runtime.transition(
@@ -1482,6 +1585,7 @@ class TranslationWorkerService:
                 quality_json=_build_batch_quality_json(
                     execution,
                     unit_count=len(context.units),
+                    context=context,
                 ),
             )
             event_id = await self._record_batch_usage_event(
@@ -1526,7 +1630,7 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
-            if is_semantic_fence_failure_code(exc.failure_code):
+            if _is_typed_translation_supersede_code(exc.failure_code):
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
                     target_status="superseded",
@@ -1690,8 +1794,8 @@ class TranslationWorkerService:
             base_text = str(row["base_text"])
             unit_rows = await conn.fetch(
                 """
-                SELECT unit_id, order_index, base_start_utf16, base_end_utf16,
-                       text_hash, metadata_json
+                 SELECT unit_id, order_index, base_start_utf16, base_end_utf16,
+                        text_hash, unit_type, metadata_json
                 FROM reading_units
                 WHERE reading_record_id = $1
                   AND base_id = $2
@@ -1751,12 +1855,14 @@ class TranslationWorkerService:
                     }
             try:
                 meta_list = []
+                unit_metadata_by_id: dict[str, dict[str, Any]] = {}
                 for ur in unit_rows:
                     um = ur["metadata_json"]
                     if hasattr(um, "keys"):
                         um = dict(um)
                     elif not isinstance(um, dict):
                         um = {}
+                    unit_metadata_by_id[str(ur["unit_id"])] = um
                     meta_list.append(um)
                 loaded_unit_ids = [str(ur["unit_id"]) for ur in unit_rows]
                 validate_automatic_job_semantic_fence(
@@ -1790,6 +1896,22 @@ class TranslationWorkerService:
                     failure_class="validation",
                     failure_code="translation_batch_missing_unit",
                 )
+
+            current_profile_units = [
+                {
+                    "unit_id": str(unit_row["unit_id"]),
+                    "order_index": int(unit_row["order_index"]),
+                    "unit_type": str(unit_row["unit_type"] or ""),
+                    "metadata_json": unit_metadata_by_id[str(unit_row["unit_id"])],
+                }
+                for unit_row in unit_rows
+            ]
+            profile_contract = _validate_translation_prompt_profile_contract(
+                input_json,
+                current_units=current_profile_units,
+                operation_fingerprint=str(row["operation_fingerprint"]),
+                explicit_section=_is_explicit_section_translation_input(input_json),
+            )
 
             units: list[TranslationBatchUnitContext] = []
             for unit_row in unit_rows:
@@ -1895,6 +2017,18 @@ class TranslationWorkerService:
                         source_text=source_text,
                         text_hash=expected_hash,
                         anchor_segments=tuple(anchor_segments),
+                        translation_prompt_profile_id=(
+                            resolve_translation_prompt_profile_for_unit(
+                                unit_metadata_by_id.get(unit_id),
+                                block_type=unit_row["unit_type"],
+                                explicit_section=_is_explicit_section_translation_input(
+                                    input_json
+                                ),
+                            ).profile_id
+                        ),
+                        translation_prompt_profile_version=(
+                            TRANSLATION_PROMPT_PROFILE_VERSION
+                        ),
                     )
                 )
 
@@ -1920,6 +2054,18 @@ class TranslationWorkerService:
                 strategy_hash=strategy_metadata.strategy_hash,
                 layer_policy_hash=strategy_metadata.layer_policy_hash,
                 translation_prompt_lines=strategy_metadata.translation_prompt_lines,
+                translation_prompt_profile_contract_version=str(
+                    profile_contract["contract_version"]
+                ),
+                translation_prompt_profile_version=str(
+                    profile_contract["profile_version"]
+                ),
+                translation_prompt_profile_manifest_hash=str(
+                    profile_contract["manifest_hash"]
+                ),
+                translation_prompt_profile_fingerprint_hash=str(
+                    input_json.get("translation_prompt_profile_fingerprint_hash", "")
+                ),
             )
 
     async def _record_batch_usage_event(
@@ -1961,6 +2107,7 @@ class TranslationWorkerService:
                     "target_language": context.target_language,
                     "source_language": context.source_language,
                     "batch": True,
+                    **_translation_profile_audit_fields(context),
                 },
             )
         )
@@ -1998,6 +2145,7 @@ class TranslationWorkerService:
                     "target_language": context.target_language,
                     "source_language": context.source_language,
                     "batch": True,
+                    **_translation_profile_audit_fields(context),
                 },
             )
         )
@@ -2018,11 +2166,12 @@ class TranslationWorkerService:
                        COALESCE(job.input_json->>'target_language', $2) AS target_language,
                        base.language AS source_language,
                        base.text AS base_text,
-                       unit.order_index,
-                       unit.base_start_utf16,
-                       unit.base_end_utf16,
-                       unit.text_hash,
-                       unit.metadata_json
+                        unit.order_index,
+                        unit.base_start_utf16,
+                        unit.base_end_utf16,
+                        unit.text_hash,
+                        unit.unit_type,
+                        unit.metadata_json
                 FROM reader_jobs job
                 JOIN reading_bases base
                   ON base.id = job.base_id
@@ -2184,6 +2333,24 @@ class TranslationWorkerService:
         # downgraded to a default strategy.
         input_json = row["input_json"]
         strategy_metadata = _validate_translation_strategy_metadata(input_json)
+        translation_profile = resolve_translation_prompt_profile_for_unit(
+            unit_meta,
+            block_type=row["unit_type"],
+            explicit_section=_is_explicit_section_translation_input(input_json),
+        )
+        profile_contract = _validate_translation_prompt_profile_contract(
+            input_json,
+            current_units=[
+                {
+                    "unit_id": unit_key,
+                    "order_index": int(row["order_index"]),
+                    "unit_type": str(row["unit_type"] or ""),
+                    "metadata_json": unit_meta,
+                }
+            ],
+            operation_fingerprint=str(row["operation_fingerprint"]),
+            explicit_section=_is_explicit_section_translation_input(input_json),
+        )
 
         return TranslationJobContext(
             job_id=row["id"],
@@ -2206,6 +2373,17 @@ class TranslationWorkerService:
             strategy_hash=strategy_metadata.strategy_hash,
             layer_policy_hash=strategy_metadata.layer_policy_hash,
             translation_prompt_lines=strategy_metadata.translation_prompt_lines,
+            translation_prompt_profile_id=translation_profile.profile_id,
+            translation_prompt_profile_version=str(profile_contract["profile_version"]),
+            translation_prompt_profile_contract_version=str(
+                profile_contract["contract_version"]
+            ),
+            translation_prompt_profile_manifest_hash=str(
+                profile_contract["manifest_hash"]
+            ),
+            translation_prompt_profile_fingerprint_hash=str(
+                input_json.get("translation_prompt_profile_fingerprint_hash", "")
+            ),
         )
 
     async def _mark_run_running(self, run_id: UUID) -> None:
@@ -2286,6 +2464,7 @@ class TranslationWorkerService:
                     "unit_id": context.unit_id,
                     "target_language": context.target_language,
                     "source_language": context.source_language,
+                    **_translation_profile_audit_fields(context),
                 },
             )
         )
@@ -2321,12 +2500,14 @@ class TranslationWorkerService:
                     "unit_id": context.unit_id,
                     "target_language": context.target_language,
                     "source_language": context.source_language,
+                    **_translation_profile_audit_fields(context),
                 },
             )
         )
 
 
 def _build_translation_prompt(context: TranslationJobContext) -> str:
+    profile_section = _format_translation_profile_section(context)
     strategy_section = _format_translation_strategy_section(context)
     grouping_section = _format_grouping_guidance_section()
     target_segments_section = _format_target_segments_section(context)
@@ -2335,6 +2516,7 @@ def _build_translation_prompt(context: TranslationJobContext) -> str:
         f"source_language: {context.source_language}\n"
         f"target_language: {context.target_language}\n"
         f"unit_id: {context.unit_id}\n"
+        f"{profile_section}"
         f"{strategy_section}"
         f"{grouping_section}"
         "Return only the structured TranslationLayerGenerationOutput.\n"
@@ -2351,6 +2533,20 @@ def _build_translation_prompt(context: TranslationJobContext) -> str:
         "</source_text>\n"
         f"{target_segments_section}"
     )
+
+
+def _format_translation_profile_section(context: TranslationJobContext) -> str:
+    """Render the versioned role-specific translation contract."""
+
+    profile = get_translation_prompt_profile(context.translation_prompt_profile_id)
+    lines = [
+        "<translation_prompt_profile>",
+        f"profile_version: {profile.version}",
+        f"profile_id: {profile.profile_id}",
+        *[f"- {line}" for line in profile.prompt_lines],
+        "</translation_prompt_profile>",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _format_grouping_guidance_section() -> str:
@@ -2579,6 +2775,99 @@ def _validate_translation_strategy_metadata(
     )
 
 
+def _translation_profile_contract_error(message: str) -> TranslationExecutionError:
+    return TranslationExecutionError(
+        message,
+        retryable=False,
+        failure_class="validation",
+        failure_code=_TRANSLATION_PROFILE_CONTRACT_MISMATCH_CODE,
+    )
+
+
+def _validate_translation_prompt_profile_contract(
+    input_json: Any,
+    *,
+    current_units: list[Mapping[str, Any]],
+    operation_fingerprint: str,
+    explicit_section: bool,
+) -> dict[str, Any]:
+    """Validate the frozen prompt-profile contract before model execution."""
+
+    if not isinstance(input_json, Mapping):
+        raise _translation_profile_contract_error(
+            "translation job input_json has no frozen prompt profile contract"
+        )
+    required_keys = (
+        "translation_prompt_profile_contract_version",
+        "translation_prompt_profile_version",
+        "translation_prompt_profile_manifest",
+        "translation_prompt_profile_manifest_hash",
+        "translation_prompt_profile_fingerprint_hash",
+    )
+    present_profile_keys = [key for key in required_keys if key in input_json]
+    if not present_profile_keys:
+        # Jobs created before G4 have no profile keys at all. Preserve their
+        # legacy prose behaviour, but never treat a partially written or
+        # USER_EXPLICIT contract as legacy: new jobs must carry the complete
+        # frozen contract before an executor can run.
+        if explicit_section:
+            raise _translation_profile_contract_error(
+                "USER_EXPLICIT translation job has no frozen prompt profile contract"
+            )
+        return {
+            "contract_version": TRANSLATION_PROMPT_PROFILE_CONTRACT_VERSION,
+            "profile_version": TRANSLATION_PROMPT_PROFILE_VERSION,
+            "manifest": [],
+            "manifest_hash": "",
+            "legacy": True,
+        }
+    missing = [key for key in required_keys if key not in input_json]
+    if missing:
+        raise _translation_profile_contract_error(
+            "translation job prompt profile contract is missing: "
+            + ", ".join(missing)
+        )
+    frozen_manifest = input_json["translation_prompt_profile_manifest"]
+    if not isinstance(frozen_manifest, list):
+        raise _translation_profile_contract_error(
+            "translation job prompt profile manifest is not a list"
+        )
+    frozen_contract = {
+        "contract_version": input_json[
+            "translation_prompt_profile_contract_version"
+        ],
+        "profile_version": input_json["translation_prompt_profile_version"],
+        "manifest": frozen_manifest,
+        "manifest_hash": input_json["translation_prompt_profile_manifest_hash"],
+    }
+    current_contract = build_translation_prompt_profile_contract(
+        current_units,
+        explicit_section=explicit_section,
+    )
+    if frozen_contract != current_contract:
+        raise _translation_profile_contract_error(
+            "translation job prompt profile contract drifted from the frozen job"
+        )
+
+    fingerprint_hash = input_json["translation_prompt_profile_fingerprint_hash"]
+    if not isinstance(fingerprint_hash, str) or not fingerprint_hash:
+        raise _translation_profile_contract_error(
+            "translation job prompt profile fingerprint hash is invalid"
+        )
+    fingerprint_token = (
+        "prompt_profile:"
+        f"{current_contract['contract_version']}:"
+        f"{current_contract['profile_version']}:"
+        f"{fingerprint_hash}"
+    )
+    if not operation_fingerprint.endswith(f":{fingerprint_token}"):
+        raise _translation_profile_contract_error(
+            "translation job operation fingerprint does not carry the frozen "
+            "prompt profile contract"
+        )
+    return current_contract
+
+
 def hydrate_translation_layer_output(
     *,
     context: TranslationJobContext,
@@ -2642,9 +2931,32 @@ def hydrate_translation_layer_output(
     return TranslationLayerOutput(groups=hydrated_groups)
 
 
+def _translation_profile_audit_fields(
+    context: TranslationJobContext | TranslationBatchJobContext,
+) -> dict[str, str]:
+    if not context.translation_prompt_profile_manifest_hash:
+        return {}
+    return {
+        "translation_prompt_profile_contract_version": (
+            context.translation_prompt_profile_contract_version
+        ),
+        "translation_prompt_profile_version": (
+            context.translation_prompt_profile_version
+        ),
+        "translation_prompt_profile_manifest_hash": (
+            context.translation_prompt_profile_manifest_hash
+        ),
+        "translation_prompt_profile_fingerprint_hash": (
+            context.translation_prompt_profile_fingerprint_hash
+        ),
+    }
+
+
 def _build_quality_json(
     output: TranslationLayerOutput,
     execution: TranslationExecutionResult,
+    *,
+    context: TranslationJobContext | None = None,
 ) -> dict[str, Any]:
     quality_json: dict[str, Any] = {
         "group_count": len(output.groups),
@@ -2659,4 +2971,21 @@ def _build_quality_json(
         quality_json["model_provider"] = execution.model_provider
     if execution.model_name is not None:
         quality_json["model_name"] = execution.model_name
+    if context is not None and context.translation_prompt_profile_manifest_hash:
+        quality_json.update(
+            {
+                "translation_prompt_profile_contract_version": (
+                    context.translation_prompt_profile_contract_version
+                ),
+                "translation_prompt_profile_version": (
+                    context.translation_prompt_profile_version
+                ),
+                "translation_prompt_profile_manifest_hash": (
+                    context.translation_prompt_profile_manifest_hash
+                ),
+                "translation_prompt_profile_fingerprint_hash": (
+                    context.translation_prompt_profile_fingerprint_hash
+                ),
+            }
+        )
     return quality_json

@@ -88,6 +88,75 @@ export const NOTION_CALLOUT_EXPORT_HTML = `
 </div>
 `.trim();
 
+/**
+ * Complete Notion dual-MIME payload. HTML carries the surrounding rich
+ * structure but exposes the callout delimiters as escaped block text; the
+ * companion plain representation carries the same article and a paired
+ * Markdown aside.
+ */
+export const NOTION_CALLOUT_DUAL_MIME_HTML = `
+<h2>Reader Goals</h2>
+<p>Opening with <strong>strong</strong> and <em>em</em> structure.</p>
+<ul><li>first point</li><li>second point</li></ul>
+<p>Read the <a href="https://example.com/guide">safe link</a>.</p>
+<h3>Reference list</h3>
+<ol><li><a href="https://example.com/reference">Reference A</a></li><li>Reference B</li></ol>
+<table><thead><tr><th>Source</th><th>Meaning</th></tr></thead><tbody><tr><td>article</td><td>rich structure</td></tr><tr><td>callout</td><td>plain semantic fallback</td></tr></tbody></table>
+<p>&lt;aside&gt;</p>
+<p>🎯</p>
+<p><strong>Alignment</strong>: preserve the <a href="https://example.com/first">first callout link</a>.</p>
+<ul><li>Read the <a href="https://example.com/first-list">first list link</a><ul><li>Nested first detail</li></ul></li><li><em>Keep</em> the first list explicit.</li></ul>
+<p>&lt;/aside&gt;</p>
+<p>&lt;aside&gt;</p>
+<p>⚠️</p>
+<p><em>Warning</em>: preserve the <a href="https://example.com/second">second callout link</a>.</p>
+<ol><li>First warning item<ul><li>Nested warning detail</li></ul></li><li><strong>Second warning item</strong></li></ol>
+<p>&lt;/aside&gt;</p>
+<p>Trailing paragraph remains independent.</p>
+`.trim();
+
+export const NOTION_CALLOUT_DUAL_MIME_PLAIN = `## Reader Goals
+
+Opening with **strong** and *em* structure.
+
+- first point
+- second point
+
+Read the [safe link](https://example.com/guide).
+
+### Reference list
+
+1. [Reference A](https://example.com/reference)
+2. Reference B
+
+| Source | Meaning |
+| --- | --- |
+| article | rich structure |
+| callout | plain semantic fallback |
+
+<aside>
+🎯
+
+**Alignment**: preserve the [first callout link](https://example.com/first).
+
+- Read the [first list link](https://example.com/first-list)
+  - Nested first detail
+- *Keep* the first list explicit.
+</aside>
+
+<aside>
+⚠️
+
+*Warning*: preserve the [second callout link](https://example.com/second).
+
+1. First warning item
+   - Nested warning detail
+2. **Second warning item**
+
+</aside>
+
+Trailing paragraph remains independent.`;
+
 // ---------------------------------------------------------------------------
 // Word 风格 HTML（mso 样式 + 条件注释残渣）
 // ---------------------------------------------------------------------------
@@ -124,6 +193,50 @@ export const MALICIOUS_HTML = `
 // ---------------------------------------------------------------------------
 
 export const ASIDE_HTML = `<aside><p>plain aside note</p></aside>`;
+
+// ---------------------------------------------------------------------------
+// Source Callout — 纯 Markdown <aside>、带 class 的 <aside>、GFM alert
+// ---------------------------------------------------------------------------
+
+/** 纯 Markdown text/plain 粘贴的 <aside> 块（canonical 表达）。 */
+export const ASIDE_MARKDOWN_PLAIN = `<aside>
+This is a source callout with **bold** text.
+</aside>`;
+
+/** 纯 Markdown 多段落 <aside>（含空行，测试 remarkMergeAsideHtml）。 */
+export const ASIDE_MARKDOWN_MULTIPARA = `<aside>
+First paragraph in callout.
+
+Second paragraph in callout.
+</aside>`;
+
+/** 带 class 的 <aside> HTML（剪贴板 text/html 粘贴，kind=warning）。 */
+export const ASIDE_HTML_WITH_CLASS = `<aside class="callout-warning"><p>Warning callout body</p></aside>`;
+
+/** GFM alert Markdown（text/plain 粘贴 `> [!NOTE]`）。 */
+export const GFM_ALERT_NOTE_MD = `> [!NOTE]
+> This is a note callout
+> with multiple lines`;
+
+/** GFM alert WARNING Markdown。 */
+export const GFM_ALERT_WARNING_MD = `> [!WARNING]
+> Be careful with this approach`;
+
+/** 转义的 \\<aside> Markdown（历史数据回归）。 */
+export const ESCAPED_ASIDE_MD = `\\<aside>This is literal\\</aside>`;
+
+/** 不完整 <aside>（无闭合标签）。 */
+export const UNCLOSED_ASIDE_MD = `<aside>No closing tag here`;
+
+/** R-Aside-1R A1: `</aside>` 后紧接正文 — callout 与后续段落边界测试。 */
+export const ASIDE_WITH_TRAILING_TEXT_MD = `<aside>
+**Alignment**: this is a callout body.
+
+Second paragraph inside callout.
+</aside>Peer discussion continues here`;
+
+/** 危险 <aside>（带 event handler 属性，测试安全降级）。 */
+export const DANGEROUS_ASIDE_HTML = `<aside onclick="steal()" class="callout-note"><p>safe content</p></aside>`;
 
 export const TABLE_HTML = `
 <table>

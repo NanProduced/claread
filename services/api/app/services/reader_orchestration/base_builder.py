@@ -306,6 +306,10 @@ class ReadingBaseBuildResult:
     units: tuple[BuiltReadingUnit, ...]
     anchor_segments: tuple[BuiltAnchorSegment, ...]
     navigation_units: tuple[NavigationUnitFact, ...]
+    # Stable Document rows are the structure truth.  The reading units and
+    # anchors above remain location/scheduling carriers; they must not be
+    # used to reconstruct list/table/callout structure on reload.
+    stable_document_blocks: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

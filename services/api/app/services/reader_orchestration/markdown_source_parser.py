@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
 
@@ -87,6 +88,10 @@ _MSG_RAW_HTML_BLOCK = (
     "Raw HTML block detected; executable structure removed, text preserved "
     "as a plain paragraph."
 )
+_MSG_UNCLOSED_ASIDE = (
+    "HTML <aside> opening tag has no matching closing tag; the wrapper was "
+    "removed and visible content was downgraded for candidate review."
+)
 _MSG_INLINE_HTML = "Inline HTML tag stripped from paragraph text."
 _MSG_UNSAFE_LINK = (
     "Links with unsafe protocols (javascript/data/vbscript) were stripped "
@@ -130,6 +135,22 @@ _MSG_UNSUP_UNSAFE_LINK = (
 _MSG_UNSUP_FOOTNOTE = (
     "Footnote definition is captured as a block but full footnote semantics "
     "(multi-ref, backref) are not supported in first phase."
+)
+_MSG_TASK_LIST = (
+    "GFM task-list checkbox state is preserved as visible text but task-list "
+    "semantics are not supported; candidate review is required."
+)
+_MSG_UNSUP_TASK_LIST = (
+    "Task-list checked-state semantics are not supported in the first phase; "
+    "the visible marker is retained for candidate review."
+)
+_MSG_DEFINITION_LIST = (
+    "Definition-list syntax is preserved as plain text; definition-list "
+    "structure is not supported in the first phase."
+)
+_MSG_UNSUP_DEFINITION_LIST = (
+    "Definition-list structure is not supported in the first phase; text is "
+    "retained for safe review."
 )
 
 
@@ -706,13 +727,179 @@ def _strip_html_tags(content: str) -> str:
     return re.sub(r"<[^>]+>", "", content).strip()
 
 
+_EMOJI_VARIATION_SELECTORS = frozenset({0xFE0E, 0xFE0F})
+_EMOJI_MODIFIERS = frozenset(range(0x1F3FB, 0x1F400))
+_REGIONAL_INDICATORS = frozenset(range(0x1F1E6, 0x1F200))
+_KEYCAP_BASES = frozenset("0123456789#*")
+
+
+def _is_emoji_base(codepoint: int) -> bool:
+    """Return True for the bounded emoji base ranges used by display icons."""
+    return (
+        0x1F000 <= codepoint <= 0x1FAFF
+        or 0x2600 <= codepoint <= 0x27BF
+        or codepoint
+        in {
+            0x00A9,
+            0x00AE,
+            0x203C,
+            0x2049,
+            0x2122,
+            0x2139,
+            0x3030,
+            0x303D,
+            0x3297,
+            0x3299,
+        }
+    )
+
+
+def _is_safe_display_icon(value: str | None) -> bool:
+    """Accept exactly one emoji grapheme, not arbitrary emoji-containing text."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+
+    codepoints = [ord(char) for char in value]
+    if len(codepoints) == 2 and all(cp in _REGIONAL_INDICATORS for cp in codepoints):
+        return True
+
+    has_base = False
+    previous_was_zwj = False
+    keycap_base: str | None = None
+    for char, codepoint in zip(value, codepoints, strict=True):
+        if char in _KEYCAP_BASES:
+            if has_base or keycap_base is not None:
+                return False
+            keycap_base = char
+            continue
+        if codepoint in _EMOJI_VARIATION_SELECTORS or codepoint in _EMOJI_MODIFIERS:
+            if not has_base and keycap_base is None:
+                return False
+            continue
+        if codepoint == 0x20E3:
+            return keycap_base is not None and not has_base
+        if codepoint == 0x200D:
+            if not has_base:
+                return False
+            previous_was_zwj = True
+            continue
+        if not _is_emoji_base(codepoint):
+            return False
+        if has_base and not previous_was_zwj:
+            return False
+        has_base = True
+        previous_was_zwj = False
+
+    return has_base or keycap_base is not None
+
+
+def _promote_callout_display_icons(blocks: list[ParsedBlock]) -> list[ParsedBlock]:
+    """Move only a wrapper's leading emoji-only paragraph into payload metadata.
+
+    This is intentionally performed on the parser's single ParsedBlock stream.
+    The removed paragraph therefore cannot acquire a canonical range, unit,
+    anchor, or automatic layer, while all other descendants retain their
+    existing parent chain and source ranges.
+    """
+    wrappers = {
+        block.block_id: block
+        for block in blocks
+        if block.payload_json.get("source_semantic_hint")
+        in {SOURCE_SEMANTIC_HINT_HTML_ASIDE, SOURCE_SEMANTIC_HINT_GFM_ALERT}
+    }
+    if not wrappers:
+        return blocks
+
+    children_by_parent: dict[str, list[ParsedBlock]] = {}
+    for block in blocks:
+        if block.parent_block_id in wrappers:
+            children_by_parent.setdefault(str(block.parent_block_id), []).append(block)
+
+    icon_by_wrapper: dict[str, str] = {}
+    removed_ids: set[str] = set()
+    for wrapper_id, children in children_by_parent.items():
+        first = min(children, key=lambda child: child.order_index)
+        if (
+            first.block_type != "paragraph"
+            or not _is_safe_display_icon(first.text_content)
+            or first.payload_json.get("inline_marks")
+            or first.payload_json.get("links")
+        ):
+            continue
+        icon_by_wrapper[wrapper_id] = str(first.text_content)
+        removed_ids.add(first.block_id)
+
+    if not icon_by_wrapper:
+        return blocks
+
+    retained = [block for block in blocks if block.block_id not in removed_ids]
+    # ParsedBlock ids are part of the parent-chain contract. Removing the
+    # icon paragraph leaves a gap, and the normalizer later assigns compact
+    # ids again; remap parents here so that a child never points at its own
+    # newly assigned id (or at the removed icon block).
+    id_by_old_id = {
+        block.block_id: f"b{index + 1}"
+        for index, block in enumerate(retained)
+    }
+
+    promoted: list[ParsedBlock] = []
+    for index, block in enumerate(retained):
+        payload = block.payload_json
+        icon = icon_by_wrapper.get(block.block_id)
+        if icon is not None:
+            payload = {**payload, "display_icon": icon}
+        promoted.append(
+            ParsedBlock(
+                block_id=id_by_old_id[block.block_id],
+                block_type=block.block_type,
+                text_content=block.text_content,
+                payload_json=payload,
+                parent_block_id=(
+                    id_by_old_id.get(block.parent_block_id)
+                    if block.parent_block_id is not None
+                    else None
+                ),
+                order_index=index,
+                source_range=block.source_range,
+            )
+        )
+    return promoted
+
+
 # Notion / clipboard <aside> containers: detect on raw HTML (before strip)
 # so the semantic classifier can map to source_callout. Ordinary <div>
 # must not match.
 _HTML_ASIDE_OPEN_RE = re.compile(r"<\s*aside\b", re.IGNORECASE)
 _HTML_ASIDE_CLOSE_RE = re.compile(r"<\s*/\s*aside\s*>", re.IGNORECASE)
-# Stable payload key consumed only by semantic_classifier (single role seam).
+# R-Aside-1R2: match the full <aside ...> opening tag (including attributes)
+# so we can extract text after the tag when markdown-it-py groups <aside>
+# and the following line into a single html_block token. ``[^>]*`` is safe
+# here because html_block tokens never contain attribute values with literal
+# ``>`` (markdown-it-py would have closed the tag earlier).
+_HTML_ASIDE_OPEN_TAG_RE = re.compile(
+    r"<\s*aside\b[^>]*>", re.IGNORECASE
+)
+# Stable payload keys consumed only by semantic_classifier (single role seam).
 SOURCE_SEMANTIC_HINT_HTML_ASIDE = "html_aside"
+SOURCE_SEMANTIC_HINT_GFM_ALERT = "gfm_alert"
+
+# R-Aside-1R2: GFM alert marker detection on the first inline child of a
+# blockquote. Matches ``[!NOTE]``, ``[!TIP]``, ``[!IMPORTANT]``, etc. as
+# the first line of the blockquote's first paragraph. The parser sets
+# ``source_semantic_hint=gfm_alert`` on the blockquote container so the
+# classifier can route to source_callout without text-matching the
+# container (which is structural, text_content=None). The marker kind
+# (group 1, lowercased) is stored as ``gfm_alert_kind`` in the container
+# payload and the marker paragraph itself is skipped so ``[!NOTE]`` does
+# NOT leak into child text / canonical text / Reader projection.
+_GFM_ALERT_MARKER_FIRST_LINE_RE = re.compile(
+    r"^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION|ABSTRACT|INFO)\]\s*",
+    re.IGNORECASE,
+)
+_TASK_LIST_MARKER_RE = re.compile(
+    r"(?m)^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\](?:\s+|$)"
+)
+_DEFINITION_LIST_RE = re.compile(r"(?m)^\s*[^\n]+\n\s*:\s+\S")
 
 
 def _html_raw_is_aside(raw_html_chunks: list[str]) -> bool:
@@ -720,6 +907,319 @@ def _html_raw_is_aside(raw_html_chunks: list[str]) -> bool:
     return bool(
         _HTML_ASIDE_OPEN_RE.search(joined) and _HTML_ASIDE_CLOSE_RE.search(joined)
     )
+
+
+def _split_aside_trailing(content: str) -> tuple[str, str]:
+    """Split raw html_block content at the closing ``</aside>`` tag.
+
+    R-Aside-1R A3: ``</aside>Peer discussion`` on the same line must split —
+    the aside part stays in the callout block, the trailing prose becomes a
+    separate paragraph block. The old implementation stripped all tags from
+    the whole token and joined the result, swallowing the trailing text into
+    the callout's ``text_content``.
+
+    Returns ``(aside_part, trailing_text)``:
+    - ``aside_part``: everything up to and including the first ``</aside>``
+      (or the whole content if no ``</aside>`` is present).
+    - ``trailing_text``: the trimmed text after ``</aside>`` (empty string
+      if nothing follows).
+
+    Only the *first* ``</aside>`` is used; malformed double-closed asides
+    keep any extra ``</aside>`` as literal trailing text (safe degradation).
+    """
+    match = _HTML_ASIDE_CLOSE_RE.search(content)
+    if not match:
+        return content, ""
+    aside_part = content[: match.end()]
+    trailing = content[match.end() :].strip()
+    return aside_part, trailing
+
+
+_RICH_ASIDE_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:p|div|section|article|h[1-6]|ul|ol|li|br|"
+    r"strong|b|em|i|code|a|del|s|script|style|iframe|object|embed|svg)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_rich_html_aside(raw: str) -> bool:
+    """Return whether a paired aside contains structure worth preserving.
+
+    A plain ``<aside>text</aside>`` remains on the legacy safe-degradation
+    path.  Once a paired aside contains supported block/inline HTML, the
+    restricted normalizer below converts it to Markdown and sends that
+    Markdown through this adapter's normal parser.  The normalizer is
+    deliberately transient; no HTML AST is persisted as a second source of
+    truth.
+    """
+    return bool(
+        _HTML_ASIDE_OPEN_RE.search(raw)
+        and _HTML_ASIDE_CLOSE_RE.search(raw)
+        and _RICH_ASIDE_TAG_RE.search(raw)
+    )
+
+
+class _RichAsideHtmlNormalizer(HTMLParser):
+    """Convert a small, safe subset of rich HTML inside ``<aside>`` to Markdown.
+
+    This is an input adaptation layer, not a second document model.  It keeps
+    only the tags needed by Notion/clipboard exports, drops executable
+    elements and attributes, and leaves link protocol validation to the same
+    Markdown parser path used for ordinary source text.
+    """
+
+    _BLOCK_TAGS = frozenset({"p", "div", "section", "article", "h1", "h2", "h3", "h4", "h5", "h6"})
+    _LIST_TAGS = frozenset({"ul", "ol"})
+    _IGNORED_TAGS = frozenset({"script", "style", "iframe", "object", "embed", "svg"})
+    _INLINE_MARKERS = {
+        "strong": ("**", "**"),
+        "b": ("**", "**"),
+        "em": ("*", "*"),
+        "i": ("*", "*"),
+        "code": ("`", "`"),
+        "del": ("~~", "~~"),
+        "s": ("~~", "~~"),
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._inside_aside = False
+        self._aside_depth = 0
+        self._ignored_depth = 0
+        self._blocks: list[str] = []
+        self._active_parts: list[str] | None = None
+        self._active_tag: str | None = None
+        self._active_item: dict[str, Any] | None = None
+        self._list_stack: list[dict[str, Any]] = []
+        self._item_stack: list[dict[str, Any]] = []
+        self._trailing_parts: list[str] = []
+        self._saw_aside = False
+        self._saw_rich_structure = False
+        self._open_links: list[tuple[str | None, bool]] = []
+
+    def _destination(self) -> list[str]:
+        if self._active_parts is not None:
+            return self._active_parts
+        if self._inside_aside and self._item_stack:
+            self._start_implicit_item_block()
+            assert self._active_parts is not None
+            return self._active_parts
+        if self._inside_aside:
+            self._start_block("p")
+            assert self._active_parts is not None
+            return self._active_parts
+        return self._trailing_parts
+
+    def _start_implicit_item_block(self) -> None:
+        if self._active_parts is not None:
+            return
+        self._active_parts = []
+        self._active_tag = "li"
+        self._active_item = self._item_stack[-1] if self._item_stack else None
+
+    def _start_block(self, tag: str) -> None:
+        self._finish_active_block()
+        self._active_parts = []
+        self._active_tag = tag
+        self._active_item = self._item_stack[-1] if self._item_stack else None
+
+    def _finish_active_block(self) -> None:
+        if self._active_parts is None:
+            return
+        value = "".join(self._active_parts).strip()
+        target = self._active_item
+        if value:
+            if target is not None:
+                target.setdefault("paragraphs", []).append(value)
+            else:
+                self._blocks.append(value)
+        self._active_parts = None
+        self._active_tag = None
+        self._active_item = None
+
+    def _append_text(self, value: str) -> None:
+        normalized = re.sub(r"\s+", " ", value)
+        if not normalized.strip():
+            if self._active_parts is not None and self._active_parts:
+                self._active_parts.append(" ")
+            return
+        self._destination().append(normalized)
+
+    def _append_markup(self, value: str) -> None:
+        self._destination().append(value)
+
+    def _render_list(self, state: dict[str, Any]) -> str:
+        lines: list[str] = []
+        depth = int(state["depth"])
+        for index, item in enumerate(state["items"], start=1):
+            paragraphs = [
+                str(part).strip()
+                for part in item.get("paragraphs", [])
+                if str(part).strip()
+            ]
+            text = " ".join(paragraphs)
+            marker = f"{index}. " if state["ordered"] else "- "
+            prefix = "  " * depth
+            lines.append(f"{prefix}{marker}{text}".rstrip())
+            for nested in item.get("nested", []):
+                lines.extend(str(nested).splitlines())
+        return "\n".join(lines)
+
+    def _finish_list(self) -> None:
+        if not self._list_stack:
+            return
+        self._finish_active_block()
+        state = self._list_stack.pop()
+        rendered = self._render_list(state)
+        parent_item = self._item_stack[-1] if self._item_stack else None
+        if parent_item is not None:
+            parent_item.setdefault("nested", []).append(rendered)
+        elif rendered:
+            self._blocks.append(rendered)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED_TAGS:
+            self._ignored_depth += 1
+            return
+        if self._ignored_depth:
+            return
+        if tag == "aside":
+            if not self._inside_aside:
+                self._inside_aside = True
+                self._saw_aside = True
+            self._aside_depth += 1
+            return
+        if not self._inside_aside:
+            return
+        if tag in self._BLOCK_TAGS:
+            self._saw_rich_structure = True
+            self._start_block(tag)
+            return
+        if tag in self._LIST_TAGS:
+            self._saw_rich_structure = True
+            self._finish_active_block()
+            self._list_stack.append(
+                {
+                    "ordered": tag == "ol",
+                    "depth": len(self._list_stack),
+                    "items": [],
+                }
+            )
+            return
+        if tag == "li":
+            self._saw_rich_structure = True
+            self._finish_active_block()
+            if not self._list_stack:
+                return
+            item: dict[str, Any] = {"paragraphs": [], "nested": []}
+            self._list_stack[-1]["items"].append(item)
+            self._item_stack.append(item)
+            self._start_implicit_item_block()
+            return
+        if tag == "br":
+            self._saw_rich_structure = True
+            self._append_markup("\n")
+            return
+        if tag == "a":
+            href = next((value for key, value in attrs if key == "href"), None)
+            self._open_links.append((href, href is not None))
+            if href is not None:
+                self._append_markup("[")
+            return
+        marker = self._INLINE_MARKERS.get(tag)
+        if marker is not None:
+            self._open_links.append((None, False))
+            self._append_markup(marker[0])
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED_TAGS:
+            if self._ignored_depth:
+                self._ignored_depth -= 1
+            return
+        if self._ignored_depth:
+            return
+        if tag == "aside":
+            if self._aside_depth > 0:
+                self._aside_depth -= 1
+            if self._aside_depth == 0:
+                self._finish_active_block()
+                while self._list_stack:
+                    self._finish_list()
+                self._inside_aside = False
+            return
+        if not self._inside_aside:
+            return
+        if tag in self._BLOCK_TAGS:
+            if self._active_tag == tag:
+                self._finish_active_block()
+            return
+        if tag == "li":
+            self._finish_active_block()
+            if self._item_stack:
+                self._item_stack.pop()
+            return
+        if tag in self._LIST_TAGS:
+            self._finish_list()
+            return
+        if tag == "a":
+            if self._open_links:
+                href, is_link = self._open_links.pop()
+                if is_link and href is not None:
+                    self._append_markup(f"]({href})")
+            return
+        marker = self._INLINE_MARKERS.get(tag)
+        if marker is not None:
+            if self._open_links:
+                self._open_links.pop()
+            self._append_markup(marker[1])
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_depth:
+            return
+        if self._inside_aside:
+            self._append_text(data)
+        else:
+            self._append_text(data)
+
+    def handle_comment(self, data: str) -> None:
+        return
+
+    @property
+    def is_paired_aside(self) -> bool:
+        return self._saw_aside and not self._inside_aside and self._aside_depth == 0
+
+    @property
+    def rendered_markdown(self) -> str:
+        return "\n\n".join(block for block in self._blocks if block.strip())
+
+    @property
+    def trailing_text(self) -> str:
+        return "".join(self._trailing_parts).strip()
+
+    @property
+    def saw_rich_structure(self) -> bool:
+        return self._saw_rich_structure
+
+
+def _normalize_rich_html_aside(raw: str) -> tuple[str, str] | None:
+    """Return ``(inner_markdown, trailing_text)`` for a paired rich aside."""
+    normalizer = _RichAsideHtmlNormalizer()
+    try:
+        normalizer.feed(raw)
+        normalizer.close()
+    except (AssertionError, ValueError):
+        return None
+    if not normalizer.is_paired_aside or not normalizer.saw_rich_structure:
+        return None
+    return normalizer.rendered_markdown, normalizer.trailing_text
 
 
 # Known HTML tag names (WHATWG standard elements). A bare inline tag whose
@@ -919,6 +1419,13 @@ class MarkdownSourceParser:
         order_index = 0
         footnote_counter = 1
         i = 0
+        # R-Aside-1R2: aside container mode. When the parser sees a
+        # standalone ``<aside>`` open token (no ``</aside>`` in the same
+        # html_block), it emits a container block and pushes it onto
+        # parent_stack. Subsequent paragraph / list / list_item tokens
+        # are then parented to the container automatically. The container
+        # is closed when a standalone ``</aside>`` close token arrives.
+        aside_open_block_id: str | None = None
 
         # Pre-scan for strikethrough detection (token-level, not string).
         # s_open/del_open may appear as inline children inside `inline` tokens,
@@ -940,6 +1447,8 @@ class MarkdownSourceParser:
         fence_count = normalized.count("```")
         if fence_count % 2 != 0:
             flags.has_unclosed_fence = True
+        flags.has_task_list = bool(_TASK_LIST_MARKER_RE.search(normalized))
+        flags.has_definition_list = bool(_DEFINITION_LIST_RE.search(normalized))
         # Count total fence tokens to identify the last one (for closed=False).
         total_fence_tokens = sum(1 for t in tokens if t.type == "fence")
         fence_tokens_seen = 0
@@ -970,25 +1479,342 @@ class MarkdownSourceParser:
 
             # --- Raw HTML block aggregation (M-6) ---
             if token_type == "html_block":
+                raw = token.content or ""
+                # R-Aside-1R2: detect standalone aside open/close tokens.
+                # When <aside> is on its own line, markdown-it-py emits it
+                # as a separate html_block token and parses the internal
+                # content (paragraphs / lists / inline marks) as normal
+                # Markdown tokens. The old aggregation loop broke on the
+                # first non-html_block token, losing the html_aside hint
+                # and orphaning internal blocks. The container mode emits
+                # a structural container and lets the main loop handle
+                # internal tokens normally.
+                has_aside_open = bool(_HTML_ASIDE_OPEN_RE.search(raw))
+                has_aside_close = bool(_HTML_ASIDE_CLOSE_RE.search(raw))
+
+                # R-Aside-1R3: Notion exports often keep the entire callout
+                # (including ``<p>`` / ``<ul>`` / inline marks) in one
+                # html_block token. Normalize that restricted HTML subset to
+                # Markdown, then send it through the same parser so the
+                # resulting paragraph/list marks use the canonical builder.
+                # The container is structural only; descendants carry all
+                # canonical text.
+                rich_aside = None
+                if (
+                    has_aside_open
+                    and has_aside_close
+                    and _looks_like_rich_html_aside(raw)
+                ):
+                    rich_aside = _normalize_rich_html_aside(raw)
+                if rich_aside is not None:
+                    flags.has_raw_html = True
+                    src_range = _map_to_1based(token.map)
+                    aside_id = f"b{order_index + 1}"
+                    aside_payload: dict[str, Any] = {
+                        "extracted_from": "html_block",
+                        "source_semantic_hint": SOURCE_SEMANTIC_HINT_HTML_ASIDE,
+                        "rich_html_normalization": "restricted_markdown_v1",
+                    }
+                    blocks.append(
+                        ParsedBlock(
+                            block_id=aside_id,
+                            block_type="blockquote",
+                            text_content=" ",
+                            payload_json=aside_payload,
+                            parent_block_id=parent_stack[-1] if parent_stack else None,
+                            order_index=order_index,
+                            source_range=_resolve_range(src_range, flags),
+                        )
+                    )
+                    order_index += 1
+
+                    inner_markdown, trailing_text = rich_aside
+                    nested_result = self.parse(inner_markdown)
+                    nested_warning_codes = {
+                        warning.code for warning in nested_result.warnings
+                    }
+                    flags.has_inline_html |= "inline_html" in nested_warning_codes
+                    flags.has_unsafe_link |= (
+                        "unsafe_link_protocol" in nested_warning_codes
+                    )
+                    flags.has_footnote_ref |= (
+                        "footnote_reference" in nested_warning_codes
+                    )
+                    flags.has_unclosed_fence |= (
+                        "has_unclosed_fence" in nested_warning_codes
+                    )
+                    flags.has_strikethrough |= (
+                        "strikethrough_extension" in nested_warning_codes
+                    )
+                    flags.has_table_structure_uncertain |= (
+                        "table_structure_uncertain" in nested_warning_codes
+                    )
+                    flags.has_missing_source_range |= (
+                        "missing_source_range" in nested_warning_codes
+                    )
+
+                    nested_id_map: dict[str, str] = {}
+                    for nested_block in nested_result.blocks:
+                        nested_id = f"b{order_index + 1}"
+                        nested_id_map[nested_block.block_id] = nested_id
+                        nested_parent_id = (
+                            aside_id
+                            if nested_block.parent_block_id is None
+                            else nested_id_map.get(
+                                nested_block.parent_block_id, aside_id
+                            )
+                        )
+                        blocks.append(
+                            ParsedBlock(
+                                block_id=nested_id,
+                                block_type=nested_block.block_type,
+                                text_content=nested_block.text_content,
+                                payload_json=dict(nested_block.payload_json),
+                                parent_block_id=nested_parent_id,
+                                order_index=order_index,
+                                # The HTML token is one source span. Keep
+                                # every derived child anchored to it rather
+                                # than inventing ranges in normalized text.
+                                source_range=_resolve_range(src_range, flags),
+                            )
+                        )
+                        order_index += 1
+
+                    if trailing_text:
+                        blocks.append(
+                            ParsedBlock(
+                                block_id=f"b{order_index + 1}",
+                                block_type="paragraph",
+                                text_content=trailing_text,
+                                payload_json={
+                                    "extracted_from": "html_block_trailing"
+                                },
+                                parent_block_id=(
+                                    parent_stack[-1] if parent_stack else None
+                                ),
+                                order_index=order_index,
+                                source_range=_resolve_range(src_range, flags),
+                            )
+                        )
+                        order_index += 1
+                    i += 1
+                    continue
+
+                # Case A: standalone <aside> open token (no close in same
+                # token). Emit a container block and push it onto
+                # parent_stack so subsequent paragraphs / lists become
+                # children. Self-contained <aside>...</aside> (both open
+                # and close in same token) falls through to the existing
+                # flat-path aggregation below.
+                if has_aside_open and not has_aside_close:
+                    has_later_aside_close = any(
+                        token_after.type == "html_block"
+                        and bool(_HTML_ASIDE_CLOSE_RE.search(token_after.content or ""))
+                        for token_after in tokens[i + 1 :]
+                    )
+                    if not has_later_aside_close:
+                        # An unclosed wrapper must never establish a parent
+                        # context: doing so swallows every following block
+                        # into a structure that the source never closed.
+                        # Keep the body visible by parsing any same-token
+                        # tail as a normal root paragraph; subsequent
+                        # Markdown tokens already remain at the root.
+                        flags.has_raw_html = True
+                        flags.has_unclosed_aside = True
+                        tag_match = _HTML_ASIDE_OPEN_TAG_RE.search(raw)
+                        if tag_match:
+                            inner_text = raw[tag_match.end() :].strip()
+                            if inner_text:
+                                inline_tokens = self._md.parseInline(inner_text)
+                                if inline_tokens and inline_tokens[0].type == "inline":
+                                    (
+                                        inner_para_text,
+                                        inner_marks,
+                                        inner_safe_links,
+                                        inner_unsafe_links,
+                                        inner_has_html,
+                                        _inner_starts_html,
+                                    ) = _process_inline_with_marks(inline_tokens[0])
+                                    if inner_has_html:
+                                        flags.has_inline_html = True
+                                    if inner_unsafe_links:
+                                        flags.has_unsafe_link = True
+                                    inner_payload: dict[str, Any] = {}
+                                    if inner_marks:
+                                        inner_payload["inline_marks"] = inner_marks
+                                    if inner_safe_links or inner_unsafe_links:
+                                        inner_payload["links"] = inner_safe_links
+                                    blocks.append(
+                                        ParsedBlock(
+                                            block_id=f"b{order_index + 1}",
+                                            block_type="paragraph",
+                                            text_content=inner_para_text,
+                                            payload_json=inner_payload,
+                                            parent_block_id=(
+                                                parent_stack[-1] if parent_stack else None
+                                            ),
+                                            order_index=order_index,
+                                            source_range=_resolve_range(
+                                                _map_to_1based(token.map), flags
+                                            ),
+                                        )
+                                    )
+                                    order_index += 1
+                        i += 1
+                        continue
+
+                    flags.has_raw_html = True
+                    src_range = _map_to_1based(token.map)
+                    aside_id = f"b{order_index + 1}"
+                    aside_payload: dict[str, Any] = {
+                        "extracted_from": "html_block",
+                        "source_semantic_hint": SOURCE_SEMANTIC_HINT_HTML_ASIDE,
+                    }
+                    blocks.append(
+                        ParsedBlock(
+                            block_id=aside_id,
+                            block_type="blockquote",
+                            # R-Aside-1R2: container text_content is a
+                            # minimal placeholder (single space) to satisfy
+                            # the DB CHECK constraint
+                            # (ck_stable_document_blocks_text_for_textual_types)
+                            # which requires non-empty text_content for
+                            # blockquote. The freeze plan skips this block
+                            # for canonical text derivation; narrative text
+                            # lives in child blocks parented to this container.
+                            text_content=" ",
+                            payload_json=aside_payload,
+                            parent_block_id=parent_stack[-1] if parent_stack else None,
+                            order_index=order_index,
+                            source_range=_resolve_range(src_range, flags),
+                        )
+                    )
+                    order_index += 1
+                    parent_stack.append(aside_id)
+                    parent_context.append(
+                        (aside_id, "blockquote", src_range.line_end if src_range else 0)
+                    )
+                    aside_open_block_id = aside_id
+
+                    # R-Aside-1R2: markdown-it-py groups <aside> and the
+                    # following line (without blank line) into a single
+                    # html_block token. The text after the <aside ...> tag
+                    # is NOT parsed as Markdown. Re-parse it using the SAME
+                    # ``self._md`` instance (parseInline) and the existing
+                    # ``_process_inline_with_marks`` builder so strong/em/
+                    # code/link become ``payload_json.inline_marks`` instead
+                    # of raw ``**...**`` / ``*...*`` / ``[...](...)`` text.
+                    # This is NOT a second parser — it reuses the same
+                    # MarkdownIt instance and the same inline builder.
+                    tag_match = _HTML_ASIDE_OPEN_TAG_RE.search(raw)
+                    if tag_match:
+                        inner_text = raw[tag_match.end():].strip()
+                        if inner_text:
+                            inline_tokens = self._md.parseInline(inner_text)
+                            if inline_tokens and inline_tokens[0].type == "inline":
+                                inline_token = inline_tokens[0]
+                                (
+                                    inner_para_text,
+                                    inner_marks,
+                                    inner_safe_links,
+                                    inner_unsafe_links,
+                                    inner_has_html,
+                                    _inner_starts_html,
+                                ) = _process_inline_with_marks(inline_token)
+                                if inner_has_html:
+                                    flags.has_inline_html = True
+                                if inner_unsafe_links:
+                                    flags.has_unsafe_link = True
+                                inner_payload: dict[str, Any] = {}
+                                if inner_marks:
+                                    inner_payload["inline_marks"] = inner_marks
+                                if inner_safe_links or inner_unsafe_links:
+                                    inner_payload["links"] = inner_safe_links
+                                blocks.append(
+                                    ParsedBlock(
+                                        block_id=f"b{order_index + 1}",
+                                        block_type="paragraph",
+                                        text_content=inner_para_text,
+                                        payload_json=inner_payload,
+                                        parent_block_id=aside_id,
+                                        order_index=order_index,
+                                        source_range=_resolve_range(src_range, flags),
+                                    )
+                                )
+                                order_index += 1
+
+                    i += 1
+                    continue
+
+                # Case B: standalone </aside> close token while inside an
+                # aside container. Pop the container from parent_stack and
+                # handle trailing text after </aside> on the same line.
+                if (
+                    has_aside_close
+                    and not has_aside_open
+                    and aside_open_block_id is not None
+                ):
+                    flags.has_raw_html = True
+                    if parent_stack:
+                        parent_stack.pop()
+                    if parent_context:
+                        parent_context.pop()
+                    aside_open_block_id = None
+                    # R-Aside-1R A3: trailing text after </aside> on the
+                    # same line becomes a separate paragraph block.
+                    _, trailing = _split_aside_trailing(raw)
+                    if trailing:
+                        trailing_range = _map_to_1based(token.map)
+                        blocks.append(
+                            ParsedBlock(
+                                block_id=f"b{order_index + 1}",
+                                block_type="paragraph",
+                                text_content=trailing,
+                                payload_json={
+                                    "extracted_from": "html_block_trailing"
+                                },
+                                parent_block_id=parent_stack[-1] if parent_stack else None,
+                                order_index=order_index,
+                                source_range=_resolve_range(trailing_range, flags),
+                            )
+                        )
+                        order_index += 1
+                    i += 1
+                    continue
+
                 flags.has_raw_html = True
                 agg_start_map = token.map
                 agg_texts: list[str] = []
                 raw_html_chunks: list[str] = []
                 agg_end_map = token.map
+                # R-Aside-1R A3: trailing text after </aside> on the same line
+                # must become a separate paragraph block, NOT be swallowed
+                # into the callout's text_content. Captured from the token
+                # that contains </aside>; emitted after the callout block.
+                aside_trailing_text = ""
+                aside_trailing_map: list[int] | None = None
                 j = i
                 while j < len(tokens):
                     t = tokens[j]
                     if t.type == "html_block":
-                        raw_html_chunks.append(t.content or "")
-                        stripped = _strip_html_tags(t.content)
+                        raw_content = t.content or ""
+                        # R-Aside-1R A3: if this token contains </aside>,
+                        # split the trailing prose out so it is NOT stripped
+                        # and joined into the callout's text_content.
+                        aside_part, trailing = _split_aside_trailing(raw_content)
+                        if trailing:
+                            aside_trailing_text = trailing
+                            aside_trailing_map = t.map
+                        raw_html_chunks.append(aside_part)
+                        stripped = _strip_html_tags(aside_part)
                         if stripped:
                             agg_texts.append(stripped)
                         if t.map:
                             agg_end_map = t.map
-                        is_closing = t.content.strip().startswith("</")
+                        is_closing = aside_part.strip().startswith("</")
                         # Self-contained <aside>...</aside> must not absorb the
                         # following prose paragraph into the same block.
-                        is_complete_aside = _html_raw_is_aside([t.content or ""])
+                        is_complete_aside = _html_raw_is_aside([aside_part])
                         j += 1
                         if is_closing or is_complete_aside:
                             break
@@ -1044,6 +1870,29 @@ class MarkdownSourceParser:
                     )
                 )
                 order_index += 1
+
+                # R-Aside-1R A3: emit trailing prose (after </aside> on the
+                # same line) as a separate paragraph block. This must NOT
+                # carry the html_aside hint and must NOT be T-only by virtue
+                # of aside association. Only emit when there is actual
+                # trailing text (no empty trailing paragraph).
+                if aside_trailing_text:
+                    trailing_range = _resolve_range(
+                        _map_to_1based(aside_trailing_map), flags
+                    )
+                    blocks.append(
+                        ParsedBlock(
+                            block_id=f"b{order_index + 1}",
+                            block_type="paragraph",
+                            text_content=aside_trailing_text,
+                            payload_json={"extracted_from": "html_block_trailing"},
+                            parent_block_id=parent_stack[-1] if parent_stack else None,
+                            order_index=order_index,
+                            source_range=trailing_range,
+                        )
+                    )
+                    order_index += 1
+
                 i = j
                 continue
 
@@ -1093,6 +1942,121 @@ class MarkdownSourceParser:
             if token_type == "blockquote_open":
                 src_range = _map_to_1based(token.map)
                 bq_id = f"b{order_index + 1}"
+
+                # R-Aside-1R2: detect GFM alert marker (``[!NOTE]`` etc.) on
+                # the first inline token inside the blockquote. When present,
+                # the blockquote becomes a structural container (like
+                # ``<aside>``) so internal paragraphs / lists / inline marks
+                # survive as child blocks. The marker kind is stored as
+                # ``gfm_alert_kind`` in the container payload and the marker
+                # paragraph is SKIPPED so ``[!NOTE]`` does not leak into
+                # child text / canonical text / Reader projection. Ordinary
+                # blockquotes keep the flat path (no regression for
+                # quotations / reference lists).
+                is_gfm_alert = False
+                gfm_alert_kind: str | None = None
+                marker_inline_index: int | None = None
+                j_scan = i + 1
+                while j_scan < len(tokens) and tokens[j_scan].type != "blockquote_close":
+                    if tokens[j_scan].type == "inline":
+                        first_text = _extract_inline_text(tokens[j_scan])
+                        marker_match = _GFM_ALERT_MARKER_FIRST_LINE_RE.match(
+                            first_text
+                        )
+                        if marker_match:
+                            is_gfm_alert = True
+                            gfm_alert_kind = marker_match.group(1).lower()
+                            marker_inline_index = j_scan
+                        break
+                    j_scan += 1
+
+                if is_gfm_alert:
+                    # Structural container path: emit blockquote with hint,
+                    # push to parent_stack, let the main loop process
+                    # internal paragraph / list / list_item tokens as
+                    # children. blockquote_close is handled by the close
+                    # handler which pops parent_stack.
+                    bq_payload: dict[str, Any] = {
+                        "source_semantic_hint": SOURCE_SEMANTIC_HINT_GFM_ALERT,
+                    }
+                    if gfm_alert_kind:
+                        bq_payload["gfm_alert_kind"] = gfm_alert_kind
+                    blocks.append(
+                        ParsedBlock(
+                            block_id=bq_id,
+                            block_type="blockquote",
+                            # Minimal placeholder for DB CHECK constraint;
+                            # freeze plan replaces this with the joined
+                            # descendant text at freeze time.
+                            text_content=" ",
+                            payload_json=bq_payload,
+                            parent_block_id=parent_stack[-1] if parent_stack else None,
+                            order_index=order_index,
+                            source_range=_resolve_range(src_range, flags),
+                        )
+                    )
+                    order_index += 1
+                    parent_stack.append(bq_id)
+                    parent_context.append(
+                        (bq_id, "blockquote", src_range.line_end if src_range else 0)
+                    )
+                    # Strip the ``[!NOTE]`` marker from the first inline
+                    # token's children so the marker text does NOT leak
+                    # into the first child paragraph's text_content /
+                    # inline_marks / canonical text. The marker kind is
+                    # already stored as ``gfm_alert_kind`` in the container
+                    # payload above.
+                    #
+                    # markdown-it puts ``[!NOTE]`` as a text child token
+                    # (possibly followed by a softbreak). We strip the
+                    # marker prefix from the text child's content; if the
+                    # content becomes empty, we also remove the following
+                    # softbreak so the paragraph doesn't start with ``\n``.
+                    if (
+                        marker_inline_index is not None
+                        and marker_inline_index < len(tokens)
+                    ):
+                        inline_tok = tokens[marker_inline_index]
+                        if inline_tok.children:
+                            children = inline_tok.children
+                            new_children: list[Token] = []
+                            marker_stripped = False
+                            skip_next_softbreak = False
+                            for child in children:
+                                if (
+                                    not marker_stripped
+                                    and child.type == "text"
+                                ):
+                                    m = _GFM_ALERT_MARKER_FIRST_LINE_RE.match(
+                                        child.content
+                                    )
+                                    if m is not None:
+                                        stripped = child.content[m.end():]
+                                        if stripped:
+                                            child.content = stripped
+                                            new_children.append(child)
+                                        else:
+                                            # Content was purely the marker;
+                                            # drop this child and the
+                                            # following softbreak so the
+                                            # paragraph doesn't start with
+                                            # ``\n``.
+                                            skip_next_softbreak = True
+                                        marker_stripped = True
+                                        continue
+                                if skip_next_softbreak and child.type in (
+                                    "softbreak",
+                                    "hardbreak",
+                                ):
+                                    skip_next_softbreak = False
+                                    continue
+                                new_children.append(child)
+                            inline_tok.children = new_children
+                    i += 1
+                    continue
+
+                # Flat path: ordinary blockquote — aggregate inline content
+                # into a single block (no regression for quotations).
                 bq_text = ""
                 bq_marks: list[dict[str, Any]] = []
                 # Consume blockquote content
@@ -1110,15 +2074,15 @@ class MarkdownSourceParser:
                         if _bq_unsafe_links:
                             flags.has_unsafe_link = True
                     j += 1
-                bq_payload: dict[str, Any] = {}
+                flat_bq_payload: dict[str, Any] = {}
                 if bq_marks:
-                    bq_payload["inline_marks"] = bq_marks
+                    flat_bq_payload["inline_marks"] = bq_marks
                 blocks.append(
                     ParsedBlock(
                         block_id=bq_id,
                         block_type="blockquote",
                         text_content=bq_text,
-                        payload_json=bq_payload,
+                        payload_json=flat_bq_payload,
                         parent_block_id=parent_stack[-1] if parent_stack else None,
                         order_index=order_index,
                         source_range=_resolve_range(src_range, flags),
@@ -1581,6 +2545,11 @@ class MarkdownSourceParser:
             # --- Skip unknown tokens ---
             i += 1
 
+        # The leading emoji-only paragraph is wrapper display metadata, not
+        # body text. Promote it before freeze/base construction so it cannot
+        # receive canonical offsets or become a Reading Unit/anchor target.
+        blocks = _promote_callout_display_icons(blocks)
+
         # --- Diagnostics ---
         # Unclosed fence detection moved to pre-scan (before token loop)
         # so fence blocks can reference flags.has_unclosed_fence.
@@ -1603,6 +2572,22 @@ class MarkdownSourceParser:
                 UnsupportedFeature(
                     code="raw_html",
                     message=_MSG_UNSUP_RAW_HTML,
+                )
+            )
+
+        if flags.has_unclosed_aside:
+            warnings.append(
+                DiagnosticWarning(
+                    code="unclosed_html_aside",
+                    message=_MSG_UNCLOSED_ASIDE,
+                    blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
+                )
+            )
+            unsupported.append(
+                UnsupportedFeature(
+                    code="unclosed_html_aside",
+                    message="Unclosed <aside> wrapper requires candidate review.",
                 )
             )
 
@@ -1645,6 +2630,38 @@ class MarkdownSourceParser:
                 UnsupportedFeature(
                     code="footnote_full_semantics",
                     message=_MSG_UNSUP_FOOTNOTE,
+                )
+            )
+
+        if flags.has_task_list:
+            warnings.append(
+                DiagnosticWarning(
+                    code="task_list_unsupported",
+                    message=_MSG_TASK_LIST,
+                    blocks_freeze=False,
+                    classification=CLASSIFICATION_CONTENT_CHECK,
+                )
+            )
+            unsupported.append(
+                UnsupportedFeature(
+                    code="task_list",
+                    message=_MSG_UNSUP_TASK_LIST,
+                )
+            )
+
+        if flags.has_definition_list:
+            warnings.append(
+                DiagnosticWarning(
+                    code="definition_list_degraded",
+                    message=_MSG_DEFINITION_LIST,
+                    blocks_freeze=False,
+                    classification=CLASSIFICATION_ADAPTATION_NOTICE,
+                )
+            )
+            unsupported.append(
+                UnsupportedFeature(
+                    code="definition_list",
+                    message=_MSG_UNSUP_DEFINITION_LIST,
                 )
             )
 
@@ -1747,9 +2764,12 @@ class MarkdownSourceParser:
 @dataclass(slots=True)
 class _DiagnosticFlags:
     has_raw_html: bool = False
+    has_unclosed_aside: bool = False
     has_inline_html: bool = False
     has_unsafe_link: bool = False
     has_footnote_ref: bool = False
+    has_task_list: bool = False
+    has_definition_list: bool = False
     has_unclosed_fence: bool = False
     has_strikethrough: bool = False
     has_missing_source_range: bool = False

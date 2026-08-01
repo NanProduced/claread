@@ -39,8 +39,32 @@
  * 渲染层在 reader-blocks-kit 中为这些标准节点注册本地薄 Plate plugins，
  * 不走手动 React DOM renderer。
  */
-import { MarkdownPlugin } from "@platejs/markdown";
+import {
+  MarkdownPlugin,
+  type DeserializeMdOptions,
+  type MdBlockquote,
+  type MdDecoration,
+  type MdHtml,
+  type MdRootContent,
+  type SerializeMdOptions,
+} from "@platejs/markdown";
+import {
+  convertChildrenDeserialize,
+  markdownToAstProcessor,
+} from "@platejs/markdown";
 import remarkGfm from "remark-gfm";
+import type { Descendant } from "platejs";
+import {
+  buildCanonicalAsideMarkdown,
+  extractGfmAlertMarker,
+  matchAsideBlock,
+  remarkMergeAsideHtml,
+  stripGfmAlertMarker,
+} from "@/lib/source-callout/source-callout-adapter";
+import {
+  extractCalloutDisplayIcon,
+  normalizeCalloutDisplayIcons,
+} from "@/lib/source-callout/source-callout-display-icon";
 
 /**
  * 允许在 Plate↔mdast 之间转换的节点类型（安全子集）。
@@ -94,6 +118,10 @@ const ALLOWED_MARKDOWN_NODES = [
   "italic",
   "code",
   "strikethrough",
+  // source_callout（Notion 风格 aside 提示框）
+  "source_callout",
+  // html（用于 source_callout 序列化为 `<aside>` raw HTML）
+  "html",
 ] as const;
 
 /**
@@ -104,9 +132,187 @@ const ALLOWED_MARKDOWN_NODES = [
  * 复制配置——Plate configure 的 options 解析会丢 remarkStringifyOptions
  * 等字段（已实测）。统一从本对象展开。
  */
+/**
+ * 自定义 mdast↔Plate 转换规则。
+ *
+ * 三条归一路径都通过这些 rules 在 deserializer 层完成：
+ * 1. 纯 Markdown `<aside>...</aside>` → `html` rule 识别 → `source_callout` Plate element
+ * 2. GFM alert `> [!NOTE]` → `blockquote` rule 识别 marker → `source_callout` Plate element
+ * 3. 剪贴板 HTML `<aside>` → Plate HTML deserializer (source-callout-kit 插件)
+ *
+ * 非 aside 的 html 节点降级为 text（与原 remarkPreserveUnsupported 行为一致）。
+ * 非 GFM alert 的 blockquote 保持默认 blockquote 行为。
+ *
+ * R-Aside-1R B: kind 统一为 "note"。canonical `<aside>` 不携带 class 属性，
+ * kind 无法安全持久化到 Stable Document / Reader reload。所有输入路径
+ * （HTML aside / GFM alert / 剪贴板 HTML）产出的 source_callout element
+ * 均设置 `kind: "note"`，不再从 class 或 GFM marker 推断视觉差异。
+ * classifyCalloutKind / classifyCalloutKindFromGfmMarker 函数保留用于
+ * 未来扩展，但当前不驱动视觉差异化。
+ *
+ * R-Aside-1R C: source_callout serializer 使用 `serializeMd(editor, {value})`
+ * 序列化内部 children，不修改 live editor.children / selection / history。
+ */
+type SourceCalloutHtmlNode = MdHtml & {
+  _asideChildren?: MdRootContent[];
+};
+
+type SourceCalloutElement = {
+  type: "source_callout";
+  kind: "note";
+  displayIcon?: string | null;
+  children: Descendant[];
+};
+
+const SOURCE_CALLOUT_RULES = {
+  html: {
+    deserialize: (
+      mdastNode: SourceCalloutHtmlNode,
+      deco: MdDecoration,
+      options: DeserializeMdOptions,
+    ) => {
+      const value = mdastNode.value ?? "";
+      const asideMatch = matchAsideBlock(value);
+      if (asideMatch) {
+        const editor = options.editor;
+        if (!editor) {
+          return { text: value };
+        }
+        let children: Descendant[];
+        if (mdastNode._asideChildren && mdastNode._asideChildren.length > 0) {
+          // R-Aside-1R A2: 使用 remarkMergeAsideHtml 携带的原始 mdast 子节点，
+          // 保留所有 inline marks / 嵌套结构 / 代码块，不进行损失性 round-trip。
+          // opening html 节点 value 中的内部文本仍需通过 markdownToAstProcessor
+          // 重新解析（因为 commonmark 将 html_block 内文本视为 raw text，不解析
+          // markdown marks）。middle nodes 已是 mdast 节点，直接转换。
+          const innerAst = markdownToAstProcessor(
+            editor,
+            asideMatch.innerContent,
+            options,
+          );
+          const innerChildren = convertChildrenDeserialize(
+            innerAst.children,
+            deco,
+            options,
+          );
+          const middleChildren = convertChildrenDeserialize(
+            mdastNode._asideChildren,
+            deco,
+            options,
+          );
+          children = [...innerChildren, ...middleChildren];
+        } else {
+          // 单个 html 节点（无合并）— 重新解析内部内容
+          const innerAst = markdownToAstProcessor(
+            editor,
+            asideMatch.innerContent,
+            options,
+          );
+          children = convertChildrenDeserialize(innerAst.children, deco, options);
+        }
+        const normalizedChildren = normalizeCalloutDisplayIcons(children);
+        const extracted = extractCalloutDisplayIcon(normalizedChildren);
+        return {
+          type: "source_callout" as const,
+          // R-Aside-1R B: 统一为 note，不从 class 推断 kind
+          kind: "note" as const,
+          ...(extracted.displayIcon
+            ? { displayIcon: extracted.displayIcon }
+            : {}),
+          children: extracted.children,
+        };
+      }
+      // 非 aside html：降级为字面文本（与原 remarkPreserveUnsupported 行为一致）
+      return { text: value };
+    },
+  },
+  blockquote: {
+    deserialize: (
+      mdastNode: MdBlockquote,
+      deco: MdDecoration,
+      options: DeserializeMdOptions,
+    ) => {
+      // 检查是否为 GFM alert blockquote（`> [!NOTE]` 等）
+      // remark-parse 可能把 marker 行和后续内容合并到同一个 text 节点
+      // （如 `[!NOTE]\nContent`），因此用 extractGfmAlertMarker 而非
+      // GFM_ALERT_MARKER_RE 进行宽松前缀匹配。
+      const firstChild = mdastNode.children?.[0];
+      if (firstChild?.type === "paragraph") {
+        const firstText = firstChild.children?.[0];
+        if (firstText?.type === "text") {
+          const marker = extractGfmAlertMarker(firstText.value);
+          if (marker) {
+            // 移除 marker 文本（含尾部空白/换行）
+            const stripped = stripGfmAlertMarker(firstText.value);
+            if (stripped) {
+              // marker 后还有内容，保留为首段文本
+              firstText.value = stripped;
+            } else if (firstChild.children.length > 1) {
+              // 首段只剩空文本节点且有其他节点，移除空文本节点
+              firstChild.children.shift();
+            } else {
+              // 整个首段只有 marker，移除首段
+              mdastNode.children.shift();
+            }
+            const children = convertChildrenDeserialize(mdastNode.children, deco, options);
+            const normalizedChildren = normalizeCalloutDisplayIcons(children);
+            const extracted = extractCalloutDisplayIcon(normalizedChildren);
+            return {
+              type: "source_callout" as const,
+              // R-Aside-1R B: 统一为 note，不从 GFM marker 推断 kind
+              kind: "note" as const,
+              ...(extracted.displayIcon
+                ? { displayIcon: extracted.displayIcon }
+                : {}),
+              children: extracted.children,
+            };
+          }
+        }
+      }
+      // 默认 blockquote 行为
+      return {
+        type: "blockquote" as const,
+        children: convertChildrenDeserialize(mdastNode.children ?? [], deco, options),
+      };
+    },
+  },
+  source_callout: {
+    serialize: (
+      slateNode: SourceCalloutElement,
+      options: SerializeMdOptions,
+    ) => {
+      // R-Aside-1R C: 使用 serializeMd(editor, {value}) 序列化内部 children，
+      // 不修改 live editor.children / selection / history。
+      // 旧实现临时替换 editor.children 导致 selection/onChange 副作用。
+      const editor = options.editor;
+      if (!editor) {
+        throw new Error("Markdown source_callout serialization requires an editor");
+      }
+        const innerMd = editor
+        .getApi(MarkdownPlugin)
+        .markdown.serialize({
+          value: slateNode.children,
+        });
+      return {
+        type: "html" as const,
+        value: buildCanonicalAsideMarkdown(
+          innerMd,
+          undefined,
+          slateNode.displayIcon,
+        ),
+      };
+    },
+  },
+};
+
 export const MARKDOWN_PLUGIN_OPTIONS = {
-  remarkPlugins: [remarkGfm],
+  // remarkMergeAsideHtml 必须在 remarkGfm 之后，确保 GFM 扩展节点已生成。
+  // 它合并被 commonmark 空行拆分的 <aside> html 节点，使 html 规则能
+  // 匹配完整的 <aside>...</aside>。
+  // 注：传 plugin 工厂（不带括号），由 unified 负责调用。
+  remarkPlugins: [remarkGfm, remarkMergeAsideHtml],
   allowedNodes: [...ALLOWED_MARKDOWN_NODES],
+  rules: SOURCE_CALLOUT_RULES,
   remarkStringifyOptions: {
     // 与粘贴入口约定：无序列表用 `-`，避免 `*` 与 emphasis 歧义。
     bullet: "-" as const,

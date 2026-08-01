@@ -114,6 +114,8 @@ function startServer(
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
   const children: ChildProcess[] = [];
+  const phoneAuthProvider =
+    process.env.CLAREAD_E2E_REAL_PRODUCT === "1" ? "fastapi" : "mock";
   const cleanup = async () => {
     for (const child of children) {
       console.log(`[dual-server] Shutting down PID ${child.pid} ...`);
@@ -143,7 +145,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     ["--filter=@claread/web", "dev:spike-test"],
     {
       ...process.env,
-      CLAREAD_PHONE_AUTH_PROVIDER: "mock",
+      CLAREAD_PHONE_AUTH_PROVIDER: phoneAuthProvider,
       CLAREAD_ENABLE_E2E_SPIKE: "1",
       CLAREAD_E2E_SPIKE_TEST: "1",
     },
@@ -152,25 +154,27 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   children.push(enabled);
   await waitForUrl(ENABLED_URL, READY_TIMEOUT_MS, "spike-enabled");
   console.log(`[spike-enabled] Server ready at ${ENABLED_URL}`);
-  // --- Spike-disabled server (port 3101) ---
-  if (await isPortAcceptingConnections(DISABLED_PORT, HOST)) {
-    throw new Error(
-      `[spike-disabled] Test port ${DISABLED_PORT} is already in use; refusing to reuse or stop another process.`,
+  if (process.env.CLAREAD_E2E_ONLY_ENABLED !== "1") {
+    // --- Spike-disabled server (port 3101) ---
+    if (await isPortAcceptingConnections(DISABLED_PORT, HOST)) {
+      throw new Error(
+        `[spike-disabled] Test port ${DISABLED_PORT} is already in use; refusing to reuse or stop another process.`,
+      );
+    }
+    const disabled = startServer(
+      "pnpm",
+      ["--filter=@claread/web", "dev:gate-test"],
+      {
+        ...process.env,
+        CLAREAD_PHONE_AUTH_PROVIDER: phoneAuthProvider,
+        CLAREAD_E2E_GATE_TEST: "1",
+      },
+      "spike-disabled",
     );
+    children.push(disabled);
+    await waitForUrl(DISABLED_URL, READY_TIMEOUT_MS, "spike-disabled");
+    console.log(`[spike-disabled] Server ready at ${DISABLED_URL}`);
   }
-  const disabled = startServer(
-    "pnpm",
-    ["--filter=@claread/web", "dev:gate-test"],
-    {
-      ...process.env,
-      CLAREAD_PHONE_AUTH_PROVIDER: "mock",
-      CLAREAD_E2E_GATE_TEST: "1",
-    },
-    "spike-disabled",
-  );
-  children.push(disabled);
-  await waitForUrl(DISABLED_URL, READY_TIMEOUT_MS, "spike-disabled");
-  console.log(`[spike-disabled] Server ready at ${DISABLED_URL}`);
   } catch (error) {
     await cleanup();
     throw error;

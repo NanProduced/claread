@@ -41,7 +41,12 @@ export function FloatingToolbar({
 }) {
   const editorId = useEditorId();
   const focusedEditorId = useEventEditorValue("focus");
-  const isFloatingLinkOpen = !!usePluginOption({ key: KEYS.link }, "mode");
+  // Plate LinkPlugin mode is "" | "edit" | "insert" — only "edit"/"insert"
+  // mean the link editor is open. A truthy check would wrongly treat any
+  // non-empty mode (e.g. a reader-only "inline" value on a composed "a"
+  // plugin) as "link editor open" and permanently hide the toolbar.
+  const linkMode = usePluginOption({ key: KEYS.link }, "mode");
+  const isFloatingLinkOpen = linkMode === "edit" || linkMode === "insert";
   const isAIChatOpen = usePluginOption({ key: KEYS.aiChat }, "open");
 
   const floatingToolbarState = useFloatingToolbarState({

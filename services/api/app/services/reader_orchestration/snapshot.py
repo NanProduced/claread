@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Sequence
 from datetime import datetime
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -21,6 +22,7 @@ from app.schemas.reader_orchestration import (
     ReaderSnapshotParsedDecision,
     ReaderSnapshotRecord,
     ReaderSnapshotUserAsset,
+    ReaderStableDocumentBlockNode,
     ReaderTextRangeAnchor,
     ReaderUnitAnchor,
     SentenceAnalysisLayerOutput,
@@ -28,6 +30,7 @@ from app.schemas.reader_orchestration import (
     VocabularyLayerOutput,
 )
 
+from .automatic_layer_policy import resolve_automatic_layer_policy
 from .base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
@@ -140,6 +143,7 @@ def build_reader_plate_snapshot(
         user_assets=list(assets),
         parsed_decisions=list(decisions),
         value=_build_plate_value(build_result, layers),
+        stable_document_tree=_build_stable_document_tree(build_result),
         semantic_outline=semantic_outline,
     )
 
@@ -428,6 +432,171 @@ def _build_plate_value(
             }
         )
     return value
+
+
+def _build_stable_document_tree(
+    build_result: ReadingBaseBuildResult,
+) -> list[ReaderStableDocumentBlockNode]:
+    """Project the complete Stable Document row set into an ordered tree.
+
+    Stable rows are the only structure input.  Reading units are joined only
+    by exact canonical range identity so wrapper rows (which have no range)
+    remain visible without being invented as units.  A container carrying the
+    same joined text as descendants is emitted as a structural node with no
+    repeated text in this projection; its child rows carry the renderable
+    text exactly once.
+    """
+    if not build_result.stable_document_blocks:
+        return []
+
+    units_by_range = {
+        (unit.base_start_utf16, unit.base_end_utf16): unit
+        for unit in build_result.units
+    }
+    segments_by_unit = _group_segments(build_result.anchor_segments)
+    nodes_by_id: dict[str, ReaderStableDocumentBlockNode] = {}
+    raw_rows: list[tuple[Any, ReaderStableDocumentBlockNode]] = []
+
+    for raw_block in sorted(
+        build_result.stable_document_blocks,
+        key=lambda block: _stable_block_value(block, "order_index", 0),
+    ):
+        start = _stable_block_value(raw_block, "canonical_text_start_utf16")
+        end = _stable_block_value(raw_block, "canonical_text_end_utf16")
+        unit = (
+            units_by_range.get((int(start), int(end)))
+            if start is not None and end is not None
+            else None
+        )
+        payload = _stable_json_object(raw_block, "payload_json", "payload")
+        semantic = payload.get("semantic")
+        semantic_mapping = semantic if isinstance(semantic, dict) else {}
+        semantic_contract_version = semantic_mapping.get("contract_version")
+        content_role = semantic_mapping.get("content_role")
+        automatic_layer_policy = None
+        resolver_version = semantic_mapping.get("resolver_version")
+        if unit is not None:
+            semantic_contract_version = unit.semantic_contract_version
+            content_role = unit.content_role
+            automatic_layer_policy = unit.automatic_layer_policy
+            resolver_version = unit.automatic_layer_policy_resolver_version
+        elif isinstance(semantic_contract_version, str):
+            resolved = resolve_automatic_layer_policy(
+                contract_version=semantic_contract_version,
+                block_type=str(_stable_block_value(raw_block, "block_type", "unknown")),
+                payload_json=payload,
+                resolver_version=(
+                    resolver_version if isinstance(resolver_version, str) else None
+                ),
+            )
+            automatic_layer_policy = resolved.policy.as_dict()
+            resolver_version = resolved.resolver_version
+        anchor_ids = (
+            [segment.anchor_segment_id for segment in segments_by_unit[unit.unit_id]]
+            if unit is not None
+            else []
+        )
+        node = ReaderStableDocumentBlockNode(
+            block_id=str(_stable_block_value(raw_block, "block_id", "")),
+            parent_block_id=_stable_block_value(raw_block, "parent_block_id"),
+            order_index=int(_stable_block_value(raw_block, "order_index", 0)),
+            block_type=str(_stable_block_value(raw_block, "block_type", "unknown")),
+            text_content=_stable_block_value(raw_block, "text_content"),
+            payload=payload,
+            source_refs=_stable_json_object(
+                raw_block, "source_refs_json", "source_refs"
+            ),
+            quality=_stable_json_object(raw_block, "quality_json", "quality"),
+            canonical_text_start_utf16=(int(start) if start is not None else None),
+            canonical_text_end_utf16=(int(end) if end is not None else None),
+            interpretation_policy=_stable_policy(raw_block),
+            semantic_contract_version=(
+                semantic_contract_version
+                if isinstance(semantic_contract_version, str)
+                else None
+            ),
+            content_role=content_role if isinstance(content_role, str) else None,
+            automatic_layer_policy=automatic_layer_policy,
+            automatic_layer_policy_resolver_version=(
+                resolver_version if isinstance(resolver_version, str) else None
+            ),
+            unit_id=unit.unit_id if unit is not None else None,
+            anchor_segment_ids=anchor_ids,
+        )
+        nodes_by_id[node.block_id] = node
+        raw_rows.append((raw_block, node))
+
+    # A wrapper row may carry a DB placeholder (or another structural text)
+    # while its children carry the canonical ranges.  The tree renders the
+    # child text exactly once and never treats the wrapper placeholder as
+    # user-visible prose.
+    for _raw_block, node in raw_rows:
+        if node.children:
+            continue
+        child_ids = {
+            str(_stable_block_value(child, "block_id", ""))
+            for child, _ in raw_rows
+            if _stable_block_value(child, "parent_block_id") == node.block_id
+        }
+        if child_ids and node.text_content:
+            node.text_content = None
+
+    roots: list[ReaderStableDocumentBlockNode] = []
+    for _, node in raw_rows:
+        parent_id = node.parent_block_id
+        parent = nodes_by_id.get(parent_id) if parent_id else None
+        if parent is None:
+            roots.append(node)
+        else:
+            parent.children.append(node)
+
+    def sort_children(node: ReaderStableDocumentBlockNode) -> None:
+        node.children.sort(key=lambda child: (child.order_index, child.block_id))
+        for child in node.children:
+            sort_children(child)
+
+    roots.sort(key=lambda node: (node.order_index, node.block_id))
+    for root in roots:
+        sort_children(root)
+    return roots
+
+
+def _stable_block_value(
+    block: object,
+    key: str,
+    default: object | None = None,
+) -> object | None:
+    if isinstance(block, dict):
+        if key in block:
+            return block[key]
+        # Repository reload rows use these aliases while building the unit
+        # range index; normalize them here for the snapshot tree projection.
+        if key == "canonical_text_start_utf16":
+            return block.get("block_start_utf16", default)
+        if key == "canonical_text_end_utf16":
+            return block.get("block_end_utf16", default)
+        return default
+    return getattr(block, key, default)
+
+
+def _stable_json_object(block: object, *keys: str) -> dict[str, object]:
+    for key in keys:
+        value = _stable_block_value(block, key)
+        if isinstance(value, dict):
+            return dict(value)
+        if value is not None and hasattr(value, "model_dump"):
+            dumped = value.model_dump(mode="json")
+            if isinstance(dumped, dict):
+                return dumped
+    return {}
+
+
+def _stable_policy(block: object) -> dict[str, object]:
+    value = _stable_block_value(block, "interpretation_policy")
+    if value is not None and hasattr(value, "model_dump"):
+        dumped = value.model_dump(mode="json")
+        return dict(dumped) if isinstance(dumped, dict) else {}
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _build_source_block(

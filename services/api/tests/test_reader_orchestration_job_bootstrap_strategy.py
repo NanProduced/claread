@@ -553,7 +553,14 @@ async def test_policy_hash_change_changes_fingerprint(
             modified_strategy,
             semantic_token="sem:legacy:legacy_open:mode:enforce",
         )
-        assert job["operation_fingerprint"] == expected_fp
+        input_json = job["input_json"]
+        expected_profile_token = (
+            ":prompt_profile:"
+            f"{input_json['translation_prompt_profile_contract_version']}:"
+            f"{input_json['translation_prompt_profile_version']}:"
+            f"{input_json['translation_prompt_profile_fingerprint_hash']}"
+        )
+        assert job["operation_fingerprint"] == expected_fp + expected_profile_token
         assert job["operation_fingerprint"] != real_fingerprint
 
 
@@ -2445,6 +2452,22 @@ def _expected_fingerprint(base: str, strategy: ReaderVariantStrategy) -> str:
     )
 
 
+def _expected_fingerprint_with_profile(
+    base: str,
+    strategy: ReaderVariantStrategy,
+    input_json: dict,
+) -> str:
+    return (
+        _expected_fingerprint(base, strategy)
+        + ":prompt_profile:"
+        + str(input_json["translation_prompt_profile_contract_version"])
+        + ":"
+        + str(input_json["translation_prompt_profile_version"])
+        + ":"
+        + str(input_json["translation_prompt_profile_fingerprint_hash"])
+    )
+
+
 async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
     strategy_env: asyncpg.Pool,
 ) -> None:
@@ -2477,8 +2500,10 @@ async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
     # Job-level: input_json.article_route
     assert job["input_json"]["article_route"] == "short_batch"
     # Job-level: operation_fingerprint uses the SHORT_BATCH base
-    expected_fp = _expected_fingerprint(
-        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT, strategy
+    expected_fp = _expected_fingerprint_with_profile(
+        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        strategy,
+        job["input_json"],
     )
     assert job["operation_fingerprint"] == expected_fp
 
@@ -2531,9 +2556,10 @@ async def test_t41b_structured_batch_route_identity_distinct_from_short(
     # Job-level: operation_fingerprint uses the STRUCTURED_BATCH base --
     # DISTINCT from SHORT_BATCH. This is what makes a route change auditable
     # and triggers supersede.
-    expected_fp = _expected_fingerprint(
+    expected_fp = _expected_fingerprint_with_profile(
         job_bootstrap.TRANSLATION_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
         strategy,
+        job["input_json"],
     )
     assert job["operation_fingerprint"] == expected_fp
     short_fp = _expected_fingerprint(
@@ -2609,8 +2635,10 @@ async def test_t41b_grouped_windowed_route_identity_in_job_and_run_metadata(
     ]
     assert len(translation_window_jobs) >= 2
 
-    expected_fp = _expected_fingerprint(
-        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT, strategy
+    expected_fp = _expected_fingerprint_with_profile(
+        job_bootstrap.TRANSLATION_BATCH_OPERATION_FINGERPRINT,
+        strategy,
+        translation_window_jobs[0]["input_json"],
     )
     for job in translation_window_jobs:
         # Every window job carries the grouped_windowed route identity.

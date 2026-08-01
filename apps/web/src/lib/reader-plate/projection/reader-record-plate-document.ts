@@ -18,6 +18,7 @@ import type {
   ReaderSourceBlockNodeDto,
   ReaderStableSeparatorLeafDto,
   ReaderStableSegmentTextLeafDto,
+  ReaderStableDocumentBlockNodeDto,
   ReaderSnapshotUserAssetDto,
   ReaderTranslationGroupNodeDto,
   ReaderUnitNodeDto,
@@ -28,6 +29,7 @@ import type {
 import { computeUtf16FNV1a } from "@claread/contracts";
 import type { Descendant } from "platejs";
 import { deserializeMarkdownToBlocks } from "@/lib/reader-plate/markdown/deserialize";
+import { isSafeCalloutEmoji } from "@/lib/source-callout/source-callout-display-icon";
 
 export const READER_RECORD_PLATE_DOCUMENT_SCHEMA_VERSION =
   "reader-record-plate-document/v1" as const;
@@ -88,7 +90,8 @@ export type ReaderRecordPlateBlock =
   | ReaderRecordPlateTableBlock
   | ReaderRecordPlateTableRowBlock
   | ReaderRecordPlateTableCellBlock
-  | ReaderRecordPlateHrBlock;
+  | ReaderRecordPlateHrBlock
+  | ReaderRecordPlateSourceCalloutBlock;
 
 /** 原文段落块 — 一个 source span 对应一个 paragraph */
 export interface ReaderRecordPlateParagraphBlock {
@@ -112,6 +115,11 @@ export interface ReaderRecordPlateParagraphData {
   hashAlgorithm: ReaderUnitNodeDto["hash_algorithm"];
   segmentType: AnchorSegmentType;
   boundaryQuality: ReaderBoundaryQuality;
+  /** Stable Document identity used by the generic persisted tree projection. */
+  stableBlockId?: string | null;
+  parentStableBlockId?: string | null;
+  /** Optional display-only emoji promoted from a source callout. */
+  calloutIcon?: string | null;
 }
 
 /** 译文引用块 — backend group-native translation group */
@@ -239,6 +247,8 @@ export interface ReaderRecordPlateStableBlockData {
   segmentType?: AnchorSegmentType;
   /** True when this block starts a new unit (used for navigable attrs). */
   isUnitStart?: boolean;
+  /** Optional display-only emoji read from the Stable wrapper payload. */
+  calloutIcon?: string | null;
 }
 
 /** Markdown 标题块 — `stableBlockType === "heading"` */
@@ -266,6 +276,8 @@ export interface ReaderRecordPlateListItemBlock {
   type: "list_item";
   id: string;
   children: ReaderRecordPlateTextLeaf[];
+  /** Nested lists are owned by the Stable Document tree, not inferred from adjacency. */
+  nestedChildren?: ReaderRecordPlateListBlock[];
   data: ReaderRecordPlateStableBlockData;
 }
 
@@ -292,6 +304,25 @@ export interface ReaderRecordPlateMarkdownBlockquoteBlock {
   type: "markdown_blockquote";
   id: string;
   children: ReaderRecordPlateTextLeaf[];
+  data: ReaderRecordPlateStableBlockData;
+}
+
+/**
+ * Notion-style source callout — `contentRole === "source_callout"`.
+ *
+ * Projected from a stable block whose backend `content_role` is
+ * `source_callout` (Notion/HTML `<aside>`, GFM `> [!NOTE]` alerts). The
+ * backend emits `block_type="blockquote"` + `contentRole="source_callout"`;
+ * the projection overlays a distinct `source_callout` stable type so the
+ * Reader renders a calm Notion-style surface (light tint, icon, non-italic)
+ * instead of an italic markdown blockquote. Plain markdown `>` quotes keep
+ * the `markdown_blockquote` type and remain italic.
+ */
+export interface ReaderRecordPlateSourceCalloutBlock {
+  type: "source_callout";
+  id: string;
+  /** Stable child blocks; the wrapper never owns a second text truth. */
+  children: ReaderRecordPlateTextLeaf[] | ReaderRecordPlateBlock[];
   data: ReaderRecordPlateStableBlockData;
 }
 
@@ -620,8 +651,7 @@ interface TranslationGroupSourceSpan {
   sourceChildren: ReaderSourceBlockChildNodeDto[];
 }
 
-interface TranslationGroupSourceSpanCandidate
-  extends TranslationGroupSourceSpan {}
+type TranslationGroupSourceSpanCandidate = TranslationGroupSourceSpan;
 
 function buildUnitSourceLayout(unit: ReaderUnitNodeDto): UnitSourceLayout {
   const sourceChildren: ReaderSourceBlockChildNodeDto[] = [];
@@ -1404,6 +1434,11 @@ const STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION: ReadonlySet<string> = new Set([
   "thematic_break",
   "list_item",
   "table_cell",
+  // source_callout is a content-role overlay: the backend emits
+  // block_type="blockquote" + contentRole="source_callout" for Notion/HTML
+  // <aside> blocks. We project it as a distinct stable type so the Reader
+  // renders a Notion-style callout instead of an italic markdown blockquote.
+  "source_callout",
 ]);
 
 /**
@@ -1437,6 +1472,16 @@ function getUnitStableBlockType(unit: ReaderUnitNodeDto): string | null {
   if (typeof rawType !== "string" || rawType.length === 0) {
     return null;
   }
+  // source_callout content-role overlay: backend emits block_type="blockquote"
+  // + contentRole="source_callout" for Notion/HTML <aside> / GFM alerts.
+  // Project as a distinct stable type so the Reader renders a Notion-style
+  // callout surface instead of an italic markdown blockquote.
+  if (
+    sourceBlock.contentRole === "source_callout" &&
+    rawType === "blockquote"
+  ) {
+    return "source_callout";
+  }
   if (!STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION.has(rawType)) {
     return null;
   }
@@ -1452,7 +1497,7 @@ function buildStableBlockData(
   anchorSegments: ReaderAnchorSegmentNode[],
   sourceBlock: ReaderSourceBlockNodeDto,
   unit: ReaderUnitNodeDto,
-  options: { isUnitStart?: boolean } = {},
+  options: { isUnitStart?: boolean; calloutIcon?: string | null } = {},
 ): ReaderRecordPlateStableBlockData {
   const primaryAnchor = anchorSegments[0];
   const terminalAnchor = anchorSegments[anchorSegments.length - 1];
@@ -1477,6 +1522,7 @@ function buildStableBlockData(
     boundaryQuality: unit.boundary_quality,
     segmentType: primaryAnchor.segment_type,
     isUnitStart: options.isUnitStart || undefined,
+    calloutIcon: options.calloutIcon ?? null,
   };
 }
 
@@ -1498,7 +1544,11 @@ function buildStableBlockForSourceSpan(
     throw new Error("Expected at least one anchor segment in source span");
   }
 
-  const stableType = sourceBlock.stableBlockType;
+  const stableType =
+    sourceBlock.contentRole === "source_callout" &&
+    sourceBlock.stableBlockType === "blockquote"
+      ? "source_callout"
+      : sourceBlock.stableBlockType;
   const children = sourceChildren.flatMap((child) =>
     isAnchorSegmentNode(child)
       ? child.children.flatMap((leaf) =>
@@ -1506,7 +1556,13 @@ function buildStableBlockForSourceSpan(
         )
       : [mapSeparatorLeaf(child)],
   );
-  const data = buildStableBlockData(anchorSegments, sourceBlock, unit, options);
+  const data = buildStableBlockData(anchorSegments, sourceBlock, unit, {
+    ...options,
+    // Reader icon projection is owned by the persisted Stable wrapper
+    // payload. The flat compatibility path has no wrapper payload and must
+    // not infer an icon by hiding the first body child.
+    calloutIcon: null,
+  });
 
   // Clamp heading level to 1-6; default to 1 when missing/invalid.
   const headingLevel =
@@ -1551,6 +1607,9 @@ function buildStableBlockForSourceSpan(
           hashAlgorithm: primaryAnchor.hash_algorithm,
           segmentType: primaryAnchor.segment_type,
           boundaryQuality: primaryAnchor.boundary_quality,
+          stableBlockId: sourceBlock.stableBlockId ?? null,
+          parentStableBlockId: sourceBlock.parentStableBlockId ?? null,
+          calloutIcon: null,
         },
       };
     }
@@ -1578,6 +1637,13 @@ function buildStableBlockForSourceSpan(
       return {
         type: "markdown_blockquote",
         id: `markdown_blockquote:${primaryAnchor.anchor_segment_id}`,
+        children,
+        data,
+      };
+    case "source_callout":
+      return {
+        type: "source_callout",
+        id: `source_callout:${primaryAnchor.anchor_segment_id}`,
         children,
         data,
       };
@@ -1618,23 +1684,6 @@ function buildStableBlockForSourceSpan(
         options,
       );
   }
-}
-
-function buildStableBlock(
-  segment: ReaderAnchorSegmentNode,
-  context: UnitProjectionContext,
-  unit: ReaderUnitNodeDto,
-  sourceBlock: ReaderSourceBlockNodeDto,
-  options: { isUnitStart?: boolean } = {},
-): ReaderRecordPlateBlock {
-  return buildStableBlockForSourceSpan(
-    [segment],
-    [segment],
-    context,
-    unit,
-    sourceBlock,
-    options,
-  );
 }
 
 function buildBlockquoteBlock(
@@ -1958,28 +2007,81 @@ function mapUnitToBlocks(
   const sourceBlock = stableBlockType ? findUnitSourceBlock(unit) : null;
   const useStableProjection = stableBlockType !== null && sourceBlock !== null;
 
-  const pushFallbackSegment = (segment: ReaderAnchorSegmentNode) => {
-    blocks.push(
-      useStableProjection && sourceBlock
-        ? buildStableBlock(segment, context, unit, sourceBlock, {
-            isUnitStart: isFirstAnchorSegmentInUnit,
-          })
-        : buildParagraphBlock(segment, context, {
-            isUnitStart: isFirstAnchorSegmentInUnit,
-          }),
+  const sourceChildrenForAnchorRange = (
+    startAnchorIndex: number,
+    endAnchorIndex: number,
+  ): ReaderSourceBlockChildNodeDto[] => {
+    const firstSegment = layout.orderedAnchorSegments[startAnchorIndex];
+    const lastSegment = layout.orderedAnchorSegments[endAnchorIndex];
+    if (!firstSegment || !lastSegment) {
+      return [];
+    }
+
+    const firstChildIndex = layout.anchorChildIndexById.get(
+      firstSegment.anchor_segment_id,
     );
-    isFirstAnchorSegmentInUnit = false;
-    blocks.push(...buildAnnotationBlocksForSegments([segment], context));
+    const lastChildIndex = layout.anchorChildIndexById.get(
+      lastSegment.anchor_segment_id,
+    );
+    if (
+      firstChildIndex === undefined ||
+      lastChildIndex === undefined ||
+      lastChildIndex < firstChildIndex
+    ) {
+      return [];
+    }
+    return layout.sourceChildren.slice(firstChildIndex, lastChildIndex + 1);
+  };
+
+  const pushFallbackRange = (
+    startAnchorIndex: number,
+    endAnchorIndex: number,
+  ) => {
+    if (startAnchorIndex > endAnchorIndex) {
+      return;
+    }
+
+    const segments = layout.orderedAnchorSegments.slice(
+      startAnchorIndex,
+      endAnchorIndex + 1,
+    );
+    if (segments.length === 0) {
+      return;
+    }
+
+    if (useStableProjection && sourceBlock) {
+      const sourceChildren = sourceChildrenForAnchorRange(
+        startAnchorIndex,
+        endAnchorIndex,
+      );
+      blocks.push(
+        buildStableBlockForSourceSpan(
+          sourceChildren.length > 0 ? sourceChildren : segments,
+          segments,
+          context,
+          unit,
+          sourceBlock,
+          { isUnitStart: isFirstAnchorSegmentInUnit },
+        ),
+      );
+      isFirstAnchorSegmentInUnit = false;
+      blocks.push(...buildAnnotationBlocksForSegments(segments, context));
+      return;
+    }
+
+    for (const segment of segments) {
+      blocks.push(
+        buildParagraphBlock(segment, context, {
+          isUnitStart: isFirstAnchorSegmentInUnit,
+        }),
+      );
+      isFirstAnchorSegmentInUnit = false;
+      blocks.push(...buildAnnotationBlocksForSegments([segment], context));
+    }
   };
 
   for (const span of spans) {
-    while (nextAnchorIndex < span.startAnchorIndex) {
-      const fallbackSegment = layout.orderedAnchorSegments[nextAnchorIndex];
-      if (fallbackSegment) {
-        pushFallbackSegment(fallbackSegment);
-      }
-      nextAnchorIndex += 1;
-    }
+    pushFallbackRange(nextAnchorIndex, span.startAnchorIndex - 1);
 
     blocks.push(
       useStableProjection && sourceBlock
@@ -2012,13 +2114,10 @@ function mapUnitToBlocks(
     nextAnchorIndex = span.endAnchorIndex + 1;
   }
 
-  while (nextAnchorIndex < layout.orderedAnchorSegments.length) {
-    const fallbackSegment = layout.orderedAnchorSegments[nextAnchorIndex];
-    if (fallbackSegment) {
-      pushFallbackSegment(fallbackSegment);
-    }
-    nextAnchorIndex += 1;
-  }
+  pushFallbackRange(
+    nextAnchorIndex,
+    layout.orderedAnchorSegments.length - 1,
+  );
 
   return blocks;
 }
@@ -2270,6 +2369,316 @@ function groupStableWrapperBlocks(
   return result;
 }
 
+/**
+ * Project the server-owned Stable Document tree into Plate blocks.
+ *
+ * The `reader_unit` value remains the source of anchor/layer leaves, while
+ * this function uses only stable block ids and parent/child rows for
+ * structure.  It is intentionally a compatibility seam: legacy snapshots
+ * without `stable_document_tree` use `groupStableWrapperBlocks` above.
+ */
+function projectStableDocumentTree(
+  nodes: ReaderStableDocumentBlockNodeDto[],
+  flatBlocks: ReaderRecordPlateBlock[],
+): ReaderRecordPlateBlock[] {
+  const blocksByStableId = new Map<string, ReaderRecordPlateBlock[]>();
+  const firstFlatIndexByStableId = new Map<string, number>();
+  flatBlocks.forEach((block, index) => {
+    const stableBlockId = getStableBlockId(block);
+    if (stableBlockId === null) return;
+    const blocks = blocksByStableId.get(stableBlockId) ?? [];
+    blocks.push(block);
+    blocksByStableId.set(stableBlockId, blocks);
+    firstFlatIndexByStableId.set(
+      stableBlockId,
+      Math.min(firstFlatIndexByStableId.get(stableBlockId) ?? index, index),
+    );
+  });
+
+  const treeIds = new Set<string>();
+  const emittedIds = new Set<string>();
+
+  const projectLeaf = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateBlock[] => {
+    treeIds.add(node.block_id);
+    const blocks = blocksByStableId.get(node.block_id);
+    if (blocks && blocks.length > 0) {
+      emittedIds.add(node.block_id);
+      markDescendantIds(node);
+      return blocks;
+    }
+    return node.children.flatMap(projectNode);
+  };
+
+  const projectListItem = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateListItemBlock | null => {
+    treeIds.add(node.block_id);
+    const blocks = blocksByStableId.get(node.block_id) ?? [];
+    const listItems = blocks.filter(isListItemBlock);
+    const block = listItems[0];
+    if (!block) return null;
+    emittedIds.add(node.block_id);
+    const nestedChildren = node.children
+      .filter((child) => child.block_type === "list")
+      .flatMap(projectNode)
+      .filter(isListBlock);
+    const mergedBlock =
+      listItems.length === 1
+        ? block
+        : {
+            ...block,
+            children: listItems.flatMap((item) => item.children),
+            data: {
+              ...block.data,
+              coveredAnchorSegmentIds: listItems.flatMap(
+                (item) => item.data.coveredAnchorSegmentIds,
+              ),
+            },
+          };
+    return nestedChildren.length > 0
+      ? { ...mergedBlock, nestedChildren }
+      : mergedBlock;
+  };
+
+  const projectList = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateListBlock[] => {
+    treeIds.add(node.block_id);
+    const items = node.children
+      .filter((child) => child.block_type === "list_item")
+      .map(projectListItem)
+      .filter((item): item is ReaderRecordPlateListItemBlock => item !== null);
+    if (items.length === 0) return [];
+
+    const firstData = items[0].data;
+    const payload = node.payload;
+    const ordered = payload["ordered"] === true;
+    emittedIds.add(node.block_id);
+    return [
+      {
+        type: "list",
+        id: `list:${node.block_id}`,
+        ordered,
+        children: items,
+        data: {
+          ...firstData,
+          stableBlockType: "list",
+          stableBlockId: node.block_id,
+          parentStableBlockId: node.parent_block_id,
+        },
+      },
+    ];
+  };
+
+  const projectSourceCallout = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateSourceCalloutBlock[] => {
+    treeIds.add(node.block_id);
+    const projectedChildBlocks = node.children.flatMap(projectNode);
+    const legacyBlocks = blocksByStableId.get(node.block_id) ?? [];
+    if (projectedChildBlocks.length === 0) {
+      const sourceCalloutBlocks = legacyBlocks.filter(
+        (block): block is ReaderRecordPlateSourceCalloutBlock =>
+          block.type === "source_callout",
+      );
+      if (sourceCalloutBlocks.length > 0) {
+        emittedIds.add(node.block_id);
+        return sourceCalloutBlocks;
+      }
+      return [];
+    }
+
+    const rawDisplayIcon = node.payload["display_icon"];
+    const displayIcon =
+      typeof rawDisplayIcon === "string" && isSafeCalloutEmoji(rawDisplayIcon)
+        ? rawDisplayIcon
+        : null;
+    const childBlocks = projectedChildBlocks;
+    const firstChild = childBlocks[0];
+    if (!firstChild) return [];
+    const firstData = firstChild.data as ReaderRecordPlateStableBlockData;
+    emittedIds.add(node.block_id);
+    return [
+      {
+        type: "source_callout",
+        id: `source_callout:${node.block_id}`,
+        children: childBlocks,
+        data: {
+          ...firstData,
+          stableBlockType: "source_callout",
+          stableBlockId: node.block_id,
+          parentStableBlockId: node.parent_block_id,
+          calloutIcon: displayIcon,
+        },
+      },
+    ];
+  };
+
+  const projectTable = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateTableBlock[] => {
+    treeIds.add(node.block_id);
+    const rows: ReaderRecordPlateTableRowBlock[] = [];
+    for (const rowNode of node.children.filter(
+      (child) => child.block_type === "table_row",
+    )) {
+      const cells = rowNode.children
+        .filter((child) => child.block_type === "table_cell")
+        .flatMap(projectLeaf)
+        .filter(isTableCellBlock)
+        .map((cell, columnIndex) => ({
+          ...cell,
+          data: { ...cell.data, columnIndex },
+        }));
+      if (cells.length === 0) continue;
+      const firstCellData = cells[0].data;
+      emittedIds.add(rowNode.block_id);
+      rows.push({
+        type: "table_row",
+        id: `table_row:${rowNode.block_id}`,
+        children: cells,
+        data: {
+          ...firstCellData,
+          stableBlockType: "table_row",
+          stableBlockId: rowNode.block_id,
+          parentStableBlockId: node.block_id,
+          isHeader: cells.every((cell) => cell.data.isHeader === true),
+          rowIndex: rows.length,
+        },
+      });
+    }
+    if (rows.length === 0) return [];
+
+    const firstRow = rows[0];
+    const payload = node.payload;
+    const alignments = firstRow.children.map(
+      (cell) => cell.data.alignment ?? "default",
+    );
+    let headerRows = 0;
+    while (headerRows < rows.length && rows[headerRows].data.isHeader === true) {
+      headerRows += 1;
+    }
+    emittedIds.add(node.block_id);
+    return [
+      {
+        type: "table",
+        id: `table:${node.block_id}`,
+        children: rows,
+        data: {
+          ...firstRow.data,
+          stableBlockType: "table",
+          stableBlockId: node.block_id,
+          parentStableBlockId: node.parent_block_id,
+          alignments:
+            Array.isArray(payload["alignments"]) &&
+            payload["alignments"].every((value) => typeof value === "string")
+              ? (payload["alignments"] as string[])
+              : alignments,
+          headerRows:
+            typeof payload["header_rows"] === "number"
+              ? payload["header_rows"]
+              : headerRows,
+        },
+      },
+    ];
+  };
+
+  const projectNode = (
+    node: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateBlock[] => {
+    treeIds.add(node.block_id);
+    switch (node.block_type) {
+      case "list":
+        return projectList(node);
+      case "table":
+        return projectTable(node);
+      case "table_row":
+      case "table_cell":
+        return projectLeaf(node);
+      case "blockquote":
+        return node.content_role === "source_callout"
+          ? projectSourceCallout(node)
+          : projectLeaf(node);
+      default:
+        return projectLeaf(node);
+    }
+  };
+
+  const markDescendantIds = (node: ReaderStableDocumentBlockNodeDto) => {
+    node.children.forEach((child) => {
+      treeIds.add(child.block_id);
+      emittedIds.add(child.block_id);
+      markDescendantIds(child);
+    });
+  };
+
+  const stableItems: Array<{
+    index: number;
+    priority: number;
+    block: ReaderRecordPlateBlock;
+  }> = [];
+  for (const node of nodes) {
+    const projected = projectNode(node);
+    const index = subtreeFirstFlatIndex(node, firstFlatIndexByStableId);
+    projected.forEach((block) => {
+      stableItems.push({ index, priority: 0, block });
+    });
+  }
+
+  const fallbackItems = flatBlocks.flatMap((block, index) => {
+    const stableBlockId = getStableBlockId(block);
+    if (
+      stableBlockId !== null &&
+      (treeIds.has(stableBlockId) || emittedIds.has(stableBlockId))
+    ) {
+      return [];
+    }
+    return [{ index, priority: 1, block }];
+  });
+
+  return [...stableItems, ...fallbackItems]
+    .sort((left, right) => left.index - right.index || left.priority - right.priority)
+    .map((item) => item.block);
+}
+
+function getStableBlockId(block: ReaderRecordPlateBlock): string | null {
+  const data = block.data as Partial<ReaderRecordPlateStableBlockData>;
+  const value = data.stableBlockId;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function subtreeFirstFlatIndex(
+  node: ReaderStableDocumentBlockNodeDto,
+  firstFlatIndexByStableId: Map<string, number>,
+): number {
+  const own = firstFlatIndexByStableId.get(node.block_id);
+  const childIndexes = node.children.map((child) =>
+    subtreeFirstFlatIndex(child, firstFlatIndexByStableId),
+  );
+  const indexes = [own ?? Number.MAX_SAFE_INTEGER, ...childIndexes];
+  return Math.min(...indexes);
+}
+
+function isListBlock(
+  block: ReaderRecordPlateBlock,
+): block is ReaderRecordPlateListBlock {
+  return block.type === "list";
+}
+
+function isListItemBlock(
+  block: ReaderRecordPlateBlock,
+): block is ReaderRecordPlateListItemBlock {
+  return block.type === "list_item";
+}
+
+function isTableCellBlock(
+  block: ReaderRecordPlateBlock,
+): block is ReaderRecordPlateTableCellBlock {
+  return block.type === "table_cell";
+}
+
 export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   snapshot: ReaderPlateSnapshotDto,
 ): ReaderRecordPlateDocument {
@@ -2288,9 +2697,13 @@ export function projectReaderPlateSnapshotToReaderRecordPlateDocument(
   const flatChildren = snapshot.value.flatMap((unit) =>
     mapUnitToBlocks(unit, context),
   );
-  // B2.6: reconstruct `list` / `table` / `table_row` wrapper blocks from
-  // consecutive `list_item` / `table_cell` leaf blocks.
-  const children = groupStableWrapperBlocks(flatChildren);
+  // Stable Document is the structure authority.  Legacy snapshots without
+  // the server tree retain the compatibility grouping path; current
+  // Markdown snapshots resolve wrappers and nesting from persisted parent
+  // identities instead of adjacency or raw Markdown.
+  const children = snapshot.stable_document_tree?.length
+    ? projectStableDocumentTree(snapshot.stable_document_tree, flatChildren)
+    : groupStableWrapperBlocks(flatChildren);
 
   return {
     type: "reader_record_plate_document",

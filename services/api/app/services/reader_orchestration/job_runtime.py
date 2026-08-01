@@ -29,7 +29,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -57,6 +57,15 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED_TERMINAL = "failed_terminal"
 STATUS_CANCELLED = "cancelled"
 STATUS_SUPERSEDED = "superseded"
+
+# G5 deterministic acceptance runs share the production ``reader_jobs``
+# table, but must never be claimable by a normal provider-backed worker.
+# The namespace is carried by the original input metadata so the fence is
+# present before bootstrap creates any jobs.
+JobRuntimeScope = Literal["production", "fake"]
+JOB_RUNTIME_SCOPE_PRODUCTION: JobRuntimeScope = "production"
+JOB_RUNTIME_SCOPE_FAKE: JobRuntimeScope = "fake"
+FAKE_JOB_NAMESPACE = "reader_markdown_g5_fake"
 
 # T3.5 completion finalizer: jobs are "terminal" when they will not be
 # retried or picked up by another worker tick. The finalizer uses this set
@@ -243,8 +252,41 @@ class ReaderJobRuntime:
     same job. LLM calls must never run inside these transactions.
     """
 
-    def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool | None = None,
+        job_scope: JobRuntimeScope = JOB_RUNTIME_SCOPE_PRODUCTION,
+    ) -> None:
         self._pool = pool
+        if job_scope not in {
+            JOB_RUNTIME_SCOPE_PRODUCTION,
+            JOB_RUNTIME_SCOPE_FAKE,
+        }:
+            raise ValueError(f"unsupported reader job runtime scope: {job_scope!r}")
+        self._job_scope = job_scope
+
+    def _claim_scope_predicate(self) -> str:
+        """Return the fixed SQL fence for this runtime's claim namespace."""
+        if self._job_scope == JOB_RUNTIME_SCOPE_FAKE:
+            return f"""
+                          AND EXISTS (
+                                SELECT 1
+                                FROM original_inputs AS fake_input
+                                WHERE fake_input.reading_record_id = reader_jobs.reading_record_id
+                                  AND fake_input.metadata_json ->> 'executor_mode' = 'fake'
+                                  AND fake_input.metadata_json ->> 'fake_job_namespace'
+                                      = '{FAKE_JOB_NAMESPACE}'
+                          )
+            """
+        return """
+                          AND NOT EXISTS (
+                                SELECT 1
+                                FROM original_inputs AS fake_input
+                                WHERE fake_input.reading_record_id = reader_jobs.reading_record_id
+                                  AND fake_input.metadata_json ->> 'executor_mode' = 'fake'
+                          )
+        """
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -294,7 +336,7 @@ class ReaderJobRuntime:
             async with conn.transaction():
                 while True:
                     row = await conn.fetchrow(
-                        """
+                        f"""
                         SELECT *
                         FROM reader_jobs
                         WHERE status IN ('queued', 'retry_later')
@@ -307,6 +349,7 @@ class ReaderJobRuntime:
                           AND ($4::uuid IS NULL OR reading_record_id = $4)
                           AND ($5::uuid IS NULL OR base_id = $5)
                           AND ($6::integer IS NULL OR expected_generation = $6)
+                          {self._claim_scope_predicate()}
                         ORDER BY priority DESC, available_at ASC, created_at ASC, id ASC
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
@@ -445,10 +488,11 @@ class ReaderJobRuntime:
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
-                    """
+                    f"""
                     SELECT *
                     FROM reader_jobs
                     WHERE id = $1
+                      {self._claim_scope_predicate()}
                     FOR UPDATE
                     """,
                     job_id,
@@ -462,9 +506,7 @@ class ReaderJobRuntime:
                     available_at = row["available_at"]
                     now = datetime.now(UTC)
                     if available_at.tzinfo is None:
-                        from datetime import timezone as _tz
-
-                        available_at = available_at.replace(tzinfo=_tz.utc)
+                        available_at = available_at.replace(tzinfo=UTC)
                     if available_at > now:
                         return None
 

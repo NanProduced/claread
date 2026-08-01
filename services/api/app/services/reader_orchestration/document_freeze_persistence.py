@@ -79,7 +79,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -428,6 +428,14 @@ async def persist_stable_document_freeze_plan(
             segmenter_version=segmenter_version,
             canonicalizer_version=canonicalizer_version,
             stable_block_annotations=_stable_block_annotations_from_plan(plan),
+        )
+        # Keep the complete Stable Document row set alongside the base
+        # carriers.  This is deliberately not projected into units: wrappers
+        # and children without canonical ranges must survive fresh/reload
+        # snapshot construction as first-class structure.
+        build_result = replace(
+            build_result,
+            stable_document_blocks=tuple(plan.blocks),
         )
     except ValueError as exc:
         raise StableDocumentFreezePersistenceError(

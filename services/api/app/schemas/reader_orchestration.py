@@ -746,6 +746,36 @@ class ReaderEnhancementProgress(BaseModel):
     layers: list[ReaderEnhancementProgressLayer] = Field(default_factory=list)
 
 
+class ReaderStableDocumentBlockNode(BaseModel):
+    """Stable Document structure projected for the Reader Plate.
+
+    The node tree is built from persisted block rows. ``unit_id`` and
+    ``anchor_segment_ids`` are range-identity projections only; they never
+    become an alternate structure model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1)
+    parent_block_id: str | None = None
+    order_index: int = Field(ge=0)
+    block_type: str = Field(min_length=1)
+    text_content: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source_refs: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    canonical_text_start_utf16: int | None = Field(default=None, ge=0)
+    canonical_text_end_utf16: int | None = Field(default=None, ge=0)
+    interpretation_policy: dict[str, Any] = Field(default_factory=dict)
+    semantic_contract_version: str | None = None
+    content_role: str | None = None
+    automatic_layer_policy: dict[str, bool] | None = None
+    automatic_layer_policy_resolver_version: str | None = None
+    unit_id: str | None = None
+    anchor_segment_ids: list[str] = Field(default_factory=list)
+    children: list[ReaderStableDocumentBlockNode] = Field(default_factory=list)
+
+
 class ReaderPlateSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -764,6 +794,9 @@ class ReaderPlateSnapshot(BaseModel):
     user_assets: list[ReaderSnapshotUserAsset] = Field(default_factory=list)
     parsed_decisions: list[ReaderSnapshotParsedDecision] = Field(default_factory=list)
     value: list[dict[str, Any]] = Field(default_factory=list)
+    stable_document_tree: list[ReaderStableDocumentBlockNode] = Field(
+        default_factory=list
+    )
     # T5.4a: optional trusted published ready|partial only; else None → JSON null.
     semantic_outline: ReaderSemanticOutlineProjection | None = None
 

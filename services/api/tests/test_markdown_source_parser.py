@@ -6,7 +6,7 @@ Contract. It loads each G0 fixture under
 adapter ``MarkdownSourceParser`` produces the expected blocks, policy,
 and diagnostics.
 
-M1 state (2026-07-23): all 11 G0 fixtures PASS under the production
+M1 state (2026-07-23): all G0 fixtures PASS under the production
 adapter. The legacy regex normalizer and the candidate-service regex
 draft path have been replaced by this adapter (single parse result).
 
@@ -41,14 +41,19 @@ _FIXTURES_ROOT = (
     / "markdown_structured_source"
 )
 
-# All 13 fixtures PASS under the M1 production adapter (11 G0 + 2 L1:
-# safe_html_adaptation / table_structure_uncertain).
+# All 20 fixtures PASS under the M1 production adapter (13 original G0/L1
+# fixtures plus source_callout, rich_html_aside, task_list, and
+# definition_list, citation_reference, heading_levels, and gfm_alert).
 # real_list_wrapper added in M3 prerequisite: focused list wrapper +
 # list_item regression for Article RAG eligibility.
 _PASSING_FIXTURES = (
+    "citation_reference",
     "code_mermaid",
+    "definition_list",
     "footnote",
+    "gfm_alert",
     "gfm_table",
+    "heading_levels",
     "nested_list",
     "r14_complex",
     "raw_html",
@@ -56,9 +61,12 @@ _PASSING_FIXTURES = (
     "reject_empty",
     "safe_html_adaptation",
     "simple_paragraph",
+    "source_callout",
+    "task_list",
     "table_structure_uncertain",
     "unclosed_fence",
     "unsafe_link",
+    "rich_html_aside",
 )
 
 # No fixtures are in RED state after M1; kept as an empty mapping so the
@@ -207,7 +215,7 @@ def _assert_identity(result: MarkdownParseResult) -> None:
 # ---------------------------------------------------------------------------
 # Fixture-driven parametrized tests
 #
-# All 11 G0 fixtures run as plain assertions under the M1 production
+# All G0 fixtures run as plain assertions under the M1 production
 # adapter. The xfail parametrization helper is retained but empty; if a
 # future regression introduces a RED fixture, re-add it to
 # ``_XFAIL_FIXTURES`` with a reason.
@@ -304,6 +312,28 @@ def test_clause3_safe_link_preserved_in_text() -> None:
     assert "Claread" in text
 
 
+def test_task_list_visible_marker_routes_to_candidate_without_checked_semantics() -> None:
+    """Unsupported checkbox state stays visible and never freezes silently."""
+    result = _parse("- [x] done\n- [ ] todo")
+    assert [b.text_content for b in result.blocks if b.block_type == "list_item"] == [
+        "[x] done",
+        "[ ] todo",
+    ]
+    assert result.outcome == "candidate_document_required"
+    assert {w.code for w in result.warnings} == {"task_list_unsupported"}
+    assert {u.code for u in result.unsupported} == {"task_list"}
+
+
+def test_definition_list_is_visible_plain_text_with_adaptation_notice() -> None:
+    """Definition-list syntax remains recoverable text with an explicit notice."""
+    result = _parse("Term\n: definition")
+    assert len(result.blocks) == 1
+    assert result.blocks[0].text_content == "Term\n: definition"
+    assert result.outcome == "stable_document_ready"
+    assert {w.code for w in result.warnings} == {"definition_list_degraded"}
+    assert {u.code for u in result.unsupported} == {"definition_list"}
+
+
 def test_clause5_outcome_stable_for_simple_paragraph() -> None:
     """Clause 5 — simple narrative input → stable_document_ready."""
     result = _parse("Just a paragraph.")
@@ -335,6 +365,8 @@ def test_clause5_warning_codes_belong_to_closed_set() -> None:
         "has_unclosed_fence",
         "unsafe_link_protocol",
         "footnote_reference",
+        "task_list_unsupported",
+        "definition_list_degraded",
         "strikethrough_extension",
         "mermaid_static_only",
         "code_dominant",
@@ -351,6 +383,8 @@ def test_clause5_unsupported_codes_belong_to_closed_set() -> None:
         "raw_html",
         "unsafe_link_sanitization",
         "footnote_full_semantics",
+        "task_list",
+        "definition_list",
     }
     result = _parse("# Title\n\nParagraph.")
     for u in result.unsupported:
@@ -425,16 +459,20 @@ def test_clause2_missing_source_range_emits_warning_and_routes_to_candidate(
 
 
 # ---------------------------------------------------------------------------
-# Explicit assertion: all 11 fixtures must exist on disk
+# Explicit assertion: all G0 fixtures must exist on disk
 # ---------------------------------------------------------------------------
 
 
 def test_all_g0_fixtures_exist_on_disk() -> None:
-    """All 11 G0 fixtures must be present with all four files."""
+    """All G0 fixtures must be present with all four files."""
     expected_names = {
         "code_mermaid",
+        "citation_reference",
+        "definition_list",
         "footnote",
+        "gfm_alert",
         "gfm_table",
+        "heading_levels",
         "nested_list",
         "r14_complex",
         "raw_html",
@@ -442,9 +480,12 @@ def test_all_g0_fixtures_exist_on_disk() -> None:
         "reject_empty",
         "safe_html_adaptation",
         "simple_paragraph",
+        "source_callout",
+        "task_list",
         "table_structure_uncertain",
         "unclosed_fence",
         "unsafe_link",
+        "rich_html_aside",
     }
     actual_names = {
         d.name

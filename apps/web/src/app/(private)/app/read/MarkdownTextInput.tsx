@@ -75,7 +75,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
-import remarkGfm from "remark-gfm";
 import {
   BaseBlockquotePlugin,
   BaseBoldPlugin,
@@ -114,15 +113,18 @@ import {
   type PlateEditor,
   usePlateEditor,
 } from "platejs/react";
-import type { Value } from "platejs";
+import type { Descendant, Value } from "platejs";
 
 import { MARKDOWN_PLUGIN_OPTIONS } from "@/components/editor/plugins/markdown-kit";
-import { prepareClipboardHtml } from "@/lib/clipboard/prepare-clipboard-html";
+import { SourceCalloutPlugin } from "@/components/editor/plugins/source-callout-kit";
+import { negotiateClipboardSource } from "@/lib/clipboard/clipboard-source-negotiation";
+import { deserializeHybridClipboardFragment } from "@/lib/clipboard/clipboard-source-fusion";
 import {
   deserializeMarkdownToBlocksWithStatus,
   type DeserializeMarkdownResult,
 } from "@/lib/reader-plate/markdown/deserialize";
 import { remarkPreserveUnsupported } from "@/lib/reader-plate/markdown/remark-preserve-unsupported";
+import { normalizeCalloutDisplayIcons } from "@/lib/source-callout/source-callout-display-icon";
 import { cn } from "@/lib/cn";
 import {
   lintMarkdownInput,
@@ -323,12 +325,23 @@ function MarkdownStrikethroughLeaf({ children, attributes }: PlateLeafProps) {
 const InputMarkdownPlugin = MarkdownPlugin.configure({
   options: {
     ...MARKDOWN_PLUGIN_OPTIONS,
-    remarkPlugins: [remarkGfm, remarkPreserveUnsupported],
+    // 复用 MARKDOWN_PLUGIN_OPTIONS.remarkPlugins（含 remarkMergeAsideHtml
+    // 用于合并被空行拆分的 <aside> html 节点），并追加输入端专用
+    // remarkPreserveUnsupported。
+    remarkPlugins: [
+      ...MARKDOWN_PLUGIN_OPTIONS.remarkPlugins,
+      remarkPreserveUnsupported,
+    ],
   },
 });
 
 const markdownTextInputPlugins = [
   InputMarkdownPlugin,
+  // source_callout：Notion 风格 aside 提示框（剪贴板 HTML deserializer +
+  // component 注册）。Markdown 路径的 mdast html → source_callout 转换由
+  // InputMarkdownPlugin 的 rules.html 处理，但 element type 需要 plugin
+  // 注册才能渲染。不注册会导致 aside 被识别后无 component 可渲染。
+  SourceCalloutPlugin,
   // basic-nodes：标题/引用/分隔线
   BaseH1Plugin.configure({ node: { component: MarkdownHeading } }),
   BaseH2Plugin.configure({ node: { component: MarkdownHeading } }),
@@ -394,6 +407,43 @@ function hasTextContent(nodes: unknown[]): boolean {
     }
     return false;
   });
+}
+
+/**
+ * R-Aside-1: 检测编辑器 value 中是否包含 `source_callout` 元素。
+ *
+ * 粘贴保真路径（`!dirty && lastPastedText` 时返回原始粘贴文本）与
+ * callout 归一化不兼容：GFM alert `> [!NOTE]` 与带 class 的
+ * `<aside class>` 在反序列化时被语义转换为 `source_callout` element，
+ * 原始粘贴文本不再是 canonical source。此 helper 用于在 `readSubmitMarkdown`
+ * 中跳过保真路径，强制走 serialize 取得 canonical `<aside>` 表达。
+ *
+ * 仅检测 element 类型，不深入 inline text 节点（source_callout 是块级
+ * element，不会出现在 text leaf 中）。
+ */
+function editorHasSourceCallout(nodes: unknown[]): boolean {
+  return nodes.some((node) => {
+    if (!node || typeof node !== "object") {
+      return false;
+    }
+    const nodeType = (node as { type?: unknown }).type;
+    if (nodeType === "source_callout") {
+      return true;
+    }
+    if ("children" in node && Array.isArray(node.children)) {
+      return editorHasSourceCallout(node.children);
+    }
+    return false;
+  });
+}
+
+function normalizeMarkdownDeserializeResult(
+  result: DeserializeMarkdownResult,
+): DeserializeMarkdownResult {
+  return {
+    ...result,
+    blocks: normalizeCalloutDisplayIcons(result.blocks),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +554,10 @@ export const MarkdownTextInput = forwardRef<
   // 在该过程中保留。`initialDegradedNotifiedRef` 防止重复触发 `onDegraded`
   // 导致父组件重复显示可见错误提示。
   const [initialResult] = useState<DeserializeMarkdownResult>(
-    () => deserializeMarkdownToBlocksWithStatus(initialValue ?? ""),
+    () =>
+      normalizeMarkdownDeserializeResult(
+        deserializeMarkdownToBlocksWithStatus(initialValue ?? ""),
+      ),
   );
   const [isEmpty, setIsEmpty] = useState(
     () => !hasTextContent(initialResult.blocks),
@@ -621,6 +674,13 @@ export const MarkdownTextInput = forwardRef<
 
   const readSubmitMarkdown = useCallback((): string => {
     if (!dirtyRef.current && lastPastedTextRef.current) {
+      // R-Aside-1: 粘贴内容若被归一化为 source_callout（GFM alert、
+      // <aside class> HTML 等），原始粘贴文本不再是 canonical source。
+      // 必须走 serialize 取得 canonical `<aside>` 表达，否则提交源会
+      // 携带 `[!NOTE]` 或原始 HTML class，违反单一 canonical 合同。
+      if (editorHasSourceCallout(editor.children)) {
+        return serializeCurrentMarkdown(editor);
+      }
       return lastPastedTextRef.current;
     }
     return serializeCurrentMarkdown(editor);
@@ -867,6 +927,17 @@ export const MarkdownTextInput = forwardRef<
       return;
     }
 
+    const deserializeHtmlBody = (body: HTMLElement) =>
+      editor.api.html.deserialize({ element: body }) as Descendant[];
+    const deserializeHtml = (htmlValue: string) =>
+      editor.api.html.deserialize({
+        element: new DOMParser().parseFromString(htmlValue, "text/html").body,
+      }) as Descendant[];
+    const deserializePlain = (markdownValue: string) =>
+      normalizeMarkdownDeserializeResult(
+        deserializeMarkdownToBlocksWithStatus(markdownValue),
+      ).blocks;
+
     const pasteIntoEmptyEditor = !hasTextContent(editor.children);
     const previousWindowScrollY = window.scrollY;
     const previousAncestorTops = pasteIntoEmptyEditor
@@ -881,26 +952,59 @@ export const MarkdownTextInput = forwardRef<
       getWindowScrollY: () => window.scrollY,
       restoreWindowScroll: (top) => window.scrollTo({ top }),
     });
+    const negotiated = negotiateClipboardSource(
+      { html, plain },
+      {
+        deserializeHtml: deserializeHtmlBody,
+        deserializeMarkdown: deserializePlain,
+      },
+    );
+
     // 仅纯 Markdown 粘贴保留 byte-exact 原文。富 HTML 的 text/plain
     // companion 通常缺少标题、列表、表格等结构；提交源必须由清洗并
     // deserialize 后的 Plate Value 序列化得到。
-    beginPasteWindow(html ? null : plain);
+    beginPasteWindow(
+      html || negotiated.kind !== "plain" ? null : negotiated.plain,
+    );
     // L1: clipboard 同时携带 text/html 时，先清洗（script/iframe/on* /
-    // 危险 URL scheme）并做 Notion callout（aside→blockquote）语义映射，
-    // 再交给官方插件的 HTML deserializer。preventDefault 后 Slate 默认
-    // 粘贴管线短路（slate-react isEventHandled 检查 defaultPrevented），
+    // 危险 URL scheme）并做 Notion callout 归一（aside 保留、callout div
+    // 重命名为 aside），再交给 SourceCalloutPlugin 的 HTML deserializer
+    // 统一反序列化为 source_callout Plate element。preventDefault 后 Slate
+    // 默认粘贴管线短路（slate-react isEventHandled 检查 defaultPrevented），
     // 避免未清洗 HTML 进入 Plate/DOM。
     if (html) {
       event.preventDefault();
-      const clean = prepareClipboardHtml(html);
-      const doc = new DOMParser().parseFromString(clean, "text/html");
-      const fragment = editor.api.html.deserialize({ element: doc.body });
+
+      let fragment: Descendant[];
+      if (negotiated.kind === "hybrid" && negotiated.fusion) {
+        // HTML remains the article truth. The fusion seam removes exactly one
+        // validated escaped-aside DOM range and inserts the existing Markdown
+        // source_callout fragment at that position. If the seam cannot be
+        // applied, keep the sanitized HTML visible as a degradation signal;
+        // never silently replace the whole article with text/plain.
+        fragment =
+          deserializeHybridClipboardFragment(
+            negotiated.html,
+            negotiated.fusion,
+            {
+              deserializeHtml: deserializeHtmlBody,
+              deserializeMarkdown: deserializePlain,
+            },
+          ) ?? deserializeHtml(negotiated.html);
+      } else if (negotiated.kind === "html") {
+        fragment = deserializeHtml(negotiated.html);
+      } else {
+        fragment = deserializePlain(negotiated.plain);
+      }
+      fragment = normalizeCalloutDisplayIcons(fragment);
       if (fragment.length > 0) {
         editor.tf.insertFragment(fragment as never[]);
       } else if (plain.trim()) {
         // 清洗后 HTML 没有可反序列化节点时，显式退回 companion text。
         // 仍以 Plate Value 为提交源，避免 preventDefault 造成可见内容丢失。
-        const fallback = deserializeMarkdownToBlocksWithStatus(plain);
+        const fallback = normalizeMarkdownDeserializeResult(
+          deserializeMarkdownToBlocksWithStatus(plain),
+        );
         editor.tf.insertFragment(fallback.blocks as never[]);
       }
     }

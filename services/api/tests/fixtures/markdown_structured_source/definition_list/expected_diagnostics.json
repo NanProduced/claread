@@ -1,0 +1,10 @@
+{
+  "fixture_name": "definition_list",
+  "warnings": [
+    {"code": "definition_list_degraded", "message": "Definition-list syntax is preserved as plain text; definition-list structure is not supported in the first phase.", "blocks_freeze": false, "classification": "adaptation_notice"}
+  ],
+  "unsupported": [
+    {"code": "definition_list", "message": "Definition-list structure is not supported in the first phase; text is retained for safe review."}
+  ],
+  "outcome": "stable_document_ready"
+}

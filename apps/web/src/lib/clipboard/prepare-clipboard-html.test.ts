@@ -71,11 +71,14 @@ describe("sanitizeClipboardHtml", () => {
 });
 
 describe("adaptNotionCallouts", () => {
-  it("maps <aside> to <blockquote> preserving content", () => {
+  it("keeps <aside> as-is (no GFM alert marker, no blockquote)", () => {
     const html = `<p>before</p><aside>💡<div>callout body <strong>bold</strong></div></aside><p>after</p>`;
     const out = adaptNotionCallouts(html);
-    expect(out).not.toContain("<aside");
-    expect(out).toContain("<blockquote>");
+    expect(out).toContain("<aside");
+    expect(out).toContain("</aside>");
+    // 不得出现 GFM alert marker 或 blockquote 转换
+    expect(out).not.toContain("[!NOTE]");
+    expect(out).not.toContain("<blockquote");
     expect(out).toContain("callout body");
     expect(out).toContain("<strong>bold</strong>");
     expect(out).toContain("💡");
@@ -83,26 +86,57 @@ describe("adaptNotionCallouts", () => {
     expect(out).toContain("after");
   });
 
-  it("maps Notion-exported callout div to blockquote", () => {
+  it("renames Notion-exported callout div to <aside> (preserving class)", () => {
     const html = `<div class="notion-callout"><div>icon</div><div>content text</div></div>`;
     const out = adaptNotionCallouts(html);
-    expect(out).toContain("<blockquote>");
+    expect(out).toContain("<aside");
+    expect(out).toContain("</aside>");
+    // class 保留用于 SourceCalloutPlugin 推断 kind
+    expect(out).toContain('class="notion-callout"');
     expect(out).toContain("content text");
+    // 不得出现可见 GFM marker
+    expect(out).not.toContain("[!NOTE]");
+    expect(out).not.toContain("<blockquote");
   });
 
-  it("handles nested asides", () => {
-    const html = `<aside><p>outer</p><aside><p>inner</p></aside></aside>`;
+  it("preserves callout-warning / callout-tip class on renamed <aside>", () => {
+    const warningHtml = `<div class="callout-warning"><p>careful</p></div>`;
+    const warningOut = adaptNotionCallouts(warningHtml);
+    expect(warningOut).toContain("<aside");
+    expect(warningOut).toContain('class="callout-warning"');
+    expect(warningOut).toContain("careful");
+    expect(warningOut).not.toContain("[!WARNING]");
+    expect(warningOut).not.toContain("<blockquote");
+
+    const tipHtml = `<div class="callout-tip"><p>hint</p></div>`;
+    const tipOut = adaptNotionCallouts(tipHtml);
+    expect(tipOut).toContain("<aside");
+    expect(tipOut).toContain('class="callout-tip"');
+    expect(tipOut).not.toContain("[!TIP]");
+
+    const importantHtml = `<div class="callout-important"><p>must</p></div>`;
+    const importantOut = adaptNotionCallouts(importantHtml);
+    expect(importantOut).toContain("<aside");
+    expect(importantOut).toContain('class="callout-important"');
+    expect(importantOut).not.toContain("[!IMPORTANT]");
+  });
+
+  it("handles nested callout divs (each renamed to <aside>)", () => {
+    const html = `<div class="callout"><p>outer</p><div class="callout"><p>inner</p></div></div>`;
     const out = adaptNotionCallouts(html);
-    expect(out).not.toContain("<aside");
-    expect(out.match(/<blockquote>/g)?.length).toBe(2);
+    expect(out).not.toContain("<div");
+    expect(out.match(/<aside/gi)?.length).toBe(2);
     expect(out).toContain("outer");
     expect(out).toContain("inner");
+    expect(out).not.toContain("[!NOTE]");
+    expect(out).not.toContain("<blockquote");
   });
 
   it("does not touch ordinary divs without callout class", () => {
     const html = `<div class="paragraph">plain</div>`;
     const out = adaptNotionCallouts(html);
     expect(out).toContain(`<div class="paragraph">plain</div>`);
+    expect(out).not.toContain("<aside");
     expect(out).not.toContain("<blockquote>");
   });
 });
@@ -131,12 +165,17 @@ describe("adaptImages", () => {
 });
 
 describe("prepareClipboardHtml", () => {
-  it("sanitizes then adapts (aside with script + onclick)", () => {
+  it("sanitizes then preserves <aside> (script + onclick stripped, no [!NOTE])", () => {
     const dirty = `<aside onclick="x()"><script>bad()</script><p>note</p></aside>`;
     const out = prepareClipboardHtml(dirty);
-    expect(out).toContain("<blockquote>");
+    expect(out).toContain("<aside");
+    expect(out).toContain("</aside>");
     expect(out).toContain("note");
+    // 危险内容必须移除
     expect(out).not.toContain("script");
     expect(out).not.toContain("onclick");
+    // 不得出现可见 GFM marker
+    expect(out).not.toContain("[!NOTE]");
+    expect(out).not.toContain("<blockquote");
   });
 });

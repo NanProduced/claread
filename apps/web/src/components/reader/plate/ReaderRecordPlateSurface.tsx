@@ -58,6 +58,7 @@ import {
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderPlateSnapshotDto,
+  type ReaderSectionTranslationOutcomeDto,
   type ReaderSnapshotUserAssetDto,
 } from "@/types/api/reader-plate";
 import type {
@@ -205,6 +206,63 @@ type ReaderRecordLookupState =
   | { kind: "loading"; query: string; context: ReaderRecordLookupContext }
   | { kind: "ready"; query: string; context: ReaderRecordLookupContext; result: WebDictResult }
   | { kind: "error"; query: string; context: ReaderRecordLookupContext; message: string };
+
+type ReaderRecordTranslationState =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | {
+      kind: "submitted";
+      outcome: ReaderSectionTranslationOutcomeDto;
+      detail: string | null;
+    }
+  | { kind: "error"; message: string };
+
+const READER_SECTION_TRANSLATION_OUTCOMES: readonly ReaderSectionTranslationOutcomeDto[] = [
+  "succeeded",
+  "retry_later",
+  "already_covered_or_inflight",
+  "budget_exhausted",
+  "rejected",
+  "superseded",
+];
+
+function isReaderSectionTranslationOutcome(
+  value: unknown,
+): value is ReaderSectionTranslationOutcomeDto {
+  return (
+    typeof value === "string" &&
+    READER_SECTION_TRANSLATION_OUTCOMES.includes(
+      value as ReaderSectionTranslationOutcomeDto,
+    )
+  );
+}
+
+function readerSectionTranslationStatusMessage(
+  state: ReaderRecordTranslationState,
+): string {
+  if (state.kind === "submitting") {
+    return "正在提交翻译";
+  }
+  if (state.kind === "error") {
+    return state.message;
+  }
+  if (state.kind === "submitted") {
+    switch (state.outcome) {
+      case "succeeded":
+        return "翻译已提交";
+      case "already_covered_or_inflight":
+        return "该段已有译文或正在翻译";
+      case "budget_exhausted":
+        return "翻译额度已用尽";
+      case "retry_later":
+        return "翻译暂时排队中，请稍后刷新";
+      case "rejected":
+      case "superseded":
+        return "翻译请求未通过校验，请刷新后重试";
+    }
+  }
+  return "";
+}
 
 interface ReaderRecordLookupContext {
   contextSentence: string;
@@ -674,6 +732,21 @@ function sourceOnlyDisabledReason(
     return action === "lookup"
       ? "跨句选区暂不支持查词"
       : "跨句选区暂不支持高亮/笔记";
+  }
+  return "暂不支持跨段或非稳定原文选区";
+}
+
+function translationDisabledReason(
+  selection: ReaderRecordSelectionAnchorBridgeResult | null,
+): string | undefined {
+  if (!selection) {
+    return "请选择稳定原文后再翻译";
+  }
+  if (selection.surfaceKind !== "source") {
+    return "当前仅支持原文翻译";
+  }
+  if (hasSourceMultiTextSelection(selection)) {
+    return "跨句选区暂不支持翻译";
   }
   return "暂不支持跨段或非稳定原文选区";
 }
@@ -2548,10 +2621,12 @@ function ReaderRecordMoreMenu({
 function SelectionActionState({
   copyStatus,
   selection,
+  translationState,
   writeState,
 }: {
   copyStatus: ReaderRecordCopyStatus;
   selection: ReaderRecordSelectionAnchorBridgeResult | null;
+  translationState: ReaderRecordTranslationState;
   writeState: ReaderRecordWriteState;
 }) {
   const draft = singleRangeDraft(selection);
@@ -2605,6 +2680,11 @@ function SelectionActionState({
       {copyStatus !== "idle" ? (
         <span data-testid="reader-record-plate-copy-status">
           {copyStatus === "copied" ? "已复制" : "复制失败"}
+        </span>
+      ) : null}
+      {translationState.kind !== "idle" ? (
+        <span data-testid="reader-record-plate-translation-status-hidden">
+          {readerSectionTranslationStatusMessage(translationState)}
         </span>
       ) : null}
       {writeStatus ? (
@@ -2699,6 +2779,8 @@ export function ReaderRecordPlateSurface({
   const activeSelectionRef =
     useRef<ReaderRecordSelectionAnchorBridgeResult | null>(null);
   const [copyStatus, setCopyStatus] = useState<ReaderRecordCopyStatus>("idle");
+  const [translationState, setTranslationState] =
+    useState<ReaderRecordTranslationState>({ kind: "idle" });
   const [writeState, setWriteState] = useState<ReaderRecordWriteState>({
     kind: "idle",
   });
@@ -4203,6 +4285,7 @@ export function ReaderRecordPlateSurface({
       activeSelectionRef.current = nextSelection;
       setActiveSelection(nextSelection);
       setCopyStatus("idle");
+      setTranslationState({ kind: "idle" });
       if (nextSelection?.selectedText.trim()) {
         setHighlightMenu(null);
         setNoteMenu(null);
@@ -4460,6 +4543,70 @@ export function ReaderRecordPlateSurface({
       setCopyStatus("error");
     }
   }, [activeSelection]);
+
+  const handleTranslate = useCallback(async () => {
+    const selection = activeSelection;
+    const draft = singleRangeDraft(selection);
+    if (!selection || !draft) {
+      setTranslationState({
+        kind: "error",
+        message: translationDisabledReason(selection) ?? "请选择稳定原文后再翻译",
+      });
+      return;
+    }
+
+    setTranslationState({ kind: "submitting" });
+    try {
+      const response = await fetch(
+        `/api/web/reader-plate/records/${encodeURIComponent(
+          snapshot.record_id,
+        )}/section-translation`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            startUnitId: draft.unit_id,
+            endUnitId: draft.unit_id,
+            startAnchorSegmentId: draft.anchor_segment_id,
+            endAnchorSegmentId: draft.anchor_segment_id,
+            nodeId: selection.blockId,
+            outlineRevision: null,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as unknown;
+      const payloadRecord =
+        payload && typeof payload === "object"
+          ? (payload as Record<string, unknown>)
+          : null;
+      const outcome = payloadRecord?.outcome;
+      if (
+        !response.ok ||
+        payloadRecord?.ok === false ||
+        !isReaderSectionTranslationOutcome(outcome)
+      ) {
+        const message =
+          typeof payloadRecord?.message === "string"
+            ? payloadRecord.message
+            : "翻译请求失败，请稍后重试。";
+        setTranslationState({ kind: "error", message });
+        return;
+      }
+
+      const detail =
+        typeof payloadRecord?.detail === "string" ? payloadRecord.detail : null;
+      setTranslationState({ kind: "submitted", outcome, detail });
+      if (outcome === "succeeded") {
+        await onRequestSnapshotReload?.();
+      }
+    } catch {
+      setTranslationState({
+        kind: "error",
+        message: "翻译请求失败，请稍后重试。",
+      });
+    }
+  }, [activeSelection, onRequestSnapshotReload, snapshot.record_id]);
 
   const handleDocumentCopyCapture = useCallback(
     (event: ReactClipboardEvent<HTMLElement>) => {
@@ -5828,6 +5975,13 @@ export function ReaderRecordPlateSurface({
         disabled: !copyReady,
         reason: copyReason,
       },
+      translate: {
+        disabled: !sourceSingleRangeReady || translationState.kind === "submitting",
+        reason:
+          translationState.kind === "submitting"
+            ? "正在提交翻译"
+            : translationDisabledReason(activeSelection),
+      },
       ask: {
         disabled: !askReady,
         reason: askReason,
@@ -5858,6 +6012,7 @@ export function ReaderRecordPlateSurface({
     currentAskSelectionAttachment,
     lookupState.kind,
     noteAnchorDraft,
+    translationState,
     writeState,
   ]);
 
@@ -5869,6 +6024,7 @@ export function ReaderRecordPlateSurface({
       pinSelectionState,
       onAskSubmit: (request) => handleAskPromptFromSelection(request),
       onCopy: () => handleCopy(),
+      onTranslate: () => handleTranslate(),
       onHighlight: () => handleHighlight(),
       onNote: () => handleOpenNoteComposer(),
       onLookup: () => handleLookup(),
@@ -5881,6 +6037,7 @@ export function ReaderRecordPlateSurface({
       pinSelectionState,
       handleAskPromptFromSelection,
       handleCopy,
+      handleTranslate,
       handleHighlight,
       handleOpenNoteComposer,
       handleLookup,
@@ -6100,6 +6257,7 @@ export function ReaderRecordPlateSurface({
           <SelectionActionState
             copyStatus={copyStatus}
             selection={activeSelection}
+            translationState={translationState}
             writeState={writeState}
           />
           {highlightMenu ? (
@@ -6304,15 +6462,35 @@ export function ReaderRecordPlateSurface({
                         className="reader-record-floating-toolbar p-1 [&_[data-slot=separator][data-orientation=vertical]]:h-6 [&_[data-slot=separator][data-orientation=vertical]]:bg-border/80"
                         data-reader-record-floating-toolbar="selection-actions"
                       >
-                        <Toolbar
-                          className="items-center gap-0.5"
-                          aria-label="Reader 选区操作"
-                        >
-                          <ReaderFloatingToolbarButtons />
-                        </Toolbar>
+                        <TooltipProvider delayDuration={200}>
+                          <Toolbar
+                            className="items-center gap-0.5"
+                            aria-label="Reader 选区操作"
+                          >
+                            <ReaderFloatingToolbarButtons />
+                          </Toolbar>
+                        </TooltipProvider>
                       </ReaderFloatingSurface>
                     ) : null}
                   </ReaderToolbarActionsProvider>
+                  {translationState.kind !== "idle" ? (
+                    <div
+                      data-testid="reader-record-plate-translation-status"
+                      data-reader-record-translation-status={translationState.kind}
+                      className={`mt-3 text-sm ${
+                        translationState.kind === "error"
+                          ? "text-rose-700"
+                          : translationState.kind === "submitted" &&
+                              translationState.outcome === "succeeded"
+                            ? "text-emerald-700"
+                            : "text-muted-foreground"
+                      }`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {readerSectionTranslationStatusMessage(translationState)}
+                    </div>
+                  ) : null}
                 </ReaderSentenceAnalysisInteractionContext.Provider>
               </ReaderCalloutActionContext.Provider>
             </ReaderGrammarExpansionProvider>

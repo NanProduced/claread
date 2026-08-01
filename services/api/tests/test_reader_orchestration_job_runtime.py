@@ -19,6 +19,8 @@ from app.services.reader_orchestration.job_runtime import (
     STATUS_RETRY_LATER,
     STATUS_SUCCEEDED,
     STATUS_SUPERSEDED,
+    FAKE_JOB_NAMESPACE,
+    JOB_RUNTIME_SCOPE_FAKE,
     FenceViolationError,
     IllegalTransitionError,
     LeaseExpiredError,
@@ -197,6 +199,35 @@ async def _insert_run(
     return run_id
 
 
+async def _insert_original_input(
+    pool: asyncpg.Pool,
+    *,
+    record_id: UUID,
+    user_id: UUID,
+    metadata: dict[str, object],
+) -> None:
+    source_text = "Runtime namespace isolation source."
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO original_inputs (
+                reading_record_id,
+                user_id,
+                input_type,
+                source_text,
+                metadata_json,
+                content_sha256
+            )
+            VALUES ($1, $2, 'plain_text', $3, $4::jsonb, $5)
+            """,
+            record_id,
+            user_id,
+            source_text,
+            metadata,
+            hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        )
+
+
 async def _insert_job(
     pool: asyncpg.Pool,
     *,
@@ -290,6 +321,105 @@ async def test_claim_returns_none_when_queue_empty(
         lease_duration=timedelta(seconds=30),
     )
     assert result is None
+
+
+async def test_production_claim_skips_fake_namespace_and_fake_scope_can_claim(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    await _insert_original_input(
+        job_runtime_env,
+        record_id=record_id,
+        user_id=user_id,
+        metadata={
+            "executor_mode": "fake",
+            "fake_job_namespace": FAKE_JOB_NAMESPACE,
+        },
+    )
+    async with job_runtime_env.acquire() as conn:
+        fake_metadata = await conn.fetchrow(
+            """
+            SELECT metadata_json,
+                   metadata_json ->> 'executor_mode' AS executor_mode,
+                   metadata_json ->> 'fake_job_namespace' AS fake_job_namespace
+            FROM original_inputs
+            WHERE reading_record_id = $1
+            """,
+            record_id,
+        )
+    assert fake_metadata["metadata_json"]["executor_mode"] == "fake"
+    assert fake_metadata["executor_mode"] == "fake"
+    assert fake_metadata["fake_job_namespace"] == FAKE_JOB_NAMESPACE
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="fake-only",
+        operation_fingerprint="fp-fake-only",
+        idempotency_key="id-fake-only",
+    )
+
+    production_result = await ReaderJobRuntime(pool=job_runtime_env).claim_next_job(
+        lease_owner="production-worker",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+    )
+    assert production_result is None
+    assert (await _fetch_job(job_runtime_env, job_id))["status"] == STATUS_QUEUED
+
+    fake_result = await ReaderJobRuntime(
+        pool=job_runtime_env,
+        job_scope=JOB_RUNTIME_SCOPE_FAKE,
+    ).claim_next_job(
+        lease_owner="fake-g5-worker",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+    )
+    assert fake_result is not None
+    assert fake_result.job_id == job_id
+
+
+async def test_fake_scope_skips_nonfake_job_and_production_scope_can_claim(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(job_runtime_env)
+    await _insert_original_input(
+        job_runtime_env,
+        record_id=record_id,
+        user_id=user_id,
+        metadata={"executor_mode": "production"},
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="production-only",
+        operation_fingerprint="fp-production-only",
+        idempotency_key="id-production-only",
+    )
+
+    fake_result = await ReaderJobRuntime(
+        pool=job_runtime_env,
+        job_scope=JOB_RUNTIME_SCOPE_FAKE,
+    ).claim_next_job(
+        lease_owner="fake-g5-worker",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+    )
+    assert fake_result is None
+    assert (await _fetch_job(job_runtime_env, job_id))["status"] == STATUS_QUEUED
+
+    production_result = await ReaderJobRuntime(pool=job_runtime_env).claim_next_job(
+        lease_owner="production-worker",
+        lease_duration=timedelta(seconds=30),
+        reading_record_id=record_id,
+    )
+    assert production_result is not None
+    assert production_result.job_id == job_id
 
 
 async def test_claim_order_priority_desc_available_at_asc_created_at_asc_id_asc(

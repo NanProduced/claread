@@ -214,6 +214,26 @@ def build_stable_document_freeze_plan(
 
     ordered = sorted(validated, key=lambda b: b.order_index)
 
+    # Structure is represented by the Stable rows themselves.  A wrapper
+    # with children must not be turned into a synthetic reading unit by
+    # joining descendant text back into the parent: that would create a
+    # second text truth and would make callout/list/table follow different
+    # snapshot paths.  The generic rule below covers all structural wrappers,
+    # including a source-callout blockquote which uses a single-space DB
+    # placeholder because the current schema requires textual blockquotes to
+    # be non-empty.  Only leaves with meaningful text contribute canonical
+    # ranges; every wrapper remains present with NULL canonical offsets.
+    children_by_parent: dict[str, list[StableDocumentBlock]] = {}
+    for block in ordered:
+        if block.parent_block_id is not None:
+            children_by_parent.setdefault(block.parent_block_id, []).append(block)
+    structural_wrapper_ids = {
+        block.block_id
+        for block in ordered
+        if block.block_id in children_by_parent
+        and not (block.text_content or "").strip()
+    }
+
     # (2) Derive Canonical Text Layer. Only blocks whose
     # interpretation_policy.default_route == "main_reading" contribute.
     # Block-type defaults (paragraph / heading / list_item / blockquote
@@ -235,6 +255,11 @@ def build_stable_document_freeze_plan(
         block_routes[block.block_id] = route
 
         if route != "main_reading":
+            continue
+
+        # Generic wrapper rule: list/table/callout containers participate in
+        # the Stable tree but never contribute a second copy of child text.
+        if block.block_id in structural_wrapper_ids:
             continue
 
         text = _block_canonical_text(block)
@@ -324,13 +349,14 @@ def build_stable_document_freeze_plan(
             continue
 
         start_utf16, end_utf16 = offsets
+        update_fields: dict[str, Any] = {
+            "canonical_text_start_utf16": start_utf16,
+            "canonical_text_end_utf16": end_utf16,
+        }
         frozen_blocks.append(
             block.model_copy(
                 deep=True,
-                update={
-                    "canonical_text_start_utf16": start_utf16,
-                    "canonical_text_end_utf16": end_utf16,
-                },
+                update=update_fields,
             )
         )
 

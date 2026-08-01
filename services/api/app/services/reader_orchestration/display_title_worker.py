@@ -272,10 +272,11 @@ class DisplayTitleWorkerService:
         self,
         *,
         pool: asyncpg.Pool | None = None,
+        job_runtime: ReaderJobRuntime | None = None,
         generator: DisplayTitleGenerator | None = None,
     ) -> None:
         self._pool = pool
-        self._job_runtime = ReaderJobRuntime(pool=pool)
+        self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._generator = generator or PydanticAIDisplayTitleGenerator()
 
     def get_pool(self) -> asyncpg.Pool:

@@ -44,12 +44,10 @@ function footnoteId(node: MdastNode): string {
 }
 
 function transform(node: MdastNode): void {
-  // raw inline/block HTML（如 vector<T> 的 <T>）→ 字面文本，不静默丢弃
-  if (node.type === "html") {
-    node.type = "text";
-    // value 保留原始字面量
-    return;
-  }
+  // raw inline/block HTML：由 MARKDOWN_PLUGIN_OPTIONS.rules.html 在
+  // deserializer 层处理（source_callout 识别 + 非 aside 降级为 text）。
+  // 此处不再降级 html 节点，避免 rules.html 永远收不到 html 节点。
+  // 注意：image / footnote / task list 仍在此处降级。
   // image → link（alt 作为可见文本，无 alt 用 url）
   if (node.type === "image") {
     const url = node.url ?? "";

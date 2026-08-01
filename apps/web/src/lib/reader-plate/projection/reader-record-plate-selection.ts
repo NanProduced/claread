@@ -26,13 +26,25 @@ import {
 import {
   READER_BLOCKQUOTE_TYPE,
   READER_CALLOUT_TYPE,
+  READER_CODE_BLOCK_TYPE,
+  READER_HEADING_TYPE,
+  READER_LIST_TYPE,
+  READER_MARKDOWN_BLOCKQUOTE_TYPE,
   READER_PARAGRAPH_TYPE,
   READER_SENTENCE_ANALYSIS_TYPE,
+  READER_SOURCE_CALLOUT_TYPE,
+  READER_TABLE_TYPE,
   type PlateTextNode,
   type ReaderBlockquoteElement,
   type ReaderCalloutElement,
+  type ReaderCodeBlockElement,
+  type ReaderHeadingElement,
+  type ReaderListElement,
+  type ReaderMarkdownBlockquoteElement,
   type ReaderParagraphElement,
   type ReaderSentenceAnalysisElement,
+  type ReaderSourceCalloutElement,
+  type ReaderTableElement,
 } from "./reader-record-plate-to-plate-value";
 import type {
   ReaderRecordSelectionAnchorBridgeResult,
@@ -41,6 +53,26 @@ import type {
 } from "./reader-record-dom-selection";
 
 const READER_CALLOUT_GROUP_TYPE = "reader_callout_group" as const;
+
+/**
+ * Top-level Plate block types that carry stable source text (Markdown
+ * original). Selections whose top-level block is one of these are eligible
+ * to become actionable source anchors — as opposed to translation /
+ * callout / sentence-analysis surfaces which are non-source.
+ *
+ * `reader_list` / `reader_table` are wrappers: `selectionBlockForPath`
+ * returns the wrapper (not the inner list_item / table_cell) for nested
+ * text leaves, so they must be allowlisted here.
+ */
+const STABLE_SOURCE_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  READER_PARAGRAPH_TYPE,
+  READER_HEADING_TYPE,
+  READER_MARKDOWN_BLOCKQUOTE_TYPE,
+  READER_LIST_TYPE,
+  READER_TABLE_TYPE,
+  READER_CODE_BLOCK_TYPE,
+  READER_SOURCE_CALLOUT_TYPE,
+]);
 
 function pathsEqual(a: number[], b: number[]): boolean {
   if (a.length !== b.length) return false;
@@ -69,6 +101,12 @@ type ReaderTopLevelPlateElement =
   | ReaderBlockquoteElement
   | ReaderCalloutElement
   | ReaderSentenceAnalysisElement
+  | ReaderHeadingElement
+  | ReaderListElement
+  | ReaderCodeBlockElement
+  | ReaderMarkdownBlockquoteElement
+  | ReaderTableElement
+  | ReaderSourceCalloutElement
   | {
       type: typeof READER_CALLOUT_GROUP_TYPE;
       id: string;
@@ -79,7 +117,13 @@ type ReaderSelectionBlockElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
   | ReaderCalloutElement
-  | ReaderSentenceAnalysisElement;
+  | ReaderSentenceAnalysisElement
+  | ReaderHeadingElement
+  | ReaderListElement
+  | ReaderCodeBlockElement
+  | ReaderMarkdownBlockquoteElement
+  | ReaderTableElement
+  | ReaderSourceCalloutElement;
 
 function selectionBlockForPath(
   editor: PlateEditor,
@@ -434,9 +478,15 @@ export function readReaderRecordSelectionFromEditor(
     };
   }
 
+  // A selection is a valid source anchor iff every touched top-level block
+  // is a stable source surface (paragraph / heading / markdown_blockquote /
+  // list / table / code_block / source_callout). Translation, callout and
+  // sentence-analysis blocks are non-source and must not reach this branch
+  // (they are handled by the groups.size === 0 path above via
+  // blockContextForNonSourceSelection).
   const hasNonSourceBlockText = textEntries.some(([, path]) => {
     const block = selectionBlockForPath(editor, path);
-    return !block || block.type !== READER_PARAGRAPH_TYPE;
+    return !block || !STABLE_SOURCE_BLOCK_TYPES.has(block.type);
   });
   if (hasNonSourceBlockText) {
     return null;
@@ -501,9 +551,8 @@ export function readReaderRecordSelectionFromEditor(
   const primaryDraft = drafts[0] ?? null;
   const primarySegment = segments[0] ?? null;
   const blockId =
-    firstBlock?.type === READER_PARAGRAPH_TYPE
-      ? (firstBlock as ReaderParagraphElement).id
-      : `paragraph:${primaryDraft?.anchor_segment_id ?? primarySegment?.sentenceId ?? ""}`;
+    firstBlock?.id ??
+    `paragraph:${primaryDraft?.anchor_segment_id ?? primarySegment?.sentenceId ?? ""}`;
   const sourceContext: ReaderRecordSelectionSourceContext = {
     anchorSegmentId: primaryDraft?.anchor_segment_id,
     unitId: primaryDraft?.unit_id,

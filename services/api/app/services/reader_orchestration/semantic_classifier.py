@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
 SEMANTIC_CONTRACT_V1: Final[str] = "semantic_contract_v1"
@@ -84,7 +84,14 @@ _ROLE_BEARING_TYPES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_SECTION_HEADING_RE: Final[re.Pattern[str]] = re.compile(
-    r"^\s*(references|bibliography|works\s+cited|参考文献|引用文献)\s*$",
+    r"^\s*("
+    r"references"
+    r"|reference\s+list(?:\s*\([^)]*\))?"
+    r"|bibliography"
+    r"|works\s+cited"
+    r"|参考文献"
+    r"|引用文献"
+    r")\s*$",
     re.IGNORECASE,
 )
 
@@ -93,9 +100,10 @@ _GFM_ALERT_MARKER_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 
-# Stable payload hint written by the Markdown parser for Notion-style
-# <aside> HTML blocks. Classifier is the only consumer of this code.
+# Stable payload hints written by the Markdown parser for callout sources.
+# Classifier is the only consumer of these codes.
 SOURCE_SEMANTIC_HINT_HTML_ASIDE: Final[str] = "html_aside"
+SOURCE_SEMANTIC_HINT_GFM_ALERT: Final[str] = "gfm_alert"
 
 _PUNCT_RE: Final[re.Pattern[str]] = re.compile(r"[\s\W_]+", re.UNICODE)
 
@@ -266,10 +274,12 @@ def _classify_one(
     signals: list[str] = []
     hint = payload.get("source_semantic_hint")
 
-    # --- enforce: Notion/HTML <aside> via stable parser hint ---
-    # Parser is the only writer of this hint; classifier is the only role seam.
-    if hint == SOURCE_SEMANTIC_HINT_HTML_ASIDE:
-        signals.append("source_semantic_hint:html_aside")
+    # --- enforce: Notion/HTML <aside> or GFM alert via stable parser hint ---
+    # Parser is the only writer of these hints; classifier is the only role
+    # seam. Structural containers carry text_content=None, so the classifier
+    # must rely on the hint (not text matching) to route to source_callout.
+    if hint in (SOURCE_SEMANTIC_HINT_HTML_ASIDE, SOURCE_SEMANTIC_HINT_GFM_ALERT):
+        signals.append(f"source_semantic_hint:{hint}")
         return SemanticClassification(
             contract_version=SEMANTIC_CONTRACT_V1,
             content_role="source_callout",
@@ -377,11 +387,53 @@ def _classify_one(
 def classify_blocks(
     blocks: Sequence[Mapping[str, Any]],
 ) -> list[SemanticClassification]:
-    """Classify every block. Pure function over block mappings."""
-    return [
+    """Classify every block, then inherit explicit callout semantics.
+
+    ``source_callout`` is a semantic role for the visible content inside the
+    callout, not a reason to flatten that content into the wrapper.  Wrapper
+    rows keep their structural-null role; text-bearing descendants inherit
+    the deterministic role so their automatic layer policy remains T-only
+    after the generic Stable Block → Unit projection.
+    """
+    classifications = [
         _classify_one(block=block, index=index, blocks=blocks)
         for index, block in enumerate(blocks)
     ]
+    by_id = {
+        block.get("block_id"): index
+        for index, block in enumerate(blocks)
+        if block.get("block_id")
+    }
+
+    for index, block in enumerate(blocks):
+        if block.get("block_type") not in _ROLE_BEARING_TYPES:
+            continue
+        parent_id = block.get("parent_block_id")
+        seen: set[object] = set()
+        inherited = False
+        while parent_id is not None and parent_id not in seen:
+            seen.add(parent_id)
+            parent_index = by_id.get(parent_id)
+            if parent_index is None:
+                break
+            parent_classification = classifications[parent_index]
+            if (
+                parent_classification.content_role == "source_callout"
+                and not parent_classification.shadow_only
+            ):
+                inherited = True
+                break
+            parent_id = blocks[parent_index].get("parent_block_id")
+        if inherited and classifications[index].content_role != "source_callout":
+            classifications[index] = replace(
+                classifications[index],
+                content_role="source_callout",
+                source="deterministic",
+                confidence=1.0,
+                signals=(*classifications[index].signals, "inherited_source_callout"),
+                shadow_only=False,
+            )
+    return classifications
 
 
 def annotate_payload_with_semantic(

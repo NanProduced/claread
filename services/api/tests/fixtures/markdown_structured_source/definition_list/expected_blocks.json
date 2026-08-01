@@ -1,0 +1,15 @@
+{
+  "fixture_name": "definition_list",
+  "description": "Definition-list syntax is retained as one visible paragraph because no definition-list block type exists.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "paragraph",
+      "text_content": "Term\n: definition",
+      "payload_json": {},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 2}
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "fixture_name": "task_list",
+  "warnings": [
+    {"code": "task_list_unsupported", "message": "GFM task-list checkbox state is preserved as visible text but task-list semantics are not supported; candidate review is required.", "blocks_freeze": false, "classification": "content_check"}
+  ],
+  "unsupported": [
+    {"code": "task_list", "message": "Task-list checked-state semantics are not supported in the first phase; the visible marker is retained for candidate review."}
+  ],
+  "outcome": "candidate_document_required"
+}

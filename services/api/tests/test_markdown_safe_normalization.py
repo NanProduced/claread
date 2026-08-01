@@ -162,14 +162,15 @@ def test_unsafe_link_text_preserved_and_href_recorded() -> None:
 
 
 def test_safe_aside_text_visible_with_notice() -> None:
-    """安全 <aside> 文本必须可见保留（聚合段落），且给 adaptation_notice。"""
+    """安全 <aside> 文本必须可见保留为 callout，并给 adaptation_notice。"""
     result = _parse("safe_html_adaptation")
     aside_block = next(
         b
         for b in result.blocks
         if b.text_content and "genuine reading note" in b.text_content
     )
-    assert aside_block.block_type == "paragraph"
+    assert aside_block.block_type == "blockquote"
+    assert aside_block.payload_json["source_semantic_hint"] == "html_aside"
     classes = _classifications_by_code(result)
     assert classes["raw_html_block"] == "adaptation_notice"
 

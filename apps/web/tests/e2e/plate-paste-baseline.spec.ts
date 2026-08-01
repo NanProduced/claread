@@ -191,22 +191,38 @@ test.describe("L1 baseline: dual-format html+plain paste", () => {
 });
 
 test.describe("L1 baseline: Notion callout", () => {
-  test("aside callout becomes visible blockquote", async ({ page }) => {
+  test("aside HTML becomes source_callout (not blockquote, no visible tags)", async ({
+    page,
+  }) => {
     await waitForHarnessReady(page);
     await dispatchRealPaste(page, {
       html: NOTION_CALLOUT_ASIDE_HTML,
       plain: "callout body",
     });
 
-    await expect(editorDom(page).locator("blockquote")).toHaveCount(1);
+    // source_callout 渲染为 <aside role="note">，不是 blockquote
+    await expect(editorDom(page).locator("aside[role='note']")).toHaveCount(1);
+    await expect(editorDom(page).locator("blockquote")).toHaveCount(0);
+
+    // 用户不可见 <aside> / </aside> 标签文本
     const text = await editorDom(page).innerText();
     expect(text).toContain("callout body with");
     expect(text).toContain("bold");
+    expect(text).not.toContain("<aside>");
+    expect(text).not.toContain("</aside>");
+
+    // 序列化为 canonical <aside> 表达
     const md = await getMarkdown(page);
+    expect(md).toContain("<aside>");
+    expect(md).toContain("</aside>");
     expect(md).toContain("callout body");
+    // 不应出现 GFM marker
+    expect(md).not.toContain("[!NOTE]");
+
     const submitted = await getSubmitText(page);
-    expect(submitted).toContain("> ");
-    expect(submitted).toContain("callout body with **bold** content");
+    expect(submitted).toContain("<aside>");
+    expect(submitted).toContain("</aside>");
+    expect(submitted).toContain("callout body");
   });
 });
 

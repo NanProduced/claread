@@ -41,6 +41,7 @@ import type {
   ReaderRecordPlateParagraphBlock,
   ReaderRecordPlateSentenceChunkMark,
   ReaderRecordPlateSentenceAnalysisBlock,
+  ReaderRecordPlateSourceCalloutBlock,
   ReaderRecordPlateTableBlock,
   ReaderRecordPlateTableCellBlock,
   ReaderRecordPlateTableRowBlock,
@@ -77,6 +78,7 @@ export const READER_TABLE_TYPE = "reader_table" as const;
 export const READER_TABLE_ROW_TYPE = "reader_table_row" as const;
 export const READER_TABLE_CELL_TYPE = "reader_table_cell" as const;
 export const READER_HR_TYPE = "reader_hr" as const;
+export const READER_SOURCE_CALLOUT_TYPE = "reader_source_callout" as const;
 
 // --- Mark key constants ---
 
@@ -153,7 +155,7 @@ export interface ReaderListElement {
 export interface ReaderListItemElement {
   type: typeof READER_LIST_ITEM_TYPE;
   id: ReaderRecordPlateListItemBlock["id"];
-  children: PlateTextNode[];
+  children: Array<PlateTextNode | ReaderListElement>;
   data: ReaderRecordPlateListItemBlock["data"];
 }
 
@@ -199,6 +201,13 @@ export interface ReaderHrElement {
   data: ReaderRecordPlateHrBlock["data"];
 }
 
+export interface ReaderSourceCalloutElement {
+  type: typeof READER_SOURCE_CALLOUT_TYPE;
+  id: ReaderRecordPlateSourceCalloutBlock["id"];
+  children: Array<PlateTextNode | ReaderPlateElement>;
+  data: ReaderRecordPlateSourceCalloutBlock["data"];
+}
+
 export type ReaderPlateElement =
   | ReaderParagraphElement
   | ReaderBlockquoteElement
@@ -215,7 +224,8 @@ export type ReaderPlateElement =
   | ReaderTableElement
   | ReaderTableRowElement
   | ReaderTableCellElement
-  | ReaderHrElement;
+  | ReaderHrElement
+  | ReaderSourceCalloutElement;
 
 // --- Text node type ---
 
@@ -537,15 +547,16 @@ function headingBlockToElement(
 function listItemBlockToElement(
   block: ReaderRecordPlateListItemBlock,
 ): ReaderListItemElement {
-  const children: PlateTextNode[] =
+  const textChildren: PlateTextNode[] =
     block.children.length > 0
       ? block.children.map(textLeafToPlateTextNode)
       : [{ text: "" }];
+  const nestedChildren = (block.nestedChildren ?? []).map(listBlockToElement);
 
   return {
     type: READER_LIST_ITEM_TYPE,
     id: block.id,
-    children,
+    children: [...textChildren, ...nestedChildren],
     data: block.data,
   };
 }
@@ -663,6 +674,64 @@ function hrBlockToElement(block: ReaderRecordPlateHrBlock): ReaderHrElement {
   };
 }
 
+function sourceCalloutBlockToElement(
+  block: ReaderRecordPlateSourceCalloutBlock,
+): ReaderSourceCalloutElement {
+  const firstChild = block.children[0];
+  const children: Array<PlateTextNode | ReaderPlateElement> =
+    firstChild === undefined
+      ? [{ text: "" }]
+      : "text" in firstChild
+        ? (block.children as ReaderRecordPlateTextLeaf[]).map(
+            textLeafToPlateTextNode,
+          )
+        : (block.children as ReaderRecordPlateBlock[]).map(
+            readerBlockToPlateElement,
+          );
+
+  return {
+    type: READER_SOURCE_CALLOUT_TYPE,
+    id: block.id,
+    children,
+    data: block.data,
+  };
+}
+
+function readerBlockToPlateElement(
+  block: ReaderRecordPlateBlock,
+): ReaderPlateElement {
+  switch (block.type) {
+    case "paragraph":
+      return paragraphBlockToElement(block);
+    case "blockquote":
+      return blockquoteBlockToElement(block);
+    case "callout":
+      return calloutBlockToElement(block);
+    case "sentence_analysis":
+      return sentenceAnalysisBlockToElement(block);
+    case "heading":
+      return headingBlockToElement(block);
+    case "list":
+      return listBlockToElement(block);
+    case "list_item":
+      return listItemBlockToElement(block);
+    case "code_block":
+      return codeBlockBlockToElement(block);
+    case "markdown_blockquote":
+      return markdownBlockquoteBlockToElement(block);
+    case "table":
+      return tableBlockToElement(block);
+    case "table_row":
+      return tableRowBlockToElement(block);
+    case "table_cell":
+      return tableCellBlockToElement(block);
+    case "hr":
+      return hrBlockToElement(block);
+    case "source_callout":
+      return sourceCalloutBlockToElement(block);
+  }
+}
+
 /**
  * 把 ReaderRecordPlateDocument 转换为 Plate editor 可消费的 Descendant[]。
  *
@@ -678,35 +747,7 @@ function hrBlockToElement(block: ReaderRecordPlateHrBlock): ReaderHrElement {
 export function projectReaderRecordPlateToPlateValue(
   document: ReaderRecordPlateDocument,
 ): Descendant[] {
-  return document.children.map((block: ReaderRecordPlateBlock) => {
-    switch (block.type) {
-      case "paragraph":
-        return paragraphBlockToElement(block) as unknown as Descendant;
-      case "blockquote":
-        return blockquoteBlockToElement(block) as unknown as Descendant;
-      case "callout":
-        return calloutBlockToElement(block) as unknown as Descendant;
-      case "sentence_analysis":
-        return sentenceAnalysisBlockToElement(block) as unknown as Descendant;
-      // B2: Markdown stable-block-derived blocks.
-      case "heading":
-        return headingBlockToElement(block) as unknown as Descendant;
-      case "list":
-        return listBlockToElement(block) as unknown as Descendant;
-      case "list_item":
-        return listItemBlockToElement(block) as unknown as Descendant;
-      case "code_block":
-        return codeBlockBlockToElement(block) as unknown as Descendant;
-      case "markdown_blockquote":
-        return markdownBlockquoteBlockToElement(block) as unknown as Descendant;
-      case "table":
-        return tableBlockToElement(block) as unknown as Descendant;
-      case "table_row":
-        return tableRowBlockToElement(block) as unknown as Descendant;
-      case "table_cell":
-        return tableCellBlockToElement(block) as unknown as Descendant;
-      case "hr":
-        return hrBlockToElement(block) as unknown as Descendant;
-    }
-  });
+  return document.children.map(
+    (block) => readerBlockToPlateElement(block) as unknown as Descendant,
+  );
 }

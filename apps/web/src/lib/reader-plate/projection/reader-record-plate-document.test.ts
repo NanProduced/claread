@@ -11,6 +11,7 @@ import {
   type ReaderSnapshotUserAssetDto,
   type ReaderSourceBlockChildNodeDto,
   type ReaderSourceBlockNodeDto,
+  type ReaderStableDocumentBlockNodeDto,
   type ReaderUnitNodeDto,
   type ReaderVocabularyMarkDto,
   type ReaderGrammarNoteMarkDto,
@@ -23,7 +24,9 @@ import {
   type ReaderRecordPlateCalloutBlock,
   type ReaderRecordPlateParagraphBlock,
   type ReaderRecordPlateSentenceAnalysisBlock,
+  type ReaderRecordPlateStableBlockData,
 } from "./reader-record-plate-document";
+import { projectReaderRecordPlateToPlateValue } from "./reader-record-plate-to-plate-value";
 
 const FIRST_TEXT = "Institutional memory shapes policy choices.";
 const SECOND_TEXT = "Those choices persist.";
@@ -552,6 +555,60 @@ function makeThreeSegmentSnapshot(): ReaderPlateSnapshotDto {
         children: unit.children.map((child) =>
           child === sourceBlock ? extendedSourceBlock : child,
         ),
+      },
+    ],
+  };
+}
+
+function makeStableMultiSegmentSnapshot(
+  kind: "paragraph" | "blockquote" | "source_callout",
+): ReaderPlateSnapshotDto {
+  const snapshot = makeThreeSegmentSnapshot();
+  const unit = snapshot.value[0];
+  const sourceBlock = unit.children.find(
+    (child): child is ReaderSourceBlockNodeDto =>
+      child.type === "reader_source_block",
+  );
+  if (!sourceBlock) {
+    throw new Error("Expected source block fixture");
+  }
+
+  const stableBlockId = `shared_${kind}`;
+  const stableBlockType = kind === "source_callout" ? "blockquote" : kind;
+  const stableSourceBlock: ReaderSourceBlockNodeDto = {
+    ...sourceBlock,
+    stableBlockType,
+    stableBlockId,
+    contentRole: kind === "source_callout" ? "source_callout" : "prose",
+  };
+
+  return {
+    ...snapshot,
+    value: [
+      {
+        ...unit,
+        // No enhancement nodes: the source block must carry every source
+        // leaf, including separators, through the Stable projection.
+        children: [stableSourceBlock],
+      },
+    ],
+    stable_document_tree: [
+      {
+        block_id: stableBlockId,
+        parent_block_id: null,
+        order_index: 0,
+        block_type: stableBlockType,
+        content_role: kind === "source_callout" ? "source_callout" : "prose",
+        text_content: null,
+        payload: {},
+        source_refs: {},
+        quality: {},
+        canonical_text_start_utf16: 0,
+        canonical_text_end_utf16: THIRD_START + THIRD_TEXT.length,
+        interpretation_policy: {},
+        unit_id: "unit_1",
+        anchor_segment_ids: ["seg_1", "seg_2", "seg_3"],
+        children: [],
       },
     ],
   };
@@ -2044,4 +2101,303 @@ describe("L1 code/table metadata projection", () => {
     expect(table.children[0].children[0].data.isHeader).toBe(false);
     expect(table.data.headerRows).toBe(0);
   });
+describe("Stable Document tree projection", () => {
+  function node(
+    overrides: Partial<ReaderStableDocumentBlockNodeDto>,
+  ): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "block",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+
+  it("uses persisted table rows/cells instead of consecutive-unit grouping", () => {
+    const snapshot = makeL1Snapshot([
+      {
+        unitId: "u_c11",
+        text: "Name",
+        stableBlockType: "table_cell",
+        stableBlockId: "c11",
+        parentStableBlockId: "row_1",
+        tableIsHeader: true,
+        tableAlignment: "left",
+      },
+      {
+        unitId: "u_c12",
+        text: "Value",
+        stableBlockType: "table_cell",
+        stableBlockId: "c12",
+        parentStableBlockId: "row_1",
+        tableIsHeader: true,
+        tableAlignment: "right",
+      },
+      {
+        unitId: "u_body",
+        text: "A paragraph between structures.",
+        stableBlockType: "paragraph",
+        stableBlockId: "p1",
+      },
+      {
+        unitId: "u_c21",
+        text: "a",
+        stableBlockType: "table_cell",
+        stableBlockId: "c21",
+        parentStableBlockId: "row_2",
+        tableIsHeader: false,
+        tableAlignment: "left",
+      },
+      {
+        unitId: "u_c22",
+        text: "1",
+        stableBlockType: "table_cell",
+        stableBlockId: "c22",
+        parentStableBlockId: "row_2",
+        tableIsHeader: false,
+        tableAlignment: "right",
+      },
+    ]);
+    snapshot.stable_document_tree = [
+      node({
+        block_id: "table_1",
+        block_type: "table",
+        children: [
+          node({
+            block_id: "row_1",
+            parent_block_id: "table_1",
+            block_type: "table_row",
+            children: [
+              node({ block_id: "c11", parent_block_id: "row_1", block_type: "table_cell" }),
+              node({ block_id: "c12", parent_block_id: "row_1", block_type: "table_cell" }),
+            ],
+          }),
+          node({
+            block_id: "row_2",
+            parent_block_id: "table_1",
+            order_index: 1,
+            block_type: "table_row",
+            children: [
+              node({ block_id: "c21", parent_block_id: "row_2", block_type: "table_cell" }),
+              node({ block_id: "c22", parent_block_id: "row_2", block_type: "table_cell" }),
+            ],
+          }),
+        ],
+      }),
+      node({
+        block_id: "p1",
+        order_index: 1,
+        block_type: "paragraph",
+      }),
+    ];
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    expect(document.children.map((child) => child.type)).toEqual([
+      "table",
+      "paragraph",
+    ]);
+    const table = document.children[0];
+    if (!table || table.type !== "table") return;
+    expect(table.children.map((row) => row.children.map((cell) => cell.id))).toEqual([
+      ["table_cell:seg_u_c11", "table_cell:seg_u_c12"],
+      ["table_cell:seg_u_c21", "table_cell:seg_u_c22"],
+    ]);
+  });
+
+  it("projects a persisted source-callout wrapper with recursive child blocks", () => {
+    const snapshot = makeL1Snapshot([
+      {
+        unitId: "u_p1",
+        text: "Callout paragraph.",
+        stableBlockType: "paragraph",
+        stableBlockId: "p1",
+      },
+      {
+        unitId: "u_p2",
+        text: "Second paragraph.",
+        stableBlockType: "paragraph",
+        stableBlockId: "p2",
+      },
+      {
+        unitId: "u_i1",
+        text: "First item",
+        stableBlockType: "list_item",
+        stableBlockId: "i1",
+        parentStableBlockId: "list1",
+      },
+      {
+        unitId: "u_i2",
+        text: "Second item",
+        stableBlockType: "list_item",
+        stableBlockId: "i2",
+        parentStableBlockId: "list1",
+      },
+    ]);
+    snapshot.stable_document_tree = [
+      node({
+        block_id: "callout1",
+        block_type: "blockquote",
+        content_role: "source_callout",
+        children: [
+          node({
+            block_id: "p1",
+            parent_block_id: "callout1",
+            block_type: "paragraph",
+          }),
+          node({
+            block_id: "p2",
+            parent_block_id: "callout1",
+            order_index: 1,
+            block_type: "paragraph",
+          }),
+          node({
+            block_id: "list1",
+            parent_block_id: "callout1",
+            order_index: 2,
+            block_type: "list",
+            payload: { ordered: false },
+            children: [
+              node({
+                block_id: "i1",
+                parent_block_id: "list1",
+                block_type: "list_item",
+              }),
+              node({
+                block_id: "i2",
+                parent_block_id: "list1",
+                order_index: 1,
+                block_type: "list_item",
+              }),
+            ],
+          }),
+        ],
+      }),
+    ];
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    expect(document.children).toHaveLength(1);
+    const callout = document.children[0];
+    if (!callout || callout.type !== "source_callout") {
+      throw new Error("source callout block missing");
+    }
+    expect(
+      callout.children.map((child) =>
+        "type" in child ? child.type : "text",
+      ),
+    ).toEqual([
+      "paragraph",
+      "paragraph",
+      "list",
+    ]);
+    const list = callout.children[2];
+    if (!list || !("type" in list) || list.type !== "list") {
+      throw new Error("callout list missing");
+    }
+    expect(list.children.map((item) => item.type)).toEqual([
+      "list_item",
+      "list_item",
+    ]);
+
+    const plateValue = projectReaderRecordPlateToPlateValue(document);
+    expect(plateValue[0]).toMatchObject({
+      type: "reader_source_callout",
+      children: [
+        { type: "reader_paragraph" },
+        { type: "reader_paragraph" },
+        {
+          type: "reader_list",
+          children: [{ type: "reader_list_item" }, { type: "reader_list_item" }],
+        },
+      ],
+    });
+  });
+
+  it("projects the callout icon from wrapper payload metadata, not the first body block", () => {
+    const snapshot = makeL1Snapshot([
+      {
+        unitId: "u_body",
+        text: "Callout body without an icon leaf.",
+        stableBlockType: "paragraph",
+        stableBlockId: "body1",
+      },
+    ]);
+    snapshot.stable_document_tree = [
+      node({
+        block_id: "callout_payload_icon",
+        block_type: "blockquote",
+        content_role: "source_callout",
+        payload: { display_icon: "🎯" },
+        children: [
+          node({
+            block_id: "body1",
+            parent_block_id: "callout_payload_icon",
+            block_type: "paragraph",
+          }),
+        ],
+      }),
+    ];
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+    const callout = document.children[0];
+    if (!callout || callout.type !== "source_callout") {
+      throw new Error("source callout block missing");
+    }
+    expect(callout.data.calloutIcon).toBe("🎯");
+    expect(callout.children).toHaveLength(1);
+    expect(callout.children[0]).toMatchObject({ type: "paragraph" });
+  });
+
+  it.each([
+    ["paragraph", "paragraph"],
+    ["blockquote", "markdown_blockquote"],
+    ["source_callout", "source_callout"],
+  ] as const)(
+    "preserves every source leaf when a %s Stable leaf spans multiple anchors",
+    (kind, expectedType) => {
+      const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(
+        makeStableMultiSegmentSnapshot(kind),
+      );
+      const blocks = document.children.filter(
+        (child) => child.type === expectedType,
+      );
+
+      expect(blocks).toHaveLength(1);
+      const block = blocks[0];
+      if (!block || !("children" in block)) {
+        throw new Error(`Expected ${expectedType} block`);
+      }
+
+      const collectText = (value: unknown): string => {
+        if (!Array.isArray(value)) return "";
+        return value
+          .map((child) => {
+            if (!child || typeof child !== "object") return "";
+            const node = child as { text?: unknown; children?: unknown };
+            if (typeof node.text === "string") return node.text;
+            return collectText(node.children);
+          })
+          .join("");
+      };
+
+      expect(collectText(block.children)).toBe(
+        `${FIRST_TEXT}${SEPARATOR_TEXT}${SECOND_TEXT}${SEPARATOR_TEXT}${THIRD_TEXT}`,
+      );
+      expect(
+        (block.data as ReaderRecordPlateStableBlockData)
+          .coveredAnchorSegmentIds,
+      ).toEqual(["seg_1", "seg_2", "seg_3"]);
+    },
+  );
+});
 });

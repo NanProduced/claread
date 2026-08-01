@@ -36,6 +36,11 @@ from app.services.reader_orchestration.reading_strategy import (
 from app.services.reader_orchestration.representation_event_payload import (
     build_representation_payload,
 )
+from app.services.reader_orchestration.translation_prompt_profile import (
+    build_translation_prompt_profile_contract,
+    compose_translation_prompt_profile_fingerprint_token,
+    translation_prompt_profile_input_fields,
+)
 
 TRANSLATION_RUN_TYPE = "translation_layer"
 TRANSLATION_JOB_TYPE = "translate_unit"
@@ -347,6 +352,23 @@ def _semantic_fingerprint_token(fence: dict[str, str | None]) -> str:
         fence,
         mode=get_automatic_layer_policy_mode(),
     )
+
+
+def _translation_profile_contract_for_units(
+    units: list[dict[str, Any]],
+    *,
+    explicit_section: bool = False,
+) -> dict[str, Any]:
+    """Build the frozen translation prompt contract for target units."""
+
+    return build_translation_prompt_profile_contract(
+        units,
+        explicit_section=explicit_section,
+    )
+
+
+def _translation_profile_fingerprint_token(contract: dict[str, Any]) -> str:
+    return compose_translation_prompt_profile_fingerprint_token(contract)
 
 
 def _build_strategy_metadata(
@@ -1101,6 +1123,7 @@ class TranslationJobBootstrapService:
                         u.base_start_utf16,
                         u.base_end_utf16,
                         u.text_hash,
+                        u.unit_type,
                         u.metadata_json
                     FROM reading_units u
                     WHERE u.reading_record_id = $1
@@ -1133,10 +1156,19 @@ class TranslationJobBootstrapService:
                 unit_row = allowed_units[0]
                 semantic_fence = _semantic_fence_from_unit_maps(allowed_units)
                 semantic_token = _semantic_fingerprint_token(semantic_fence)
+                translation_profile_contract = _translation_profile_contract_for_units(
+                    [unit_row]
+                )
+                translation_profile_token = _translation_profile_fingerprint_token(
+                    translation_profile_contract
+                )
                 operation_fingerprint = _compose_operation_fingerprint(
                     TRANSLATION_OPERATION_FINGERPRINT,
                     state.strategy,
-                    semantic_token=semantic_token,
+                    semantic_token=f"{semantic_token}:{translation_profile_token}",
+                )
+                translation_profile_fields = translation_prompt_profile_input_fields(
+                    translation_profile_contract
                 )
                 await _supersede_stale_fingerprint_jobs(
                     conn,
@@ -1202,6 +1234,7 @@ class TranslationJobBootstrapService:
                         "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                         "trace_id": str(trace_id),
                         **_semantic_input_fields(semantic_fence, layer='translation'),
+                        **translation_profile_fields,
                     },
                     input_signature_suffix=(
                         f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}"
@@ -1210,6 +1243,7 @@ class TranslationJobBootstrapService:
                         "base_language": state.base_language,
                         "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                         **_semantic_input_fields(semantic_fence, layer='translation'),
+                        **translation_profile_fields,
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_JOB_TYPE],
                 )
@@ -2363,7 +2397,7 @@ class EnhancementJobBootstrapService:
             route_suffix = "short"
         rows = await conn.fetch(
             """
-            SELECT u.unit_id, u.order_index, u.text_hash, u.metadata_json
+            SELECT u.unit_id, u.order_index, u.text_hash, u.unit_type, u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
               AND u.base_id = $2
@@ -2395,10 +2429,17 @@ class EnhancementJobBootstrapService:
         target_unit_ids = [str(row["unit_id"]) for row in allowed]
         semantic_fence = _semantic_fence_from_unit_maps(allowed)
         semantic_token = _semantic_fingerprint_token(semantic_fence)
+        translation_profile_contract = _translation_profile_contract_for_units(allowed)
+        translation_profile_token = _translation_profile_fingerprint_token(
+            translation_profile_contract
+        )
         operation_fingerprint = _compose_operation_fingerprint(
             fingerprint_base,
             state.strategy,
-            semantic_token=semantic_token,
+            semantic_token=f"{semantic_token}:{translation_profile_token}",
+        )
+        translation_profile_fields = translation_prompt_profile_input_fields(
+            translation_profile_contract
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
@@ -2459,6 +2500,7 @@ class EnhancementJobBootstrapService:
                 "article_route": route.value,
                 "document_features": _route_document_features(state),
                 **_semantic_input_fields(semantic_fence, layer='translation'),
+                **translation_profile_fields,
             },
             input_signature_suffix=(
                 f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -2471,6 +2513,7 @@ class EnhancementJobBootstrapService:
                 "target_language": DEFAULT_TRANSLATION_TARGET_LANGUAGE,
                 "article_route": route.value,
                 **_semantic_input_fields(semantic_fence, layer='translation'),
+                **translation_profile_fields,
             },
             layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
         )
@@ -2540,7 +2583,7 @@ class EnhancementJobBootstrapService:
         # upgrade would see zero candidates and never rotate jobs.
         meta_rows = await conn.fetch(
             """
-            SELECT unit_id, order_index, metadata_json
+            SELECT unit_id, order_index, unit_type, metadata_json
             FROM reading_units
             WHERE reading_record_id = $1 AND base_id = $2
             ORDER BY order_index ASC
@@ -2548,12 +2591,19 @@ class EnhancementJobBootstrapService:
             state.record_id,
             state.base_id,
         )
-        semantic_fence = _semantic_fence_from_unit_maps(_unit_rows_to_maps(meta_rows))
+        meta_maps = _unit_rows_to_maps(meta_rows)
+        semantic_fence = _semantic_fence_from_unit_maps(meta_maps)
         semantic_token = _semantic_fingerprint_token(semantic_fence)
+        translation_profile_operation_contract = (
+            _translation_profile_contract_for_units(meta_maps)
+        )
+        translation_profile_token = _translation_profile_fingerprint_token(
+            translation_profile_operation_contract
+        )
         operation_fingerprint = _compose_operation_fingerprint(
             TRANSLATION_BATCH_OPERATION_FINGERPRINT,
             state.strategy,
-            semantic_token=semantic_token,
+            semantic_token=f"{semantic_token}:{translation_profile_token}",
         )
         await _supersede_stale_fingerprint_jobs(
             conn,
@@ -2593,6 +2643,7 @@ class EnhancementJobBootstrapService:
                 u.order_index,
                 u.base_start_utf16,
                 u.base_end_utf16,
+                u.unit_type,
                 u.metadata_json
             FROM reading_units u
             WHERE u.reading_record_id = $1
@@ -2689,6 +2740,16 @@ class EnhancementJobBootstrapService:
             )
             if existing_job is not None:
                 continue
+            window_maps = [
+                row for row in allowed if str(row["unit_id"]) in target_unit_ids
+            ]
+            translation_profile_contract = _translation_profile_contract_for_units(
+                window_maps
+            )
+            translation_profile_fields = translation_prompt_profile_input_fields(
+                translation_profile_contract,
+                fingerprint_contract=translation_profile_operation_contract,
+            )
             run_id, job_id = await _insert_unit_range_job(
                 conn,
                 state=state,
@@ -2710,6 +2771,7 @@ class EnhancementJobBootstrapService:
                     "article_route": route.value,
                     "document_features": _route_document_features(state),
                     **_semantic_input_fields(semantic_fence, layer='translation'),
+                    **translation_profile_fields,
                 },
                 input_signature_suffix=(
                     f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -2723,6 +2785,7 @@ class EnhancementJobBootstrapService:
                     "window_id": window.window_id,
                     "article_route": route.value,
                     **_semantic_input_fields(semantic_fence, layer='translation'),
+                    **translation_profile_fields,
                 },
                 layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
                 target_key_override=window_target_key,

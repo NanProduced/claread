@@ -1187,20 +1187,18 @@ class ReaderOrchestrationRepository:
             title_snapshot=str(title_snapshot) if title_snapshot is not None else None,
         )
 
-        # R1: project the active Stable Reading Document's blocks back onto
-        # reading units by EXACT canonical UTF-16 range equality. The stable
-        # document is the single structural truth — reading_units carry no
-        # stable block columns, so a reload must re-derive stable metadata
-        # from the same generation's active document or fail soft to the
-        # legacy paragraph shape. Range fence: same reading_record_id AND
-        # record_generation AND status='active' (one active document per
-        # record/generation by constraint). Duplicate exact matches are
-        # deterministic: lowest order_index wins (first-wins via setdefault),
-        # mirroring base_builder's ``annotations_by_range`` build semantics.
+        # Load the COMPLETE active Stable Reading Document row set. The
+        # stable document is the single structural truth — reading_units
+        # carry no stable block columns, so reload must re-derive both the
+        # full tree and range metadata from the same generation's active
+        # document. Wrapper rows without canonical ranges are intentionally
+        # included; filtering them here would force Web to reconstruct
+        # structure from flat units.
         stable_block_rows = await conn.fetch(
             """
             SELECT b.block_id, b.parent_block_id, b.block_type,
-                   b.payload_json,
+                   b.text_content, b.payload_json, b.source_refs_json,
+                   b.quality_json, b.interpretation_policy_json,
                    b.canonical_text_start_utf16 AS block_start_utf16,
                    b.canonical_text_end_utf16 AS block_end_utf16
             FROM stable_reading_documents d
@@ -1209,8 +1207,6 @@ class ReaderOrchestrationRepository:
             WHERE d.reading_record_id = $1
               AND d.record_generation = $2
               AND d.status = 'active'
-              AND b.canonical_text_start_utf16 IS NOT NULL
-              AND b.canonical_text_end_utf16 IS NOT NULL
             ORDER BY b.order_index ASC
             """,
             record_id,
@@ -1218,6 +1214,11 @@ class ReaderOrchestrationRepository:
         )
         stable_annotations_by_range: dict[tuple[int, int], Any] = {}
         for block_row in stable_block_rows:
+            if (
+                block_row["block_start_utf16"] is None
+                or block_row["block_end_utf16"] is None
+            ):
+                continue
             block_start = int(block_row["block_start_utf16"])
             block_end = int(block_row["block_end_utf16"])
             if block_start >= block_end:
@@ -1436,6 +1437,7 @@ class ReaderOrchestrationRepository:
             units=tuple(units),
             anchor_segments=tuple(anchor_segments),
             navigation_units=tuple(navigation_units),
+            stable_document_blocks=tuple(dict(row) for row in stable_block_rows),
         )
         validate_reading_base_build_result(build_result)
 

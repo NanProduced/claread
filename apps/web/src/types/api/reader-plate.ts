@@ -512,6 +512,8 @@ export interface ReaderPlateSnapshotDto {
   user_assets: ReaderSnapshotUserAssetDto[];
   parsed_decisions: ReaderSnapshotParsedDecisionDto[];
   value: ReaderPlateValueDto;
+  /** Server-owned Stable Document tree; absent only on legacy snapshots. */
+  stable_document_tree?: ReaderStableDocumentBlockNodeDto[];
   /** Optional; undefined | null = no trusted outline. Do not parse enhancement_layers for L2. */
   semantic_outline?: import("@/lib/reader-plate/projection/semantic-outline").ReaderSemanticOutlineProjectionDto | null;
 }
@@ -1466,6 +1468,17 @@ export interface ReaderStableDocumentBlockDto {
   canonical_text_start_utf16: number | null;
   canonical_text_end_utf16: number | null;
   interpretation_policy: Record<string, unknown>;
+}
+
+export interface ReaderStableDocumentBlockNodeDto
+  extends ReaderStableDocumentBlockDto {
+  semantic_contract_version?: string | null;
+  content_role?: string | null;
+  automatic_layer_policy?: Record<string, boolean> | null;
+  automatic_layer_policy_resolver_version?: string | null;
+  unit_id: string | null;
+  anchor_segment_ids: string[];
+  children: ReaderStableDocumentBlockNodeDto[];
 }
 
 export interface ReaderStableDocumentAnchorSegmentDto {

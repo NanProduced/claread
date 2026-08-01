@@ -35,6 +35,8 @@ from app.services.reader_orchestration.job_bootstrap import (
     _LockedActiveBaseState,
     _semantic_fingerprint_token,
     _semantic_input_fields,
+    _translation_profile_contract_for_units,
+    _translation_profile_fingerprint_token,
     build_semantic_fence_from_unit_maps,
 )
 from app.services.reader_orchestration.section_candidates import (
@@ -57,6 +59,9 @@ from app.services.reader_orchestration.section_request_planner import (
     SectionPlannerFacts,
     SectionPlanResult,
     plan_explicit_section_request,
+)
+from app.services.reader_orchestration.translation_prompt_profile import (
+    translation_prompt_profile_input_fields,
 )
 
 REASON_ALREADY_QUEUED = "section_job_already_queued"
@@ -210,10 +215,20 @@ class SectionTranslationBootstrapService:
                     )
 
                 semantic_token = _semantic_fingerprint_token(semantic_fence)
+                translation_profile_contract = _translation_profile_contract_for_units(
+                    target_unit_maps,
+                    explicit_section=True,
+                )
+                translation_profile_token = _translation_profile_fingerprint_token(
+                    translation_profile_contract
+                )
                 operation_fingerprint = _compose_operation_fingerprint(
                     TRANSLATION_SECTION_OPERATION_FINGERPRINT,
                     state.strategy,
-                    semantic_token=semantic_token,
+                    semantic_token=f"{semantic_token}:{translation_profile_token}",
+                )
+                translation_profile_fields = translation_prompt_profile_input_fields(
+                    translation_profile_contract
                 )
 
                 existing = await conn.fetchrow(
@@ -282,6 +297,7 @@ class SectionTranslationBootstrapService:
                         "request_origin": SECTION_REQUEST_ORIGIN,
                         "section_identity": section_identity_payload,
                         **_semantic_input_fields(semantic_fence, layer="translation"),
+                        **translation_profile_fields,
                     },
                     input_signature_suffix=(
                         f"{state.base_language}:{DEFAULT_TRANSLATION_TARGET_LANGUAGE}:"
@@ -301,6 +317,7 @@ class SectionTranslationBootstrapService:
                             plan.audit.client_outline_revision if plan.audit else None
                         ),
                         **_semantic_input_fields(semantic_fence, layer="translation"),
+                        **translation_profile_fields,
                     },
                     layer_name=_LAYER_NAME_BY_JOB_TYPE[TRANSLATION_BATCH_JOB_TYPE],
                     target_key_override=target_key,
@@ -549,7 +566,7 @@ class SectionTranslationBootstrapService:
             return []
         rows = await conn.fetch(
             """
-            SELECT unit_id, order_index, metadata_json
+            SELECT unit_id, order_index, unit_type, metadata_json
             FROM reading_units
             WHERE reading_record_id = $1
               AND base_id = $2
@@ -579,6 +596,7 @@ class SectionTranslationBootstrapService:
                 {
                     "unit_id": str(row["unit_id"]),
                     "order_index": int(row["order_index"]),
+                    "unit_type": str(row["unit_type"] or ""),
                     "metadata_json": meta,
                 }
             )

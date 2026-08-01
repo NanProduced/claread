@@ -50,12 +50,23 @@ from app.services.reader_orchestration.grammar_worker import (
     GrammarExecutionResult,
     GrammarJobContext,
 )
+from app.services.reader_orchestration.job_bootstrap import (
+    EnhancementJobBootstrapService,
+)
+from app.services.reader_orchestration.job_runtime import (
+    FAKE_JOB_NAMESPACE,
+    JOB_RUNTIME_SCOPE_FAKE,
+    ReaderJobRuntime,
+)
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.pipeline_runner import (
     DEFAULT_PIPELINE_MAX_JOBS,
     DEFAULT_PIPELINE_MAX_TICKS,
     ReaderEnhancementPipelineRunner,
     ReaderPipelineRunSummary,
+)
+from app.services.reader_orchestration.semantic_outline_worker import (
+    SemanticOutlineWorkerService,
 )
 from app.services.reader_orchestration.translation_worker import (
     TranslationBatchExecutionResult,
@@ -89,6 +100,7 @@ SmokeGrammarTopology = Literal["legacy", "production"]
 DEFAULT_SMOKE_LEASE_OWNER = "reader-d5-smoke-harness"
 DEFAULT_SMOKE_LEASE_DURATION = timedelta(seconds=30)
 DEV_FAKE_EXECUTOR_NOTE = "dev/test-only deterministic fake executors"
+DEV_FAKE_JOB_NAMESPACE = FAKE_JOB_NAMESPACE
 DEV_FAKE_TRANSLATION_PROMPT_VERSION = "reader-d5-smoke-fake-translation"
 DEV_FAKE_VOCABULARY_PROMPT_VERSION = "reader-d5-smoke-fake-vocabulary"
 DEV_FAKE_GRAMMAR_PROMPT_VERSION = "reader-d5-smoke-fake-grammar"
@@ -559,16 +571,20 @@ class ReaderEnhancementSmokeHarness:
             "production" if executor_mode == "real" else grammar_topology
         )
 
+        source_metadata: dict[str, Any] = {
+            "origin": "reader_d5_smoke_harness",
+            "executor_mode": executor_mode,
+            "grammar_topology": effective_topology,
+        }
+        if executor_mode == "fake":
+            source_metadata["fake_job_namespace"] = DEV_FAKE_JOB_NAMESPACE
+
         submit_kwargs: dict[str, Any] = {
             "user_id": user_id,
             "plain_text": plain_text,
             "title": title,
             "language": language,
-            "source_metadata": {
-                "origin": "reader_d5_smoke_harness",
-                "executor_mode": executor_mode,
-                "grammar_topology": effective_topology,
-            },
+            "source_metadata": source_metadata,
         }
         if reading_goal is not None:
             submit_kwargs["reading_goal"] = reading_goal
@@ -624,8 +640,24 @@ class ReaderEnhancementSmokeHarness:
         if executor_mode == "real":
             return ReaderEnhancementPipelineRunner(pool=pool)
 
+        # All fake workers share a fake-only runtime. Production workers use
+        # the default scope and therefore cannot claim these jobs even when a
+        # G5 browser run is executing against the same development database.
+        fake_job_runtime = ReaderJobRuntime(
+            pool=pool,
+            job_scope=JOB_RUNTIME_SCOPE_FAKE,
+        )
+        fake_bootstrap_service = EnhancementJobBootstrapService(
+            pool=pool,
+            # The deterministic G5 lane is scoped to the four persisted
+            # enhancement layers below; it must not create an unrelated
+            # semantic-outline job (and therefore cannot reach a provider).
+            semantic_outline_request_eligibility=lambda _state: False,
+        )
+
         translation_worker = TranslationWorkerService(
             pool=pool,
+            job_runtime=fake_job_runtime,
             translator=DevFakeTranslationExecutor(),
         )
         orchestrator = ReaderOrchestrator(
@@ -637,10 +669,12 @@ class ReaderEnhancementSmokeHarness:
         # smoke / fake mode independently of the per-unit orchestrator path.
         translation_batch_worker = TranslationWorkerService(
             pool=pool,
+            job_runtime=fake_job_runtime,
             batch_translator=DevFakeTranslationBatchExecutor(),
         )
         vocabulary_worker = VocabularyWorkerService(
             pool=pool,
+            job_runtime=fake_job_runtime,
             executor=DevFakeVocabularyExecutor(),
             batch_executor=DevFakeVocabularyBatchExecutor(),
         )
@@ -651,14 +685,10 @@ class ReaderEnhancementSmokeHarness:
         # the ``force_legacy_grammar`` fallback.
         grammar_worker = GrammarBundleWorkerService(
             pool=pool,
+            job_runtime=fake_job_runtime,
             executor=DevFakeGrammarBundleExecutor(),
             batch_executor=DevFakeGrammarBatchExecutor(),
         )
-        display_title_worker = DisplayTitleWorkerService(
-            pool=pool,
-            generator=DevFakeDisplayTitleGenerator(),
-        )
-
         if grammar_topology == "production":
             # T4.2a-R1: faithfully reproduce the production route-aware split.
             # ``enable_zplus_grammar=True`` activates the route-aware bootstrap
@@ -668,6 +698,7 @@ class ReaderEnhancementSmokeHarness:
             # the real ``PydanticAIGrammarWindowExecutor``.
             window_worker = GrammarWindowWorkerService(
                 pool=pool,
+                job_runtime=fake_job_runtime,
                 executor=DevFakeGrammarWindowExecutor(),
             )
             window_publisher = GrammarWindowPublisher(
@@ -676,24 +707,44 @@ class ReaderEnhancementSmokeHarness:
             )
             return ReaderEnhancementPipelineRunner(
                 pool=pool,
-                display_title_worker_service=display_title_worker,
+                bootstrap_service=fake_bootstrap_service,
+                display_title_worker_service=DisplayTitleWorkerService(
+                    pool=pool,
+                    job_runtime=fake_job_runtime,
+                    generator=DevFakeDisplayTitleGenerator(),
+                ),
+                semantic_outline_worker_service=SemanticOutlineWorkerService(
+                    pool=pool,
+                    job_runtime=fake_job_runtime,
+                ),
                 translation_orchestrator=orchestrator,
                 translation_batch_worker_service=translation_batch_worker,
                 vocabulary_worker_service=vocabulary_worker,
                 grammar_worker_service=grammar_worker,
                 grammar_window_worker_service=window_worker,
                 grammar_window_publisher=window_publisher,
+                job_runtime=fake_job_runtime,
                 enable_zplus_grammar=True,
             )
 
         # legacy topology: 4-worker path, per-unit grammar for all routes.
         return ReaderEnhancementPipelineRunner(
             pool=pool,
-            display_title_worker_service=display_title_worker,
+            bootstrap_service=fake_bootstrap_service,
+            display_title_worker_service=DisplayTitleWorkerService(
+                pool=pool,
+                job_runtime=fake_job_runtime,
+                generator=DevFakeDisplayTitleGenerator(),
+            ),
+            semantic_outline_worker_service=SemanticOutlineWorkerService(
+                pool=pool,
+                job_runtime=fake_job_runtime,
+            ),
             translation_orchestrator=orchestrator,
             translation_batch_worker_service=translation_batch_worker,
             vocabulary_worker_service=vocabulary_worker,
             grammar_worker_service=grammar_worker,
+            job_runtime=fake_job_runtime,
             enable_zplus_grammar=False,
         )
 

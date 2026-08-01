@@ -32,6 +32,7 @@ import {
   ReaderHighlightToolbarButton,
   ReaderLookupToolbarButton,
   ReaderNoteToolbarButton,
+  ReaderTranslateToolbarButton,
   ReaderToolbarActionsProvider,
   type ReaderToolbarActions,
   type ReaderToolbarActionId,
@@ -952,7 +953,7 @@ function selectAcrossElements(
 
 function selectionActionButton(
   container: HTMLElement,
-  action: "lookup" | "copy" | "ask" | "highlight" | "note",
+  action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
 ): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(
     `[data-reader-record-toolbar-action="${action}"]`,
@@ -961,7 +962,7 @@ function selectionActionButton(
 
 async function waitForSelectionAction(
   container: HTMLElement,
-  action: "lookup" | "copy" | "ask" | "highlight" | "note",
+  action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
 ) {
   return waitFor(() => {
     const button = selectionActionButton(container, action);
@@ -997,12 +998,14 @@ function makeToolbarActions(
   return {
     onAsk: vi.fn(),
     onCopy: vi.fn(),
+    onTranslate: vi.fn(),
     onHighlight: vi.fn(),
     onNote: vi.fn(),
     onLookup: vi.fn(),
     state: {
       lookup: enabled,
       copy: enabled,
+      translate: enabled,
       ask: enabled,
       highlight: enabled,
       note: enabled,
@@ -3782,7 +3785,7 @@ describe("ReaderRecordPlateSurface", () => {
     const toolbarButtons = container.querySelectorAll<HTMLButtonElement>(
       "[data-reader-record-toolbar-action]",
     );
-    expect(toolbarButtons).toHaveLength(5);
+    expect(toolbarButtons).toHaveLength(6);
     expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
     for (const button of toolbarButtons) {
       expect(button.getAttribute("title")).toBeNull();
@@ -3812,6 +3815,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.onLookup).not.toHaveBeenCalled();
   });
 
+  it("exposes an explicit translation action in the selection toolbar", () => {
+    const { container } = renderToolbarHarness();
+
+    expect(
+      container.querySelector('[data-reader-record-toolbar-action="translate"]'),
+    ).not.toBeNull();
+  });
+
   it("keeps each reader toolbar button as a Plate-style primitive with disabled reason and click forwarding", () => {
     const cases: Array<{
       action: ReaderToolbarActionId;
@@ -3819,10 +3830,16 @@ describe("ReaderRecordPlateSurface", () => {
       handler: keyof Pick<
         ReaderToolbarActions,
         "onLookup" | "onCopy" | "onAsk" | "onHighlight" | "onNote"
+          | "onTranslate"
       >;
     }> = [
       { action: "lookup", component: <ReaderLookupToolbarButton />, handler: "onLookup" },
       { action: "copy", component: <ReaderCopyToolbarButton />, handler: "onCopy" },
+      {
+        action: "translate",
+        component: <ReaderTranslateToolbarButton />,
+        handler: "onTranslate",
+      },
       { action: "ask", component: <ReaderAskToolbarButton />, handler: "onAsk" },
       {
         action: "highlight",

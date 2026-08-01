@@ -1,0 +1,33 @@
+{
+  "fixture_name": "task_list",
+  "description": "GFM checkbox markers remain visible as list-item text while checked semantics route to candidate review.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "list",
+      "text_content": null,
+      "payload_json": {"ordered": false, "depth": 0},
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 2}
+    },
+    {
+      "block_id": "b2",
+      "block_type": "list_item",
+      "text_content": "[x] done",
+      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "parent_block_id": "b1",
+      "order_index": 1,
+      "source_range": {"line_start": 1, "line_end": 1}
+    },
+    {
+      "block_id": "b3",
+      "block_type": "list_item",
+      "text_content": "[ ] todo",
+      "payload_json": {"ordered": false, "marker": "-", "ordinal": null, "depth": 0},
+      "parent_block_id": "b1",
+      "order_index": 2,
+      "source_range": {"line_start": 2, "line_end": 2}
+    }
+  ]
+}

@@ -549,6 +549,18 @@ async def test_worker_process_hydrates_generation_output_and_passes_durable_outp
         "model_profile": "fake-profile",
         "model_provider": "fake-provider",
         "model_name": "fake-model",
+        "translation_prompt_profile_contract_version": (
+            result.context.translation_prompt_profile_contract_version
+        ),
+        "translation_prompt_profile_version": (
+            result.context.translation_prompt_profile_version
+        ),
+        "translation_prompt_profile_manifest_hash": (
+            result.context.translation_prompt_profile_manifest_hash
+        ),
+        "translation_prompt_profile_fingerprint_hash": (
+            result.context.translation_prompt_profile_fingerprint_hash
+        ),
     }
 
 
