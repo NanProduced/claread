@@ -3605,6 +3605,127 @@ describe("createSseMessageHandler – v2 reasoning firewall", () => {
 });
 
 // ---------------------------------------------------------------------------
+// createSseMessageHandler – learner_reasoning snapshot (R1.2)
+// ---------------------------------------------------------------------------
+
+describe("createSseMessageHandler – learner_reasoning snapshot", () => {
+  type Msg = ReaderAskUiMessageDto;
+
+  function makeStreamingAssistant(): Msg {
+    return {
+      id: "msg-1",
+      thread_id: "thread-1",
+      role: "assistant",
+      status: "streaming",
+      content_md: "",
+      provisional_content_md: null,
+      reasoning_md: null,
+      reasoning_status: null,
+      context_anchors: [],
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
+      evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      supplement_candidates: [],
+      persisted_supplements: [],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:00:00Z",
+    };
+  }
+
+  function learnerSnap(overrides: Record<string, unknown> = {}) {
+    return {
+      execution_version: "reader_record_ask_agentic_v2",
+      message_id: "msg-1",
+      thread_id: "thread-1",
+      turn_run_id: "run-1",
+      sequence: 1,
+      revision: 1,
+      generation_id: 0,
+      stage: "analyzing",
+      text: "正在梳理问题要点",
+      policy_version: "learner_reasoning_v1",
+      ...overrides,
+    };
+  }
+
+  it("applies snapshot via production reducer after activeRunIdentity", () => {
+    let updatedMessages: Msg[] = [makeStreamingAssistant()];
+    const updateMessage = (updater: (msgs: Msg[]) => Msg[]) => {
+      updatedMessages = updater(updatedMessages);
+    };
+    const handler = createSseMessageHandler("msg-1", updateMessage, undefined, vi.fn());
+
+    // Missing identity → reject
+    handler({
+      event: "agentic.learner_reasoning.snapshot",
+      data: learnerSnap(),
+    });
+    expect(updatedMessages[0].learner_reasoning_text).toBeUndefined();
+
+    handler({
+      event: "agentic.run_started",
+      data: {
+        execution_version: "reader_record_ask_agentic_v2",
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        turn_run_id: "run-1",
+        has_initial_selection: false,
+      },
+    });
+
+    handler({
+      event: "agentic.learner_reasoning.snapshot",
+      data: learnerSnap(),
+    });
+    expect(updatedMessages[0].learner_reasoning_text).toBe("正在梳理问题要点");
+    expect(updatedMessages[0].learner_reasoning_status).toBe("streaming");
+    expect(updatedMessages[0].learner_reasoning_stage).toBe("analyzing");
+
+    // Replace (not append)
+    handler({
+      event: "agentic.learner_reasoning.snapshot",
+      data: learnerSnap({
+        sequence: 2,
+        revision: 2,
+        stage: "synthesizing",
+        text: "结合证据核对结论",
+      }),
+    });
+    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
+    expect(updatedMessages[0].learner_reasoning_text).not.toContain("正在梳理");
+
+    // Foreign identity rejected
+    handler({
+      event: "agentic.learner_reasoning.snapshot",
+      data: learnerSnap({
+        sequence: 3,
+        revision: 3,
+        message_id: "other-msg",
+        text: "外来帧不应出现",
+      }),
+    });
+    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
+
+    // Missing generation_id rejected
+    handler({
+      event: "agentic.learner_reasoning.snapshot",
+      data: learnerSnap({
+        sequence: 4,
+        revision: 4,
+        generation_id: undefined,
+        text: "缺 generation 不应出现",
+      }),
+    });
+    expect(updatedMessages[0].learner_reasoning_text).toBe("结合证据核对结论");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createSseMessageHandler – context.compacting & CONTEXT_TOO_LARGE tests
 // ---------------------------------------------------------------------------
 

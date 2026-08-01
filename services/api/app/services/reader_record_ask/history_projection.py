@@ -144,25 +144,35 @@ def _sanitize_turn_run_for_wire(turn_run: dict[str, Any] | None) -> dict[str, An
 
 def _safe_reasoning_projection(
     turn_run: dict[str, Any] | None
-) -> tuple[str | None, bool | None]:
-    """Retire persisted v1 provider reasoning at the public boundary.
+) -> tuple[str | None, bool | None, str | None]:
+    """Policy-gated cold restore of learner-reasoning summary.
 
-    ``reasoning_projection_v1`` redacted secrets and internal identifiers,
-    but could still preserve ordinary model self-talk such as response
-    strategy or schema names. That content is not suitable for Ask
-    Claread's learner-facing UI. Cold history therefore fails closed for
-    every legacy reasoning snapshot. Typed lifecycle steps remain the
-    single user-visible process representation.
+    Reuses the live text/schema/stage/basis validator. Legacy
+    ``reasoning_projection_v1`` remains fail-closed.
+    Returns ``(text, truncated, stage)``.
     """
-    del turn_run
-    return None, None
+    if not isinstance(turn_run, dict):
+        return None, None, None
+    payload = turn_run.get("reasoning_projection_json")
+    if not isinstance(payload, dict):
+        return None, None, None
+    from app.services.reader_record_ask.learner_reasoning.validator import (
+        validate_cold_learner_payload,
+    )
+
+    text, stage, _basis = validate_cold_learner_payload(payload)
+    if text is None:
+        return None, None, None
+    truncated = payload.get("truncated")
+    trunc_flag = bool(truncated) if isinstance(truncated, bool) else False
+    return text, trunc_flag, stage
 
 
 def _safe_reasoning_projection_text(turn_run: dict[str, Any] | None) -> str | None:
     """Backward-compat wrapper returning only the text. Prefer
     :func:`_safe_reasoning_projection` for new callers.
     """
-    text, _ = _safe_reasoning_projection(turn_run)
+    text, _, _ = _safe_reasoning_projection(turn_run)
     return text
 
 
@@ -306,7 +316,7 @@ def project_agentic_history_message(
     # before wire sanitization strips the raw JSONB payload.
     # R4-4: extract both text and truncated flag from the same validated
     # snapshot so hot SSE, DB snapshot, and cold history stay consistent.
-    reasoning_text, reasoning_truncated = _safe_reasoning_projection(
+    reasoning_text, reasoning_truncated, learner_stage = _safe_reasoning_projection(
         current_turn_run
     )
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
@@ -351,17 +361,17 @@ def project_agentic_history_message(
                 "resolved_intent": None,
                 "context_anchors": anchors,
                 **_empty_legacy_lists(),
-                # ASK-REASONING-R1: reuse the existing semantic reasoning
-                # fields (hot SSE and cold history share them). Byte-identical
-                # to the hot projection: persisted snapshot text == concat of
-                # streamed deltas by construction.
-                # R4-4: ``reasoning_truncated`` restored from the same
-                # validated snapshot — ``True`` means the visible text was
-                # truncated by the turn-level total cap (marker at end).
-                # ``None`` when no reasoning was projected.
-                "reasoning_md": reasoning_text,
-                "reasoning_status": "completed" if reasoning_text is not None else None,
-                "reasoning_truncated": reasoning_truncated,
+                # Learner-reasoning summary (policy learner_reasoning_v1).
+                # Public fields use learner_reasoning_*; legacy reasoning_md
+                # stays null on the agentic v2 cold path.
+                "reasoning_md": None,
+                "reasoning_status": None,
+                "reasoning_truncated": None,
+                "learner_reasoning_text": reasoning_text,
+                "learner_reasoning_status": (
+                    "completed" if reasoning_text is not None else None
+                ),
+                "learner_reasoning_stage": learner_stage,
                 "usage_event_id": usage_event_id,
                 "current_turn_run_id": current_turn_run_id,
                 "current_turn_run": safe_turn_run,

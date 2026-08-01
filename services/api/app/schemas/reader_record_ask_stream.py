@@ -426,6 +426,13 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     # (marker appended exactly once at the end). ``None`` when no
     # reasoning was projected (legacy / degraded / no reasoning).
     reasoning_truncated: bool | None = None
+    # ASK-LEARNER-REASONING-PROJECTOR-R1: public learner summary fields.
+    # Prefer these over the ambiguous legacy reasoning_md on agentic v2.
+    learner_reasoning_text: str | None = None
+    learner_reasoning_status: Literal["streaming", "completed"] | None = None
+    learner_reasoning_stage: (
+        Literal["analyzing", "article", "web", "synthesizing"] | None
+    ) = None
     usage_event_id: str | None = None
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     article_rag: ReaderAskArticleRagSidecar | None = None

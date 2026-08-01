@@ -560,6 +560,9 @@ async def _stream_legacy_or_agentic(
     web_search_backend = (
         resolved_backend if web_search_capability is not None else None
     )
+    main_model_config = (
+        execution.resolved_model_config if execution is not None else None
+    )
 
     # R3 P2 — the effective anchor set (plural focus_anchors, or the
     # legacy singular anchor as fallback). The primary selection is the
@@ -577,6 +580,7 @@ async def _stream_legacy_or_agentic(
         request_anchor=primary_anchor,
         validated_anchor=None,
         focus_anchors=focus_anchors or None,
+        main_model_config=main_model_config,
         client_submission_id=client_sub_id,
         existing_user_message=precreated_user,
         existing_assistant_message=precreated_asst,
@@ -1147,6 +1151,7 @@ async def retry_reading_record_ask_message(
         model=execution.model,
         model_settings=execution.model_settings(),
         usage_limits=execution.usage_limits,
+        main_model_config=execution.resolved_model_config,
         # R3 P2 — replay the same validated focus set as the original turn.
         focus_anchors=prepared.focus_anchors,
         # ASK-WEB-G1-R1: forward the resolved web search capability so

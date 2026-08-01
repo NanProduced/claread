@@ -151,6 +151,29 @@ def _resolve_base_profile_config(
     model_settings = _merge_settings(provider.model_settings, model.model_settings)
     model_settings = _merge_settings(model_settings, profile.model_settings)
 
+    # dashscope_native has no base_url; reuse the openai-compatible
+    # ``dashscope`` provider endpoint as the product region authority
+    # only when both sides share a non-empty, equal api_key_env (same
+    # credential *name* domain — never read/compare/log secrets).
+    # Empty or mismatched env names → fail-closed (no authority_endpoint).
+    # Not a hardcoded CN guess — the sibling entry is the registry source
+    # of truth. Exact host allowlist is applied later by the projector router.
+    authority_endpoint = ""
+    if provider.adapter == "dashscope_native" and not (provider.base_url or "").strip():
+        sibling = registry.providers.get("dashscope")
+        native_env = (provider.api_key_env or "").strip()
+        sibling_env = (
+            (sibling.api_key_env or "").strip() if sibling is not None else ""
+        )
+        if (
+            sibling is not None
+            and (sibling.base_url or "").strip()
+            and native_env
+            and sibling_env
+            and native_env == sibling_env
+        ):
+            authority_endpoint = sibling.base_url.strip()
+
     return ResolvedModelConfig(
         route=route,
         profile_name=profile_name,
@@ -165,6 +188,7 @@ def _resolve_base_profile_config(
         provider_options=provider_options,
         model_settings=model_settings,
         openai_profile=openai_profile,
+        authority_endpoint=authority_endpoint,
     )
 
 

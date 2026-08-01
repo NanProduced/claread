@@ -248,6 +248,9 @@ class ReaderRecordAskExecutionConfig:
     # Raw ``Model`` instance — excluded from repr (carries provider
     # auth / base_url inside the model object).
     model: Model | str = field(repr=False)
+    # Server-only resolved model identity used for same-authority
+    # projector routing. Never enter DTO/SSE/logs/repr (api_key).
+    resolved_model_config: Any | None = field(default=None, repr=False)
     # Merged provider settings dict (max_tokens + temperature +
     # extra_body + extra_headers + ...). Excluded from repr — not
     # safely loggable; extra_headers may carry auth sentinels.
@@ -527,6 +530,7 @@ def resolve_reader_record_ask_execution(
     return ReaderRecordAskExecutionConfig(
         option_key=option.key,
         model=model,
+        resolved_model_config=model_config,
         model_settings_payload=payload,
         usage_limits=usage_limits,
         runtime_budget=budget,

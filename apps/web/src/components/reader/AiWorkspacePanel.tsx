@@ -100,6 +100,7 @@ import { CitationList } from "@/components/reader/ask-chat/CitationList";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
 import { FollowUpSuggestionChips } from "@/components/reader/ask-chat/FollowUpSuggestionChips";
 import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestions";
+import { LearnerReasoningPanel } from "@/components/reader/ask-chat/LearnerReasoningPanel";
 import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
 import { TaskProcessCard } from "@/components/reader/ask-chat/TaskProcessCard";
 import { ToolChipRow } from "@/components/reader/ask-chat/ToolChipRow";
@@ -161,6 +162,7 @@ import {
   isReaderAskAgenticAnswerBlockList,
   isReaderAskAgenticCitationList,
   isReaderAskAgenticFinalStatus,
+  isReaderAskLearnerReasoningSnapshotPayload,
   isReaderAskWebSearchSummary,
   READER_ASK_AGENTIC_EXECUTION_VERSION,
   type ReaderAskAgenticAnswerBlockDto,
@@ -183,6 +185,12 @@ import {
   type AgenticActivityState,
 } from "./ask/agentic-activity";
 import { buildAgenticProcessSnapshot } from "./ask/agentic-process-projection";
+import {
+  EMPTY_LEARNER_REASONING_STATE,
+  learnerReasoningMessagePatch,
+  reduceLearnerReasoningSnapshot,
+  type LearnerReasoningState,
+} from "./ask/learner-reasoning";
 import {
   consumeReaderAskSse,
   isReaderAskAgenticCompletedPayload,
@@ -1024,10 +1032,16 @@ export function createSseMessageHandler(
           response_cards: message.response_cards ?? [],
           supplement_candidates: message.supplement_candidates ?? [],
           persisted_supplements: message.persisted_supplements ?? [],
-          // Public v2 never stores or rehydrates provider reasoning.
+          // Public v2 never stores or rehydrates provider raw reasoning.
           reasoning_md: null,
           reasoning_status: null,
           reasoning_truncated: null,
+          // Settle learner summary: keep last replace snapshot as completed.
+          learner_reasoning_text: message.learner_reasoning_text ?? null,
+          learner_reasoning_status: message.learner_reasoning_text
+            ? "completed"
+            : null,
+          learner_reasoning_stage: message.learner_reasoning_stage ?? null,
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
@@ -1124,6 +1138,12 @@ export function createSseMessageHandler(
           reasoning_md: null,
           reasoning_status: null,
           reasoning_truncated: null,
+          // Failed/cancelled turns never keep learner reasoning in cold history;
+          // drop hot provisional summary as well (silent, no error UI).
+          learner_reasoning_text: null,
+          learner_reasoning_status: null,
+          learner_reasoning_stage: null,
+          learner_reasoning_sequence: null,
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
@@ -1261,14 +1281,60 @@ export function createSseMessageHandler(
       return;
     }
 
-    // Provider reasoning is never a public v2 event. Keep the event names
-    // explicitly fail-closed so malformed or stale frames cannot enter
-    // message state, DOM, or the ChainOfThought projection.
+    // Provider raw reasoning is never a public v2 event. Legacy names stay
+    // fail-closed. Learner summaries use agentic.learner_reasoning.*.
     if (
       event.event === "agentic.reasoning.started" ||
       event.event === "agentic.reasoning.delta" ||
       event.event === "agentic.reasoning.completed"
     ) {
+      return;
+    }
+
+    if (event.event === "agentic.learner_reasoning.snapshot") {
+      // Requires activeRunIdentity (from agentic.run_started) — never
+      // contextCompactionIdentity. Production path uses the shared reducer.
+      if (!isReaderAskLearnerReasoningSnapshotPayload(event.data)) {
+        return;
+      }
+      if (agenticTerminalHandled) {
+        return;
+      }
+      const payload = event.data;
+      updateMessage((messages) =>
+        messages.map((message) => {
+          if (
+            message.id !== currentMessageId &&
+            message.id !== payload.message_id
+          ) {
+            return message;
+          }
+          if (message.status !== "streaming" && message.status !== "pending") {
+            return message;
+          }
+          const prev: LearnerReasoningState = {
+            ...EMPTY_LEARNER_REASONING_STATE,
+            text: message.learner_reasoning_text ?? null,
+            status: message.learner_reasoning_status ?? null,
+            stage: message.learner_reasoning_stage ?? null,
+            sequence: message.learner_reasoning_sequence ?? 0,
+            revision: 0,
+          };
+          const next = reduceLearnerReasoningSnapshot(
+            prev,
+            payload,
+            activeRunIdentity
+          );
+          // No accept (missing identity / foreign / order / invalid).
+          if (next.sequence === prev.sequence && next.text === prev.text) {
+            return message;
+          }
+          return {
+            ...message,
+            ...learnerReasoningMessagePatch(next),
+          };
+        })
+      );
       return;
     }
 
@@ -1583,6 +1649,26 @@ export function createSseMessageHandler(
               persisted_supplements: payload.persisted_supplements ?? [],
               reasoning_md: nextReasoningMd,
               reasoning_status: nextReasoningStatus,
+              learner_reasoning_text:
+                message.learner_reasoning_text ||
+                (typeof (payload as { learner_reasoning_text?: string })
+                  .learner_reasoning_text === "string"
+                  ? (payload as { learner_reasoning_text?: string })
+                      .learner_reasoning_text
+                  : null) ||
+                null,
+              learner_reasoning_status: (
+                message.learner_reasoning_text ||
+                (payload as { learner_reasoning_text?: string })
+                  .learner_reasoning_text
+              )
+                ? "completed"
+                : null,
+              learner_reasoning_stage:
+                message.learner_reasoning_stage ??
+                (payload as { learner_reasoning_stage?: typeof message.learner_reasoning_stage })
+                  .learner_reasoning_stage ??
+                null,
               follow_up_suggestions: payload.follow_up_suggestions ?? [],
               replan_status: "idle",
               compacting: false,
@@ -2363,11 +2449,20 @@ function normalizeReaderAskMessages(
       agentic_answer_blocks: finalAnswerBlocks,
       agentic_citations: finalCitations,
       agentic_web_search: finalWebSearch,
-      // Public v2 never hydrates provider reasoning, including payloads from
-      // older or malformed history rows.
+      // Public v2 never hydrates legacy provider reasoning. Learner summary
+      // is restored only when the backend policy-gated field is present.
       reasoning_md: null,
       reasoning_status: null,
       reasoning_truncated: null,
+      learner_reasoning_text:
+        typeof message.learner_reasoning_text === "string" &&
+        message.learner_reasoning_text.trim()
+          ? message.learner_reasoning_text.trim()
+          : null,
+      learner_reasoning_status: message.learner_reasoning_text
+        ? "completed"
+        : null,
+      learner_reasoning_stage: message.learner_reasoning_stage ?? null,
       // Agentic path must not carry legacy article_rag sidecar.
       article_rag: null,
       // Never surface agentic items through the legacy evidence channel.
@@ -3664,7 +3759,22 @@ function MessageBubble({
                     key={`${message.id}-${block.kind}-${index}`}
                     className="px-0.5"
                     reasoning={
-                      isAgenticV2Turn ? undefined : (
+                      isAgenticV2Turn ? (
+                        <LearnerReasoningPanel
+                          text={message.learner_reasoning_text}
+                          status={
+                            message.status === "streaming"
+                              ? message.learner_reasoning_status === "streaming"
+                                ? "streaming"
+                                : message.learner_reasoning_text
+                                  ? "streaming"
+                                  : null
+                              : message.learner_reasoning_text
+                                ? "completed"
+                                : null
+                          }
+                        />
+                      ) : (
                         <AssistantReasoningBlock
                           reasoningMd={message.reasoning_md}
                           reasoningStatus={message.reasoning_status}

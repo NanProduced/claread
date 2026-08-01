@@ -21,6 +21,7 @@ from pydantic_ai.usage import UsageLimits
 from app.config.settings import get_settings
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V2,
+    FinalStatus,
     ProgressActivity,
     ProgressOutcome,
     ProgressPhase,
@@ -45,6 +46,15 @@ from app.services.reader_record_ask.envelope_builder import (
 )
 from app.services.reader_record_ask.evidence_expansion import ExpansionPointerLedger
 from app.services.reader_record_ask.finalizer import FinalizedAskResult
+
+# M3 C2 wiring: map-source material provider for B3 heading enrichment (§4.2).
+# Imported lazily inside stream_agentic_thread_message to avoid module-load
+# cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
+# runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
+from app.services.reader_record_ask.learner_reasoning.sidecar import (
+    LearnerReasoningSnapshotEvent,
+    build_learner_reasoning_observer,
+)
 from app.services.reader_record_ask.pointer_ledger_owner import (
     get_process_pointer_ledger,
 )
@@ -52,14 +62,6 @@ from app.services.reader_record_ask.production_wiring import (
     build_production_article_rag_port,
     load_active_stable_document_id,
     resolve_agentic_model,
-)
-
-# M3 C2 wiring: map-source material provider for B3 heading enrichment (§4.2).
-# Imported lazily inside stream_agentic_thread_message to avoid module-load
-# cycles that surface under uvicorn --reload (reader_record_ask.__init__ →
-# runtime → turn_coordinator → article_map_model_view ← map_source_material_provider).
-from app.services.reader_record_ask.reasoning_projection import (
-    UserSafeReasoningObserver,
 )
 from app.services.reader_record_ask.repository import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -90,8 +92,8 @@ from app.services.reader_record_ask.runtime_events import (
     WebSearchResultEvent,
 )
 from app.services.reader_record_ask.sse import (
+    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
     EVENT_AGENTIC_PROGRESS,
-    EVENT_AGENTIC_REASONING_COMPLETED,
     EVENT_AGENTIC_REASONING_DELTA,
     EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
@@ -1246,6 +1248,12 @@ async def _run_agentic_turn(
     # behavior, exactly like the existing ``model`` / ``run_fn`` seams.
     memory_enabled_override: bool | None = None,
     memory_compactor: Any | None = None,
+    # ASK-LEARNER-REASONING-PROJECTOR-R1 test seams (production leaves None).
+    learner_reasoning_enabled_override: bool | None = None,
+    learner_reasoning_run_fn: Any | None = None,
+    learner_reasoning_model_config: Any | None = None,
+    learner_reasoning_test_route: Any | None = None,
+    learner_reasoning_finalize_grace: float | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent task and stream SSE events to terminal/completed.
 
@@ -1319,16 +1327,31 @@ async def _run_agentic_turn(
     loop = asyncio.get_running_loop()
     sink = _make_queue_sink(loop, event_queue)
 
-    # ASK-REASONING-R1: the single approved ingress chokepoint for provider
-    # reasoning. UserSafeReasoningObserver deliberately discards the input:
-    # it emits no agentic.reasoning.* events and returns no persistence
-    # payload. User-visible process state comes only from typed lifecycle
-    # events.
-    reasoning_projector = UserSafeReasoningObserver(
+    # ASK-LEARNER-REASONING-PROJECTOR-R1: flag OFF → discard at ingress.
+    # Flag ON → use the *same* ResolvedModelConfig that built active_model
+    # (never re-resolve the default MODEL_ROUTE_READER_ASK here).
+    _lr_settings = get_settings()
+    _lr_enabled = (
+        bool(learner_reasoning_enabled_override)
+        if learner_reasoning_enabled_override is not None
+        else bool(_lr_settings.reader_record_ask_learner_reasoning_enabled)
+    )
+    _lr_main_config = learner_reasoning_model_config
+    _lr_grace = (
+        float(learner_reasoning_finalize_grace)
+        if learner_reasoning_finalize_grace is not None
+        else 0.75
+    )
+    reasoning_projector = build_learner_reasoning_observer(
         emit=sink,
         message_id=assistant_msg["id"],
         thread_id=str(thread_id),
         turn_run_id=turn["id"],
+        enabled=_lr_enabled,
+        main_model_config=_lr_main_config,
+        run_fn=learner_reasoning_run_fn,
+        test_route=learner_reasoning_test_route,
+        finalize_grace_seconds=_lr_grace,
     )
 
     active_ledger = (
@@ -1394,17 +1417,121 @@ async def _run_agentic_turn(
 
     run_result: ReadingRecordAskRunResult | None = None
     terminal_emitted = False
+    # Learner-reasoning lifecycle state machine (idempotent, all exits):
+    #   open → frozen (success grace) → closed
+    #   open → closed (fail/cancel immediate freeze+aclose)
+    _lr_state: Literal["open", "frozen", "closed"] = "open"
+    _grace_snapshots: list[LearnerReasoningSnapshotEvent] = []
+
+    async def _learner_cleanup(*, success: bool) -> None:
+        """Idempotent learner finalizer — at most one terminal transition.
+
+        success=True: freeze intake → grace drain → snapshot freeze (no aclose yet).
+        success=False: freeze intake + aclose immediately; no cold persist.
+        After success freeze, a later fail only acloses (no unpublish).
+        """
+        nonlocal _lr_state
+        if _lr_state == "closed":
+            return
+        if success:
+            if _lr_state == "open":
+                finalize_fn = getattr(
+                    reasoning_projector, "finalize_for_persist", None
+                )
+                if callable(finalize_fn):
+                    try:
+                        await finalize_fn(grace_seconds=_lr_grace)
+                    except Exception:  # noqa: BLE001
+                        pass
+                await asyncio.sleep(0)
+                while not event_queue.empty():
+                    try:
+                        item = event_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if isinstance(item, LearnerReasoningSnapshotEvent):
+                        metrics.mark_first_reasoning()
+                        _grace_snapshots.append(item)
+                _lr_state = "frozen"
+            return
+        # fail / cancel
+        if _lr_state == "open":
+            freeze_fn = getattr(reasoning_projector, "freeze_intake", None)
+            if callable(freeze_fn):
+                try:
+                    freeze_fn()
+                except Exception:  # noqa: BLE001
+                    pass
+        close_fn = getattr(reasoning_projector, "aclose", None)
+        if callable(close_fn):
+            try:
+                await close_fn()
+            except Exception:  # noqa: BLE001
+                pass
+        _lr_state = "closed"
+
+    async def _failure_terminal_frames(
+        *,
+        final_status: FinalStatus,
+        run_status: Literal["failed", "cancelled", "stale"],
+        terminal_reason: str | None,
+        finalized: FinalizedAskResult | None = None,
+    ) -> tuple[str, str]:
+        """Unified fail path: cleanup first, then best-effort terminal DB, then SSE.
+
+        Consumers that read the returned frames see terminal only after
+        sidecar aclose (limiter released). Never relies on post-yield finally.
+        """
+        await _learner_cleanup(success=False)
+        terminal = build_terminal_dto(
+            finalized=finalized,
+            message_id=assistant_msg["id"],
+            thread_id=str(thread_id),
+            turn_run_id=turn["id"],
+            envelope_fingerprint=envelope.envelope_fingerprint,
+            final_status=final_status,
+            terminal_reason=terminal_reason,
+        )
+        terminal_json = terminal.model_dump(mode="json")
+        try:
+            await repo.terminal_agentic_turn_run(
+                turn_run_id=turn_run_id,
+                message_id=message_id,
+                run_status=run_status,
+                final_status=final_status,
+                terminal_reason=terminal_reason
+                or str(terminal_json.get("terminal_reason") or "failed"),
+                terminal_dto=terminal_json,
+            )
+        except Exception:
+            logger.exception(
+                "reader_record_ask terminal persist failed: turn_run_id=%s "
+                "final_status=%s",
+                turn_run_id,
+                final_status,
+            )
+        metrics.mark_terminal_sent()
+        return (
+            encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json),
+            encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json),
+        )
 
     try:
         while True:
             item = await event_queue.get()
             if item is _AGENT_DONE:
                 break
+            if isinstance(item, LearnerReasoningSnapshotEvent):
+                # Learner-facing stage summary (replace semantics).
+                metrics.mark_first_reasoning()
+                yield encode_sse(
+                    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
+                    item.model_dump(mode="json"),
+                )
+                continue
             if isinstance(item, AgenticReasoningStartedEvent):
-                # ASK-REASONING-R1: safe projection only — emitted by the
-                # reasoning projector on the first non-empty projected
-                # chunk. 1:1 wire mapping; never progress, never phase.
-                # R3: mark first-reasoning timestamp (idempotent).
+                # Legacy agentic.reasoning.* retained for wire compatibility
+                # tests; production learner path uses learner_reasoning.*.
                 metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_STARTED,
@@ -1412,11 +1539,6 @@ async def _run_agentic_turn(
                 )
                 continue
             if isinstance(item, AgenticReasoningDeltaEvent):
-                # ASK-REASONING-R1: projected reasoning increment
-                # (redaction + quota already applied server-side).
-                # R3: mark first-reasoning timestamp (idempotent; covers
-                # the no-started-event edge case where the projector
-                # emits a delta without a preceding started event).
                 metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_REASONING_DELTA,
@@ -1517,6 +1639,13 @@ async def _run_agentic_turn(
                 break
             if item is _AGENT_DONE:
                 continue
+            if isinstance(item, LearnerReasoningSnapshotEvent):
+                metrics.mark_first_reasoning()
+                yield encode_sse(
+                    EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
+                    item.model_dump(mode="json"),
+                )
+                continue
             if isinstance(item, AgenticReasoningStartedEvent):
                 # ASK-REASONING-R1 (late drain path).
                 # R3: mark first-reasoning timestamp (idempotent).
@@ -1597,32 +1726,12 @@ async def _run_agentic_turn(
                 max(0, int((time.perf_counter() - started_at) * 1000)),
                 metrics.to_log_dict(),
             )
-            terminal = build_terminal_dto(
-                finalized=None,
-                message_id=assistant_msg["id"],
-                thread_id=str(thread_id),
-                turn_run_id=turn["id"],
-                envelope_fingerprint=envelope.envelope_fingerprint,
+            for frame in await _failure_terminal_frames(
                 final_status="failed",
-                terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
-            )
-            await repo.terminal_agentic_turn_run(
-                turn_run_id=turn_run_id,
-                message_id=message_id,
                 run_status="failed",
-                final_status="failed",
-                terminal_reason=terminal.terminal_reason,
-                terminal_dto=terminal.model_dump(mode="json"),
-            )
-            # R3: terminal_sent marks the moment we yield the terminal SSE.
-            metrics.mark_terminal_sent()
-            yield encode_sse(
-                EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
-            )
-            yield encode_sse(
-                EVENT_MESSAGE_INTERRUPTED,
-                terminal.model_dump(mode="json"),
-            )
+                terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
+            ):
+                yield frame
             terminal_emitted = True
             return
         except BaseExceptionGroup as exc_group:
@@ -1637,32 +1746,12 @@ async def _run_agentic_turn(
                     assistant_msg["id"],
                     metrics.to_log_dict(),
                 )
-                terminal = build_terminal_dto(
-                    finalized=None,
-                    message_id=assistant_msg["id"],
-                    thread_id=str(thread_id),
-                    turn_run_id=turn["id"],
-                    envelope_fingerprint=envelope.envelope_fingerprint,
+                for frame in await _failure_terminal_frames(
                     final_status="failed",
-                    terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
-                )
-                await repo.terminal_agentic_turn_run(
-                    turn_run_id=turn_run_id,
-                    message_id=message_id,
                     run_status="failed",
-                    final_status="failed",
-                    terminal_reason=terminal.terminal_reason,
-                    terminal_dto=terminal.model_dump(mode="json"),
-                )
-                # R3: terminal_sent marks the moment we yield the terminal SSE.
-                metrics.mark_terminal_sent()
-                yield encode_sse(
-                    EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json")
-                )
-                yield encode_sse(
-                    EVENT_MESSAGE_INTERRUPTED,
-                    terminal.model_dump(mode="json"),
-                )
+                    terminal_reason=TERMINAL_REASON_BUDGET_EXHAUSTED,
+                ):
+                    yield frame
                 terminal_emitted = True
                 return
             # Fall through to UnexpectedModelBehavior / generic handling.
@@ -1692,30 +1781,12 @@ async def _run_agentic_turn(
                 runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
-            terminal = build_terminal_dto(
-                finalized=None,
-                message_id=assistant_msg["id"],
-                thread_id=str(thread_id),
-                turn_run_id=turn["id"],
-                envelope_fingerprint=envelope.envelope_fingerprint,
+            for frame in await _failure_terminal_frames(
                 final_status="failed",
-                terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
-            )
-            await repo.terminal_agentic_turn_run(
-                turn_run_id=turn_run_id,
-                message_id=message_id,
                 run_status="failed",
-                final_status="failed",
-                terminal_reason=terminal.terminal_reason,
-                terminal_dto=terminal.model_dump(mode="json"),
-            )
-            # R3: terminal_sent marks the moment we yield the terminal SSE.
-            metrics.mark_terminal_sent()
-            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-            yield encode_sse(
-                EVENT_MESSAGE_INTERRUPTED,
-                terminal.model_dump(mode="json"),
-            )
+                terminal_reason=TERMINAL_REASON_AGENT_OUTPUT_INVALID,
+            ):
+                yield frame
             terminal_emitted = True
             return
         except Exception as exc:
@@ -1740,30 +1811,12 @@ async def _run_agentic_turn(
                 runtime_observation.output_validation_retry_requests,
                 metrics.to_log_dict(),
             )
-            terminal = build_terminal_dto(
-                finalized=None,
-                message_id=assistant_msg["id"],
-                thread_id=str(thread_id),
-                turn_run_id=turn["id"],
-                envelope_fingerprint=envelope.envelope_fingerprint,
+            for frame in await _failure_terminal_frames(
                 final_status="failed",
-                terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
-            )
-            await repo.terminal_agentic_turn_run(
-                turn_run_id=turn_run_id,
-                message_id=message_id,
                 run_status="failed",
-                final_status="failed",
-                terminal_reason=terminal.terminal_reason,
-                terminal_dto=terminal.model_dump(mode="json"),
-            )
-            # R3: terminal_sent marks the moment we yield the terminal SSE.
-            metrics.mark_terminal_sent()
-            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-            yield encode_sse(
-                EVENT_MESSAGE_INTERRUPTED,
-                terminal.model_dump(mode="json"),
-            )
+                terminal_reason=TERMINAL_REASON_AGENT_RUN_FAILED,
+            ):
+                yield frame
             terminal_emitted = True
             return
 
@@ -1775,28 +1828,6 @@ async def _run_agentic_turn(
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         if not terminal_emitted:
-            terminal = build_terminal_dto(
-                finalized=None,
-                message_id=assistant_msg["id"],
-                thread_id=str(thread_id),
-                turn_run_id=turn["id"],
-                envelope_fingerprint=envelope.envelope_fingerprint,
-                final_status="cancelled",
-                terminal_reason="client disconnect or cancellation",
-            )
-            persisted = await repo.terminal_agentic_turn_run(
-                turn_run_id=turn_run_id,
-                message_id=message_id,
-                run_status="cancelled",
-                final_status="cancelled",
-                terminal_reason=terminal.terminal_reason,
-                terminal_dto=terminal.model_dump(mode="json"),
-            )
-            assert persisted.get("resolved_evidence_json") in (None, [], "[]")
-            # R3: terminal_sent marks the moment we yield the terminal SSE.
-            # On cancel, persistence_done is intentionally skipped — no
-            # canonical answer was persisted on this path.
-            metrics.mark_terminal_sent()
             logger.info(
                 "reader_record_ask turn cancelled: turn_run_id=%s message_id=%s "
                 "model_route=%s total_ms=%s lifecycle=%s",
@@ -1806,11 +1837,16 @@ async def _run_agentic_turn(
                 max(0, int((time.perf_counter() - started_at) * 1000)),
                 metrics.to_log_dict(),
             )
-            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal.model_dump(mode="json"))
-            yield encode_sse(
-                EVENT_MESSAGE_INTERRUPTED,
-                terminal.model_dump(mode="json"),
-            )
+            for frame in await _failure_terminal_frames(
+                final_status="cancelled",
+                run_status="cancelled",
+                terminal_reason="client disconnect or cancellation",
+            ):
+                yield frame
+            terminal_emitted = True
+        else:
+            # Already terminal elsewhere — still ensure limiter release.
+            await _learner_cleanup(success=False)
         raise
     finally:
         if not agent_task.done():
@@ -1818,6 +1854,12 @@ async def _run_agentic_turn(
             try:
                 await agent_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        # Safety net for agent-phase exits that skipped explicit cleanup.
+        if _lr_state == "open" and (terminal_emitted or run_result is None):
+            try:
+                await _learner_cleanup(success=False)
+            except Exception:  # noqa: BLE001
                 pass
         _log_web_search_turn_observation(
             run_result=run_result,
@@ -1829,336 +1871,246 @@ async def _run_agentic_turn(
             ),
         )
 
-    if terminal_emitted or run_result is None:
-        return
+    # Post-agent phase: success or late failure.
+    # try/finally guarantees sidecar close on every exit.
+    try:
+        if terminal_emitted or run_result is None:
+            await _learner_cleanup(success=False)
+            return
 
-    total_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-    finalized = run_result.finalized
-    if finalized is None or finalized.status != "ok" or run_result.final_text is None:
-        status = finalized.status if finalized is not None else "failed"
-        run_status = "stale" if status == "context_stale" else "failed"
+        total_ms = max(0, int((time.perf_counter() - started_at) * 1000))
+        finalized = run_result.finalized
+        if finalized is None or finalized.status != "ok" or run_result.final_text is None:
+            status = finalized.status if finalized is not None else "failed"
+            run_status = "stale" if status == "context_stale" else "failed"
 
-        # Map internal "unavailable" to wire "failed" + typed terminal_reason.
-        # Wire FinalStatus is a 5-value Literal that does NOT include
-        # "unavailable"; production must never emit it on the wire. The
-        # caller (runtime) sets finalized.reason to one of the two typed
-        # values when producing status="unavailable"; we defence-in-depth
-        # validate that here and fall back to a safe typed value.
-        if status == "unavailable":
-            wire_final_status = "failed"
-            typed_reason = finalized.reason if finalized is not None else None
-            if typed_reason not in (
-                TERMINAL_REASON_DOCUMENT_UNAVAILABLE,
-                TERMINAL_REASON_BASELINE_UNAVAILABLE,
-            ):
-                typed_reason = TERMINAL_REASON_BASELINE_UNAVAILABLE
-        else:
-            wire_final_status = status if status != "ok" else "failed"
-            typed_reason = (
-                finalized.reason if finalized is not None else "missing_finalizer_result"
+            # Map internal "unavailable" to wire "failed" + typed terminal_reason.
+            # Wire FinalStatus is a 5-value Literal that does NOT include
+            # "unavailable"; production must never emit it on the wire. The
+            # caller (runtime) sets finalized.reason to one of the two typed
+            # values when producing status="unavailable"; we defence-in-depth
+            # validate that here and fall back to a safe typed value.
+            if status == "unavailable":
+                wire_final_status = "failed"
+                typed_reason = finalized.reason if finalized is not None else None
+                if typed_reason not in (
+                    TERMINAL_REASON_DOCUMENT_UNAVAILABLE,
+                    TERMINAL_REASON_BASELINE_UNAVAILABLE,
+                ):
+                    typed_reason = TERMINAL_REASON_BASELINE_UNAVAILABLE
+            else:
+                wire_final_status = status if status != "ok" else "failed"
+                typed_reason = (
+                    finalized.reason if finalized is not None else "missing_finalizer_result"
+                )
+
+            logger.info(
+                "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+                "model_route=%s final_status=%s total_ms=%s ttfa_ms=%s "
+                "progress_events=%s read_range_calls=%s search_calls=%s "
+                "web_search_calls=%s output_validation_final_attempts=%s "
+                "output_validation_retry_requests=%s lifecycle=%s",
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                wire_final_status,
+                total_ms,
+                projector.time_to_first_activity_ms,
+                projector.progress_event_count,
+                run_result.read_range_calls,
+                run_result.search_current_article_calls,
+                run_result.web_search_calls,
+                runtime_observation.output_validation_final_attempts,
+                runtime_observation.output_validation_retry_requests,
+                metrics.to_log_dict(),
             )
+            for frame in await _failure_terminal_frames(
+                final_status=wire_final_status,
+                run_status=run_status,
+                terminal_reason=typed_reason,
+                finalized=finalized,
+            ):
+                yield frame
+            return
 
-        terminal = build_terminal_dto(
-            finalized=finalized,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status=wire_final_status,
-            terminal_reason=typed_reason,
-        )
-        terminal_json = terminal.model_dump(mode="json")
-        await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status=run_status,
-            final_status=terminal.final_status,
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal_json,
-        )
-        logger.info(
-            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
-            "model_route=%s final_status=%s total_ms=%s ttfa_ms=%s "
-            "progress_events=%s read_range_calls=%s search_calls=%s "
-            "web_search_calls=%s output_validation_final_attempts=%s "
-            "output_validation_retry_requests=%s lifecycle=%s",
-            turn["id"],
-            assistant_msg["id"],
-            _safe_model_route(active_model),
-            terminal.final_status,
-            total_ms,
-            projector.time_to_first_activity_ms,
-            projector.progress_event_count,
-            run_result.read_range_calls,
-            run_result.search_current_article_calls,
-            run_result.web_search_calls,
-            runtime_observation.output_validation_final_attempts,
-            runtime_observation.output_validation_retry_requests,
-            metrics.to_log_dict(),
-        )
-        # R3: terminal_sent marks the moment we yield the terminal SSE.
-        metrics.mark_terminal_sent()
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
-        return
-
-    try:
-        completed = build_completed_dto(
-            run_result=run_result,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope=envelope,
-        )
-    except EvidenceScopeInvariantError:
-        # Fail-closed: never emit ok completed with conflicting / incomplete scope.
-        # Do not drop conflicting search_hit evidence and retry success.
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="failed",
-            terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
-        )
-        terminal_json = terminal.model_dump(mode="json")
-        await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status="failed",
-            final_status="failed",
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal_json,
-        )
-        logger.info(
-            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
-            "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
-            "progress_events=%s read_range_calls=%s search_calls=%s "
-            "web_search_calls=%s output_validation_final_attempts=%s "
-            "output_validation_retry_requests=%s reason=%s lifecycle=%s",
-            turn["id"],
-            assistant_msg["id"],
-            _safe_model_route(active_model),
-            total_ms,
-            projector.time_to_first_activity_ms,
-            projector.progress_event_count,
-            run_result.read_range_calls,
-            run_result.search_current_article_calls,
-            run_result.web_search_calls,
-            runtime_observation.output_validation_final_attempts,
-            runtime_observation.output_validation_retry_requests,
-            TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
-            metrics.to_log_dict(),
-        )
-        # R3: terminal_sent marks the moment we yield the terminal SSE.
-        metrics.mark_terminal_sent()
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
-        return
-
-    completed_json = completed.model_dump(mode="json")
-    try:
-        restricted_evidence = build_restricted_evidence_json(
-            run_result=run_result,
-            envelope=envelope,
-        )
-    except EvidenceScopeInvariantError:
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="failed",
-            terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
-        )
-        terminal_json = terminal.model_dump(mode="json")
-        await repo.terminal_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            run_status="failed",
-            final_status="failed",
-            terminal_reason=terminal.terminal_reason,
-            terminal_dto=terminal_json,
-        )
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
-        return
-    try:
-        persisted = await repo.complete_agentic_turn_run(
-            turn_run_id=turn_run_id,
-            message_id=message_id,
-            answer_text=completed.answer_text,
-            completed_dto=completed_json,
-            resolved_evidence=restricted_evidence,
-            final_status="ok",
-            # ASK-REASONING-R1: the visible reasoning projection commits
-            # in the SAME transaction as the answer (or NULL when the
-            # provider returned no reasoning). Persist failure below
-            # leaves no cold-history reasoning — fail-closed.
-            reasoning_projection=reasoning_projector.persistence_payload(),
-        )
-    except Exception:
-        # Success-path DB persistence failed (connection drop, constraint,
-        # JSONB encoding, etc.).  Emit a typed terminal so the frontend
-        # receives a terminal signal instead of hanging on a stream that
-        # ended without message.completed / message.interrupted.
-        # The typed reason never embeds the underlying DB error text.
-        logger.exception(
-            "reader_record_ask persist failed: turn_run_id=%s message_id=%s",
-            turn_run_id,
-            message_id,
-        )
-        terminal = build_terminal_dto(
-            finalized=None,
-            message_id=assistant_msg["id"],
-            thread_id=str(thread_id),
-            turn_run_id=turn["id"],
-            envelope_fingerprint=envelope.envelope_fingerprint,
-            final_status="failed",
-            terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
-        )
-        terminal_json = terminal.model_dump(mode="json")
         try:
-            await repo.terminal_agentic_turn_run(
+            completed = build_completed_dto(
+                run_result=run_result,
+                message_id=assistant_msg["id"],
+                thread_id=str(thread_id),
+                turn_run_id=turn["id"],
+                envelope=envelope,
+            )
+        except EvidenceScopeInvariantError:
+            # Fail-closed: never emit ok completed with conflicting / incomplete scope.
+            logger.info(
+                "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+                "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
+                "progress_events=%s read_range_calls=%s search_calls=%s "
+                "web_search_calls=%s output_validation_final_attempts=%s "
+                "output_validation_retry_requests=%s reason=%s lifecycle=%s",
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                total_ms,
+                projector.time_to_first_activity_ms,
+                projector.progress_event_count,
+                run_result.read_range_calls,
+                run_result.search_current_article_calls,
+                run_result.web_search_calls,
+                runtime_observation.output_validation_final_attempts,
+                runtime_observation.output_validation_retry_requests,
+                TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+                metrics.to_log_dict(),
+            )
+            for frame in await _failure_terminal_frames(
+                final_status="failed",
+                run_status="failed",
+                terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+            ):
+                yield frame
+            return
+
+        completed_json = completed.model_dump(mode="json")
+        # Success learner path: freeze → grace drain → freeze snapshot → yield.
+        await _learner_cleanup(success=True)
+        for snap in _grace_snapshots:
+            yield encode_sse(
+                EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
+                snap.model_dump(mode="json"),
+            )
+        try:
+            restricted_evidence = build_restricted_evidence_json(
+                run_result=run_result,
+                envelope=envelope,
+            )
+        except EvidenceScopeInvariantError:
+            for frame in await _failure_terminal_frames(
+                final_status="failed",
+                run_status="failed",
+                terminal_reason=TERMINAL_REASON_EVIDENCE_SCOPE_INVARIANT,
+            ):
+                yield frame
+            return
+        try:
+            persisted = await repo.complete_agentic_turn_run(
                 turn_run_id=turn_run_id,
                 message_id=message_id,
-                run_status="failed",
-                final_status="failed",
-                terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
-                terminal_dto=terminal_json,
+                answer_text=completed.answer_text,
+                completed_dto=completed_json,
+                resolved_evidence=restricted_evidence,
+                final_status="ok",
+                reasoning_projection=reasoning_projector.persistence_payload(),
             )
         except Exception:
+            # Success-path DB persistence failed. Unified order:
+            # cleanup → best-effort terminal DB → typed terminal SSE.
             logger.exception(
-                "reader_record_ask terminal persist also failed: turn_run_id=%s",
+                "reader_record_ask persist failed: turn_run_id=%s message_id=%s",
                 turn_run_id,
+                message_id,
             )
-        # R3: terminal_sent marks the moment we yield the terminal SSE.
+            logger.info(
+                "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
+                "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
+                "progress_events=%s read_range_calls=%s search_calls=%s "
+                "web_search_calls=%s output_validation_final_attempts=%s "
+                "output_validation_retry_requests=%s reason=%s lifecycle=%s",
+                turn["id"],
+                assistant_msg["id"],
+                _safe_model_route(active_model),
+                total_ms,
+                projector.time_to_first_activity_ms,
+                projector.progress_event_count,
+                run_result.read_range_calls,
+                run_result.search_current_article_calls,
+                run_result.web_search_calls,
+                runtime_observation.output_validation_final_attempts,
+                runtime_observation.output_validation_retry_requests,
+                TERMINAL_REASON_PERSIST_FAILED,
+                metrics.to_log_dict(),
+            )
+            for frame in await _failure_terminal_frames(
+                final_status="failed",
+                run_status="failed",
+                terminal_reason=TERMINAL_REASON_PERSIST_FAILED,
+            ):
+                yield frame
+            return
+        # R3: persistence_done marks the successful commit timestamp. From
+        # this point on, the canonical answer is durable and any reload
+        # returns the same content.
+        # R4-3: CAS outcome check. Only the CAS WINNER (the call that
+        # actually flipped the row from streaming → completed with
+        # final_status=ok) may emit reasoning.completed and message.completed.
+        # The CAS loser (status == "already_terminal") must NOT emit
+        # completed — the winning writer owns the terminal. Always aclose
+        # BEFORE any terminal frames or silent return so the consumer never
+        # observes terminal while the learner worker still holds a limiter
+        # slot. Winning non-ok → project real terminal; winning ok → silent.
+        if persisted.get("status") == "already_terminal":
+            winning_final_status = persisted.get("winning_final_status")
+            winning_terminal_reason = persisted.get("winning_terminal_reason")
+            winning_output_json = persisted.get("winning_user_visible_output_json")
+            logger.info(
+                "reader_record_ask CAS lost: turn_run_id=%s message_id=%s "
+                "winning_final_status=%s winning_terminal_reason=%s "
+                "model_route=%s total_ms=%s lifecycle=%s",
+                turn["id"],
+                assistant_msg["id"],
+                winning_final_status,
+                winning_terminal_reason,
+                _safe_model_route(active_model),
+                total_ms,
+                metrics.to_log_dict(),
+            )
+            # Always aclose before any terminal frames or silent return.
+            await _learner_cleanup(success=False)
+            metrics.mark_terminal_sent()
+            if winning_final_status in ("failed", "cancelled", "context_stale"):
+                # Project the real persisted terminal. Prefer the winning
+                # terminal DTO if the winner persisted one; otherwise build
+                # a minimal typed terminal from the persisted fields.
+                if isinstance(winning_output_json, dict):
+                    terminal_json = winning_output_json
+                else:
+                    terminal = build_terminal_dto(
+                        finalized=None,
+                        message_id=assistant_msg["id"],
+                        thread_id=str(thread_id),
+                        turn_run_id=turn["id"],
+                        envelope_fingerprint=envelope.envelope_fingerprint,
+                        final_status=winning_final_status,
+                        terminal_reason=winning_terminal_reason
+                        or TERMINAL_REASON_AGENT_RUN_FAILED,
+                    )
+                    terminal_json = terminal.model_dump(mode="json")
+                yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
+                yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
+            # If winning_final_status == "ok" or unknown, end silently.
+            # The client will either see the winner's message.completed
+            # (same request) or run stale-stream reconciliation.
+            return
+        metrics.mark_persistence_done()
+        stored = persisted.get("user_visible_output_json")
+        emit_payload = stored if isinstance(stored, dict) else completed_json
+        # ASK-REASONING-R1: persist-first ordering contract. The projection
+        # and the answer are now committed in one transaction, so from this
+        # point on any reload returns the same visible reasoning text. Only
+        # now may the completion promise be emitted — and it must precede
+        # message.completed. aclose after persist, before message.completed.
+        await _learner_cleanup(success=False)
         metrics.mark_terminal_sent()
-        logger.info(
-            "reader_record_ask turn terminal: turn_run_id=%s message_id=%s "
-            "model_route=%s final_status=failed total_ms=%s ttfa_ms=%s "
-            "progress_events=%s read_range_calls=%s search_calls=%s "
-            "web_search_calls=%s output_validation_final_attempts=%s "
-            "output_validation_retry_requests=%s reason=%s lifecycle=%s",
-            turn["id"],
-            assistant_msg["id"],
-            _safe_model_route(active_model),
-            total_ms,
-            projector.time_to_first_activity_ms,
-            projector.progress_event_count,
-            run_result.read_range_calls,
-            run_result.search_current_article_calls,
-            run_result.web_search_calls,
-            runtime_observation.output_validation_final_attempts,
-            runtime_observation.output_validation_retry_requests,
-            TERMINAL_REASON_PERSIST_FAILED,
-            metrics.to_log_dict(),
-        )
-        yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
-        return
-    # R3: persistence_done marks the successful commit timestamp. From
-    # this point on, the canonical answer is durable and any reload
-    # returns the same content.
-    # R4-3: CAS outcome check. Only the CAS WINNER (the call that
-    # actually flipped the row from streaming → completed with
-    # final_status=ok) may emit reasoning.completed and message.completed.
-    # The CAS loser (status == "already_terminal") must NOT emit
-    # completed — the winning writer owns the terminal. If the winning
-    # terminal was a non-ok state (cancelled / failed / context_stale),
-    # project the real persisted terminal so the client sees a typed
-    # terminal instead of an unexplained EOF. If the winning terminal
-    # was ok (duplicate completed), end silently — the first completed
-    # already emitted the canonical terminal.
-    if persisted.get("status") == "already_terminal":
-        winning_final_status = persisted.get("winning_final_status")
-        winning_terminal_reason = persisted.get("winning_terminal_reason")
-        winning_output_json = persisted.get("winning_user_visible_output_json")
-        logger.info(
-            "reader_record_ask CAS lost: turn_run_id=%s message_id=%s "
-            "winning_final_status=%s winning_terminal_reason=%s "
-            "model_route=%s total_ms=%s lifecycle=%s",
-            turn["id"],
-            assistant_msg["id"],
-            winning_final_status,
-            winning_terminal_reason,
-            _safe_model_route(active_model),
-            total_ms,
-            metrics.to_log_dict(),
-        )
-        # R4-3: mark terminal_sent so the lifecycle hook does not
-        # double-reconcile. We are about to either project the winning
-        # terminal or end silently — both are terminal outcomes.
-        metrics.mark_terminal_sent()
-        if winning_final_status in ("failed", "cancelled", "context_stale"):
-            # Project the real persisted terminal. Prefer the winning
-            # terminal DTO if the winner persisted one; otherwise build
-            # a minimal typed terminal from the persisted fields.
-            if isinstance(winning_output_json, dict):
-                terminal_json = winning_output_json
-            else:
-                terminal = build_terminal_dto(
-                    finalized=None,
-                    message_id=assistant_msg["id"],
-                    thread_id=str(thread_id),
-                    turn_run_id=turn["id"],
-                    envelope_fingerprint=envelope.envelope_fingerprint,
-                    final_status=winning_final_status,
-                    terminal_reason=winning_terminal_reason
-                    or TERMINAL_REASON_AGENT_RUN_FAILED,
-                )
-                terminal_json = terminal.model_dump(mode="json")
-            yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-            yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
-        # If winning_final_status == "ok" or unknown, end silently —
-        # the winning completed writer owns the message.completed
-        # terminal. The client will either see the winner's
-        # message.completed (same request) or run stale-stream
-        # reconciliation (different request / reconnect).
-        return
-    metrics.mark_persistence_done()
-    stored = persisted.get("user_visible_output_json")
-    emit_payload = stored if isinstance(stored, dict) else completed_json
-    # ASK-REASONING-R1: persist-first ordering contract. The projection
-    # and the answer are now committed in one transaction, so from this
-    # point on any reload returns the same visible reasoning text. Only
-    # now may the completion promise be emitted — and it must precede
-    # message.completed. None when the provider returned no reasoning
-    # (nothing started, nothing to complete, no cold content).
-    reasoning_completed = reasoning_projector.build_completed_event()
-    logger.info(
-        "reader_record_ask turn completed: turn_run_id=%s message_id=%s "
-        "model_route=%s final_status=ok total_ms=%s ttfa_ms=%s "
-        "progress_events=%s read_range_calls=%s search_calls=%s "
-        "web_search_calls=%s output_validation_final_attempts=%s "
-        "output_validation_retry_requests=%s reasoning_projected=%s "
-        "lifecycle=%s",
-        turn["id"],
-        assistant_msg["id"],
-        _safe_model_route(active_model),
-        total_ms,
-        projector.time_to_first_activity_ms,
-        projector.progress_event_count,
-        run_result.read_range_calls,
-        run_result.search_current_article_calls,
-        run_result.web_search_calls,
-        runtime_observation.output_validation_final_attempts,
-        runtime_observation.output_validation_retry_requests,
-        reasoning_completed is not None,
-        metrics.to_log_dict(),
-    )
-    if reasoning_completed is not None:
-        yield encode_sse(
-            EVENT_AGENTIC_REASONING_COMPLETED,
-            reasoning_completed.model_dump(mode="json"),
-        )
-    # R3: terminal_sent marks the moment we yield message.completed —
-    # the client should be able to receive the terminal signal now.
-    metrics.mark_terminal_sent()
-    yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
+        yield encode_sse(EVENT_MESSAGE_COMPLETED, emit_payload)
 
+
+    finally:
+        # Post-agent safety net: every exit closes the sidecar.
+        if _lr_state != "closed":
+            try:
+                await _learner_cleanup(success=False)
+            except Exception:  # noqa: BLE001
+                pass
 
 async def stream_agentic_thread_message(
     *,
@@ -2216,6 +2168,12 @@ async def stream_agentic_thread_message(
     # callers pass none of these.
     memory_enabled_override: bool | None = None,
     memory_compactor: Any | None = None,
+    # Same ResolvedModelConfig used to build ``model`` (server-only).
+    main_model_config: Any | None = None,
+    learner_reasoning_enabled_override: bool | None = None,
+    learner_reasoning_run_fn: Any | None = None,
+    learner_reasoning_test_route: Any | None = None,
+    learner_reasoning_finalize_grace: float | None = None,
 ) -> AsyncIterator[str]:
     """Run the agentic path: persist + SSE with a single completed DTO truth.
 
@@ -2676,6 +2634,11 @@ async def stream_agentic_thread_message(
             web_evidence_registry=wired_web_evidence_registry,
             memory_enabled_override=memory_enabled_override,
             memory_compactor=memory_compactor,
+            learner_reasoning_enabled_override=learner_reasoning_enabled_override,
+            learner_reasoning_run_fn=learner_reasoning_run_fn,
+            learner_reasoning_model_config=main_model_config,
+            learner_reasoning_test_route=learner_reasoning_test_route,
+            learner_reasoning_finalize_grace=learner_reasoning_finalize_grace,
         ):
             yield chunk
             # ASK-TURN-LIFECYCLE R1: mark terminal-emitted as soon as the
@@ -2744,6 +2707,7 @@ async def retry_agentic_thread_message(
     web_evidence_registry: WebEvidenceRegistry | None = None,
     # ASK-TURN-LIFECYCLE R1: forwarded to ``stream_agentic_thread_message``.
     lifecycle: StreamLifecycleHook | None = None,
+    main_model_config: Any | None = None,
 ) -> AsyncIterator[str]:
     """Retry an existing assistant message via the agentic path.
 
@@ -2792,6 +2756,7 @@ async def retry_agentic_thread_message(
         web_search_backend=web_search_backend,
         web_evidence_registry=web_evidence_registry,
         lifecycle=lifecycle,
+        main_model_config=main_model_config,
     ):
         yield chunk
     return

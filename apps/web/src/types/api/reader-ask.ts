@@ -468,6 +468,20 @@ export interface ReaderAskMessageDto {
    *   terminals — cold history never carries interrupted reasoning.
    */
   reasoning_status?: "idle" | "streaming" | "completed" | "interrupted" | null;
+  /**
+   * ASK-LEARNER-REASONING-PROJECTOR-R1 — public learner summary fields.
+   * Prefer these over ambiguous reasoning_md on agentic v2.
+   */
+  learner_reasoning_text?: string | null;
+  learner_reasoning_status?: "streaming" | "completed" | null;
+  learner_reasoning_stage?:
+    | "analyzing"
+    | "article"
+    | "web"
+    | "synthesizing"
+    | null;
+  /** Client-only sequence gate for replace snapshots (not a public API field). */
+  learner_reasoning_sequence?: number | null;
   follow_up_suggestions?: ReaderAskFollowUpSuggestionDto[] | null;
   usage_event_id?: string | null;
   /**
@@ -917,6 +931,8 @@ export type ReaderAskStreamEventName =
   | "agentic.reasoning.started"
   | "agentic.reasoning.delta"
   | "agentic.reasoning.completed"
+  // ASK-LEARNER-REASONING-PROJECTOR-R1 — learner stage summary (replace).
+  | "agentic.learner_reasoning.snapshot"
   // ASK-RETRY-CONTRACT-R6: duplicate client_submission_id short-circuits
   // the model; payload is a public reconcile snapshot (no secrets).
   | "submission.reconcile"
@@ -1253,6 +1269,54 @@ export interface ReaderAskInterruptedPayloadDto {
 }
 
 /**
+ * ASK-LEARNER-REASONING-PROJECTOR-R1 — replace-semantics snapshot.
+ * Host-owned identity + policy; only validated Chinese text is public.
+ */
+export interface ReaderAskLearnerReasoningSnapshotPayloadDto {
+  execution_version: "reader_record_ask_agentic_v2";
+  message_id: string;
+  thread_id: string;
+  turn_run_id: string;
+  sequence: number;
+  revision: number;
+  generation_id: number;
+  stage: "analyzing" | "article" | "web" | "synthesizing";
+  text: string;
+  basis?: Array<"article" | "web" | "general">;
+  policy_version: "learner_reasoning_v1";
+  projection_policy_version?: "learner_reasoning_v1";
+}
+
+export function isReaderAskLearnerReasoningSnapshotPayload(
+  data: unknown
+): data is ReaderAskLearnerReasoningSnapshotPayloadDto {
+  if (!data || typeof data !== "object") return false;
+  const d = data as Record<string, unknown>;
+  if (typeof d.text !== "string" || !d.text.trim() || d.text.length > 80) {
+    return false;
+  }
+  if (typeof d.sequence !== "number" || d.sequence < 1) return false;
+  if (typeof d.revision !== "number" || d.revision < 1) return false;
+  if (typeof d.generation_id !== "number" || d.generation_id < 0) return false;
+  if (!Number.isInteger(d.generation_id)) return false;
+  if (d.execution_version !== "reader_record_ask_agentic_v2") return false;
+  if (
+    d.stage !== "analyzing" &&
+    d.stage !== "article" &&
+    d.stage !== "web" &&
+    d.stage !== "synthesizing"
+  ) {
+    return false;
+  }
+  if (typeof d.message_id !== "string" || !d.message_id) return false;
+  if (typeof d.thread_id !== "string" || !d.thread_id) return false;
+  if (typeof d.turn_run_id !== "string" || !d.turn_run_id) return false;
+  const policy = d.policy_version ?? d.projection_policy_version;
+  if (policy !== "learner_reasoning_v1") return false;
+  return true;
+}
+
+/**
  * Discriminated stream envelope union.
  * Agentic-only events carry strict DTOs; shared event names keep loose data so
  * legacy partial payloads remain assignable at the transport boundary.
@@ -1281,6 +1345,10 @@ export type ReaderAskTypedStreamEnvelopeDto =
   | {
       event: "agentic.reasoning.completed";
       data: ReaderAskAgenticReasoningCompletedPayloadDto;
+    }
+  | {
+      event: "agentic.learner_reasoning.snapshot";
+      data: ReaderAskLearnerReasoningSnapshotPayloadDto;
     }
   | {
       event:

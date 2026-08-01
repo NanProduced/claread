@@ -32,6 +32,10 @@ EVENT_AGENTIC_TERMINAL = "agentic.terminal"
 EVENT_AGENTIC_REASONING_STARTED = "agentic.reasoning.started"
 EVENT_AGENTIC_REASONING_DELTA = "agentic.reasoning.delta"
 EVENT_AGENTIC_REASONING_COMPLETED = "agentic.reasoning.completed"
+# Learner reasoning summary (ASK-LEARNER-REASONING-PROJECTOR-R1).
+# Distinct from legacy ``agentic.reasoning.*`` (retired for learner-facing
+# content). Snapshots are replace-semantics only — no empty started shell.
+EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT = "agentic.learner_reasoning.snapshot"
 # Thread-memory lifecycle. These always precede reasoning.started for a turn.
 EVENT_CONTEXT_COMPACTION_STARTED = "context.compaction.started"
 EVENT_CONTEXT_COMPACTION_COMPLETED = "context.compaction.completed"

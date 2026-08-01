@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -182,6 +183,11 @@ class ResolvedModelConfig(BaseModel):
     fallback_profiles: list[str] = Field(default_factory=list)
     model_settings: RunModelSettings | None = None
     openai_profile: OpenAIProfileConfig | None = None
+    # Server-only: endpoint authority when the adapter omits base_url
+    # (e.g. dashscope_native). Populated from the registry sibling
+    # openai-compatible DashScope provider base_url so same-credential
+    # projectors share region without guessing. Never on public DTO/SSE.
+    authority_endpoint: str = ""
 
     def cache_key(self) -> str:
         return self.model_dump_json(exclude_none=True)

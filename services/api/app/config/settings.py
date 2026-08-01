@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # compactor is guarded by deterministic Host validation and an emergency
     # fallback; failures remain fail-soft for the user turn.
     reader_record_ask_memory_enabled: bool = False
+    # ASK-LEARNER-REASONING-PROJECTOR-R1: learner reasoning summary via a
+    # same-authority cheap non-thinking projector. Default OFF. When OFF,
+    # production discards private reasoning at ingress (byte-stable with
+    # the prior UserSafeReasoningObserver path). When ON, turn-local raw
+    # reasoning is scrubbed and retransmitted only to the same provider
+    # authority; public surfaces receive only Host-validated Chinese
+    # stage summaries. Raw reasoning never enters SSE/DTO/DB/logs.
+    reader_record_ask_learner_reasoning_enabled: bool = False
     # ASK-WEB-G1-R2: Web Search capability provider for reader_record_ask.
     # Empty string means "no provider wired" — the resolver returns a
     # disabled capability and the runtime must NOT mount ``search_web``.
