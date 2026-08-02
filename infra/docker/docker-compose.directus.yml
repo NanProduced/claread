@@ -33,13 +33,19 @@ services:
       CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT: ${CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT:-/directus/runtime-evals/workflow-compares}
       CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE: ${CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE:-directus_async}
       CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND: ${CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND:-python -m claread_eval.node_lab_judge.worker}
-    entrypoint: >
-      /bin/sh -c "
-      mkdir -p /directus/runtime-evals/node-lab/sessions
-      mkdir -p /directus/runtime-evals/workflow-runs
-      mkdir -p /directus/runtime-evals/workflow-compares
-      exec npx directus start
-      "
+    # exec-form list (NOT a folded `>` scalar). A folded scalar collapses the
+    # newlines below into one malformed `mkdir` command, so `npx directus start`
+    # never runs and the container silently exits 0. Keep the `|` literal block
+    # so each `mkdir -p` runs on its own line and `exec npx directus start` is
+    # the final command.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /directus/runtime-evals/node-lab/sessions
+        mkdir -p /directus/runtime-evals/workflow-runs
+        mkdir -p /directus/runtime-evals/workflow-compares
+        exec npx directus start
     volumes:
       - ../../apps/directus/.runtime/uploads:/directus/uploads
       - ../../apps/directus/.runtime/evals:/directus/runtime-evals
