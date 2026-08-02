@@ -7,6 +7,7 @@
 
 import { request } from './client'
 import type { VocabEntry, SourceRef, VocabHighlightMatch } from '../../types/view/vocabulary.vm'
+import { parseSourceRefs, emitSourceRefs } from './sourceref-codec'
 
 // ---------------------------------------------------------------------------
 // 后端 DTO（snake_case）
@@ -58,20 +59,6 @@ interface ReviewResultDto {
   review_count: number
 }
 
-function parseSourceRefs(payload: Record<string, unknown> | undefined): SourceRef[] {
-  if (!payload?.source_refs || !Array.isArray(payload.source_refs)) return []
-  return payload.source_refs.map((ref: { reading_record_id?: string; client_record_id?: string; daily_reader_article_id?: string; source_sentence?: string; source_context?: string; source_sentence_id?: string; source_anchor_text?: string; source_occurrence?: number; collected_at?: string }) => ({
-    // CUTOVER-MINI-LONG: canonical key is reading_record_id; client_record_id kept only as backward-compat fallback.
-    readingRecordId: ref.reading_record_id || ref.client_record_id || undefined,
-    dailyReaderArticleId: ref.daily_reader_article_id || undefined,
-    sourceSentence: ref.source_sentence || undefined,
-    sourceContext: ref.source_context || undefined,
-    sourceSentenceId: ref.source_sentence_id || undefined,
-    sourceAnchorText: ref.source_anchor_text || undefined,
-    sourceOccurrence: ref.source_occurrence || undefined,
-    collectedAt: ref.collected_at || undefined,
-  }))
-}
 
 function dtoToVm(dto: VocabularyResponseDto): VocabEntry {
   const detailMeanings = Array.isArray(dto.meanings_json)
@@ -90,7 +77,7 @@ function dtoToVm(dto: VocabularyResponseDto): VocabEntry {
     : undefined
 
   const payload = dto.payload_json || {}
-  const sourceRefs = parseSourceRefs(payload as Record<string, unknown>)
+  const sourceRefs = parseSourceRefs(payload)
   const collectedForms = Array.isArray(payload.collected_forms)
     ? payload.collected_forms as string[]
     : []
@@ -154,17 +141,7 @@ export async function fetchCloudVocabulary(
 export async function addVocabToCloud(
   entry: VocabEntry
 ): Promise<{ id: string; created: boolean }> {
-  const sourceRefs = (entry.sourceRefs || []).map(ref => ({
-    // CUTOVER-MINI-LONG: emit canonical reading_record_id; client/cloud record ID mapping removed.
-    reading_record_id: ref.readingRecordId || null,
-    daily_reader_article_id: ref.dailyReaderArticleId || null,
-    source_sentence: ref.sourceSentence || null,
-    source_context: ref.sourceContext || null,
-    source_sentence_id: ref.sourceSentenceId || null,
-    source_anchor_text: ref.sourceAnchorText || null,
-    source_occurrence: ref.sourceOccurrence || null,
-    collected_at: ref.collectedAt || null,
-  }))
+  const sourceRefs = emitSourceRefs(entry.sourceRefs || [])
 
   const payloadJson: Record<string, unknown> = {
     source_refs: sourceRefs,

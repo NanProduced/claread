@@ -10,20 +10,17 @@ import { fetchWeChatLogin } from './api/client'
 
 export interface LoginResult {
   success: boolean
-  /** 登录成功时是否为首次登录（user_configured 未设置） */
-  isFirstLogin: boolean
 }
 
 /**
  * 引导用户登录
  *
  * 流程：
- * 1. 检查是否已登录（已登录直接返回 { success: true, isFirstLogin: false }）
+ * 1. 检查是否已登录（已登录直接返回 { success: true }）
  * 2. 如 skipConfirmModal=false（默认），弹出确认对话框；skipConfirmModal=true 时跳过对话框直接登录
  * 3. 用户确认 → 调用 wx.login → 后端换取 session token → 存到 auth store
- * 4. 登录成功后检查是否首次登录（user_configured 未设置）
- * 5. 登录成功后，同步本地收藏和生词本到云端
- * 6. 用户取消 → 返回 { success: false, isFirstLogin: false }
+ * 4. 登录成功后，同步本地收藏和生词本到云端
+ * 5. 用户取消 → 返回 { success: false }
  *
  * @param skipConfirmModal - 为 true 时跳过确认对话框，由调用方自行提供确认 UI（如头像 / Profile 入口）
  * @returns LoginResult
@@ -31,7 +28,7 @@ export interface LoginResult {
 export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginResult> {
   // 已登录，直接放行
   if (useAuthStore.getState().isLoggedIn) {
-    return { success: true, isFirstLogin: false }
+    return { success: true }
   }
 
   // 弹确认框（skipConfirmModal=true 时由调用方自行提供确认 UI）
@@ -44,7 +41,7 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
       cancelText: '稍后',
     })
     if (!confirm) {
-      return { success: false, isFirstLogin: false }
+      return { success: false }
     }
   }
 
@@ -53,7 +50,7 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
     const loginResult = await Taro.login()
     if (!loginResult.code) {
       Taro.showToast({ title: '微信登录失败', icon: 'none' })
-      return { success: false, isFirstLogin: false }
+      return { success: false }
     }
 
     const res = await fetchWeChatLogin(loginResult.code)
@@ -65,14 +62,10 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
 
     Taro.showToast({ title: '登录成功', icon: 'success' })
 
-    // 检查是否首次登录（user_configured 未设置）
-    const isFirstLogin = !Taro.getStorageSync('user_configured')
-
-
-    return { success: true, isFirstLogin }
+    return { success: true }
   } catch (err) {
     console.warn('[auth] ensureLoggedIn failed', err)
     Taro.showToast({ title: '登录失败，请重试', icon: 'none' })
-    return { success: false, isFirstLogin: false }
+    return { success: false }
   }
 }

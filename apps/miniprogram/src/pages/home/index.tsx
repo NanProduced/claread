@@ -68,7 +68,7 @@ function HomeView() {
         className='user-avatar guest'
         onClick={async () => {
           const result = await ensureLoggedIn()
-          if (result.success && result.isFirstLogin) {
+          if (result.success) {
             Taro.navigateTo({ url: ROUTES.PROFILE })
           }
         }}

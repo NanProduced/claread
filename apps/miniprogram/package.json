@@ -6,7 +6,8 @@
   "scripts": {
     "build:weapp": "taro build --type weapp",
     "dev:weapp": "taro build --type weapp --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:sourceref": "npx --yes tsx src/services/api/__tests__/sourceref.contract.test.ts"
   },
   "browserslist": [
     "last 3 versions",

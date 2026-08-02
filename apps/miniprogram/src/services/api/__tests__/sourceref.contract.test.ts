@@ -1,155 +1,133 @@
 /**
  * SourceRef round-trip contract test
  *
- * CUTOVER-MINI-LONG: 锁定 vocabulary.cloud payload <-> VocabEntry SourceRef
- * 的 canonical 字段契约：
- *   - reading_record_id  <-> readingRecordId
+ * CUTOVER-MINI-LONG: 直接导入 production codec (sourceref-codec.ts)，
+ * 不复制实现。验证 vocabulary.cloud payload <-> VocabEntry SourceRef 的
+ * canonical 字段契约：
+ *   - reading_record_id      <-> readingRecordId
  *   - daily_reader_article_id <-> dailyReaderArticleId
  *
- * 旧 client_record_id / cloud_record_id 字段已从客户端写入路径移除；
- * parseSourceRefs 仅保留对历史 cloud payload 的向后兼容读取。
+ * 旧 client_record_id 已从读写路径完全移除；本测试验证 codec 不再读取
+ * 也不输出 client_record_id。
  *
- * 注意：本文件为 contract 文档；小程序包当前无 test runner，
- * 由总策划在 evals 或 web 包中复用此契约时落地运行。
- * 字段命名锁定后，API owner 需补 daily_reader_article_id schema + merge key。
+ * 运行：pnpm test:sourceref （使用 npx tsx 执行）
  */
 
-import type { VocabEntry, SourceRef } from '../../../types/view/vocabulary.vm'
-
-// Mirror of vocabulary.client.ts parseSourceRefs (kept in sync manually)
-interface SourceRefDto {
-  reading_record_id?: string | null
-  client_record_id?: string
-  daily_reader_article_id?: string | null
-  source_sentence?: string | null
-  source_context?: string | null
-  source_sentence_id?: string | null
-  source_anchor_text?: string | null
-  source_occurrence?: number | null
-  collected_at?: string | null
-}
-
-function parseSourceRefs(payload: { source_refs?: SourceRefDto[] } | undefined): SourceRef[] {
-  if (!payload?.source_refs || !Array.isArray(payload.source_refs)) return []
-  return payload.source_refs.map((ref) => ({
-    readingRecordId: ref.reading_record_id || ref.client_record_id || undefined,
-    dailyReaderArticleId: ref.daily_reader_article_id || undefined,
-    sourceSentence: ref.source_sentence || undefined,
-    sourceContext: ref.source_context || undefined,
-    sourceSentenceId: ref.source_sentence_id || undefined,
-    sourceAnchorText: ref.source_anchor_text || undefined,
-    sourceOccurrence: ref.source_occurrence || undefined,
-    collectedAt: ref.collected_at || undefined,
-  }))
-}
-
-// Mirror of vocabulary.client.ts addVocabToCloud sourceRefs emission
-function emitSourceRefs(refs: SourceRef[]): SourceRefDto[] {
-  return refs.map(ref => ({
-    reading_record_id: ref.readingRecordId || null,
-    daily_reader_article_id: ref.dailyReaderArticleId || null,
-    source_sentence: ref.sourceSentence || null,
-    source_context: ref.sourceContext || null,
-    source_sentence_id: ref.sourceSentenceId || null,
-    source_anchor_text: ref.sourceAnchorText || null,
-    source_occurrence: ref.sourceOccurrence || null,
-    collected_at: ref.collectedAt || null,
-  }))
-}
+import { parseSourceRefs, emitSourceRefs, type SourceRefDto } from '../sourceref-codec'
+import type { SourceRef } from '../../../types/view/vocabulary.vm'
 
 function assert(cond: boolean, msg: string): void {
-  if (!cond) throw new Error(`ASSERT FAILED: ${msg}`)
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-function runRoundTrip(label: string, refs: SourceRef[]): void {
-  const emitted = emitSourceRefs(refs)
-  const payload = { source_refs: emitted }
-  const parsed = parseSourceRefs(payload)
-  assert(deepEqual(parsed, refs), `${label}: round-trip mismatch`)
-  // Canonical key assertions
-  for (const dto of emitted) {
-    assert(!('client_record_id' in dto) || dto.client_record_id === undefined,
-      `${label}: client_record_id must not be emitted`)
-    assert(!('cloud_record_id' in dto),
-      `${label}: cloud_record_id must not be emitted`)
+  if (!cond) {
+    console.error(`FAIL: ${msg}`)
+    process.exit(1)
   }
 }
 
-// ---------------------------------------------------------------------------
-// Test cases
-// ---------------------------------------------------------------------------
+function assertEqual<T>(actual: T, expected: T, msg: string): void {
+  const a = JSON.stringify(actual)
+  const e = JSON.stringify(expected)
+  if (a !== e) {
+    console.error(`FAIL: ${msg}\n  actual:   ${a}\n  expected: ${e}`)
+    process.exit(1)
+  }
+}
 
-// 1. Daily Reader article source (canonical path after cutover)
-runRoundTrip('daily-reader-source', [
-  {
-    dailyReaderArticleId: 'dr_2026_08_02_abc',
-    sourceSentence: 'The committee adopted the new policy.',
-    sourceSentenceId: 's_42',
-    sourceAnchorText: 'adopted',
-    sourceOccurrence: 1,
-    collectedAt: '2026-08-02T10:00:00Z',
-  },
-])
+let passCount = 0
+function pass(msg: string): void {
+  passCount++
+  console.log(`  ok - ${msg}`)
+}
 
-// 2. Reading record source (legacy analysis record; link-only, no jump)
-runRoundTrip('reading-record-source', [
-  {
-    readingRecordId: 'rec_001',
+// ============ 1. parse: canonical reading_record_id ============
+
+{
+  const payload = {
+    source_refs: [{
+      reading_record_id: 'rec_001',
+      daily_reader_article_id: 'dr_201',
+      source_sentence: 'Adopted by the committee.',
+      source_sentence_id: 's1',
+      source_anchor_text: 'adopted',
+      source_occurrence: 1,
+      collected_at: '2026-01-01T00:00:00Z',
+    }],
+  }
+  const refs = parseSourceRefs(payload)
+  assert(refs.length === 1, 'parse: should return 1 ref')
+  assertEqual(refs[0].readingRecordId, 'rec_001', 'parse: readingRecordId')
+  assertEqual(refs[0].dailyReaderArticleId, 'dr_201', 'parse: dailyReaderArticleId')
+  assertEqual(refs[0].sourceSentenceId, 's1', 'parse: sourceSentenceId')
+  pass('parse canonical reading_record_id + daily_reader_article_id')
+}
+
+// ============ 2. emit: canonical fields only, no client_record_id ============
+
+{
+  const refs: SourceRef[] = [{
+    readingRecordId: 'rec_002',
+    dailyReaderArticleId: 'dr_202',
     sourceSentence: 'The policy was adopted.',
-    collectedAt: '2026-07-31T08:00:00Z',
-  },
-])
+    sourceAnchorText: 'adopted',
+    sourceOccurrence: 2,
+    collectedAt: '2026-02-01T00:00:00Z',
+  }]
+  const dtos = emitSourceRefs(refs)
+  assert(dtos.length === 1, 'emit: should return 1 dto')
+  assertEqual(dtos[0].reading_record_id, 'rec_002', 'emit: reading_record_id')
+  assertEqual(dtos[0].daily_reader_article_id, 'dr_202', 'emit: daily_reader_article_id')
+  assert(!('client_record_id' in dtos[0]), 'emit: must not output client_record_id')
+  pass('emit canonical fields only, no client_record_id')
+}
 
-// 3. Mixed sources
-runRoundTrip('mixed-sources', [
-  {
-    dailyReaderArticleId: 'dr_2026_08_01_xyz',
-    sourceSentence: 'Adopted from the original text.',
-    sourceSentenceId: 's_7',
-    sourceAnchorText: 'Adopted',
-    sourceOccurrence: 1,
-    collectedAt: '2026-08-01T12:00:00Z',
-  },
-  {
-    readingRecordId: 'rec_legacy_002',
-    sourceSentence: 'The adoption was swift.',
-    collectedAt: '2026-07-15T09:30:00Z',
-  },
-])
+// ============ 3. round-trip: emit -> parse is lossless ============
 
-// 4. Empty source
-runRoundTrip('empty-source', [{}])
-
-// 5. Backward-compat: legacy cloud payload with client_record_id still parses
 {
+  const original: SourceRef[] = [
+    { readingRecordId: 'rec_003', dailyReaderArticleId: 'dr_203', sourceSentenceId: 's3', collectedAt: '2026-03-01T00:00:00Z' },
+    { dailyReaderArticleId: 'dr_204', sourceAnchorText: 'policy', collectedAt: '2026-03-02T00:00:00Z' },
+  ]
+  const emitted = emitSourceRefs(original)
+  const roundTripped = parseSourceRefs({ source_refs: emitted })
+  assertEqual(roundTripped, original, 'round-trip: emit -> parse lossless')
+  pass('round-trip emit -> parse lossless')
+}
+
+// ============ 4. parse: empty / missing source_refs ============
+
+{
+  assertEqual(parseSourceRefs(undefined), [], 'parse undefined -> []')
+  assertEqual(parseSourceRefs({}), [], 'parse {} -> []')
+  assertEqual(parseSourceRefs({ source_refs: [] }), [], 'parse empty array -> []')
+  pass('parse empty / missing source_refs')
+}
+
+// ============ 5. parse: client_record_id is NOT read (strict single-track) ============
+
+{
+  // Legacy payload with ONLY client_record_id (no reading_record_id).
+  // Strict codec must NOT fall back to client_record_id.
   const legacyPayload = {
-    source_refs: [
-      {
-        client_record_id: 'legacy_rec_003',
-        daily_reader_article_id: 'dr_2026_07_30_old',
-        source_sentence: 'Legacy sentence.',
-        collected_at: '2026-07-30T00:00:00Z',
-      },
-    ],
+    source_refs: [{
+      client_record_id: 'legacy_rec_004',
+      daily_reader_article_id: 'dr_204',
+    } as SourceRefDto],
   }
-  const parsed = parseSourceRefs(legacyPayload)
-  assert(parsed[0].readingRecordId === 'legacy_rec_003',
-    'backward-compat: client_record_id must map to readingRecordId')
-  assert(parsed[0].dailyReaderArticleId === 'dr_2026_07_30_old',
-    'backward-compat: daily_reader_article_id must parse')
+  const refs = parseSourceRefs(legacyPayload)
+  assert(refs.length === 1, 'parse legacy: should return 1 ref')
+  assertEqual(refs[0].readingRecordId, undefined, 'parse legacy: client_record_id must NOT map to readingRecordId')
+  assertEqual(refs[0].dailyReaderArticleId, 'dr_204', 'parse legacy: dailyReaderArticleId still read')
+  pass('parse: client_record_id NOT read (strict single-track)')
 }
 
-// 6. No source_refs
+// ============ 6. emit: null/undefined fields -> null in DTO ============
+
 {
-  const parsed = parseSourceRefs(undefined)
-  assert(parsed.length === 0, 'undefined payload must yield empty array')
+  const refs: SourceRef[] = [{ dailyReaderArticleId: 'dr_205' }]
+  const dtos = emitSourceRefs(refs)
+  assertEqual(dtos[0].reading_record_id, null, 'emit: missing readingRecordId -> null')
+  assertEqual(dtos[0].daily_reader_article_id, 'dr_205', 'emit: dailyReaderArticleId preserved')
+  assertEqual(dtos[0].source_sentence, null, 'emit: missing sourceSentence -> null')
+  pass('emit: null/undefined fields -> null in DTO')
 }
 
-// Suppress unused import warning (VocabEntry kept for future expansion of contract tests)
-export type _VocabEntryRef = VocabEntry
-
-console.log('sourceref.contract.test.ts: all assertions passed')
+console.log(`\nAll ${passCount} SourceRef codec assertions passed.`)

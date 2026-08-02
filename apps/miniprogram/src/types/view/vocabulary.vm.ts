@@ -7,7 +7,7 @@
 
 /** 单次收藏来源的语境记录 */
 export interface SourceRef {
-  /** 来源阅读记录 ID（旧分析记录，仅作数据溯源，不再提供跳转） */
+  /** 来源阅读记录 ID（canonical reading_record_id） */
   readingRecordId?: string
   /** 来源 Daily Reader 文章 ID（可跳转回 Daily Reader） */
   dailyReaderArticleId?: string
