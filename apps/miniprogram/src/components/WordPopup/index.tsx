@@ -5,7 +5,7 @@ import { AnyInlineMarkModel, type VisualTone, type AcademicVisualTone, type Inli
 import { ApiError, fetchDict, fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
 import { getDictCache, setDictCache, getEntryCache, setEntryCache } from '../../services/dictCache'
-import { filterExamTags } from '../../config/purpose'
+import { filterExamTags } from '../../utils/exam-tags'
 import LucideIcon from '../LucideIcon'
 import AnnotationGlyph from '../AnnotationGlyph'
 import FeedbackSheet from '../FeedbackSystem/FeedbackSheet'
