@@ -1,6 +1,13 @@
 # Directus Scripts
 
-> CUTOVER-CONTROL-EVAL-LONG Logical: `sync-parse-run-observability-metadata.mjs` 与 `sync-eval-center-metadata.mjs` 已退役并强制 exit(1)，禁止自动复活旧 Parse/Eval 面。`check-logical-registration.mjs` 为 L-GATE 静态门禁。Reader observability 唯一 endpoint 为 `reader-orch`。
+> CUTOVER-CONTROL-EVAL-LONG Logical tombstones:
+> - `sync-parse-run-observability-metadata.mjs` / `sync-eval-center-metadata.mjs` 已退役，调用即 `[retired]` + `process.exit(1)`，**不是**正常运维入口。
+> - 根目录与 `apps/directus/package.json` 已移除 `parse-run:sync-metadata` / `eval-center:sync-metadata` 脚本别名。
+> - `infra/scripts/init-eval-center-dev.ps1` fail-closed：在任何 Docker/DDL 之前退出。
+> - `check-logical-registration.mjs` 为 L-GATE 静态门禁。
+> - Reader observability 唯一 endpoint：`reader-orch`（`/reader-orch/*`）。
+> - Example Lab **数据校验 hook** 保留；Example Lab UI/module/endpoint 仍注销。
+> - 静态注销 ≠ 运行态 Directus metadata 已清理；metadata cleanup 与旧入口不可达属于集成 L-ACCEPT gate。
 
 本目录包含 Directus 本地开发与 metadata 同步脚本。
 
@@ -29,45 +36,27 @@
 | 写入 | 无（只输出 JSON 到 stdout） |
 | 典型场景 | Claude Code 连接本地 Directus MCP 时自动鉴权 |
 
-### sync-parse-run-observability-metadata.mjs
+### check-logical-registration.mjs
 
-同步 Parse Run Observability 的 Directus metadata：collection 定义、字段元数据、关系、presets、dashboards。
-
-| 项目 | 说明 |
-|------|------|
-| 入口 | `pnpm directus:parse-run:sync-metadata` |
-| 会写 SQL | 是 — 通过 `docker exec` 在 PostgreSQL 中执行 migration SQL |
-| 会写 Directus metadata | 是 — 通过 Directus API 创建/更新 collection / field / relation / preset / dashboard |
-| 会重启容器 | 是 — SQL bootstrap 后重启 Directus 使 schema 变更生效 |
-| 关键环境变量 | `DIRECTUS_URL`、`DIRECTUS_CONTAINER`、`POSTGRES_CONTAINER`、`RESET_PARSE_RUN_DASHBOARD` |
-| 典型场景 | 业务表 schema 变更后、首次部署时、dashboard 需要重置时 |
-
-### sync-eval-center-metadata.mjs
-
-同步 Eval Center / Example Lab 的 Directus metadata：collection 定义、字段元数据、module bar 入口。同时清理已弃用字段。
+Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`reader-orch` 正向存在、retired sync tombstone、init 脚本 fail-closed、Example Lab 校验 hook 保留。
 
 | 项目 | 说明 |
 |------|------|
-| 入口 | `pnpm directus:eval-center:sync-metadata` |
-| 会写 SQL | 视环境变量而定；默认会执行 Eval Center baseline bootstrap SQL |
-| 会写 Directus metadata | 是 — 通过 Directus API 创建/更新 collection / field / module bar |
-| 会重启容器 | 视环境变量而定；默认 SQL 执行后重启 Directus |
-| 会清理弃用字段 | 是 — 当前清理 `eval_example_lab_entries.rag_eligible` |
-| 关键环境变量 | `DIRECTUS_URL`、`DIRECTUS_CONTAINER`、`POSTGRES_CONTAINER`、`DIRECTUS_SKIP_SQL_BOOTSTRAP`、`DIRECTUS_SKIP_RESTART` |
-| 典型场景 | Eval Center collection 字段变更后、首次部署时、弃用字段需要清理时 |
+| 入口 | `pnpm --dir apps/directus run registration:check` |
+| 会写 SQL / metadata | 否 |
+| 典型场景 | L-GATE / CI 静态检查 |
 
-补充说明：
+### sync-parse-run-observability-metadata.mjs — RETIRED
 
-- 该脚本会自动读取 `apps/directus/.env`。
-- baseline bootstrap 读取的是 `infra/migrations/eval-center/0001_eval_center_control_plane.sql`。
-- 后续增量 migration 仍应按正常数据库迁移流程执行；本脚本不替代所有后续 migration。
+**已退役。不是正常运维入口。** 调用会立即打印 `[retired]` 并以 exit code 1 失败，不会写 SQL / Directus metadata。
 
-## 注意事项
+历史职责（仅供审计）：同步旧 Parse Run Observability collection/dashboard/panel metadata。Physical 阶段将删除脚本本体。
 
-- 三个 sync 脚本都会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
-- sync 脚本依赖 Directus 容器和 PostgreSQL 容器正在运行。
-- `DIRECTUS_SKIP_SQL_BOOTSTRAP=true` 可跳过 SQL 执行（仅同步 Directus metadata）。
-- `DIRECTUS_SKIP_RESTART=true` 可跳过容器重启。
+### sync-eval-center-metadata.mjs — RETIRED
+
+**已退役。不是正常运维入口。** 调用会立即打印 `[retired]` 并以 exit code 1 失败，不会写 SQL / Directus metadata / module bar。
+
+历史职责（仅供审计）：同步 Eval Center / Example Lab collection 与 module bar。Physical 阶段将删除脚本本体；`eval_example_lab_entries` 表本身 KEEP/REHOME，不随宽泛删除。
 
 ### sync-llm-config-metadata.mjs
 
@@ -105,12 +94,6 @@
 | 校验 | 是 — 导出前校验 bundle，与后端 Pydantic schema 规则对齐 |
 | 典型场景 | 配置变更后导出 bundle，复制到 services/api/config/ |
 
-补充说明：
-
-- 导出的 JSON 文件可直接复制到 `services/api/config/` 替换对应配置文件。
-- 校验规则与 `services/api/app/llm/types.py` 的 Pydantic schema 对齐，不引入额外规则。
-- 校验失败时脚本会输出详细错误信息并退出，不会生成不完整的 bundle。
-
 ### import-llm-config-bundle.mjs
 
 从 services/api/config/ 读取 3 个源 JSON 文件，幂等 upsert 到 Directus 的 6 个 llm_* collection。
@@ -119,29 +102,12 @@
 |------|------|
 | 入口 | `pnpm directus:llm-config:import-bundle` |
 | 会写 SQL | 否 |
-| 会写 Directus 数据 | 是 — 通过 Directus API upsert llm_providers / llm_models / llm_profiles / llm_presets / llm_ask_options / llm_ask_config |
-| 会读文件 | 是 — services/api/config/ 下的 3 个 JSON 文件 |
-| 校验 | 是 — 导入前校验 bundle，与后端 Pydantic schema 规则对齐 |
-| 幂等 | 是 — 按 slug upsert，重复执行不会产生重复记录 |
-| 收敛同步 | 是 — JSON 中省略的可选字段会显式写 null/默认值，确保 Directus 与 JSON 完全一致 |
-| 典型场景 | 首次部署时回填数据、JSON 变更后同步到 Directus |
+| 会写 Directus 数据 | 是 — 通过 Directus API upsert llm_* collections |
 
-补充说明：
+## 注意事项
 
-- 默认读取 `services/api/config/`，可通过 `--input DIR` 指定其他目录。
-- `--dry-run` 参数只校验不写入。
-- 导入顺序按 FK 依赖：providers → models → profiles → presets → ask options → ask config。
-- `llm_ask_config` 是单例表，存储 Ask 顶层配置（default_option / billing_defaults / runtime_defaults）。
-- 收敛同步意味着：如果 JSON 中删除了某个字段（如 provider 的 base_url），Directus 中对应的值会被清空为 null。这保证 "JSON 是真源"。
-
-### validate-llm-config-bundle.mjs
-
-校验 LLM 配置 bundle 的完整性和引用链。被 import/export 脚本内部调用，也可独立运行。
-
-| 项目 | 说明 |
-|------|------|
-| 入口 | `node validate-llm-config-bundle.mjs`（通常由 import/export 自动调用） |
-| 会写 | 否 — 只读校验 |
-| 校验规则 | Adapter 枚举、openai_compatible 必须有 base_url、FK 引用链完整、route 名称合法 |
-| 典型场景 | 配置变更后快速校验，CI 中校验 |
-
+- 退役 sync 脚本与 `init-eval-center-dev.ps1` 不是运维入口；调用必须失败。
+- 仍活跃的 LLM Config sync 会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
+- `DIRECTUS_SKIP_SQL_BOOTSTRAP=true` 可跳过 SQL 执行（仅同步 Directus metadata）。
+- `DIRECTUS_SKIP_RESTART=true` 可跳过容器重启。
+- 静态注销不证明现有 Directus 实例中的旧 dashboard/module bar/collection metadata 已清理；那是集成 L-ACCEPT / Data owner 工作。

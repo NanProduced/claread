@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = resolve(ROOT, "../..");
 
 function loadJson(rel) {
   return JSON.parse(readFileSync(resolve(ROOT, rel), "utf8"));
+}
+
+function readRepo(rel) {
+  return readFileSync(resolve(REPO_ROOT, rel), "utf8");
 }
 
 const FORBIDDEN_MODULE_ENTRIES = new Set([
@@ -24,12 +29,24 @@ const FORBIDDEN_ENDPOINT_ENTRIES = new Set([
   "eval-center",
 ]);
 
-const FORBIDDEN_PANEL_PREFIXES = [
-  "claread-parse-run-",
-];
+const FORBIDDEN_PANEL_PREFIXES = ["claread-parse-run-"];
 
 const REQUIRED_ENDPOINT_ENTRIES = new Set(["reader-orch"]);
 const REQUIRED_MODULE_ENTRIES = new Set(["claread-llm-config"]);
+
+const RETIRED_SYNC_TOMBSTONE = "[retired]";
+const RETIRED_SYNC_EXIT = "process.exit(1)";
+
+const INIT_SCRIPT_REL = "infra/scripts/init-eval-center-dev.ps1";
+const INIT_FORBIDDEN_SIDE_EFFECTS = [
+  "docker cp",
+  "docker exec",
+  "drop_eval_center_tables",
+  "0001_eval_center_control_plane.sql",
+  "directus:eval-center:sync-metadata",
+  "eval-center:sync-metadata",
+  "reset-eval-center-data",
+];
 
 const errors = [];
 
@@ -40,6 +57,8 @@ const hooksSrc = readFileSync(
   resolve(ROOT, "extensions/hooks-bundle/src/index.js"),
   "utf8",
 );
+const directusPkg = loadJson("package.json");
+const rootPkg = JSON.parse(readRepo("package.json"));
 
 const moduleNames = (modules["directus:extension"]?.entries ?? []).map((e) => e.name);
 const panelNames = (panels["directus:extension"]?.entries ?? []).map((e) => e.name);
@@ -78,18 +97,98 @@ if (panelNames.length !== 0) {
   );
 }
 
-if (/eval_example_lab_entries|filter\(|action\(/.test(hooksSrc)) {
-  errors.push("hooks-bundle still appears to register Example Lab filters/actions");
+// Example Lab data validation hook is KEEP: must still normalize/validate
+// eval_example_lab_entries. UI/module/endpoint remain unregistered.
+const hasExampleLabCollection = hooksSrc.includes("eval_example_lab_entries");
+const hasExampleLabFilters =
+  hooksSrc.includes("eval_example_lab_entries.items.create") ||
+  hooksSrc.includes("${COLLECTION}.items.create");
+const hasFilterRegistration = /filter\s*\(/.test(hooksSrc);
+if (!hasExampleLabCollection || !hasExampleLabFilters || !hasFilterRegistration) {
+  errors.push(
+    "hooks-bundle must keep Example Lab validation hook for eval_example_lab_entries (normalization/validation KEEP/REHOME)",
+  );
+}
+// Forbid non-Example-Lab legacy hook surfaces (Workflow/Node Lab etc.)
+if (/eval_workflow_|eval_node_lab_|eval_judge_run|eval_prompt_variant/.test(hooksSrc)) {
+  errors.push("hooks-bundle must not register non-Example-Lab legacy eval control-plane hooks");
 }
 
-// Sync scripts must refuse to revive old surfaces.
+// Retired sync scripts: BOTH tombstone marker AND process.exit(1) required.
 for (const rel of [
   "scripts/sync-parse-run-observability-metadata.mjs",
   "scripts/sync-eval-center-metadata.mjs",
 ]) {
   const body = readFileSync(resolve(ROOT, rel), "utf8");
-  if (!body.includes("[retired]") && !body.includes("process.exit(1)")) {
-    errors.push(`${rel} is not retired/no-op; would re-register old metadata`);
+  if (!body.includes(RETIRED_SYNC_TOMBSTONE)) {
+    errors.push(`${rel} missing exact tombstone marker ${RETIRED_SYNC_TOMBSTONE}`);
+  }
+  if (!body.includes(RETIRED_SYNC_EXIT)) {
+    errors.push(`${rel} missing ${RETIRED_SYNC_EXIT}`);
+  }
+  // Must not still contain active sync body that would write Directus metadata.
+  if (body.includes("upsertModuleBarItems") || body.includes("MODULE_BAR_ITEMS")) {
+    errors.push(`${rel} still contains active metadata sync implementation`);
+  }
+}
+
+// package.json must not expose retired sync commands as normal ops entrypoints.
+for (const cmd of ["parse-run:sync-metadata", "eval-center:sync-metadata"]) {
+  if (directusPkg.scripts && Object.prototype.hasOwnProperty.call(directusPkg.scripts, cmd)) {
+    errors.push(`apps/directus/package.json still exposes retired script: ${cmd}`);
+  }
+}
+for (const cmd of [
+  "directus:parse-run:sync-metadata",
+  "directus:eval-center:sync-metadata",
+]) {
+  if (rootPkg.scripts && Object.prototype.hasOwnProperty.call(rootPkg.scripts, cmd)) {
+    errors.push(`root package.json still exposes retired script: ${cmd}`);
+  }
+}
+
+// init-eval-center-dev.ps1 must fail-closed before any Docker/DDL side effect.
+const initPath = resolve(REPO_ROOT, INIT_SCRIPT_REL);
+if (!existsSync(initPath)) {
+  errors.push(`${INIT_SCRIPT_REL} missing; expected retired fail-closed tombstone`);
+} else {
+  const initBody = readFileSync(initPath, "utf8");
+  if (!/\[retired\]/i.test(initBody)) {
+    errors.push(`${INIT_SCRIPT_REL} missing [retired] tombstone`);
+  }
+  if (!/\bexit\s+1\b/i.test(initBody)) {
+    errors.push(`${INIT_SCRIPT_REL} must exit 1 (fail-closed)`);
+  }
+  for (const token of INIT_FORBIDDEN_SIDE_EFFECTS) {
+    if (initBody.toLowerCase().includes(token.toLowerCase())) {
+      // Allow mention only inside the retired error message if it's clearly non-executing.
+      // Hard-fail if docker commands appear as executable lines (not only in error string).
+      const lines = initBody.split(/\r?\n/);
+      const executable = lines.some((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("Write-Error") || trimmed.startsWith("Write-Host")) {
+          return false;
+        }
+        // String concatenation inside Write-Error block still may include tokens;
+        // only flag bare command-like lines.
+        return (
+          trimmed.toLowerCase().startsWith("docker ") ||
+          trimmed.includes("docker cp") ||
+          trimmed.includes("docker exec") ||
+          trimmed.includes("& $resetScript") ||
+          trimmed.includes("pnpm directus:eval-center:sync-metadata") ||
+          trimmed.includes("psql ")
+        );
+      });
+      if (executable) {
+        errors.push(`${INIT_SCRIPT_REL} still has executable side-effect involving: ${token}`);
+        break;
+      }
+    }
+  }
+  // Stronger: no docker/psql executable invocation at all.
+  if (/(^|\n)\s*docker\s+/i.test(initBody) || /(^|\n)\s*pnpm\s+directus:eval-center/i.test(initBody)) {
+    errors.push(`${INIT_SCRIPT_REL} still contains executable docker/pnpm side effects`);
   }
 }
 
@@ -122,7 +221,9 @@ console.log(
       modules: moduleNames,
       endpoints: endpointNames,
       panels: panelNames,
-      hooks: "no-op",
+      hooks: "example-lab-validation-keep",
+      retired_sync: "tombstoned",
+      init_eval_center: "fail-closed",
     },
     null,
     2,
