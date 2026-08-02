@@ -277,7 +277,7 @@ class ReaderRecordAskRunStartedDTO(BaseModel):
     # was wired and ``enabled_for_turn=True`` at send time — the frontend
     # gates Search toggle visibility/enablement on this signal, not on
     # ``isReadingRecordScope`` alone. ``disabled`` is the fail-closed
-    # default for legacy streams that do not emit the field.
+    # default when the v2 stream does not emit the field.
     web_search_mode: Literal["disabled", "allowed"] = "disabled"
 
 

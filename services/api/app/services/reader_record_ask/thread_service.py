@@ -164,11 +164,12 @@ async def resolve_and_persist_thread_model_option(
     user_id: UUID,
     thread_id: UUID,
     requested_key: str | None,
-    reading_record_id: UUID | None = None,
+    reading_record_id: UUID,
 ) -> model_options_svc.ResolvedReaderAskModelOption:
-    """Resolve Ask model option for a thread and persist fallback/explicit selection.
+    """Resolve and persist a model option for a Reading Record Ask v2 thread.
 
-    Composition-layer helper shared by legacy stream and agentic Ask wiring.
+    Every v2 call carries the Reading Record identity so the thread scope and
+    identity fence are always checked before model-option resolution.
     - request.model present → strict=True (unknown/deleted keys → 422)
     - only thread.selected_model_key → strict=False (historical keys soft-fallback)
     When fallback or explicit selection changes the key, persist it on the thread.
@@ -176,17 +177,16 @@ async def resolve_and_persist_thread_model_option(
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    if reading_record_id is not None:
-        if thread.get("record_scope") != "reading_record":
-            raise HTTPException(
-                status_code=404,
-                detail="Reader ask thread not found for this Reading Record",
-            )
-        if thread.get("reading_record_id") != str(reading_record_id):
-            raise HTTPException(
-                status_code=404,
-                detail="Reader ask thread not found for this Reading Record",
-            )
+    if thread.get("record_scope") != "reading_record":
+        raise HTTPException(
+            status_code=404,
+            detail="Reader ask thread not found for this Reading Record",
+        )
+    if thread.get("reading_record_id") != str(reading_record_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Reader ask thread not found for this Reading Record",
+        )
 
     requested = requested_key or None
     current_key = cast(str | None, thread.get("selected_model_key"))

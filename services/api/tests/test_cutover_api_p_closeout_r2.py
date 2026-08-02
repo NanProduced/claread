@@ -34,6 +34,16 @@ def _top_level_function_names(relative_path: str) -> set[str]:
     }
 
 
+def _top_level_function_node(
+    relative_path: str, name: str
+) -> ast.AsyncFunctionDef | ast.FunctionDef:
+    tree = ast.parse(_read(relative_path), filename=relative_path)
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"missing top-level function: {relative_path}:{name}")
+
+
 def _class_names(relative_path: str) -> set[str]:
     tree = ast.parse(_read(relative_path), filename=relative_path)
     return {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
@@ -76,7 +86,57 @@ def test_analysis_thread_crud_and_legacy_schema_symbols_are_absent() -> None:
         "ReaderAskUserVisibleOutput",
         "ReaderAskCompletedPayload",
     }
+    schema_source = _read("app/schemas/reader_ask.py")
+    for removed_name in {
+        "ReaderAskEvidenceKind",
+        "ReaderAskEvidenceScope",
+        "ReaderAskEvidenceItem",
+        "ReaderAskArticleRagStatus",
+        "ReaderAskArticleRagCitationContent",
+        "ReaderAskArticleRagCitation",
+        "ReaderAskArticleRagSidecar",
+    }:
+        assert removed_name not in schema_source
     assert not (API_ROOT / "app/schemas/tasks.py").exists()
+
+
+def test_model_option_resolution_is_v2_scoped_and_identity_fenced() -> None:
+    node = _top_level_function_node(
+        "app/services/reader_record_ask/thread_service.py",
+        "resolve_and_persist_thread_model_option",
+    )
+    params = list(node.args.kwonlyargs)
+    record_index = next(
+        index for index, param in enumerate(params) if param.arg == "reading_record_id"
+    )
+    record_param = params[record_index]
+    assert ast.unparse(record_param.annotation) == "UUID"
+    assert node.args.kw_defaults[record_index] is None
+
+    function_source = ast.unparse(node)
+    assert "reading_record_id is not None" not in function_source
+    assert "record_scope" in function_source
+    assert "reading_record" in function_source
+    assert "str(reading_record_id)" in function_source
+    assert "legacy stream" not in function_source.lower()
+    assert "v2" in (ast.get_docstring(node) or "").lower()
+
+    service_tree = ast.parse(
+        _read("app/services/reader_record_ask/service.py"),
+        filename="app/services/reader_record_ask/service.py",
+    )
+    calls = [
+        call
+        for call in ast.walk(service_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "resolve_and_persist_thread_model_option"
+    ]
+    assert len(calls) == 2
+    assert all(
+        any(keyword.arg == "reading_record_id" for keyword in call.keywords)
+        for call in calls
+    )
 
 
 def test_plain_text_route_is_absent_without_banning_valid_analysis_record_id() -> None:
