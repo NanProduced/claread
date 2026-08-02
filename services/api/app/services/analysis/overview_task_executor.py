@@ -38,7 +38,7 @@ from app.services.analysis.overview_task_service import (
     update_record_overview_hint,
     update_task_status,
 )
-from app.workflow.tracing import build_llm_trace_metadata, build_workflow_root_metadata
+from app.observability.workflow_tracing import build_llm_trace_metadata, build_workflow_root_metadata
 
 logger = logging.getLogger(__name__)
 

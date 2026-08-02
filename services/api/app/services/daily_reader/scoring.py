@@ -28,7 +28,7 @@ from app.services.ai_usage import (
     build_model_metadata,
     record_ai_usage_event,
 )
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 from app.services.daily_reader.discovery import DiscoveredArticle
 
 logger = logging.getLogger(__name__)

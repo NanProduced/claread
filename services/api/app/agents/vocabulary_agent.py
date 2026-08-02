@@ -8,11 +8,11 @@ from functools import lru_cache
 from pydantic_ai import Agent
 
 from app.schemas.internal.drafts import VocabularyDraft
-from app.services.analysis.prompting.example_strategy import ExampleEntry
-from app.services.analysis.prompting.prompt_composer import build_agent_prompt
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
-from app.services.analysis.prompting.prompt_strategy import PromptStrategy, build_prompt_sections
-from app.services.analysis.prompting.runtime_context import is_prompt_override_active
+from app.services.prompting.example_strategy import ExampleEntry
+from app.services.prompting.prompt_composer import build_agent_prompt
+from app.services.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_strategy import PromptStrategy, build_prompt_sections
+from app.services.prompting.runtime_context import is_prompt_override_active
 
 
 @dataclass

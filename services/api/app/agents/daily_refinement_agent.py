@@ -12,12 +12,12 @@ from functools import lru_cache
 from pydantic_ai import Agent
 
 from app.schemas.internal.daily_drafts import DailyRefinementDraft
-from app.services.analysis.prompting.daily_prompt_strategy import (
+from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_refinement_strategy,
 )
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_loader import load_agent_instructions
 
 # Refinement receives original text, review issues, and current drafts together.
 # These caps keep the prompt bounded while preserving enough local context for
@@ -39,7 +39,7 @@ class DailyRefinementAgentDeps:
 
 
 def build_daily_refinement_prompt(deps: DailyRefinementAgentDeps) -> str:
-    from app.services.analysis.prompting.prompt_composer import render_prompt_sections, PromptSection
+    from app.services.prompting.prompt_composer import render_prompt_sections, PromptSection
 
     sections = build_daily_prompt_sections(deps.prompt_strategy)
     all_sections = list(sections) + [

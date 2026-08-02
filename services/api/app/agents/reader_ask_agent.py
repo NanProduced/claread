@@ -33,7 +33,7 @@ from app.schemas.reader_ask import (
     ReaderAskReadingRecordAnchor,
     ReaderAskToolTraceEntry,
 )
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_loader import load_agent_instructions
 
 # ---------------------------------------------------------------------------
 # Round 2: tool IO contracts (stable, model-facing)

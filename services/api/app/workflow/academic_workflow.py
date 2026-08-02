@@ -27,12 +27,12 @@ from app.schemas.internal.analysis import PreparedSentence
 from app.services.analysis.postprocess.academic_normalize import academic_normalize_and_ground
 from app.services.analysis.postprocess.academic_projection import project_to_academic_render_scene
 from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.prompting.example_strategy import ExampleEntry
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.example_strategy import ExampleEntry
+from app.services.prompting.prompt_loader import (
     load_examples,
     load_policy_lines,
 )
-from app.services.analysis.prompting.prompt_strategy import (
+from app.services.prompting.prompt_strategy import (
     PromptStrategy,
 )
 from app.services.analysis.runtime.academic_runners import (
@@ -41,7 +41,7 @@ from app.services.analysis.runtime.academic_runners import (
     run_understanding_agent,
 )
 from app.workflow.academic_state import AcademicState
-from app.workflow.tracing import build_llm_trace_metadata
+from app.observability.workflow_tracing import build_llm_trace_metadata
 
 logger = logging.getLogger(__name__)
 

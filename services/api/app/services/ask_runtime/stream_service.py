@@ -32,7 +32,7 @@ from app.services.ai_usage import (
     compute_reader_ask_cost_points,
     record_ai_usage_event,
 )
-from app.services.analysis.credit_service import (
+from app.services.credits import (
     LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     CreditReservation,
     check_quota,

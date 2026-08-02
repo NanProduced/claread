@@ -11,13 +11,13 @@ from app.eval_adapter.schemas import (
     WorkflowLabPromptLayer,
 )
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.prompting.prompt_composer import build_agent_prompt
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_composer import build_agent_prompt
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
 )
-from app.services.analysis.prompting.prompt_strategy import build_prompt_sections
-from app.services.analysis.prompting.strategy_builder import (
+from app.services.prompting.prompt_strategy import build_prompt_sections
+from app.services.prompting.strategy_builder import (
     StrategyBundle,
     build_grammar_bundle,
     build_translation_bundle,

@@ -46,15 +46,15 @@ from app.services.analysis.debug_snapshots import (
 )
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
 from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
 )
-from app.services.analysis.prompting.runtime_context import (
+from app.services.prompting.runtime_context import (
     grammar_rag_enabled_override,
     prompt_runtime_override,
 )
-from app.services.analysis.prompting.strategy_builder import (
+from app.services.prompting.strategy_builder import (
     StrategyBundle,
     build_grammar_bundle_async,
     build_translation_bundle,

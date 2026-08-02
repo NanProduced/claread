@@ -25,7 +25,7 @@ from app.workflow.analyze_nodes import (
     WORKFLOW_VERSION,
 )
 from app.workflow.learning_workflow import build_learning_graph
-from app.workflow.tracing import build_workflow_root_metadata, build_workflow_root_tags
+from app.observability.workflow_tracing import build_workflow_root_metadata, build_workflow_root_tags
 
 ANALYZE_SCHEMA_VERSION = "3.0.0"
 

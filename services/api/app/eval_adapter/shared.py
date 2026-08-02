@@ -24,7 +24,7 @@ from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
 from app.llm.types import ModelSelection
 from app.observability import disabled_tracing
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = logging.getLogger(__name__)
 

@@ -35,7 +35,7 @@ from app.services.ai_usage import (
     record_ai_usage_event,
     resolve_model_metadata,
 )
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 from app.services.daily_reader.discovery import DiscoveredArticle, discover_guardian, discover_rss_sources
 from app.services.daily_reader.extraction import apply_extraction_to_article, extract_with_trafilatura
 from app.services.daily_reader.cover_download import download_cover_image
@@ -301,12 +301,12 @@ def select_diverse_candidates(
 async def _run_workflow_and_store(
     article: DiscoveredArticle, score: ArticleScore, tracker: PipelineRunTracker | None = None
 ) -> dict | None:
-    from app.workflow.daily_reader_workflow import (
+    from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
         build_daily_reader_graph,
     )
-    from app.workflow.tracing import build_workflow_root_metadata, build_workflow_root_tags
+    from app.observability.workflow_tracing import build_workflow_root_metadata, build_workflow_root_tags
 
     graph = build_daily_reader_graph()
 
@@ -476,12 +476,12 @@ async def run_workflow_only(article_id: str) -> dict | None:
     if not original_text:
         raise ValueError(f"Article {article_id} has no original_text stored; retry not possible")
 
-    from app.workflow.daily_reader_workflow import (
+    from app.services.daily_reader.workflow import (
         WORKFLOW_NAME,
         WORKFLOW_VERSION,
         build_daily_reader_graph,
     )
-    from app.workflow.tracing import build_workflow_root_metadata, build_workflow_root_tags
+    from app.observability.workflow_tracing import build_workflow_root_metadata, build_workflow_root_tags
 
     graph = build_daily_reader_graph()
 

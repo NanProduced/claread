@@ -50,8 +50,8 @@ from app.services.analysis.debug_snapshots import (
     resolve_workflow_identity,
 )
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
-from app.services.analysis.prompting.runtime_context import (
+from app.services.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.runtime_context import (
     grammar_rag_enabled_override,
     prompt_runtime_override,
 )

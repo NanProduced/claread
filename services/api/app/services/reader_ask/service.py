@@ -90,7 +90,7 @@ from app.services.ai_usage import (
     compute_reader_ask_cost_points,
     record_ai_usage_event,
 )
-from app.services.analysis.credit_service import (
+from app.services.credits import (
     LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     CreditReservation,
     check_quota,
@@ -104,8 +104,8 @@ from app.services.analysis.postprocess.projection import (
     _format_grammar_note_content,
     _format_sentence_analysis_content,
 )
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
-from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
+from app.services.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.strategy_builder import build_grammar_bundle_async
 from app.services.analysis.runtime.runners import run_grammar_agent
 from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
 from app.services.ask_runtime import action_service as ask_runtime_action_svc

@@ -61,19 +61,19 @@ from app.services.analysis.postprocess.draft_validators import (
     validate_vocabulary_draft,
 )
 from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.prompting.example_strategy import ExampleEntry
-from app.services.analysis.prompting.node_lab_runtime import (
+from app.services.prompting.example_strategy import ExampleEntry
+from app.services.prompting.node_lab_runtime import (
     NodeLabNodeName,
     NodeLabRuntimeOverride,
 )
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
     load_examples,
     load_policy_lines_raw,
 )
-from app.services.analysis.prompting.prompt_strategy import PromptStrategy
-from app.services.analysis.prompting.rag.grammar_rag_service import (
+from app.services.prompting.prompt_strategy import PromptStrategy
+from app.services.prompting.rag.grammar_rag_service import (
     build_rag_debug_info,
     query_grammar_rag,
 )

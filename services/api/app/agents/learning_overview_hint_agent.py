@@ -6,7 +6,7 @@ from functools import lru_cache
 from pydantic_ai import Agent
 
 from app.schemas.internal.overview_hint import LearningOverviewHintDraft
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_loader import load_agent_instructions
 
 
 @dataclass

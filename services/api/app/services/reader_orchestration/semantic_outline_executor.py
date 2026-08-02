@@ -19,7 +19,7 @@ from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
 from app.llm.types import RunModelSettings
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
 )

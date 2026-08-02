@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic_ai import Agent
 
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_loader import load_agent_instructions
 from app.services.dictionary_ai.schemas import DictionaryAIContextExplainResponse
 
 

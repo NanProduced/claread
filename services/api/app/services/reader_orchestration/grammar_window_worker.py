@@ -41,7 +41,7 @@ from app.llm.routes import MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
 from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
 )
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
 )

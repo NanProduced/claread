@@ -13,7 +13,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 from app.agents.reader_ask_agent import ReaderAskRuntimeState
-from app.services.analysis.credit_service import CreditReservation
+from app.services.credits import CreditReservation
 from app.schemas.reader_ask import (
     ReaderAskAnchorRef,
     ReaderAskAttachment,

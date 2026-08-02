@@ -24,7 +24,7 @@ from app.services.analysis.postprocess.projection import (
     _format_grammar_note_content,
     _format_sentence_analysis_content,
 )
-from app.services.analysis.prompting.strategy_builder import build_grammar_bundle_async
+from app.services.prompting.strategy_builder import build_grammar_bundle_async
 from app.services.analysis.runtime.runners import run_grammar_agent
 from app.services.analysis.validators import validate_grammar_note, validate_sentence_analysis
 from app.services.reader_ask import planner

@@ -51,7 +51,7 @@ from app.services.analysis.postprocess.repair_policy import (
     should_trigger_patch_repair,
 )
 from app.services.analysis.preprocess.input_preparation import prepare_input
-from app.services.analysis.prompting.strategy_builder import (
+from app.services.prompting.strategy_builder import (
     build_grammar_bundle_async,
     build_translation_bundle,
     build_vocabulary_bundle,
@@ -62,7 +62,7 @@ from app.services.analysis.runtime.runners import (
     run_vocabulary_agent,
 )
 from app.workflow.analyze_state import AnalyzeState
-from app.workflow.tracing import build_llm_trace_metadata
+from app.observability.workflow_tracing import build_llm_trace_metadata
 
 logger = logging.getLogger(__name__)
 WORKFLOW_NAME = "article_analysis"

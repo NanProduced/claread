@@ -8,11 +8,11 @@ from app.llm.routes import ModelRoute
 from app.llm.types import ModelSelection
 from app.schemas.analysis import AnyRenderSceneModel, SourceType
 from app.schemas.internal.analysis import ReadingGoal, ReadingVariant
-from app.services.analysis.prompting.node_lab_runtime import (
+from app.services.prompting.node_lab_runtime import (
     NodeLabExampleEntry,
     NodeLabRuntimeOverride,
 )
-from app.services.analysis.prompting.runtime_context import PromptRuntimeOverride
+from app.services.prompting.runtime_context import PromptRuntimeOverride
 
 EVAL_ADAPTER_SCHEMA_VERSION = "article-analysis-eval-v1"
 NODE_PROBE_SCHEMA_VERSION = "article-analysis-node-probe-v1"

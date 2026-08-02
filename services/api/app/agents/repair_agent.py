@@ -13,8 +13,8 @@ from functools import lru_cache
 from pydantic_ai import Agent
 
 from app.schemas.internal.repair import RepairPatchRequest, RepairPatchResult
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
-from app.services.analysis.prompting.runtime_context import is_prompt_override_active
+from app.services.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.runtime_context import is_prompt_override_active
 
 # ── Item-level Repair Patch ─────────────────────────────────────
 

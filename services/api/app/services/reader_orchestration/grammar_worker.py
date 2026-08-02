@@ -41,7 +41,7 @@ from app.services.ai_usage import (
     update_ai_usage_event_outcome,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
 )

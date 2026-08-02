@@ -34,13 +34,13 @@ from app.services.ai_usage import (
     record_ai_usage_event,
     resolve_model_metadata,
 )
-from app.services.analysis.credit_service import deduct_credits
+from app.services.credits import deduct_credits
 from app.services.analysis.debug_snapshots import (
     build_debug_snapshot_payload,
     upsert_debug_snapshot,
 )
 from app.services.analysis.overview_task_service import enqueue_overview_task_if_needed
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 from app.services.analysis.rag_usage_events import record_rag_usage_events_from_result
 from app.services.analysis.task_service import (
     TaskExecutionPayload,

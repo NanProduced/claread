@@ -9,7 +9,7 @@ from app.llm.call_guard import assert_real_llm_allowed
 from app.llm.router import build_model_for_route
 from app.llm.routes import ModelRoute
 from app.llm.types import ModelSelection, ResolvedModelConfig
-from app.workflow.tracing import build_usage_metadata
+from app.observability.workflow_tracing import build_usage_metadata
 
 
 async def run_reader_scoped_agent(
