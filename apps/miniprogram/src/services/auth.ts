@@ -25,7 +25,7 @@ export interface LoginResult {
  * 5. 登录成功后，同步本地收藏和生词本到云端
  * 6. 用户取消 → 返回 { success: false, isFirstLogin: false }
  *
- * @param skipConfirmModal - 为 true 时跳过确认对话框，适用于已有引导层的场景（如 LoginGuideModal）
+ * @param skipConfirmModal - 为 true 时跳过确认对话框，由调用方自行提供确认 UI（如头像 / Profile 入口）
  * @returns LoginResult
  */
 export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginResult> {
