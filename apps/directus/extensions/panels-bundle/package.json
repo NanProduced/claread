@@ -21,58 +21,7 @@
       "app": "dist/app.js",
       "api": "dist/api.js"
     },
-    "entries": [
-      {
-        "type": "panel",
-        "name": "claread-parse-run-records-7d",
-        "source": "src/records-7d/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-task-status",
-        "source": "src/task-status/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-usage-total",
-        "source": "src/usage-total/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-recent-failures",
-        "source": "src/recent-failures/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-health-overview",
-        "source": "src/health-overview/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-failure-types",
-        "source": "src/failure-types/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-queue-health",
-        "source": "src/queue-health/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-quality-degradation",
-        "source": "src/quality-degradation/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-model-cost-trend",
-        "source": "src/model-cost-trend/index.js"
-      },
-      {
-        "type": "panel",
-        "name": "claread-parse-run-rag-quality",
-        "source": "src/rag-quality/index.js"
-      }
-    ]
+    "entries": []
   },
   "pnpm": {
     "executionEnv": {
