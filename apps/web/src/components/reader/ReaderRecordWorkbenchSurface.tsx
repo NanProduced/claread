@@ -1411,7 +1411,6 @@ export function ReaderRecordWorkbenchSurface({
         surface={askSurface}
         pageIdentity={askPageIdentity}
         recordId={snapshot.record_id}
-        recordScope="reading_record"
         hideClosedLauncher
         recordTitle={snapshot.record.title}
         attachments={askAttachments}

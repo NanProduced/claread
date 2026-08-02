@@ -14,27 +14,28 @@ import {
 import { classifyRetryTarget } from "./retry-target";
 
 const THREAD = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1";
+const RECORD = "record-1";
 const CANONICAL = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2";
 const CLIENT_SUB = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
 const LOCAL_ASST = "local-assistant-1";
 
 describe("R6 browser paths — never /retry/stream in browser", () => {
   it("persisted regenerate uses /retry only", () => {
-    const path = browserAskRetryPath(THREAD, CANONICAL);
+    const path = browserAskRetryPath(RECORD, THREAD, CANONICAL);
     expect(path).toContain("/retry");
     expect(path).not.toContain("/retry/stream");
     expect(path).toBe(
-      `/api/web/reader-ask/threads/${THREAD}/messages/${CANONICAL}/retry`,
+      `/api/web/reader/records/${RECORD}/ask/threads/${THREAD}/messages/${CANONICAL}/retry`,
     );
   });
 
   it("stream path is messages/stream not retry", () => {
-    expect(browserAskStreamPath(THREAD)).toContain("/messages/stream");
-    expect(browserAskStreamPath(THREAD)).not.toContain("/retry");
+    expect(browserAskStreamPath(RECORD, THREAD)).toContain("/messages/stream");
+    expect(browserAskStreamPath(RECORD, THREAD)).not.toContain("/retry");
   });
 
   it("submission hydrate path is GET submissions/{id}", () => {
-    const p = browserAskSubmissionPath(THREAD, CLIENT_SUB);
+    const p = browserAskSubmissionPath(RECORD, THREAD, CLIENT_SUB);
     expect(p).toContain(`/submissions/${CLIENT_SUB}`);
     expect(p).not.toContain("/retry");
   });
@@ -47,7 +48,7 @@ describe("R6 resend vs regenerate target selection", () => {
     expect(target?.kind).toBe("pending_submission");
     expect(target?.ctaAction).toBe("resend");
     // Resend must never construct a browser /retry URL.
-    expect(browserAskRetryPath(THREAD, LOCAL_ASST)).not.toMatch(
+    expect(browserAskRetryPath(RECORD, THREAD, LOCAL_ASST)).not.toMatch(
       /\/retry\/stream$/,
     );
   });
@@ -57,7 +58,7 @@ describe("R6 resend vs regenerate target selection", () => {
     expect(target).not.toBeNull();
     expect(target?.kind).toBe("persisted_assistant");
     expect(target?.ctaAction).toBe("retry");
-    const path = browserAskRetryPath(THREAD, CANONICAL);
+    const path = browserAskRetryPath(RECORD, THREAD, CANONICAL);
     expect(path).toContain("/retry");
     expect(path).not.toContain("/retry/stream");
   });

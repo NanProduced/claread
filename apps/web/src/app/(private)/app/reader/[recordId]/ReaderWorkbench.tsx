@@ -4480,7 +4480,6 @@ export function ReaderWorkbench({
           open={aiOpen}
           presentation={isImmersiveMode ? "immersive" : "intensive"}
           recordId={record.id}
-          recordScope="analysis"
           recordTitle={record.title}
           pageIdentity={pageIdentity}
           attachments={askAttachments}
@@ -4490,33 +4489,13 @@ export function ReaderWorkbench({
           hideLauncherInCompactLayout={Boolean(dictionaryPanelVisible)}
           onRemoveAttachment={removeAskAttachment}
           onClearAttachments={clearAskAttachments}
-          onAppendAttachments={appendAskAttachments}
           onJumpToAttachment={jumpToAskAttachment}
-          onActionExecuted={handleAskActionExecuted}
-          onSupplementDeleted={deleteAnalysisSupplement}
           onPendingQuickActionConsumed={() => setPendingAskQuickAction(null)}
           onActivateLiveContextSelection={activateLiveContextSelection}
           onComposerTextareaFocus={handleComposerTextareaFocus}
           onComposerTextareaBlur={handleComposerTextareaBlur}
           onPanelPointerDownOutsideComposer={handleAiPanelPointerDownOutsideComposer}
           onToggle={toggleAiWorkspace}
-          onAnnotationFeedback={(params) =>
-            openFeedbackSheet({
-              scope: "annotation",
-              sentiment: "negative",
-              targetId: params.entryId,
-              analysisRecordId: record.id,
-              annotationType: params.entryType,
-              clientSurface: "reader",
-              entryPoint: "ai_workspace_annotation_feedback",
-              contextSummary: params.entryType,
-              contextJson: {
-                entry_id: params.entryId,
-                entry_type: params.entryType,
-              },
-            })
-          }
-          analysisRecordId={record.id}
         />
       ) : null}
       {feedbackSheet?.open ? (

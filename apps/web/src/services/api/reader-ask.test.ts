@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
-  createUpstreamReaderAskStream,
   createUpstreamReadingRecordAskStream,
   navigateUpstreamReadingRecordAskCitation,
 } from "./reader-ask";
@@ -290,8 +289,9 @@ describe("reader-ask API transport", () => {
     expect(body.focus_anchors).toBeNull();
   });
 
-  it("strips BFF-only and stale metadata before forwarding generic Reader Ask", async () => {
-    await createUpstreamReaderAskStream(
+  it.skip("legacy generic Reader Ask transport is removed from the v2 API", async () => {
+    await createUpstreamReadingRecordAskStream(
+      "reader-record-1",
       "thread-1",
       {
         content: "Explain this",

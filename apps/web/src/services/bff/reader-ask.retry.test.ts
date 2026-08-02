@@ -7,15 +7,11 @@ vi.mock("@/services/bff/session", () => ({
 }));
 
 vi.mock("@/services/api/reader-ask", () => ({
-  retryUpstreamReaderAskMessage: vi.fn(),
   retryUpstreamReadingRecordAskMessage: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
-import {
-  retryUpstreamReaderAskMessage,
-  retryUpstreamReadingRecordAskMessage,
-} from "@/services/api/reader-ask";
+import { retryUpstreamReadingRecordAskMessage } from "@/services/api/reader-ask";
 import { retryReaderAskMessageForWeb } from "./reader-ask";
 
 const mockSession = {
@@ -34,17 +30,15 @@ describe("retryReaderAskMessageForWeb (ASK-RETRY-CONTRACT-R0)", () => {
 
   it("rejects non-UUID message ids with typed 409 and never calls upstream", async () => {
     const res = await retryReaderAskMessageForWeb(
+      "rr-1",
       "thread-1",
       "local-assistant-123",
       {},
-      "rr-1",
-      "reading_record",
     );
     expect(res.status).toBe(409);
     const body = (await res.json()) as { code?: string };
     expect(body.code).toBe("retry_target_not_persisted");
     expect(retryUpstreamReadingRecordAskMessage).not.toHaveBeenCalled();
-    expect(retryUpstreamReaderAskMessage).not.toHaveBeenCalled();
   });
 
   it("forwards UUID targets to the upstream RR retry helper", async () => {
@@ -61,11 +55,10 @@ describe("retryReaderAskMessageForWeb (ASK-RETRY-CONTRACT-R0)", () => {
     );
 
     const res = await retryReaderAskMessageForWeb(
+      "rr-1",
       "thread-1",
       UUID,
       { model: "ask-clarity" },
-      "rr-1",
-      "reading_record",
     );
     expect(res.status).toBe(200);
     expect(retryUpstreamReadingRecordAskMessage).toHaveBeenCalledWith(

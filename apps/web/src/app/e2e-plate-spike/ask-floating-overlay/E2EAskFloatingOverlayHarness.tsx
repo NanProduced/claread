@@ -290,7 +290,6 @@ export default function E2EAskFloatingOverlayHarness() {
         presentation="intensive"
         pageIdentity={PAGE_IDENTITY}
         recordId={RECORD_ID}
-        recordScope="reading_record"
         recordTitle={PAGE_IDENTITY.recordTitle}
         attachments={[]}
         onRemoveAttachment={() => undefined}

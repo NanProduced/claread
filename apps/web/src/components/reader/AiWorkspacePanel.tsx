@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  BookPlus,
   Check,
   ChevronDown,
   Copy,
   FileText,
   GitBranch,
   Globe,
-  LoaderCircle,
   MessageSquare,
   PencilLine,
   Quote,
@@ -17,8 +15,6 @@ import {
   RotateCcw,
   Search,
   Sparkles,
-  ThumbsDown,
-  ThumbsUp,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,34 +42,12 @@ import {
   type AttachmentData,
 } from "@/components/ai-elements/attachments";
 import {
-  Confirmation,
-  ConfirmationAccepted,
-  ConfirmationActions,
-  ConfirmationRejected,
-  ConfirmationRequest,
-  ConfirmationTitle,
-} from "@/components/ai-elements/confirmation";
-import {
   Message as AiMessage,
   MessageAction,
   MessageActions,
   MessageContent,
   MessageResponse,
 } from "@/components/ai-elements/message";
-import {
-  Plan,
-  PlanContent,
-  PlanDescription,
-  PlanHeader,
-  PlanTitle,
-  PlanTrigger,
-} from "@/components/ai-elements/plan";
-import {
-  Tool,
-  ToolContent,
-  ToolHeader,
-  ToolOutput,
-} from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -94,66 +68,40 @@ import { SystemMessage } from "@/components/ui/system-message";
 import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import { IconButton } from "@/components/primitives/icon-button";
 import { AskComposer } from "@/components/reader/ask-chat/AskComposer";
-import { ArticleRagCitationList } from "@/components/reader/ask-chat/ArticleRagCitationList";
 import { AssistantMessage } from "@/components/reader/ask-chat/AssistantMessage";
-import { CitationList } from "@/components/reader/ask-chat/CitationList";
 import { ConversationShell } from "@/components/reader/ask-chat/ConversationShell";
-import { FollowUpSuggestionChips } from "@/components/reader/ask-chat/FollowUpSuggestionChips";
 import { PromptSuggestions } from "@/components/reader/ask-chat/PromptSuggestions";
 import { LearnerReasoningPanel } from "@/components/reader/ask-chat/LearnerReasoningPanel";
-import { ReasoningPanel } from "@/components/reader/ask-chat/ReasoningPanel";
-import { TaskProcessCard } from "@/components/reader/ask-chat/TaskProcessCard";
-import { ToolChipRow } from "@/components/reader/ask-chat/ToolChipRow";
 import { TurnProcessDisclosure } from "@/components/reader/ask-chat/turn-process";
 import {
   readerCommandControl,
-  readerPanelItem,
   readerTransitionStandard,
 } from "@/components/reader/interaction";
 import { cn } from "@/lib/cn";
 import {
-  askAttachmentFromDto,
   askAttachmentKey,
   askAttachmentLabel,
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
 } from "@/lib/reader-plate";
-import { mapAskArticleRagSidecar } from "@/lib/reader-orchestration/status-mapper";
 import type {
-  ReaderAskActionConfirmResponseDto,
-  ReaderAskActionProposalDto,
   ReaderAskAttachmentDto,
-  ReaderAskAssetDisambiguationCandidateDto,
-  ReaderAskAssetDisambiguationDto,
   ReaderAskAgenticCompletedPayloadDto,
   ReaderAskAgenticProgressPayloadDto,
   ReaderAskAgenticTerminalPayloadDto,
   ReaderAskAgenticTerminalStatusDto,
-  ReaderAskCompletedPayloadDto,
-  ReaderAskContextPlanDto,
-  ReaderAskContextRecordItemDto,
-  ReaderAskContextRecordSearchResponseDto,
-  ReaderAskDeleteSupplementResponseDto,
-  ReaderAskDisambiguationDto,
   ReaderAskEntryActionDto,
-  ReaderAskEvidenceItemDto,
   ReaderAskMessageDto,
   ReaderAskMessageUiStateDto,
   ReaderAskModelOptionListResponseDto,
   ReaderAskModelOptionSummaryDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskPageIdentityDto,
-  ReaderAskPersistedSupplementDto,
   ReaderAskResolvedContextInputDto,
-  ReaderAskResolvedContextSummaryDto,
-  ReaderAskResponseCardDto,
   ReaderAskSelectedModelDto,
-  ReaderAskSupplementCandidateDto,
   ReaderAskStreamEnvelopeDto,
-  ReaderAskTraceSummaryDto,
   ReaderAskThreadDetailDto,
   ReaderAskThreadSummaryDto,
-  ReaderAskToolTraceEntryDto,
   ReaderAskUiMessageDto,
   ReaderAskWebSearchSummaryDto,
   WebSearchModeDto,
@@ -228,12 +176,10 @@ import {
   type PendingSendRequest,
 } from "@/lib/reader-ask/retry-target";
 import {
-  projectActionFailureNotice,
   projectClarifyWarningNotice,
   projectOptionalToolWarning,
   projectPanelInitNotice,
   projectSendFailureNotice,
-  projectSupplementFailureNotice,
   projectTurnTerminalNotice,
   type AskSystemNotice,
   type AskSystemNoticeCtaAction,
@@ -260,12 +206,7 @@ function isAbortError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { name?: string }).name === "AbortError";
 }
 
-const SHOW_ASK_DEBUG_DISCLOSURES = process.env.NEXT_PUBLIC_ASK_CLAREAD_DEBUG === "true";
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
-const workspaceRelatedRecordItemClassName = cn(
-  readerPanelItem,
-  "w-full justify-between rounded-[12px] px-2.5 py-2 text-left",
-);
 const workspaceLauncherClassName = cn(
   readerCommandControl,
   "group fixed bottom-[5.25rem] right-4 z-[var(--reader-z-floating-ask)] h-14 w-14 rounded-full border border-hairline/85",
@@ -314,27 +255,8 @@ const STARTER_CONTENT: Record<
   },
 };
 
-type ContextRecordSearchState = {
-  items: ReaderAskContextRecordItemDto[];
-  loading: boolean;
-  query: string;
-};
-
 type AskPanelBlockKind =
-  | "answer"
-  | "response_cards"
-  | "disambiguation"
-  | "external_asset_disambiguation"
-  | "action_proposals"
-  | "supplement_candidates"
-  | "persisted_supplements"
-  | "context_summary"
-  | "evidence"
-  | "trace_summary"
-  | "article_rag_citations"
-  | "citations"
-  | "tool_trace"
-  | "follow_up_suggestions";
+  | "answer";
 
 type AskPanelBlock = {
   kind: AskPanelBlockKind;
@@ -355,19 +277,9 @@ type ReaderAskQuickActionRequest = {
   submissionMode?: "chat" | "quick_action";
 };
 
-function submissionModeOf(message: Pick<ReaderAskMessageDto, "submission_mode"> | Pick<ReaderAskCompletedPayloadDto, "submission_mode">) {
-  return message.submission_mode === "quick_action" ? "quick_action" : "chat";
-}
 
-function quickActionLabel(entryAction?: ReaderAskEntryActionDto | null) {
-  if (entryAction === "why_here") {
-    return "语法解析";
-  }
-  if (entryAction === "explain_this") {
-    return "句子拆分";
-  }
-  return "快捷分析";
-}
+
+
 
 function deriveAvailableContextCapabilities(pageIdentity: ReaderAskPageIdentity): string[] {
   if (Array.isArray(pageIdentity.availableContextCapabilities)) {
@@ -458,56 +370,9 @@ function defaultEntryAction(): ReaderAskEntryActionDto {
   return "ask_about_this";
 }
 
-function buildRelatedRecordAttachment(
-  pageIdentity: ReaderAskPageIdentity,
-  item: ReaderAskContextRecordItemDto,
-): ReaderAskAttachment {
-  return {
-    kind: "record_ref",
-    subtype: "related_record",
-    label: item.title?.trim() || "关联文章",
-    targetKey: `record:${item.record_id}:record`,
-    metadata: {
-      pageIdentity,
-      sourceSurface: "ask_context_picker",
-      entryAction: "ask_about_this",
-      recordId: item.record_id,
-      recordTitle: item.title?.trim() || null,
-      assetId: item.record_id,
-      title: item.title?.trim() || null,
-    },
-  };
-}
 
-function buildExternalAssetAttachment(
-  pageIdentity: ReaderAskPageIdentity,
-  recordId: string,
-  recordTitle: string | null | undefined,
-  candidate: ReaderAskAssetDisambiguationCandidateDto,
-): ReaderAskAttachment {
-  const entryType = (
-    candidate.entry_type?.trim() || (candidate.asset_type === "supplement" ? "grammar_note" : "sentence_analysis")
-  ) as ReaderAskAttachment["subtype"];
-  return {
-    kind: candidate.asset_type === "supplement" ? "supplement_ref" : "analysis_ref",
-    subtype: entryType,
-    label: candidate.title?.trim() || "外部稳定资产",
-    selectedText: candidate.summary ?? undefined,
-    targetKey: `record:${recordId}:analysis:${entryType}:${candidate.asset_id}`,
-    metadata: {
-      pageIdentity,
-      sourceSurface: "ask_hitp_asset_picker",
-      entryAction: "ask_about_this",
-      recordId,
-      recordTitle: recordTitle?.trim() || null,
-      entryId: candidate.asset_id,
-      entryType,
-      assetId: candidate.asset_id,
-      title: candidate.title?.trim() || null,
-      note: candidate.summary ?? null,
-    },
-  };
-}
+
+
 
 function mergeAttachments(
   current: ReaderAskAttachment[],
@@ -526,17 +391,7 @@ function mergeAttachments(
   return merged;
 }
 
-function attachmentsFromResolvedContext(
-  message: ReaderAskUiMessageDto | null | undefined,
-  fallbackPageIdentity: ReaderAskPageIdentity,
-): ReaderAskAttachment[] {
-  if (!message?.resolved_context_input?.attachments?.length) {
-    return [];
-  }
-  return message.resolved_context_input.attachments.map((attachment) =>
-    askAttachmentFromDto(attachment, fallbackPageIdentity),
-  );
-}
+
 
 function buildOptimisticResolvedContextInput(
   pageIdentity: ReaderAskPageIdentity,
@@ -663,79 +518,7 @@ function extractErrorMessage(payload: unknown, fallback: string) {
   return fallback;
 }
 
-function syncToolTrace(
-  entries: ReaderAskToolTraceEntryDto[],
-  event: ReaderAskStreamEnvelopeDto,
-): ReaderAskToolTraceEntryDto[] {
-  if (!event.event.startsWith("tool.")) {
-    return entries;
-  }
-  const toolName = String((event.data as { tool_name?: unknown }).tool_name ?? "");
-  if (!toolName) {
-    return entries;
-  }
-  if (event.event === "tool.started") {
-    return [
-      ...entries,
-      {
-        tool_name: toolName,
-        status: "started",
-        started_at: new Date().toISOString(),
-        completed_at: null,
-        input_summary: null,
-        summary: null,
-        next_actions: [],
-        artifacts: [],
-        metadata_json: {},
-      },
-    ];
-  }
 
-  const status: ReaderAskToolTraceEntryDto["status"] =
-    event.event === "tool.completed" ? "completed" : "failed";
-  let updated = false;
-  const next = entries.map((entry) => {
-    if (!updated && entry.tool_name === toolName && entry.status === "started") {
-      updated = true;
-      return {
-        ...entry,
-        status,
-        completed_at: new Date().toISOString(),
-        summary:
-          typeof (event.data as { summary?: unknown; detail?: unknown }).summary === "string"
-            ? String((event.data as { summary?: string }).summary)
-            : typeof (event.data as { detail?: unknown }).detail === "string"
-              ? String((event.data as { detail?: string }).detail)
-              : entry.summary,
-      };
-    }
-    return entry;
-  });
-
-  if (updated) {
-    return next;
-  }
-
-  return [
-    ...entries,
-    {
-      tool_name: toolName,
-        status,
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        input_summary: null,
-        summary:
-          typeof (event.data as { summary?: unknown; detail?: unknown }).summary === "string"
-            ? String((event.data as { summary?: string }).summary)
-            : typeof (event.data as { detail?: unknown }).detail === "string"
-              ? String((event.data as { detail?: string }).detail)
-              : null,
-      next_actions: [],
-      artifacts: [],
-      metadata_json: {},
-    },
-  ];
-}
 
 type MessageUpdater = ( updater: (messages: ReaderAskUiMessageDto[]) => ReaderAskUiMessageDto[] ) => void;
 
@@ -1023,15 +806,25 @@ export function createSseMessageHandler(
           // when the canonical answer arrives. The provisional slot must
           // never survive a committed terminal.
           provisional_content_md: null,
-          // Keep legacy evidence fields untouched — never map agentic evidence
-          // into ReaderAskEvidenceItemDto or article_rag sidecar.
-          citations: message.citations ?? [],
-          action_proposals: message.action_proposals ?? [],
-          tool_trace: message.tool_trace ?? [],
-          evidence: message.evidence ?? [],
-          response_cards: message.response_cards ?? [],
-          supplement_candidates: message.supplement_candidates ?? [],
-          persisted_supplements: message.persisted_supplements ?? [],
+          // Reader Record Ask v2 has no legacy action, evidence, tool,
+          // response-card, article-RAG, or supplement projection. Clear any
+          // stale fields from a reused retry/history row instead of allowing
+          // them to survive through object spread.
+          citations: [],
+          action_proposals: [],
+          tool_trace: [],
+          evidence: [],
+          trace_summary: null,
+          disambiguation: null,
+          external_asset_disambiguation: null,
+          response_cards: [],
+          resolved_context: null,
+          context_plan: null,
+          resolved_context_input: null,
+          run_info: null,
+          supplement_candidates: [],
+          persisted_supplements: [],
+          follow_up_suggestions: [],
           // Public v2 never stores or rehydrates provider raw reasoning.
           reasoning_md: null,
           reasoning_status: null,
@@ -1045,8 +838,6 @@ export function createSseMessageHandler(
           replan_status: "idle",
           compacting: false,
           regenerate_preview: false,
-          // Agentic path must not carry a legacy article_rag sidecar.
-          article_rag: null,
           // Public v2: no raw evidence / handles in browser state.
           agentic_evidence: null,
           agentic_evidence_scope: null,
@@ -1152,6 +943,21 @@ export function createSseMessageHandler(
           agentic_evidence_scope: null,
           agentic_answer_blocks: null,
           agentic_citations: null,
+          citations: [],
+          action_proposals: [],
+          tool_trace: [],
+          evidence: [],
+          trace_summary: null,
+          disambiguation: null,
+          external_asset_disambiguation: null,
+          response_cards: [],
+          resolved_context: null,
+          context_plan: null,
+          resolved_context_input: null,
+          run_info: null,
+          supplement_candidates: [],
+          persisted_supplements: [],
+          follow_up_suggestions: [],
         };
       }),
     true);
@@ -1496,58 +1302,6 @@ export function createSseMessageHandler(
       return;
     }
 
-    if (event.event === "reasoning.started") {
-      commitStreamingMessageUpdate((messages) =>
-        messages.map((message) =>
-          message.id === currentMessageId
-            ? { ...message, reasoning_status: "streaming", reasoning_md: message.reasoning_md ?? "", compacting: false }
-            : message,
-        ),
-        true,
-      );
-      return;
-    }
-
-    if (event.event === "reasoning.delta") {
-      const delta = String((event.data as { delta?: unknown }).delta ?? "");
-      commitStreamingMessageUpdate((messages) =>
-        messages.map((message) =>
-          message.id === currentMessageId
-            ? {
-                ...message,
-                reasoning_status: "streaming",
-                reasoning_md: `${message.reasoning_md ?? ""}${delta}`,
-              }
-            : message,
-        ),
-      );
-      return;
-    }
-
-    if (event.event === "reasoning.completed") {
-      commitStreamingMessageUpdate((messages) =>
-        messages.map((message) =>
-          message.id === currentMessageId
-            ? { ...message, reasoning_status: "completed" }
-            : message,
-        ),
-        true,
-      );
-      return;
-    }
-
-    if (event.event === "tool.started" || event.event === "tool.completed" || event.event === "tool.failed") {
-      commitStreamingMessageUpdate((messages) =>
-        messages.map((message) =>
-          message.id === currentMessageId
-            ? { ...message, tool_trace: syncToolTrace(message.tool_trace, event) }
-            : message,
-        ),
-        true,
-      );
-      return;
-    }
-
     if (event.event === "replan.started") {
       commitStreamingMessageUpdate((messages) =>
         messages.map((message) =>
@@ -1573,171 +1327,25 @@ export function createSseMessageHandler(
     }
 
     if (event.event === "message.completed") {
-      // Prefer agentic completed DTO when the wire payload is agentic v1.
+      // `message.completed` is a canonical v2 commit event. Any markerless
+      // or v1/history payload is ignored; no legacy answer projection is
+      // allowed to reach the Reader Record UI.
       if (isReaderAskAgenticCompletedPayload(event.data)) {
         applyAgenticCompleted(event.data);
         return;
       }
-      // Legacy completed: never enter the agentic activity state machine.
-      onAgenticActivity?.({ type: "reset" });
-
-      const payload = event.data as unknown as ReaderAskCompletedPayloadDto;
-      // Capture the streaming temp id BEFORE reassignment so the optimistic
-      // assistant bubble can still be found after the server id lands.
-      const previousMessageId = currentMessageId;
-      if (payload.id) {
-        currentMessageId = payload.id;
-        onMessageIdAssigned?.(payload.id);
-      }
-      commitStreamingMessageUpdate((messages) => {
-        const assistantIndex = messages.findIndex(
-          (candidate) =>
-            candidate.id === previousMessageId ||
-            candidate.id === currentMessageId ||
-            candidate.id === payload.id,
-        );
-        const priorUserIndex =
-          assistantIndex > 0
-            ? [...messages.slice(0, assistantIndex)].reverse().findIndex((candidate) => candidate.role === "user")
-            : -1;
-        const normalizedPriorUserIndex =
-          priorUserIndex >= 0 && assistantIndex > 0 ? assistantIndex - 1 - priorUserIndex : -1;
-        return messages.map((message, index) => {
-          const isStreamingAssistant =
-            message.id === previousMessageId ||
-            message.id === currentMessageId ||
-            message.id === payload.id;
-          if (isStreamingAssistant) {
-            // Preserve streamed reasoning content: payload.reasoning_md may be an
-            // empty string from the server while the frontend has accumulated deltas.
-            // Only fall back to the payload value when the frontend has none.
-            const nextReasoningMd = message.reasoning_md || payload.reasoning_md || null;
-            // Derive terminal status from the final content: if any source
-            // indicates completed/streaming or there is reasoning content, it
-            // must be "completed" — never null when reasoning_md is present.
-            const nextReasoningStatus =
-              payload.reasoning_status === "completed" ||
-              message.reasoning_status === "completed" ||
-              message.reasoning_status === "streaming" ||
-              nextReasoningMd
-                ? "completed"
-                : null;
-            return {
-              ...message,
-              id: payload.id,
-              thread_id: payload.thread_id,
-              status: "completed",
-              content_md: payload.content_md,
-              // ASK-TURN-LIFECYCLE R2 — drop the provisional preview when
-              // the canonical legacy completed payload arrives.
-              provisional_content_md: null,
-              submission_mode: payload.submission_mode ?? message.submission_mode ?? "chat",
-              resolved_intent: payload.resolved_intent ?? null,
-              citations: payload.citations,
-              action_proposals: payload.action_proposals,
-              tool_trace: payload.tool_trace,
-              evidence: payload.evidence ?? [],
-              trace_summary: payload.trace_summary ?? null,
-              disambiguation: payload.disambiguation ?? null,
-              external_asset_disambiguation: payload.external_asset_disambiguation ?? null,
-              response_cards: payload.response_cards,
-              resolved_context: payload.resolved_context,
-              context_plan: payload.context_plan ?? null,
-              resolved_context_input: payload.resolved_context_input ?? null,
-              run_info: payload.run_info ?? null,
-              supplement_candidates: payload.supplement_candidates ?? [],
-              persisted_supplements: payload.persisted_supplements ?? [],
-              reasoning_md: nextReasoningMd,
-              reasoning_status: nextReasoningStatus,
-              learner_reasoning_text:
-                message.learner_reasoning_text ||
-                (typeof (payload as { learner_reasoning_text?: string })
-                  .learner_reasoning_text === "string"
-                  ? (payload as { learner_reasoning_text?: string })
-                      .learner_reasoning_text
-                  : null) ||
-                null,
-              learner_reasoning_status: (
-                message.learner_reasoning_text ||
-                (payload as { learner_reasoning_text?: string })
-                  .learner_reasoning_text
-              )
-                ? "completed"
-                : null,
-              learner_reasoning_stage:
-                message.learner_reasoning_stage ??
-                (payload as { learner_reasoning_stage?: typeof message.learner_reasoning_stage })
-                  .learner_reasoning_stage ??
-                null,
-              follow_up_suggestions: payload.follow_up_suggestions ?? [],
-              replan_status: "idle",
-              compacting: false,
-              regenerate_preview: false,
-              usage_event_id: payload.usage_event_id ?? message.usage_event_id ?? null,
-              // Map raw article_rag sidecar into a UI-safe shape: strips
-              // debug-only fields, coerces unknown statuses, and only
-              // retains citations when status === "available".
-              article_rag: mapAskArticleRagSidecar(payload.article_rag ?? null),
-              // Clear any prior agentic evidence so legacy completions cannot
-              // keep stale agentic basis from an earlier attempt.
-              agentic_evidence: null,
-              agentic_evidence_scope: null,
-            };
-          }
-          const isPriorUser =
-            payload.resolved_context_input &&
-            message.role === "user" &&
-            index === normalizedPriorUserIndex;
-          if (isPriorUser) {
-            return {
-              ...message,
-              submission_mode: payload.submission_mode ?? message.submission_mode ?? "chat",
-              resolved_context_input: payload.resolved_context_input ?? message.resolved_context_input ?? null,
-              context_anchors:
-                payload.resolved_context_input?.normalized_anchors ?? message.context_anchors,
-            };
-          }
-          return message;
-        });
-      }, true);
       return;
+
     }
 
     if (event.event === "message.interrupted") {
-      // Agentic non-ok terminal reuses message.interrupted with a typed payload.
+      // Agentic non-ok terminal may be duplicated on message.interrupted, but
+      // only the canonical typed v2 payload is trusted.
       if (isReaderAskAgenticTerminalPayload(event.data)) {
         applyAgenticTerminal(event.data);
         return;
       }
 
-      const payload = event.data as { content_md?: unknown };
-      commitStreamingMessageUpdate((messages) =>
-        messages.map((message) =>
-          message.id === currentMessageId
-            ? {
-                ...message,
-                status: "interrupted",
-                // ASK-TURN-LIFECYCLE R2 — legacy interrupted must not
-                // preserve the provisional preview. Only a typed
-                // `content_md` from the legacy payload (when present)
-                // may be promoted to canonical; otherwise keep the
-                // existing canonical (empty for a fresh turn).
-                content_md: typeof payload.content_md === "string" ? payload.content_md : message.content_md,
-                provisional_content_md: null,
-                // If reasoning was started (streaming or has content), mark it
-                // as completed so it doesn't stay in streaming after interrupt.
-                // An empty reasoning_md after reasoning.started means the model
-                // started thinking but produced no content — still not streaming.
-                reasoning_status:
-                  message.reasoning_status === "streaming" || message.reasoning_md
-                    ? "completed"
-                    : message.reasoning_status,
-                compacting: false,
-                regenerate_preview: false,
-              }
-            : message,
-        ),
-      true);
       return;
     }
 
@@ -1762,72 +1370,11 @@ export function createSseMessageHandler(
   };
 }
 
-function toolLabel(toolName: string) {
-  switch (toolName) {
-    case "get_record_context":
-      return "当前文章上下文";
-    case "get_record_insights":
-      return "解析卡片";
-    case "get_user_vocabulary_book":
-      return "生词本";
-    case "resolve_known_reference":
-      return "跨文章引用";
-    case "suggest_prompts":
-      return "追问建议";
-    case "generate_sentence_annotation":
-      return "句法生成";
-    case "propose_save_note":
-      return "保存笔记确认";
-    case "propose_save_highlight":
-      return "保存高亮确认";
-    default:
-      return toolName;
-  }
-}
 
-function toolTraceState(entry: ReaderAskToolTraceEntryDto) {
-  if (entry.status === "started") {
-    return "input-available" as const;
-  }
-  if (entry.status === "completed") {
-    return "output-available" as const;
-  }
-  return "output-error" as const;
-}
 
-function normalizeToolTraceEntries(entries: ReaderAskToolTraceEntryDto[]): ReaderAskToolTraceEntryDto[] {
-  const normalized: ReaderAskToolTraceEntryDto[] = [];
 
-  for (const entry of entries) {
-    if (entry.status === "started") {
-      normalized.push({ ...entry });
-      continue;
-    }
 
-    let merged = false;
-    for (let index = normalized.length - 1; index >= 0; index -= 1) {
-      const candidate = normalized[index];
-      if (candidate.tool_name !== entry.tool_name || candidate.status !== "started") {
-        continue;
-      }
 
-      normalized[index] = {
-        ...candidate,
-        ...entry,
-        started_at: candidate.started_at ?? entry.started_at,
-        input_summary: candidate.input_summary ?? entry.input_summary,
-      };
-      merged = true;
-      break;
-    }
-
-    if (!merged) {
-      normalized.push({ ...entry });
-    }
-  }
-
-  return normalized;
-}
 
 async function fetchJson<T>(url: string, init?: RequestInit, fallback = "请求失败。"): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -2127,194 +1674,19 @@ function AskProvenanceLine({
   );
 }
 
-function RelatedRecordPicker({
-  disabled,
-  search,
-  onSearchChange,
-  onAttachRelatedRecord,
-}: {
-  disabled?: boolean;
-  search: ContextRecordSearchState;
-  onSearchChange: (value: string) => void;
-  onAttachRelatedRecord: (item: ReaderAskContextRecordItemDto) => void;
-}) {
-  const showingRecent = search.query.trim().length === 0;
 
-  return (
-    <Command className="w-[18rem]">
-      <CommandInput
-        disabled={disabled}
-        placeholder="搜索其他文章"
-        value={search.query}
-        onValueChange={onSearchChange}
-      />
-      <CommandList>
-        <CommandGroup heading={showingRecent ? "最近文章" : "搜索结果"}>
-          {search.loading ? (
-            <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-              <span>正在检索文章</span>
-            </div>
-          ) : null}
-          {search.items.map((item) => (
-            <CommandItem
-              key={item.record_id}
-              className={workspaceRelatedRecordItemClassName}
-              disabled={disabled}
-              value={`${item.title || ""} ${item.record_id}`}
-              onSelect={() => onAttachRelatedRecord(item)}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-ink">{item.title || "Untitled"}</p>
-                <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                  {item.updated_at ? "最近查看的文章" : "加入当前讨论"}
-                </p>
-              </div>
-              <BookPlus className="h-3.5 w-3.5 shrink-0 text-subtle" />
-            </CommandItem>
-          ))}
-        </CommandGroup>
-        {!search.loading ? (
-          <CommandEmpty>
-            {showingRecent ? "最近没有可加入的文章。" : "没有找到匹配的文章。"}
-          </CommandEmpty>
-        ) : null}
-      </CommandList>
-    </Command>
-  );
-}
 
-function contextSummaryChips(
-  summary?: ReaderAskResolvedContextSummaryDto | null,
-  contextInput?: ReaderAskResolvedContextInputDto | null,
-) {
-  const chips: string[] = [];
-  if (summary?.current_sentence_used) {
-    chips.push("当前句");
-  }
-  if (summary?.current_paragraph_used) {
-    chips.push("当前段");
-  }
-  if (summary?.used_record_insights || (contextInput?.current_record_context?.record_insights.length ?? 0) > 0) {
-    chips.push("本文解析");
-  }
-  if (summary?.used_cross_record_context) {
-    chips.push("跨文章上下文");
-  }
-  if (summary?.used_dictionary) {
-    chips.push("词典");
-  }
-  if (contextInput?.current_record_context?.article_overview) {
-    chips.push("文章概览");
-  }
-  if ((contextInput?.external_record_contexts.length ?? 0) > 0) {
-    chips.push(`外部文章 ${contextInput?.external_record_contexts.length}`);
-  }
-  if ((contextInput?.external_asset_contexts.length ?? 0) > 0) {
-    chips.push(`外部资产 ${contextInput?.external_asset_contexts.length}`);
-  }
-  return chips.length > 0 ? chips : ["当前文章"];
-}
 
-function overviewStatusLabel(status?: string | null) {
-  switch (status) {
-    case "ready":
-      return "概览可用";
-    case "pending":
-      return "概览生成中";
-    case "stale":
-      return "概览待刷新";
-    case "failed":
-      return "概览生成失败";
-    case "unavailable":
-      return "不适合生成概览";
-    default:
-      return null;
-  }
-}
 
-function overviewSourceLabel(source?: string | null) {
-  switch (source) {
-    case "learning_overview_hint":
-      return "Learning Overview Hint";
-    case "academic_render_scene":
-      return "Academic Render Scene";
-    default:
-      return source ?? null;
-  }
-}
 
-function plannerModeLabel(mode: ReaderAskTraceSummaryDto["planner_mode"]) {
-  switch (mode) {
-    case "direct_answer":
-      return "直接回答";
-    case "needs_local_clarification":
-      return "需要局部澄清";
-    case "partial_answer_with_followup":
-      return "先答复再追问";
-    case "known_reference_resolved":
-      return "已命中历史文章";
-    case "known_reference_ambiguous":
-      return "历史文章候选冲突";
-    case "known_reference_not_found":
-      return "未命中历史文章";
-    default:
-      return mode;
-  }
-}
 
-function workingSetModeLabel(mode: ReaderAskTraceSummaryDto["working_set_mode"]) {
-  switch (mode) {
-    case "anchor_local":
-      return "围绕当前选区";
-    case "article_overview":
-      return "围绕文章概览";
-    case "explicit_external_record":
-      return "围绕显式外部文章";
-    case "known_reference":
-      return "围绕历史文章引用";
-    case "clarification":
-      return "等待补充定位";
-    default:
-      return mode;
-  }
-}
 
-function supplementCandidateIdFromProposal(proposal: ReaderAskActionProposalDto): string | null {
-  if (proposal.action_type !== "create_supplement_grammar_note") {
-    return null;
-  }
-  const candidate = proposal.payload_json.candidate;
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-    return null;
-  }
-  const candidateId = (candidate as { candidate_id?: unknown }).candidate_id;
-  return typeof candidateId === "string" && candidateId.trim() ? candidateId : null;
-}
 
-function pendingSupplementCandidates(message: ReaderAskUiMessageDto | null): ReaderAskSupplementCandidateDto[] {
-  if (!message) {
-    return [];
-  }
-  return message.supplement_candidates.filter((candidate) => {
-    const proposal = message.action_proposals.find(
-      (item) => supplementCandidateIdFromProposal(item) === candidate.candidate_id,
-    );
-    return !proposal;
-  });
-}
 
-function messageOperationSummary(message: ReaderAskUiMessageDto) {
-  const entryAction = message.resolved_context_input?.entry_action ?? null;
-  const firstAttachment =
-    message.resolved_context_input?.attachments[0]?.selected_text ??
-    (message.context_anchors && message.context_anchors[0]?.selected_text) ??
-    "";
-  const compactTarget = firstAttachment.replace(/\s+/g, " ").trim();
-  return compactTarget
-    ? `${quickActionLabel(entryAction)} · ${compactTarget.length > 42 ? `${compactTarget.slice(0, 41).trimEnd()}…` : compactTarget}`
-    : quickActionLabel(entryAction);
-}
+
+
+
+
 
 async function copyMessageText(text: string) {
   if (!text.trim() || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -2328,41 +1700,15 @@ async function copyMessageText(text: string) {
 }
 
 /**
- * Decide whether the article RAG sidecar should render a citation block.
- *
- * This is the single render gate for article_rag citations: status MUST be
- * `available` (already coerced by `mapAskArticleRagSidecar`),
- * `should_attach` MUST be strictly `true`, and the citations list MUST be
- * non-empty. Anything else (silent fallback, debug-only paths, stale or
- * disabled sidecars) returns false so the Ask surface falls back to the
- * ordinary answer with no user-visible error state.
- */
-function hasRenderableArticleRagCitations(
-  sidecar: ReaderAskUiMessageDto["article_rag"],
-): sidecar is NonNullable<NonNullable<ReaderAskUiMessageDto["article_rag"]>> {
-  if (!sidecar) return false;
-  if (sidecar.status !== "available") return false;
-  if (sidecar.should_attach !== true) return false;
-  return Array.isArray(sidecar.citations) && sidecar.citations.length > 0;
-}
-
-/**
  * Normalize thread-detail / thread-list messages into UI state.
  *
- * The backend `GET /reader-ask/threads/{id}` returns the raw `article_rag`
- * sidecar on each assistant message — that shape contains debug-only
- * fields (`failure_code`, `retryable`, `fallback_allowed`,
- * `source_pack_hash`, `query_sha256`) which MUST NOT enter React state
- * unfiltered. Running every loaded message through `mapAskArticleRagSidecar`
- * guarantees that the field on `ReaderAskUiMessageDto.article_rag` is
- * always the UI-safe projection, regardless of whether the message
- * arrived via SSE `message.completed`, thread-detail fetch, or reset.
+ * Reader Record Ask v2 thread detail is the sole history input. This mapper
+ * validates public answer blocks, citations, web-search summary, and
+ * learner-reasoning fields, then clears every legacy analysis/article-RAG/
+ * action/supplement projection before render.
  *
- * Reading Record Agentic history (execution_version =
- * reader_record_ask_agentic_v1) is handled here as well: validated
- * `agentic_evidence` is copied into UI state, legacy `article_rag` is
- * forced null, and terminal reloads keep the backend status without
- * inventing answers or firing stream-only onError side effects.
+ * Markerless and agentic-v1 assistant history is rejected here; there is no
+ * second history lane or legacy fallback in the Reader web client.
  *
  * The SSE merge path already calls the mapper inline; this helper covers
  * the cold-load / reset paths that bypass streaming. The mapper is
@@ -2373,55 +1719,36 @@ function hasRenderableArticleRagCitations(
 function normalizeReaderAskMessages(
   messages: ReaderAskMessageDto[] | ReaderAskUiMessageDto[],
 ): ReaderAskUiMessageDto[] {
-  return messages.map((message) => {
+  return messages.flatMap((message) => {
     const uiState = message as Partial<ReaderAskMessageUiStateDto>;
-    const isAgenticHistory =
+    const isAssistantMessage = message.role === "assistant";
+    const isCanonicalV2Assistant =
+      isAssistantMessage &&
       message.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION;
-
-    if (!isAgenticHistory) {
-      // Legacy RR / Analysis Ask: preserve article_rag normalization only.
-      // Missing agentic fields (response_model_exclude_none) must not be
-      // treated as agentic.
-      return {
-        ...message,
-        article_rag: mapAskArticleRagSidecar(
-          (uiState.article_rag ?? null) as Parameters<typeof mapAskArticleRagSidecar>[0],
-        ),
-        // Clear any accidental agentic UI state from a prior session.
-        agentic_evidence: null,
-        agentic_evidence_scope: null,
-        // Legacy never carries a web-search summary; clear to prevent a stale
-        // summary leaking in from a prior agentic session on the same message id.
-        agentic_web_search: null,
-        // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
-        // preview. Only the canonical `content_md` is persisted server-side.
-        provisional_content_md: null,
-        // ASK-COT — the process snapshot is in-memory only; cold history
-        // can never carry it (defensive: the server never sends it).
-        agentic_process_snapshot: null,
-        context_compaction: null,
-      } as ReaderAskUiMessageDto;
+    // Reading Record v2 history: fail closed on the execution marker before
+    // mapping any assistant content. Markerless, v1, and forged assistant
+    // rows are not a second history lane and must not render.
+    if (isAssistantMessage && !isCanonicalV2Assistant) {
+      return [];
     }
-
-    // Agentic history: fail closed on evidence — never keep raw invalid payload.
     // Public v2 never hydrates raw agentic evidence / handles into UI state.
     const agenticEvidence = null;
-    const agenticAnswerBlocks = isReaderAskAgenticAnswerBlockList(
+    const agenticAnswerBlocks = isCanonicalV2Assistant && isReaderAskAgenticAnswerBlockList(
       message.agentic_answer_blocks,
     )
       ? message.agentic_answer_blocks
       : null;
-    const agenticCitations = isReaderAskAgenticCitationList(message.agentic_citations)
+    const agenticCitations = isCanonicalV2Assistant && isReaderAskAgenticCitationList(message.agentic_citations)
       ? message.agentic_citations
       : null;
     // Validate the web-search summary with the same guard as the hot SSE path.
     // Malformed summaries must be coerced to null rather than half-accepted.
-    const agenticWebSearch = isReaderAskWebSearchSummary(
+    const agenticWebSearch = isCanonicalV2Assistant && isReaderAskWebSearchSummary(
       uiState.agentic_web_search,
     )
       ? (uiState.agentic_web_search ?? null)
       : null;
-    const finalStatus = isReaderAskAgenticFinalStatus(message.final_status)
+    const finalStatus = isAssistantMessage && isReaderAskAgenticFinalStatus(message.final_status)
       ? message.final_status
       : null;
 
@@ -2441,7 +1768,9 @@ function normalizeReaderAskMessages(
       ...message,
       // Backend already projected content_md / status for completed & terminal.
       // Never invent answers for terminals; keep content_md as returned.
-      execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
+      // The execution marker belongs to the assistant turn. User messages
+      // remain ordinary chat entries even though the thread is v2-only.
+      execution_version: isAssistantMessage ? message.execution_version : null,
       final_status: finalStatus,
       // Public v2: never hydrate raw evidence / scope identity into browser state.
       agentic_evidence: agenticEvidence,
@@ -2449,24 +1778,42 @@ function normalizeReaderAskMessages(
       agentic_answer_blocks: finalAnswerBlocks,
       agentic_citations: finalCitations,
       agentic_web_search: finalWebSearch,
+      // Article-RAG is not a v2 browser surface. Drop any stale persisted
+      // sidecar instead of allowing it to survive through object spread.
+      article_rag: null,
       // Public v2 never hydrates legacy provider reasoning. Learner summary
       // is restored only when the backend policy-gated field is present.
       reasoning_md: null,
       reasoning_status: null,
       reasoning_truncated: null,
       learner_reasoning_text:
+        isAssistantMessage &&
         typeof message.learner_reasoning_text === "string" &&
         message.learner_reasoning_text.trim()
           ? message.learner_reasoning_text.trim()
           : null,
-      learner_reasoning_status: message.learner_reasoning_text
+      learner_reasoning_status: isAssistantMessage && message.learner_reasoning_text
         ? "completed"
         : null,
-      learner_reasoning_stage: message.learner_reasoning_stage ?? null,
-      // Agentic path must not carry legacy article_rag sidecar.
-      article_rag: null,
+      learner_reasoning_stage: isAssistantMessage
+        ? message.learner_reasoning_stage ?? null
+        : null,
       // Never surface agentic items through the legacy evidence channel.
+      citations: [],
+      action_proposals: [],
+      tool_trace: [],
       evidence: [],
+      trace_summary: null,
+      disambiguation: null,
+      external_asset_disambiguation: null,
+      response_cards: [],
+      resolved_context: null,
+      context_plan: null,
+      resolved_context_input: null,
+      run_info: null,
+      supplement_candidates: [],
+      persisted_supplements: [],
+      follow_up_suggestions: [],
       // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
       // preview. Only the canonical `content_md` is persisted server-side.
       provisional_content_md: null,
@@ -2482,460 +1829,19 @@ function normalizeReaderAskMessages(
 export { normalizeReaderAskMessages };
 
 function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBlock[] {
-  const blocks: AskPanelBlock[] = [];
-
-  const responseCards = message.response_cards ?? [];
-  if (submissionModeOf(message) === "quick_action" && responseCards.length > 0) {
-    blocks.push({ kind: "response_cards" });
-  }
-  blocks.push({ kind: "answer" });
-
-  if (responseCards.length > 0 && !(submissionModeOf(message) === "quick_action")) {
-    blocks.push({ kind: "response_cards" });
-  }
-  if (
-    SHOW_ASK_DEBUG_DISCLOSURES &&
-    (message.context_plan ||
-      message.resolved_context_input ||
-      (message.evidence ?? []).length > 0 ||
-      message.trace_summary)
-  ) {
-    blocks.push({ kind: "context_summary" });
-  }
-  if (message.disambiguation?.required) {
-    blocks.push({ kind: "disambiguation" });
-  }
-  if (message.external_asset_disambiguation?.required) {
-    blocks.push({ kind: "external_asset_disambiguation" });
-  }
-  if ((message.action_proposals ?? []).length > 0) {
-    blocks.push({ kind: "action_proposals" });
-  }
-  if ((message.follow_up_suggestions ?? []).length > 0) {
-    blocks.push({ kind: "follow_up_suggestions" });
-  }
-  // Article RAG sidecar citations render before ordinary citations so they
-  // stay anchored to the answer body. The block only fires when the
-  // normalized sidecar is `available`, `should_attach === true`, and at
-  // least one citation was retained by `mapAskArticleRagSidecar`. All
-  // other statuses (stale_due_to_repair, disabled, composer_rejected,
-  // not_indexed_or_unavailable, empty, unknown) silently fall through.
-  if (hasRenderableArticleRagCitations(message.article_rag)) {
-    blocks.push({ kind: "article_rag_citations" });
-  }
-  // Article citations render inline via answer blocks — no end-of-answer Sources list.
-  if ((message.citations ?? []).length > 0) {
-    blocks.push({ kind: "citations" });
-  }
-  if ((message.tool_trace ?? []).length > 0 && message.status !== "streaming") {
-    blocks.push({ kind: "tool_trace" });
-  }
-  if (
-    pendingSupplementCandidates(message).length > 0 ||
-    (message.persisted_supplements ?? []).some((item) => item.lifecycle_status === "persisted")
-  ) {
-    blocks.push({ kind: "supplement_candidates" });
-  }
-
-  return blocks;
+  // Reader Record Ask v2 has one assistant disclosure owner: the answer
+  // block, which owns learner_reasoning, ChainOfThought, canonical citations,
+  // and the typed web-search sources. Legacy action, context, evidence,
+  // reasoning, supplement, and follow-up blocks have no render lane.
+  void message;
+  return [{ kind: "answer" }];
 }
 
-function contextPlanSummary(plan: ReaderAskContextPlanDto) {
-  return [
-    plan.entry_action,
-    plan.used_article_overview ? "文章概览" : null,
-    plan.used_record_context ? "正文上下文" : null,
-    plan.used_dictionary ? "词典" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
 
-function SupplementCandidateTray({
-  candidates,
-  persistedSupplements,
-  deletingSupplementId,
-  notice,
-  onDeletePersistedSupplement,
-}: {
-  candidates: ReaderAskSupplementCandidateDto[];
-  persistedSupplements: ReaderAskPersistedSupplementDto[];
-  deletingSupplementId: string | null;
-  notice: string | null;
-  onDeletePersistedSupplement: (supplementId: string) => void;
-}) {
-  if (candidates.length === 0 && persistedSupplements.length === 0 && !notice) {
-    return null;
-  }
 
-  if (candidates.length === 0 && persistedSupplements.length === 0 && notice) {
-    return (
-      <SystemMessage
-        fill
-        variant="action"
-        className="rounded-[18px] border-none bg-muted/45 text-[12px] text-muted-foreground shadow-none"
-      >
-        {notice}
-      </SystemMessage>
-    );
-  }
 
-  return (
-    <Plan
-      defaultOpen
-      className="rounded-[20px] border border-border/70 bg-[color:var(--reader-entry-surface)] py-4 shadow-none backdrop-blur-sm"
-    >
-      <PlanHeader className="gap-3 px-4 pb-3">
-        <div className="space-y-1">
-          <PlanTitle className="text-[0.95rem] text-ink">补充内容</PlanTitle>
-          <PlanDescription className="text-[12px] leading-5">
-            {candidates.length > 0 ? "可写入当前页" : "已写入当前页"}
-          </PlanDescription>
-        </div>
-        <PlanTrigger aria-label="补充内容" />
-      </PlanHeader>
-      <PlanContent className="space-y-3 px-4">
-        {notice ? (
-          <SystemMessage
-            fill
-            variant="action"
-            className="rounded-[18px] border-none bg-muted/45 text-[12px] text-muted-foreground shadow-none"
-          >
-            {notice}
-          </SystemMessage>
-        ) : null}
-      {candidates.length > 0 ? (
-        <div className="space-y-2.5">
-          <p className="px-0.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">候选补充</p>
-          <Attachments variant="list" className="gap-2.5">
-            {candidates.map((candidate) => (
-              <Attachment
-                key={candidate.candidate_id}
-                data={sourceDocumentPart(candidate.candidate_id, candidate.title)}
-                className="items-start rounded-[16px] border border-border/65 bg-background/72 px-3 py-3 shadow-none hover:bg-background/80"
-              >
-                <AttachmentPreview
-                  className="size-10 rounded-[12px] bg-muted/70"
-                  fallbackIcon={<Sparkles className="h-4 w-4 text-muted-foreground" />}
-                />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <AttachmentInfo className="text-[13px] font-medium text-ink" />
-                  <p className="text-[12px] leading-6 text-muted-foreground">{candidate.content}</p>
-                </div>
-              </Attachment>
-            ))}
-          </Attachments>
-        </div>
-      ) : null}
-      {persistedSupplements.length > 0 ? (
-        <div className="space-y-2.5">
-          <p className="px-0.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">已写入当前页</p>
-          <Attachments variant="list" className="gap-2.5">
-          {persistedSupplements.map((item) => (
-            <Attachment
-              key={item.supplement_id}
-              data={sourceDocumentPart(item.supplement_id, item.title)}
-              className="items-start rounded-[16px] border border-border/65 bg-background/72 px-3 py-3 shadow-none hover:bg-background/80"
-            >
-              <AttachmentPreview
-                className="size-10 rounded-[12px] bg-muted/70"
-                fallbackIcon={<FileText className="h-4 w-4 text-muted-foreground" />}
-              />
-              <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <AttachmentInfo className="text-[13px] font-medium text-ink" />
-                  <p className="mt-1 text-[12px] leading-6 text-muted-foreground">{item.content}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {item.record_title || "当前文章"} · 句子 {item.sentence_id}
-                  </p>
-                </div>
-                <IconButton
-                  aria-label="删除补充"
-                  className="mt-0.5 shrink-0"
-                  disabled={deletingSupplementId === item.supplement_id}
-                  onClick={() => onDeletePersistedSupplement(item.supplement_id)}
-                  size="sm"
-                  variant="quiet"
-                >
-                  {deletingSupplementId === item.supplement_id ? (
-                    <LoaderCircle className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <X className="h-3 w-3" />
-                  )}
-                </IconButton>
-              </div>
-            </Attachment>
-          ))}
-          </Attachments>
-        </div>
-      ) : null}
-      </PlanContent>
-    </Plan>
-  );
-}
 
-function ContextSummaryDisclosure({
-  summary,
-  contextInput,
-}: {
-  summary?: ReaderAskResolvedContextSummaryDto | null;
-  contextInput?: ReaderAskResolvedContextInputDto | null;
-}) {
-  if (!summary && !contextInput) {
-    return null;
-  }
 
-  const chips = contextSummaryChips(summary, contextInput);
-  const currentRecordContext = contextInput?.current_record_context;
-  const externalRecordContexts = contextInput?.external_record_contexts ?? [];
-  const externalAssetContexts = contextInput?.external_asset_contexts ?? [];
-
-  return (
-    <Plan>
-      <PlanHeader>
-        <div className="space-y-1">
-          <PlanTitle>依据与上下文</PlanTitle>
-          <PlanDescription>{chips.join(" · ")}</PlanDescription>
-        </div>
-        <PlanTrigger aria-label="依据与上下文" />
-      </PlanHeader>
-      <PlanContent className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">当前文章</p>
-          <Attachments variant="inline" className="max-w-full">
-            {chips
-              .filter((chip) => !chip.startsWith("外部文章") && !chip.startsWith("外部资产"))
-              .map((chip) => (
-                <Attachment
-                  key={chip}
-                  data={sourceDocumentPart(`context-chip:${chip}`, chip)}
-                >
-                  <AttachmentPreview fallbackIcon={<GitBranch className="h-3 w-3 text-muted-foreground" />} />
-                  <AttachmentInfo className="text-xs" />
-                </Attachment>
-              ))}
-            {currentRecordContext?.record_title ? (
-              <Attachment
-                data={sourceDocumentPart(
-                  `current-record:${currentRecordContext.record_title}`,
-                  currentRecordContext.record_title,
-                  "application/vnd.claread.record",
-                )}
-              >
-                <AttachmentPreview fallbackIcon={<FileText className="h-3 w-3 text-muted-foreground" />} />
-                <AttachmentInfo className="text-xs" />
-              </Attachment>
-            ) : null}
-          </Attachments>
-          {currentRecordContext?.article_overview || currentRecordContext?.article_overview_status ? (
-            <div className="space-y-2">
-              <Attachments variant="inline" className="max-w-full">
-                <Attachment
-                  data={sourceDocumentPart(
-                    "current-overview-status",
-                    overviewStatusLabel(currentRecordContext.article_overview_status) || "概览状态未知",
-                  )}
-                >
-                  <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-                  <AttachmentInfo className="text-xs" />
-                </Attachment>
-                {currentRecordContext.article_overview_source ? (
-                  <Attachment
-                    data={sourceDocumentPart(
-                      "current-overview-source",
-                      overviewSourceLabel(currentRecordContext.article_overview_source) || currentRecordContext.article_overview_source,
-                    )}
-                  >
-                    <AttachmentPreview fallbackIcon={<Quote className="h-3 w-3 text-muted-foreground" />} />
-                    <AttachmentInfo className="text-xs" />
-                  </Attachment>
-                ) : null}
-                {currentRecordContext.article_overview_confidence ? (
-                  <Attachment
-                    data={sourceDocumentPart(
-                      "current-overview-confidence",
-                      `置信度 ${currentRecordContext.article_overview_confidence}`,
-                    )}
-                  >
-                    <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-                    <AttachmentInfo className="text-xs" />
-                  </Attachment>
-                ) : null}
-              </Attachments>
-              {currentRecordContext.article_overview ? (
-                <p className="text-[11px] leading-5 text-muted-foreground">{currentRecordContext.article_overview}</p>
-              ) : null}
-            </div>
-          ) : null}
-          {currentRecordContext?.record_insights.length ? (
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              已并入 {currentRecordContext.record_insights.length} 条当前文章的稳定解析。
-            </p>
-          ) : null}
-        </div>
-        {externalRecordContexts.length > 0 ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">外部文章</p>
-            <Attachments variant="list" className="w-full gap-2">
-              {externalRecordContexts.map((item) => (
-                <Attachment
-                  key={item.record_id}
-                  data={sourceDocumentPart(
-                    `external-record:${item.record_id}`,
-                    item.record_title || item.record_id,
-                    "application/vnd.claread.record",
-                  )}
-                  className="items-start"
-                >
-                  <AttachmentPreview fallbackIcon={<FileText className="h-4 w-4 text-muted-foreground" />} />
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <AttachmentInfo className="text-xs font-medium text-ink-soft" />
-                    <p className="text-[11px] leading-5 text-muted-foreground">
-                      {item.article_overview
-                        ? "已并入文章概览。"
-                        : item.record_insights.length > 0
-                          ? "已并入记录级稳定解析资产。"
-                          : "已定位到文章，但当前没有可用概览。"}
-                    </p>
-                    {item.article_overview ? (
-                      <p className="line-clamp-3 text-[11px] leading-5 text-muted-foreground">{item.article_overview}</p>
-                    ) : null}
-                    {item.record_insights.length > 0 ? (
-                      <Attachments variant="inline" className="max-w-full">
-                        {item.record_insights.slice(0, 2).map((insight) => (
-                          <Attachment
-                            key={insight}
-                            data={sourceDocumentPart(`record-insight:${item.record_id}:${insight}`, insight)}
-                          >
-                            <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-                            <AttachmentInfo className="text-xs" />
-                          </Attachment>
-                        ))}
-                      </Attachments>
-                    ) : null}
-                  </div>
-                </Attachment>
-              ))}
-            </Attachments>
-          </div>
-        ) : null}
-        {externalAssetContexts.length > 0 ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">外部资产</p>
-            <Attachments variant="list" className="w-full gap-2">
-              {externalAssetContexts.map((item) => (
-                <Attachment
-                  key={`${item.record_id}:${item.asset_type}:${item.asset_id}`}
-                  data={sourceDocumentPart(
-                    `external-asset:${item.record_id}:${item.asset_id}`,
-                    item.asset_title || item.asset_id,
-                  )}
-                  className="items-start"
-                >
-                  <AttachmentPreview fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />} />
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <AttachmentInfo className="text-xs font-medium text-ink-soft" />
-                    <p className="text-[11px] text-subtle">
-                      {(item.record_title || item.record_id)} · {item.asset_type === "supplement" ? "AI 补充" : "稳定分析"}
-                    </p>
-                    {item.content_summary ? (
-                      <p className="text-[11px] leading-5 text-muted-foreground">{item.content_summary}</p>
-                    ) : null}
-                    {!item.content_summary && item.content_md ? (
-                      <p className="line-clamp-3 text-[11px] leading-5 text-muted-foreground">{item.content_md}</p>
-                    ) : null}
-                  </div>
-                </Attachment>
-              ))}
-            </Attachments>
-          </div>
-        ) : null}
-      </PlanContent>
-    </Plan>
-  );
-}
-
-function EvidenceDisclosure({
-  evidence,
-}: {
-  evidence: ReaderAskEvidenceItemDto[];
-}) {
-  if (evidence.length === 0) {
-    return null;
-  }
-
-  return (
-    <Plan className="rounded-[20px] border border-border/70 bg-[color:var(--reader-entry-surface)] py-4 shadow-none backdrop-blur-sm">
-      <PlanHeader className="gap-3 px-4 pb-3">
-        <div className="space-y-1">
-          <PlanTitle className="text-[0.95rem] text-ink">证据</PlanTitle>
-          <PlanDescription className="text-[12px] leading-5">{`${evidence.length} 条显式依据`}</PlanDescription>
-        </div>
-        <PlanTrigger aria-label="证据" />
-      </PlanHeader>
-      <PlanContent className="px-4">
-        <Attachments variant="list" className="w-full gap-2.5">
-          {evidence.map((item, index) => (
-            <Attachment
-              key={`${item.kind}-${item.record_id ?? "local"}-${item.target_key ?? index}`}
-              data={sourceDocumentPart(
-                `evidence:${item.kind}:${item.record_id ?? "local"}:${item.target_key ?? index}`,
-                item.label,
-              )}
-              className="items-start rounded-[16px] border border-border/65 bg-background/68 px-3 py-3 shadow-none hover:bg-background/76"
-            >
-              <AttachmentPreview
-                className="size-10 rounded-[12px] bg-muted/70"
-                fallbackIcon={<Quote className="h-4 w-4 text-muted-foreground" />}
-              />
-              <div className="min-w-0 flex-1 space-y-1">
-                <AttachmentInfo className="text-[13px] font-medium text-ink-soft" />
-                <Attachments variant="inline" className="max-w-full gap-1.5">
-                  <Attachment
-                    data={sourceDocumentPart(
-                      `evidence-scope:${index}`,
-                      item.scope === "external_record" ? "外部文章" : "当前文章",
-                    )}
-                    className="border-border/60 bg-background/84 text-[11px]"
-                  >
-                    <AttachmentPreview fallbackIcon={<GitBranch className="h-3 w-3 text-muted-foreground" />} />
-                    <AttachmentInfo className="text-xs" />
-                  </Attachment>
-                  <Attachment
-                    data={sourceDocumentPart(
-                      `evidence-kind:${index}`,
-                      item.kind === "attachment"
-                        ? "显式带入"
-                        : item.kind === "citation"
-                          ? "回答引用"
-                          : item.kind === "resolved_reference"
-                            ? "历史文章命中"
-                            : item.kind === "supplement_candidate"
-                              ? "补充候选"
-                            : item.kind === "clarification"
-                              ? "需要澄清"
-                              : "候选项",
-                    )}
-                    className="border-border/60 bg-background/84 text-[11px]"
-                  >
-                    <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-                    <AttachmentInfo className="text-xs" />
-                  </Attachment>
-                </Attachments>
-                {item.detail ? <p className="text-[12px] leading-6 text-muted-foreground">{item.detail}</p> : null}
-                {item.record_title || item.source_article_title ? (
-                  <p className="text-[11px] text-subtle">
-                    {[item.record_title || item.source_article_title].filter(Boolean).join(" · ")}
-                  </p>
-                ) : null}
-              </div>
-            </Attachment>
-          ))}
-        </Attachments>
-      </PlanContent>
-    </Plan>
-  );
-}
 
 /**
  * Safe Chinese feedback for legacy Reader-owned source navigation.
@@ -3065,526 +1971,19 @@ function AgenticAnswerBlocks({
   );
 }
 
-function clarificationHint(
-  traceSummary?: ReaderAskTraceSummaryDto | null,
-  evidence: ReaderAskEvidenceItemDto[] = [],
-) {
-  if (!traceSummary || traceSummary.planner_mode !== "needs_local_clarification") {
-    return null;
-  }
-  const clarification = evidence.find((item) => item.kind === "clarification");
-  if (traceSummary.reference_resolution_status === "ambiguous") {
-    return clarification?.detail || "当前引用没有唯一命中，请补充更完整的文章标题。";
-  }
-  if (traceSummary.reference_resolution_status === "not_found") {
-    return clarification?.detail || "当前没有命中可并入的历史文章，请补充更准确的标题。";
-  }
-  return "当前问题还缺少可定位锚点。先选中一句正文或加入相关解析对象，再继续问。";
-}
 
-function formatDisambiguationUpdatedAt(value?: string | null) {
-  if (!value) {
-    return "最近更新";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "最近更新";
-  }
-  return `更新于 ${date.toLocaleDateString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-  })}`;
-}
 
-function DisambiguationCards({
-  disambiguation,
-  onSelectCandidate,
-}: {
-  disambiguation?: ReaderAskDisambiguationDto | null;
-  onSelectCandidate: (candidate: ReaderAskContextRecordItemDto) => void;
-}) {
-  if (!disambiguation?.required || disambiguation.candidates.length === 0) {
-    return null;
-  }
 
-  return (
-    <Plan defaultOpen>
-      <PlanHeader>
-        <div className="space-y-1">
-          <PlanTitle>候选文章</PlanTitle>
-          <PlanDescription>
-            {disambiguation.reason || "当前引用命中了多个候选，请明确指定要并入哪篇文章。"}
-          </PlanDescription>
-        </div>
-        <PlanTrigger />
-      </PlanHeader>
-      <PlanContent>
-        <Attachments variant="list" className="w-full gap-2">
-          {disambiguation.candidates.map((candidate, index) => (
-            <Attachment
-              key={`${candidate.record_id}:${index}`}
-              data={sourceDocumentPart(candidate.record_id, candidate.title || candidate.record_id)}
-            >
-              <AttachmentPreview />
-              <AttachmentInfo
-                className="text-xs"
-                title={`我的文章 · ${formatDisambiguationUpdatedAt(candidate.updated_at)}`}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onSelectCandidate(candidate)}
-              >
-                加入当前讨论
-              </Button>
-            </Attachment>
-          ))}
-        </Attachments>
-      </PlanContent>
-    </Plan>
-  );
-}
 
-function AssetDisambiguationCards({
-  assetDisambiguation,
-  onSelectCandidate,
-}: {
-  assetDisambiguation?: ReaderAskAssetDisambiguationDto | null;
-  onSelectCandidate: (candidate: ReaderAskAssetDisambiguationCandidateDto, assetDisambiguation: ReaderAskAssetDisambiguationDto) => void;
-}) {
-  if (!assetDisambiguation?.required || assetDisambiguation.candidates.length === 0) {
-    return null;
-  }
 
-  return (
-    <Plan defaultOpen>
-      <PlanHeader>
-        <div className="space-y-1">
-          <PlanTitle>候选资产</PlanTitle>
-          <PlanDescription>
-            {assetDisambiguation.reason || "当前外部文章里命中了多个稳定资产，请先指定要并入哪一个。"}
-          </PlanDescription>
-        </div>
-        <PlanTrigger />
-      </PlanHeader>
-      <PlanContent>
-        <Attachments variant="list" className="w-full gap-2">
-          {assetDisambiguation.candidates.map((candidate, index) => (
-            <Attachment
-              key={`${candidate.asset_type}:${candidate.asset_id}:${index}`}
-              data={sourceDocumentPart(candidate.asset_id, candidate.title || candidate.asset_id)}
-            >
-              <AttachmentPreview />
-              <AttachmentInfo
-                className="text-xs"
-                title={`${assetDisambiguation.record_title || "我的文章"} · ${
-                  candidate.asset_type === "supplement" ? "AI 补充" : "稳定分析"
-                }`}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onSelectCandidate(candidate, assetDisambiguation)}
-              >
-                加入当前讨论
-              </Button>
-            </Attachment>
-          ))}
-        </Attachments>
-      </PlanContent>
-    </Plan>
-  );
-}
 
-function TraceSummaryDisclosure({
-  traceSummary,
-}: {
-  traceSummary?: ReaderAskTraceSummaryDto | null;
-}) {
-  if (!traceSummary) {
-    return null;
-  }
 
-  const summary = [
-    plannerModeLabel(traceSummary.planner_mode),
-    workingSetModeLabel(traceSummary.working_set_mode),
-    traceSummary.cross_record_context_used ? "已并入跨文章上下文" : "仅使用当前文章",
-    traceSummary.used_external_asset_context ? "并入外部资产" : null,
-  ].filter(Boolean).join(" · ");
 
-  return (
-    <Plan>
-      <PlanHeader>
-        <div className="space-y-1">
-          <PlanTitle>运行轨迹</PlanTitle>
-          <PlanDescription>{summary}</PlanDescription>
-        </div>
-        <PlanTrigger aria-label="运行轨迹" />
-      </PlanHeader>
-      <PlanContent className="space-y-3">
-        <Attachments variant="inline" className="max-w-full">
-          <Attachment
-            data={sourceDocumentPart("trace-planner-mode", plannerModeLabel(traceSummary.planner_mode))}
-          >
-            <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-            <AttachmentInfo className="text-xs" />
-          </Attachment>
-          <Attachment
-            data={sourceDocumentPart("trace-working-set-mode", workingSetModeLabel(traceSummary.working_set_mode))}
-          >
-            <AttachmentPreview fallbackIcon={<GitBranch className="h-3 w-3 text-muted-foreground" />} />
-            <AttachmentInfo className="text-xs" />
-          </Attachment>
-          {traceSummary.reference_resolution_status !== "not_needed" ? (
-            <Attachment
-              data={sourceDocumentPart(
-                "trace-reference-resolution",
-                `引用解析 · ${traceSummary.reference_resolution_status}`,
-              )}
-            >
-              <AttachmentPreview fallbackIcon={<Quote className="h-3 w-3 text-muted-foreground" />} />
-              <AttachmentInfo className="text-xs" />
-            </Attachment>
-          ) : null}
-        </Attachments>
-        {traceSummary.notes.length > 0 ? (
-          <div className="space-y-1.5 text-xs text-muted-foreground">
-            {traceSummary.notes.map((note, index) => (
-              <p key={index} className="leading-5">
-                {note}
-              </p>
-            ))}
-          </div>
-        ) : null}
-        {traceSummary.tool_steps.length > 0 ? (
-          <Attachments variant="inline" className="max-w-full">
-            {traceSummary.tool_steps.map((step) => (
-              <Attachment
-                key={step}
-                data={sourceDocumentPart(`trace-tool-step:${step}`, toolLabel(step))}
-              >
-                <AttachmentPreview fallbackIcon={<Search className="h-3 w-3 text-muted-foreground" />} />
-                <AttachmentInfo className="text-xs" />
-              </Attachment>
-            ))}
-          </Attachments>
-        ) : null}
-      </PlanContent>
-    </Plan>
-  );
-}
 
-function ResponseCards({ cards, onAnnotationFeedback, analysisRecordId }: { cards: ReaderAskResponseCardDto[]; onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void; analysisRecordId?: string }) {
-  if (cards.length === 0) {
-    return null;
-  }
 
-  return (
-    <div className="mt-3 space-y-3">
-      {cards.map((card, index) => {
-        if (card.card_type === "grammar_note_card") {
-          const entryId = `ask-grammar-${index}`;
-          const focusHint =
-            card.analysis_scope === "focus_span" && card.focus_text.trim() && card.focus_text.trim() !== card.sentence_text.trim()
-              ? `聚焦片段 · ${card.focus_text}`
-              : "锚定本句";
-          return (
-            <Plan key={`${card.card_type}-${index}`} defaultOpen>
-              <PlanHeader>
-                <div className="space-y-1">
-                  <PlanTitle>{card.label || "句子解析"}</PlanTitle>
-                  <PlanDescription>{focusHint}</PlanDescription>
-                </div>
-                <PlanTrigger aria-label={card.label || "句子解析"} />
-              </PlanHeader>
-              <PlanContent className="space-y-3">
-                {card.sentence_text ? (
-                  <p className="text-xs leading-6 text-muted-foreground">{card.sentence_text}</p>
-                ) : null}
-                <MessageResponse className="ask-message-response text-sm leading-7">
-                  {card.note_zh}
-                </MessageResponse>
-                <MessageActions>
-                  <MessageAction
-                    label="标注有帮助"
-                    title="标注有帮助"
-                    onClick={() => {
-                      if (analysisRecordId) {
-                        fetch("/api/web/feedback", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            feedbackScope: "annotation",
-                            sentiment: "positive",
-                            feedbackType: "helpful",
-                            targetId: entryId,
-                            analysisRecordId,
-                            annotationType: "grammar_note",
-                            clientPlatform: "web",
-                            clientSurface: "reader",
-                            entryPoint: "ai_workspace_annotation_positive",
-                            contextSummary: card.label || "AI 助手生成标注",
-                            contextJson: {
-                              entry_id: entryId,
-                              entry_type: "grammar_note",
-                            },
-                          }),
-                        }).catch(() => {});
-                      }
-                    }}
-                  >
-                    <ThumbsUp className="h-3.5 w-3.5" />
-                  </MessageAction>
-                  <MessageAction
-                    label="标注有问题"
-                    title="标注有问题"
-                    onClick={() =>
-                      onAnnotationFeedback?.({
-                        entryType: "grammar_note",
-                        entryId,
-                      })
-                    }
-                  >
-                    <ThumbsDown className="h-3.5 w-3.5" />
-                  </MessageAction>
-                </MessageActions>
-                {card.spans.length > 0 ? (
-                  <Attachments variant="inline" className="max-w-full">
-                    {card.spans.map((span, spanIndex) => (
-                      <Attachment
-                        key={`${span.text}-${spanIndex}`}
-                        data={sourceDocumentPart(
-                          `${card.card_type}:${index}:${spanIndex}`,
-                          `${span.role ? `${span.role} · ` : ""}${span.text}`,
-                        )}
-                      >
-                        <AttachmentPreview />
-                        <AttachmentInfo className="text-xs" />
-                      </Attachment>
-                    ))}
-                  </Attachments>
-                ) : null}
-              </PlanContent>
-            </Plan>
-          );
-        }
 
-        if (card.card_type === "sentence_breakdown_card") {
-          return (
-            <Plan key={`${card.card_type}-${index}`} defaultOpen>
-              <PlanHeader>
-                <div className="space-y-1">
-                  <PlanTitle>拆句卡</PlanTitle>
-                  <PlanDescription>{card.sentence_text}</PlanDescription>
-                </div>
-                <PlanTrigger />
-              </PlanHeader>
-              <PlanContent className="space-y-3">
-                {card.translation_zh ? (
-                  <p className="text-xs leading-5 text-muted-foreground">{card.translation_zh}</p>
-                ) : null}
-                {card.main_clause ? (
-                  <p className="text-xs font-medium text-ink-soft">
-                    主线：
-                    <span className="ml-1 text-ink">{card.main_clause}</span>
-                  </p>
-                ) : null}
-                {card.parts.length > 0 ? (
-                  <div className="space-y-2">
-                    {card.parts.map((part, partIndex) => (
-                      <TaskProcessCard
-                        key={`${part.label}-${partIndex}`}
-                        title={part.label}
-                        detail={part.text}
-                      >
-                        {part.note ? <p className="text-xs text-muted-foreground">{part.note}</p> : null}
-                      </TaskProcessCard>
-                    ))}
-                  </div>
-                ) : null}
-                {card.analysis_zh ? (
-                  <p className="text-xs leading-5 text-muted-foreground">{card.analysis_zh}</p>
-                ) : null}
-              </PlanContent>
-            </Plan>
-          );
-        }
 
-        return null;
-      })}
-    </div>
-  );
-}
 
-function ToolTraceBlock({ entries }: { entries: ReaderAskToolTraceEntryDto[] }) {
-  const normalizedEntries = normalizeToolTraceEntries(entries);
-
-  if (normalizedEntries.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="space-y-2 w-full">
-      {normalizedEntries.map((entry, index) => (
-        <Tool
-          key={`${entry.tool_name}-${index}`}
-          className="mt-0 shadow-none"
-          defaultOpen={entry.status !== "completed"}
-        >
-          <ToolHeader
-            type="dynamic-tool"
-            toolName={toolLabel(entry.tool_name)}
-            state={toolTraceState(entry)}
-          />
-          <ToolContent>
-            <ToolOutput
-              output={entry.summary ?? null}
-              errorText={entry.status === "failed" ? entry.summary ?? "工具调用失败。" : undefined}
-            />
-          </ToolContent>
-        </Tool>
-      ))}
-    </div>
-  );
-}
-
-function ConfirmActionCard({
-  proposal,
-  busy,
-  onConfirm,
-  onReject,
-}: {
-  proposal: ReaderAskActionProposalDto;
-  busy: boolean;
-  onConfirm: (confirmed: boolean) => void;
-  onReject: (confirmed: boolean) => void;
-}) {
-  if (proposal.status !== "pending") {
-    const respondedCopy =
-      proposal.status === "confirmed" ? "已确认建议动作" : "已取消建议动作";
-
-    return (
-      <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-lg border border-border/30 bg-muted/10 text-xs">
-        <span className="font-medium text-muted-foreground">{proposal.label}</span>
-        <span className="text-muted-foreground/60">{respondedCopy}</span>
-      </div>
-    );
-  }
-
-  return (
-    <Confirmation
-      className="rounded-lg border border-border/40 bg-muted/20 px-3.5 py-2.5 shadow-none"
-      approval={{ id: proposal.id }}
-      state="approval-requested"
-    >
-      <div className="flex flex-col gap-1 w-full">
-        <ConfirmationTitle className="text-xs font-semibold text-ink leading-normal">
-          {proposal.label}
-        </ConfirmationTitle>
-        {proposal.description ? (
-          <div className="text-[11px] leading-relaxed text-muted-foreground mt-0.5">{proposal.description}</div>
-        ) : null}
-      </div>
-      <ConfirmationRequest>
-        <ConfirmationActions className="gap-1.5 mt-2 self-end">
-          <Button
-            size="xs"
-            disabled={busy}
-            onClick={() => onReject(false)}
-            variant="ghost"
-            className="h-6.5 text-[11px] text-muted-foreground hover:text-foreground"
-          >
-            取消
-          </Button>
-          <Button
-            size="xs"
-            disabled={busy}
-            onClick={() => onConfirm(true)}
-            variant="default"
-            className="h-6.5 text-[11px]"
-          >
-            确认
-          </Button>
-        </ConfirmationActions>
-      </ConfirmationRequest>
-      <ConfirmationAccepted>
-        <div className="mt-2 text-[11px] text-muted-foreground/80">已确认此建议动作。</div>
-      </ConfirmationAccepted>
-      <ConfirmationRejected>
-        <div className="mt-2 text-[11px] text-muted-foreground/80">已取消此建议动作。</div>
-      </ConfirmationRejected>
-    </Confirmation>
-  );
-}
-
-function AssistantStreamingIndicator({
-  hasAnswerContent,
-  reasoningStatus,
-  compacting,
-  replanStatus,
-}: {
-  hasAnswerContent: boolean;
-  reasoningStatus: ReaderAskMessageDto["reasoning_status"];
-  compacting?: boolean;
-  replanStatus?: ReaderAskMessageUiStateDto["replan_status"];
-}) {
-  // ASK-COT: the agentic activity row moved into the turn-scoped Chain of
-  // Thought (TurnProcessDisclosure) for v2 turns. This indicator keeps the
-  // legacy lane fallbacks only (compacting / replan / legacy streaming).
-
-  const title = compacting
-    ? "正在压缩上下文"
-    : replanStatus === "replanning"
-      ? "正在补充上下文"
-      : hasAnswerContent
-        ? "正在组织回答"
-        : reasoningStatus === "streaming"
-          ? "正在思考"
-          : "正在整理问题";
-  const detail = compacting
-    ? "Claread 正在收束这轮上下文，随后继续输出答案。"
-    : replanStatus === "replanning"
-      ? "已经识别到需要补充上下文，会在补充后重新组织答案。"
-      : hasAnswerContent
-        ? "正文已经开始输出，剩余内容仍在继续生成。"
-        : reasoningStatus === "streaming"
-          ? "模型正在整理思路，随后继续输出正文。"
-          : "正在读取当前文章与附件上下文，准备本轮解释。";
-
-  if (
-    !hasAnswerContent &&
-    reasoningStatus === "streaming" &&
-    !compacting &&
-    replanStatus !== "replanning"
-  ) {
-    return null;
-  }
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="mb-1 inline-flex max-w-full items-center gap-2 rounded-md border border-hairline/70 bg-surface/40 px-2.5 py-1.5 text-[12px] leading-4 text-muted-foreground"
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lens-blue/80",
-          "motion-safe:animate-pulse",
-          "motion-reduce:animate-none",
-        )}
-      />
-      <span className="min-w-0">
-        <span className="block truncate font-medium text-ink-soft">{title}</span>
-        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-          {detail}
-        </span>
-      </span>
-    </div>
-  );
-}
 
 function AskPanelLoadingState({
   title,
@@ -3613,76 +2012,22 @@ function AskPanelLoadingState({
   );
 }
 
-function AssistantReasoningBlock({
-  reasoningMd,
-  reasoningStatus,
-  reasoningTruncated,
-}: {
-  reasoningMd: string | null | undefined;
-  reasoningStatus: ReaderAskMessageDto["reasoning_status"];
-  reasoningTruncated?: boolean | null;
-}) {
-  const hasReasoningContent = Boolean(reasoningMd?.trim());
-  const isStreaming = reasoningStatus === "streaming";
-  const isCompleted = reasoningStatus === "completed";
-  const isActive = isStreaming;
-  const shouldRender = isActive || isCompleted || hasReasoningContent;
-
-  if (!shouldRender) {
-    return null;
-  }
-
-  return (
-    <ReasoningPanel
-      reasoningMd={reasoningMd}
-      reasoningStatus={reasoningStatus}
-      reasoningTruncated={reasoningTruncated === true}
-      className={cn("mb-0.5 transition-all", isActive ? "" : "")}
-    />
-  );
-}
-
 function MessageBubble({
   item,
-  pendingActionId,
-  deletingSupplementId,
-  supplementNotice,
-  onConfirmAction,
-  onDeletePersistedSupplement,
-  onSelectDisambiguationCandidate,
-  onSelectAssetDisambiguationCandidate,
   onRetry,
   onResend,
   resolveRetryTarget,
-  onAnnotationFeedback,
-  analysisRecordId,
-  onPickFollowUpSuggestion,
   agenticActivity,
   turnNotice,
   onDismissTurnNotice,
-  isAgenticCapable,
 }: {
   item: AskPanelConversationItem;
-  pendingActionId: string | null;
-  deletingSupplementId: string | null;
-  supplementNotice: string | null;
-  onConfirmAction: (actionId: string, confirmed: boolean) => void;
-  onDeletePersistedSupplement: (supplementId: string) => void;
-  onSelectDisambiguationCandidate: (messageId: string, candidate: ReaderAskContextRecordItemDto) => void;
-  onSelectAssetDisambiguationCandidate: (
-    messageId: string,
-    candidate: ReaderAskAssetDisambiguationCandidateDto,
-    assetDisambiguation: ReaderAskAssetDisambiguationDto,
-  ) => void;
   onRetry: (messageId: string) => void;
   onResend?: (localAssistantId: string) => void;
   /** R8: pending recovery may force resend for UUID bubbles. */
   resolveRetryTarget: (
     messageId: string,
   ) => ReturnType<typeof classifyRetryTarget>;
-  onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
-  analysisRecordId?: string;
-  onPickFollowUpSuggestion?: (prompt: string) => void;
   agenticActivity?: AgenticActivityState | null;
   turnNotice?: AskSystemNotice | null;
   onDismissTurnNotice?: (messageId: string) => void;
@@ -3692,13 +2037,9 @@ function MessageBubble({
    * backend flag is on). Analysis-scope callers are the explicit legacy
    * lane and keep AssistantStreamingIndicator at T0.
    */
-  isAgenticCapable?: boolean;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
-  const clarificationText = clarificationHint(message.trace_summary, message.evidence);
-  const candidateSupplements = pendingSupplementCandidates(message);
-  const persistedSupplements = message.persisted_supplements.filter((entry) => entry.lifecycle_status === "persisted");
   // ASK-TURN-LIFECYCLE R2 — pick the visible answer text based on
   // streaming state. While streaming, the provisional preview
   // accumulated from `message.delta` is shown. Once committed
@@ -3717,28 +2058,6 @@ function MessageBubble({
   const agenticCitationItems = hasAgenticAnswerBlocks
     ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
     : [];
-  // ASK-COT — agentic v2 turns converge public activity into one turn-scoped
-  // Chain of Thought (TurnProcessDisclosure). Detection:
-  // hot settled (snapshot present), cold history (execution_version), or
-  // live v2 (streaming with an activity bound to this bubble).
-  //
-  // ASK-UX-HISTORY-COT-R2 P0-3: for agentic-capable panels (Reading Record
-  // Ask), the optimistic assistant message enters TurnProcessDisclosure at
-  // T0 — the moment the bubble is created with a bound (even idle)
-  // activity. We must NOT wait for agentic.run_started to switch from the
-  // old AssistantStreamingIndicator, or the user sees a two-line status
-  // card flash before the typed process disclosure takes over. The idle
-  // activity is still bound to this bubble (see the prop passing in the
-  // render site), so `agenticActivity != null` is the T0 signal.
-  // Analysis-scope (explicit legacy lane) keeps the old indicator at T0
-  // because `isAgenticCapable` is false there.
-  const isAgenticV2Turn =
-    message.agentic_process_snapshot != null ||
-    message.execution_version === READER_ASK_AGENTIC_EXECUTION_VERSION ||
-    (message.status === "streaming" &&
-      agenticActivity != null &&
-      (isAgenticCapable || agenticActivity.status !== "idle"));
-
   return (
     <div
       data-testid={isAssistant ? "ask-assistant-message" : "ask-user-message"}
@@ -3759,66 +2078,37 @@ function MessageBubble({
                     key={`${message.id}-${block.kind}-${index}`}
                     className="px-0.5"
                     reasoning={
-                      isAgenticV2Turn ? (
-                        <LearnerReasoningPanel
-                          text={message.learner_reasoning_text}
-                          status={
-                            message.status === "streaming"
-                              ? message.learner_reasoning_status === "streaming"
-                                ? "streaming"
-                                : message.learner_reasoning_text
-                                  ? "streaming"
-                                  : null
+                      <LearnerReasoningPanel
+                        text={message.learner_reasoning_text}
+                        status={
+                          message.status === "streaming"
+                            ? message.learner_reasoning_status === "streaming"
+                              ? "streaming"
                               : message.learner_reasoning_text
-                                ? "completed"
+                                ? "streaming"
                                 : null
-                          }
-                        />
-                      ) : (
-                        <AssistantReasoningBlock
-                          reasoningMd={message.reasoning_md}
-                          reasoningStatus={message.reasoning_status}
-                          reasoningTruncated={message.reasoning_truncated}
-                        />
-                      )
+                            : message.learner_reasoning_text
+                              ? "completed"
+                              : null
+                        }
+                      />
                     }
                     process={
-                      isAgenticV2Turn ? (
-                        <TurnProcessDisclosure
-                          activity={
-                            message.status === "streaming"
-                              ? (agenticActivity ?? null)
-                              : null
-                          }
-                          snapshot={message.agentic_process_snapshot ?? null}
-                          citations={agenticCitationItems}
-                          isStreaming={message.status === "streaming"}
-                          webSearchSummary={message.agentic_web_search ?? null}
-                          contextCompaction={message.context_compaction ?? null}
-                        />
-                      ) : (
-                        <>
-                          {message.status === "streaming" ? (
-                            <AssistantStreamingIndicator
-                              hasAnswerContent={hasAnswerContent}
-                              reasoningStatus={message.reasoning_status}
-                              compacting={message.compacting ?? false}
-                              replanStatus={message.replan_status}
-                            />
-                          ) : null}
-                          {message.status === "streaming" && message.tool_trace.length > 0 ? (
-                            <ToolTraceBlock entries={message.tool_trace} />
-                          ) : null}
-                        </>
-                      )
+                      <TurnProcessDisclosure
+                        activity={
+                          message.status === "streaming"
+                            ? (agenticActivity ?? null)
+                            : null
+                        }
+                        snapshot={message.agentic_process_snapshot ?? null}
+                        citations={agenticCitationItems}
+                        isStreaming={message.status === "streaming"}
+                        webSearchSummary={message.agentic_web_search ?? null}
+                        contextCompaction={message.context_compaction ?? null}
+                      />
                     }
                     answer={
                       <div className="space-y-2">
-                        {clarificationText ? (
-                          <SystemMessage variant="warning">
-                            {clarificationText}
-                          </SystemMessage>
-                        ) : null}
                         {hasAgenticAnswerBlocks ? (
                           <AgenticAnswerBlocks
                             blocks={message.agentic_answer_blocks ?? []}
@@ -3936,166 +2226,18 @@ function MessageBubble({
                     }
                   />
                 );
-              case "response_cards":
-                return <ResponseCards key={`${message.id}-${block.kind}-${index}`} cards={message.response_cards} onAnnotationFeedback={onAnnotationFeedback} analysisRecordId={analysisRecordId} />;
-              case "disambiguation":
-                return (
-                  <DisambiguationCards
-                    key={`${message.id}-${block.kind}-${index}`}
-                    disambiguation={message.disambiguation}
-                    onSelectCandidate={(candidate) => onSelectDisambiguationCandidate(message.id, candidate)}
-                  />
-                );
-              case "external_asset_disambiguation":
-                return (
-                  <AssetDisambiguationCards
-                    key={`${message.id}-${block.kind}-${index}`}
-                    assetDisambiguation={message.external_asset_disambiguation}
-                    onSelectCandidate={(candidate, assetDisambiguation) =>
-                      onSelectAssetDisambiguationCandidate(message.id, candidate, assetDisambiguation)
-                    }
-                  />
-                );
-              case "action_proposals":
-                return (
-                  <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
-                    {message.action_proposals.map((proposal) => (
-                      <ConfirmActionCard
-                        key={proposal.id}
-                        proposal={proposal}
-                        busy={pendingActionId === proposal.id}
-                        onConfirm={(confirmed) => onConfirmAction(proposal.id, confirmed)}
-                        onReject={(confirmed) => onConfirmAction(proposal.id, confirmed)}
-                      />
-                    ))}
-                  </div>
-                );
-              case "supplement_candidates":
-              case "persisted_supplements":
-                return (
-                  <SupplementCandidateTray
-                    key={`${message.id}-supplements`}
-                    candidates={candidateSupplements}
-                    persistedSupplements={persistedSupplements}
-                    deletingSupplementId={deletingSupplementId}
-                    notice={supplementNotice}
-                    onDeletePersistedSupplement={onDeletePersistedSupplement}
-                  />
-                );
-              case "citations":
-                return <CitationList key={`${message.id}-${block.kind}-${index}`} citations={message.citations} />;
-              case "article_rag_citations":
-                // `hasRenderableArticleRagCitations` is the render gate in
-                // `buildAssistantBlocks`; the sidecar here is guaranteed to
-                // be `available` with `should_attach === true` and at least
-                // one citation. The component also re-checks internally as a
-                // defensive double gate.
-                return message.article_rag ? (
-                  <ArticleRagCitationList
-                    key={`${message.id}-${block.kind}-${index}`}
-                    sidecar={message.article_rag}
-                  />
-                ) : null;
-              case "context_summary":
-                return (
-                  <div key={`${message.id}-${block.kind}-${index}`} className="space-y-3">
-                    <ContextSummaryDisclosure
-                      summary={message.resolved_context}
-                      contextInput={message.resolved_context_input}
-                    />
-                    {message.context_plan ? (
-                      <Plan>
-                        <PlanHeader>
-                          <div className="space-y-1">
-                            <PlanTitle>上下文策略</PlanTitle>
-                            <PlanDescription>{contextPlanSummary(message.context_plan)}</PlanDescription>
-                          </div>
-                          <PlanTrigger aria-label="上下文策略" />
-                        </PlanHeader>
-                        <PlanContent className="space-y-3 text-[11px] leading-5 text-muted-foreground">
-                          <p className="font-semibold text-ink-soft">本轮决策</p>
-                          <Attachments variant="inline" className="max-w-full">
-                            <Attachment
-                              data={sourceDocumentPart("context-plan-entry-action", message.context_plan.entry_action)}
-                            >
-                              <AttachmentPreview fallbackIcon={<Sparkles className="h-3 w-3 text-muted-foreground" />} />
-                              <AttachmentInfo className="text-xs" />
-                            </Attachment>
-                            {(message.context_plan.source_labels.length > 0
-                              ? message.context_plan.source_labels
-                              : ["当前文章"]).map((label) => (
-                              <Attachment
-                                key={label}
-                                data={sourceDocumentPart(`context-plan-source:${label}`, label)}
-                              >
-                                <AttachmentPreview fallbackIcon={<GitBranch className="h-3 w-3 text-muted-foreground" />} />
-                                <AttachmentInfo className="text-xs" />
-                              </Attachment>
-                            ))}
-                          </Attachments>
-                          <p>
-                            {message.context_plan.used_article_overview ? "已使用文章概览" : "未使用文章概览"} ·
-                            {message.context_plan.used_record_context ? " 已使用正文上下文" : " 未使用正文上下文"} ·
-                            {message.context_plan.used_dictionary ? " 已查词典" : " 未查词典"}
-                          </p>
-                        </PlanContent>
-                      </Plan>
-                    ) : null}
-                    <EvidenceDisclosure evidence={message.evidence} />
-                    <TraceSummaryDisclosure traceSummary={message.trace_summary} />
-                    <ToolTraceBlock entries={message.tool_trace} />
-                  </div>
-                );
-              case "evidence":
-              case "trace_summary":
-              case "tool_trace":
-                return (
-                  <div key={`${message.id}-${block.kind}-${index}`} className="space-y-1.5 w-full">
-                    <ToolChipRow entries={message.tool_trace} toolLabelFn={toolLabel} />
-                    <ToolTraceBlock entries={message.tool_trace} />
-                  </div>
-                );
-              case "follow_up_suggestions":
-                return (
-                  <FollowUpSuggestionChips
-                    key={`${message.id}-${block.kind}-${index}`}
-                    suggestions={message.follow_up_suggestions ?? []}
-                    onPickSuggestion={(prompt) => {
-                      onPickFollowUpSuggestion?.(prompt);
-                    }}
-                  />
-                );
               default:
                 return null;
             }
           })}
-          {supplementNotice && candidateSupplements.length === 0 && persistedSupplements.length === 0 ? (
-            <SupplementCandidateTray
-              candidates={candidateSupplements}
-              persistedSupplements={persistedSupplements}
-              deletingSupplementId={deletingSupplementId}
-              notice={supplementNotice}
-              onDeletePersistedSupplement={onDeletePersistedSupplement}
-            />
-          ) : null}
         </div>
         ) : (
           <AiMessage from={message.role} className="w-full max-w-[31rem]">
-            {submissionModeOf(message) === "quick_action" ? (
-              <MessageContent className="text-[12px] font-medium">
-                {messageOperationSummary(message)}
-              </MessageContent>
-            ) : (
-              // P1 — user message: compact tonal surface, no thick border.
-              // bg-secondary + rounded-lg from MessageContent is the right
-              // baseline; tighten padding for a quieter, more scannable
-              // rhythm against the frameless assistant answer.
-              <MessageContent className="text-[14.5px] px-3.5 py-2.5">
-                <MessageResponse className="ask-message-response whitespace-pre-wrap text-[14.5px] leading-[1.7]">
-                  {message.content_md}
-                </MessageResponse>
-              </MessageContent>
-            )}
+            <MessageContent className="text-[14.5px] px-3.5 py-2.5">
+              <MessageResponse className="ask-message-response whitespace-pre-wrap text-[14.5px] leading-[1.7]">
+                {message.content_md}
+              </MessageResponse>
+            </MessageContent>
             <div className="flex items-center justify-end gap-2 pr-1 opacity-0 transition-opacity group-hover:opacity-70">
               <span className="text-[10px] text-muted-foreground">
                 {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
@@ -4224,7 +2366,6 @@ export interface AiWorkspacePanelProps {
   surface?: AiWorkspaceSurface;
   pageIdentity: ReaderAskPageIdentity;
   recordId: string;
-  recordScope?: "analysis" | "reading_record";
   hideClosedLauncher?: boolean;
   recordTitle?: string | null;
   attachments: ReaderAskAttachment[];
@@ -4248,10 +2389,7 @@ export interface AiWorkspacePanelProps {
   hideLauncherInCompactLayout?: boolean;
   onRemoveAttachment: (attachmentKey: string) => void;
   onClearAttachments: () => void;
-  onAppendAttachments?: (attachments: ReaderAskAttachment[]) => void;
   onJumpToAttachment?: (attachment: ReaderAskAttachment) => void;
-  onActionExecuted?: (result: ReaderAskActionConfirmResponseDto["result"]) => void;
-  onSupplementDeleted?: (supplementId: string) => void | Promise<void>;
   onPendingQuickActionConsumed?: () => void;
   onActivateLiveContextSelection?: () => void;
   onComposerTextareaFocus?: () => void;
@@ -4259,8 +2397,6 @@ export interface AiWorkspacePanelProps {
   onPanelPointerDownOutsideComposer?: () => void;
   onOpenSidecar?: () => void;
   onToggle: () => void;
-  onAnnotationFeedback?: (params: { entryType: string; entryId: string }) => void;
-  analysisRecordId?: string;
   capacityDowngradeNotice?: string | null;
   onDismissCapacityDowngradeNotice?: () => void;
   /**
@@ -4294,25 +2430,19 @@ export function AiWorkspacePanel({
   surface = "sidecar",
   open,
   recordId,
-  recordScope = "analysis",
   hideClosedLauncher = false,
   recordTitle,
   hideLauncherOnMobile = false,
   hideLauncherInCompactLayout = false,
-  onAppendAttachments,
   onClearAttachments,
   onJumpToAttachment,
-  onActionExecuted,
   onActivateLiveContextSelection,
   onComposerTextareaBlur,
   onComposerTextareaFocus,
   onPanelPointerDownOutsideComposer,
   onPendingQuickActionConsumed,
-  onSupplementDeleted,
   onRemoveAttachment,
   onToggle,
-  onAnnotationFeedback,
-  analysisRecordId,
   capacityDowngradeNotice,
   onDismissCapacityDowngradeNotice,
   hasSidecarCapacity = true,
@@ -4321,18 +2451,9 @@ export function AiWorkspacePanel({
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
-  const isReadingRecordScope = recordScope === "reading_record";
-  const supportsRelatedRecordContext = !isReadingRecordScope;
-  const scopedReaderAskUrl = (pathname: string) => {
-    if (!isReadingRecordScope) {
-      return pathname;
-    }
-    const searchParams = new URLSearchParams({
-      record_id: recordId,
-      record_scope: "reading_record",
-    });
-    return `${pathname}?${searchParams.toString()}`;
-  };
+  // The Web Reader is a Reading Record surface. The legacy analysis scope is
+  // intentionally not a transport or rendering branch here.
+  const isReadingRecordScope = true;
   const launcherVisibilityClass = hideLauncherInCompactLayout
     ? "hidden 2xl:inline-flex"
     : hideLauncherOnMobile
@@ -4361,8 +2482,6 @@ export function AiWorkspacePanel({
   const [, setModelOptionsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
-  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
-  const [pendingSupplementDeleteId, setPendingSupplementDeleteId] = useState<string | null>(null);
   // ASK-UX-MOBILE R2 — turn-scoped system notices keyed by messageId. These
   // persist across new turns (do not drift to the composer) and render
   // inside the corresponding assistant turn bubble, not above the composer.
@@ -4371,14 +2490,6 @@ export function AiWorkspacePanel({
   // Renders in a dedicated banner slot between the header and the
   // conversation wrapper, never in a turn bubble or the composer.
   const [panelNotice, setPanelNotice] = useState<AskSystemNotice | null>(null);
-  const [supplementNotice, setSupplementNotice] = useState<string | null>(null);
-  const [supplementNoticeMessageId, setSupplementNoticeMessageId] = useState<string | null>(null);
-  const [contextPickerOpen, setContextPickerOpen] = useState(false);
-  const [contextSearch, setContextSearch] = useState<ContextRecordSearchState>({
-    items: [],
-    loading: false,
-    query: "",
-  });
   const hydrationRef = useRef(0);
   const initInProgressRef = useRef(false);
   const sseAbortRef = useRef<AbortController | null>(null);
@@ -4640,9 +2751,7 @@ export function AiWorkspacePanel({
 
   async function fetchThreadList() {
     const payload = await fetchJson<{ items: ReaderAskThreadSummaryDto[] }>(
-      isReadingRecordScope
-        ? `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}&record_scope=reading_record`
-        : `/api/web/reader-ask/threads?record_id=${encodeURIComponent(recordId)}`,
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads`,
       undefined,
       "Ask Claread 线程列表加载失败。",
     );
@@ -4651,26 +2760,15 @@ export function AiWorkspacePanel({
 
   async function fetchThreadDetail(threadId: string) {
     return fetchJson<ReaderAskThreadDetailDto>(
-      scopedReaderAskUrl(`/api/web/reader-ask/threads/${threadId}`),
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads/${encodeURIComponent(threadId)}`,
       undefined,
       "Ask Claread 加载失败。",
     );
   }
 
-  const fetchContextRecords = useCallback(async (query: string) => {
-    if (!supportsRelatedRecordContext) {
-      return { items: [] } satisfies ReaderAskContextRecordSearchResponseDto;
-    }
-    return fetchJson<ReaderAskContextRecordSearchResponseDto>(
-      `/api/web/reader-ask/context-records?query=${encodeURIComponent(query)}&exclude_record_id=${encodeURIComponent(recordId)}`,
-      undefined,
-      "上下文文章搜索失败。",
-    );
-  }, [recordId, supportsRelatedRecordContext]);
-
   async function fetchModelOptions() {
     return fetchJson<ReaderAskModelOptionListResponseDto>(
-      "/api/web/reader-ask/model-options",
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/model-options`,
       undefined,
       "Ask Claread 模型列表加载失败。",
     );
@@ -4678,7 +2776,7 @@ export function AiWorkspacePanel({
 
   async function createThread(title: string) {
     return fetchJson<ReaderAskThreadSummaryDto>(
-      "/api/web/reader-ask/threads",
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -4686,7 +2784,6 @@ export function AiWorkspacePanel({
           record_id: recordId,
           title,
           model: effectiveSelectedModelKey,
-          ...(isReadingRecordScope ? { record_scope: "reading_record" as const } : {}),
         }),
       },
       "Ask Claread 初始化失败。",
@@ -4698,7 +2795,6 @@ export function AiWorkspacePanel({
     const normalizedMessages = normalizeReaderAskMessages(detail.messages);
     setActiveThreadId(threadId);
     setMessages(normalizedMessages);
-    setSupplementNotice(null);
     // ASK-UX-MOBILE R2 — reconstruct turn-scoped notices for cold history.
     // Assistant messages with a non-ok final_status get a turn notice so the
     // failure context survives a reload. The render layer suppresses turn
@@ -4724,46 +2820,6 @@ export function AiWorkspacePanel({
     setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
     setThreads((current) => replaceThreadSummary(nextThreads ?? current, nextSummary));
   }
-
-  useEffect(() => {
-    if (!contextPickerOpen || !supportsRelatedRecordContext) {
-      return;
-    }
-    const normalizedQuery = contextSearch.query.trim();
-
-    let cancelled = false;
-    const delay = normalizedQuery ? 180 : 0;
-    const timer = window.setTimeout(() => {
-      setContextSearch((current) => ({ ...current, loading: true }));
-      void fetchContextRecords(normalizedQuery)
-        .then((payload) => {
-          if (cancelled) {
-            return;
-          }
-          setContextSearch((current) => ({
-            ...current,
-            items: payload.items ?? [],
-            loading: false,
-          }));
-        })
-        .catch(() => {
-          if (cancelled) {
-            return;
-          }
-          setContextSearch((current) => ({ ...current, items: [], loading: false }));
-        });
-    }, delay);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [
-    contextPickerOpen,
-    contextSearch.query,
-    fetchContextRecords,
-    supportsRelatedRecordContext,
-  ]);
 
   // Set loading state when panel opens (before fetch starts)
   const [prevOpenForLoading, setPrevOpenForLoading] = useState(open);
@@ -4925,7 +2981,7 @@ export function AiWorkspacePanel({
     setLoading(true);
     try {
       const detail = await fetchJson<ReaderAskThreadDetailDto>(
-        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/reset`),
+        `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads/${encodeURIComponent(activeThreadId)}/reset`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -4936,8 +2992,6 @@ export function AiWorkspacePanel({
       setMessages(normalizeReaderAskMessages(detail.messages));
       setSelectedModelKey(detail.selected_model?.key ?? defaultModelKey ?? null);
       setThreads([toThreadSummary(detail)]);
-      setSupplementNotice(null);
-      setSupplementNoticeMessageId(null);
       setTurnNotices({});
       setPanelNotice(null);
       onClearAttachments();
@@ -4951,230 +3005,6 @@ export function AiWorkspacePanel({
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleConfirmAction(actionId: string, confirmed: boolean) {
-    if (!activeThreadId) {
-      return;
-    }
-    const targetMessageId =
-      messages.find((message) => message.action_proposals.some((proposal) => proposal.id === actionId))?.id ?? null;
-    setPendingActionId(actionId);
-    try {
-      const payload = await fetchJson<ReaderAskActionConfirmResponseDto>(
-        scopedReaderAskUrl(`/api/web/reader-ask/threads/${activeThreadId}/actions/${actionId}/confirm`),
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ confirmed }),
-        },
-        "动作确认失败。",
-      );
-      setMessages((current) =>
-        current.map((message) => {
-          const hasProposal = message.action_proposals.some((proposal) => proposal.id === actionId);
-          if (!hasProposal) {
-            return message;
-          }
-          return {
-            ...message,
-            action_proposals: message.action_proposals.map((proposal) =>
-              proposal.id === actionId
-                ? { ...proposal, status: payload.status ?? (confirmed ? "executed" : "rejected") }
-                : proposal,
-            ),
-            persisted_supplements:
-              confirmed && payload.result?.persisted_supplement
-                ? (() => {
-                    const existing = message.persisted_supplements.filter(
-                      (item) => item.supplement_id !== payload.result.persisted_supplement?.supplement_id,
-                    );
-                    return [...existing, payload.result.persisted_supplement];
-                  })()
-                : message.persisted_supplements,
-            trace_summary:
-              confirmed && payload.result?.persisted_supplement && message.trace_summary
-                ? {
-                    ...message.trace_summary,
-                    supplement_persisted_count: message.persisted_supplements.filter(
-                      (item) => item.lifecycle_status === "persisted",
-                    ).length + 1,
-                  }
-                : message.trace_summary,
-          };
-        }),
-      );
-      if (confirmed && payload.result?.persisted_supplement) {
-        setSupplementNotice("已把这条 AI 补充写入当前页。");
-        setSupplementNoticeMessageId(targetMessageId);
-      } else if (!confirmed) {
-        setSupplementNotice("已拒绝这条补充候选。");
-        setSupplementNoticeMessageId(targetMessageId);
-      }
-      if (confirmed && payload.result) {
-        onActionExecuted?.(payload.result);
-      }
-    } catch (error) {
-      const actionMsg = toUserFacingErrorMessage(error, "动作确认失败。");
-      if (targetMessageId) {
-        // ASK-UX-MOBILE-R3 — action-confirm failure uses the canonical
-        // projector. NOT retryable via "重新生成" (regenerate would
-        // discard the action context); dismissible so the user can
-        // clear the notice and retry the action card directly.
-        setTurnNotices((prev) => ({
-          ...prev,
-          [targetMessageId]: projectActionFailureNotice({
-            messageId: targetMessageId,
-            message: actionMsg,
-          }),
-        }));
-      } else {
-        setPanelNotice(
-          projectPanelInitNotice({ kind: "init", message: actionMsg }),
-        );
-      }
-    } finally {
-      setPendingActionId(null);
-    }
-  }
-
-  async function handleDeletePersistedSupplement(supplementId: string) {
-    const targetMessageId =
-      messages.find((message) => message.persisted_supplements.some((item) => item.supplement_id === supplementId))?.id ??
-      null;
-    setPendingSupplementDeleteId(supplementId);
-    try {
-      const payload = await fetchJson<ReaderAskDeleteSupplementResponseDto>(
-        scopedReaderAskUrl(`/api/web/reader-ask/supplements/${supplementId}`),
-        {
-          method: "DELETE",
-          headers: { "content-type": "application/json" },
-        },
-        "删除补充失败。",
-      );
-      setMessages((current) =>
-        current.map((message) => ({
-          ...message,
-          persisted_supplements: message.persisted_supplements.map((item) =>
-            item.supplement_id === supplementId
-              ? payload.persisted_supplement ?? { ...item, lifecycle_status: "deleted" }
-              : item,
-          ),
-          trace_summary:
-            message.persisted_supplements.some((item) => item.supplement_id === supplementId) && message.trace_summary
-              ? {
-                  ...message.trace_summary,
-                  supplement_deleted_count: message.trace_summary.supplement_deleted_count + 1,
-                }
-              : message.trace_summary,
-        })),
-      );
-      setSupplementNotice("已从当前页移除这条 AI 补充。");
-      setSupplementNoticeMessageId(targetMessageId);
-      await onSupplementDeleted?.(supplementId);
-    } catch (error) {
-      const deleteMsg = toUserFacingErrorMessage(error, "删除补充失败。");
-      if (targetMessageId) {
-        // ASK-UX-MOBILE-R3 — supplement-delete failure uses the canonical
-        // projector. NOT retryable via "重新生成" (regenerate would not
-        // retry the delete); dismissible so the user can clear the
-        // notice and retry the delete control directly.
-        setTurnNotices((prev) => ({
-          ...prev,
-          [targetMessageId]: projectSupplementFailureNotice({
-            messageId: targetMessageId,
-            message: deleteMsg,
-          }),
-        }));
-      } else {
-        setPanelNotice(
-          projectPanelInitNotice({ kind: "init", message: deleteMsg }),
-        );
-      }
-    } finally {
-      setPendingSupplementDeleteId(null);
-    }
-  }
-
-  function handleAttachRelatedRecord(item: ReaderAskContextRecordItemDto) {
-    onAppendAttachments?.([buildRelatedRecordAttachment(pageIdentity, item)]);
-    setContextSearch((current) => ({
-      ...current,
-      query: "",
-      loading: false,
-    }));
-  }
-
-  async function handleSelectDisambiguationCandidate(messageId: string, candidate: ReaderAskContextRecordItemDto) {
-    if (sending) {
-      return;
-    }
-    const candidateAttachment = buildRelatedRecordAttachment(pageIdentity, candidate);
-    const assistantIndex = messages.findIndex((message) => message.id === messageId);
-    const priorUserMessage =
-      assistantIndex > 0
-        ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
-        : null;
-    if (!priorUserMessage?.content_md.trim()) {
-      // ASK-UX-MOBILE-R3 — clarify warning uses the canonical projector.
-      setTurnNotices((prev) => ({
-        ...prev,
-        [messageId]: projectClarifyWarningNotice({
-          messageId,
-          message: CLARIFICATION_CONTEXT_MISSING_MESSAGE,
-        }),
-      }));
-      return;
-    }
-    const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
-    const nextAttachments = mergeAttachments(baseAttachments, [candidateAttachment]);
-    await sendMessage({
-      content: priorUserMessage.content_md,
-      attachments: nextAttachments,
-      attachmentMode: "exact",
-      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
-      clearComposer: false,
-    });
-  }
-
-  async function handleSelectAssetDisambiguationCandidate(
-    messageId: string,
-    candidate: ReaderAskAssetDisambiguationCandidateDto,
-    assetDisambiguation: ReaderAskAssetDisambiguationDto,
-  ) {
-    if (sending || !assetDisambiguation.record_id) {
-      return;
-    }
-    const candidateAttachment = buildExternalAssetAttachment(
-      pageIdentity,
-      assetDisambiguation.record_id,
-      assetDisambiguation.record_title,
-      candidate,
-    );
-    const assistantIndex = messages.findIndex((message) => message.id === messageId);
-    const priorUserMessage =
-      assistantIndex > 0
-        ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
-        : null;
-    if (!priorUserMessage?.content_md.trim()) {
-      setTurnNotices((prev) => ({
-        ...prev,
-        [messageId]: projectClarifyWarningNotice({
-          messageId,
-          message: ASSET_CLARIFICATION_CONTEXT_MISSING_MESSAGE,
-        }),
-      }));
-      return;
-    }
-    const baseAttachments = attachmentsFromResolvedContext(priorUserMessage, pageIdentity);
-    const nextAttachments = mergeAttachments(baseAttachments, [candidateAttachment]);
-    await sendMessage({
-      content: priorUserMessage.content_md,
-      attachments: nextAttachments,
-      attachmentMode: "exact",
-      entryAction: priorUserMessage.resolved_context_input?.entry_action ?? defaultEntryAction(),
-      clearComposer: false,
-    });
   }
 
   async function sendMessage(options?: {
@@ -5293,7 +3123,6 @@ export function AiWorkspacePanel({
       reasoning_status: null,
       regenerate_preview: false,
       usage_event_id: null,
-      article_rag: null,
       // Record the user's web search request mode at send time so the
       // backend can persist it as message metadata and replay the original
       // turn capability on retry (server-side source of truth). Absent on
@@ -5336,9 +3165,6 @@ export function AiWorkspacePanel({
       context_compaction: null,
       regenerate_preview: false,
       usage_event_id: null,
-      // No article_rag sidecar until message.completed arrives — streaming
-      // must not show partial citations.
-      article_rag: null,
       // Clear agentic evidence so a new turn never inherits prior basis.
       agentic_evidence: null,
       agentic_evidence_scope: null,
@@ -5349,8 +3175,6 @@ export function AiWorkspacePanel({
     };
 
     setSending(true);
-    setSupplementNotice(null);
-    setSupplementNoticeMessageId(null);
     // New user turn: clear previous activity so old summaries never linger.
     dispatchAgenticActivity({ type: "reset" });
     streamingAssistantIdRef.current = tempAssistantId;
@@ -5449,8 +3273,10 @@ export function AiWorkspacePanel({
     };
 
     const reconcileSubmission = async (): Promise<boolean> => {
-      const reconcileUrl = scopedReaderAskUrl(
-        browserAskSubmissionPath(threadId, clientSubmissionId),
+      const reconcileUrl = browserAskSubmissionPath(
+        recordId,
+        threadId,
+        clientSubmissionId,
       );
       const pollOnce = async (): Promise<ReconcileSnap | null> => {
         const reconcileRes = await fetch(reconcileUrl, {
@@ -5629,7 +3455,7 @@ export function AiWorkspacePanel({
         client_submission_id: clientSubmissionId,
       };
       // ASK-RETRY-CONTRACT-R0 — browser path from the shared path builder.
-      const response = await fetch(scopedReaderAskUrl(browserAskStreamPath(threadId)), {
+      const response = await fetch(browserAskStreamPath(recordId, threadId), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -5939,8 +3765,6 @@ export function AiWorkspacePanel({
     // invoked Search.
 
     setSending(true);
-    setSupplementNotice(null);
-    setSupplementNoticeMessageId(null);
     dispatchAgenticActivity({ type: "reset" });
     streamingAssistantIdRef.current = messageId;
     const controller = new AbortController();
@@ -5985,15 +3809,12 @@ export function AiWorkspacePanel({
               context_plan: null,
               resolved_context_input: message.resolved_context_input,
               supplement_candidates: [],
-              persisted_supplements: message.persisted_supplements,
+              persisted_supplements: [],
               reasoning_status: "idle",
               reasoning_md: "",
               follow_up_suggestions: [],
               compacting: false,
               context_compaction: null,
-              // Clear any prior article_rag sidecar so streaming doesn't
-              // render stale citations from the previous attempt.
-              article_rag: null,
               // Clear agentic evidence so retry does not keep prior basis.
               agentic_evidence: null,
               agentic_evidence_scope: null,
@@ -6011,7 +3832,7 @@ export function AiWorkspacePanel({
       // ASK-RETRY-CONTRACT-R0: Browser ABI is `/retry` only. Upstream
       // `/retry/stream` is BFF→FastAPI exclusive.
       const response = await fetch(
-        scopedReaderAskUrl(browserAskRetryPath(activeThreadId, messageId)),
+        browserAskRetryPath(recordId, activeThreadId, messageId),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -6390,23 +4211,9 @@ export function AiWorkspacePanel({
               <MessageBubble
                 key={item.id}
                 item={item}
-                pendingActionId={pendingActionId}
-                deletingSupplementId={pendingSupplementDeleteId}
-                supplementNotice={supplementNoticeMessageId === item.id ? supplementNotice : null}
-                onConfirmAction={handleConfirmAction}
-                onDeletePersistedSupplement={(supplementId) => {
-                  void handleDeletePersistedSupplement(supplementId);
-                }}
-                onSelectDisambiguationCandidate={handleSelectDisambiguationCandidate}
-                onSelectAssetDisambiguationCandidate={handleSelectAssetDisambiguationCandidate}
                 onRetry={handleRetry}
                 onResend={handleResend}
                 resolveRetryTarget={resolveRetryTarget}
-                onAnnotationFeedback={onAnnotationFeedback}
-                analysisRecordId={analysisRecordId}
-                onPickFollowUpSuggestion={(prompt) => {
-                  void sendMessage({ content: prompt });
-                }}
                 agenticActivity={
                   item.role === "assistant" &&
                   item.status === "streaming" &&
@@ -6418,7 +4225,6 @@ export function AiWorkspacePanel({
                 }
                 turnNotice={turnNotices[item.id] ?? null}
                 onDismissTurnNotice={handleDismissTurnNotice}
-                isAgenticCapable={isReadingRecordScope}
               />
             ))}
           </ConversationShell>
@@ -6488,22 +4294,6 @@ export function AiWorkspacePanel({
             </>
           ) : undefined
         }
-        actionMenu={
-          supportsRelatedRecordContext ? (
-            <RelatedRecordPicker
-              disabled={sending}
-              search={contextSearch}
-              onSearchChange={(value) => {
-                setContextSearch((current) => ({ ...current, query: value }));
-              }}
-              onAttachRelatedRecord={(item) => {
-                void handleAttachRelatedRecord(item);
-              }}
-            />
-          ) : undefined
-        }
-        actionMenuOpen={contextPickerOpen}
-        onActionMenuOpenChange={setContextPickerOpen}
         modelOptions={modelSelectItems}
         modelSelectDisabled={loading || sending || modelOptionsLoading || modelSelectItems.length === 0}
         selectedModelKey={effectiveSelectedModelKey}

@@ -148,22 +148,7 @@ function classifyTrustedTerminal(
     // agentic.run_started binds the active turn identity, every v2
     // message.completed / agentic.terminal / message.interrupted frame is
     // unattributed and must be ignored even when it carries a complete tuple.
-    //
-    // The only exception is the pre-v2 legacy completed shape, whose producer
-    // never emits agentic.run_started and identifies the message with
-    // id + thread_id + content_md.
-    if (
-      event === "message.completed" &&
-      typeof payload.id === "string" &&
-      typeof payload.thread_id === "string" &&
-      typeof payload.content_md === "string"
-    ) {
-      // Legacy completed — no identity to match, no v2 validation.
-      return makeLogicalTerminalResult("completed", {
-        identity: null,
-        finalStatus: "ok",
-      });
-    }
+    // There is no pre-v2 compatibility lane in the Reader Record web client.
     return null;
   }
 
@@ -184,25 +169,14 @@ function classifyTrustedTerminal(
     });
   }
 
-  // agentic.terminal or legacy message.interrupted.
-  // agentic.terminal must validate as the typed non-ok terminal payload.
-  // Legacy message.interrupted is accepted for backward compatibility as
-  // long as it carries a non-ok final_status and matching identity.
+  // agentic.terminal or its typed message.interrupted duplicate.
+  // Both event names must carry the canonical v2 non-ok terminal payload.
   if (event === "agentic.terminal") {
     if (!isReaderAskAgenticTerminalPayload(payload)) {
       return makeLogicalTerminalResult("parse_error");
     }
   } else if (event === "message.interrupted") {
-    // Legacy interrupted: accept if it carries a typed non-ok final_status.
-    const status = payload.final_status;
-    if (
-      typeof status !== "string" ||
-      status === "ok" ||
-      (status !== "failed" &&
-        status !== "cancelled" &&
-        status !== "context_stale")
-    ) {
-      // Unknown legacy interrupted payload — fail closed.
+    if (!isReaderAskAgenticTerminalPayload(payload)) {
       return makeLogicalTerminalResult("parse_error");
     }
   }
@@ -239,8 +213,9 @@ function classifyTrustedTerminal(
  *
  * - `completed` — `message.completed` with a valid v2 payload observed
  *   for the active turn. The composer may be unlocked immediately.
- * - `terminal` / `interrupted` — `agentic.terminal` / legacy
- *   `message.interrupted` observed for the active turn. Composer unlocks.
+ * - `terminal` / `interrupted` — a typed `agentic.terminal` /
+ *   `message.interrupted` duplicate observed for the active turn. Composer
+ *   unlocks.
  * - `abort` — the supplied `AbortSignal` fired. Composer unlocks and the
  *   host must persist a `cancelled` terminal.
  * - `parse_error` — an `SSE_PARSE_ERROR` was emitted. The stream is
@@ -260,8 +235,7 @@ function classifyTrustedTerminal(
  *    `agentic.run_started`) are ignored and never terminate the stream.
  * 4. The active identity is captured from the first valid
  *    `agentic.run_started` frame. Without it, v2 terminal frames are
- *    unattributed and ignored; only the explicit pre-v2 completed shape is
- *    accepted for legacy compatibility.
+ *    unattributed and ignored; no legacy terminal shape is accepted.
  */
 export async function consumeReaderAskSse(
   response: Response,
@@ -476,8 +450,9 @@ export async function consumeReaderAskSse(
  *
  * Mapping (frontend approximation of backend phases):
  *
- * - ``agentic.reasoning.started`` / ``agentic.reasoning.delta`` →
- *   ``first_reasoning``.
+ * - ``agentic.learner_reasoning.snapshot`` → ``first_reasoning``. The
+ *   learner snapshot is the sole public reasoning marker; provider/raw
+ *   reasoning events never drive this metric.
  * - ``message.delta`` → ``first_answer_delta`` / ``last_answer_delta``.
  * - ``agentic.progress`` with phase ``validating_evidence`` →
  *   ``validation_done``. The backend emits this when the agent run
@@ -495,8 +470,7 @@ function markEventMetrics(
     return;
   }
   switch (event.event) {
-    case "agentic.reasoning.started":
-    case "agentic.reasoning.delta":
+    case "agentic.learner_reasoning.snapshot":
       metrics.markFirstReasoning();
       break;
     case "message.delta":
