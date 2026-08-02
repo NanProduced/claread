@@ -76,15 +76,19 @@ const NOTION_HTML_SOURCE = `
 `.trim();
 
 function repoRoot(): string {
+  const configuredRoot = process.env.CLAREAD_E2E_API_REPO_ROOT?.trim();
   const cwdCandidates = [
+    configuredRoot ? resolve(configuredRoot) : null,
     resolve(process.cwd()),
     resolve(process.cwd(), "..", ".."),
-  ];
+  ].filter((candidate): candidate is string => Boolean(candidate));
   const root = cwdCandidates.find((candidate) =>
     existsSync(resolve(candidate, "services", "api", "pyproject.toml")),
   );
   if (!root) {
-    throw new Error("Unable to locate Claread repository root for G5 helper");
+    throw new Error(
+      "Unable to locate Claread repository root for G5 helper; set CLAREAD_E2E_API_REPO_ROOT to the integration API worktree",
+    );
   }
   return root;
 }
