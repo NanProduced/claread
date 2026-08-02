@@ -5151,7 +5151,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     }
   });
 
-  it("treats markerless assistant history as v2 and drops article_rag", () => {
+  it("rejects markerless assistant history instead of opening a legacy lane", () => {
     const rawSidecar = {
       status: "available",
       failure_code: "internal_error",
@@ -5182,7 +5182,9 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 
     const [normalized] = normalizeReaderAskMessages([
       createAssistantMessage({
-        // No execution_version is still v2-only; there is no legacy lane.
+        // The fixture defaults to v2, so explicitly remove the discriminator
+        // to exercise the markerless cold-history boundary.
+        execution_version: null,
         article_rag: rawSidecar as unknown as ReaderAskArticleRagSidecarSafeDto,
         evidence: [
           {
@@ -5196,11 +5198,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
       }),
     ]);
 
-    expect(normalized.execution_version).toBe("reader_record_ask_agentic_v2");
-    expect(normalized.agentic_evidence).toBeNull();
-    expect(normalized.agentic_evidence_scope ?? null).toBeNull();
-    expect(normalized.article_rag).toBeNull();
-    expect(normalized.evidence).toEqual([]);
+    expect(normalized).toBeUndefined();
   });
 
   it("fails closed on invalid agentic evidence and forged execution_version", () => {
