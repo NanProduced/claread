@@ -9,11 +9,12 @@
   "scripts": {
     "extensions:build": "pnpm --filter @claread/directus-modules run build && pnpm --filter @claread/directus-panels run build && pnpm --filter @claread/directus-endpoints run build && pnpm --filter @claread/directus-hooks run build",
     "extensions:watch": "node ./scripts/watch-extensions.mjs",
-    "parse-run:sync-metadata": "node ./scripts/sync-parse-run-observability-metadata.mjs",
-    "eval-center:sync-metadata": "node ./scripts/sync-eval-center-metadata.mjs",
+    "registration:check": "node ./scripts/check-logical-registration.mjs",
     "llm-config:sync-metadata": "node ./scripts/sync-llm-config-metadata.mjs",
     "llm-config:export-bundle": "node ./scripts/export-llm-config-bundle.mjs",
-    "llm-config:import-bundle": "node ./scripts/import-llm-config-bundle.mjs"
+    "llm-config:import-bundle": "node ./scripts/import-llm-config-bundle.mjs",
+    "parse-run:sync-metadata": "node ./scripts/sync-parse-run-observability-metadata.mjs",
+    "eval-center:sync-metadata": "node ./scripts/sync-eval-center-metadata.mjs"
   },
   "pnpm": {
     "executionEnv": {

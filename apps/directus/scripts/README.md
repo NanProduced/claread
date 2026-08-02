@@ -1,5 +1,7 @@
 # Directus Scripts
 
+> CUTOVER-CONTROL-EVAL-LONG Logical: `sync-parse-run-observability-metadata.mjs` 与 `sync-eval-center-metadata.mjs` 已退役并强制 exit(1)，禁止自动复活旧 Parse/Eval 面。`check-logical-registration.mjs` 为 L-GATE 静态门禁。Reader observability 唯一 endpoint 为 `reader-orch`。
+
 本目录包含 Directus 本地开发与 metadata 同步脚本。
 
 ## 脚本清单
@@ -142,3 +144,4 @@
 | 会写 | 否 — 只读校验 |
 | 校验规则 | Adapter 枚举、openai_compatible 必须有 base_url、FK 引用链完整、route 名称合法 |
 | 典型场景 | 配置变更后快速校验，CI 中校验 |
+
