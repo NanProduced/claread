@@ -1,7 +1,7 @@
 import { View, Text, ScrollView } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { AnyInlineMarkModel, type VisualTone, type AcademicVisualTone, type InlineGlossary, type AcademicInlineGlossary, type DictionaryEntryPayload, type DictionaryDisambiguationResult, type DictionaryResult } from '../../types/view/render-scene.vm'
+import { AnyInlineMarkModel, type VisualTone, type AcademicVisualTone, type InlineGlossary, type AcademicInlineGlossary, type DictionaryEntryPayload, type DictionaryDisambiguationResult, type DictionaryResult } from '../../types/view/reader-primitive.vm'
 import { ApiError, fetchDict, fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
 import { getDictCache, setDictCache, getEntryCache, setEntryCache } from '../../services/dictCache'

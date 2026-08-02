@@ -1,5 +1,5 @@
 import type { DailyReaderHighlight } from '../../../types/view/daily-reader.vm'
-import type { InlineMarkModel, TextAnchor, InlineGlossary } from '../../../types/view/render-scene.vm'
+import type { InlineMarkModel, TextAnchor, InlineGlossary } from '../../../types/view/reader-primitive.vm'
 
 const TONE_MAP: Record<string, InlineMarkModel['visualTone']> = {
   vocab_highlight: 'vocab',

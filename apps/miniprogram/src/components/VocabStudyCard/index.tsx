@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchDict, fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
 import type { VocabEntry, SourceRef } from '../../types/view/vocabulary.vm'
-import type { DictionaryDisambiguationResult, DictionaryEntryPayload, DictionaryMeaning, DictionaryResult } from '../../types/view/render-scene.vm'
+import type { DictionaryDisambiguationResult, DictionaryEntryPayload, DictionaryMeaning, DictionaryResult } from '../../types/view/reader-primitive.vm'
 import LucideIcon from '../LucideIcon'
 import './index.scss'
 

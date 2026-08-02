@@ -6,7 +6,7 @@
  * 仅缓存 entry 类型结果（disambiguation 结果较小，不缓存）。
  */
 
-import type { DictionaryResult } from '../types/view/render-scene.vm'
+import type { DictionaryResult } from '../types/view/reader-primitive.vm'
 
 const TTL_MS = 5 * 60 * 1000
 const MAX_SIZE = 200
