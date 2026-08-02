@@ -355,14 +355,13 @@ def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
 # ---------------------------------------------------------------------------
 # History / thread-detail DTOs (cold-load only)
 #
-# Distinct from the generic ReaderAskMessage so that the v2 history wire
-# contract stays isolated and explicit.
+# Dedicated v2 thread-detail DTO so the history wire contract stays isolated
+# and explicit.
 # ---------------------------------------------------------------------------
 
 from app.schemas.reader_ask import (  # noqa: E402
     ReaderAskActionProposal,
     ReaderAskAnchorRef,
-    ReaderAskArticleRagSidecar,
     ReaderAskAssetDisambiguation,
     ReaderAskCitation,
     ReaderAskContextPlan,
@@ -418,7 +417,6 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     ) = None
     usage_event_id: str | None = None
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
-    article_rag: ReaderAskArticleRagSidecar | None = None
     execution_version: Literal["reader_record_ask_agentic_v2"] | None = None
     final_status: FinalStatus | None = None
     # Public v2 blocks/citations — no handles. Null on terminals.

@@ -16,10 +16,10 @@ from app.schemas.reader_documents import CandidateReadingDocumentStatus
 from app.schemas.reader_input_adapter import (
     AdaptationRecord,
     InputAdapterSourceType,
+    InputSuitabilityResult,
     SourceArtifactKind,
     SourceArtifactStatus,
     SourceArtifactStorageProvider,
-    InputSuitabilityResult,
 )
 
 ReadingRecordLifecycleStatus = Literal["active", "cancelled", "superseded", "deleted"]
@@ -801,61 +801,6 @@ class ReaderPlateSnapshot(BaseModel):
     semantic_outline: ReaderSemanticOutlineProjection | None = None
 
 
-class ReaderPlainTextSubmitRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    plain_text: str = Field(min_length=1)
-    title: str | None = None
-    language: str | None = None
-    source_metadata: dict[str, Any] | None = None
-    client_record_id: str | None = Field(default=None, max_length=255)
-    reading_goal: ReaderOrchestrationReadingGoal = Field(
-        default=DEFAULT_READER_ORCHESTRATION_READING_GOAL
-    )
-    reading_variant: ReaderOrchestrationReadingVariant = Field(
-        default=DEFAULT_READER_ORCHESTRATION_READING_VARIANT
-    )
-
-    @field_validator("plain_text")
-    @classmethod
-    def validate_plain_text_not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("plain_text must not be blank")
-        return value
-
-    @field_validator("client_record_id")
-    @classmethod
-    def normalize_client_record_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @field_validator("source_metadata")
-    @classmethod
-    def _reject_reserved_strategy_keys(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
-        return _reject_reserved_strategy_keys_in_source_metadata(value)
-
-    @model_validator(mode="after")
-    def _validate_reader_strategy_pair(self) -> ReaderPlainTextSubmitRequest:
-        _validate_reader_orchestration_strategy(
-            reading_goal=self.reading_goal,
-            reading_variant=self.reading_variant,
-        )
-        return self
-
-
-class ReaderPlainTextSubmitResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    record_id: str = Field(min_length=1)
-    base_id: str = Field(min_length=1)
-    article_ready_sequence: int = Field(ge=1)
-    snapshot: ReaderPlateSnapshot
-
-
 class ReaderStableReadyInputSubmitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -976,10 +921,13 @@ class ReaderSourceArtifactUploadInitRequest(BaseModel):
 
     @field_validator("artifact_kind")
     @classmethod
-    def validate_artifact_kind_for_upload_init(cls, value: SourceArtifactKind) -> SourceArtifactKind:
+    def validate_artifact_kind_for_upload_init(
+        cls, value: SourceArtifactKind
+    ) -> SourceArtifactKind:
         if value != "original_upload":
             raise ValueError(
-                "artifact_kind must be original_upload for init-upload; derived artifacts are worker-managed"
+                "artifact_kind must be original_upload for init-upload; "
+                "derived artifacts are worker-managed"
             )
         return value
 

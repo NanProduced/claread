@@ -725,42 +725,6 @@ ReaderAskResponseCard = Annotated[
 ]
 
 
-class ReaderAskMessage(BaseModel):
-    id: str
-    thread_id: str
-    role: ReaderAskMessageRole
-    status: ReaderAskMessageStatus
-    content_md: str
-    submission_mode: ReaderAskSubmissionMode = "chat"
-    resolved_intent: ReaderAskResolvedIntent | None = None
-    context_anchors: list[ReaderAskAnchorRef] = Field(default_factory=list)
-    citations: list[ReaderAskCitation] = Field(default_factory=list)
-    action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
-    tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
-    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
-    trace_summary: ReaderAskTraceSummary | None = None
-    disambiguation: ReaderAskDisambiguation | None = None
-    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
-    response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
-    resolved_context: ReaderAskResolvedContextSummary | None = None
-    context_plan: ReaderAskContextPlan | None = None
-    resolved_context_input: ReaderAskResolvedContextInput | None = None
-    run_info: ReaderAskRunInfo | None = None
-    supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
-    persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
-    reasoning_md: str | None = None
-    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
-    # ASK-TURN-LIFECYCLE R4-4: cold history truncated flag.
-    reasoning_truncated: bool | None = None
-    usage_event_id: str | None = None
-    # Round 2: follow-up prompt suggestions emitted by
-    # ``suggest_prompts`` tool. The frontend renders them as clickable
-    # chips at the tail of the assistant message.
-    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
-    created_at: str
-    updated_at: str
-
-
 class ReaderAskSelectedModel(BaseModel):
     key: str
     label: str
@@ -800,20 +764,8 @@ class ReaderAskThreadSummary(BaseModel):
     last_message_at: str | None = None
 
 
-class ReaderAskThreadDetail(ReaderAskThreadSummary):
-    messages: list[ReaderAskMessage] = Field(default_factory=list)
-
-
 class ReaderAskThreadListResponse(BaseModel):
     items: list[ReaderAskThreadSummary]
-
-
-class ReaderAskThreadCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    record_id: str
-    title: str | None = Field(default=None, max_length=120)
-    model: str | None = None
 
 
 class ReaderAskActionConfirmResult(BaseModel):
@@ -844,18 +796,6 @@ class ReaderAskDeleteSupplementResponse(BaseModel):
     target_key: str | None = None
     lifecycle_status: Literal["deleted"] = "deleted"
     persisted_supplement: ReaderAskPersistedSupplement | None = None
-
-
-class ReaderAskMessageStreamRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    content: str = Field(min_length=1, max_length=5000)
-    page_identity: ReaderAskPageIdentity
-    attachments: list[ReaderAskAttachment] = Field(default_factory=list)
-    entry_action: ReaderAskEntryAction
-    model: str | None = None
-    # ASK-RETRY-CONTRACT-R2 — optional on legacy clients; new web always sends.
-    client_submission_id: UUID | None = None
 
 
 class ReaderAskMessageRetryRequest(BaseModel):
@@ -926,7 +866,7 @@ class ReaderAskFollowUpSuggestion(BaseModel):
 class ReaderRecordAskMessageRequest(BaseModel):
     """D6-A6: new Reading Record Ask message request contract.
 
-    This is intentionally separate from ``ReaderAskMessageStreamRequest``.
+    This is the canonical Reading Record Ask v2 request contract.
     It accepts Reading Record anchors and never accepts an
     ``analysis_record_id`` disguised as ``record_id``.
 
@@ -1079,73 +1019,6 @@ class ReaderAskArticleRagSidecar(BaseModel):
     source_pack_hash: str | None = None
     query_sha256: str | None = None
     citations: list[ReaderAskArticleRagCitation] = Field(default_factory=list)
-
-
-class ReaderAskUserVisibleOutput(BaseModel):
-    content_md: str
-    submission_mode: ReaderAskSubmissionMode = "chat"
-    resolved_intent: ReaderAskResolvedIntent | None = None
-    citations: list[ReaderAskCitation] = Field(default_factory=list)
-    action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
-    tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
-    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
-    trace_summary: ReaderAskTraceSummary | None = None
-    disambiguation: ReaderAskDisambiguation | None = None
-    external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
-    response_cards: list[ReaderAskResponseCard] = Field(default_factory=list)
-    usage_summary: dict[str, Any] | None = None
-    billed_points: int = 0
-    resolved_context: ReaderAskResolvedContextSummary
-    context_plan: ReaderAskContextPlan | None = None
-    resolved_context_input: ReaderAskResolvedContextInput | None = None
-    run_info: ReaderAskRunInfo | None = None
-    supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
-    persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
-    reasoning_md: str | None = None
-    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
-    # ASK-TURN-LIFECYCLE R4-4: cold history truncated flag.
-    reasoning_truncated: bool | None = None
-    # Round 2: follow-up prompt suggestions emitted by the
-    # ``suggest_prompts`` tool. The frontend renders them as clickable
-    # chips at the tail of the assistant message. None when the tool
-    # was not called.
-    follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
-    # D6-I4Q: Article RAG structured citations sidecar.  Separate
-    # from tool-generated ``citations`` — these come from the RAG
-    # retrieval pipeline (I4A-I4O) and are never parsed from prompt
-    # text.  Empty list when RAG is unavailable / not attached /
-    # fail-soft.  This field NEVER enters the LLM prompt because it
-    # is not part of ``prompt_payload``.
-    article_rag_citations: list[dict[str, Any]] = Field(default_factory=list)
-    # D6-I4Q (Round 2): Typed Article RAG sidecar. Carries the same
-    # data as ``article_rag_citations`` plus status / failure_code /
-    # retryable / fallback_allowed / should_attach / context_ids /
-    # source_pack_hash / query_sha256. The typed contract lets the
-    # frontend render status-specific UI without parsing the legacy
-    # ``article_rag_citations`` list. Back-compat: when the typed
-    # sidecar is set, ``article_rag_citations`` is populated from
-    # ``article_rag.citations``.
-    article_rag: ReaderAskArticleRagSidecar | None = None
-
-    @model_validator(mode="after")
-    def back_fill_article_rag_citations(self) -> ReaderAskUserVisibleOutput:
-        """D6-I4Q (Round 2): back-compat — when the typed sidecar is
-        present and the legacy ``article_rag_citations`` field is
-        empty, populate it from the sidecar's citations. This lets
-        the frontend (and older callers) keep reading the legacy
-        field without code changes.
-        """
-        if self.article_rag is not None and not self.article_rag_citations:
-            self.article_rag_citations = [
-                c.model_dump(mode="json") for c in self.article_rag.citations
-            ]
-        return self
-
-
-class ReaderAskCompletedPayload(ReaderAskUserVisibleOutput):
-    id: str
-    thread_id: str
-    usage_event_id: str | None = None
 
 
 class ReaderAskStreamEnvelope(BaseModel):

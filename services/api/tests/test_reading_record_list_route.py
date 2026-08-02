@@ -126,7 +126,7 @@ async def reader_api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-async def _create_plain_text_record(
+async def _create_reader_input_record(
     client: AsyncClient,
     *,
     title: str | None = None,
@@ -276,7 +276,7 @@ async def _insert_extra_original_input(
 ) -> None:
     """Insert a SECOND original_inputs row for a record.
 
-    The existing _create_plain_text_record already inserts one row.
+    The existing _create_reader_input_record already inserts one row.
     This helper inserts an additional row with a later created_at so
     we can verify the LATERAL join picks the earliest one (P1-1).
     """
@@ -322,8 +322,8 @@ async def test_response_includes_display_title_and_source_label_fields(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            await _create_plain_text_record(client, title="Has Title")
-            await _create_plain_text_record(client, title=None)
+            await _create_reader_input_record(client, title="Has Title")
+            await _create_reader_input_record(client, title=None)
 
             response = await client.get(
                 "/reader/records?limit=10",
@@ -359,7 +359,7 @@ async def test_display_title_layer1_generated_title_zh_succeeded(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(client, title="English Title")
+            record_id = await _create_reader_input_record(client, title="English Title")
             await _set_generated_title(
                 pool,
                 record_id=record_id,
@@ -388,7 +388,7 @@ async def test_display_title_layer2_record_title_when_no_succeeded_generated(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(client, title="My Record Title")
+            record_id = await _create_reader_input_record(client, title="My Record Title")
             # generated_title_zh is set but status is pending (not succeeded)
             await _set_generated_title(
                 pool,
@@ -416,7 +416,7 @@ async def test_title_generation_status_not_succeeded_ignores_generated_title_zh(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(client, title="Fallback Title")
+            record_id = await _create_reader_input_record(client, title="Fallback Title")
             for status in ("pending", "failed_retryable"):
                 await _set_generated_title(
                     pool,
@@ -445,7 +445,7 @@ async def test_display_title_layer3_ready_candidate_title(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(client, title="Temp Title")
+            record_id = await _create_reader_input_record(client, title="Temp Title")
             await _clear_record_title(pool, record_id=record_id)
             await _insert_ready_candidate(
                 pool,
@@ -473,7 +473,7 @@ async def test_display_title_layer4_filename_when_no_titles(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(
+            record_id = await _create_reader_input_record(
                 client,
                 title="Temp Title",
                 source_metadata={"filename": "report.pdf"},
@@ -501,7 +501,7 @@ async def test_display_title_layer5_source_type_label_when_nothing_else(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(client, title="Temp Title")
+            record_id = await _create_reader_input_record(client, title="Temp Title")
             await _clear_record_title(pool, record_id=record_id)
             # No ready candidate, no filename in metadata → layer 5
 
@@ -509,7 +509,7 @@ async def test_display_title_layer5_source_type_label_when_nothing_else(
             assert response.status_code == 200
             items = response.json()["items"]
             assert len(items) == 1
-            # original_input_type is 'plain_text' → "粘贴文本"
+            # original_input_type is the pasted-text semantic → "粘贴文本"
             assert items[0]["display_title"] == "粘贴文本"
 
 
@@ -536,7 +536,7 @@ async def test_query_matches_display_title_not_just_record_title(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             # Record 1: display_title will be "中文焦点标题" (generated, succeeded)
-            r1 = await _create_plain_text_record(client, title="English Title")
+            r1 = await _create_reader_input_record(client, title="English Title")
             await _set_generated_title(
                 pool,
                 record_id=r1,
@@ -544,7 +544,7 @@ async def test_query_matches_display_title_not_just_record_title(
                 status="succeeded",
             )
             # Record 2: display_title will be "Other Record" (plain record.title)
-            await _create_plain_text_record(client, title="Other Record")
+            await _create_reader_input_record(client, title="Other Record")
 
             # Search for the Chinese generated title
             response = await client.get(
@@ -579,7 +579,7 @@ async def test_source_label_is_controlled_no_raw_metadata_leak(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            await _create_plain_text_record(
+            await _create_reader_input_record(
                 client,
                 title="Test Record",
                 source_metadata={
@@ -620,7 +620,7 @@ async def test_source_label_includes_filename_for_file_ref(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(
+            record_id = await _create_reader_input_record(
                 client,
                 title="File Record",
                 source_metadata={"filename": "report.pdf"},
@@ -659,9 +659,9 @@ async def test_sort_last_opened_at_desc_nulls_last_regression(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            await _create_plain_text_record(client, title="Oldest No Open")
-            r2 = await _create_plain_text_record(client, title="With Open")
-            await _create_plain_text_record(client, title="Newest No Open")
+            await _create_reader_input_record(client, title="Oldest No Open")
+            r2 = await _create_reader_input_record(client, title="With Open")
+            await _create_reader_input_record(client, title="Newest No Open")
 
             # r2 has last_opened_at set; r1 and r3 do not
             await _set_last_opened_at(
@@ -706,7 +706,7 @@ async def test_query_less_limit_is_bounded_server_side(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             for i in range(15):
-                await _create_plain_text_record(client, title=f"Record {i:02d}")
+                await _create_reader_input_record(client, title=f"Record {i:02d}")
 
             response = await client.get(
                 "/reader/records?limit=10",
@@ -739,7 +739,7 @@ async def test_query_with_limit_bounded_and_still_matches_display_title(
         async with await _create_client(app) as client:
             # 5 records with generated display_title containing "焦点"
             for i in range(5):
-                rid = await _create_plain_text_record(
+                rid = await _create_reader_input_record(
                     client, title=f"English {i}"
                 )
                 await _set_generated_title(
@@ -750,7 +750,7 @@ async def test_query_with_limit_bounded_and_still_matches_display_title(
                 )
             # 10 records without "焦点" in any title layer
             for i in range(10):
-                await _create_plain_text_record(client, title=f"Other {i}")
+                await _create_reader_input_record(client, title=f"Other {i}")
 
             response = await client.get(
                 "/reader/records?query=焦点&limit=10",
@@ -787,7 +787,7 @@ async def test_display_title_skips_candidate_title_when_two_ready_candidates(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(
+            record_id = await _create_reader_input_record(
                 client,
                 title="Temp Title",
                 source_metadata={"filename": "doc.pdf"},
@@ -835,7 +835,7 @@ async def test_display_title_uses_candidate_title_when_exactly_one(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            record_id = await _create_plain_text_record(
+            record_id = await _create_reader_input_record(
                 client,
                 title="Temp Title",
                 source_metadata={"filename": "doc.pdf"},
@@ -878,7 +878,7 @@ async def test_two_original_inputs_picks_earliest_and_no_duplicate_rows(
             # Create a record (this inserts original_input #1 with
             # input_type='plain_text' and metadata containing filename
             # "earliest.pdf").
-            record_id = await _create_plain_text_record(
+            record_id = await _create_reader_input_record(
                 client,
                 title="Has Two Inputs",
                 source_metadata={"filename": "earliest.pdf"},
@@ -963,7 +963,7 @@ async def test_query_none_items_sql_has_limit_and_no_count_window(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            await _create_plain_text_record(client, title="Test Record")
+            await _create_reader_input_record(client, title="Test Record")
 
             asyncpg.Connection.fetch = _capturing_fetch  # type: ignore[method-assign]
             try:
@@ -1005,7 +1005,7 @@ async def test_query_none_total_always_uses_separate_count(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             for i in range(5):
-                await _create_plain_text_record(client, title=f"Record {i}")
+                await _create_reader_input_record(client, title=f"Record {i}")
 
             response = await client.get(
                 "/reader/records?limit=3",

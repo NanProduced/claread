@@ -12,7 +12,6 @@ from app.schemas.reader_orchestration import (
     DEFAULT_READER_ORCHESTRATION_READING_GOAL,
     DEFAULT_READER_ORCHESTRATION_READING_VARIANT,
     READER_ORCHESTRATION_GOAL_VARIANT_MAP,
-    ReaderPlainTextSubmitRequest,
     ReaderSnapshotRecord,
     ReaderSourceArtifactSubmitInputRequest,
     ReaderStableReadyInputSubmitRequest,
@@ -40,11 +39,12 @@ _LEGAL_STRATEGY_COMBOS = [
 
 
 @pytest.mark.parametrize("goal,variant", _LEGAL_STRATEGY_COMBOS)
-def test_reader_plain_text_submit_accepts_legal_strategy_combos(
+def test_reader_input_submit_accepts_legal_strategy_combos(
     goal: str, variant: str
 ) -> None:
-    request = ReaderPlainTextSubmitRequest(
-        plain_text="Some reading text.",
+    request = ReaderUnifiedInputSubmitRequest(
+        source_type="pasted_text",
+        text="Some reading text.",
         reading_goal=goal,  # type: ignore[arg-type]
         reading_variant=variant,  # type: ignore[arg-type]
     )
@@ -52,8 +52,10 @@ def test_reader_plain_text_submit_accepts_legal_strategy_combos(
     assert request.reading_variant == variant
 
 
-def test_reader_plain_text_submit_defaults_strategy_when_omitted() -> None:
-    request = ReaderPlainTextSubmitRequest(plain_text="Some reading text.")
+def test_reader_input_submit_defaults_strategy_when_omitted() -> None:
+    request = ReaderUnifiedInputSubmitRequest(
+        source_type="pasted_text", text="Some reading text."
+    )
     assert request.reading_goal == DEFAULT_READER_ORCHESTRATION_READING_GOAL
     assert request.reading_variant == DEFAULT_READER_ORCHESTRATION_READING_VARIANT
 
@@ -67,12 +69,13 @@ def test_reader_plain_text_submit_defaults_strategy_when_omitted() -> None:
         ("exam", "intensive_reading"),
     ],
 )
-def test_reader_plain_text_submit_rejects_cross_goal_variants(
+def test_reader_input_submit_rejects_cross_goal_variants(
     goal: str, variant: str
 ) -> None:
     with pytest.raises(ValidationError) as exc_info:
-        ReaderPlainTextSubmitRequest(
-            plain_text="Some reading text.",
+        ReaderUnifiedInputSubmitRequest(
+            source_type="pasted_text",
+            text="Some reading text.",
             reading_goal=goal,  # type: ignore[arg-type]
             reading_variant=variant,  # type: ignore[arg-type]
         )
@@ -88,7 +91,7 @@ def test_reader_plain_text_submit_rejects_cross_goal_variants(
         ("daily_reading", "academic_general"),
     ],
 )
-def test_reader_plain_text_submit_fails_closed_for_academic(goal: str, variant: str) -> None:
+def test_reader_input_submit_fails_closed_for_academic(goal: str, variant: str) -> None:
     """`academic` / `academic_general` are not wired into the new orchestration.
 
     Submitting them must fail closed at the schema Literal layer rather than be
@@ -97,8 +100,9 @@ def test_reader_plain_text_submit_fails_closed_for_academic(goal: str, variant: 
     error before the model_validator can even run.
     """
     with pytest.raises(ValidationError):
-        ReaderPlainTextSubmitRequest(
-            plain_text="Some reading text.",
+        ReaderUnifiedInputSubmitRequest(
+            source_type="pasted_text",
+            text="Some reading text.",
             reading_goal=goal,  # type: ignore[arg-type]
             reading_variant=variant,  # type: ignore[arg-type]
         )
@@ -121,12 +125,13 @@ def test_reader_plain_text_submit_fails_closed_for_academic(goal: str, variant: 
         {"source_kind": "manual", "reading_goal": "exam"},
     ],
 )
-def test_plain_text_submit_rejects_reserved_strategy_keys_in_source_metadata(
+def test_reader_input_submit_rejects_reserved_strategy_keys_in_source_metadata(
     metadata: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError) as exc_info:
-        ReaderPlainTextSubmitRequest(
-            plain_text="Some reading text.",
+        ReaderUnifiedInputSubmitRequest(
+            source_type="pasted_text",
+            text="Some reading text.",
             source_metadata=metadata,
         )
     assert "reserved strategy keys" in str(exc_info.value)
@@ -161,11 +166,12 @@ def test_source_artifact_submit_rejects_reserved_strategy_keys_in_source_metadat
         )
 
 
-def test_plain_text_submit_accepts_nested_strategy_keys_in_source_metadata() -> None:
+def test_reader_input_submit_accepts_nested_strategy_keys_in_source_metadata() -> None:
     """Nested keys inside sub-objects are not reserved. Only the top level of
     `source_metadata` is policed."""
-    request = ReaderPlainTextSubmitRequest(
-        plain_text="Some reading text.",
+    request = ReaderUnifiedInputSubmitRequest(
+        source_type="pasted_text",
+        text="Some reading text.",
         source_metadata={
             "source_kind": "manual",
             "provenance": {"reading_goal": "exam", "reading_variant": "gaokao"},
@@ -175,12 +181,15 @@ def test_plain_text_submit_accepts_nested_strategy_keys_in_source_metadata() -> 
     assert request.source_metadata["provenance"]["reading_goal"] == "exam"
 
 
-def test_plain_text_submit_accepts_none_and_empty_source_metadata() -> None:
-    request_none = ReaderPlainTextSubmitRequest(plain_text="Some reading text.")
+def test_reader_input_submit_accepts_none_and_empty_source_metadata() -> None:
+    request_none = ReaderUnifiedInputSubmitRequest(
+        source_type="pasted_text", text="Some reading text."
+    )
     assert request_none.source_metadata is None
 
-    request_empty = ReaderPlainTextSubmitRequest(
-        plain_text="Some reading text.",
+    request_empty = ReaderUnifiedInputSubmitRequest(
+        source_type="pasted_text",
+        text="Some reading text.",
         source_metadata={},
     )
     assert request_empty.source_metadata == {}

@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.reader_ask import ReaderAskMessage
 from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskHistoryMessage,
@@ -160,7 +159,7 @@ def test_completed_v2_projects_public_blocks_and_citations() -> None:
         }
     ]
     assert "evidence" not in projected
-    assert projected["article_rag"] is None
+    assert "article_rag" not in projected
     assert projected["current_user_visible_output"] is None
     _assert_no_evh(projected)
     ReaderRecordAskHistoryMessage.model_validate(projected)
@@ -412,23 +411,8 @@ def test_message_row_to_history_agentic_completed_bypasses_legacy_evidence() -> 
     assert message["agentic_citations"] is not None
     assert message["agentic_citations"][0]["citation_id"] == "c1"
     assert "evidence" not in message
-    assert message["article_rag"] is None
+    assert "article_rag" not in message
     _assert_no_evh(message)
-    ReaderAskMessage.model_validate(
-        {
-            k: v
-            for k, v in message.items()
-            if k
-            not in {
-                "execution_version",
-                "final_status",
-                "agentic_answer_blocks",
-                "agentic_citations",
-                "knowledge_mode",
-                "source_status",
-            }
-        }
-    )
     ReaderRecordAskHistoryMessage.model_validate(message)
 
 
@@ -445,7 +429,7 @@ def test_message_row_to_history_quarantines_json_version_without_column() -> Non
     assert message.get("execution_version") is None
     assert message.get("agentic_citations") is None
     assert "evidence" not in message
-    assert message["article_rag"] is None
+    assert "article_rag" not in message
     _assert_no_evh(message)
     ReaderRecordAskHistoryMessage.model_validate(message)
 
@@ -639,7 +623,7 @@ def test_message_row_to_history_user_message_preserves_content_md_with_agentic_m
     assert message.get("agentic_answer_blocks") is None
     assert message.get("agentic_citations") is None
     assert "evidence" not in message
-    ReaderAskMessage.model_validate(message)
+    ReaderRecordAskHistoryMessage.model_validate(message)
 
 
 # ---------------------------------------------------------------------------

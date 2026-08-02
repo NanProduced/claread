@@ -8,8 +8,6 @@ from fastapi import HTTPException
 from app.config.settings import get_settings
 from app.schemas.reader_ask import (
     ReaderAskSelectedModel,
-    ReaderAskThreadCreateRequest,
-    ReaderAskThreadDetail,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
 )
@@ -83,92 +81,6 @@ def _thread_summary_payload(thread: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def list_analysis_threads(user_id: UUID, record_id: str) -> ReaderAskThreadListResponse:
-    record_uuid = _parse_uuid(record_id, "record_id must be a UUID")
-    await repo.ensure_record_access(user_id, record_uuid)
-    items = await repo.list_threads(user_id, record_uuid)
-    return ReaderAskThreadListResponse(
-        items=[
-            ReaderAskThreadSummary.model_validate(_thread_summary_payload(item))
-            for item in items
-        ]
-    )
-
-
-async def create_analysis_thread(
-    user_id: UUID,
-    body: ReaderAskThreadCreateRequest,
-) -> ReaderAskThreadSummary:
-    record_uuid = _parse_uuid(body.record_id, "record_id must be a UUID")
-    record = await repo.ensure_record_access(user_id, record_uuid)
-    selected_option = _resolve_reader_ask_model_option_or_422(
-        selected_key=body.model,
-        strict=body.model is not None,
-    )
-    thread = await repo.get_or_create_default_thread(
-        user_id,
-        record_uuid,
-        title=body.title or record.get("title") or "Ask Claread",
-        selected_model_key=selected_option.key if body.model is not None else None,
-    )
-    if thread.get("selected_model_key") is None:
-        updated_thread = await repo.update_thread_selected_model(
-            user_id,
-            _parse_uuid(thread["id"], "thread id is invalid"),
-            selected_model_key=selected_option.key,
-        )
-        if updated_thread is not None:
-            thread = updated_thread
-    return ReaderAskThreadSummary.model_validate(_thread_summary_payload(thread))
-
-
-async def get_thread_detail(
-    user_id: UUID,
-    thread_id: UUID,
-) -> ReaderAskThreadDetail:
-    thread = await repo.get_thread(user_id, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    messages = await repo.list_messages(thread_id, limit=100)
-    return ReaderAskThreadDetail.model_validate(
-        {**_thread_summary_payload(thread), "messages": messages}
-    )
-
-
-async def reset_analysis_thread(user_id: UUID, thread_id: UUID) -> ReaderAskThreadDetail:
-    thread = await repo.get_thread(user_id, thread_id)
-    if thread is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    if thread.get("record_scope") != "analysis":
-        raise HTTPException(
-            status_code=400,
-            detail="Reader ask thread is not a legacy analysis thread",
-        )
-
-    record_id = _parse_uuid(str(thread["record_id"]), "thread record_id is invalid")
-    archived = await repo.archive_thread(user_id, thread_id)
-    if archived is None:
-        raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    next_thread_option = _resolve_reader_ask_model_option_or_422(
-        selected_key=cast(str | None, thread.get("selected_model_key")),
-        strict=False,
-    )
-
-    next_thread = await repo.get_or_create_default_thread(
-        user_id,
-        record_id,
-        title=thread.get("title") or "Ask Claread",
-        selected_model_key=next_thread_option.key,
-    )
-    messages = await repo.list_messages(
-        _parse_uuid(next_thread["id"], "thread id is invalid"),
-        limit=100,
-    )
-    return ReaderAskThreadDetail.model_validate(
-        {**_thread_summary_payload(next_thread), "messages": messages}
-    )
-
-
 async def list_reading_record_threads(
     user_id: UUID,
     reading_record_id: UUID,
@@ -240,8 +152,8 @@ async def get_reading_record_thread_detail(
                     "message": "该历史回答不是可验证的 Reading Record Ask v2 结果。",
                 },
             )
-    # RR-only history DTO: allows agentic_evidence with strict schema without
-    # expanding the Analysis Ask ReaderAskMessage wire contract.
+    # RR-only history DTO: the public shape is defined by the v2 stream schema
+    # and never falls back to an older Ask message contract.
     return ReaderRecordAskThreadDetail.model_validate(
         {**_thread_summary_payload(thread), "messages": messages}
     )

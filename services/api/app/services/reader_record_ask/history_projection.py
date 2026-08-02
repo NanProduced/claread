@@ -107,7 +107,6 @@ def _empty_history_lists() -> dict[str, Any]:
         "resolved_context_input": None,
         "run_info": None,
         "run_history": [],
-        "article_rag": None,
     }
 
 
@@ -234,7 +233,7 @@ def project_agentic_history_message(
     Rules:
     - Trust DB ``final_status`` column as source of truth; JSON may only
       confirm it. Mismatch → safe degrade (P0).
-    - Never hydrate public evidence / ``article_rag`` from agentic JSON.
+    - Never hydrate public evidence from agentic JSON.
     - Never emit ``envelope_fingerprint``, handles, or raw restricted evidence.
     - ``resolved_evidence_json`` is server-only and is never projected to history.
     """

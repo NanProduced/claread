@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -132,24 +131,7 @@ async def reader_api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
 
 async def _create_client(app: FastAPI) -> AsyncClient:
-    class _UnifiedInputTestClient(AsyncClient):
-        """Adapt historical fixture payloads to the unified input contract."""
-
-        async def post(self, url: Any, *args: Any, **kwargs: Any) -> Any:
-            if str(url) == "/reader/records/input":
-                payload = kwargs.get("json")
-                if isinstance(payload, dict) and "plain_text" in payload:
-                    payload = dict(payload)
-                    text = str(payload.pop("plain_text"))
-                    title = payload.pop("title", None)
-                    if title:
-                        text = f"# {title}\n\n{text}"
-                    payload["text"] = text
-                    payload.setdefault("source_type", "pasted_text")
-                    kwargs["json"] = payload
-            return await super().post(url, *args, **kwargs)
-
-    return _UnifiedInputTestClient(
+    return AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
     )
@@ -176,7 +158,7 @@ def _find_progress_layer(
     )
 
 
-async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_reload(
+async def test_submit_reader_input_returns_article_ready_snapshot_and_snapshot_reload(
     reader_api_env: dict[str, object],
 ) -> None:
     pool = reader_api_env["pool"]
@@ -191,9 +173,8 @@ async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_rel
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "First sentence.\n\nSecond paragraph.",
-                    "title": "API Submit",
-                    "language": "en",
+                    "source_type": "pasted_text",
+                    "text": "# API Submit\n\nFirst sentence.\n\nSecond paragraph.",
                     "source_metadata": {"source_kind": "api_test"},
                     "client_record_id": "reader-api-1",
                 },
@@ -256,7 +237,10 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Publish progress example.", "title": "Published"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Published\n\nPublish progress example.",
+                },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
@@ -364,7 +348,10 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Retry progress example.", "title": "Retry"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Retry\n\nRetry progress example.",
+                },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
@@ -525,7 +512,10 @@ async def test_snapshot_progress_reflects_failed_terminal_without_overwriting_pr
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Failure progress example.", "title": "Failed Job"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Failed Job\n\nFailure progress example.",
+                },
             )
             assert submit_response.status_code == 200
             submitted = submit_response.json()
@@ -587,7 +577,10 @@ async def test_polling_returns_article_ready_event_and_empty_page_after_cursor(
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Polling event body.", "title": "Polling"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Polling\n\nPolling event body.",
+                },
             )
             record_id = submit_response.json()["record_id"]
 
@@ -629,7 +622,10 @@ async def test_polling_limit_truncation_does_not_skip_cursor(
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Cursor truncation body.", "title": "Cursor"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Cursor\n\nCursor truncation body.",
+                },
             )
             record_id = UUID(submit_response.json()["record_id"])
 
@@ -684,7 +680,10 @@ async def test_other_user_cannot_read_snapshot_or_events(
             submit_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Private reader record.", "title": "Private"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Private\n\nPrivate reader record.",
+                },
             )
             record_id = submit_response.json()["record_id"]
 
@@ -718,7 +717,10 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
             owner_submit = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Owner progress record.", "title": "Owner"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Owner\n\nOwner progress record.",
+                },
             )
             assert owner_submit.status_code == 200
             owner_record_id = owner_submit.json()["record_id"]
@@ -728,7 +730,10 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
             other_submit = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Other progress record.", "title": "Other"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Other\n\nOther progress record.",
+                },
             )
             assert other_submit.status_code == 200
             other_record_id = UUID(other_submit.json()["record_id"])
@@ -775,7 +780,7 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
             assert snapshot["enhancement_progress"]["overall_status"] == "readable_enhancing"
 
 
-async def test_empty_plain_text_submit_returns_validation_error(
+async def test_empty_reader_input_returns_validation_error(
     reader_api_env: dict[str, object],
 ) -> None:
     pool = reader_api_env["pool"]
@@ -789,7 +794,7 @@ async def test_empty_plain_text_submit_returns_validation_error(
             response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "   \n\t  "},
+                json={"source_type": "pasted_text", "text": "   \n\t  "},
             )
 
     assert response.status_code == 422
@@ -810,7 +815,8 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "Blank client record id first submit.",
+                    "source_type": "pasted_text",
+                    "text": "Blank client record id first submit.",
                     "client_record_id": "   ",
                 },
             )
@@ -818,7 +824,8 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "Blank client record id second submit.",
+                    "source_type": "pasted_text",
+                    "text": "Blank client record id second submit.",
                     "client_record_id": "",
                 },
             )
@@ -857,7 +864,8 @@ async def test_duplicate_client_record_id_returns_conflict(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "First idempotency-like submit.",
+                    "source_type": "pasted_text",
+                    "text": "First idempotency-like submit.",
                     "client_record_id": "dup-client-record-id",
                 },
             )
@@ -865,7 +873,8 @@ async def test_duplicate_client_record_id_returns_conflict(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "Second conflicting submit.",
+                    "source_type": "pasted_text",
+                    "text": "Second conflicting submit.",
                     "client_record_id": "dup-client-record-id",
                 },
             )
@@ -890,8 +899,8 @@ async def test_list_reader_records_returns_user_scoped_records(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "First reading record body.",
-                    "title": "First Record",
+                    "source_type": "pasted_text",
+                    "text": "# First Record\n\nFirst reading record body.",
                     "source_metadata": {"source_kind": "list_test_first"},
                 },
             )
@@ -899,8 +908,8 @@ async def test_list_reader_records_returns_user_scoped_records(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
-                    "plain_text": "Second reading record body.",
-                    "title": "Second Record",
+                    "source_type": "pasted_text",
+                    "text": "# Second Record\n\nSecond reading record body.",
                     "source_metadata": {"source_kind": "list_test_second"},
                 },
             )
@@ -952,7 +961,10 @@ async def test_list_reader_records_isolates_by_user(
             await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Owner private record.", "title": "Owner"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Owner\n\nOwner private record.",
+                },
             )
 
     with _mock_auth(other_user_id):
@@ -960,7 +972,10 @@ async def test_list_reader_records_isolates_by_user(
             await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Other user record.", "title": "Other"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Other\n\nOther user record.",
+                },
             )
 
             list_response = await client.get(
@@ -987,9 +1002,12 @@ async def test_list_reader_records_respects_limit(
         async with await _create_client(app) as client:
             for index in range(3):
                 response = await client.post(
-                "/reader/records/input",
+                    "/reader/records/input",
                     headers=AUTH_HEADERS,
-                    json={"plain_text": f"Record {index} body.", "title": f"Record {index}"},
+                    json={
+                        "source_type": "pasted_text",
+                        "text": f"# Record {index}\n\nRecord {index} body.",
+                    },
                 )
                 assert response.status_code == 200
 
@@ -1017,9 +1035,12 @@ async def test_list_reader_records_filters_by_query(
         async with await _create_client(app) as client:
             for title in ("Focus Alpha", "Background Note", "Focus Beta"):
                 response = await client.post(
-                "/reader/records/input",
+                    "/reader/records/input",
                     headers=AUTH_HEADERS,
-                    json={"plain_text": f"{title} body.", "title": title},
+                    json={
+                        "source_type": "pasted_text",
+                        "text": f"# {title}\n\n{title} body.",
+                    },
                 )
                 assert response.status_code == 200
 
@@ -1050,12 +1071,18 @@ async def test_list_reader_records_filters_by_product_state(
             failed_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Failed body.", "title": "Failed Record"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Failed Record\n\nFailed body.",
+                },
             )
             ready_response = await client.post(
                 "/reader/records/input",
                 headers=AUTH_HEADERS,
-                json={"plain_text": "Ready body.", "title": "Ready Record"},
+                json={
+                    "source_type": "pasted_text",
+                    "text": "# Ready Record\n\nReady body.",
+                },
             )
             assert failed_response.status_code == 200
             assert ready_response.status_code == 200
