@@ -13,21 +13,26 @@ function body() {
   return readFileSync(COMPOSE, "utf8");
 }
 
-// Regression for the Directus "silent exit 0" boot bug: a YAML folded (`>`)
-// entrypoint scalar collapses the `mkdir -p` lines and `exec npx directus start`
-// into a single malformed `mkdir` command, so Directus never starts yet the
-// container exits 0. The entrypoint must stay an exec-form list whose shell
-// command is a literal block with each statement on its own line.
+// Directus boot contract + retired-surface prohibition for
+// infra/docker/docker-compose.directus.yml.
+//
+// Boot contract: the entrypoint must be an exec-form list (`/bin/sh -c` with a
+// literal command block) whose final/only statement is `exec npx directus start`.
+// A YAML folded (`>`) scalar would collapse the command into a malformed string
+// and the container could silently exit 0 without starting Directus.
+//
+// Retired-surface prohibition: after CUTOVER-CONTROL-EVAL the compose file must
+// not carry the retired Eval Center / Workflow Lab / Node Lab runtime contract —
+// no runtime-evals mkdir, no legacy CLAREAD_* env, no Node Lab judge worker
+// command, and no consumer-less /directus/evals or /directus/runtime-evals mounts.
 
 test("directus compose entrypoint is not a folded scalar", () => {
   const src = body();
   assert.doesNotMatch(
     src,
     /entrypoint:\s*>/,
-    "entrypoint must not be a folded `>` scalar (it would fold the boot commands into one malformed mkdir)",
+    "entrypoint must not be a folded `>` scalar (it would fold the boot command into a malformed string)",
   );
-  // The `entrypoint:` key must introduce a block (exec-form list), not an inline
-  // scalar value on the same line.
   assert.match(
     src,
     /^\s*entrypoint:\s*(#.*)?$/m,
@@ -35,31 +40,52 @@ test("directus compose entrypoint is not a folded scalar", () => {
   );
 });
 
-test("directus compose entrypoint is exec-form /bin/sh -c with a literal command block", () => {
+test("directus compose entrypoint is exec-form /bin/sh -c ending in exec npx directus start", () => {
   const src = body();
   assert.match(src, /^\s*-\s*\/bin\/sh\s*$/m, "entrypoint list must include /bin/sh");
   assert.match(src, /^\s*-\s*-c\s*$/m, "entrypoint list must include -c");
   assert.match(
     src,
-    /^\s*-\s*\|/m,
-    "entrypoint shell command must be a literal block scalar (| or |-) so newlines are preserved",
+    /^\s*exec npx directus start\s*$/m,
+    "'exec npx directus start' must be its own shell statement (the boot command)",
   );
 });
 
-test("directus compose entrypoint runs each mkdir separately then exec npx directus start", () => {
+test("directus compose no longer creates or mounts the retired runtime-evals dirs", () => {
   const src = body();
-  const mkdirLines = src
-    .split(/\r?\n/)
-    .filter((line) => /mkdir -p \/directus\/runtime-evals/.test(line));
-  assert.ok(
-    mkdirLines.length >= 3,
-    `expected >=3 separate 'mkdir -p /directus/runtime-evals' lines, found ${mkdirLines.length}`,
-  );
-  // `exec npx directus start` must be its own shell statement on its own line,
-  // not folded into the tail of the last mkdir.
-  assert.match(
+  assert.doesNotMatch(
     src,
-    /^\s*exec npx directus start\s*$/m,
-    "'exec npx directus start' must be on its own line as the final command",
+    /mkdir -p \/directus\/runtime-evals/,
+    "entrypoint must not create the retired /directus/runtime-evals directories",
   );
+  assert.doesNotMatch(
+    src,
+    /\/directus\/runtime-evals/,
+    "compose must not reference the retired /directus/runtime-evals mount/path",
+  );
+  assert.doesNotMatch(
+    src,
+    /\/directus\/evals\b/,
+    "compose must not reference the retired /directus/evals mount",
+  );
+});
+
+test("directus compose carries no retired Eval/Workflow/Node Lab env or worker command", () => {
+  const src = body();
+  const forbiddenTokens = [
+    "CLAREAD_EVAL_PROXY_TIMEOUT_MS",
+    "CLAREAD_EVAL_RUNS_ROOT",
+    "CLAREAD_NODE_LAB_ARTIFACTS_ROOT",
+    "CLAREAD_WORKFLOW_RUNTIME_RUNS_ROOT",
+    "CLAREAD_WORKFLOW_COMPARE_RUNTIME_ROOT",
+    "CLAREAD_NODE_LAB_JUDGE_DISPATCH_MODE",
+    "CLAREAD_NODE_LAB_JUDGE_WORKER_COMMAND",
+    "CLAREAD_API_BASE_URL",
+    "CLAREAD_API_ADMIN_KEY",
+    // Node Lab judge worker command referenced a module deleted in the physical cutover.
+    "claread_eval.node_lab_judge.worker",
+  ];
+  for (const token of forbiddenTokens) {
+    assert.equal(src.includes(token), false, `compose must not carry retired token: ${token}`);
+  }
 });

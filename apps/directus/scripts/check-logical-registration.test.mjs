@@ -72,4 +72,5 @@ test("registration gate script exits 0 on current tree", () => {
   assert.equal(payload.panels.length, 0);
   assert.equal(payload.retired_sync, "physically-deleted");
   assert.equal(payload.physical_deletion, "enforced");
+  assert.equal(payload.eval_example_lab, "protected");
 });

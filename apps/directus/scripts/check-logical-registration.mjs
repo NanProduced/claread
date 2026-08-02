@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -151,6 +151,73 @@ for (const rel of PHYSICALLY_DELETED_FILES) {
   }
 }
 
+// Eval-center DATA reset scripts must be PHYSICALLY DELETED: the old
+// reset_eval_center_tables.sql TRUNCATE'd eval_example_lab_entries (a KEEP
+// table), so neither the PowerShell runner nor its SQL may remain on disk.
+for (const rel of [
+  "infra/scripts/reset-eval-center-data.ps1",
+  "infra/scripts/reset_eval_center_tables.sql",
+]) {
+  if (existsSync(resolve(REPO_ROOT, rel))) {
+    errors.push(`${rel} must be physically deleted (it could empty eval_example_lab_entries)`);
+  }
+}
+
+// drop_eval_center_tables.sql is the Data owner DROP manifest: exactly the 12
+// legacy control-plane tables, and it MUST NOT include the protected
+// eval_example_lab_entries (KEEP/REHOME). Cutover does not execute it.
+const DROP_MANIFEST_REL = "infra/scripts/drop_eval_center_tables.sql";
+const EXPECTED_DROP_TABLES = [
+  "eval_prompt_variant_drafts",
+  "eval_workflow_run_requests",
+  "eval_workflow_compares",
+  "eval_workflow_compare_judge_requests",
+  "eval_judge_run_requests",
+  "eval_review_notes",
+  "eval_node_lab_candidate_drafts",
+  "eval_node_lab_sessions",
+  "eval_node_lab_trials",
+  "eval_node_lab_judge_configs",
+  "eval_node_lab_judge_requests",
+  "eval_node_lab_review_notes",
+];
+const dropManifestPath = resolve(REPO_ROOT, DROP_MANIFEST_REL);
+if (!existsSync(dropManifestPath)) {
+  errors.push(`${DROP_MANIFEST_REL} missing; expected the Data owner 12-table DROP manifest`);
+} else {
+  // Strip full-line SQL comments so the prohibition header may document the
+  // exclusion; only executable SQL is checked.
+  const dropBody = readFileSync(dropManifestPath, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  if (/eval_example_lab_entries/.test(dropBody)) {
+    errors.push(`${DROP_MANIFEST_REL} MUST NOT include protected eval_example_lab_entries`);
+  }
+  for (const table of EXPECTED_DROP_TABLES) {
+    if (!new RegExp(`\\b${table}\\b`).test(dropBody)) {
+      errors.push(`${DROP_MANIFEST_REL} missing expected legacy table: ${table}`);
+    }
+  }
+}
+
+// Broad protection: NO executable SQL under infra/scripts may reference the
+// protected eval_example_lab_entries table (comment mentions are allowed). This
+// guarantees no ops reset/drop script can empty or drop the KEEP table.
+const infraScriptsDir = resolve(REPO_ROOT, "infra/scripts");
+if (existsSync(infraScriptsDir)) {
+  for (const entry of readdirSync(infraScriptsDir)) {
+    if (!entry.endsWith(".sql")) continue;
+    const executableSql = readFileSync(resolve(infraScriptsDir, entry), "utf8")
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    if (/\beval_example_lab_entries\b/.test(executableSql)) {
+      errors.push(`infra/scripts/${entry} must not touch protected eval_example_lab_entries in executable SQL`);
+    }
+  }
+}
+
 // package.json must not expose retired sync commands as normal ops entrypoints.
 for (const cmd of ["parse-run:sync-metadata", "eval-center:sync-metadata"]) {
   if (directusPkg.scripts && Object.prototype.hasOwnProperty.call(directusPkg.scripts, cmd)) {
@@ -243,6 +310,7 @@ console.log(
       hooks: "example-lab-validation-keep",
       retired_sync: "physically-deleted",
       physical_deletion: "enforced",
+      eval_example_lab: "protected",
       init_eval_center: "fail-closed",
     },
     null,
