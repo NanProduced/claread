@@ -60,8 +60,9 @@ interface ReviewResultDto {
 
 function parseSourceRefs(payload: Record<string, unknown> | undefined): SourceRef[] {
   if (!payload?.source_refs || !Array.isArray(payload.source_refs)) return []
-  return payload.source_refs.map((ref: { client_record_id?: string; daily_reader_article_id?: string; source_sentence?: string; source_context?: string; source_sentence_id?: string; source_anchor_text?: string; source_occurrence?: number; collected_at?: string }) => ({
-    readingRecordId: ref.client_record_id || undefined,
+  return payload.source_refs.map((ref: { reading_record_id?: string; client_record_id?: string; daily_reader_article_id?: string; source_sentence?: string; source_context?: string; source_sentence_id?: string; source_anchor_text?: string; source_occurrence?: number; collected_at?: string }) => ({
+    // CUTOVER-MINI-LONG: canonical key is reading_record_id; client_record_id kept only as backward-compat fallback.
+    readingRecordId: ref.reading_record_id || ref.client_record_id || undefined,
     dailyReaderArticleId: ref.daily_reader_article_id || undefined,
     sourceSentence: ref.source_sentence || undefined,
     sourceContext: ref.source_context || undefined,
@@ -154,7 +155,8 @@ export async function addVocabToCloud(
   entry: VocabEntry
 ): Promise<{ id: string; created: boolean }> {
   const sourceRefs = (entry.sourceRefs || []).map(ref => ({
-    client_record_id: ref.readingRecordId || null,
+    // CUTOVER-MINI-LONG: emit canonical reading_record_id; client/cloud record ID mapping removed.
+    reading_record_id: ref.readingRecordId || null,
     daily_reader_article_id: ref.dailyReaderArticleId || null,
     source_sentence: ref.sourceSentence || null,
     source_context: ref.sourceContext || null,
