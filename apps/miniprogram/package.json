@@ -7,7 +7,7 @@
     "build:weapp": "taro build --type weapp",
     "dev:weapp": "taro build --type weapp --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:sourceref": "npx --yes tsx src/services/api/__tests__/sourceref.contract.test.ts"
+    "test:sourceref": "tsx src/services/api/__tests__/sourceref.contract.test.ts"
   },
   "browserslist": [
     "last 3 versions",
@@ -39,6 +39,7 @@
     "ajv": "^8.0.0",
     "babel-preset-taro": "3.6.8",
     "sass": "^1.59.3",
+    "tsx": "^4.23.0",
     "typescript": "^5.0.0",
     "webpack": "5.78.0"
   }
