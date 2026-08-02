@@ -7391,10 +7391,9 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     });
   });
 
-  it("v2 keeps TurnProcessDisclosure at T0 without an analysis lane", async () => {
-    // Same T0 stall, but analysis scope ⇒ isAgenticCapable=false ⇒
-    // isAgenticV2Turn=false at T0 (idle activity). The old indicator
-    // is the correct owner for the explicit legacy lane.
+  it("v2 keeps TurnProcessDisclosure at T0 without a fabricated phase", async () => {
+    // A stalled v2 turn must not synthesize an analysis step before a typed
+    // progress event proves that phase.
     let releaseStream: () => void = () => {};
     const streamReleased = new Promise<void>((resolve) => {
       releaseStream = resolve;

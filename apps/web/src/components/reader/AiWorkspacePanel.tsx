@@ -2031,12 +2031,6 @@ function MessageBubble({
   agenticActivity?: AgenticActivityState | null;
   turnNotice?: AskSystemNotice | null;
   onDismissTurnNotice?: (messageId: string) => void;
-  /**
-   * ASK-UX-HISTORY-COT-R2 P0-3 — true when the host panel routes sends
-   * through the Reading Record Ask stream (the agentic v2 lane when the
-   * backend flag is on). Analysis-scope callers are the explicit legacy
-   * lane and keep AssistantStreamingIndicator at T0.
-   */
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -2400,8 +2394,8 @@ export interface AiWorkspacePanelProps {
   capacityDowngradeNotice?: string | null;
   onDismissCapacityDowngradeNotice?: () => void;
   /**
-   * Reader-owned NavigateAgenticSource callback (R3C-A). Optional — Analysis
-   * Ask and callers without wiring keep Sources display-only.
+   * Reader-owned NavigateAgenticSource callback (R3C-A). Optional — callers
+   * without wiring keep canonical citations display-only.
    * Must not pass CurrentPageIdentity / Document / Element here.
    */
   onNavigateAgenticSource?: NavigateAgenticSource;
@@ -2409,7 +2403,7 @@ export interface AiWorkspacePanelProps {
    * ASK-UX-MOBILE — whether the host layout currently has room for the
    * sidecar surface. When false, the surface switch menu is replaced by a
    * static「浮窗」label so the user cannot pick an unavailable surface.
-   * Defaults to true so Analysis-scope callers (which never pass it) keep
+   * Defaults to true so callers that do not provide a layout measurement keep
    * the existing menu behavior.
    */
   hasSidecarCapacity?: boolean;
@@ -2451,9 +2445,6 @@ export function AiWorkspacePanel({
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
-  // The Web Reader is a Reading Record surface. The legacy analysis scope is
-  // intentionally not a transport or rendering branch here.
-  const isReadingRecordScope = true;
   const launcherVisibilityClass = hideLauncherInCompactLayout
     ? "hidden 2xl:inline-flex"
     : hideLauncherOnMobile
@@ -2644,15 +2635,13 @@ export function AiWorkspacePanel({
   const currentArticleChipTitle =
     recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
 
-  // R3 P1 — RR selection slots (auto 0/1 + manual ≤3) ride along on send
-  // as explicit focus context. Analysis scope keeps its legacy
-  // live-selection-only behavior.
-  const selectionSlotAttachments = isReadingRecordScope
-    ? [
-        ...(autoSelectionAttachment ? [autoSelectionAttachment] : []),
-        ...(manualSelectionAttachments ?? []),
-      ]
-    : [];
+  // R3 P1 — Reading Record selection slots (auto 0/1 + manual ≤3) ride along
+  // on send as explicit focus context. The Web Reader has one Ask contract
+  // and one selection lane.
+  const selectionSlotAttachments = [
+    ...(autoSelectionAttachment ? [autoSelectionAttachment] : []),
+    ...(manualSelectionAttachments ?? []),
+  ];
 
   // ASK-UX-HISTORY-COT-R2 P0-2: the current article is fixed implicit
   // context — it must NOT produce a default "基于：当前文章" provenance
@@ -4239,60 +4228,43 @@ export function AiWorkspacePanel({
         onStop={handleStop}
         placeholder={COMPOSER_PLACEHOLDER}
         contextStrip={
-          isReadingRecordScope ? (
-            <>
-              {/* ASK-UX-COT-COMPOSER-R3 P1 — Reading Record strip: the
-                  permanent current-article chip first (implicit context,
-                  page-authoritative title, non-removable), then the 0/1
-                  auto selection, then pinned manual selections, then
-                  other drafts (notes/refs). No "基于：当前文章"
-                  provenance — the chip is the visible hint. */}
-              <CurrentArticleChip title={currentArticleChipTitle} />
-              {autoSelectionAttachment ? (
-                <SelectionContextChip
-                  attachment={autoSelectionAttachment}
-                  slot="auto"
-                  onRemove={
-                    onRemoveAutoSelection ? () => onRemoveAutoSelection() : undefined
-                  }
-                />
-              ) : null}
-              {(manualSelectionAttachments ?? []).map((attachment) => (
-                <SelectionContextChip
-                  key={askAttachmentKey(attachment)}
-                  attachment={attachment}
-                  slot="manual"
-                  onRemove={onRemoveManualSelection}
-                />
-              ))}
-              <AttachmentChips
-                attachments={composerContextAttachments}
-                removable
-                onRemove={onRemoveAttachment}
-                onJump={onJumpToAttachment}
-                variant="composer"
+          <>
+            {/* ASK-UX-COT-COMPOSER-R3 P1 — the permanent current-article
+                chip is implicit context and non-removable, followed by the
+                auto/manual selections and explicit attachments. */}
+            <CurrentArticleChip title={currentArticleChipTitle} />
+            {autoSelectionAttachment ? (
+              <SelectionContextChip
+                attachment={autoSelectionAttachment}
+                slot="auto"
+                onRemove={
+                  onRemoveAutoSelection ? () => onRemoveAutoSelection() : undefined
+                }
               />
-            </>
-          ) : composerContextAttachments.length > 0 || liveContextAttachment ? (
-            <>
-              {/* Analysis scope keeps the legacy strip: explicit
-                  attachments + live selection only. */}
-              <AttachmentChips
-                attachments={composerContextAttachments}
-                removable
-                onRemove={onRemoveAttachment}
-                onJump={onJumpToAttachment}
-                variant="composer"
+            ) : null}
+            {(manualSelectionAttachments ?? []).map((attachment) => (
+              <SelectionContextChip
+                key={askAttachmentKey(attachment)}
+                attachment={attachment}
+                slot="manual"
+                onRemove={onRemoveManualSelection}
               />
-              {liveContextAttachment ? (
-                <LiveSelectionChip
-                  attachment={liveContextAttachment}
-                  onActivate={onActivateLiveContextSelection}
-                  onRemove={onRemoveAttachment}
-                />
-              ) : null}
-            </>
-          ) : undefined
+            ))}
+            <AttachmentChips
+              attachments={composerContextAttachments}
+              removable
+              onRemove={onRemoveAttachment}
+              onJump={onJumpToAttachment}
+              variant="composer"
+            />
+            {liveContextAttachment ? (
+              <LiveSelectionChip
+                attachment={liveContextAttachment}
+                onActivate={onActivateLiveContextSelection}
+                onRemove={onRemoveAttachment}
+              />
+            ) : null}
+          </>
         }
         modelOptions={modelSelectItems}
         modelSelectDisabled={loading || sending || modelOptionsLoading || modelSelectItems.length === 0}
@@ -4302,23 +4274,14 @@ export function AiWorkspacePanel({
         onTextareaFocus={onComposerTextareaFocus}
         onTextareaBlur={onComposerTextareaBlur}
         // ASK-WEB-G1-R2: gate the Search toggle by the server-declared
-        // capability for the current model option, not by page scope alone.
-        // ``isReadingRecordScope`` is a page condition; the actual
-        // capability is declared by the host via the model option's
-        // ``web_search_capability`` field. When the host has not declared
-        // the capability (or no model option is selected), both props are
-        // undefined so AskComposer hides the toggle entirely (no no-op
-        // control per product rule). When sending, AskComposer disables
-        // the toggle independently — we do not duplicate that here.
-        webSearchMode={
-          isReadingRecordScope && webSearchCapabilityAvailable
-            ? webSearchMode
-            : undefined
-        }
+        // capability for the current model option. When the host has not
+        // declared the capability (or no model option is selected), both
+        // props are undefined so AskComposer hides the toggle entirely (no
+        // no-op control per product rule). When sending, AskComposer
+        // disables the toggle independently — we do not duplicate that here.
+        webSearchMode={webSearchCapabilityAvailable ? webSearchMode : undefined}
         onWebSearchModeChange={
-          isReadingRecordScope && webSearchCapabilityAvailable
-            ? setWebSearchMode
-            : undefined
+          webSearchCapabilityAvailable ? setWebSearchMode : undefined
         }
       />
     </aside>
