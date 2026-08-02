@@ -7,17 +7,13 @@
  *    `failure_code`, `retryable`, `fallback_allowed`, `source_pack_hash`,
  *    and `query_sha256` so components cannot accidentally render them.
  *
- * 2. The new Reader Orchestration flow (F0-F6) does not re-import the
- *    legacy `/app/reader/{recordId}` route helper. The legacy route is
- *    kept for the old ReaderWorkbench surface only; the new flow must
- *    navigate via `appReadingRecordRoute` (`/app/reader-record/{recordId}`).
- *    Re-introducing the legacy route into the new flow would break the
- *    "legacy path stays untouched" hard constraint and split traffic
- *    between two reader surfaces.
+ * 2. The final Reader Orchestration flow (F0-F6) does not re-import a
+ *    removed route helper or old BFF URL. The only Reader product page is
+ *    `/app/reader/{recordId}`, and its reachable source closure must use
+ *    the canonical `/api/web/reader/**` namespace.
  *
- * 3. The F7 Ask sidecar e2e fixture route is blocked in production. It is
- *    allowed as a stable Playwright entry point, but must never become a
- *    user-visible app page.
+ * 3. The F7 Ask sidecar e2e fixture route is not a user-visible app page;
+ *    retained harness coverage is a separate Physical-phase deletion item.
  *
  * This is a guard test: it scans source files at test time so a future
  * regression fails the test suite before it can ship.
@@ -269,4 +265,40 @@ describe("F7 source guard: removed pages and old BFF namespaces stay absent", ()
     expect(source).not.toContain("getReaderRecordSurfaceMode");
     expect(source).toContain("/api/web/reader/records/");
   });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Reachable final Reader source closure uses canonical BFF URLs
+// ---------------------------------------------------------------------------
+
+const FINAL_READER_SOURCE_FILES = [
+  "src/app/(private)/app/reader/[recordId]/page.tsx",
+  "src/app/(private)/app/reader/[recordId]/plate-page.tsx",
+  "src/app/(private)/app/reader/[recordId]/FavoriteButton.tsx",
+  "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+  "src/components/reader/AiWorkspacePanel.tsx",
+  "src/lib/reader-ask/browser-paths.ts",
+] as const;
+
+const REMOVED_BFF_URL_MARKERS = [
+  "/api/web/analysis",
+  "/api/web/annotations",
+  "/api/web/favorites",
+  "/api/web/reader-ask",
+  "/api/web/reader-notes",
+  "/api/web/reader-plate",
+  "/api/web/reading-record",
+  "/api/web/reading-records",
+] as const;
+
+describe("F7 source guard: final Reader closure has no old BFF fetches", () => {
+  it.each(FINAL_READER_SOURCE_FILES)(
+    "%s contains no removed BFF URL namespace",
+    (relativePath) => {
+      const source = readFileSync(resolve(process.cwd(), relativePath), "utf8");
+      for (const marker of REMOVED_BFF_URL_MARKERS) {
+        expect(source, `${relativePath} contains removed URL ${marker}`).not.toContain(marker);
+      }
+    },
+  );
 });
