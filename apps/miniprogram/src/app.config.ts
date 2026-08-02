@@ -1,14 +1,11 @@
 export default {
   pages: [
     'pages/home/index',
-    'pages/input/index',
-    'pages/result/index',
   ],
   subPackages: [
     {
       root: 'packageA',
       pages: [
-        'history/index',
         'vocab/index',
         'vocab-review/index',
         'profile/index',

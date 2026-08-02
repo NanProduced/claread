@@ -1,8 +1,5 @@
 const ROUTES = {
   HOME: '/pages/home/index',
-  INPUT: '/pages/input/index',
-  RESULT: '/pages/result/index',
-  HISTORY: '/packageA/history/index',
   VOCAB: '/packageA/vocab/index',
   VOCAB_REVIEW: '/packageA/vocab-review/index',
   PROFILE: '/packageA/profile/index',

@@ -12,7 +12,6 @@ interface TabBarProps {
 export default function TabBar({ current, onTabChange }: TabBarProps) {
   const tabs = [
     { key: 'home', text: '首页', icon: 'home' as const, path: ROUTES.HOME },
-    { key: 'history', text: '记录', icon: 'bookOpen' as const, path: ROUTES.HISTORY },
     { key: 'profile', text: '我的', icon: 'smile' as const, path: ROUTES.PROFILE },
   ]
 

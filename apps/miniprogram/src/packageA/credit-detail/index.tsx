@@ -129,10 +129,8 @@ export default function CreditDetailPage() {
     Taro.showToast({ title: '邀请功能开发中', icon: 'none' })
   }
 
-  const handleEntryClick = (entry: LedgerEntry) => {
-    if (entry.taskId) {
-      Taro.navigateTo({ url: `/packageA/history/index?highlightTask=${entry.taskId}` })
-    }
+  const handleEntryClick = (_entry: LedgerEntry) => {
+    // History page deactivated in CUTOVER-MINI-LONG; entry detail navigation removed
   }
 
   const groups = groupByDate(entries)

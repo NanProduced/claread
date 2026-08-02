@@ -23,8 +23,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useConfigStore } from '../../stores/config'
 import { useAuthStore } from '../../stores/auth'
 import { ensureLoggedIn } from '../../services/auth'
-import { getAllRecords, getVocabulary, getVocabCount } from '../../services/storage'
-import { fetchCloudRecords } from '../../services/api/records.client'
+import { getVocabulary, getVocabCount } from '../../services/storage'
 import { fetchCloudVocabulary } from '../../services/api/vocabulary.client'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
 import { fetchUserQuota, updateProfile } from '../../services/api/client'
@@ -67,14 +66,13 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
       try {
         await fetchUserInfo().catch(() => {})
 
-        const [vocabResult, quotaResult, recordResult] = await Promise.all([
+        const [vocabResult, quotaResult] = await Promise.all([
           fetchCloudVocabulary(1, 1).catch(() => ({ total: 0, items: [] as VocabEntry[] })),
           fetchUserQuota().catch(() => null),
-          fetchCloudRecords(1, 1).catch(() => ({ total: 0 })),
         ])
 
         const latestInfo = useAuthStore.getState().userInfo
-        setArticleCount(latestInfo?.cumulativeArticleCount ?? recordResult.total ?? 0)
+        setArticleCount(latestInfo?.cumulativeArticleCount ?? 0)
 
         const localVocab = getVocabulary()
         const cloudTotal = vocabResult.total
@@ -89,13 +87,11 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
           })
         }
       } catch {
-        const records = getAllRecords()
-        setArticleCount(records.length)
+        setArticleCount(0)
         setWordCount(getVocabCount())
       }
     } else {
-      const records = getAllRecords()
-      setArticleCount(records.length)
+      setArticleCount(0)
       setWordCount(getVocabCount())
       setQuota(null)
     }

@@ -4,7 +4,6 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { ROUTES } from '../../config/routes'
 import NavBar from '../../components/NavBar'
 import TabBar from '../../components/TabBar'
-import LucideIcon from '../../components/LucideIcon'
 import { useLayoutStore } from '../../stores/layout'
 import { useAuthStore } from '../../stores/auth'
 import { useDailyReaderStore } from '../../stores/daily-reader'
@@ -16,21 +15,12 @@ import './index.scss'
 
 const ANONYMOUS_DAILY_TRIAL_LIMIT = 3
 
-function HomeView({ placeholders }: { placeholders: string[] }) {
-  const [placeholderIndex, setPlaceholderIndex] = useState(0)
+function HomeView() {
   const { navBarHeight } = useLayoutStore()
   const { isLoggedIn, userInfo } = useAuthStore()
 
   // 匿名用户试用 banner 状态
   const [guestTrials, setGuestTrials] = useState<number | null>(null)
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setPlaceholderIndex((i) => (i + 1) % placeholders.length)
-    }, 3000)
-
-    return () => clearInterval(timer)
-  }, [placeholders.length])
 
   // 获取匿名用户剩余试用次数
   const fetchGuestTrials = useCallback(() => {
@@ -167,23 +157,6 @@ function HomeView({ placeholders }: { placeholders: string[] }) {
           <Text className='sub-greeting'>{greeting.sub}</Text>
         </View>
 
-        <View className='light-portal' onClick={() => Taro.navigateTo({ url: ROUTES.INPUT })}>
-          <View className='portal-inner'>
-            <View className='portal-text-area'>
-              <Text className='portal-label'>输入文本</Text>
-              <View className='placeholder-wrapper'>
-                <Text className='well-placeholder' key={placeholderIndex}>
-                  {placeholders[placeholderIndex]}
-                </Text>
-                <View className='typing-cursor' />
-              </View>
-            </View>
-            <View className='portal-action-btn'>
-              <LucideIcon name='plus' size={24} color='var(--color-white)' />
-            </View>
-          </View>
-        </View>
-
         <View className='section-header'>
           <Text className='section-title'>最新精读</Text>
           <Text
@@ -231,12 +204,5 @@ function HomeView({ placeholders }: { placeholders: string[] }) {
 }
 
 export default function Home() {
-  const placeholders = [
-    '粘贴一段《经济学人》社论...',
-    '粘贴你的 GRE 阅读真题...',
-    '导入一段雅思大作文练习...',
-    '粘贴今日份的纽约时报摘要...',
-  ]
-
-  return <HomeView placeholders={placeholders} />
+  return <HomeView />
 }

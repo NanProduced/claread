@@ -245,8 +245,8 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
     })
   }
 
-  const goToInput = () => {
-    Taro.navigateTo({ url: ROUTES.INPUT })
+  const goToDailyReaderArchive = () => {
+    Taro.navigateTo({ url: ROUTES.DAILY_READER_ARCHIVE })
   }
 
   const openVocabInspect = (entry: VocabEntry) => {
@@ -344,7 +344,7 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
             <Image className='empty-illustration' src={emptyVocabImg} mode='aspectFit' />
             <Text className='empty-text'>{debouncedQuery ? '未找到匹配的生词' : (filterStatus === 'due' ? '今日无需复习' : '暂无生词')}</Text>
             {!debouncedQuery && filterStatus === 'all' && (
-              <View className='empty-action' onClick={goToInput}>
+              <View className='empty-action' onClick={goToDailyReaderArchive}>
                 <Text className='empty-sub'>去读一篇文章，记下不认识的词吧 →</Text>
               </View>
             )}
