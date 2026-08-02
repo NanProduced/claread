@@ -148,7 +148,9 @@ test.describe("Claread web routes", () => {
   }) => {
     const removedPaths = [
       "/api/web/reader-plate/mock-record/snapshot",
+      "/api/web/reader-plate/submit",
       "/api/web/reader-ask/model-options",
+      "/api/web/reader/records/plain-text",
       "/api/web/reading-records",
       "/api/web/reading-record/mock-record/submit",
       "/api/web/reader-notes",
@@ -161,6 +163,22 @@ test.describe("Claread web routes", () => {
 
     for (const path of removedPaths) {
       const response = await request.get(path);
+      expect(response.status(), path).toBe(404);
+    }
+  });
+
+  test("retired Reader submit endpoints return 404 for write methods", async ({
+    request,
+  }) => {
+    const removedSubmitPaths = [
+      "/api/web/reader/records/plain-text",
+      "/api/web/reader-plate/submit",
+    ];
+
+    for (const path of removedSubmitPaths) {
+      const response = await request.post(path, {
+        data: { plainText: "retired route probe" },
+      });
       expect(response.status(), path).toBe(404);
     }
   });

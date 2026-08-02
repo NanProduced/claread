@@ -249,6 +249,11 @@ describe("F7 source guard: removed pages and old BFF namespaces stay absent", ()
     "src/app/api/web/analysis",
     "src/app/api/web/reader/[recordId]",
     "src/app/api/web/records",
+    // The unified Web submit entry is the only supported record input route.
+    "src/app/api/web/reader/records/plain-text/route.ts",
+    // Keep the retired legacy submit endpoint from being recreated under the
+    // old namespace while its zero-consumer clients await P-WEB cleanup.
+    "src/app/api/web/reader-plate/submit/route.ts",
   ] as const;
 
   it.each(removedPaths)("does not retain removed path %s", (relativePath) => {
@@ -289,6 +294,8 @@ const REMOVED_BFF_URL_MARKERS = [
   "/api/web/reader-plate",
   "/api/web/reading-record",
   "/api/web/reading-records",
+  "/api/web/reader/records/plain-text",
+  "/api/web/reader-plate/submit",
 ] as const;
 
 describe("F7 source guard: final Reader closure has no old BFF fetches", () => {
