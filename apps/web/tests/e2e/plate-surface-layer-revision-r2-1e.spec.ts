@@ -24,6 +24,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-spike/surface";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: progressive Plate revision coverage is retained in ReaderRecordPlateSurface Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
+
 // Intercept API calls that the Surface may make (dictionary lookup,
 // favorites, feedback) and return benign mock responses so the test
 // is self-contained and does not depend on a running backend.
@@ -35,7 +42,7 @@ async function mockApiRoutes(page: Page) {
       body: JSON.stringify({ ok: true, entries: [] }),
     });
   });
-  await page.route("**/api/web/favorites**", (route) => {
+  await page.route("**/api/web/reader/records/*/favorite**", (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",

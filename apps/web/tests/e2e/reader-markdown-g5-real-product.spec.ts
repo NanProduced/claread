@@ -182,7 +182,7 @@ test.describe("Reader Markdown Structured Source G5 real product path", () => {
 
     const submitResponsePromise = page.waitForResponse(
       (response) =>
-        response.url().includes("/api/web/reader-plate/input")
+        response.url().includes("/api/web/reader/records/input")
         && response.request().method() === "POST",
     );
     await page.getByRole("button", { name: "开始透读" }).click();
@@ -223,7 +223,7 @@ test.describe("Reader Markdown Structured Source G5 real product path", () => {
     expect(canonicalSource).not.toMatch(/class\s*=|style\s*=|on[a-z]+\s*=/i);
 
     await expect(page).toHaveURL(
-      new RegExp(`/app/reader-record/${submitPayload.reading_record_id}$`),
+      new RegExp(`/app/reader/${submitPayload.reading_record_id}$`),
       { timeout: 20_000 },
     );
     const recordId = submitPayload.reading_record_id as string;
@@ -306,7 +306,7 @@ test.describe("Reader Markdown Structured Source G5 real product path", () => {
     };
     let translationRequestBody: TranslationRequestBody | null = null;
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         if (route.request().method() !== "POST") {
           await route.continue();

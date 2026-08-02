@@ -12,6 +12,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: retry/reconcile coverage is retained in Ask v2 Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const EXECUTION_VERSION = "reader_record_ask_agentic_v2";
 const CANONICAL_ASSISTANT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const CLIENT_SUBMISSION = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";

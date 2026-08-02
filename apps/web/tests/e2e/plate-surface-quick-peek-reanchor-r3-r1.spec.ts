@@ -29,6 +29,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-spike/surface";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Quick Peek coverage is retained in ReaderRecordPlateSurface Vitest and final Reader smoke; this legacy harness suite awaits Physical deletion.",
+  );
+});
+
 // 拦截 Surface 可能发起的 API 调用（词典查询、收藏、反馈），
 // 返回良性 mock 响应，使测试自包含、不依赖后端。
 async function mockApiRoutes(page: Page) {
@@ -39,7 +46,7 @@ async function mockApiRoutes(page: Page) {
       body: JSON.stringify({ ok: true, entries: [] }),
     });
   });
-  await page.route("**/api/web/favorites**", (route) => {
+  await page.route("**/api/web/reader/records/*/favorite**", (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",

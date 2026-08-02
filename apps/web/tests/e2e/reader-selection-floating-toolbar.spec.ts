@@ -3,8 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * Reader selection floating toolbar — real native-selection e2e.
  *
- * This spec drives the REAL /app/reader-record/{recordId} page (not the
- * /e2e-plate-spike harness) with real Chromium native selections created via
+ * This spec drives the REAL /app/reader/{recordId} page with real Chromium
+ * native selections created via
  * `locator.selectText()` (programmatic Selection API, not a raw pointer
  * drag). Plate/Slate intercepts `mousedown` with `preventDefault()` in
  * readonly mode, which blocks the browser from initiating a drag-based text
@@ -414,7 +414,7 @@ async function mockBff(page: Page) {
   const snapshot = makeSnapshot();
 
   await page.route(
-    `**/api/web/reader-plate/${RECORD_ID}/snapshot`,
+    `**/api/web/reader/records/${RECORD_ID}/snapshot`,
     async (route) => {
       await route.fulfill({
         status: 200,
@@ -425,7 +425,7 @@ async function mockBff(page: Page) {
   );
 
   await page.route(
-    `**/api/web/reader-plate/${RECORD_ID}/events**`,
+    `**/api/web/reader/records/${RECORD_ID}/events**`,
     async (route) => {
       await route.fulfill({
         status: 200,
@@ -447,7 +447,7 @@ async function mockBff(page: Page) {
   );
 
   await page.route(
-    `**/api/web/reader-plate/records/${RECORD_ID}/article-rag-index/status`,
+    `**/api/web/reader/records/${RECORD_ID}/article-rag-index/status`,
     async (route) => {
       await route.fulfill({
         status: 200,
@@ -499,7 +499,7 @@ async function loginAndNavigate(page: Page) {
     });
   });
 
-  const targetPath = `/app/reader-record/${RECORD_ID}`;
+  const targetPath = `/app/reader/${RECORD_ID}`;
   await page.goto(`/login?next=${encodeURIComponent(targetPath)}`);
   await page.getByLabel("手机号").fill("13800138000");
   await page.getByRole("button", { name: "发送验证码" }).click();

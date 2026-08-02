@@ -35,6 +35,13 @@ import {
 
 const HARNESS_URL = "/e2e-plate-spike/surface";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: translation coverage is retained in ReaderRecordPlateSurface Vitest and final Reader markdown E2E; this legacy harness suite awaits Physical deletion.",
+  );
+});
+
 async function mockApiRoutes(page: Page) {
   await page.route("**/api/web/dict/lookup*", (route) => {
     route.fulfill({
@@ -43,7 +50,7 @@ async function mockApiRoutes(page: Page) {
       body: JSON.stringify({ ok: true, entries: [] }),
     });
   });
-  await page.route("**/api/web/favorites**", (route) => {
+  await page.route("**/api/web/reader/records/*/favorite**", (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -255,7 +262,7 @@ test.describe("T5.6c section translation per-row action", () => {
     } | null = null;
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         const request = route.request();
         capturedRequest = {
@@ -287,7 +294,7 @@ test.describe("T5.6c section translation per-row action", () => {
 
     expect(capturedRequest!.method).toBe("POST");
     expect(capturedRequest!.url).toContain(
-      "/api/web/reader-plate/records/record_l2_outline/section-translation",
+      "/api/web/reader/records/record_l2_outline/section-translation",
     );
     // Full range witness — never node-only.
     expect(capturedRequest!.body).toMatchObject({
@@ -312,7 +319,7 @@ test.describe("T5.6c section translation per-row action", () => {
     ).toHaveCount(0);
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -398,7 +405,7 @@ test.describe("T5.6c section translation per-row action", () => {
     await loadSnapshot(page, snapshot, ["u1", "u2", "u3", "u4"]);
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -471,7 +478,7 @@ test.describe("T5.6c section translation per-row action", () => {
 
     let callCount = 0;
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         callCount += 1;
         const request = route.request();
@@ -546,7 +553,7 @@ test.describe("T5.6c section translation per-row action", () => {
     await expect.poll(() => capturedRequests.length).toBe(2);
     expect(capturedRequests[1]!.method).toBe("POST");
     expect(capturedRequests[1]!.url).toContain(
-      "/api/web/reader-plate/records/record_l2_outline/section-translation",
+      "/api/web/reader/records/record_l2_outline/section-translation",
     );
     expect(capturedRequests[1]!.body).toMatchObject({
       startUnitId: "u1",
@@ -626,7 +633,7 @@ test.describe("T5.6c section translation per-row action", () => {
     await loadSnapshot(page, snapshot, ["u1", "u2", "u3", "u4"]);
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         await route.fulfill({
           status: 409,
@@ -682,7 +689,7 @@ test.describe("T5.6c section translation per-row action", () => {
     await switchToSemantic(page);
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -823,7 +830,7 @@ test.describe("T5.6c section translation per-row action", () => {
     } | null = null;
 
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         const request = route.request();
         capturedRequest = {
@@ -890,7 +897,7 @@ test.describe("T5.6c section translation per-row action", () => {
 
     let capturedRequest: { body: unknown } | null = null;
     await page.route(
-      "**/api/web/reader-plate/records/*/section-translation",
+      "**/api/web/reader/records/*/section-translation",
       async (route) => {
         const request = route.request();
         capturedRequest = { body: JSON.parse(request.postData() ?? "{}") };

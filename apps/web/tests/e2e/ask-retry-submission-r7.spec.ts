@@ -16,6 +16,13 @@ import path from "node:path";
 import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-activity/types";
 
 const HARNESS_PATH = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: retry/reconcile coverage is retained in Ask v2 Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
 /** Must match E2EAskActivityHarness RECORD_ID (fixed prop, not URL). */
 const RECORD = "test-record-r2-activity";
 const THREAD = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1";

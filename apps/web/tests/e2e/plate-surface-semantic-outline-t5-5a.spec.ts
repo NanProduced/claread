@@ -18,6 +18,13 @@ import {
 
 const HARNESS_URL = "/e2e-plate-spike/surface";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: outline coverage is retained in ReaderRecordPlateSurface Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
+
 async function mockApiRoutes(page: Page) {
   await page.route("**/api/web/dict/lookup*", (route) => {
     route.fulfill({
@@ -26,7 +33,7 @@ async function mockApiRoutes(page: Page) {
       body: JSON.stringify({ ok: true, entries: [] }),
     });
   });
-  await page.route("**/api/web/favorites**", (route) => {
+  await page.route("**/api/web/reader/records/*/favorite**", (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",

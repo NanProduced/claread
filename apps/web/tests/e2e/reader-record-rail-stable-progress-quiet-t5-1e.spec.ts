@@ -18,6 +18,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { makeL1HeadingRichSnapshot } from "./fixtures/l1-heading-navigation-snapshot";
 
 const HARNESS_URL = "/e2e-plate-spike/surface";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Reader rail/progressive coverage is retained in ReaderRecordPlateSurface Vitest and final Reader smoke; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const RECORD_ID = "record_t5_1e_ask_geometry";
 
 async function mockApiRoutes(page: Page) {

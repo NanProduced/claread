@@ -39,6 +39,13 @@ import { expect, test, type Page } from "@playwright/test";
 import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-activity/types";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: replaced by final Reader Ask Vitest and real Reader selection gates; retained until Physical harness deletion.",
+  );
+});
 const RECORD_ID = "test-record-cot";
 const THREAD_ID = "test-thread-cot";
 const MESSAGE_ID = "msg-cot-1";

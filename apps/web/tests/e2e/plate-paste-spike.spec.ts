@@ -17,6 +17,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-paste-spike";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Markdown coverage is retained in the final Reader/focused tests; this legacy paste harness suite awaits Physical deletion.",
+  );
+});
+
 interface SpikeNode {
   type?: string;
   text?: string;

@@ -22,6 +22,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-spike";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Plate callout coverage is retained in ReaderRecordPlateSurface Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
+
 async function waitForHarnessReady(page: Page) {
   await page.goto(HARNESS_URL);
   await page.waitForFunction(

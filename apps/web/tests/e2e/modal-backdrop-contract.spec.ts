@@ -110,7 +110,7 @@ async function mockBffRoutes(page: Page) {
   });
 
   // Reading records — needed by Ctrl+K command palette + sidebar recent list.
-  await page.route("**/api/web/reading-records**", async (route) => {
+  await page.route("**/api/web/reader/records**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

@@ -54,6 +54,13 @@ import { expect, test, type Page } from "@playwright/test";
 import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-floating-overlay/types";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-floating-overlay";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Ask v2 panel coverage is retained in Vitest and final Reader E2E; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const RECORD_ID = "test-record-r3-floating-overlay";
 const THREAD_ID = "test-thread-r3-floating-overlay";
 const MESSAGE_ID = "msg-r3-floating-overlay-1";

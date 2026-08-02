@@ -10,6 +10,13 @@ import { expect, test, type Page } from "@playwright/test";
 import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-activity/types";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: ChainOfThought/process coverage is retained in Ask v2 Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const RECORD_ID = "test-record-r2-activity";
 const THREAD_ID = "test-thread-r2-activity";
 const MESSAGE_ID = "msg-process-r0-1";

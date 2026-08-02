@@ -65,7 +65,7 @@ interface CapturedSubmit {
 
 /** 拦截提交端点，记录请求体，返回 stable_document_ready。 */
 async function mockSubmitEndpoint(page: Page, captured: CapturedSubmit[]) {
-  await page.route("**/api/web/reader-plate/input", async (route) => {
+  await page.route("**/api/web/reader/records/input", async (route) => {
     const request = route.request();
     try {
       captured.push(JSON.parse(request.postData() ?? "{}") as CapturedSubmit);

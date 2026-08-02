@@ -2,7 +2,7 @@
  * ASK-WEB-G1-R1 — Web Search UI 真实浏览器验收
  *
  * 使用 /e2e-plate-spike/ask-activity harness 挂载真实 AiWorkspacePanel
- * (recordScope="reading_record")，验证：
+ *（Reader Record scope），验证：
  * 1. Search toggle 在 reading_record scope 下可见
  * 2. 开启 Search toggle 后发送消息，web 来源使用 prompt-kit Source 渲染
  * 3. 同一 canonical URL 的 web citation 被去重（首次出现保留）
@@ -16,6 +16,13 @@ import { expect, test, type Page } from "@playwright/test";
 import type { SpikeSseScriptEvent } from "@/app/e2e-plate-spike/ask-activity/types";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Web Search/citation coverage is retained in Ask v2 Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const RECORD_ID = "test-record-web-search";
 const THREAD_ID = "test-thread-web-search";
 const MESSAGE_ID = "msg-web-search-1";
@@ -269,11 +276,11 @@ async function openHarness(page: Page) {
 }
 
 test.describe("Web Search UI (ASK-WEB-G1-R1)", () => {
-  test("Search toggle is visible in reading_record scope", async ({ page }) => {
+  test("Search toggle is visible in Reader Record scope", async ({ page }) => {
     await openHarness(page);
 
-    // The Search toggle must be visible because the harness uses
-    // recordScope="reading_record" which supports web search capability.
+    // The Search toggle must be visible because the harness uses the
+    // Reader Record scope which supports web search capability.
     const toggle = page.getByTestId("ask-composer-web-search-toggle");
     await expect(toggle).toBeVisible({ timeout: 10_000 });
     // Default state is off.

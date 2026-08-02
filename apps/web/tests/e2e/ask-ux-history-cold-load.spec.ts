@@ -19,6 +19,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const HARNESS_URL = "/e2e-plate-spike/ask-activity";
+
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: cold-history coverage is retained in Ask v2 Vitest; this legacy harness suite awaits Physical deletion.",
+  );
+});
 const RECORD_ID = "test-record-cold-load";
 const THREAD_ID = "test-thread-cold-load";
 

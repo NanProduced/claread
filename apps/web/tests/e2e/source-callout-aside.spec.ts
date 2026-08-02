@@ -33,6 +33,13 @@ import {
 
 const HARNESS_URL = "/e2e-plate-paste-spike/input";
 
+test.beforeEach(() => {
+  test.skip(
+    true,
+    "CUTOVER-WEB-LONG: Markdown/source adaptation coverage is retained in the final Reader/focused tests; this legacy paste harness suite awaits Physical deletion.",
+  );
+});
+
 interface InputSpikeWindow {
   __inputSpikeReady?: boolean;
   __inputSpike?: {
