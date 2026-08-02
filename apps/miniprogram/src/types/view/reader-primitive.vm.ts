@@ -8,8 +8,8 @@
  * - InlineMark 锚点与模型（Learning + Academic）
  * - Dictionary 结果模型
  *
- * 旧 RenderSceneVm / AcademicRenderSceneVm 联合类型仍由 render-scene.vm.ts 持有，
- * 待旧文章 Analysis 主链 Physical 删除时一并清理。
+ * CUTOVER-MINI-LONG: 旧 render-scene.vm / AcademicRenderSceneVm 联合类型已随
+ * 旧文章 Analysis 主链 Physical 删除一并清理；本文件现为 Reader 端唯一 VM 基础类型源。
  */
 
 // ============ 共享基础类型 ============
