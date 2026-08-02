@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 from uuid import UUID
 
@@ -11,6 +11,16 @@ from starlette.responses import JSONResponse
 
 from app.schemas.reader_input_adapter import InputSuitabilityRequest
 from app.schemas.reader_orchestration import (
+    ReaderArticleRagIndexEnsureRequest,
+    ReaderArticleRagIndexEnsureResponse,
+    ReaderArticleRagIndexStatusResponse,
+    ReaderArtifactPipelineArtifactSummary,
+    ReaderArtifactPipelineCandidateDocument,
+    ReaderArtifactPipelineJobSummary,
+    ReaderArtifactPipelineOriginalInputSummary,
+    ReaderArtifactPipelineRecordSummary,
+    ReaderArtifactPipelineStableDocument,
+    ReaderArtifactPipelineStatusResponse,
     ReaderCandidateDocumentConfirmRequest,
     ReaderCandidateDocumentConfirmResponse,
     ReaderCandidateDocumentConflictResponseDto,
@@ -22,18 +32,24 @@ from app.schemas.reader_orchestration import (
     ReaderConfirmedSourceUpdateResponse,
     ReaderEventPollResponse,
     ReaderEventResponse,
-    ReaderPlainTextSubmitRequest,
-    ReaderPlainTextSubmitResponse,
     ReaderPlateSnapshot,
+    ReaderRecordListItem,
+    ReaderRecordListResponse,
+    ReaderRecordOpenedResponse,
     ReaderSectionTranslationOutcome,
     ReaderSectionTranslationRequest,
     ReaderSectionTranslationResponse,
+    ReaderSourceArtifactSubmitInputRequest,
+    ReaderSourceArtifactSubmitInputResponse,
     ReaderSourceArtifactUploadCompleteRequest,
     ReaderSourceArtifactUploadCompleteResponse,
     ReaderSourceArtifactUploadInitRequest,
     ReaderSourceArtifactUploadInitResponse,
-    ReaderSourceArtifactSubmitInputRequest,
-    ReaderSourceArtifactSubmitInputResponse,
+    ReaderStableDocumentAnchorSegment,
+    ReaderStableDocumentBase,
+    ReaderStableDocumentBlock,
+    ReaderStableDocumentMetadata,
+    ReaderStableDocumentResponse,
     ReaderStableReadyInputSubmitRequest,
     ReaderStableReadyInputSubmitResponse,
     ReaderUnifiedInputSubmitCandidateResponse,
@@ -41,25 +57,7 @@ from app.schemas.reader_orchestration import (
     ReaderUnifiedInputSubmitRequest,
     ReaderUnifiedInputSubmitResponse,
     ReaderUnifiedInputSubmitStableResponse,
-    ReaderStableDocumentAnchorSegment,
-    ReaderStableDocumentBase,
-    ReaderStableDocumentBlock,
-    ReaderStableDocumentMetadata,
-    ReaderStableDocumentResponse,
-    ReaderRecordListItem,
-    ReaderRecordListResponse,
-    ReaderRecordOpenedResponse,
     ReadingRecordProductState,
-    ReaderArtifactPipelineArtifactSummary,
-    ReaderArtifactPipelineCandidateDocument,
-    ReaderArtifactPipelineJobSummary,
-    ReaderArtifactPipelineOriginalInputSummary,
-    ReaderArtifactPipelineRecordSummary,
-    ReaderArtifactPipelineStableDocument,
-    ReaderArtifactPipelineStatusResponse,
-    ReaderArticleRagIndexEnsureRequest,
-    ReaderArticleRagIndexEnsureResponse,
-    ReaderArticleRagIndexStatusResponse,
 )
 from app.services.auth.dependencies import AuthUserDep
 from app.services.reader_orchestration.article_rag_index_lifecycle_service import (
@@ -71,7 +69,6 @@ from app.services.reader_orchestration.article_rag_index_lifecycle_service impor
 )
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
-    PlainTextArticleReadySubmitRequest,
 )
 from app.services.reader_orchestration.artifact_input_application_service import (
     ArtifactInputApplicationConflictError,
@@ -90,15 +87,15 @@ from app.services.reader_orchestration.base_builder import (
     DETERMINISTIC_READING_BASE_BUILDER_VERSION,
     EXACT_CANONICAL_TEXT_VERSION,
 )
-from app.services.reader_orchestration.candidate_document_creation_service import (
-    CandidateDocumentCreationError,
-    CandidateDocumentCreationResult,
-    CandidateDocumentCreationService,
-)
 from app.services.reader_orchestration.candidate_document_confirm_application_service import (
     CandidateDocumentConfirmApplicationError,
     CandidateDocumentConfirmApplicationService,
     StaleCandidateRevisionApplicationError,
+)
+from app.services.reader_orchestration.candidate_document_creation_service import (
+    CandidateDocumentCreationError,
+    CandidateDocumentCreationResult,
+    CandidateDocumentCreationService,
 )
 from app.services.reader_orchestration.candidate_document_read_service import (
     CandidateDocumentReadConflict,
@@ -121,7 +118,12 @@ from app.services.reader_orchestration.input_suitability_gate import (
 from app.services.reader_orchestration.markdown_source_parser import (
     MarkdownSourceParser,
 )
-from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
+from app.services.reader_orchestration.oss_presigner import (
+    NullPresigner,
+    PresignedUpload,
+    Presigner,
+    build_default_presigner,
+)
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
 from app.services.reader_orchestration.section_request_planner import (
     ExplicitSectionIntent,
@@ -136,16 +138,6 @@ from app.services.reader_orchestration.section_translation_drain import (
     SectionDrainOutcome,
     SectionTranslationDrainService,
 )
-from app.services.reader_orchestration.stable_ready_input_application_service import (
-    StableReadyInputApplicationError,
-    StableReadyInputApplicationResult,
-    StableReadyInputApplicationService,
-)
-from app.services.reader_orchestration.stable_document_query_service import (
-    StableDocumentProjectionResult,
-    StableDocumentQueryError,
-    StableDocumentQueryService,
-)
 from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactCompletionResult,
     SourceArtifactConflictError,
@@ -154,11 +146,15 @@ from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactRegistrationResult,
     SourceArtifactService,
 )
-from app.services.reader_orchestration.oss_presigner import (
-    NullPresigner,
-    PresignedUpload,
-    Presigner,
-    build_default_presigner,
+from app.services.reader_orchestration.stable_document_query_service import (
+    StableDocumentProjectionResult,
+    StableDocumentQueryError,
+    StableDocumentQueryService,
+)
+from app.services.reader_orchestration.stable_ready_input_application_service import (
+    StableReadyInputApplicationError,
+    StableReadyInputApplicationResult,
+    StableReadyInputApplicationService,
 )
 
 router = APIRouter(prefix="/reader", tags=["reader"])
@@ -415,50 +411,12 @@ def _build_source_artifact_submit_input_response(
 
 
 @router.post(
-    "/records/plain-text",
-    response_model=ReaderPlainTextSubmitResponse,
-    summary="Create a reader record from low-risk plain text input",
-)
-async def submit_reader_plain_text(
-    body: ReaderPlainTextSubmitRequest,
-    current_user: AuthUserDep,
-) -> ReaderPlainTextSubmitResponse:
-    orchestrator = ReaderOrchestrator()
-    try:
-        result = await orchestrator.submit_plain_text_and_bootstrap_translation(
-            PlainTextArticleReadySubmitRequest(
-                user_id=UUID(current_user.user_id),
-                plain_text=body.plain_text,
-                title=body.title,
-                language=body.language,
-                source_metadata=body.source_metadata,
-                client_record_id=body.client_record_id,
-                reading_goal=body.reading_goal,
-                reading_variant=body.reading_variant,
-            )
-        )
-    except asyncpg.UniqueViolationError as exc:
-        if exc.constraint_name == "uq_reading_records_user_client_active":
-            raise HTTPException(
-                status_code=409,
-                detail="client_record_id already exists for this user",
-            ) from exc
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return ReaderPlainTextSubmitResponse(
-        record_id=str(result.record_id),
-        base_id=str(result.base_id),
-        article_ready_sequence=result.article_ready_sequence,
-        snapshot=result.snapshot,
-    )
-
-
-@router.post(
     "/records/input",
     response_model=ReaderUnifiedInputSubmitResponse,
-    summary="Submit reader input and route it to stable freeze, candidate creation, or action-required",
+    summary=(
+        "Submit reader input and route it to stable freeze, candidate creation, "
+        "or action-required"
+    ),
 )
 async def submit_reader_input(
     body: ReaderUnifiedInputSubmitRequest,
@@ -498,7 +456,7 @@ async def submit_reader_input(
             )
         except StableReadyInputApplicationError as exc:
             _raise_stable_ready_input_application_error(exc)
-            raise AssertionError("unreachable")
+            raise AssertionError("unreachable") from exc
         return _build_unified_stable_ready_submit_response(result)
 
     if suitability.outcome == "candidate_document_required":
@@ -518,7 +476,7 @@ async def submit_reader_input(
             )
         except CandidateDocumentCreationError as exc:
             _raise_candidate_document_creation_error(exc)
-            raise AssertionError("unreachable")
+            raise AssertionError("unreachable") from exc
         return _build_unified_candidate_submit_response(result)
 
     return ReaderUnifiedInputSubmitRejectedResponse(
@@ -631,7 +589,7 @@ async def complete_reader_source_artifact_upload(
         )
     except SourceArtifactError as exc:
         _raise_source_artifact_complete_error(exc)
-        raise AssertionError("unreachable")
+        raise AssertionError("unreachable") from exc
 
     return _build_source_artifact_upload_complete_response(result)
 
@@ -660,7 +618,7 @@ async def submit_reader_source_artifact_as_input(
         )
     except ArtifactInputApplicationError as exc:
         _raise_artifact_input_application_error(exc)
-        raise AssertionError("unreachable")
+        raise AssertionError("unreachable") from exc
 
     return _build_source_artifact_submit_input_response(result)
 
@@ -831,7 +789,7 @@ async def submit_reader_stable_ready_input(
         )
     except StableReadyInputApplicationError as exc:
         _raise_stable_ready_input_application_error(exc)
-        raise AssertionError("unreachable")
+        raise AssertionError("unreachable") from exc
 
     return _build_stable_ready_submit_response(result)
 
@@ -1344,7 +1302,7 @@ async def mark_reader_record_opened(
     new_value = await repository.mark_record_opened(
         record_id=record_id,
         user_id=UUID(current_user.user_id),
-        opened_at=datetime.now(tz=timezone.utc),
+        opened_at=datetime.now(tz=UTC),
     )
     if new_value is None:
         raise HTTPException(

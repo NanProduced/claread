@@ -700,8 +700,12 @@ def test_cold_history_does_not_restore_v1_article_seed_evidence() -> None:
         final_status="ok",
         turn_run_status=None,
     )
-    assert projected["content_md"] == "An answer."
-    assert projected["legacy_classification"] == "legacy_unclassified"
+    assert projected["status"] == "failed"
+    assert projected["content_md"] == ""
+    assert projected["execution_version"] is None
+    assert projected["final_status"] == "failed"
+    assert "legacy_classification" not in projected
+    assert "evidence" not in projected
     assert projected.get("agentic_evidence") is None
     assert "evh_" not in json.dumps(projected)
 

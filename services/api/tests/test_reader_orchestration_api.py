@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -131,7 +132,24 @@ async def reader_api_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
 
 async def _create_client(app: FastAPI) -> AsyncClient:
-    return AsyncClient(
+    class _UnifiedInputTestClient(AsyncClient):
+        """Adapt historical fixture payloads to the unified input contract."""
+
+        async def post(self, url: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(url) == "/reader/records/input":
+                payload = kwargs.get("json")
+                if isinstance(payload, dict) and "plain_text" in payload:
+                    payload = dict(payload)
+                    text = str(payload.pop("plain_text"))
+                    title = payload.pop("title", None)
+                    if title:
+                        text = f"# {title}\n\n{text}"
+                    payload["text"] = text
+                    payload.setdefault("source_type", "pasted_text")
+                    kwargs["json"] = payload
+            return await super().post(url, *args, **kwargs)
+
+    return _UnifiedInputTestClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
     )
@@ -170,7 +188,7 @@ async def test_submit_plain_text_returns_article_ready_snapshot_and_snapshot_rel
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "First sentence.\n\nSecond paragraph.",
@@ -236,7 +254,7 @@ async def test_snapshot_progress_marks_published_layer_succeeded(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Publish progress example.", "title": "Published"},
             )
@@ -344,7 +362,7 @@ async def test_snapshot_progress_ignores_stale_failed_job_after_newer_publish(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Retry progress example.", "title": "Retry"},
             )
@@ -505,7 +523,7 @@ async def test_snapshot_progress_reflects_failed_terminal_without_overwriting_pr
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Failure progress example.", "title": "Failed Job"},
             )
@@ -567,7 +585,7 @@ async def test_polling_returns_article_ready_event_and_empty_page_after_cursor(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Polling event body.", "title": "Polling"},
             )
@@ -609,7 +627,7 @@ async def test_polling_limit_truncation_does_not_skip_cursor(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Cursor truncation body.", "title": "Cursor"},
             )
@@ -664,7 +682,7 @@ async def test_other_user_cannot_read_snapshot_or_events(
     with _mock_auth(owner_id):
         async with await _create_client(app) as client:
             submit_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Private reader record.", "title": "Private"},
             )
@@ -698,7 +716,7 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
     with _mock_auth(owner_id):
         async with await _create_client(app) as client:
             owner_submit = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Owner progress record.", "title": "Owner"},
             )
@@ -708,7 +726,7 @@ async def test_snapshot_progress_does_not_leak_other_users_jobs(
     with _mock_auth(other_user_id):
         async with await _create_client(app) as client:
             other_submit = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Other progress record.", "title": "Other"},
             )
@@ -769,7 +787,7 @@ async def test_empty_plain_text_submit_returns_validation_error(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "   \n\t  "},
             )
@@ -789,7 +807,7 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             first = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "Blank client record id first submit.",
@@ -797,7 +815,7 @@ async def test_blank_client_record_id_is_normalized_to_null_and_does_not_conflic
                 },
             )
             second = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "Blank client record id second submit.",
@@ -836,7 +854,7 @@ async def test_duplicate_client_record_id_returns_conflict(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             first = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "First idempotency-like submit.",
@@ -844,7 +862,7 @@ async def test_duplicate_client_record_id_returns_conflict(
                 },
             )
             second = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "Second conflicting submit.",
@@ -869,7 +887,7 @@ async def test_list_reader_records_returns_user_scoped_records(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             first = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "First reading record body.",
@@ -878,7 +896,7 @@ async def test_list_reader_records_returns_user_scoped_records(
                 },
             )
             second = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={
                     "plain_text": "Second reading record body.",
@@ -932,7 +950,7 @@ async def test_list_reader_records_isolates_by_user(
     with _mock_auth(owner_id):
         async with await _create_client(app) as client:
             await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Owner private record.", "title": "Owner"},
             )
@@ -940,7 +958,7 @@ async def test_list_reader_records_isolates_by_user(
     with _mock_auth(other_user_id):
         async with await _create_client(app) as client:
             await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Other user record.", "title": "Other"},
             )
@@ -969,7 +987,7 @@ async def test_list_reader_records_respects_limit(
         async with await _create_client(app) as client:
             for index in range(3):
                 response = await client.post(
-                    "/reader/records/plain-text",
+                "/reader/records/input",
                     headers=AUTH_HEADERS,
                     json={"plain_text": f"Record {index} body.", "title": f"Record {index}"},
                 )
@@ -999,7 +1017,7 @@ async def test_list_reader_records_filters_by_query(
         async with await _create_client(app) as client:
             for title in ("Focus Alpha", "Background Note", "Focus Beta"):
                 response = await client.post(
-                    "/reader/records/plain-text",
+                "/reader/records/input",
                     headers=AUTH_HEADERS,
                     json={"plain_text": f"{title} body.", "title": title},
                 )
@@ -1030,12 +1048,12 @@ async def test_list_reader_records_filters_by_product_state(
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
             failed_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Failed body.", "title": "Failed Record"},
             )
             ready_response = await client.post(
-                "/reader/records/plain-text",
+                "/reader/records/input",
                 headers=AUTH_HEADERS,
                 json={"plain_text": "Ready body.", "title": "Ready Record"},
             )

@@ -84,13 +84,13 @@ def test_main_module_does_not_reference_reader_worker_runtime_components() -> No
         assert forbidden not in source
 
 
-def test_submit_route_remains_request_serving_only() -> None:
+def test_unified_input_route_remains_request_serving_only() -> None:
     source = ROUTE_PATH.read_text(encoding="utf-8")
     module = _parse_module(ROUTE_PATH)
-    submit_route = _find_async_function(module, "submit_reader_plain_text")
+    submit_route = _find_async_function(module, "submit_reader_input")
     call_targets = _collect_call_targets(submit_route)
 
-    assert "orchestrator.submit_plain_text_and_bootstrap_translation" in call_targets
+    assert "evaluate_input_suitability" in call_targets
 
     for forbidden in (
         "ReaderEnhancementPipelineRunner",
@@ -120,6 +120,7 @@ def test_orchestrator_submit_only_persists_article_ready_and_bootstraps_initial_
 
     assert _collect_call_targets(method) == [
         "self._article_ready_service.submit_plain_text",
+        "uuid4",
         "self._title_bootstrap_service.bootstrap_display_title_job",
         "self._bootstrap_service.bootstrap_translation_run",
     ]

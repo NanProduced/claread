@@ -59,6 +59,18 @@ def _route_path() -> str:
     return "/reader/records/input"
 
 
+def test_plain_text_route_is_unregistered() -> None:
+    app = _build_app()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/reader/records/plain-text",
+            json={"plain_text": "must use the unified input route"},
+        )
+
+    assert response.status_code == 404
+
+
 def _session_info(user_id: UUID = USER_ID) -> object:
     return type(
         "SessionInfo",
@@ -218,7 +230,8 @@ def _candidate_creation_error_with_cause(
     return error
 
 
-def test_submit_reader_input_stable_ready_routes_to_stable_service_and_trims_empty_client_record_id() -> None:
+def test_submit_reader_input_stable_ready_routes_to_stable_service_and_trims_empty_client_record_id(
+) -> None:
     app = _build_app()
     suitability = _build_suitability(
         outcome="stable_document_ready",

@@ -25,7 +25,7 @@ end-to-end SQL + route integration.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -132,16 +132,18 @@ async def _create_plain_text_record(
     title: str | None = None,
     source_metadata: dict[str, object] | None = None,
 ) -> str:
-    """POST /reader/records/plain-text and return the record_id."""
-    payload: dict[str, object] = {
-        "plain_text": f"Record body {uuid4().hex[:8]}.",
-    }
+    """POST the unified reader input route and return the record_id."""
+    text = f"Record body {uuid4().hex[:8]}."
     if title is not None:
-        payload["title"] = title
+        text = f"# {title}\n\n{text}"
+    payload: dict[str, object] = {
+        "source_type": "pasted_text",
+        "text": text,
+    }
     if source_metadata is not None:
         payload["source_metadata"] = source_metadata
     response = await client.post(
-        "/reader/records/plain-text",
+        "/reader/records/input",
         headers=AUTH_HEADERS,
         json=payload,
     )
@@ -281,7 +283,7 @@ async def _insert_extra_original_input(
     metadata: dict[str, object] = {}
     if filename:
         metadata["filename"] = filename
-    ts = created_at or datetime.now(timezone.utc)
+    ts = created_at or datetime.now(UTC)
     async with pool.acquire() as conn:
         await conn.execute(
             """
@@ -657,15 +659,15 @@ async def test_sort_last_opened_at_desc_nulls_last_regression(
 
     with _mock_auth(user_id):
         async with await _create_client(app) as client:
-            r1 = await _create_plain_text_record(client, title="Oldest No Open")
+            await _create_plain_text_record(client, title="Oldest No Open")
             r2 = await _create_plain_text_record(client, title="With Open")
-            r3 = await _create_plain_text_record(client, title="Newest No Open")
+            await _create_plain_text_record(client, title="Newest No Open")
 
             # r2 has last_opened_at set; r1 and r3 do not
             await _set_last_opened_at(
                 pool,
                 record_id=r2,
-                last_opened_at=datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc),
+                last_opened_at=datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC),
             )
 
             response = await client.get("/reader/records", headers=AUTH_HEADERS)
@@ -901,7 +903,7 @@ async def test_two_original_inputs_picks_earliest_and_no_duplicate_rows(
                     WHERE reading_record_id = $1
                     """,
                     UUID(record_id),
-                    datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC),
                 )
             # Insert a SECOND original_input with a LATER created_at and
             # a different filename. The LATERAL join must pick the
@@ -913,7 +915,7 @@ async def test_two_original_inputs_picks_earliest_and_no_duplicate_rows(
                 input_type="file_ref",
                 source_text="second input body",
                 filename="latest.pdf",
-                created_at=datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 14, 12, 0, 0, tzinfo=UTC),
             )
 
             response = await client.get("/reader/records", headers=AUTH_HEADERS)

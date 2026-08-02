@@ -878,14 +878,11 @@ class ReaderAskSubmissionPublicMessage(BaseModel):
     role: ReaderAskMessageRole
     status: ReaderAskMessageStatus
     content_md: str
-    reasoning_md: str | None = None
-    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
-    reasoning_truncated: bool | None = None
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     agentic_citations: list[Any] | None = None
     agentic_answer_blocks: list[Any] | None = None
     agentic_web_search: Any | None = None
-    execution_version: str | None = None
+    execution_version: Literal["reader_record_ask_agentic_v2"] | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

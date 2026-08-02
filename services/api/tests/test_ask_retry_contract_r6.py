@@ -233,14 +233,12 @@ def test_r6_route_prepare_before_streaming_response() -> None:
     ).read_text(encoding="utf-8")
     # prepare must appear before StreamingResponse construction in send/stream
     assert "prepare_reading_record_ask_message" in src
-    send_idx = src.index("async def send_reading_record_ask_message")
     stream_idx = src.index("async def stream_reading_record_ask_thread_message")
-    for idx in (send_idx, stream_idx):
-        chunk = src[idx : idx + 800]
-        assert "prepare_reading_record_ask_message" in chunk
-        assert chunk.index("prepare_reading_record_ask_message") < chunk.index(
-            "_streaming_response"
-        )
+    chunk = src[stream_idx : stream_idx + 800]
+    assert "prepare_reading_record_ask_message" in chunk
+    assert chunk.index("prepare_reading_record_ask_message") < chunk.index(
+        "_streaming_response"
+    )
 
 
 def test_r6_snapshot_fail_closed_no_regression() -> None:

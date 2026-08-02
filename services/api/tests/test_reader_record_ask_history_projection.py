@@ -6,20 +6,20 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.reader_ask import ReaderAskMessage
 from app.schemas.reader_record_ask_stream import (
-    EXECUTION_VERSION_AGENTIC_V1,
     EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskHistoryMessage,
 )
-from app.services.reader_record_ask.repository import _message_row_to_history
 from app.services.reader_record_ask.history_projection import (
     project_agentic_history_message,
 )
 from app.services.reader_record_ask.reasoning_projection import (
     DEFAULT_PROJECTION_CHAR_CAP,
 )
+from app.services.reader_record_ask.repository import _message_row_to_history
 
 _HANDLE = "evh_" + ("ab" * 16)
 
@@ -61,7 +61,7 @@ _SOURCE_UNAVAILABLE_V2 = {
 }
 
 _LEGACY_V1 = {
-    "execution_version": EXECUTION_VERSION_AGENTIC_V1,
+    "execution_version": "reader_record_ask_agentic_v1",
     "final_status": "ok",
     "answer_text": "Climate change is discussed in paragraph 2.",
     "message_id": "msg-1",
@@ -145,7 +145,7 @@ def test_completed_v2_projects_public_blocks_and_citations() -> None:
     assert projected["final_status"] == "ok"
     assert projected["knowledge_mode"] == "article_grounded"
     assert projected["source_status"] is None
-    assert projected["legacy_classification"] is None
+    assert "legacy_classification" not in projected
     assert projected["agentic_answer_blocks"] == [
         {
             "text": "Climate change is discussed in paragraph 2.",
@@ -159,7 +159,7 @@ def test_completed_v2_projects_public_blocks_and_citations() -> None:
             "snippet": "climate change impacts",
         }
     ]
-    assert projected["evidence"] == []
+    assert "evidence" not in projected
     assert projected["article_rag"] is None
     assert projected["current_user_visible_output"] is None
     _assert_no_evh(projected)
@@ -192,12 +192,28 @@ def test_legacy_v1_history_is_quarantined_fail_closed() -> None:
     assert projected["content_md"] == ""
     assert projected["execution_version"] is None
     assert projected["final_status"] == "failed"
-    assert projected["legacy_classification"] is None
+    assert "legacy_classification" not in projected
     assert projected["agentic_answer_blocks"] is None
     assert projected["agentic_citations"] is None
     assert projected["knowledge_mode"] is None
     _assert_no_evh(projected)
     ReaderRecordAskHistoryMessage.model_validate(projected)
+
+
+def test_history_dto_rejects_v1_execution_version_fixture() -> None:
+    payload = {
+        "id": "msg-v1",
+        "thread_id": "thread-1",
+        "role": "assistant",
+        "status": "failed",
+        "content_md": "",
+        "execution_version": "reader_record_ask_agentic_v1",
+        "created_at": "2026-07-14T00:00:00+00:00",
+        "updated_at": "2026-07-14T00:00:00+00:00",
+    }
+
+    with pytest.raises(ValidationError):
+        ReaderRecordAskHistoryMessage.model_validate(payload)
 
 
 def test_resolved_evidence_never_projected_to_history() -> None:
@@ -255,7 +271,7 @@ def test_terminal_projects_without_fake_answer(
     assert projected["final_status"] == final_status
     assert projected["agentic_answer_blocks"] is None
     assert projected["agentic_citations"] is None
-    assert projected["evidence"] == []
+    assert "evidence" not in projected
     assert "terminal_reason" not in projected
     assert "do-not-leak" not in str(projected)
     ReaderRecordAskHistoryMessage.model_validate(projected)
@@ -314,7 +330,7 @@ def test_corrupt_completed_payload_degrades_to_legacy_or_failed() -> None:
     # Incomplete v2 blob without answer_text and without row content → degrade.
     assert projected["status"] == "failed"
     assert projected["agentic_answer_blocks"] is None
-    assert projected["evidence"] == []
+    assert "evidence" not in projected
 
 
 def _agentic_row(**overrides: Any) -> dict[str, Any]:
@@ -395,7 +411,7 @@ def test_message_row_to_history_agentic_completed_bypasses_legacy_evidence() -> 
     assert message["final_status"] == "ok"
     assert message["agentic_citations"] is not None
     assert message["agentic_citations"][0]["citation_id"] == "c1"
-    assert message.get("evidence", []) == []
+    assert "evidence" not in message
     assert message["article_rag"] is None
     _assert_no_evh(message)
     ReaderAskMessage.model_validate(
@@ -410,7 +426,6 @@ def test_message_row_to_history_agentic_completed_bypasses_legacy_evidence() -> 
                 "agentic_citations",
                 "knowledge_mode",
                 "source_status",
-                "legacy_classification",
             }
         }
     )
@@ -429,7 +444,7 @@ def test_message_row_to_history_quarantines_json_version_without_column() -> Non
     assert message["content_md"] == ""
     assert message.get("execution_version") is None
     assert message.get("agentic_citations") is None
-    assert message["evidence"] == []
+    assert "evidence" not in message
     assert message["article_rag"] is None
     _assert_no_evh(message)
     ReaderRecordAskHistoryMessage.model_validate(message)
@@ -459,7 +474,7 @@ def test_message_row_to_history_agentic_terminal_no_fake_answer() -> None:
     assert message["content_md"] == ""
     assert message["final_status"] == "context_stale"
     assert message["agentic_citations"] is None
-    assert message["evidence"] == []
+    assert "evidence" not in message
     assert "generation mismatch secret" not in str(message)
     ReaderRecordAskHistoryMessage.model_validate(message)
 
@@ -535,7 +550,7 @@ def test_message_row_to_history_legacy_row_is_quarantined() -> None:
     assert message["status"] == "failed"
     assert message["content_md"] == ""
     assert message.get("execution_version") is None
-    assert message["evidence"] == []
+    assert "evidence" not in message
 
 
 def test_message_row_to_history_user_message_preserves_content_md_with_agentic_metadata() -> None:
@@ -623,7 +638,7 @@ def test_message_row_to_history_user_message_preserves_content_md_with_agentic_m
     assert message.get("execution_version") is None
     assert message.get("agentic_answer_blocks") is None
     assert message.get("agentic_citations") is None
-    assert message.get("evidence", []) == []
+    assert "evidence" not in message
     ReaderAskMessage.model_validate(message)
 
 
@@ -650,23 +665,23 @@ def test_ok_turn_does_not_restore_legacy_provider_reasoning() -> None:
             }
         )
     )
-    assert projected["reasoning_md"] is None
-    assert projected["reasoning_status"] is None
-    assert projected["reasoning_truncated"] is None
+    assert "reasoning_md" not in projected
+    assert "reasoning_status" not in projected
+    assert "reasoning_truncated" not in projected
     assert _REASONING_PROJECTION["text"] not in json.dumps(
         projected, ensure_ascii=False
     )
     # The raw JSONB payload never rides on the wire turn_run dict.
     assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
     blob = json.dumps(projected, ensure_ascii=False)
-    assert "projection_policy_version" not in blob.split('"reasoning_md"')[0]
+    assert "projection_policy_version" not in blob
     ReaderRecordAskHistoryMessage.model_validate(projected)
 
 
 def test_ok_turn_without_reasoning_projects_none_fields() -> None:
     projected = project_agentic_history_message(**_base_kwargs())
-    assert projected["reasoning_md"] is None
-    assert projected["reasoning_status"] is None
+    assert "reasoning_md" not in projected
+    assert "reasoning_status" not in projected
     ReaderRecordAskHistoryMessage.model_validate(projected)
 
 
@@ -688,8 +703,8 @@ def test_ok_turn_with_malformed_reasoning_payload_fails_closed() -> None:
                 }
             )
         )
-        assert projected["reasoning_md"] is None, f"payload={bad_payload!r}"
-        assert projected["reasoning_status"] is None, f"payload={bad_payload!r}"
+        assert "reasoning_md" not in projected, f"payload={bad_payload!r}"
+        assert "reasoning_status" not in projected, f"payload={bad_payload!r}"
 
 
 def test_terminal_turn_never_resurrects_reasoning() -> None:
@@ -719,8 +734,8 @@ def test_terminal_turn_never_resurrects_reasoning() -> None:
         )
     )
     assert projected["status"] == "failed"
-    assert projected["reasoning_md"] is None
-    assert projected["reasoning_status"] is None
+    assert "reasoning_md" not in projected
+    assert "reasoning_status" not in projected
     assert "reasoning_projection_json" not in (projected["current_turn_run"] or {})
 
 
@@ -818,8 +833,8 @@ def test_ok_turn_with_invalid_snapshot_never_shows_reasoning() -> None:
                 }
             )
         )
-        assert projected["reasoning_md"] is None, f"payload={bad!r}"
-        assert projected["reasoning_status"] is None, f"payload={bad!r}"
+        assert "reasoning_md" not in projected, f"payload={bad!r}"
+        assert "reasoning_status" not in projected, f"payload={bad!r}"
         # No raw payload content may surface anywhere on the message.
         blob = json.dumps(projected, ensure_ascii=False)
         assert str(bad["text"]) not in blob or not bad["text"].strip(), (

@@ -185,25 +185,19 @@ def test_reader_record_api_does_not_read_render_scene_json() -> None:
     )
 
 
-def test_legacy_services_only_import_allowlisted_reader_orchestration_modules() -> None:
-    """D6-A5 narrow allowlist guard.
+def test_retained_rr_asset_writers_only_import_allowlisted_modules() -> None:
+    """D6-A5 narrow boundary for retained Reading Record asset writers.
 
-    The legacy `user_annotations.py` and `reader_notes.py` services must
-    NOT reach into the new `reader_orchestration` package broadly. D6-A5
-    intentionally introduces two narrow imports:
-
-    - `app.services.reader_orchestration.anchor_gate` — for the dual-
-      contract validation branch on the new `anchor` field.
-    - `app.services.reader_orchestration.repository` — for the lazy
-      `ReaderOrchestrationRepository` default constructor used by the
-      same branch.
-
-    Any other import from `app.services.reader_orchestration.*` would
-    silently broaden the cross-package coupling and is forbidden until a
-    follow-up explicitly widens this allowlist.
+    ``user_annotations.py`` and ``reader_notes.py`` are retained RR asset
+    writers. They may use only the four explicit orchestration seams needed
+    for anchor validation, event persistence, repository access, and the
+    representation payload contract. This is intentionally not a wildcard
+    allowlist for ``reader_orchestration`` imports.
     """
     allowlist = {
         "app.services.reader_orchestration.anchor_gate",
+        "app.services.reader_orchestration.event_runtime",
+        "app.services.reader_orchestration.representation_event_payload",
         "app.services.reader_orchestration.repository",
     }
 
@@ -235,8 +229,10 @@ def test_legacy_services_only_import_allowlisted_reader_orchestration_modules() 
                 offenders.append(f"{relative.as_posix()} -> {module}")
 
     assert offenders == [], (
-        "user_annotations.py / reader_notes.py may only import the "
-        "narrow allowlist " + ", ".join(sorted(allowlist)) + "; offenders: " + ", ".join(offenders)
+        "retained RR asset writers may only import the explicit allowlist "
+        + ", ".join(sorted(allowlist))
+        + "; offenders: "
+        + ", ".join(offenders)
     )
 
 

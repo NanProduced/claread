@@ -1,8 +1,7 @@
-"""History projection for Agentic Reading Record Ask turns.
+"""History projection for v2 Agentic Reading Record Ask turns.
 
-Cold-load / thread-detail path only. Does **not** touch legacy
-``output_contract.USER_VISIBLE_OUTPUT_FIELDS`` and never maps agentic
-evidence into legacy ``evidence`` or ``article_rag``.
+Cold-load / thread-detail path only. Agentic evidence remains server-side and
+is never projected into the public history DTO.
 """
 
 from __future__ import annotations
@@ -58,9 +57,9 @@ def quarantine_untrusted_agentic_claim(
 ) -> dict[str, Any]:
     """DB version missing/non-agentic but JSON claims agentic → isolate.
 
-    Emits a failed empty message with **no** legacy evidence and **no**
+    Emits a failed empty message with **no** public evidence and **no**
     public agentic citations, so substrate/index/hash cannot leak through
-    the loose legacy evidence channel.
+    any public evidence channel.
     """
     anchors = list(context_anchors or [])
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
@@ -73,7 +72,7 @@ def quarantine_untrusted_agentic_claim(
         "submission_mode": "chat",
         "resolved_intent": None,
         "context_anchors": anchors,
-        **_empty_legacy_lists(),
+        **_empty_history_lists(),
         "usage_event_id": usage_event_id,
         "current_turn_run_id": current_turn_run_id,
         "current_turn_run": safe_turn_run,
@@ -88,16 +87,14 @@ def quarantine_untrusted_agentic_claim(
         "agentic_citations": None,
         "knowledge_mode": None,
         "source_status": None,
-        "legacy_classification": None,
     }
 
 
-def _empty_legacy_lists() -> dict[str, Any]:
+def _empty_history_lists() -> dict[str, Any]:
     return {
         "citations": [],
         "action_proposals": [],
         "tool_trace": [],
-        "evidence": [],
         "response_cards": [],
         "supplement_candidates": [],
         "persisted_supplements": [],
@@ -110,12 +107,7 @@ def _empty_legacy_lists() -> dict[str, Any]:
         "resolved_context_input": None,
         "run_info": None,
         "run_history": [],
-        "reasoning_md": None,
-        "reasoning_status": None,
-        # R4-4: cold history truncated flag — None when no reasoning.
-        "reasoning_truncated": None,
         "article_rag": None,
-        "article_rag_citations": [],
     }
 
 
@@ -192,7 +184,7 @@ def _safe_degraded_message(
         "submission_mode": "chat",
         "resolved_intent": None,
         "context_anchors": context_anchors,
-        **_empty_legacy_lists(),
+        **_empty_history_lists(),
         "usage_event_id": usage_event_id,
         "current_turn_run_id": current_turn_run_id,
         "current_turn_run": current_turn_run,
@@ -206,7 +198,6 @@ def _safe_degraded_message(
         "agentic_citations": None,
         "knowledge_mode": None,
         "source_status": None,
-        "legacy_classification": None,
     }
 
 
@@ -243,7 +234,7 @@ def project_agentic_history_message(
     Rules:
     - Trust DB ``final_status`` column as source of truth; JSON may only
       confirm it. Mismatch → safe degrade (P0).
-    - Never hydrate legacy ``evidence`` / ``article_rag`` from agentic JSON.
+    - Never hydrate public evidence / ``article_rag`` from agentic JSON.
     - Never emit ``envelope_fingerprint``, handles, or raw restricted evidence.
     - ``resolved_evidence_json`` is server-only and is never projected to history.
     """
@@ -255,7 +246,7 @@ def project_agentic_history_message(
     # before wire sanitization strips the raw JSONB payload.
     # R4-4: extract both text and truncated flag from the same validated
     # snapshot so hot SSE, DB snapshot, and cold history stay consistent.
-    reasoning_text, reasoning_truncated, learner_stage = _safe_reasoning_projection(
+    reasoning_text, _, learner_stage = _safe_reasoning_projection(
         current_turn_run
     )
     safe_turn_run = _sanitize_turn_run_for_wire(current_turn_run)
@@ -297,13 +288,9 @@ def project_agentic_history_message(
                 "submission_mode": "chat",
                 "resolved_intent": None,
                 "context_anchors": anchors,
-                **_empty_legacy_lists(),
+                **_empty_history_lists(),
                 # Learner-reasoning summary (policy learner_reasoning_v1).
-                # Public fields use learner_reasoning_*; legacy reasoning_md
-                # stays null on the agentic v2 cold path.
-                "reasoning_md": None,
-                "reasoning_status": None,
-                "reasoning_truncated": None,
+                # Public fields use the canonical learner_reasoning_* shape.
                 "learner_reasoning_text": reasoning_text,
                 "learner_reasoning_status": (
                     "completed" if reasoning_text is not None else None
@@ -339,7 +326,6 @@ def project_agentic_history_message(
                     if completed.web_search is not None
                     else None
                 ),
-                "legacy_classification": None,
             }
 
         return _safe_degraded_message(**base_kwargs)
@@ -365,7 +351,7 @@ def project_agentic_history_message(
             "submission_mode": "chat",
             "resolved_intent": None,
             "context_anchors": anchors,
-            **_empty_legacy_lists(),
+            **_empty_history_lists(),
             "usage_event_id": usage_event_id,
             "current_turn_run_id": current_turn_run_id,
             "current_turn_run": safe_turn_run,
@@ -379,7 +365,6 @@ def project_agentic_history_message(
             "agentic_citations": None,
             "knowledge_mode": None,
             "source_status": None,
-            "legacy_classification": None,
         }
 
     # final_status column missing on an agentic row: incomplete / streaming /
@@ -394,7 +379,7 @@ def project_agentic_history_message(
             "submission_mode": "chat",
             "resolved_intent": None,
             "context_anchors": anchors,
-            **_empty_legacy_lists(),
+            **_empty_history_lists(),
             "usage_event_id": usage_event_id,
             "current_turn_run_id": current_turn_run_id,
             "current_turn_run": safe_turn_run,
@@ -408,7 +393,6 @@ def project_agentic_history_message(
             "agentic_citations": None,
             "knowledge_mode": None,
             "source_status": None,
-            "legacy_classification": None,
         }
 
     return _safe_degraded_message(**base_kwargs)

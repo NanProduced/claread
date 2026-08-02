@@ -28,8 +28,6 @@ from app.services.reader_record_ask.web_search_contracts import (
     PublicWebSearchSummary,
 )
 
-# Historical wire identity retained for cold-load legacy degradation only.
-EXECUTION_VERSION_AGENTIC_V1 = "reader_record_ask_agentic_v1"
 # Canonical public / SSE / history identity for new production turns.
 EXECUTION_VERSION_AGENTIC_V2 = "reader_record_ask_agentic_v2"
 
@@ -41,7 +39,6 @@ KnowledgeModePublic = Literal[
 ]
 
 SourceStatusPublic = Literal["article_source_unavailable"]
-LegacyClassification = Literal["legacy_unclassified"]
 
 FinalStatus = Literal[
     "ok",
@@ -358,21 +355,18 @@ def evidence_item_from_observation(obs: Any) -> ReaderRecordAskEvidenceItem:
 # ---------------------------------------------------------------------------
 # History / thread-detail DTOs (cold-load only)
 #
-# Distinct from Analysis Ask ReaderAskMessage so that wire contract stays
-# isolated. Reuses the same strict field types as ReaderAskMessage and only
-# adds agentic history fields with a strict evidence schema.
+# Distinct from the generic ReaderAskMessage so that the v2 history wire
+# contract stays isolated and explicit.
 # ---------------------------------------------------------------------------
 
 from app.schemas.reader_ask import (  # noqa: E402
     ReaderAskActionProposal,
     ReaderAskAnchorRef,
-    ReaderAskArticleRagCitation,
     ReaderAskArticleRagSidecar,
     ReaderAskAssetDisambiguation,
     ReaderAskCitation,
     ReaderAskContextPlan,
     ReaderAskDisambiguation,
-    ReaderAskEvidenceItem,
     ReaderAskFollowUpSuggestion,
     ReaderAskMessageRole,
     ReaderAskMessageStatus,
@@ -391,7 +385,7 @@ from app.schemas.reader_ask import (  # noqa: E402
 
 
 class ReaderRecordAskHistoryMessage(BaseModel):
-    """Reading Record Ask thread-detail message (legacy + agentic)."""
+    """Reading Record Ask v2 thread-detail message."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -406,8 +400,6 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     citations: list[ReaderAskCitation] = Field(default_factory=list)
     action_proposals: list[ReaderAskActionProposal] = Field(default_factory=list)
     tool_trace: list[ReaderAskToolTraceEntry] = Field(default_factory=list)
-    # Legacy evidence only. Agentic / quarantined rows always emit [].
-    evidence: list[ReaderAskEvidenceItem] = Field(default_factory=list)
     trace_summary: ReaderAskTraceSummary | None = None
     disambiguation: ReaderAskDisambiguation | None = None
     external_asset_disambiguation: ReaderAskAssetDisambiguation | None = None
@@ -418,16 +410,7 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     run_info: ReaderAskRunInfo | None = None
     supplement_candidates: list[ReaderAskSupplementCandidate] = Field(default_factory=list)
     persisted_supplements: list[ReaderAskPersistedSupplement] = Field(default_factory=list)
-    reasoning_md: str | None = None
-    reasoning_status: Literal["idle", "streaming", "completed"] | None = None
-    # ASK-TURN-LIFECYCLE R4-4: cold history restores the truncated flag
-    # from the persisted reasoning projection snapshot. ``True`` means the
-    # visible ``reasoning_md`` was truncated by the turn-level total cap
-    # (marker appended exactly once at the end). ``None`` when no
-    # reasoning was projected (legacy / degraded / no reasoning).
-    reasoning_truncated: bool | None = None
     # ASK-LEARNER-REASONING-PROJECTOR-R1: public learner summary fields.
-    # Prefer these over the ambiguous legacy reasoning_md on agentic v2.
     learner_reasoning_text: str | None = None
     learner_reasoning_status: Literal["streaming", "completed"] | None = None
     learner_reasoning_stage: (
@@ -436,25 +419,17 @@ class ReaderRecordAskHistoryMessage(BaseModel):
     usage_event_id: str | None = None
     follow_up_suggestions: list[ReaderAskFollowUpSuggestion] | None = None
     article_rag: ReaderAskArticleRagSidecar | None = None
-    article_rag_citations: list[ReaderAskArticleRagCitation] = Field(default_factory=list)
-    # Agentic-only history fields. Omitted for legacy RR messages via
-    # response_model_exclude_none on the RR thread-detail route.
-    execution_version: (
-        Literal["reader_record_ask_agentic_v1", "reader_record_ask_agentic_v2"]
-        | None
-    ) = None
+    execution_version: Literal["reader_record_ask_agentic_v2"] | None = None
     final_status: FinalStatus | None = None
-    # Public v2 blocks/citations — no handles. Null on terminals / legacy.
+    # Public v2 blocks/citations — no handles. Null on terminals.
     agentic_answer_blocks: list[PublicAnswerBlock] | None = None
     agentic_citations: list[PublicCitation] | None = None
     knowledge_mode: KnowledgeModePublic | None = None
     source_status: SourceStatusPublic | None = None
-    # Agentic v2 web search summary. Null on terminals / legacy / turns
+    # Agentic v2 web search summary. Null on terminals / turns
     # where web search was not invoked. Cold history replays the same
     # shape as hot SSE for "search happened but no cited source".
     agentic_web_search: PublicWebSearchSummary | None = None
-    # Old flat/v1 rows that only retain answer text.
-    legacy_classification: LegacyClassification | None = None
     created_at: str
     updated_at: str
 
