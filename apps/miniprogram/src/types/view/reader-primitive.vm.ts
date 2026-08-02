@@ -5,11 +5,12 @@
  * 保留产品能力直接依赖，避免引用旧文章 Analysis render-scene VM。
  *
  * 这里只收录：
- * - InlineMark 锚点与模型（Learning + Academic）
+ * - InlineMark 锚点与模型（Learning）
  * - Dictionary 结果模型
  *
  * CUTOVER-MINI-LONG: 旧 render-scene.vm / AcademicRenderSceneVm 联合类型已随
- * 旧文章 Analysis 主链 Physical 删除一并清理；本文件现为 Reader 端唯一 VM 基础类型源。
+ * 旧文章 Analysis 主链 Physical 删除一并清理；Academic InlineMark 零消费者类型
+ * 同步删除，本文件现为 Reader 端唯一 VM 基础类型源。
  */
 
 // ============ 共享基础类型 ============
@@ -99,35 +100,6 @@ export interface InlineMarkModel {
   parentId?: string
 }
 
-// ============ Academic 模式 InlineMark ============
-
-export interface AcademicInlineGlossary {
-  zh?: string
-  zhUncertain?: boolean
-  contextDefinition?: string
-  termCategory?: string
-  logicType?: string
-  hedgingDetected?: boolean
-  hedgingWords?: string[]
-}
-
-export type AcademicAnnotationType = 'term_note' | 'logic_note'
-export type AcademicVisualTone = 'term' | 'logic'
-
-export interface AcademicInlineMarkModel {
-  id: string
-  annotationType: AcademicAnnotationType
-  anchor: InlineMarkAnchor
-  renderType: RenderType
-  visualTone: AcademicVisualTone
-  clickable: boolean
-  lookupText?: string
-  lookupKind?: PhraseKind
-  glossary?: AcademicInlineGlossary
-  parentId?: string
-}
-
-export type AnyInlineMarkModel = InlineMarkModel | AcademicInlineMarkModel
 
 // ============ Dictionary 结果模型 ============
 

@@ -144,12 +144,6 @@
     opacity: 0.85;
   }
 
-  .exam-tags-row { display: flex; align-items: center; gap: 6rpx; margin-left: 8rpx; }
-  .exam-tag-pill {
-    padding: 3rpx 9rpx; border-radius: 7rpx; background: rgba(0, 0, 0, 0.03);
-    color: var(--reader-muted); font-size: 19rpx; font-weight: 500;
-  }
-
   .popup-close-btn {
     width: 56rpx; height: 56rpx; display: flex; align-items: center; justify-content: center;
     border-radius: 50%; background: #F4F1E9;
