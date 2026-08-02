@@ -16,7 +16,8 @@ This module is the ONLY path by which reasoning may become user-visible:
   handles, envelope/record identity, authentication material, system
   instruction fragments, and provider raw wrappers;
 - a bounded host-side quota caps the visible projection per turn;
-- only the projected text is published, as ``agentic.reasoning.*``
+- only the validated summary is published as
+  ``agentic.learner_reasoning.snapshot``
   runtime events that production stream maps 1:1 onto SSE and, on
   successful turns, persists atomically with the final answer.
 

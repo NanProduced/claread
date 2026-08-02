@@ -38,8 +38,8 @@ Critical invariants
 
 * HTTP EOF is **transport cleanup**, not a business terminal. Only a
   trusted typed terminal event (``message.completed`` /
-  ``agentic.terminal`` / legacy ``message.interrupted`` / parse-error /
-  abort) may move the lifecycle into a terminal state.
+  ``agentic.terminal`` / parse-error / abort) may move the lifecycle into a
+  terminal state.
 * A terminal is **trusted** only when its ``message_id`` /
   ``thread_id`` / ``turn_run_id`` match the active turn identity
   captured at ``agentic.run_started``. Foreign / stale terminals are
@@ -85,19 +85,16 @@ TERMINAL_STATES: frozenset[TurnLifecycleState] = frozenset(
     {"committed", "failed", "cancelled"}
 )
 
-#: Trusted typed terminal event names. ``message.interrupted`` is the
-#: legacy wire alias for ``agentic.terminal`` and is treated as trusted
-#: when its payload matches the active turn identity.
+#: Trusted typed terminal event names.
 TRUSTED_TERMINAL_EVENT_NAMES: frozenset[str] = frozenset(
     {
         "message.completed",
         "agentic.terminal",
-        "message.interrupted",
     }
 )
 
-#: Final status values carried by ``agentic.terminal`` /
-#: ``message.interrupted``. ``ok`` only appears on ``message.completed``.
+#: Final status values carried by ``agentic.terminal``. ``ok`` only appears
+#: on ``message.completed``.
 TerminalFinalStatus = Literal[
     "ok",
     "failed",
@@ -169,7 +166,6 @@ class TurnIdentity:
 LogicalTerminalKind = Literal[
     "completed",      # message.completed with valid v2 payload
     "terminal",       # agentic.terminal with non-ok final_status
-    "interrupted",    # legacy message.interrupted with non-ok payload
     "abort",          # client abort / network failure / BFF disconnect
     "parse_error",    # SSE_PARSE_ERROR — stream corrupted
     "eof",            # HTTP body closed without a typed terminal
@@ -201,14 +197,14 @@ class LogicalTerminalResult:
         reconciliation. ``abort`` is trusted for composer unlock but
         the host must still persist a ``cancelled`` terminal.
         """
-        return self.kind in {"completed", "terminal", "interrupted", "abort", "parse_error"}
+        return self.kind in {"completed", "terminal", "abort", "parse_error"}
 
     @property
     def resulting_state(self) -> TurnLifecycleState:
         """Lifecycle state the host should record for this terminal."""
         if self.kind == "completed":
             return "committed"
-        if self.kind in {"terminal", "interrupted"}:
+        if self.kind == "terminal":
             if self.final_status == "cancelled":
                 return "cancelled"
             return "failed"
@@ -252,7 +248,7 @@ class StreamLifecycleHook(Protocol):
     calls ``register_active_turn`` as soon as the assistant message +
     turn_run rows are persisted, and ``mark_terminal_emitted`` immediately
     after yielding a typed terminal event (``message.completed`` /
-    ``agentic.terminal`` / ``message.interrupted``).
+    ``agentic.terminal``).
 
     The route's ``finally`` block (inside ``_streaming_response``) calls
     ``reconcile_if_streaming`` to terminalize any still-streaming row

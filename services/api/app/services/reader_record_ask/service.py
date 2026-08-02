@@ -3,12 +3,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Literal  # noqa: F401 — Literal used in _stream_legacy_or_agentic
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
 
-from app.config.settings import get_settings
 from app.contracts.anchor_validation import (
     ANCHOR_RECORD_ID_MISMATCH,
     READING_RECORD_NOT_FOUND,
@@ -17,19 +16,18 @@ from app.contracts.anchor_validation import (
 )
 from app.database import connection as db_connect
 from app.schemas.reader_ask import (
-    ReaderAskActionConfirmRequest,
-    ReaderAskActionConfirmResponse,
-    ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
+    ReaderAskModelOptionListResponse,
+    ReaderAskModelOptionSummary,
     ReaderAskReadingRecordAnchor,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
-    ReaderRecordAskActionConfirmRequest,
     ReaderRecordAskMessageRequest,
 )
-from app.services.ask_runtime import action_service, stream_service, thread_service
+from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
 from app.services.reader_orchestration.anchor_gate import load_validated_reading_record_anchor
 from app.services.reader_orchestration.repository import ReaderOrchestrationRepository
+from app.services.reader_record_ask import thread_service
 from app.services.reader_record_ask.execution_config import (
     ReaderRecordAskExecutionConfig,
     ReaderRecordAskExecutionUnavailable,
@@ -42,18 +40,31 @@ from app.services.reader_record_ask.web_search_contracts import WebSearchMode
 logger = logging.getLogger(__name__)
 
 
+async def list_reading_record_ask_model_options() -> ReaderAskModelOptionListResponse:
+    """Return the v2 model catalog owned by the Reading Record Ask surface."""
+    from app.config.settings import get_settings
+    from app.services.reader_record_ask.model_options import (
+        list_reader_ask_model_options,
+    )
+
+    items, default_key = list_reader_ask_model_options(get_settings())
+    return ReaderAskModelOptionListResponse(
+        default_key=default_key,
+        items=[
+            ReaderAskModelOptionSummary(
+                **thread_service._selected_model_payload(item),
+                is_default=item.is_default,
+            )
+            for item in items
+        ],
+    )
+
+
 # Default replayed web search mode when the persisted user message metadata
 # does not carry ``web_search_mode`` (legacy rows persisted before ASK-WEB-G1-R2).
 # Fail-closed: never silently grant a capability the original turn did not
 # explicitly record as ``allowed``.
 _DEFAULT_REPLAY_WEB_SEARCH_MODE: WebSearchMode = "disabled"
-
-
-# Retry mode determined during preflight. ``"agentic"`` → use the
-# unified execution config + production_stream retry; ``"legacy"`` → use
-# stream_service.retry_thread_message. Resolving this before the
-# StreamingResponse starts prevents branch drift mid-stream.
-RetryMode = Literal["agentic", "legacy"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -66,15 +77,14 @@ class RetryPreparedResult:
     before constructing the StreamingResponse so a config-unavailable
     option surfaces as a real HTTP 503 instead of an SSE error frame.
 
-    For legacy retry (agentic flag off), ``facts`` and ``execution``
-    are both ``None`` — ``stream_service.retry_thread_message`` loads
-    its own state.
+    The result is always the v2 execution config. Historical v1, legacy,
+    missing, and unknown execution identities are rejected before this
+    object is constructed.
     """
 
     reading_record_id: UUID
-    mode: RetryMode
-    facts: object | None
-    execution: ReaderRecordAskExecutionConfig | None
+    facts: object
+    execution: ReaderRecordAskExecutionConfig
     # ASK-UX-COT-COMPOSER-R3 P2 — the replayed focus anchor set, parsed
     # from the persisted retry snapshot and re-validated against the live
     # document during preflight (fail-closed). ``None`` = legacy
@@ -349,10 +359,9 @@ class SendPreparedResult:
 
     reading_record_id: UUID
     thread_id: UUID
-    execution: ReaderRecordAskExecutionConfig | None
-    lane: Literal["agentic", "legacy"]
+    execution: ReaderRecordAskExecutionConfig
     submission: Any  # SubmissionEnsureResult | None
-    model_option_key: str | None
+    model_option_key: str
 
 
 async def prepare_reading_record_ask_message(
@@ -388,37 +397,31 @@ async def prepare_reading_record_ask_message(
     else:
         resolved_thread_id = thread_id
 
-    agentic = get_settings().reader_record_ask_agentic_enabled
-    lane: Literal["agentic", "legacy"] = "agentic" if agentic else "legacy"
-    execution: ReaderRecordAskExecutionConfig | None = None
-    model_option_key: str | None = request.model
-
-    if agentic:
-        option = await thread_service.resolve_and_persist_thread_model_option(
-            user_id=user_id,
-            thread_id=resolved_thread_id,
-            requested_key=request.model,
-            reading_record_id=parsed_record_id,
-        )
-        execution = await _resolve_agentic_execution(
-            option,
-            web_search_mode=request.web_search_mode,
-        )
-        model_option_key = execution.option_key
-        if request.web_search_mode == "allowed":
-            capability = execution.web_search_capability
-            if (
-                capability is None
-                or not capability.enabled_for_turn
-                or execution.web_search_backend is None
-            ):
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "code": "web_search_unavailable",
-                        "message": "Web Search is temporarily unavailable for this model.",
-                    },
-                )
+    option = await thread_service.resolve_and_persist_thread_model_option(
+        user_id=user_id,
+        thread_id=resolved_thread_id,
+        requested_key=request.model,
+        reading_record_id=parsed_record_id,
+    )
+    execution = await _resolve_agentic_execution(
+        option,
+        web_search_mode=request.web_search_mode,
+    )
+    model_option_key = execution.option_key
+    if request.web_search_mode == "allowed":
+        capability = execution.web_search_capability
+        if (
+            capability is None
+            or not capability.enabled_for_turn
+            or execution.web_search_backend is None
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "web_search_unavailable",
+                    "message": "Web Search is temporarily unavailable for this model.",
+                },
+            )
 
     web_mode = (
         request.web_search_mode
@@ -426,7 +429,6 @@ async def prepare_reading_record_ask_message(
         else "disabled"
     )
     retry_snapshot = build_retry_snapshot(
-        lane=lane,
         model_option_key=model_option_key,
         web_search_mode=web_mode,
         route_identity="reader_record_ask",
@@ -455,13 +457,12 @@ async def prepare_reading_record_ask_message(
         reading_record_id=parsed_record_id,
         thread_id=resolved_thread_id,
         execution=execution,
-        lane=lane,
         submission=submission,
         model_option_key=model_option_key,
     )
 
 
-async def _stream_legacy_or_agentic(
+async def _stream_agentic_v2(
     *,
     user_id: UUID,
     reading_record_id: UUID,
@@ -471,7 +472,7 @@ async def _stream_legacy_or_agentic(
     lifecycle: StreamLifecycleHook | None = None,
     prepared: SendPreparedResult | None = None,
 ) -> AsyncIterator[str]:
-    """Dispatch agentic/legacy using pre-stream prepared submission (R6).
+    """Dispatch the v2 stream using the pre-stream submission (R6).
 
     Generator must NOT re-claim or re-create pairs. Model only runs when
     prepared.submission is None (pre-R2) or may_create_model=True.
@@ -480,7 +481,6 @@ async def _stream_legacy_or_agentic(
 
     if prepared is not None:
         ensure = prepared.submission
-        lane = prepared.lane
         model_option_key = prepared.model_option_key
         execution = prepared.execution
         thread_id = prepared.thread_id
@@ -488,11 +488,6 @@ async def _stream_legacy_or_agentic(
     else:
         # Defensive fallback for tests that skip prepare — still not ideal.
         ensure = None
-        lane = (
-            "agentic"
-            if get_settings().reader_record_ask_agentic_enabled
-            else "legacy"
-        )
         model_option_key = (
             execution.option_key if execution is not None else request.model
         )
@@ -526,20 +521,6 @@ async def _stream_legacy_or_agentic(
     claim_gen = ensure.claim_generation if ensure else None
     client_sub_id = request.client_submission_id
 
-    if lane == "legacy":
-        async for chunk in stream_service.stream_thread_message(
-            user_id=user_id,
-            reading_record_id=reading_record_id,
-            thread_id=thread_id,
-            request=request,
-            existing_user_message=precreated_user,
-            existing_assistant_message=precreated_asst,
-            client_submission_id=client_sub_id,
-            claim_generation=claim_gen,
-        ):
-            yield chunk
-        return
-
     facts = await _load_snapshot_facts(
         user_id=user_id,
         reading_record_id=reading_record_id,
@@ -548,21 +529,17 @@ async def _stream_legacy_or_agentic(
         stream_agentic_thread_message,
     )
 
-    model = execution.model if execution is not None else None
-    model_settings = execution.model_settings() if execution is not None else None
-    usage_limits = execution.usage_limits if execution is not None else None
-    web_search_capability = (
-        execution.web_search_capability if execution is not None else None
-    )
-    resolved_backend = (
-        execution.web_search_backend if execution is not None else None
-    )
+    if execution is None:
+        raise RuntimeError("Reader Record Ask v2 execution was not prepared")
+    model = execution.model
+    model_settings = execution.model_settings()
+    usage_limits = execution.usage_limits
+    web_search_capability = execution.web_search_capability
+    resolved_backend = execution.web_search_backend
     web_search_backend = (
         resolved_backend if web_search_capability is not None else None
     )
-    main_model_config = (
-        execution.resolved_model_config if execution is not None else None
-    )
+    main_model_config = execution.resolved_model_config
 
     # R3 P2 — the effective anchor set (plural focus_anchors, or the
     # legacy singular anchor as fallback). The primary selection is the
@@ -611,7 +588,7 @@ async def send_reading_record_ask_message(
             reading_record_id=reading_record_id,
             request=request,
         )
-    async for chunk in _stream_legacy_or_agentic(
+    async for chunk in _stream_agentic_v2(
         user_id=user_id,
         reading_record_id=prepared.reading_record_id,
         thread_id=prepared.thread_id,
@@ -639,7 +616,7 @@ async def stream_reading_record_ask_thread_message(
             request=request,
             thread_id=thread_id,
         )
-    async for chunk in _stream_legacy_or_agentic(
+    async for chunk in _stream_agentic_v2(
         user_id=user_id,
         reading_record_id=prepared.reading_record_id,
         thread_id=prepared.thread_id,
@@ -660,18 +637,14 @@ async def prepare_reading_record_ask_retry(
 ) -> RetryPreparedResult:
     """Retry preflight — runs before the StreamingResponse starts.
 
-    ASK-RETRY-CONTRACT-R3 preflight order (immutable lane firewall):
+    v2 retry preflight order (immutable execution identity):
 
     1. Validate reading_record_id / thread / message ownership;
     2. Load target assistant + preceding user message;
-    3. Resolve persisted retry lane from message / turn_run
-       ``execution_version`` (never the live feature flag);
-    4. Enter only that lane's Adapter;
-    5. Missing / untrusted lane → typed 409 (no cross-chain guess).
-
-    The live ``reader_record_ask_agentic_enabled`` flag only decides the
-    default lane for *new* submissions. Historical retry must replay the
-    original lane.
+    3. Require the persisted ``reader_record_ask_agentic_v2`` identity;
+    4. Resolve only the v2 execution adapter;
+    5. v1, legacy, missing, or unknown identities → typed 409 before any
+       provider execution.
 
     ASK-WEB-G1-R2: when ``message_id`` is provided, the preflight loads
     the persisted user message metadata and replays the original turn's
@@ -709,32 +682,21 @@ async def prepare_reading_record_ask_retry(
             detail="Retried assistant message or its preceding user message was not found",
         )
 
-    # 3: resolve immutable retry lane from persisted facts only.
-    lane = _resolve_persisted_retry_lane(
+    # 3: require the immutable v2 execution identity from persisted facts.
+    has_v2_execution = _has_persisted_v2_execution(
         assistant_msg=assistant_msg,
         user_msg=user_msg,
     )
-    if lane is None:
+    if not has_v2_execution:
         raise HTTPException(
             status_code=409,
             detail={
-                "code": "retry_lane_unknown",
-                "message": "无法确认这轮回答的执行链路，请新建提问，不要跨链重试。",
+                "code": "retry_execution_version_untrusted",
+                "message": "无法确认这轮回答是 Reading Record Ask v2，请新建提问。",
             },
         )
 
-    if lane == "legacy":
-        # Facts load preserves the historical 404/400 surface for missing
-        # records without entering the agentic adapter.
-        await _load_snapshot_facts(user_id=user_id, reading_record_id=parsed_record_id)
-        return RetryPreparedResult(
-            reading_record_id=parsed_record_id,
-            mode="legacy",
-            facts=None,
-            execution=None,
-        )
-
-    # Agentic lane: preflight facts + execution from the *persisted*
+    # v2 preflight facts + execution from the *persisted*
     # retry snapshot model option (never current UI / thread selection /
     # retry body model).
     facts = await _load_snapshot_facts(
@@ -745,7 +707,7 @@ async def prepare_reading_record_ask_retry(
         assistant_msg=assistant_msg,
         user_msg=user_msg,
     )
-    if lane == "agentic" and not snapshot_model_key:
+    if not snapshot_model_key:
         raise HTTPException(
             status_code=409,
             detail={
@@ -796,7 +758,6 @@ async def prepare_reading_record_ask_retry(
             )
     return RetryPreparedResult(
         reading_record_id=parsed_record_id,
-        mode="agentic",
         facts=facts,
         execution=execution,
         focus_anchors=replayed_focus_anchors,
@@ -909,25 +870,17 @@ async def _revalidate_snapshot_focus_anchors(
     return parsed
 
 
-def _resolve_persisted_retry_lane(
+def _has_persisted_v2_execution(
     *,
     assistant_msg: dict[str, Any],
     user_msg: dict[str, Any],
-) -> RetryMode | None:
-    """Return agentic/legacy from persisted facts; None if untrusted.
+) -> bool:
+    """Accept only an explicit, consistent persisted v2 identity.
 
-    Preference order:
-    1. current turn_run.execution_version (agentic versions);
-    2. assistant metadata.execution_version;
-    3. user metadata.execution_version;
-    4. explicit legacy markers / absence of agentic claim → legacy when
-       the turn predates agentic metadata but is a valid completed pair.
-
-    Never consults the live feature flag.
+    The absence of a version is not evidence of v2.  Any v1, legacy, or
+    unknown marker is rejected so retry cannot cross execution chains or
+    reach a provider before the route has established its identity fence.
     """
-    from app.services.reader_record_ask.history_projection import (
-        is_agentic_execution_version,
-    )
 
     def _meta(msg: dict[str, Any]) -> dict[str, Any]:
         raw = msg.get("metadata_json") or {}
@@ -939,32 +892,14 @@ def _resolve_persisted_retry_lane(
     u_snap = u_meta.get("retry_snapshot") if isinstance(u_meta.get("retry_snapshot"), dict) else {}
 
     candidates: list[Any] = [
-        a_snap.get("retry_lane"),
-        u_snap.get("retry_lane"),
         a_snap.get("execution_version"),
         u_snap.get("execution_version"),
         assistant_msg.get("turn_run_execution_version"),
         a_meta.get("execution_version"),
         u_meta.get("execution_version"),
-        a_meta.get("retry_lane"),
-        u_meta.get("retry_lane"),
     ]
-    for value in candidates:
-        if value is None or value == "":
-            continue
-        if is_agentic_execution_version(value) or value in {
-            "agentic",
-            "reader_record_ask_agentic",
-        }:
-            return "agentic"
-        if value in {"legacy", "reader_record_ask_legacy", "reader_ask_legacy"}:
-            return "legacy"
-        # Unknown non-empty token → fail-closed (do not guess).
-        return None
-
-    # ASK-RETRY-CONTRACT-R4: no trusted snapshot/lane → fail-closed.
-    # Never guess legacy for null/missing metadata (would cross-chain).
-    return None
+    present = [value for value in candidates if value not in (None, "")]
+    return bool(present) and all(value == EXECUTION_VERSION_AGENTIC_V2 for value in present)
 
 
 async def _load_replayed_web_search_mode(
@@ -1114,20 +1049,7 @@ async def retry_reading_record_ask_message(
         )
     parsed_record_id = prepared.reading_record_id
 
-    if prepared.mode == "legacy":
-        async for chunk in stream_service.retry_thread_message(
-            user_id=user_id,
-            reading_record_id=parsed_record_id,
-            thread_id=thread_id,
-            message_id=message_id,
-            retry_body=request,
-        ):
-            yield chunk
-        return
-
-    # Agentic mode — preflight has already resolved facts + execution.
-    assert prepared.execution is not None, "agentic mode requires execution config"
-    assert prepared.facts is not None, "agentic mode requires preflight facts"
+    # v2 mode — preflight has already resolved facts + execution.
     from app.services.reader_record_ask.production_stream import (
         retry_agentic_thread_message,
     )
@@ -1166,56 +1088,3 @@ async def retry_reading_record_ask_message(
         lifecycle=lifecycle,
     ):
         yield chunk
-
-
-async def confirm_reading_record_ask_action(
-    *,
-    user_id: UUID,
-    reading_record_id: str,
-    action_id: str,
-    request: ReaderRecordAskActionConfirmRequest,
-) -> ReaderAskActionConfirmResponse:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    threads = await thread_service.list_reading_record_threads(user_id, parsed_record_id)
-    target_thread_id = next((UUID(item.id) for item in threads.items if item.is_default), None)
-    if target_thread_id is None:
-        raise HTTPException(status_code=404, detail="Reader ask action proposal not found")
-    return await action_service.confirm_action(
-        user_id=user_id,
-        thread_id=target_thread_id,
-        action_id=action_id,
-        body=ReaderAskActionConfirmRequest(confirmed=request.confirmed),
-        expected_reading_record_id=parsed_record_id,
-    )
-
-
-async def confirm_reading_record_ask_thread_action(
-    *,
-    user_id: UUID,
-    reading_record_id: str,
-    thread_id: UUID,
-    action_id: str,
-    request: ReaderRecordAskActionConfirmRequest,
-) -> ReaderAskActionConfirmResponse:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    return await action_service.confirm_action(
-        user_id=user_id,
-        thread_id=thread_id,
-        action_id=action_id,
-        body=ReaderAskActionConfirmRequest(confirmed=request.confirmed),
-        expected_reading_record_id=parsed_record_id,
-    )
-
-
-async def delete_reading_record_ask_supplement(
-    *,
-    user_id: UUID,
-    reading_record_id: str,
-    supplement_id: UUID,
-) -> ReaderAskDeleteSupplementResponse:
-    parsed_record_id = _parse_uuid(reading_record_id, field="reading_record_id")
-    return await action_service.delete_supplement(
-        user_id=user_id,
-        supplement_id=supplement_id,
-        expected_reading_record_id=parsed_record_id,
-    )

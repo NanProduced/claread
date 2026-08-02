@@ -1,9 +1,4 @@
-"""SSE wire helpers for the agentic Reading Record Ask path.
-
-Mirrors the existing event *names* used by the legacy stream so clients
-remain compatible, but lives entirely under ``reader_record_ask`` and
-does not import ``reader_ask.stream_events`` or ``ask_runtime``.
-"""
+"""Canonical SSE wire helpers for Reading Record Ask v2."""
 
 from __future__ import annotations
 
@@ -14,7 +9,6 @@ EVENT_THREAD_READY = "thread.ready"
 EVENT_MESSAGE_STARTED = "message.started"
 EVENT_MESSAGE_DELTA = "message.delta"
 EVENT_MESSAGE_COMPLETED = "message.completed"
-EVENT_MESSAGE_INTERRUPTED = "message.interrupted"
 EVENT_MESSAGE_PREVIEW_RESET = "message.preview_reset"
 EVENT_ERROR = "error"
 # Agentic-only typed progress (safe for clients that ignore unknown events).
@@ -29,12 +23,8 @@ EVENT_AGENTIC_TERMINAL = "agentic.terminal"
 # on the legacy reader_ask path); the agentic path no longer maps analysis
 # phase events onto reasoning lifecycle signals — progress and reasoning
 # are separate channels.
-EVENT_AGENTIC_REASONING_STARTED = "agentic.reasoning.started"
-EVENT_AGENTIC_REASONING_DELTA = "agentic.reasoning.delta"
-EVENT_AGENTIC_REASONING_COMPLETED = "agentic.reasoning.completed"
-# Learner reasoning summary (ASK-LEARNER-REASONING-PROJECTOR-R1).
-# Distinct from legacy ``agentic.reasoning.*`` (retired for learner-facing
-# content). Snapshots are replace-semantics only — no empty started shell.
+# Learner reasoning summary. Snapshots are replace-semantics only — no empty
+# started shell and no provider chain-of-thought event family.
 EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT = "agentic.learner_reasoning.snapshot"
 # Thread-memory lifecycle. These always precede reasoning.started for a turn.
 EVENT_CONTEXT_COMPACTION_STARTED = "context.compaction.started"

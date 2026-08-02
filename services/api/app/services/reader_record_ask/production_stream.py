@@ -1,6 +1,6 @@
 """Production SSE + persistence adapter for the agentic Reading Record Ask path.
 
-Flag-gated from ``service.py``.  Does not import legacy reader_ask agent,
+Owned by ``reader_record_ask.service``. Does not import legacy reader_ask agent,
 planner, ask_runtime stream, or old RAG prompt bridges.
 """
 
@@ -73,8 +73,6 @@ from app.services.reader_record_ask.runtime import (
 )
 from app.services.reader_record_ask.runtime_deps import RuntimeObservation
 from app.services.reader_record_ask.runtime_events import (
-    AgenticReasoningDeltaEvent,
-    AgenticReasoningStartedEvent,
     AnalysisFinishedEvent,
     AnalysisStartedEvent,
     AnswerDeltaEvent,
@@ -94,8 +92,6 @@ from app.services.reader_record_ask.runtime_events import (
 from app.services.reader_record_ask.sse import (
     EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
     EVENT_AGENTIC_PROGRESS,
-    EVENT_AGENTIC_REASONING_DELTA,
-    EVENT_AGENTIC_REASONING_STARTED,
     EVENT_AGENTIC_RUN_STARTED,
     EVENT_AGENTIC_TERMINAL,
     EVENT_CONTEXT_COMPACTION_COMPLETED,
@@ -104,7 +100,6 @@ from app.services.reader_record_ask.sse import (
     EVENT_CONTEXT_COMPACTION_STARTED,
     EVENT_MESSAGE_COMPLETED,
     EVENT_MESSAGE_DELTA,
-    EVENT_MESSAGE_INTERRUPTED,
     EVENT_MESSAGE_PREVIEW_RESET,
     EVENT_MESSAGE_STARTED,
     EVENT_THREAD_READY,
@@ -144,7 +139,6 @@ logger = logging.getLogger(__name__)
 _TERMINAL_SSE_PREFIXES: tuple[str, ...] = (
     "event: message.completed\n",
     "event: agentic.terminal\n",
-    "event: message.interrupted\n",
 )
 
 
@@ -257,10 +251,7 @@ def _submission_status_from_terminal_chunk(
     """
     if chunk.startswith("event: message.completed\n"):
         return "completed"
-    if not (
-        chunk.startswith("event: agentic.terminal\n")
-        or chunk.startswith("event: message.interrupted\n")
-    ):
+    if not chunk.startswith("event: agentic.terminal\n"):
         return None
     # Extract final_status from the data line when present.
     for line in chunk.split("\n"):
@@ -685,8 +676,7 @@ class _TurnLifecycleMetrics:
 
     Lifecycle phases tracked (R3 contract):
 
-    - ``first_reasoning_ms``: first ``AgenticReasoningStartedEvent`` or
-      first ``AgenticReasoningDeltaEvent`` (whichever fires first).
+    - ``first_reasoning_ms``: first learner-reasoning snapshot arrival.
       ``None`` when no reasoning was emitted this turn.
     - ``first_answer_delta_ms`` / ``last_answer_delta_ms``: first and
       last ``AnswerDeltaEvent`` arrival times. ``None`` when no answer
@@ -700,8 +690,7 @@ class _TurnLifecycleMetrics:
       commit timestamp. ``None`` on failure paths (no canonical answer
       was persisted).
     - ``terminal_sent_ms``: first typed terminal SSE frame yielded
-      (``message.completed`` / ``agentic.terminal`` /
-      ``message.interrupted``). Marks the moment the client should be
+      (``message.completed`` / ``agentic.terminal``). Marks the moment the client should be
       able to receive the terminal signal.
     """
 
@@ -1243,7 +1232,7 @@ async def _run_agentic_turn(
     # Production passes neither seam (the flag + real repository + real Flash
     # compactor are derived below); an integrated test that drives
     # the real stream/core against real PostgreSQL injects a deterministic
-    # compactor and forces the memory lane on without touching settings or
+    # compactor and forces thread-memory handling on without touching settings or
     # forming a second business chain. ``None`` ⇒ byte-identical production
     # behavior, exactly like the existing ``model`` / ``run_fn`` seams.
     memory_enabled_override: bool | None = None,
@@ -1306,7 +1295,6 @@ async def _run_agentic_turn(
             terminal_dto=terminal_json,
         )
         yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-        yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
         return
 
     started_at = time.perf_counter()
@@ -1476,7 +1464,7 @@ async def _run_agentic_turn(
         run_status: Literal["failed", "cancelled", "stale"],
         terminal_reason: str | None,
         finalized: FinalizedAskResult | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str]:
         """Unified fail path: cleanup first, then best-effort terminal DB, then SSE.
 
         Consumers that read the returned frames see terminal only after
@@ -1511,10 +1499,7 @@ async def _run_agentic_turn(
                 final_status,
             )
         metrics.mark_terminal_sent()
-        return (
-            encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json),
-            encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json),
-        )
+        return (encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json),)
 
     try:
         while True:
@@ -1526,22 +1511,6 @@ async def _run_agentic_turn(
                 metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
-                    item.model_dump(mode="json"),
-                )
-                continue
-            if isinstance(item, AgenticReasoningStartedEvent):
-                # Legacy agentic.reasoning.* retained for wire compatibility
-                # tests; production learner path uses learner_reasoning.*.
-                metrics.mark_first_reasoning()
-                yield encode_sse(
-                    EVENT_AGENTIC_REASONING_STARTED,
-                    item.model_dump(mode="json"),
-                )
-                continue
-            if isinstance(item, AgenticReasoningDeltaEvent):
-                metrics.mark_first_reasoning()
-                yield encode_sse(
-                    EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
                 )
                 continue
@@ -1643,24 +1612,6 @@ async def _run_agentic_turn(
                 metrics.mark_first_reasoning()
                 yield encode_sse(
                     EVENT_AGENTIC_LEARNER_REASONING_SNAPSHOT,
-                    item.model_dump(mode="json"),
-                )
-                continue
-            if isinstance(item, AgenticReasoningStartedEvent):
-                # ASK-REASONING-R1 (late drain path).
-                # R3: mark first-reasoning timestamp (idempotent).
-                metrics.mark_first_reasoning()
-                yield encode_sse(
-                    EVENT_AGENTIC_REASONING_STARTED,
-                    item.model_dump(mode="json"),
-                )
-                continue
-            if isinstance(item, AgenticReasoningDeltaEvent):
-                # ASK-REASONING-R1 (late drain path).
-                # R3: mark first-reasoning timestamp (idempotent).
-                metrics.mark_first_reasoning()
-                yield encode_sse(
-                    EVENT_AGENTIC_REASONING_DELTA,
                     item.model_dump(mode="json"),
                 )
                 continue
@@ -2086,7 +2037,6 @@ async def _run_agentic_turn(
                     )
                     terminal_json = terminal.model_dump(mode="json")
                 yield encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json)
-                yield encode_sse(EVENT_MESSAGE_INTERRUPTED, terminal_json)
             # If winning_final_status == "ok" or unknown, end silently.
             # The client will either see the winner's message.completed
             # (same request) or run stale-stream reconciliation.
@@ -2402,7 +2352,6 @@ async def stream_agentic_thread_message(
         else:
             persisted_web_search_mode = effective_web_search_mode
             retry_snapshot = build_retry_snapshot(
-                lane="agentic",
                 model_option_key=model_option_key,
                 web_search_mode=persisted_web_search_mode,
                 # R3 P2 — persist the full validated focus set (canonical
@@ -2430,7 +2379,6 @@ async def stream_agentic_thread_message(
                 content_md=content,
                 metadata={
                     "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                    "retry_lane": "agentic",
                     "retry_contract_version": retry_snapshot[
                         "retry_contract_version"
                     ],
@@ -2446,7 +2394,6 @@ async def stream_agentic_thread_message(
                 content_md="",
                 metadata={
                     "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                    "retry_lane": "agentic",
                     "retry_contract_version": retry_snapshot[
                         "retry_contract_version"
                     ],

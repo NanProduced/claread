@@ -54,10 +54,10 @@ class TestTurnLifecycleContract:
         assert TERMINAL_STATES == frozenset({"committed", "failed", "cancelled"})
 
     def test_trusted_terminal_event_names_are_typed(self) -> None:
-        # message.completed + agentic.terminal + legacy message.interrupted.
+        # v2 uses message.completed + agentic.terminal.
         # Unknown / forward-compat event names must NOT be trusted.
         assert TRUSTED_TERMINAL_EVENT_NAMES == frozenset(
-            {"message.completed", "agentic.terminal", "message.interrupted"}
+            {"message.completed", "agentic.terminal"}
         )
         assert not is_trusted_terminal_event("agentic.future_signal")
         assert not is_trusted_terminal_event("message.delta")
@@ -183,9 +183,9 @@ class TestLogicalTerminalResult:
         assert result.is_trusted_terminal
         assert result.resulting_state == "cancelled"
 
-    def test_interrupted_with_context_stale_results_in_failed(self) -> None:
+    def test_terminal_context_stale_results_in_failed(self) -> None:
         result = LogicalTerminalResult(
-            kind="interrupted",
+            kind="terminal",
             final_status="context_stale",
         )
         assert result.is_trusted_terminal

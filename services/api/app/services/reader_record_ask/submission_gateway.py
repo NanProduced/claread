@@ -4,7 +4,7 @@ Lifecycle (DB-authoritative):
 
   claimed → streaming → completed | failed | cancelled
 
-Reading Record Ask **agentic and legacy** new sends MUST enter through
+Reading Record Ask v2 new sends MUST enter through
 ``ensure_submission_for_send`` before any model call. Duplicate
 ``client_submission_id`` values never create a second user/assistant
 pair and never re-invoke the model.
@@ -74,13 +74,12 @@ class SubmissionReconcileView:
     claim_generation: int | None = None
     user_message: dict[str, Any] | None = None
     assistant_message: dict[str, Any] | None = None
-    # UI hint when lane cannot be retried safely.
+    # UI hint when this execution cannot be retried safely.
     action_hint: Literal["resend", "retry", "reask", "wait", "none"] | None = None
 
 
 def build_retry_snapshot(
     *,
-    lane: Literal["agentic", "legacy"],
     model_option_key: str | None,
     web_search_mode: str,
     route_identity: str | None = None,
@@ -95,12 +94,7 @@ def build_retry_snapshot(
     """
     return {
         "retry_contract_version": RETRY_CONTRACT_VERSION,
-        "retry_lane": lane,
-        "execution_version": (
-            "reader_record_ask_agentic_v2"
-            if lane == "agentic"
-            else "reader_record_ask_legacy"
-        ),
+        "execution_version": "reader_record_ask_agentic_v2",
         "model_option_key": model_option_key,
         "route_identity": route_identity,
         "web_search_mode": web_search_mode,
@@ -122,7 +116,7 @@ async def ensure_submission_for_send(
     user_extra_metadata: dict[str, Any] | None = None,
     assistant_extra_metadata: dict[str, Any] | None = None,
 ) -> SubmissionEnsureResult | None:
-    """Ensure durable claim+pair for both agentic and legacy lanes.
+    """Ensure durable claim+pair for the v2 Reading Record Ask path.
 
     Returns ``None`` only when ``client_submission_id`` is absent (pre-R2
     clients). When present, fails closed if the submissions table is
@@ -134,7 +128,6 @@ async def ensure_submission_for_send(
     user_meta = {
         **(user_extra_metadata or {}),
         "retry_snapshot": retry_snapshot,
-        "retry_lane": retry_snapshot.get("retry_lane"),
         "retry_contract_version": retry_snapshot.get("retry_contract_version"),
         "execution_version": retry_snapshot.get("execution_version"),
         "web_search_mode": retry_snapshot.get("web_search_mode"),
@@ -143,7 +136,6 @@ async def ensure_submission_for_send(
     assistant_meta = {
         **(assistant_extra_metadata or {}),
         "retry_snapshot": retry_snapshot,
-        "retry_lane": retry_snapshot.get("retry_lane"),
         "retry_contract_version": retry_snapshot.get("retry_contract_version"),
         "execution_version": retry_snapshot.get("execution_version"),
         "model_option_key": retry_snapshot.get("model_option_key"),
@@ -222,7 +214,7 @@ class SubmissionTerminalHook:
     client_submission_id: UUID | None
     claim_generation: int | None = None
     assistant_message_id: UUID | None = None
-    # Real model terminal — set as soon as the lane knows the outcome.
+    # Real model terminal — set as soon as this execution knows the outcome.
     intended_status: Literal["completed", "failed", "cancelled"] | None = None
     # True only after a successful terminal DB write (or no-op inactive).
     _synced: bool = False

@@ -11,10 +11,6 @@ class HealthCheckResponse(BaseModel):
     env: str
     postgres: bool
     redis: bool
-    worker: bool
-    worker_inflight_tasks: int
-    overview_worker: bool = False
-    overview_worker_inflight_tasks: int = 0
     dict_cache: DictCacheStats | None = None
     zilliz: bool | None = None
 
@@ -36,7 +32,3 @@ class DbHealthResponse(BaseModel):
 class ReadinessCheckResponse(BaseModel):
     status: str
     postgres: bool
-    worker: bool
-    worker_inflight_tasks: int
-    overview_worker: bool = False
-    overview_worker_inflight_tasks: int = 0

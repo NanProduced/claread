@@ -68,11 +68,6 @@ class Settings(BaseSettings):
     # Frozen into each automatic job at creation; workers use the job mode.
     # Illegal values fail Settings construction (no silent fallback).
     reader_automatic_layer_policy_mode: Literal["off", "shadow", "enforce"] = "enforce"
-    # Reading Record Ask agentic lane (default OFF — dual-path coexistence).
-    # When true, validated Reading Record Ask message streams use the
-    # independent reader_record_ask agent runtime instead of ask_runtime.
-    # Failures do not fall back to the legacy agent.
-    reader_record_ask_agentic_enabled: bool = False
     # R1A: Ask thread memory + compaction (default OFF — flag orthogonality
     # with agentic lane; when OFF, assembly behaves exactly as today).
     # When true, agentic Ask turns load a thread-memory snapshot, inject it

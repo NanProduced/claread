@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.config.settings import get_settings
 from app.services.analysis.planning.goal_planner import build_goal_execution_plan
-from app.services.analysis.prompting.daily_prompt_strategy import (
+from app.services.prompting.daily_prompt_strategy import (
     DailyPromptStrategy,
     build_daily_prompt_sections,
     build_vocab_highlight_strategy,
@@ -20,29 +20,29 @@ from app.services.analysis.prompting.daily_prompt_strategy import (
     build_quality_review_strategy,
     build_refinement_strategy,
 )
-from app.services.analysis.prompting.example_strategy import (
+from app.services.prompting.example_strategy import (
     ExampleEntry,
     ExampleStrategy,
 )
-from app.services.analysis.prompting.prompt_composer import (
+from app.services.prompting.prompt_composer import (
     PromptSection,
     build_agent_prompt,
     render_prompt_sections,
 )
-from app.services.analysis.prompting.prompt_loader import (
+from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
     load_examples,
     load_policy_lines,
 )
-from app.services.analysis.prompting.prompt_strategy import (
+from app.services.prompting.prompt_strategy import (
     PromptStrategy,
     build_grammar_prompt_strategy,
     build_prompt_sections,
     build_translation_prompt_strategy,
     build_vocabulary_prompt_strategy,
 )
-from app.services.analysis.prompting.strategy_builder import (
+from app.services.prompting.strategy_builder import (
     StrategyBundle,
     build_grammar_bundle,
     build_translation_bundle,

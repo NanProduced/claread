@@ -16,13 +16,14 @@ router = APIRouter(prefix="/health", tags=["health"])
 
 @router.get("", response_model=HealthCheckResponse, summary="健康检查")
 async def health_check(request: Request) -> HealthCheckResponse:
-    """检查应用、数据库、Redis 和 Worker 的运行状态。"""
+    """检查应用、数据库和 Redis 的运行状态。
+
+    Reader workers are independent processes; the API must not own or
+    require their lifecycle state.
+    """
     settings = get_settings()
     db_ready = await is_db_ready()
     redis_ready = await is_redis_ready()
-    worker_snapshot = _get_worker_snapshot(request, "analysis_task_worker")
-    overview_worker_snapshot = _get_worker_snapshot(request, "overview_task_worker")
-    worker_ready = bool(worker_snapshot["healthy"]) and bool(overview_worker_snapshot["healthy"])
 
     zilliz_ready: bool | None = None
     if settings.grammar_rag_enabled:
@@ -30,15 +31,11 @@ async def health_check(request: Request) -> HealthCheckResponse:
         zilliz_ready = await _is_zilliz_ready()
 
     return {
-        "status": "ok" if db_ready and worker_ready else "degraded",
+        "status": "ok" if db_ready else "degraded",
         "app": settings.app_name,
         "env": settings.app_env,
         "postgres": db_ready,
         "redis": redis_ready,
-        "worker": worker_ready,
-        "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
-        "overview_worker": bool(overview_worker_snapshot["healthy"]),
-        "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
         "dict_cache": _get_dict_cache_stats(),
         "zilliz": zilliz_ready,
     }
@@ -56,46 +53,22 @@ async def db_health() -> DbHealthResponse:
 
 @router.get("/ready", response_model=ReadinessCheckResponse, summary="就绪探针")
 async def readiness_check(request: Request) -> ReadinessCheckResponse:
-    """就绪探针，数据库和 Worker 都健康时返回 200，否则 503。"""
+    """就绪探针，数据库健康时返回 200，否则 503。"""
     db_ready = await is_db_ready()
-    worker_snapshot = _get_worker_snapshot(request, "analysis_task_worker")
-    overview_worker_snapshot = _get_worker_snapshot(request, "overview_task_worker")
-    worker_ready = bool(worker_snapshot["healthy"]) and bool(overview_worker_snapshot["healthy"])
 
-    if not db_ready or not worker_ready:
+    if not db_ready:
         raise HTTPException(
             status_code=503,
             detail={
                 "status": "unavailable",
                 "postgres": db_ready,
-                "worker": worker_ready,
-                "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
-                "overview_worker": bool(overview_worker_snapshot["healthy"]),
-                "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
             },
         )
 
     return {
         "status": "ok",
         "postgres": db_ready,
-        "worker": worker_ready,
-        "worker_inflight_tasks": int(worker_snapshot["inflight_tasks"]),
-        "overview_worker": bool(overview_worker_snapshot["healthy"]),
-        "overview_worker_inflight_tasks": int(overview_worker_snapshot["inflight_tasks"]),
     }
-
-
-def _get_worker_snapshot(request: Request, attribute_name: str) -> dict[str, bool | int | str]:
-    worker = getattr(request.app.state, attribute_name, None)
-    if worker is None:
-        return {
-            "healthy": False,
-            "worker_token": "",
-            "runner_running": False,
-            "stopping": True,
-            "inflight_tasks": 0,
-        }
-    return worker.health_snapshot()
 
 
 def _get_dict_cache_stats() -> DictCacheStats | None:

@@ -35,7 +35,7 @@ from app.config.settings import Settings, get_settings
 from app.llm.router import ModelSelectionError, resolve_model_config
 from app.llm.routes import MODEL_ROUTE_READER_ASK
 from app.llm.types import ResolvedModelConfig
-from app.services.reader_ask.model_options import ResolvedReaderAskModelOption
+from app.services.reader_record_ask.model_options import ResolvedReaderAskModelOption
 from app.services.reader_record_ask.web_search_adapter_registry import (
     ResolvedWebSearchBinding,
     build_production_web_search_adapter_registry,

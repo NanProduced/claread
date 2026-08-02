@@ -124,41 +124,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("Dict cache warmup failed (non-blocking): %s", e)
 
-    # 4. 恢复服务重启前残留的活跃任务（重新入队）
-    from app.services.analysis.overview_task_executor import (
-        OverviewTaskWorker,
-    )
-    from app.services.analysis.overview_task_executor import (
-        recover_stuck_tasks as recover_stuck_overview_tasks,
-    )
-    from app.services.analysis.task_executor import (
-        AnalysisTaskWorker,
-        recover_stuck_tasks,
-    )
-
-    recovered = await recover_stuck_tasks()
-    if recovered:
-        logger.info("Requeued %d stale tasks on startup", recovered)
-    recovered_overview = await recover_stuck_overview_tasks()
-    if recovered_overview:
-        logger.info("Requeued %d stale overview tasks on startup", recovered_overview)
-
-    worker = AnalysisTaskWorker()
-    worker.start()
-    await asyncio.sleep(0)
-    if not worker.health_snapshot()["healthy"]:
-        raise RuntimeError("Analysis task worker failed to start")
-    app.state.analysis_task_worker = worker
-    logger.info("Analysis task worker started")
-
-    overview_worker = OverviewTaskWorker()
-    overview_worker.start()
-    await asyncio.sleep(0)
-    if not overview_worker.health_snapshot()["healthy"]:
-        raise RuntimeError("Overview task worker failed to start")
-    app.state.overview_task_worker = overview_worker
-    logger.info("Overview task worker started")
-
     # ASK-TURN-LIFECYCLE R4-5d: reconcile orphan streaming rows from a
     # previous process lifetime. If this process crashed/restarted while
     # a ``reader_ask_turn_runs`` row was still ``streaming``, that row is
@@ -203,12 +168,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if hasattr(app.state, 'stale_stream_sweeper'):
         stale_sweeper = app.state.stale_stream_sweeper
         await stale_sweeper.stop()
-    if hasattr(app.state, 'analysis_task_worker'):
-        worker = app.state.analysis_task_worker
-        await worker.stop()
-    if hasattr(app.state, 'overview_task_worker'):
-        overview_worker = app.state.overview_task_worker
-        await overview_worker.stop()
     from app.infra.zilliz_client import close_zilliz
     await close_zilliz()
     await close_redis()

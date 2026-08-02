@@ -23,7 +23,7 @@ from app.services.ai_usage import (
     resolve_model_metadata,
 )
 from app.services.analysis.rag_usage_events import record_rag_usage_events_from_result
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 from app.workflow.analyze import (
     ANALYZE_SCHEMA_VERSION,
     WORKFLOW_NAME,

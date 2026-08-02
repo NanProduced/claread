@@ -22,7 +22,7 @@ from app.services.dictionary_ai import (
     insert_candidate_entry,
 )
 from app.services.auth.dependencies import AuthUserDep
-from app.services.analysis.credit_service import (
+from app.services.credits import (
     LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     check_quota,
     ensure_credit_account,
@@ -42,7 +42,7 @@ from app.services.ai_usage import (
     compute_dict_ai_cost_points,
     record_ai_usage_event,
 )
-from app.services.analysis.prompting.prompt_loader import get_prompt_version
+from app.services.prompting.prompt_loader import get_prompt_version
 
 logger = getLogger("app.api")
 

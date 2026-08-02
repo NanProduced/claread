@@ -248,7 +248,7 @@ class ReaderRecordAskCompletedDTO(BaseModel):
 class ReaderRecordAskTerminalDTO(BaseModel):
     """Typed non-ok terminal (stale / invalid citations / cancelled / failed).
 
-    Emitted as ``message.interrupted`` or ``error`` depending on status.
+    Emitted as ``agentic.terminal`` or ``error`` depending on status.
     Never carries a displayable answer for stale/invalid. Public surface is
     no-evh: no fingerprints or rejected handles.
     """

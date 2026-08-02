@@ -16,7 +16,7 @@ from app.schemas.quota import (
     QuotaCheckResponse,
     QuotaResponse,
 )
-from app.services.analysis.credit_service import ensure_credit_account, get_quota_info
+from app.services.credits import ensure_credit_account, get_quota_info
 from app.services.auth.dependencies import AuthUserDep, OptionalAuthUserDep
 from app.services.quota import get_anonymous_quota_info, check_and_consume_anonymous_trial
 from app.services.quota.ledger import get_credit_ledger

@@ -15,6 +15,12 @@ from uuid import UUID
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
+from app.services.reader_record_ask.history_projection import (
+    claims_agentic_payload,
+    is_agentic_execution_version,
+    project_agentic_history_message,
+    quarantine_untrusted_agentic_claim,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +66,156 @@ HEARTBEAT_INTERVAL_SECONDS: int = 15
 # owner process is gone or stuck. Must be > HEARTBEAT_INTERVAL_SECONDS to
 # avoid false positives from scheduling jitter; 3x gives comfortable margin.
 HEARTBEAT_STALE_THRESHOLD_SECONDS: int = HEARTBEAT_INTERVAL_SECONDS * 3
+
+
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.astimezone(UTC).isoformat()
+
+
+def _thread_row_to_dict(row: Any) -> dict[str, Any]:
+    reading_record_id = row.get("reading_record_id")
+    analysis_record_id = row.get("analysis_record_id")
+    record_id = reading_record_id or analysis_record_id
+    return {
+        "id": str(row["id"]),
+        "user_id": str(row["user_id"]) if row.get("user_id") is not None else None,
+        "record_id": str(record_id) if record_id is not None else None,
+        "record_scope": (
+            "reading_record" if reading_record_id is not None
+            else "analysis" if analysis_record_id is not None
+            else None
+        ),
+        "analysis_record_id": str(analysis_record_id) if analysis_record_id is not None else None,
+        "reading_record_id": str(reading_record_id) if reading_record_id is not None else None,
+        "title": row["title"],
+        "is_default": bool(row["is_default"]),
+        "selected_model_key": row.get("selected_model_key"),
+        "archived_at": _iso(row.get("archived_at")),
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+        "last_message_at": _iso(row.get("last_message_at")),
+    }
+
+
+def _turn_run_for_history(row: Any) -> dict[str, Any] | None:
+    run_id = row.get("turn_run_id")
+    if run_id is None:
+        return None
+    return {
+        "id": str(run_id),
+        "message_id": str(row["id"]),
+        "thread_id": str(row["thread_id"]),
+        "user_id": (
+            str(row["turn_run_user_id"])
+            if row.get("turn_run_user_id") is not None
+            else None
+        ),
+        "reading_record_id": str(row["turn_run_reading_record_id"])
+        if row.get("turn_run_reading_record_id") is not None else None,
+        "status": row.get("turn_run_status"),
+        "final_status": row.get("turn_run_final_status"),
+        "terminal_reason": row.get("turn_run_terminal_reason"),
+        "execution_version": row.get("turn_run_execution_version"),
+        "user_visible_output_json": row.get("user_visible_output_json"),
+        "resolved_evidence_json": row.get("turn_run_resolved_evidence_json"),
+        "reasoning_projection_json": row.get("turn_run_reasoning_projection_json"),
+        "envelope_fingerprint": row.get("turn_run_envelope_fingerprint"),
+        "usage_event_id": str(row["turn_run_usage_event_id"])
+        if row.get("turn_run_usage_event_id") is not None else None,
+        "started_at": _iso(row.get("turn_run_started_at")),
+        "completed_at": _iso(row.get("turn_run_completed_at")),
+        "failed_at": _iso(row.get("turn_run_failed_at")),
+        "created_at": _iso(row.get("turn_run_created_at")),
+        "updated_at": _iso(row.get("turn_run_updated_at")),
+    }
+
+
+def _message_row_to_history(row: Any) -> dict[str, Any]:
+    metadata = row.get("metadata_json") if isinstance(row.get("metadata_json"), dict) else {}
+    turn_run = _turn_run_for_history(row)
+    execution_version = row.get("turn_run_execution_version")
+    base = {
+        "id": str(row["id"]),
+        "thread_id": str(row["thread_id"]),
+        "role": row["role"],
+        "status": row["status"],
+        "content_md": row["content_md"] or "",
+        "context_anchors": row.get("context_anchors_json") or [],
+        "citations": row.get("citations_json") or [],
+        "action_proposals": row.get("action_proposals_json") or [],
+        "tool_trace": row.get("tool_trace_json") or [],
+        "metadata_json": metadata,
+        "usage_event_id": (
+            str(row["usage_event_id"])
+            if row.get("usage_event_id") is not None
+            else None
+        ),
+        "current_turn_run_id": str(row["message_current_turn_run_id"])
+        if row.get("message_current_turn_run_id") is not None else None,
+        "created_at": _iso(row.get("created_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
+    if is_agentic_execution_version(execution_version):
+        return project_agentic_history_message(
+            message_id=base["id"],
+            thread_id=base["thread_id"],
+            role=base["role"],
+            row_status=base["status"],
+            row_content_md=base["content_md"],
+            created_at=base["created_at"],
+            updated_at=base["updated_at"],
+            context_anchors=base["context_anchors"],
+            usage_event_id=base["usage_event_id"],
+            current_turn_run_id=base["current_turn_run_id"],
+            current_turn_run=turn_run,
+            user_visible_output_json=row.get("user_visible_output_json"),
+            resolved_evidence_json=row.get("turn_run_resolved_evidence_json"),
+            final_status=row.get("turn_run_final_status"),
+            turn_run_status=row.get("turn_run_status"),
+        )
+    if base["role"] == "assistant" and (
+        claims_agentic_payload(row.get("user_visible_output_json"))
+        or claims_agentic_payload(metadata)
+    ):
+        return quarantine_untrusted_agentic_claim(
+            message_id=base["id"],
+            thread_id=base["thread_id"],
+            role=base["role"],
+            created_at=base["created_at"],
+            updated_at=base["updated_at"],
+            context_anchors=base["context_anchors"],
+            usage_event_id=base["usage_event_id"],
+            current_turn_run_id=base["current_turn_run_id"],
+            current_turn_run=turn_run,
+        )
+    base.pop("metadata_json", None)
+    return base
+
+
+_MESSAGE_HISTORY_SELECT = """
+SELECT m.id, m.thread_id, m.role, m.status, m.content_md,
+       m.context_anchors_json, m.citations_json, m.action_proposals_json,
+       m.tool_trace_json, m.metadata_json, m.current_turn_run_id AS message_current_turn_run_id,
+       m.usage_event_id, m.created_at, m.updated_at,
+       tr.id AS turn_run_id, tr.user_id AS turn_run_user_id,
+       tr.reading_record_id AS turn_run_reading_record_id,
+       tr.status AS turn_run_status, tr.final_status AS turn_run_final_status,
+       tr.terminal_reason AS turn_run_terminal_reason,
+       tr.execution_version AS turn_run_execution_version,
+       tr.user_visible_output_json, tr.resolved_evidence_json AS turn_run_resolved_evidence_json,
+       tr.reasoning_projection_json AS turn_run_reasoning_projection_json,
+       tr.envelope_fingerprint AS turn_run_envelope_fingerprint,
+       tr.usage_event_id AS turn_run_usage_event_id,
+       tr.started_at AS turn_run_started_at, tr.completed_at AS turn_run_completed_at,
+       tr.failed_at AS turn_run_failed_at, tr.created_at AS turn_run_created_at,
+       tr.updated_at AS turn_run_updated_at
+FROM reader_ask_messages m
+LEFT JOIN reader_ask_turn_runs tr ON tr.id = m.current_turn_run_id
+"""
 
 
 class ReaderRecordAskRepository:
@@ -167,17 +323,19 @@ class ReaderRecordAskRepository:
         *,
         user_id: UUID,
         thread_id: UUID,
-        reading_record_id: UUID,
+        reading_record_id: UUID | None = None,
     ) -> dict[str, Any] | None:
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, user_id, reading_record_id, title, is_default
+                SELECT id, user_id, analysis_record_id, reading_record_id, title,
+                       is_default, selected_model_key, archived_at, created_at,
+                       updated_at, last_message_at
                 FROM reader_ask_threads
                 WHERE id = $1
                   AND user_id = $2
-                  AND reading_record_id = $3
+                  AND ($3::uuid IS NULL OR reading_record_id = $3)
                   AND archived_at IS NULL
                 """,
                 thread_id,
@@ -189,10 +347,182 @@ class ReaderRecordAskRepository:
         return {
             "id": str(row["id"]),
             "user_id": str(row["user_id"]),
-            "reading_record_id": str(row["reading_record_id"]),
+            "record_id": str(row["reading_record_id"] or row["analysis_record_id"]),
+            "record_scope": (
+                "reading_record"
+                if row["reading_record_id"] is not None
+                else "analysis"
+                if row["analysis_record_id"] is not None
+                else None
+            ),
+            "analysis_record_id": (
+                str(row["analysis_record_id"])
+                if row["analysis_record_id"] is not None
+                else None
+            ),
+            "reading_record_id": (
+                str(row["reading_record_id"])
+                if row["reading_record_id"] is not None
+                else None
+            ),
             "title": row["title"],
             "is_default": bool(row["is_default"]),
+            "selected_model_key": row["selected_model_key"],
+            "archived_at": _iso(row["archived_at"]),
+            "created_at": _iso(row["created_at"]),
+            "updated_at": _iso(row["updated_at"]),
+            "last_message_at": _iso(row["last_message_at"]),
         }
+
+    async def list_reading_record_threads(
+        self,
+        *,
+        user_id: UUID,
+        reading_record_id: UUID,
+    ) -> list[dict[str, Any]]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, analysis_record_id, reading_record_id, title,
+                       is_default, selected_model_key, archived_at, created_at,
+                       updated_at, last_message_at
+                FROM reader_ask_threads
+                WHERE user_id = $1
+                  AND reading_record_id = $2
+                  AND archived_at IS NULL
+                ORDER BY is_default DESC,
+                         COALESCE(last_message_at, created_at) DESC,
+                         created_at DESC
+                """,
+                user_id,
+                reading_record_id,
+            )
+        return [_thread_row_to_dict(row) for row in rows]
+
+    async def get_or_create_default_reading_record_thread(
+        self,
+        *,
+        user_id: UUID,
+        reading_record_id: UUID,
+        title: str | None = None,
+        selected_model_key: str | None = None,
+    ) -> dict[str, Any]:
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO reader_ask_threads (
+                    user_id, analysis_record_id, reading_record_id, title,
+                    selected_model_key, is_default, created_at, updated_at
+                )
+                VALUES ($1, NULL, $2, $3, $4, TRUE, $5, $5)
+                ON CONFLICT (user_id, reading_record_id)
+                WHERE is_default = TRUE
+                  AND archived_at IS NULL
+                  AND reading_record_id IS NOT NULL
+                DO UPDATE SET
+                    title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
+                    selected_model_key = COALESCE(
+                        EXCLUDED.selected_model_key,
+                        reader_ask_threads.selected_model_key
+                    ),
+                    updated_at = EXCLUDED.updated_at
+                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                          is_default, selected_model_key, archived_at, created_at,
+                          updated_at, last_message_at
+                """,
+                user_id,
+                reading_record_id,
+                title,
+                selected_model_key,
+                now,
+            )
+        assert row is not None
+        return _thread_row_to_dict(row)
+
+    async def update_thread_selected_model(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: UUID,
+        selected_model_key: str | None,
+    ) -> dict[str, Any] | None:
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_threads
+                SET selected_model_key = $3, updated_at = $4
+                WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
+                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                          is_default, selected_model_key, archived_at, created_at,
+                          updated_at, last_message_at
+                """,
+                thread_id,
+                user_id,
+                selected_model_key,
+                now,
+            )
+        return _thread_row_to_dict(row) if row is not None else None
+
+    async def archive_thread(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: UUID,
+    ) -> dict[str, Any] | None:
+        pool = self._pool_or_raise()
+        now = datetime.now(UTC)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE reader_ask_threads
+                SET archived_at = $3, updated_at = $3
+                WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
+                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                          is_default, selected_model_key, archived_at, created_at,
+                          updated_at, last_message_at
+                """,
+                thread_id,
+                user_id,
+                now,
+            )
+        return _thread_row_to_dict(row) if row is not None else None
+
+    async def list_messages(
+        self,
+        *,
+        thread_id: UUID,
+        limit: int | None = 100,
+    ) -> list[dict[str, Any]]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            if limit is None:
+                rows = await conn.fetch(
+                    _MESSAGE_HISTORY_SELECT
+                    + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC",
+                    thread_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    _MESSAGE_HISTORY_SELECT
+                    + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC LIMIT $2",
+                    thread_id,
+                    limit,
+                )
+        return [_message_row_to_history(row) for row in rows]
+
+    async def get_message(self, *, message_id: UUID) -> dict[str, Any] | None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                _MESSAGE_HISTORY_SELECT + " WHERE m.id = $1",
+                message_id,
+            )
+        return _message_row_to_history(row) if row is not None else None
 
     async def create_message(
         self,
@@ -1685,3 +2015,149 @@ class ReaderRecordAskRepository:
         raise RuntimeError(
             "bind_client_submission_messages is removed; bind is atomic in ensure"
         )
+
+
+# Module-level thread seam retained for the RR thread service. These thin
+# wrappers keep all SQL in the RR repository while allowing the production
+# RR package to avoid importing ``ask_runtime`` or the legacy repository.
+def _module_repository() -> ReaderRecordAskRepository:
+    return ReaderRecordAskRepository()
+
+
+async def get_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | None:
+    return await _module_repository().get_thread(user_id=user_id, thread_id=thread_id)
+
+
+async def list_reading_record_threads(
+    user_id: UUID,
+    reading_record_id: UUID,
+) -> list[dict[str, Any]]:
+    return await _module_repository().list_reading_record_threads(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+    )
+
+
+async def get_or_create_default_thread_for_reading_record(
+    user_id: UUID,
+    reading_record_id: UUID,
+    *,
+    title: str | None = None,
+    selected_model_key: str | None = None,
+) -> dict[str, Any]:
+    return await _module_repository().get_or_create_default_reading_record_thread(
+        user_id=user_id,
+        reading_record_id=reading_record_id,
+        title=title,
+        selected_model_key=selected_model_key,
+    )
+
+
+async def update_thread_selected_model(
+    user_id: UUID,
+    thread_id: UUID,
+    *,
+    selected_model_key: str | None,
+) -> dict[str, Any] | None:
+    return await _module_repository().update_thread_selected_model(
+        user_id=user_id,
+        thread_id=thread_id,
+        selected_model_key=selected_model_key,
+    )
+
+
+async def archive_thread(user_id: UUID, thread_id: UUID) -> dict[str, Any] | None:
+    return await _module_repository().archive_thread(
+        user_id=user_id,
+        thread_id=thread_id,
+    )
+
+
+async def list_messages(
+    thread_id: UUID,
+    *,
+    limit: int | None = 100,
+) -> list[dict[str, Any]]:
+    return await _module_repository().list_messages(thread_id=thread_id, limit=limit)
+
+
+async def ensure_record_access(user_id: UUID, record_id: UUID) -> dict[str, Any]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, title
+            FROM analysis_records
+            WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+            """,
+            record_id,
+            user_id,
+        )
+    if row is None:
+        raise RuntimeError("Reading Record not found")
+    return {"id": str(row["id"]), "title": row["title"]}
+
+
+async def list_threads(user_id: UUID, record_id: UUID) -> list[dict[str, Any]]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, user_id, analysis_record_id, reading_record_id, title,
+                   is_default, selected_model_key, archived_at, created_at,
+                   updated_at, last_message_at
+            FROM reader_ask_threads
+            WHERE user_id = $1 AND analysis_record_id = $2 AND archived_at IS NULL
+            ORDER BY is_default DESC, COALESCE(last_message_at, created_at) DESC,
+                     created_at DESC
+            """,
+            user_id,
+            record_id,
+        )
+    return [_thread_row_to_dict(row) for row in rows]
+
+
+async def get_or_create_default_thread(
+    user_id: UUID,
+    record_id: UUID,
+    *,
+    title: str | None = None,
+    selected_model_key: str | None = None,
+) -> dict[str, Any]:
+    pool = db_connection.DB_POOL
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO reader_ask_threads (
+                user_id, analysis_record_id, title, selected_model_key,
+                is_default, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, TRUE, $5, $5)
+            ON CONFLICT (user_id, analysis_record_id)
+            WHERE is_default = TRUE AND archived_at IS NULL
+            DO UPDATE SET
+                title = COALESCE(reader_ask_threads.title, EXCLUDED.title),
+                selected_model_key = COALESCE(
+                    EXCLUDED.selected_model_key,
+                    reader_ask_threads.selected_model_key
+                ),
+                updated_at = EXCLUDED.updated_at
+            RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                      is_default, selected_model_key, archived_at, created_at,
+                      updated_at, last_message_at
+            """,
+            user_id,
+            record_id,
+            title,
+            selected_model_key,
+            now,
+        )
+    assert row is not None
+    return _thread_row_to_dict(row)

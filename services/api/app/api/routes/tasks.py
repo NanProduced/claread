@@ -16,7 +16,7 @@ from app.schemas.tasks import (
     TaskSubmitRequest,
     TaskSubmitResponse,
 )
-from app.services.analysis.credit_service import (
+from app.services.credits import (
     InsufficientCredits,
     check_quota,
     ensure_credit_account,

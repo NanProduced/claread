@@ -8,8 +8,9 @@ Independent runtime (round 2+):
 - Article RAG port/adapter + ``search_current_article`` (round 3)
 - Baseline context assembler + ``article_seed`` evidence (round 4-A1)
 
-The production HTTP path still goes through ``service`` → ``ask_runtime``
-and is **not** connected to the new agent loop yet.
+The production HTTP path is owned by this package: model options, threads,
+submissions, history, stream, retry, and citation navigation stay behind the
+Reading Record Ask v2 boundary.
 """
 
 from app.services.reader_record_ask.article_rag_port import (

@@ -16,7 +16,7 @@ from app.schemas.feedback import (
     FeedbackStatusUpdateRequest,
     FeedbackStatusUpdateResponse,
 )
-from app.services.analysis.credit_service import grant_bonus_credits
+from app.services.credits import grant_bonus_credits
 from app.services.feedback import service as feedback_svc
 
 logger = getLogger("app.api")

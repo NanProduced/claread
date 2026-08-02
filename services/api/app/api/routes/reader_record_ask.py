@@ -10,13 +10,11 @@ from pydantic import BaseModel, ConfigDict
 
 from app.config.settings import get_settings
 from app.schemas.reader_ask import (
-    ReaderAskActionConfirmResponse,
-    ReaderAskDeleteSupplementResponse,
     ReaderAskMessageRetryRequest,
+    ReaderAskModelOptionListResponse,
     ReaderAskSubmissionReconcileResponse,
     ReaderAskThreadListResponse,
     ReaderAskThreadSummary,
-    ReaderRecordAskActionConfirmRequest,
     ReaderRecordAskMessageRequest,
 )
 from app.schemas.reader_record_ask_stream import ReaderRecordAskThreadDetail
@@ -188,6 +186,19 @@ async def list_reading_record_ask_threads(
     )
 
 
+@router.get(
+    "/reader/records/{reading_record_id}/ask/model-options",
+    response_model=ReaderAskModelOptionListResponse,
+    summary="List Reading Record Ask v2 model options",
+)
+async def list_reading_record_ask_model_options(
+    reading_record_id: str,
+    current_user: AuthUserDep,
+) -> ReaderAskModelOptionListResponse:
+    _ = (reading_record_id, current_user)
+    return await rr_ask_svc.list_reading_record_ask_model_options()
+
+
 @router.post(
     "/reader/records/{reading_record_id}/ask/threads/default",
     response_model=ReaderAskThreadSummary,
@@ -305,34 +316,6 @@ async def reset_reading_record_ask_thread(
 
 
 @router.post(
-    "/reader/records/{reading_record_id}/ask/messages",
-    summary="Send an Ask message on a Reading Record",
-)
-async def send_reading_record_ask_message(
-    reading_record_id: str,
-    body: ReaderRecordAskMessageRequest,
-    current_user: AuthUserDep,
-) -> StreamingResponse:
-    user_id = UUID(current_user.user_id)
-    prepared = await rr_ask_svc.prepare_reading_record_ask_message(
-        user_id=user_id,
-        reading_record_id=reading_record_id,
-        request=body,
-    )
-    lifecycle = _StreamLifecycleContext()
-    return _streaming_response(
-        rr_ask_svc.send_reading_record_ask_message(
-            user_id=user_id,
-            reading_record_id=reading_record_id,
-            request=body,
-            prepared=prepared,
-            lifecycle=lifecycle,
-        ),
-        lifecycle=lifecycle,
-    )
-
-
-@router.post(
     "/reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream",
     summary="Stream a message on a Reading Record Ask thread",
 )
@@ -376,7 +359,6 @@ async def reconcile_reading_record_ask_submission(
 ) -> ReaderAskSubmissionReconcileResponse:
     """ASK-RETRY-CONTRACT-R5 — typed reconcile + safe public message hydrate."""
     from app.schemas.reader_ask import ReaderAskSubmissionPublicMessage
-    from app.services.reader_ask import repository as ask_repo
     from app.services.reader_record_ask.submission_gateway import (
         build_reconcile_view,
     )
@@ -396,7 +378,7 @@ async def reconcile_reading_record_ask_submission(
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
 
     async def project_public_message(message_id: UUID) -> dict | None:
-        msg = await ask_repo.get_message(message_id)
+        msg = await repo.get_message(message_id=message_id)
         if msg is None:
             return None
         # Strip internal-only fields if present.
@@ -492,61 +474,4 @@ async def retry_reading_record_ask_message(
             lifecycle=lifecycle,
         ),
         lifecycle=lifecycle,
-    )
-
-
-@router.post(
-    "/reader/records/{reading_record_id}/ask/actions/{action_id}/confirm",
-    response_model=ReaderAskActionConfirmResponse,
-    summary="Confirm a Reading Record Ask action proposal",
-)
-async def confirm_reading_record_ask_action(
-    reading_record_id: str,
-    action_id: str,
-    body: ReaderRecordAskActionConfirmRequest,
-    current_user: AuthUserDep,
-) -> ReaderAskActionConfirmResponse:
-    return await rr_ask_svc.confirm_reading_record_ask_action(
-        user_id=UUID(current_user.user_id),
-        reading_record_id=reading_record_id,
-        action_id=action_id,
-        request=body,
-    )
-
-
-@router.post(
-    "/reader/records/{reading_record_id}/ask/threads/{thread_id}/actions/{action_id}/confirm",
-    response_model=ReaderAskActionConfirmResponse,
-    summary="Confirm a Reading Record Ask thread action proposal",
-)
-async def confirm_reading_record_ask_thread_action(
-    reading_record_id: str,
-    thread_id: UUID,
-    action_id: str,
-    body: ReaderRecordAskActionConfirmRequest,
-    current_user: AuthUserDep,
-) -> ReaderAskActionConfirmResponse:
-    return await rr_ask_svc.confirm_reading_record_ask_thread_action(
-        user_id=UUID(current_user.user_id),
-        reading_record_id=reading_record_id,
-        thread_id=thread_id,
-        action_id=action_id,
-        request=body,
-    )
-
-
-@router.delete(
-    "/reader/records/{reading_record_id}/ask/supplements/{supplement_id}",
-    response_model=ReaderAskDeleteSupplementResponse,
-    summary="Delete a Reading Record Ask supplement",
-)
-async def delete_reading_record_ask_supplement(
-    reading_record_id: str,
-    supplement_id: UUID,
-    current_user: AuthUserDep,
-) -> ReaderAskDeleteSupplementResponse:
-    return await rr_ask_svc.delete_reading_record_ask_supplement(
-        user_id=UUID(current_user.user_id),
-        reading_record_id=reading_record_id,
-        supplement_id=supplement_id,
     )
