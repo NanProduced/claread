@@ -1784,7 +1784,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toggleButton?.getAttribute("title")).toBeNull();
   });
 
-  it.skip("legacy fake article feedback UI is removed from the Plate", () => {
+  it("does not render legacy fake article feedback or call the legacy feedback BFF", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const requestUrl = new URL(String(input), "https://example.test");
       return Promise.resolve(
@@ -1801,19 +1801,7 @@ describe("ReaderRecordPlateSurface", () => {
     const prompt = container.querySelector<HTMLElement>(
       '[data-reader-record-article-feedback="ready"]',
     );
-    expect(prompt).not.toBeNull();
-    if (!prompt) {
-      throw new Error("Expected article feedback prompt");
-    }
-    expect(prompt.dataset.readerRecordBottomSpacer).toBe("article-feedback");
-    expect(within(prompt).getByText("这次解析有帮助吗？")).toBeTruthy();
-
-    const helpfulButton = within(prompt).getByRole("button", { name: "有帮助" });
-    fireEvent.click(helpfulButton);
-    expect(helpfulButton.getAttribute("aria-pressed")).toBe("true");
-    expect(within(prompt).getByRole("status").textContent).toContain(
-      "已选择：有帮助",
-    );
+    expect(prompt).toBeNull();
     expect(
       fetchMock.mock.calls.some(([input]) => String(input) === "/api/web/feedback"),
     ).toBe(false);
