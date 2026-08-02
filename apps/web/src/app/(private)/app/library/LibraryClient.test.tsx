@@ -111,7 +111,9 @@ describe("LibraryClient", () => {
       "/app/reader/reading_record_1",
     );
 
-    const legacyLinks = document.querySelectorAll('a[href^="/app/reader/"]');
+    const legacyLinks = document.querySelectorAll(
+      'a[href^="/app/reader-record/"], a[href^="/app/reader-"], a[href^="/app/f7-ask-fixture/"]',
+    );
     expect(legacyLinks).toHaveLength(0);
 
     expect(screen.getByText("共 1 篇记录")).toBeTruthy();
