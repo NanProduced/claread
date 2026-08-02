@@ -34,9 +34,6 @@ const FORBIDDEN_PANEL_PREFIXES = ["claread-parse-run-"];
 const REQUIRED_ENDPOINT_ENTRIES = new Set(["reader-orch"]);
 const REQUIRED_MODULE_ENTRIES = new Set(["claread-llm-config"]);
 
-const RETIRED_SYNC_TOMBSTONE = "[retired]";
-const RETIRED_SYNC_EXIT = "process.exit(1)";
-
 const INIT_SCRIPT_REL = "infra/scripts/init-eval-center-dev.ps1";
 const INIT_FORBIDDEN_SIDE_EFFECTS = [
   "docker cp",
@@ -114,21 +111,15 @@ if (/eval_workflow_|eval_node_lab_|eval_judge_run|eval_prompt_variant/.test(hook
   errors.push("hooks-bundle must not register non-Example-Lab legacy eval control-plane hooks");
 }
 
-// Retired sync scripts: BOTH tombstone marker AND process.exit(1) required.
+// Retired sync scripts must be PHYSICALLY DELETED post-cutover. Earlier rounds
+// sealed them in place (tombstone + process.exit(1)); physical deletion is the
+// final state. Re-adding either script is a cutover regression.
 for (const rel of [
   "scripts/sync-parse-run-observability-metadata.mjs",
   "scripts/sync-eval-center-metadata.mjs",
 ]) {
-  const body = readFileSync(resolve(ROOT, rel), "utf8");
-  if (!body.includes(RETIRED_SYNC_TOMBSTONE)) {
-    errors.push(`${rel} missing exact tombstone marker ${RETIRED_SYNC_TOMBSTONE}`);
-  }
-  if (!body.includes(RETIRED_SYNC_EXIT)) {
-    errors.push(`${rel} missing ${RETIRED_SYNC_EXIT}`);
-  }
-  // Must not still contain active sync body that would write Directus metadata.
-  if (body.includes("upsertModuleBarItems") || body.includes("MODULE_BAR_ITEMS")) {
-    errors.push(`${rel} still contains active metadata sync implementation`);
+  if (existsSync(resolve(ROOT, rel))) {
+    errors.push(`${rel} must be physically deleted after cutover (still present)`);
   }
 }
 
@@ -222,7 +213,7 @@ console.log(
       endpoints: endpointNames,
       panels: panelNames,
       hooks: "example-lab-validation-keep",
-      retired_sync: "tombstoned",
+      retired_sync: "physically-deleted",
       init_eval_center: "fail-closed",
     },
     null,

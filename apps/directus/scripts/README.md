@@ -1,7 +1,7 @@
 # Directus Scripts
 
 > CUTOVER-CONTROL-EVAL-LONG Logical tombstones:
-> - `sync-parse-run-observability-metadata.mjs` / `sync-eval-center-metadata.mjs` 已退役，调用即 `[retired]` + `process.exit(1)`，**不是**正常运维入口。
+> - `sync-parse-run-observability-metadata.mjs` / `sync-eval-center-metadata.mjs` 已**物理删除**（Physical cutover），不再存在于仓库；重新添加属于 cutover 回归。
 > - 根目录与 `apps/directus/package.json` 已移除 `parse-run:sync-metadata` / `eval-center:sync-metadata` 脚本别名。
 > - `infra/scripts/init-eval-center-dev.ps1` fail-closed：在任何 Docker/DDL 之前退出。
 > - `check-logical-registration.mjs` 为 L-GATE 静态门禁。
@@ -38,25 +38,13 @@
 
 ### check-logical-registration.mjs
 
-Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`reader-orch` 正向存在、retired sync tombstone、init 脚本 fail-closed、Example Lab 校验 hook 保留。
+Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`reader-orch` 正向存在、retired sync 脚本已物理删除、init 脚本 fail-closed、Example Lab 校验 hook 保留。
 
 | 项目 | 说明 |
 |------|------|
 | 入口 | `pnpm --dir apps/directus run registration:check` |
 | 会写 SQL / metadata | 否 |
 | 典型场景 | L-GATE / CI 静态检查 |
-
-### sync-parse-run-observability-metadata.mjs — RETIRED
-
-**已退役。不是正常运维入口。** 调用会立即打印 `[retired]` 并以 exit code 1 失败，不会写 SQL / Directus metadata。
-
-历史职责（仅供审计）：同步旧 Parse Run Observability collection/dashboard/panel metadata。Physical 阶段将删除脚本本体。
-
-### sync-eval-center-metadata.mjs — RETIRED
-
-**已退役。不是正常运维入口。** 调用会立即打印 `[retired]` 并以 exit code 1 失败，不会写 SQL / Directus metadata / module bar。
-
-历史职责（仅供审计）：同步 Eval Center / Example Lab collection 与 module bar。Physical 阶段将删除脚本本体；`eval_example_lab_entries` 表本身 KEEP/REHOME，不随宽泛删除。
 
 ### sync-llm-config-metadata.mjs
 
@@ -106,7 +94,7 @@ Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`read
 
 ## 注意事项
 
-- 退役 sync 脚本与 `init-eval-center-dev.ps1` 不是运维入口；调用必须失败。
+- 退役 sync 脚本已物理删除；`init-eval-center-dev.ps1` 不是运维入口，调用必须失败。
 - 仍活跃的 LLM Config sync 会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
 - `DIRECTUS_SKIP_SQL_BOOTSTRAP=true` 可跳过 SQL 执行（仅同步 Directus metadata）。
 - `DIRECTUS_SKIP_RESTART=true` 可跳过容器重启。
