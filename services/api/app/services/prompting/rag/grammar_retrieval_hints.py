@@ -22,7 +22,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.eval_adapter.example_lab import _rule_extract_grammar_tags, normalize_grammar_tags
+from app.services.prompting.rag.grammar_tag_normalization import (
+    normalize_grammar_tags,
+)
 
 _LONG_SENTENCE_THRESHOLD = 20
 _MANY_COMMA_THRESHOLD = 2

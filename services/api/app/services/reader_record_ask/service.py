@@ -888,18 +888,30 @@ def _has_persisted_v2_execution(
 
     a_meta = _meta(assistant_msg)
     u_meta = _meta(user_msg)
-    a_snap = a_meta.get("retry_snapshot") if isinstance(a_meta.get("retry_snapshot"), dict) else {}
-    u_snap = u_meta.get("retry_snapshot") if isinstance(u_meta.get("retry_snapshot"), dict) else {}
+    a_snap = a_meta.get("retry_snapshot")
+    u_snap = u_meta.get("retry_snapshot")
 
-    candidates: list[Any] = [
-        a_snap.get("execution_version"),
-        u_snap.get("execution_version"),
+    # These are the three independent persisted authorities for retry.  Do
+    # not treat a flattened metadata marker, or a single v2 marker, as proof
+    # that the whole turn belongs to the v2 execution chain.
+    required_markers = (
         assistant_msg.get("turn_run_execution_version"),
-        a_meta.get("execution_version"),
-        u_meta.get("execution_version"),
-    ]
-    present = [value for value in candidates if value not in (None, "")]
-    return bool(present) and all(value == EXECUTION_VERSION_AGENTIC_V2 for value in present)
+        a_snap.get("execution_version") if isinstance(a_snap, dict) else None,
+        u_snap.get("execution_version") if isinstance(u_snap, dict) else None,
+    )
+    if any(value != EXECUTION_VERSION_AGENTIC_V2 for value in required_markers):
+        return False
+
+    # The flattened fields are derived copies written by the submission
+    # gateway.  If they exist, they must agree as well; a stale v1/unknown
+    # copy is a persisted conflict and must fail closed.
+    for metadata in (a_meta, u_meta):
+        if (
+            "execution_version" in metadata
+            and metadata["execution_version"] != EXECUTION_VERSION_AGENTIC_V2
+        ):
+            return False
+    return True
 
 
 async def _load_replayed_web_search_mode(

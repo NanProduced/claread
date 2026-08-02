@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config.settings import get_settings
-from app.eval_adapter.example_lab import normalize_grammar_tags
 from app.services.prompting.example_strategy import ExampleEntry
 from app.services.prompting.rag.grammar_retrieval_hints import (
     build_query_text,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.internal.execution_plan import GoalExecutionPlan
+from app.services.prompting.planning import get_annotation_style as _get_annotation_style
 
 _PROFILE_BASELINES: dict[str, str] = {
     "daily_beginner": (
@@ -72,21 +73,9 @@ _PROFILE_BASELINES: dict[str, str] = {
 
 
 def get_annotation_style(plan: GoalExecutionPlan) -> str:
-    if plan.goal_id == "exam":
-        if plan.variant_id == "gaokao":
-            return "exam_gaokao"
-        if plan.variant_id == "cet":
-            return "exam_cet"
-        if plan.variant_id == "kaoyan":
-            return "exam_kaoyan"
-        if plan.variant_id == "tem":
-            return "exam_tem"
-        if plan.variant_id == "ielts_toefl":
-            return "exam_ielts_toefl"
-        return "exam_oriented"
-    elif plan.goal_id == "academic":
-        return "structural_and_academic"
-    return "plain_and_supportive"
+    """Compatibility shim for callers that still use the old planning path."""
+
+    return _get_annotation_style(plan)
 
 
 def get_prompt_baseline_text(plan: GoalExecutionPlan) -> str | None:

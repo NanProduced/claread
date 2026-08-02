@@ -17,11 +17,14 @@ Rule hints combine:
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Any
 
 from app.llm.routes import MODEL_ROUTE_ANNOTATION_GENERATION
+from app.services.prompting.rag.grammar_tag_normalization import (
+    _rule_extract_grammar_tags,
+    normalize_grammar_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,60 +51,6 @@ RECOMMENDED_GRAMMAR_TAGS: list[str] = [
     "nested_clause",
     "main_clause_interruption",
 ]
-
-# Alias merge map: common LLM variations → canonical form.
-# NOTE: "relative_clause" is intentionally NOT aliased — it is a valid generic
-# tag for when the specific subtype (restrictive / nonrestrictive) is unknown.
-_TAG_ALIASES: dict[str, str] = {
-    "defining_relative_clause": "restrictive_relative_clause",
-    "limiting_relative_clause": "restrictive_relative_clause",
-    "non_defining_relative_clause": "nonrestrictive_relative_clause",
-    "non-defining_relative_clause": "nonrestrictive_relative_clause",
-    "participle_adverbial": "past_participle_adverbial",
-    "participle_attribute": "past_participle_attribute",
-    "fronting": "subject_clause_fronting",
-}
-
-
-def _normalize_tag(raw: str) -> str | None:
-    """Normalize a single grammar tag.
-
-    - trim whitespace
-    - lowercase
-    - collapse whitespace / hyphens / repeated underscores into a single ``_``
-    - apply alias merge
-    - reject empty / generic tags
-
-    This pipeline MUST stay aligned with the JS hook normalizer at
-    ``apps/directus/extensions/hooks-bundle/src/index.js:normalizeGrammarTag``
-    — both layers must produce the same canonical form for the same input,
-    otherwise tag overlap / rerank will diverge across the Directus write
-    path and the API rebuild path.
-    """
-    t = raw.strip().lower()
-    t = re.sub(r"[\s\-_]+", "_", t)
-    t = t.strip("_")
-    if not t:
-        return None
-    # Alias merge
-    t = _TAG_ALIASES.get(t, t)
-    # Reject generic / uninformative tags
-    if t in ("general", "complex", "other", "misc"):
-        return None
-    return t
-
-
-def normalize_grammar_tags(tags: list[str]) -> list[str]:
-    """Normalize and deduplicate a list of grammar tags."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for raw in tags:
-        t = _normalize_tag(raw)
-        if t is not None and t not in seen:
-            seen.add(t)
-            result.append(t)
-    return result
-
 
 # ---------------------------------------------------------------------------
 # LLM prompt
@@ -295,62 +244,6 @@ def _assess_confidence(validated: dict[str, Any], rule_hints: dict[str, Any]) ->
 # Rule-based fallback
 # ---------------------------------------------------------------------------
 
-# Compact subset of label→tag patterns for deterministic coverage.
-_LABEL_TAG_PATTERNS: list[tuple[str, list[str]]] = [
-    ("非限制性定语从句", ["nonrestrictive_relative_clause"]),
-    ("同位语从句", ["appositive_clause"]),
-    ("过去分词后置定语", ["past_participle_attribute"]),
-    ("过去分词作状语", ["past_participle_adverbial"]),
-    ("过去分词状语", ["past_participle_adverbial"]),
-    ("分词结果状语", ["past_participle_adverbial"]),
-    ("现在分词状语", ["present_participle_adverbial"]),
-    ("名词性从句", ["object_clause"]),
-    ("介词+关系代词", ["restrictive_relative_clause"]),
-    ("限制性定语从句", ["restrictive_relative_clause"]),
-    ("否定副词前置", ["inversion"]),
-    ("虚拟条件句倒装", ["inversion"]),
-    ("虚拟倒装", ["inversion"]),
-    ("倒装结构", ["inversion"]),
-    ("主句插入", ["main_clause_interruption"]),
-    ("动词并列", ["parallelism"]),
-    ("明喻", ["parallelism"]),
-    ("give up", ["nonfinite"]),
-    ("not only", ["inversion", "parallelism"]),
-]
-
-# Order matters: more specific patterns must come before less specific ones.
-_GENERAL_TAG_PATTERNS: list[tuple[str, list[str]]] = [
-    ("宾语从句", ["object_clause"]),
-    ("定语从句", ["relative_clause"]),
-    ("倒装", ["inversion"]),
-    ("被动语态", ["passive_voice"]),
-    ("插入", ["main_clause_interruption"]),
-    ("反复", ["parallelism"]),
-    ("让步", ["nested_clause"]),
-    ("转折", ["nested_clause"]),
-]
-
-
-def _rule_extract_grammar_tags(label: str, output_type: str) -> list[str]:
-    """Rule-based grammar tag extraction from Chinese label.
-
-    Returns sorted list of normalized tags. Falls back to ["unclassified"] if
-    nothing matches.
-    """
-    tags: set[str] = set()
-    for pattern, tag_list in _LABEL_TAG_PATTERNS:
-        if pattern in label:
-            tags.update(tag_list)
-    for pattern, tag_list in _GENERAL_TAG_PATTERNS:
-        if pattern in label:
-            tags.update(tag_list)
-    if output_type == "sentence_analysis" and ("定语从句" in label or "宾语从句" in label):
-        tags.add("nested_clause")
-    if not tags:
-        tags.add("unclassified")
-    return sorted(tags)
-
-
 async def generate_rag_fields(
     sentence_text: str,
     output_fragment: dict[str, Any],
@@ -391,7 +284,11 @@ async def generate_rag_fields(
     settings = get_settings()
     selection = ModelSelection(
         default_profile=effective_model_profile,
-        routes={MODEL_ROUTE_ANNOTATION_GENERATION: RouteModelSelection(profile=effective_model_profile)},
+        routes={
+            MODEL_ROUTE_ANNOTATION_GENERATION: RouteModelSelection(
+                profile=effective_model_profile
+            )
+        },
     )
     user_prompt = _build_llm_user_prompt(sentence_text, output_fragment, reading_variant)
 

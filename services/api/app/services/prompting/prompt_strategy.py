@@ -14,9 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.schemas.internal.execution_plan import GoalExecutionPlan
-from app.services.analysis.planning.goal_views import (
-    get_annotation_style,
-)
+from app.services.prompting.planning import get_annotation_style
 from app.services.prompting.prompt_composer import PromptSection
 from app.services.prompting.prompt_loader import load_policy_lines
 

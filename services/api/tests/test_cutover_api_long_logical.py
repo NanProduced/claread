@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -11,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.api.routes import health
+from app.api.routes import health, prompt_debug
 from app.main import create_app
 from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
 from app.services.reader_record_ask import repository, service, thread_service
@@ -114,18 +115,46 @@ async def test_health_does_not_require_or_report_old_worker_state(monkeypatch) -
     assert ready.await_count == 2
 
 
-@pytest.mark.parametrize(
-    "marker",
-    [None, "reader_record_ask_agentic_v1", "legacy_unclassified", "unknown"],
-)
-def test_retry_execution_fence_rejects_non_v2_or_missing(marker: str | None) -> None:
-    assistant: dict[str, object] = {"metadata_json": {}}
-    user: dict[str, object] = {"metadata_json": {}}
-    if marker is not None:
+def _persisted_retry_messages(
+    *,
+    turn_run: str | None = EXECUTION_VERSION_AGENTIC_V2,
+    assistant_snapshot: str | None = EXECUTION_VERSION_AGENTIC_V2,
+    user_snapshot: str | None = EXECUTION_VERSION_AGENTIC_V2,
+) -> tuple[dict[str, object], dict[str, object]]:
+    assistant_snapshot_meta: dict[str, object] = {}
+    user_snapshot_meta: dict[str, object] = {}
+    assistant: dict[str, object] = {
+        "metadata_json": {"retry_snapshot": assistant_snapshot_meta},
+    }
+    user: dict[str, object] = {"metadata_json": {"retry_snapshot": user_snapshot_meta}}
+    if turn_run is not None:
+        assistant["turn_run_execution_version"] = turn_run
+    if assistant_snapshot is not None:
+        assistant_snapshot_meta["execution_version"] = assistant_snapshot
         assistant["metadata_json"] = {
-            "retry_snapshot": {"execution_version": marker}
+            "execution_version": assistant_snapshot,
+            "retry_snapshot": assistant_snapshot_meta,
         }
-        user["metadata_json"] = {"execution_version": marker}
+    if user_snapshot is not None:
+        user_snapshot_meta["execution_version"] = user_snapshot
+        user["metadata_json"] = {
+            "execution_version": user_snapshot,
+            "retry_snapshot": user_snapshot_meta,
+        }
+    return assistant, user
+
+
+@pytest.mark.parametrize("missing", ["turn_run", "assistant_snapshot", "user_snapshot"])
+def test_retry_execution_fence_rejects_each_missing_authoritative_marker(
+    missing: str,
+) -> None:
+    markers: dict[str, str | None] = {
+        "turn_run": EXECUTION_VERSION_AGENTIC_V2,
+        "assistant_snapshot": EXECUTION_VERSION_AGENTIC_V2,
+        "user_snapshot": EXECUTION_VERSION_AGENTIC_V2,
+    }
+    markers[missing] = None
+    assistant, user = _persisted_retry_messages(**markers)
 
     assert not service._has_persisted_v2_execution(
         assistant_msg=assistant,
@@ -133,25 +162,87 @@ def test_retry_execution_fence_rejects_non_v2_or_missing(marker: str | None) -> 
     )
 
 
-def test_retry_execution_fence_accepts_explicit_consistent_v2() -> None:
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_marker"),
+    [
+        ("turn_run", "reader_record_ask_agentic_v1"),
+        ("turn_run", "unknown"),
+        ("turn_run", "legacy_unclassified"),
+        ("assistant_snapshot", "reader_record_ask_agentic_v1"),
+        ("assistant_snapshot", "unknown"),
+        ("assistant_snapshot", "legacy_unclassified"),
+        ("user_snapshot", "reader_record_ask_agentic_v1"),
+        ("user_snapshot", "unknown"),
+        ("user_snapshot", "legacy_unclassified"),
+    ],
+)
+def test_retry_execution_fence_rejects_each_invalid_authoritative_marker(
+    invalid_field: str,
+    invalid_marker: str,
+) -> None:
+    markers: dict[str, str | None] = {
+        "turn_run": EXECUTION_VERSION_AGENTIC_V2,
+        "assistant_snapshot": EXECUTION_VERSION_AGENTIC_V2,
+        "user_snapshot": EXECUTION_VERSION_AGENTIC_V2,
+    }
+    markers[invalid_field] = invalid_marker
+    assistant, user = _persisted_retry_messages(**markers)
+
+    assert not service._has_persisted_v2_execution(
+        assistant_msg=assistant,
+        user_msg=user,
+    )
+
+
+@pytest.mark.parametrize(
+    ("turn_run", "assistant_snapshot", "user_snapshot"),
+    [
+        (
+            "reader_record_ask_agentic_v1",
+            EXECUTION_VERSION_AGENTIC_V2,
+            EXECUTION_VERSION_AGENTIC_V2,
+        ),
+        (
+            EXECUTION_VERSION_AGENTIC_V2,
+            "reader_record_ask_agentic_v1",
+            EXECUTION_VERSION_AGENTIC_V2,
+        ),
+        (EXECUTION_VERSION_AGENTIC_V2, EXECUTION_VERSION_AGENTIC_V2, "unknown"),
+        (EXECUTION_VERSION_AGENTIC_V2, "legacy_unclassified", "unknown"),
+    ],
+)
+def test_retry_execution_fence_rejects_mixed_or_unknown_markers(
+    turn_run: str,
+    assistant_snapshot: str,
+    user_snapshot: str,
+) -> None:
+    assistant, user = _persisted_retry_messages(
+        turn_run=turn_run,
+        assistant_snapshot=assistant_snapshot,
+        user_snapshot=user_snapshot,
+    )
+
+    assert not service._has_persisted_v2_execution(
+        assistant_msg=assistant,
+        user_msg=user,
+    )
+
+
+def test_retry_execution_fence_rejects_conflicting_flattened_marker() -> None:
+    assistant, user = _persisted_retry_messages()
+    assistant["metadata_json"]["execution_version"] = "reader_record_ask_agentic_v1"  # type: ignore[index]
+
+    assert not service._has_persisted_v2_execution(
+        assistant_msg=assistant,
+        user_msg=user,
+    )
+
+
+def test_retry_execution_fence_accepts_complete_v2_markers() -> None:
+    assistant, user = _persisted_retry_messages()
     assert service._has_persisted_v2_execution(
-        assistant_msg={
-            "metadata_json": {
-                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                "retry_snapshot": {
-                    "execution_version": EXECUTION_VERSION_AGENTIC_V2
-                },
-            },
-            "turn_run_execution_version": EXECUTION_VERSION_AGENTIC_V2,
-        },
-        user_msg={
-            "metadata_json": {
-                "execution_version": EXECUTION_VERSION_AGENTIC_V2,
-                "retry_snapshot": {
-                    "execution_version": EXECUTION_VERSION_AGENTIC_V2
-                },
-            }
-        },
+        assistant_msg=assistant,
+        user_msg=user,
     )
 
 
@@ -168,12 +259,22 @@ def test_new_send_snapshot_is_fixed_to_v2_without_a_lane_selector() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "marker",
-    [None, "reader_record_ask_agentic_v1", "legacy_unclassified", "unknown"],
+    "markers",
+    [
+        (None, EXECUTION_VERSION_AGENTIC_V2, EXECUTION_VERSION_AGENTIC_V2),
+        (EXECUTION_VERSION_AGENTIC_V2, None, EXECUTION_VERSION_AGENTIC_V2),
+        (EXECUTION_VERSION_AGENTIC_V2, EXECUTION_VERSION_AGENTIC_V2, None),
+        (
+            "reader_record_ask_agentic_v1",
+            EXECUTION_VERSION_AGENTIC_V2,
+            EXECUTION_VERSION_AGENTIC_V2,
+        ),
+        (EXECUTION_VERSION_AGENTIC_V2, "legacy_unclassified", "unknown"),
+    ],
 )
 async def test_retry_invalid_execution_fails_before_execution_resolution(
     monkeypatch,
-    marker: str | None,
+    markers: tuple[str | None, str | None, str | None],
 ) -> None:
     class FakeRepository:
         async def get_thread(self, **kwargs):
@@ -184,14 +285,11 @@ async def test_retry_invalid_execution_fails_before_execution_resolution(
             }
 
         async def get_assistant_message_with_preceding_user_message(self, **kwargs):
-            assistant: dict[str, object] = {"metadata_json": {}}
-            user: dict[str, object] = {"metadata_json": {}}
-            if marker is not None:
-                assistant["metadata_json"] = {
-                    "retry_snapshot": {"execution_version": marker}
-                }
-                user["metadata_json"] = {"execution_version": marker}
-            return assistant, user
+            return _persisted_retry_messages(
+                turn_run=markers[0],
+                assistant_snapshot=markers[1],
+                user_snapshot=markers[2],
+            )
 
     resolver = AsyncMock()
     facts_loader = AsyncMock()
@@ -214,7 +312,10 @@ async def test_retry_invalid_execution_fails_before_execution_resolution(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("marker", [None, "reader_record_ask_agentic_v1", "unknown"])
+@pytest.mark.parametrize(
+    "marker",
+    [None, "reader_record_ask_agentic_v1", "legacy_unclassified", "unknown"],
+)
 async def test_history_rejects_non_v2_assistant_message(monkeypatch, marker: str | None) -> None:
     monkeypatch.setattr(
         thread_service.repo,
@@ -278,3 +379,77 @@ def test_active_api_has_no_legacy_shared_module_imports() -> None:
         source = path.read_text(encoding="utf-8")
         for token in forbidden:
             assert token not in source, f"{path}: {token}"
+
+
+def test_neutral_prompting_import_boundary_is_closed() -> None:
+    package = Path(__file__).resolve().parents[1] / "app" / "services" / "prompting"
+    forbidden = ("analysis", "workflow", "eval_adapter", "reader_ask", "ask_runtime")
+    for path in package.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported_modules: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_modules.append(node.module)
+        for module in imported_modules:
+            assert not any(token in module for token in forbidden), (
+                f"{path}: forbidden neutral prompting import {module}"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_type",
+    [
+        None,
+        "vocabulary",
+        "grammar",
+        "translation",
+        "term",
+        "academic_translation",
+        "understanding",
+    ],
+)
+async def test_prompt_preview_rejects_legacy_learning_and_academic_modes(
+    monkeypatch,
+    agent_type: str | None,
+) -> None:
+    monkeypatch.setattr(
+        prompt_debug,
+        "get_settings",
+        lambda: SimpleNamespace(daily_reader_admin_api_key="secret"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await prompt_debug.prompt_preview(
+            prompt_debug.PromptPreviewRequest(
+                reading_goal="daily_reading",
+                reading_variant="beginner_reading",
+                agent_type=agent_type,
+            ),
+            _auth="secret",
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_prompt_preview_keeps_daily_reader_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        prompt_debug,
+        "get_settings",
+        lambda: SimpleNamespace(daily_reader_admin_api_key="secret"),
+    )
+
+    result = await prompt_debug.prompt_preview(
+        prompt_debug.PromptPreviewRequest(
+            reading_goal="daily_reading",
+            reading_variant="beginner_reading",
+            agent_type="daily_vocab",
+        ),
+        _auth="secret",
+    )
+
+    assert result.strategy_meta["workflow"] == "daily_reader"
+    assert result.strategy_meta["agent_type"] == "daily_vocab"
