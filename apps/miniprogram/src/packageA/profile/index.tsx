@@ -8,7 +8,6 @@
 import { View, Text, ScrollView, Image, Button, Input } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { ROUTES } from '../../config/routes'
-import { setNavigatingToOnboarding } from '../../utils/navigationState'
 import type { ChooseAvatarEvent, InputEvent } from '../../types/taro-events'
 
 interface MenuItem {
@@ -105,11 +104,7 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
   useDidShow(loadStats)
 
   const handleLogin = async () => {
-    setNavigatingToOnboarding(true)
-    const result = await ensureLoggedIn()
-    if (result.success && result.isFirstLogin) {
-      Taro.navigateTo({ url: ROUTES.ONBOARDING })
-    }
+    await ensureLoggedIn()
   }
 
   const handleLogout = () => {

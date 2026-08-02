@@ -129,9 +129,6 @@ export default function CreditDetailPage() {
     Taro.showToast({ title: '邀请功能开发中', icon: 'none' })
   }
 
-  const handleEntryClick = (_entry: LedgerEntry) => {
-    // History page deactivated in CUTOVER-MINI-LONG; entry detail navigation removed
-  }
 
   const groups = groupByDate(entries)
 
@@ -196,7 +193,7 @@ export default function CreditDetailPage() {
                 const absPoints = Math.abs(entry.points)
 
                 return (
-                  <View key={entry.id} className={`credit-detail__entry ${isPositive ? 'credit-detail__entry--positive' : ''}`} onClick={() => handleEntryClick(entry)}>
+                  <View key={entry.id} className={`credit-detail__entry ${isPositive ? 'credit-detail__entry--positive' : ''}`}>
                     <View className='credit-detail__entry-icon-wrap'>
                       <LucideIcon name={config.icon as any} size={28} color={config.iconColor} strokeWidth={1.8} />
                     </View>

@@ -24,7 +24,6 @@ export default {
       pages: [
         'feedback/index',
         'feedback/my-feedback',
-        'onboarding/index',
         'about/index',
         'agreement/index',
       ],

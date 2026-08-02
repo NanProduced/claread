@@ -8,7 +8,6 @@ const ROUTES = {
   DAILY_READER_ARCHIVE: '/packageB/daily-reader-archive/index',
   FEEDBACK: '/packageC/feedback/index',
   FEEDBACK_MY: '/packageC/feedback/my-feedback',
-  ONBOARDING: '/packageC/onboarding/index',
   ABOUT: '/packageC/about/index',
   AGREEMENT: '/packageC/agreement/index',
 } as const
