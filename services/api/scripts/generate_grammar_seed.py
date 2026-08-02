@@ -16,7 +16,10 @@ SEED_OUTPUT = SERVER_ROOT / "data" / "seed" / "grammar_seed_v1.jsonl"
 
 
 def extract_grammar_tags(label: str, output_type: str) -> list[str]:
-    from app.eval_adapter.example_lab import _rule_extract_grammar_tags, normalize_grammar_tags
+    from app.services.prompting.rag.grammar_tag_normalization import (
+        _rule_extract_grammar_tags,
+        normalize_grammar_tags,
+    )
 
     tags = _rule_extract_grammar_tags(label, output_type)
     return normalize_grammar_tags(tags)
@@ -106,10 +109,10 @@ def main() -> None:
         for tag in rec["tags"]:
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
-    print(f"\nOutput type distribution:")
+    print("\nOutput type distribution:")
     for t, c in sorted(type_counts.items()):
         print(f"  {t}: {c}")
-    print(f"\nTag distribution:")
+    print("\nTag distribution:")
     for t, c in sorted(tag_counts.items(), key=lambda x: -x[1]):
         print(f"  {t}: {c}")
 

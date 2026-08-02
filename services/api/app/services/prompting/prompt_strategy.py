@@ -1,4 +1,4 @@
-"""Prompt strategy for V3 workflow.
+"""Prompt strategy for Reader orchestration.
 
 负责为各 agent 构建 runtime prompt strategy。
 设计原则：

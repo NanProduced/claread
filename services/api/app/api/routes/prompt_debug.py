@@ -110,10 +110,10 @@ async def prompt_preview(
     request: PromptPreviewRequest,
     _auth: str = Header(..., alias="x-debug-api-key"),
 ) -> PromptPreviewResponse:
-    """预览 Daily Reader prompt；旧 Learning/Academic 模式已注销。"""
+    """仅预览 Daily Reader prompt。"""
     await _verify_debug_key(_auth)
 
-    if request.agent_type not in _DAILY_AGENTS:
+    if request.reading_goal != "daily_reading" or request.agent_type not in _DAILY_AGENTS:
         raise HTTPException(
             status_code=400,
             detail="Only Daily Reader prompt preview is supported",

@@ -13,7 +13,7 @@ from app.schemas.reader_record_ask_stream import (
     EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskHistoryMessage,
 )
-from app.services.reader_ask.repository import _message_row_to_dict
+from app.services.reader_record_ask.repository import _message_row_to_history
 from app.services.reader_record_ask.history_projection import (
     project_agentic_history_message,
 )
@@ -184,14 +184,15 @@ def test_source_unavailable_projects_fixed_copy() -> None:
     ReaderRecordAskHistoryMessage.model_validate(projected)
 
 
-def test_legacy_v1_projects_legacy_unclassified_answer_only() -> None:
+def test_legacy_v1_history_is_quarantined_fail_closed() -> None:
     projected = project_agentic_history_message(
         **_base_kwargs(user_visible_output_json=_LEGACY_V1)
     )
-    assert projected["status"] == "completed"
-    assert projected["content_md"] == "Climate change is discussed in paragraph 2."
-    assert projected["execution_version"] == EXECUTION_VERSION_AGENTIC_V1
-    assert projected["legacy_classification"] == "legacy_unclassified"
+    assert projected["status"] == "failed"
+    assert projected["content_md"] == ""
+    assert projected["execution_version"] is None
+    assert projected["final_status"] == "failed"
+    assert projected["legacy_classification"] is None
     assert projected["agentic_answer_blocks"] is None
     assert projected["agentic_citations"] is None
     assert projected["knowledge_mode"] is None
@@ -369,11 +370,24 @@ def _agentic_row(**overrides: Any) -> dict[str, Any]:
         "eval_trace_updated_at": None,
     }
     row.update(overrides)
+    row["turn_run_id"] = row.get("current_turn_run_id")
+    row["turn_run_user_id"] = row.get("current_turn_run_user_id")
+    row["turn_run_reading_record_id"] = row.get("current_turn_run_reading_record_id")
+    row["turn_run_status"] = row.get("current_turn_run_status")
+    row["turn_run_final_status"] = row.get("current_turn_run_final_status")
+    row["turn_run_terminal_reason"] = row.get("current_turn_run_terminal_reason")
+    row["turn_run_execution_version"] = row.get("current_turn_run_execution_version")
+    row["turn_run_resolved_evidence_json"] = row.get(
+        "current_turn_run_resolved_evidence_json"
+    )
+    row["turn_run_envelope_fingerprint"] = row.get(
+        "current_turn_run_envelope_fingerprint"
+    )
     return row
 
 
-def test_message_row_to_dict_agentic_completed_bypasses_legacy_evidence() -> None:
-    message = _message_row_to_dict(_agentic_row())
+def test_message_row_to_history_agentic_completed_bypasses_legacy_evidence() -> None:
+    message = _message_row_to_history(_agentic_row())
 
     assert message["status"] == "completed"
     assert message["content_md"] == "Climate change is discussed in paragraph 2."
@@ -381,7 +395,7 @@ def test_message_row_to_dict_agentic_completed_bypasses_legacy_evidence() -> Non
     assert message["final_status"] == "ok"
     assert message["agentic_citations"] is not None
     assert message["agentic_citations"][0]["citation_id"] == "c1"
-    assert message["evidence"] == []
+    assert message.get("evidence", []) == []
     assert message["article_rag"] is None
     _assert_no_evh(message)
     ReaderAskMessage.model_validate(
@@ -403,13 +417,13 @@ def test_message_row_to_dict_agentic_completed_bypasses_legacy_evidence() -> Non
     ReaderRecordAskHistoryMessage.model_validate(message)
 
 
-def test_message_row_to_dict_quarantines_json_version_without_column() -> None:
+def test_message_row_to_history_quarantines_json_version_without_column() -> None:
     row = _agentic_row(
         current_turn_run_execution_version=None,
         user_visible_output_json={**_COMPLETED_V2},
         current_turn_run_final_status=None,
     )
-    message = _message_row_to_dict(row)
+    message = _message_row_to_history(row)
 
     assert message["status"] == "failed"
     assert message["content_md"] == ""
@@ -421,7 +435,7 @@ def test_message_row_to_dict_quarantines_json_version_without_column() -> None:
     ReaderRecordAskHistoryMessage.model_validate(message)
 
 
-def test_message_row_to_dict_agentic_terminal_no_fake_answer() -> None:
+def test_message_row_to_history_agentic_terminal_no_fake_answer() -> None:
     terminal_dto = {
         "execution_version": EXECUTION_VERSION_AGENTIC_V2,
         "final_status": "context_stale",
@@ -430,7 +444,7 @@ def test_message_row_to_dict_agentic_terminal_no_fake_answer() -> None:
         "turn_run_id": "turn-run-1",
         "terminal_reason": "generation mismatch secret",
     }
-    message = _message_row_to_dict(
+    message = _message_row_to_history(
         _agentic_row(
             status="failed",
             content_md="",
@@ -450,7 +464,7 @@ def test_message_row_to_dict_agentic_terminal_no_fake_answer() -> None:
     ReaderRecordAskHistoryMessage.model_validate(message)
 
 
-def test_message_row_to_dict_legacy_row_unchanged() -> None:
+def test_message_row_to_history_legacy_row_is_quarantined() -> None:
     row = {
         "id": "msg-legacy",
         "thread_id": "thread-1",
@@ -517,14 +531,14 @@ def test_message_row_to_dict_legacy_row_unchanged() -> None:
         "eval_trace_created_at": None,
         "eval_trace_updated_at": None,
     }
-    message = _message_row_to_dict(row)
-    assert message["status"] == "completed"
-    assert message["content_md"] == "legacy body"
-    assert "execution_version" not in message or message.get("execution_version") is None
-    assert message["evidence"]
+    message = _message_row_to_history(row)
+    assert message["status"] == "failed"
+    assert message["content_md"] == ""
+    assert message.get("execution_version") is None
+    assert message["evidence"] == []
 
 
-def test_message_row_to_dict_user_message_preserves_content_md_with_agentic_metadata() -> None:
+def test_message_row_to_history_user_message_preserves_content_md_with_agentic_metadata() -> None:
     """ASK-UX-HISTORY-COT-R2 P0-1: cold-loaded user messages must keep
     their ``content_md`` even when ``metadata_json`` carries an
     ``execution_version`` marker from the retry snapshot.
@@ -552,14 +566,12 @@ def test_message_row_to_dict_user_message_preserves_content_md_with_agentic_meta
         "tool_trace_json": [],
         "metadata_json": {
             "retry_contract_version": "ask_retry_contract_r5",
-            "retry_lane": "agentic",
             "execution_version": EXECUTION_VERSION_AGENTIC_V2,
             "model_option_key": None,
             "route_identity": None,
             "web_search_mode": "disabled",
             "retry_snapshot": {
                 "retry_contract_version": "ask_retry_contract_r5",
-                "retry_lane": "agentic",
                 "execution_version": EXECUTION_VERSION_AGENTIC_V2,
             },
         },
@@ -601,7 +613,7 @@ def test_message_row_to_dict_user_message_preserves_content_md_with_agentic_meta
         "eval_trace_created_at": None,
         "eval_trace_updated_at": None,
     }
-    message = _message_row_to_dict(row)
+    message = _message_row_to_history(row)
 
     assert message["role"] == "user"
     assert message["status"] == "completed"
@@ -611,7 +623,7 @@ def test_message_row_to_dict_user_message_preserves_content_md_with_agentic_meta
     assert message.get("execution_version") is None
     assert message.get("agentic_answer_blocks") is None
     assert message.get("agentic_citations") is None
-    assert message["evidence"] == []
+    assert message.get("evidence", []) == []
     ReaderAskMessage.model_validate(message)
 
 

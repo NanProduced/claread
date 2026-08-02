@@ -1,7 +1,8 @@
 """Persistence seam for agentic Reading Record Ask turns.
 
 Owns SQL against ``reader_ask_*`` tables for the agentic lane only.
-Does not import ``app.services.reader_ask.repository``.
+The repository owns the v2 persistence seam and does not depend on a legacy
+Ask repository.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.schemas.reader_record_ask_stream import EXECUTION_VERSION_AGENTIC_V2
 from app.services.reader_record_ask.history_projection import (
-    claims_agentic_payload,
     is_agentic_execution_version,
     project_agentic_history_message,
     quarantine_untrusted_agentic_claim,
@@ -177,10 +177,7 @@ def _message_row_to_history(row: Any) -> dict[str, Any]:
             final_status=row.get("turn_run_final_status"),
             turn_run_status=row.get("turn_run_status"),
         )
-    if base["role"] == "assistant" and (
-        claims_agentic_payload(row.get("user_visible_output_json"))
-        or claims_agentic_payload(metadata)
-    ):
+    if base["role"] == "assistant":
         return quarantine_untrusted_agentic_claim(
             message_id=base["id"],
             thread_id=base["thread_id"],

@@ -2,8 +2,9 @@
 
 Redesigned per redesign-tracker.tmp.md:
 - vocab_highlight: per-batch generation with coverage emphasis
-- paragraph_notes: replaces footer_analysis (summary/thesis/structure → focus_question/micro_summary/translation)
-- close_reading_takeaways: replaces full_interpretation (500-1000 word essay → structured language points)
+- paragraph_notes: focuses on focus_question/micro_summary/translation
+- close_reading_takeaways: replaces full_interpretation with structured
+  language points instead of a 500-1000 word essay
 - quality_review: 8 dimensions including coverage and content overload
 - refinement: targets new schema fields
 """

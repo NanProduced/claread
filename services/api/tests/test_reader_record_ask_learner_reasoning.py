@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from app.config.settings import Settings
 from app.llm.types import ResolvedModelConfig
 from app.services.reader_record_ask.history_projection import (
     _safe_reasoning_projection,
@@ -48,6 +51,32 @@ from app.services.reader_record_ask.learner_reasoning.validator import (
 from app.services.reader_record_ask.learner_reasoning.worker import (
     LearnerReasoningWorker,
 )
+
+_CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def _product_settings() -> Settings:
+    profiles = json.loads(
+        (_CONFIG_DIR / "model-profiles.example.json").read_text(encoding="utf-8")
+    )
+
+    def strip_notes(value):
+        if isinstance(value, dict):
+            return {
+                key: strip_notes(item)
+                for key, item in value.items()
+                if not key.startswith("_")
+            }
+        if isinstance(value, list):
+            return [strip_notes(item) for item in value]
+        return value
+
+    return Settings(
+        model_profiles_json=json.dumps(strip_notes(profiles)),
+        reader_ask_model_options_json=(
+            _CONFIG_DIR / "reader-ask-model-options.json"
+        ).read_text(encoding="utf-8"),
+    )
 
 # ---------------------------------------------------------------------------
 # Buffer ring
@@ -426,9 +455,8 @@ def test_router_dashscope_cn_intl_us_preserve_region() -> None:
     assert resolve_projector_route(native) is None
 
 
-def test_router_product_qwen37_max_native_via_authority_endpoint() -> None:
-    """Product ask-main-qwen37-max (dashscope_native) routes via registry authority."""
-    from app.config.settings import get_settings
+def test_router_product_qwen37_max_uses_dashscope_authority() -> None:
+    """The product Qwen option routes to the allowlisted DashScope host."""
     from app.llm.router import resolve_model_config
     from app.llm.routes import MODEL_ROUTE_READER_ASK
     from app.llm.types import ModelSelection
@@ -436,11 +464,10 @@ def test_router_product_qwen37_max_native_via_authority_endpoint() -> None:
     sel = ModelSelection.model_validate(
         {"routes": {"reader_ask": {"profile": "ask-main-qwen37-max"}}}
     )
-    cfg = resolve_model_config(get_settings(), MODEL_ROUTE_READER_ASK, sel)
+    cfg = resolve_model_config(_product_settings(), MODEL_ROUTE_READER_ASK, sel)
     assert cfg is not None
-    assert cfg.adapter == "dashscope_native"
-    assert cfg.base_url == ""
-    assert "dashscope.aliyuncs.com" in (cfg.authority_endpoint or "")
+    assert cfg.adapter == "openai_compatible"
+    assert "dashscope.aliyuncs.com" in cfg.base_url
     keyed = cfg.model_copy(update={"api_key": cfg.api_key or "sk-test"})
     route = resolve_projector_route(keyed)
     assert route is not None
@@ -463,7 +490,7 @@ def test_dashscope_native_authority_credential_env_match_matrix(
     """
     import json
 
-    from app.config.settings import Settings, get_settings
+    from app.config.settings import Settings
     from app.llm.router import resolve_model_config
     from app.llm.routes import MODEL_ROUTE_READER_ASK
     from app.llm.types import ModelSelection
@@ -548,17 +575,16 @@ def test_dashscope_native_authority_credential_env_match_matrix(
     assert cfg is not None
     assert (cfg.authority_endpoint or "") == ""
 
-    # product path still flash via product settings
-    get_settings.cache_clear()
+    # Product path uses the checked-in example catalog; no provider is called.
     product_sel = ModelSelection.model_validate(
         {"routes": {"reader_ask": {"profile": "ask-main-qwen37-max"}}}
     )
     product = resolve_model_config(
-        get_settings(), MODEL_ROUTE_READER_ASK, product_sel
+        _product_settings(), MODEL_ROUTE_READER_ASK, product_sel
     )
     assert product is not None
-    assert product.adapter == "dashscope_native"
-    assert "dashscope.aliyuncs.com" in (product.authority_endpoint or "")
+    assert product.adapter == "openai_compatible"
+    assert "dashscope.aliyuncs.com" in product.base_url
     route = resolve_projector_route(
         product.model_copy(update={"api_key": product.api_key or "sk-test"})
     )

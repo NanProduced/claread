@@ -1,4 +1,4 @@
-"""Example strategy for V3 workflow.
+"""Example strategy for Reader and Daily prompting.
 
 负责 example selection。
 设计原则：

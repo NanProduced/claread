@@ -12,19 +12,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.schemas.reader_record_ask_stream import (
-    EXECUTION_VERSION_AGENTIC_V1,
     EXECUTION_VERSION_AGENTIC_V2,
     ReaderRecordAskCompletedDTO,
     ReaderRecordAskTerminalDTO,
 )
 
 AGENTIC_EXECUTION_VERSION = EXECUTION_VERSION_AGENTIC_V2
-AGENTIC_EXECUTION_VERSIONS = frozenset(
-    {
-        EXECUTION_VERSION_AGENTIC_V1,
-        EXECUTION_VERSION_AGENTIC_V2,
-    }
-)
+AGENTIC_EXECUTION_VERSIONS = frozenset({EXECUTION_VERSION_AGENTIC_V2})
 
 _TERMINAL_UI_STATUS: dict[str, str] = {
     "failed": "failed",
@@ -39,11 +33,11 @@ def is_agentic_execution_version(value: Any) -> bool:
 
 
 def claims_agentic_payload(value: Any) -> bool:
-    """True when a persisted JSON blob self-identifies as agentic.
+    """True when a persisted JSON blob self-identifies as trusted v2.
 
-    Used only for isolation: such blobs must not enter legacy evidence
-    hydration. They are never treated as a trusted successful agentic fact
-    without a matching DB ``execution_version`` column.
+    Used only for isolation: such blobs must not enter an untrusted history
+    row. They are never treated as a trusted successful fact without a
+    matching DB ``execution_version`` column.
     """
     if not isinstance(value, dict):
         return False
@@ -216,48 +210,6 @@ def _safe_degraded_message(
     }
 
 
-def _project_legacy_unclassified(
-    *,
-    message_id: str,
-    thread_id: str,
-    role: str,
-    created_at: str | None,
-    updated_at: str | None,
-    context_anchors: list[Any],
-    usage_event_id: str | None,
-    current_turn_run_id: str | None,
-    current_turn_run: dict[str, Any] | None,
-    answer_text: str,
-) -> dict[str, Any]:
-    """Old v1 / flat completed rows: answer only, no inferred provenance."""
-
-    return {
-        "id": message_id,
-        "thread_id": thread_id,
-        "role": role,
-        "status": "completed",
-        "content_md": answer_text,
-        "submission_mode": "chat",
-        "resolved_intent": None,
-        "context_anchors": context_anchors,
-        **_empty_legacy_lists(),
-        "usage_event_id": usage_event_id,
-        "current_turn_run_id": current_turn_run_id,
-        "current_turn_run": current_turn_run,
-        "current_user_visible_output": None,
-        "current_eval_trace": None,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "execution_version": EXECUTION_VERSION_AGENTIC_V1,
-        "final_status": "ok",
-        "agentic_answer_blocks": None,
-        "agentic_citations": None,
-        "knowledge_mode": None,
-        "source_status": None,
-        "legacy_classification": "legacy_unclassified",
-    }
-
-
 def _try_project_v2_completed(visible: dict[str, Any]) -> ReaderRecordAskCompletedDTO | None:
     try:
         completed = ReaderRecordAskCompletedDTO.model_validate(visible)
@@ -266,19 +218,6 @@ def _try_project_v2_completed(visible: dict[str, Any]) -> ReaderRecordAskComplet
     if completed.final_status != "ok":
         return None
     return completed
-
-
-def _legacy_answer_from_v1_blob(visible: dict[str, Any]) -> str | None:
-    """Extract answer text from pre-v2 agentic completed blobs without rehydrating citations."""
-
-    if visible.get("execution_version") != EXECUTION_VERSION_AGENTIC_V1:
-        return None
-    if visible.get("final_status") != "ok":
-        return None
-    answer = visible.get("answer_text")
-    if isinstance(answer, str) and answer.strip():
-        return answer
-    return None
 
 
 def project_agentic_history_message(
@@ -333,18 +272,16 @@ def project_agentic_history_message(
     }
 
     visible = user_visible_output_json if isinstance(user_visible_output_json, dict) else None
+    if (
+        isinstance(visible, dict)
+        and visible.get("execution_version") != EXECUTION_VERSION_AGENTIC_V2
+    ):
+        return quarantine_untrusted_agentic_claim(**base_kwargs)
     # DB column is the only status authority when present.
     db_final = final_status if isinstance(final_status, str) else None
 
     if db_final == "ok":
         if not isinstance(visible, dict):
-            # Prefer row content for degraded ok without structured blob.
-            answer = (row_content_md or "").strip()
-            if answer:
-                return _project_legacy_unclassified(
-                    **base_kwargs,
-                    answer_text=answer,
-                )
             return _safe_degraded_message(**base_kwargs)
 
         completed = _try_project_v2_completed(visible)
@@ -405,20 +342,6 @@ def project_agentic_history_message(
                 "legacy_classification": None,
             }
 
-        legacy_answer = _legacy_answer_from_v1_blob(visible)
-        if legacy_answer is not None:
-            return _project_legacy_unclassified(
-                **base_kwargs,
-                answer_text=legacy_answer,
-            )
-
-        # Unrecognised ok blob: surface row text only if present.
-        fallback = (row_content_md or "").strip()
-        if fallback:
-            return _project_legacy_unclassified(
-                **base_kwargs,
-                answer_text=fallback,
-            )
         return _safe_degraded_message(**base_kwargs)
 
     if db_final in _TERMINAL_UI_STATUS:
@@ -427,11 +350,7 @@ def project_agentic_history_message(
             try:
                 terminal = ReaderRecordAskTerminalDTO.model_validate(visible)
             except ValidationError:
-                # Tolerate pre-v2 terminal blobs that still carried fingerprint.
-                status_match = visible.get("final_status") == db_final
-                if not status_match and "final_status" in visible:
-                    return _safe_degraded_message(**base_kwargs)
-                terminal = None
+                return _safe_degraded_message(**base_kwargs)
             else:
                 if terminal.final_status != db_final:
                     return _safe_degraded_message(**base_kwargs)

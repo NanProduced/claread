@@ -1515,7 +1515,7 @@ def test_legacy_agent_instructions_contain_markdown_contract() -> None:
     language requirements (grammar_point can be Chinese/mixed, pattern/
     dedup_hint stay English).
     """
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
 
@@ -1614,7 +1614,7 @@ _R3_TEACHING_MARKERS = (
 
 def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
     """Shared YAML instructions own the R3 teaching contract used by all paths."""
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
 
@@ -1631,7 +1631,7 @@ def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
 
 def test_window_system_prompt_shares_r3_teaching_semantics_with_agent_yaml() -> None:
     """Window composed system prompt must embed the same teaching contract."""
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
     from app.services.reader_orchestration.grammar_window_worker import (
@@ -1654,7 +1654,7 @@ def test_window_system_prompt_shares_r3_teaching_semantics_with_agent_yaml() -> 
 
 def test_per_unit_and_batch_agents_load_same_shared_instructions() -> None:
     """Per-unit and batch executors both wire reader_layer_grammar_bundle."""
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
     from app.services.reader_orchestration import grammar_worker as gw
@@ -1706,7 +1706,7 @@ def test_shared_grammar_prompt_drops_fixed_three_step_template() -> None:
     they are not fixed steps, not required to be exhaustive, and not
     required to follow a fixed order.
     """
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
 
@@ -1759,7 +1759,7 @@ def test_shared_grammar_prompt_owns_self_rating_contract() -> None:
     ``confidence`` / ``low_value`` concepts are removed and must not
     appear in the prompt.
     """
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
     from app.services.reader_orchestration.grammar_window_worker import (
@@ -3928,7 +3928,7 @@ def test_grammar_bundle_prompt_bans_mechanical_exam_jargon() -> None:
     「紧跟具体、贴切的教学内容时」 — LLM abused this exception and
     appended exam slogans to nearly every note.
     """
-    from app.services.analysis.prompting.prompt_loader import (
+    from app.services.prompting.prompt_loader import (
         load_agent_instructions,
     )
 

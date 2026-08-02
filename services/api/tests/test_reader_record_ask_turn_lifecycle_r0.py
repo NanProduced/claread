@@ -8,7 +8,7 @@ Coverage:
 
 1. ``message.completed`` keeps the HTTP stream open — composer must
    unlock on the terminal frame, not on EOF.
-2. ``agentic.terminal`` / ``message.interrupted`` unlock immediately
+2. ``agentic.terminal`` / ``message.completed`` unlock exactly once
    and are handled exactly once.
 3. Foreign / stale terminal frames must not unlock the active turn.
 4. Answer deltas followed by output validator failure must leave the
@@ -386,7 +386,7 @@ class TestReasoningTruncationTypedContract:
 
     Current behavior embeds ``…（思考内容已截断）`` in the reasoning text
     itself. R3 will move truncation to a typed field on the
-    ``agentic.reasoning.completed`` payload and on the cold-history
+    ``learner_reasoning`` payload and on the cold-history
     DTO, with no marker in the visible reasoning body.
     """
 
@@ -406,7 +406,7 @@ class TestReasoningTruncationTypedContract:
             assert marker not in compliant_body
 
     def test_reasoning_completed_payload_must_carry_typed_truncated_field(self) -> None:
-        """``agentic.reasoning.completed`` must carry a typed boolean
+        """``learner_reasoning`` must carry a typed boolean
         ``truncated`` field. The frontend uses this to render an
         explicit "达到展示上限" badge — it must not infer truncation
         from a body marker.

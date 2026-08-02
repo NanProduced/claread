@@ -1,6 +1,6 @@
 """Independent Reading Record Ask PydanticAI agent.
 
-Isolated from ``app.agents.reader_ask_agent``.  Tools this slice:
+This package owns the Reading Record Ask agent surface. Tools in this slice:
 
 - ``expand_evidence``
 - ``search_current_article``

@@ -5,7 +5,7 @@ independent Reading Record Ask agent.  It deliberately does **not**:
 
 - enter the production Ask stream / LLM loop;
 - call Article RAG or invent ``rag_substrate_id``;
-- import legacy ``app.services.reader_ask`` / old agent modules.
+- import any pre-cutover Ask runtime or agent modules.
 
 Construction rule
 -----------------

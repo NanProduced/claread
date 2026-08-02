@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.analysis.credit_service import (
+from app.services.credits import (
     InsufficientCredits,
     DEFAULT_DAILY_FREE_POINTS,
 )

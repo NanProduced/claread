@@ -5,13 +5,9 @@ get the same base_url / api_key / model_name negotiation as pydantic_ai and
 agent_runner), then issues a ``POST /chat/completions`` request with
 ``response_format=json_object`` and parses the response.
 
-Used by:
-- ``app.eval_adapter.workflow_lab_compare_judge`` (Workflow compare judge)
-- ``app.eval_adapter.example_lab`` (Example Lab RAG field generation)
-
 The helper does NOT replace pydantic_ai / agent_runner for typed output use
-cases that need retries + tool_choice; it is intentionally minimal so eval
-artifacts can audit the raw LLM response.
+cases that need retries + tool_choice; it is intentionally minimal for
+structured JSON callers that need to inspect the raw LLM response.
 """
 
 from __future__ import annotations

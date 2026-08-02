@@ -20,7 +20,7 @@ R1.6 P0-3: 每个 assistant message 只取最新 canonical ok run（DISTINCT ON
 R1.6 P1-3: 0028 未应用且 memory flag 被误开时，snapshot table 缺失必须
     typed fail-soft 为"无 memory"，不得让整个 Ask 500。
 
-agentic lane 独立：不导入 ``app.services.reader_ask.repository``。
+agentic lane 独立：不导入 legacy Ask persistence。
 """
 
 from __future__ import annotations

@@ -31,7 +31,7 @@ from app.schemas.user_annotations import (
     UserAnnotationUpdateRequest,
 )
 from app.schemas.user_editorial_assets import UserEditorialAssetAnchor
-from app.services.reader_ask.supplements import (
+from app.services.reader_orchestration.supplements import (
     create_supplement,
     delete_supplement,
 )

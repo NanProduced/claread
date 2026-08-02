@@ -1,4 +1,4 @@
-"""Strategy bundle builder for V3 workflow.
+"""Strategy bundle builder for Reader orchestration.
 
 统一的 strategy bundle 构建器。
 设计原则：

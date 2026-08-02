@@ -14,7 +14,6 @@ class PromptRuntimeOverride(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     variant_id: str
-    target: Literal["article_analysis"] = "article_analysis"
     description: str = ""
     few_shot_mode: FewShotMode = "settings"
     instructions: dict[str, str] = Field(default_factory=dict)

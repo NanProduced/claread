@@ -25,8 +25,6 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic_ai.models.function import FunctionModel
-
 from app.config.settings import Settings
 from app.llm.deepseek_direct import DirectDeepSeekChatModel
 from app.llm.router import build_model_for_route
@@ -34,14 +32,31 @@ from app.llm.routes import (
     MODEL_ROUTE_READER_ASK,
     MODEL_ROUTE_READER_ASK_REPLAN,
 )
-from app.services.reader_ask import model_options as model_options_svc
+from app.services.reader_record_ask import model_options as model_options_svc
 from app.services.reader_record_ask.execution_config import (
     resolve_reader_record_ask_execution,
 )
 
 _CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
-_PROFILES_PATH = _CONFIG_DIR / "model-profiles.json"
+_PROFILES_PATH = _CONFIG_DIR / "model-profiles.example.json"
 _OPTIONS_PATH = _CONFIG_DIR / "reader-ask-model-options.json"
+
+
+def _runtime_profiles_json() -> str:
+    raw = json.loads(_PROFILES_PATH.read_text(encoding="utf-8"))
+
+    def strip_notes(value):
+        if isinstance(value, dict):
+            return {
+                key: strip_notes(item)
+                for key, item in value.items()
+                if not key.startswith("_")
+            }
+        if isinstance(value, list):
+            return [strip_notes(item) for item in value]
+        return value
+
+    return json.dumps(strip_notes(raw))
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +76,7 @@ def production_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-do-not-leak")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key-do-not-leak")
     return Settings(
-        model_profiles_json=_PROFILES_PATH.read_text(encoding="utf-8"),
+        model_profiles_json=_runtime_profiles_json(),
         reader_ask_model_options_json=_OPTIONS_PATH.read_text(encoding="utf-8"),
     )
 
@@ -157,7 +172,7 @@ def test_pro_option_builds_thinking_enabled_direct_model(
     assert settings["extra_body"]["thinking"] == {"type": "enabled"}
 
 
-def test_qwen_option_builds_native_thinking_function_model(
+def test_qwen_option_builds_thinking_compatible_model(
     production_settings: Settings,
 ) -> None:
     option = model_options_svc.resolve_reader_ask_model_option(
@@ -167,9 +182,9 @@ def test_qwen_option_builds_native_thinking_function_model(
         option, settings=production_settings
     )
     model = execution.model
-    # dashscope_native adapter builds a FunctionModel with the native
-    # stream function; thinking rides in extra_body.enable_thinking.
-    assert isinstance(model, FunctionModel)
+    # The checked-in product option uses the OpenAI-compatible DashScope
+    # transport; thinking still rides in extra_body.enable_thinking.
+    assert model is not None
     settings = _model_settings_dict(model)
     assert settings["extra_body"]["enable_thinking"] is True
     payload = execution.model_settings()
@@ -203,7 +218,7 @@ def test_replan_route_keeps_thinking_enabled(
     )
     assert model is not None and model_config is not None
     if option_key == "qwen-max":
-        assert isinstance(model, FunctionModel)
+        assert model is not None
         settings = _model_settings_dict(model)
         assert settings["extra_body"]["enable_thinking"] is True
     else:

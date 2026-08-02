@@ -13,11 +13,8 @@ def build_workflow_root_tags(
 ) -> list[str]:
     """Build the root-run tag list passed to LangGraph ``config['tags']``.
 
-    Includes ``surface:<value>`` (e.g. ``surface:analyze_direct``,
-    ``surface:eval_workflow_lab``) when provided so LangSmith filters can
-    cleanly separate main-product analyze traces from eval-center traces
-    even when they share the same workflow_name and project — see
-    ``docs/operations/langsmith.md`` for the canonical surface list.
+    Includes ``surface:<value>`` when provided so LangSmith filters can
+    separate Reader and Daily product traces by their canonical surface.
     """
 
     tags = ["workflow", workflow_name]

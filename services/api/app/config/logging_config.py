@@ -29,9 +29,7 @@ from app.config.settings import Settings, get_settings
 _MODULE_PREFIX_MAP = {
     "app.services.dictionary": "dict",
     "app.services.dictionary.providers": "dict",
-    "app.services.analysis": "tasks",
     "app.services.auth": "auth",
-    "app.workflow": "workflow",
     "app.database": "db",
     "app.api": "api",
     "app.main": "app",

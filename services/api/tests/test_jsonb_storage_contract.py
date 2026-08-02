@@ -8,11 +8,8 @@ import pytest
 
 from app.api.routes.vocabulary import _vocab_row_to_response
 from app.database.json_compat import ensure_json_array, ensure_json_object
-from app.schemas.internal.overview_hint import StoredOverviewHint
 from app.services.ai_usage.service import AIUsageEventCreate, record_ai_usage_event
-from app.services.analysis.credit_service import LedgerAttribution, deduct_points
-from app.services.analysis.overview_task_service import update_record_overview_hint
-from app.services.analysis.task_service import submit_task, update_task_status
+from app.services.credits import LedgerAttribution, deduct_points
 from app.services.auth.identity import get_or_create_user_by_identity
 from app.services.auth.profile import get_user_profile, update_user_profile
 from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
@@ -206,66 +203,6 @@ class TestJsonbWriteContracts:
         assert any(isinstance(arg, dict) and arg["verified_by"] == "mock" for arg in insert_args)
 
     @pytest.mark.anyio
-    async def test_submit_task_writes_native_event_payload_json(self):
-        user_id = uuid4()
-        record_id = uuid4()
-        task_id = uuid4()
-        mock_conn = _make_mock_conn_with_tx()
-        mock_conn.fetchrow = AsyncMock(side_effect=[None, {"id": record_id}, {"id": task_id}])
-        mock_pool = _make_mock_pool(mock_conn)
-
-        with patch("app.services.analysis.task_service.db_connection.DB_POOL", mock_pool):
-            await submit_task(
-                user_id=user_id,
-                text="Hello world",
-                reading_goal="daily_reading",
-                reading_variant="intermediate_reading",
-                source_type="user_input",
-                extended=False,
-            )
-
-        execute_args = mock_conn.execute.await_args.args
-        assert isinstance(execute_args[2], dict)
-        assert execute_args[2] == {}
-
-    @pytest.mark.anyio
-    async def test_update_task_status_writes_native_usage_summary_json(self):
-        mock_conn = AsyncMock()
-        mock_pool = _make_mock_pool(mock_conn)
-        usage_summary = {"aggregate": {"input_tokens": 1}}
-
-        with patch("app.services.analysis.task_service.db_connection.DB_POOL", mock_pool):
-            await update_task_status(uuid4(), status="succeeded", usage_summary_json=usage_summary)
-
-        execute_args = mock_conn.execute.await_args.args
-        assert any(isinstance(arg, dict) and arg == usage_summary for arg in execute_args)
-
-    @pytest.mark.anyio
-    async def test_overview_hint_update_reads_legacy_string_and_writes_native_jsonb(self):
-        mock_conn = _make_mock_conn_with_tx()
-        mock_conn.fetchrow = AsyncMock(return_value={"page_state_json": '{"derived":{}}'})
-        mock_pool = _make_mock_pool(mock_conn)
-        hint = StoredOverviewHint(
-            status="ready",
-            source="learning_overview_hint_agent",
-            source_text_hash="hash-1",
-            workflow_version="3.0.0",
-            schema_version="3.0.0",
-            updated_at=datetime.now(UTC).isoformat(),
-            task_id=str(uuid4()),
-            overview="summary",
-            confidence="medium",
-        )
-
-        with patch("app.services.analysis.overview_task_service.db_connection.DB_POOL", mock_pool):
-            await update_record_overview_hint(record_id=uuid4(), hint=hint)
-
-        execute_args = mock_conn.execute.await_args.args
-        payload = execute_args[2]
-        assert isinstance(payload, dict)
-        assert payload["derived"]["overview_hint"]["overview"] == "summary"
-
-    @pytest.mark.anyio
     async def test_records_update_record_writes_native_jsonb(self):
         mock_conn = _make_mock_conn_with_tx()
         mock_pool = _make_mock_pool(mock_conn)
@@ -364,7 +301,7 @@ class TestJsonbWriteContracts:
         user_id = uuid4()
         task_id = uuid4()
 
-        with patch("app.services.analysis.credit_service.db_connection.DB_POOL", mock_pool):
+        with patch("app.services.credits.db_connection.DB_POOL", mock_pool):
             await deduct_points(
                 user_id,
                 5,

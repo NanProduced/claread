@@ -453,3 +453,24 @@ async def test_prompt_preview_keeps_daily_reader_mode(monkeypatch) -> None:
 
     assert result.strategy_meta["workflow"] == "daily_reader"
     assert result.strategy_meta["agent_type"] == "daily_vocab"
+
+
+@pytest.mark.asyncio
+async def test_prompt_preview_rejects_non_daily_reading_goal(monkeypatch) -> None:
+    monkeypatch.setattr(
+        prompt_debug,
+        "get_settings",
+        lambda: SimpleNamespace(daily_reader_admin_api_key="secret"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await prompt_debug.prompt_preview(
+            prompt_debug.PromptPreviewRequest(
+                reading_goal="academic",
+                reading_variant="beginner_reading",
+                agent_type="daily_vocab",
+            ),
+            _auth="secret",
+        )
+
+    assert exc_info.value.status_code == 400

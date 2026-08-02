@@ -65,7 +65,7 @@ def test_r6_prepare_runs_ensure_before_stream() -> None:
 
     src = inspect.getsource(svc.prepare_reading_record_ask_message)
     assert "ensure_submission_for_send" in src
-    stream_src = inspect.getsource(svc._stream_legacy_or_agentic)
+    stream_src = inspect.getsource(svc._stream_agentic_v2)
     assert "submission.reconcile" in stream_src
     assert "stop_model" in stream_src
 
@@ -90,7 +90,6 @@ async def test_r6_preflight_missing_table_is_http_503_not_sse() -> None:
             client_submission_id=uuid4(),
             content_md="hello",
             retry_snapshot=build_retry_snapshot(
-                lane="agentic",
                 model_option_key="ask-clarity",
                 web_search_mode="disabled",
             ),
@@ -111,7 +110,6 @@ async def test_r6_no_client_submission_id_returns_none() -> None:
         client_submission_id=None,
         content_md="hello",
         retry_snapshot=build_retry_snapshot(
-            lane="legacy",
             model_option_key=None,
             web_search_mode="disabled",
         ),
@@ -146,7 +144,6 @@ async def test_r6_duplicate_stop_model_no_may_create() -> None:
         client_submission_id=sid,
         content_md="hello",
         retry_snapshot=build_retry_snapshot(
-            lane="agentic",
             model_option_key="ask-clarity",
             web_search_mode="disabled",
         ),
@@ -209,20 +206,6 @@ async def test_r6_submission_terminal_hook_completed_failed_cancelled() -> None:
     assert statuses[-1] == "cancelled"
 
 
-def test_r6_legacy_stream_does_not_delete_submission_ids() -> None:
-    src = (
-        REPO_ROOT
-        / "services"
-        / "api"
-        / "app"
-        / "services"
-        / "ask_runtime"
-        / "stream_service.py"
-    ).read_text(encoding="utf-8")
-    assert "del client_submission_id, claim_generation" not in src
-    assert "SubmissionTerminalHook" in src
-
-
 def test_r6_agentic_finally_syncs_submission() -> None:
     src = (
         REPO_ROOT
@@ -260,42 +243,9 @@ def test_r6_route_prepare_before_streaming_response() -> None:
         )
 
 
-def test_r6_both_lanes_consume_prepared_gateway() -> None:
-    from app.services.reader_record_ask import service as svc
-
-    src = inspect.getsource(svc._stream_legacy_or_agentic)
-    assert "lane == \"legacy\"" in src or "lane == 'legacy'" in src
-    assert "stream_service.stream_thread_message" in src
-    assert "stream_agentic_thread_message" in src
-    assert "existing_user_message" in src
-    assert "claim_generation" in src
-
-
-def test_r6_duplicate_sse_is_reconcile_not_fake_agentic_ok() -> None:
-    from app.services.reader_record_ask import service as svc
-
-    src = inspect.getsource(svc._stream_legacy_or_agentic)
-    assert '"submission.reconcile"' in src or "'submission.reconcile'" in src
-    # Must not yield fake agentic.terminal ok on duplicate
-    stop_block_start = src.index("stop_model")
-    stop_block = src[stop_block_start : stop_block_start + 600]
-    assert "agentic.terminal" not in stop_block
-    assert "submission.reconcile" in stop_block
-
-
 def test_r6_snapshot_fail_closed_no_regression() -> None:
-    from app.services.reader_record_ask.service import (
-        _extract_snapshot_model_option_key,
-        _resolve_persisted_retry_lane,
-    )
+    from app.services.reader_record_ask.service import _extract_snapshot_model_option_key
 
-    assert (
-        _resolve_persisted_retry_lane(
-            assistant_msg={"metadata_json": {}},
-            user_msg={"metadata_json": {}},
-        )
-        is None
-    )
     key = _extract_snapshot_model_option_key(
         assistant_msg={
             "metadata_json": {
@@ -311,5 +261,4 @@ def test_r6_send_prepared_result_dataclass() -> None:
     from app.services.reader_record_ask.service import SendPreparedResult
 
     assert "submission" in SendPreparedResult.__dataclass_fields__
-    assert "lane" in SendPreparedResult.__dataclass_fields__
     assert "execution" in SendPreparedResult.__dataclass_fields__

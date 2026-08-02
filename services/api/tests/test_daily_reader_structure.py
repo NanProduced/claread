@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.workflow.daily_reader_workflow import (
+from app.services.daily_reader.workflow import (
     MAX_PARAGRAPH_CHARS,
     MIN_REQUIRED_HIGHLIGHT_CHARS,
     READING_UNIT_MIN_CHARS,

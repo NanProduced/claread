@@ -416,7 +416,6 @@ class TestRetrySnapshotFocusAnchors:
     def test_snapshot_persists_focus_anchors_canonical_dicts(self) -> None:
         anchors = [make_anchor("甲", segment="s1"), make_anchor("乙", segment="s2")]
         snapshot = build_retry_snapshot(
-            lane="agentic",
             model_option_key="ask-fast",
             web_search_mode="disabled",
             focus_anchors=[a.model_dump(mode="json") for a in anchors],
@@ -427,7 +426,6 @@ class TestRetrySnapshotFocusAnchors:
 
     def test_snapshot_without_focus_keeps_none(self) -> None:
         snapshot = build_retry_snapshot(
-            lane="agentic",
             model_option_key="ask-fast",
             web_search_mode="disabled",
         )

@@ -29,7 +29,7 @@ from app.contracts.annotation import (
 )
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
-from app.services.analysis.prompting.prompt_loader import load_agent_instructions
+from app.services.prompting.prompt_loader import load_agent_instructions
 from app.schemas.reader_orchestration import (
     TranslationBatchGenerationOutput,
     TranslationBatchGroupOutput,

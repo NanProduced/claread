@@ -1,4 +1,4 @@
-"""Composable prompt sections for analysis agents."""
+"""Composable prompt sections for Reader agents."""
 
 from __future__ import annotations
 

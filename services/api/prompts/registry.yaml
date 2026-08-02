@@ -1,7 +1,5 @@
 version: "0.0.6"
 agents:
-  vocabulary:
-    file: agents/vocabulary.yaml
   reader_layer_vocabulary:
     file: agents/reader_layer_vocabulary.yaml
   reader_layer_grammar_bundle:
@@ -10,26 +8,12 @@ agents:
     file: agents/reader_semantic_outline.yaml
   reader_title_generation:
     file: agents/reader_title_generation.yaml
-  reader_ask:
-    file: agents/reader_ask.yaml
   reader_layer_translation:
     file: agents/reader_layer_translation.yaml
   dict_context_explain:
     file: agents/dict_context_explain.yaml
   dict_missing_fallback:
     file: agents/dict_missing_fallback.yaml
-  grammar:
-    file: agents/grammar.yaml
-  translation:
-    file: agents/translation.yaml
-  repair:
-    file: agents/repair.yaml
-  term:
-    file: agents/term.yaml
-  understanding:
-    file: agents/understanding.yaml
-  academic_translation:
-    file: agents/academic_translation.yaml
   daily_vocab:
     file: agents/daily_vocab.yaml
   daily_footer:
@@ -40,5 +24,3 @@ agents:
     file: agents/daily_review.yaml
   daily_refinement:
     file: agents/daily_refinement.yaml
-  learning_overview_hint:
-    file: agents/learning_overview_hint.yaml

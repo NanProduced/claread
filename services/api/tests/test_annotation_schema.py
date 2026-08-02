@@ -12,11 +12,6 @@ from app.schemas.internal.analysis import (
     AnnotationOutput,
     VocabHighlight,
 )
-from app.services.analysis.postprocess.draft_validators import (
-    validate_context_gloss_business_rules,
-    validate_phrase_gloss_business_rules,
-    validate_vocab_highlight_business_rules,
-)
 from app.schemas.analysis import SentenceEntry
 
 
@@ -66,37 +61,6 @@ def test_phrase_gloss_rejects_ellipsis_inside_explicit_spans() -> None:
             phrase_type="phrasal_verb",
             zh="把……变成……",
         )
-
-
-def test_business_rule_helpers_match_schema_constraints() -> None:
-    invalid_vocab = VocabHighlight.model_construct(
-        type="vocab_highlight",
-        sentence_id="s1",
-        text="two words",
-        occurrence=None,
-    )
-    invalid_phrase = PhraseGloss.model_construct(
-        type="phrase_gloss",
-        sentence_id="s1",
-        text="buzzword",
-        occurrence=None,
-        phrase_type="collocation",
-        zh="流行词",
-    )
-    invalid_proper = PhraseGloss.model_construct(
-        type="phrase_gloss",
-        sentence_id="s1",
-        text="Andrew",
-        occurrence=None,
-        phrase_type="proper_noun",
-        zh="安德鲁",
-    )
-    context = ContextGloss(sentence_id="s1", text="rendered", gloss="呈现", reason="词典义不足")
-
-    assert validate_vocab_highlight_business_rules(invalid_vocab)
-    assert validate_phrase_gloss_business_rules(invalid_phrase)
-    assert validate_phrase_gloss_business_rules(invalid_proper)
-    assert validate_context_gloss_business_rules(context) == []
 
 
 def test_annotation_output_accepts_mixed_annotations() -> None:

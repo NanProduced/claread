@@ -502,7 +502,7 @@ def test_budget_exhausted_terminal_reason_constant():
 
 @pytest.mark.asyncio
 async def test_production_stream_host_budget_exhausted_terminal_only():
-    """HostBudgetExhausted → terminal/interrupted only; never completed."""
+    """HostBudgetExhausted → agentic.terminal only; never completed."""
     from uuid import uuid4
 
     from app.services.reader_record_ask.production_stream import (
@@ -511,7 +511,6 @@ async def test_production_stream_host_budget_exhausted_terminal_only():
     from app.services.reader_record_ask.sse import (
         EVENT_AGENTIC_TERMINAL,
         EVENT_MESSAGE_COMPLETED,
-        EVENT_MESSAGE_INTERRUPTED,
     )
 
     class _FakeRepo:
@@ -607,7 +606,6 @@ async def test_production_stream_host_budget_exhausted_terminal_only():
     names = [e for e, _ in events]
     assert EVENT_MESSAGE_COMPLETED not in names
     assert EVENT_AGENTIC_TERMINAL in names
-    assert EVENT_MESSAGE_INTERRUPTED in names
     terminals = [p for n, p in events if n == EVENT_AGENTIC_TERMINAL]
     assert terminals
     assert terminals[0]["terminal_reason"] == TERMINAL_REASON_BUDGET_EXHAUSTED

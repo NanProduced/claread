@@ -23,12 +23,6 @@ from app.contracts.anchor_validation import (
     AnchorValidationError,
 )
 from app.contracts.annotation import compute_text_range_hash
-from app.schemas.reader_ask import (
-    ReaderAskActionConfirmResponse,
-    ReaderAskActionConfirmResult,
-    ReaderAskThreadListResponse,
-    ReaderAskThreadSummary,
-)
 
 USER_ID = "00000000-0000-0000-0000-000000000001"
 RECORD_ID = "00000000-0000-0000-0000-0000000000a6"
@@ -96,7 +90,7 @@ def _make_execution_config(
     (with ``max_tokens``) and ``usage_limits`` so budget-capture tests
     can assert both the provider cap and the host guard.
     """
-    from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig
+    from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
     from app.services.reader_record_ask.execution_config import (
         ReaderRecordAskExecutionConfig,
     )
@@ -129,11 +123,21 @@ def create_client() -> TestClient:
 
 
 class TestReaderRecordAskRoute:
-    def test_messages_require_auth(self) -> None:
+    def test_no_thread_message_url_is_removed(self) -> None:
         client = create_client()
 
         response = client.post(
             f"/reader/records/{RECORD_ID}/ask/messages",
+            json={"content": "hello"},
+        )
+
+        assert response.status_code == 404
+
+    def test_thread_stream_requires_auth(self) -> None:
+        client = create_client()
+
+        response = client.post(
+            f"/reader/records/{RECORD_ID}/ask/threads/{THREAD_ID}/messages/stream",
             json={"content": "hello"},
         )
 
@@ -144,252 +148,14 @@ class TestReaderRecordAskRoute:
         client = create_client()
 
         response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
+            f"/reader/records/{RECORD_ID}/ask/threads/{THREAD_ID}/messages/stream",
             headers=AUTH_HEADERS,
             json={"content": "hello", "task_mode": "explain"},
         )
 
         assert response.status_code == 422
 
-    @_mock_auth()
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
-        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
-        new_callable=AsyncMock,
-        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), object()),
-    )
-    def test_message_alias_route_streams_service_chunks(
-        self,
-        mock_prepare,
-        mock_send,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "Explain the article"},
-        )
-
-        assert response.status_code == 200
-        assert response.headers["content-type"].startswith("text/event-stream")
-        assert "event: message.completed" in response.text
-        mock_prepare.assert_awaited_once()
-        mock_send.assert_called_once()
-        assert mock_send.call_args.kwargs["prepared"] == mock_prepare.return_value
-
-    @_mock_auth()
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
-        new_callable=AsyncMock,
-        side_effect=HTTPException(
-            status_code=422,
-            detail="Unknown Ask Claread model option: glm-standard",
-        ),
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
-        return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
-    )
-    def test_explicit_deleted_glm_key_returns_typed_422(
-        self,
-        mock_send,
-        mock_prepare,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "hello", "model": "glm-standard"},
-        )
-
-        assert response.status_code == 422
-        assert "Unknown Ask Claread model option" in str(response.json()["detail"])
-        mock_prepare.assert_awaited_once()
-        mock_send.assert_not_called()
-
-    @_mock_auth()
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.confirm_reading_record_ask_action",
-        new_callable=AsyncMock,
-    )
-    def test_confirm_alias_route_uses_real_response_contract(
-        self,
-        mock_confirm,
-        mock_auth,
-    ) -> None:
-        client = create_client()
-        mock_confirm.return_value = ReaderAskActionConfirmResponse(
-            ok=True,
-            action_id="act-1",
-            status="executed",
-            result=ReaderAskActionConfirmResult(note_id="note-1"),
-        )
-
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/actions/act-1/confirm",
-            headers=AUTH_HEADERS,
-            json={"confirmed": True},
-        )
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "executed"
-        assert response.json()["result"]["note_id"] == "note-1"
-        mock_confirm.assert_awaited_once()
-
-    # ------------------------------------------------------------------
-    # H2: production-mode SSE error frame must use the fixed Chinese
-    # fallback message and must not leak the raw exception text.
-    # ------------------------------------------------------------------
-
-    @_mock_auth()
-    @patch(
-        "app.api.routes.reader_record_ask.get_settings",
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
-        new_callable=AsyncMock,
-        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), None),
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
-    )
-    def test_production_error_frame_uses_chinese_fallback_no_leak(
-        self,
-        mock_send,
-        mock_prepare,
-        mock_settings,
-        mock_auth,
-    ) -> None:
-        """In production mode, a generic streaming exception yields a fixed
-        Chinese fallback detail with a ``user_message`` field and never
-        leaks the raw exception text.
-        """
-
-        async def _boom(**kwargs):
-            raise RuntimeError("internal secret: connection refused to db")
-            yield  # pragma: no cover - generator marker
-
-        mock_send.return_value = _boom()
-        prod_settings = MagicMock()
-        prod_settings.app_env = "production"
-        mock_settings.return_value = prod_settings
-
-        client = create_client()
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "hello"},
-        )
-
-        assert response.status_code == 200
-        body = response.text
-        assert "event: error" in body
-        # Chinese fallback message is present.
-        assert "Ask Claread 暂时不可用。" in body
-        # user_message field is present.
-        assert '"user_message"' in body
-        # Raw exception text must NOT leak.
-        assert "internal secret" not in body
-        assert "connection refused to db" not in body
-        assert "RuntimeError" not in body
-
-    @_mock_auth()
-    @patch(
-        "app.api.routes.reader_record_ask.get_settings",
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.prepare_reading_record_ask_message",
-        new_callable=AsyncMock,
-        return_value=(UUID(RECORD_ID), UUID(THREAD_ID), None),
-    )
-    @patch(
-        "app.api.routes.reader_record_ask.rr_ask_svc.send_reading_record_ask_message",
-    )
-    def test_dev_error_frame_shows_raw_detail(
-        self,
-        mock_send,
-        mock_prepare,
-        mock_settings,
-        mock_auth,
-    ) -> None:
-        """In non-production (dev) mode, the raw exception text is shown
-        for debugging.  This preserves the existing dev-mode behavior.
-        """
-
-        async def _boom(**kwargs):
-            raise RuntimeError("dev-only diagnostic detail")
-            yield  # pragma: no cover - generator marker
-
-        mock_send.return_value = _boom()
-        dev_settings = MagicMock()
-        dev_settings.app_env = "development"
-        mock_settings.return_value = dev_settings
-
-        client = create_client()
-        response = client.post(
-            f"/reader/records/{RECORD_ID}/ask/messages",
-            headers=AUTH_HEADERS,
-            json={"content": "hello"},
-        )
-
-        assert response.status_code == 200
-        body = response.text
-        assert "event: error" in body
-        # Dev mode: raw detail is present for debugging.
-        assert "dev-only diagnostic detail" in body
-
-
 class TestReaderRecordAskService:
-    @pytest.mark.asyncio
-    async def test_send_message_without_anchor_validates_snapshot_and_delegates(self) -> None:
-        from app.services.reader_record_ask.service import send_reading_record_ask_message
-
-        request = MagicMock()
-        request.anchor = None
-        request.content = "hello"
-        request.entry_action = "ask_about_this"
-        request.model = None
-
-        with (
-            patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
-                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
-                new_callable=AsyncMock,
-            ) as mock_load_snapshot_facts,
-            patch(
-                "app.services.reader_record_ask.service.thread_service.ensure_default_reading_record_thread",
-                new_callable=AsyncMock,
-                return_value={"id": THREAD_ID, "title": "Test"},
-            ),
-            patch(
-                "app.services.reader_record_ask.service.stream_service.stream_thread_message",
-                return_value=_stream_chunks("event: message.completed\ndata: {}\n\n"),
-            ) as mock_stream,
-        ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = False
-            mock_load_snapshot_facts.return_value = MagicMock(
-                record=MagicMock(title="Test"),
-            )
-            generator = send_reading_record_ask_message(
-                user_id=UUID(USER_ID),
-                reading_record_id=RECORD_ID,
-                request=request,
-            )
-            chunks = [chunk async for chunk in generator]
-
-        assert chunks == ["event: message.completed\ndata: {}\n\n"]
-        assert mock_load_snapshot_facts.await_count >= 1
-        mock_stream.assert_called_once()
-
     @pytest.mark.asyncio
     async def test_send_message_anchor_record_mismatch_raises_typed_error(self) -> None:
         from app.services.reader_record_ask.service import send_reading_record_ask_message
@@ -502,9 +268,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -534,11 +297,7 @@ class TestReaderRecordAskService:
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
                 side_effect=_fake_agentic,
             ),
-            patch(
-                "app.services.reader_record_ask.service.stream_service.stream_thread_message",
-            ) as mock_legacy,
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             chunks = [
                 chunk
                 async for chunk in send_reading_record_ask_message(
@@ -549,7 +308,6 @@ class TestReaderRecordAskService:
             ]
 
         assert chunks == ["event: message.completed\ndata: {}\n\n"]
-        mock_legacy.assert_not_called()
         mock_resolve.assert_awaited_once()
         assert mock_resolve.await_args.kwargs["requested_key"] is None
         # ASK-WEB-G1-R1: route forwards web_search_mode to the execution
@@ -584,9 +342,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -617,7 +372,6 @@ class TestReaderRecordAskService:
                 side_effect=_fake_agentic,
             ),
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             chunks = [
                 chunk
                 async for chunk in send_reading_record_ask_message(
@@ -658,9 +412,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -687,7 +438,6 @@ class TestReaderRecordAskService:
                 side_effect=_fake_agentic,
             ),
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             chunks = [
                 chunk
                 async for chunk in send_reading_record_ask_message(
@@ -718,9 +468,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -742,7 +489,6 @@ class TestReaderRecordAskService:
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
             ) as mock_agentic,
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             with pytest.raises(HTTPException) as excinfo:
                 await prepare_reading_record_ask_message(
                     user_id=UUID(USER_ID),
@@ -772,9 +518,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -800,7 +543,6 @@ class TestReaderRecordAskService:
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
             ) as mock_agentic,
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             with pytest.raises(HTTPException) as excinfo:
                 await prepare_reading_record_ask_message(
                     user_id=UUID(USER_ID),
@@ -833,9 +575,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -861,7 +600,6 @@ class TestReaderRecordAskService:
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
             ) as mock_agentic,
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             with pytest.raises(HTTPException) as excinfo:
                 await prepare_reading_record_ask_message(
                     user_id=UUID(USER_ID),
@@ -893,9 +631,6 @@ class TestReaderRecordAskService:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -921,7 +656,6 @@ class TestReaderRecordAskService:
                 "app.services.reader_record_ask.production_stream.stream_agentic_thread_message",
             ) as mock_agentic,
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             with pytest.raises(HTTPException) as excinfo:
                 await prepare_reading_record_ask_message(
                     user_id=UUID(USER_ID),
@@ -932,53 +666,6 @@ class TestReaderRecordAskService:
         assert excinfo.value.status_code == 503
         assert excinfo.value.detail["code"] == "model_unconfigured"
         mock_agentic.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_confirm_action_uses_thread_scoped_runtime(self) -> None:
-        from app.services.reader_record_ask.service import confirm_reading_record_ask_action
-
-        with (
-            patch(
-                "app.services.reader_record_ask.service.thread_service.list_reading_record_threads",
-                new_callable=AsyncMock,
-                return_value=ReaderAskThreadListResponse(
-                    items=[
-                        ReaderAskThreadSummary(
-                            id=THREAD_ID,
-                            record_id=RECORD_ID,
-                            title="Test",
-                            is_default=True,
-                            selected_model=None,
-                            archived_at=None,
-                            created_at="2026-06-25T00:00:00Z",
-                            updated_at="2026-06-25T00:00:00Z",
-                            last_message_at=None,
-                        )
-                    ]
-                ),
-            ),
-            patch(
-                "app.services.reader_record_ask.service.action_service.confirm_action",
-                new_callable=AsyncMock,
-                return_value=ReaderAskActionConfirmResponse(
-                    ok=True,
-                    action_id="act-1",
-                    status="executed",
-                    result=ReaderAskActionConfirmResult(note_id="note-1"),
-                ),
-            ) as mock_confirm,
-        ):
-            result = await confirm_reading_record_ask_action(
-                user_id=UUID(USER_ID),
-                reading_record_id=RECORD_ID,
-                action_id="act-1",
-                request=MagicMock(confirmed=True),
-            )
-
-        assert result.status == "executed"
-        assert result.result.note_id == "note-1"
-        mock_confirm.assert_awaited_once()
-
 
 # ---------------------------------------------------------------------------
 # ASK-M1-R1: Retry preflight + Send/Retry budget capture
@@ -1124,9 +811,6 @@ class TestReaderRecordAskBudgetCapture:
 
         with (
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -1155,7 +839,6 @@ class TestReaderRecordAskBudgetCapture:
                 side_effect=_fake_agentic,
             ),
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             chunks = [
                 chunk
                 async for chunk in send_reading_record_ask_message(
@@ -1188,7 +871,7 @@ class TestReaderRecordAskBudgetCapture:
         derived from the persisted Pro option — proving Send and Retry
         have identical budget propagation.
         """
-        from app.services.reader_ask.model_options import ReaderAskRuntimeBudgetConfig
+        from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
         from app.services.reader_record_ask.execution_config import (
             ReaderRecordAskExecutionConfig,
         )
@@ -1225,7 +908,6 @@ class TestReaderRecordAskBudgetCapture:
         repo = MagicMock()
         repo.get_thread = AsyncMock(return_value={"id": THREAD_ID})
         persisted_snapshot = {
-            "retry_lane": "agentic",
             "execution_version": "reader_record_ask_agentic_v2",
             "model_option_key": "deepseek-pro",
             "web_search_mode": "disabled",
@@ -1255,9 +937,6 @@ class TestReaderRecordAskBudgetCapture:
                 return_value=repo,
             ),
             patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
                 "app.services.reader_record_ask.service._load_snapshot_facts_raw",
                 new_callable=AsyncMock,
                 return_value=MagicMock(record=MagicMock(title="Test")),
@@ -1276,7 +955,6 @@ class TestReaderRecordAskBudgetCapture:
                 side_effect=_fake_retry,
             ),
         ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = True
             prepared = await prepare_reading_record_ask_retry(
                 user_id=UUID(USER_ID),
                 reading_record_id=RECORD_ID,
@@ -1296,8 +974,7 @@ class TestReaderRecordAskBudgetCapture:
             ]
 
         assert chunks == ["event: message.completed\ndata: {}\n\n"]
-        # Preflight resolved to agentic mode with the Pro execution config.
-        assert prepared.mode == "agentic"
+        # Preflight resolved the v2 Pro execution config.
         assert prepared.execution is pro_execution
         assert prepared.facts is not None
         # Exact resolved model — Pro model object.
@@ -1312,94 +989,3 @@ class TestReaderRecordAskBudgetCapture:
         assert usage_limits.output_tokens_limit == 19200
         assert usage_limits.input_tokens_limit is None
         assert usage_limits.total_tokens_limit is None
-
-    @pytest.mark.asyncio
-    async def test_retry_legacy_mode_does_not_resolve_execution(self) -> None:
-        """Legacy retry (agentic flag off) — no execution config, no model.
-
-        ASK-M1-R1: ``mode`` is fixed at preflight time. When the
-        agentic flag is off, ``prepare_reading_record_ask_retry`` returns
-        ``mode="legacy"`` with ``execution=None`` and the generator
-        delegates to ``stream_service.retry_thread_message`` without
-        touching the agentic path.
-        """
-        from app.services.reader_record_ask.service import (
-            prepare_reading_record_ask_retry,
-            retry_reading_record_ask_message,
-        )
-
-        captured: dict[str, object] = {}
-
-        async def _fake_legacy_retry(**kwargs):
-            captured.update(kwargs)
-            yield "event: message.completed\ndata: {}\n\n"
-
-        message_id = uuid4()
-        repo = MagicMock()
-        repo.get_thread = AsyncMock(return_value={"id": THREAD_ID})
-        repo.get_assistant_message_with_preceding_user_message = AsyncMock(
-            return_value=(
-                {
-                    "metadata_json": {
-                        "retry_snapshot": {"retry_lane": "legacy"}
-                    }
-                },
-                {
-                    "metadata_json": {
-                        "retry_snapshot": {"retry_lane": "legacy"}
-                    }
-                },
-            )
-        )
-
-        with (
-            patch(
-                "app.services.reader_record_ask.repository.ReaderRecordAskRepository",
-                return_value=repo,
-            ),
-            patch(
-                "app.services.reader_record_ask.service.ReaderRecordAskRepository",
-                return_value=repo,
-            ),
-            patch(
-                "app.services.reader_record_ask.service.get_settings",
-            ) as mock_settings,
-            patch(
-                "app.services.reader_record_ask.service._load_snapshot_facts_raw",
-                new_callable=AsyncMock,
-                return_value=MagicMock(record=MagicMock(title="Test")),
-            ),
-            patch(
-                "app.services.reader_record_ask.service.stream_service.retry_thread_message",
-                side_effect=_fake_legacy_retry,
-            ),
-            patch(
-                "app.services.reader_record_ask.production_stream.retry_agentic_thread_message",
-            ) as mock_agentic,
-        ):
-            mock_settings.return_value.reader_record_ask_agentic_enabled = False
-            prepared = await prepare_reading_record_ask_retry(
-                user_id=UUID(USER_ID),
-                reading_record_id=RECORD_ID,
-                thread_id=UUID(THREAD_ID),
-                message_id=message_id,
-            )
-            chunks = [
-                chunk
-                async for chunk in retry_reading_record_ask_message(
-                    user_id=UUID(USER_ID),
-                    reading_record_id=RECORD_ID,
-                    thread_id=UUID(THREAD_ID),
-                    message_id=message_id,
-                    request=MagicMock(),
-                    prepared=prepared,
-                )
-            ]
-
-        assert chunks == ["event: message.completed\ndata: {}\n\n"]
-        assert prepared.mode == "legacy"
-        assert prepared.execution is None
-        # Legacy path never touches the agentic stream.
-        mock_agentic.assert_not_called()
-        # Legacy retry received message_id + retry_body.
-        assert captured["message_id"] == message_id

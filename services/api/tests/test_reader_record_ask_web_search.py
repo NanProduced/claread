@@ -1033,8 +1033,7 @@ class TestSelectedModelPayloadR3Projection:
 
     The R3 contract requires that ``available`` only appears when a real
     adapter is registered AND constructible for the current model
-    option's provider. The function is in ``app.services.reader_ask.service``
-    (the shared Ask service module), not ``reader_record_ask.service``.
+    option's provider. The function is in ``reader_record_ask.service``.
 
     These tests monkeypatch the production registry to an empty registry
     so they verify the projection logic without depending on real adapter
@@ -1043,7 +1042,7 @@ class TestSelectedModelPayloadR3Projection:
 
     def _make_option(self, *, key: str, label: str, main_model_name: str) -> object:
         from app.services.ai_usage.billing import WeightedTokensBillingConfig
-        from app.services.reader_ask.model_options import (
+        from app.services.reader_record_ask.model_options import (
             ReaderAskRuntimeBudgetConfig,
             ResolvedReaderAskModelOption,
         )
@@ -1074,7 +1073,7 @@ class TestSelectedModelPayloadR3Projection:
         provider. A non-empty settings string alone does not constitute
         a capability.
         """
-        from app.services.reader_ask import service as ask_service
+        from app.services.reader_record_ask import thread_service as ask_service
         from app.services.reader_record_ask import web_search_common
         from app.services.reader_record_ask.web_search_adapter_registry import (
             WebSearchAdapterRegistry,
@@ -1101,7 +1100,7 @@ class TestSelectedModelPayloadR3Projection:
         real ``WebSearchBackend`` adapter is registered for the DeepSeek
         provider. The capability is per-model-option, not global.
         """
-        from app.services.reader_ask import service as ask_service
+        from app.services.reader_record_ask import thread_service as ask_service
         from app.services.reader_record_ask import web_search_common
         from app.services.reader_record_ask.web_search_adapter_registry import (
             WebSearchAdapterRegistry,
@@ -1135,8 +1134,8 @@ class TestSelectedModelPayloadR3Projection:
         config the option resolves to.
         """
         from app.services.ai_usage.billing import WeightedTokensBillingConfig
-        from app.services.reader_ask import service as ask_service
-        from app.services.reader_ask.model_options import (
+        from app.services.reader_record_ask import thread_service as ask_service
+        from app.services.reader_record_ask.model_options import (
             ReaderAskRuntimeBudgetConfig,
             ResolvedReaderAskModelOption,
         )

@@ -29,7 +29,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.llm.types import ModelAdapter, ResolvedModelConfig
-from app.services.reader_ask.model_options import (
+from app.services.reader_record_ask.model_options import (
     ReaderAskRuntimeBudgetConfig,
     ResolvedReaderAskModelOption,
 )

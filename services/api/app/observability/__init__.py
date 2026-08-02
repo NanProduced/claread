@@ -2,10 +2,8 @@
 
 from app.observability.tracing_context import (
     KNOWN_SURFACES,
-    SURFACE_ANALYZE_DIRECT,
     SURFACE_DAILY_READER_PIPELINE,
-    SURFACE_EVAL_WORKFLOW_LAB,
-    SURFACE_OVERVIEW_WORKER,
+    SURFACE_READER_ORCHESTRATION,
     disabled_tracing,
     get_trace_surface,
     set_trace_surface,
@@ -13,10 +11,8 @@ from app.observability.tracing_context import (
 
 __all__ = [
     "KNOWN_SURFACES",
-    "SURFACE_ANALYZE_DIRECT",
     "SURFACE_DAILY_READER_PIPELINE",
-    "SURFACE_EVAL_WORKFLOW_LAB",
-    "SURFACE_OVERVIEW_WORKER",
+    "SURFACE_READER_ORCHESTRATION",
     "disabled_tracing",
     "get_trace_surface",
     "set_trace_surface",

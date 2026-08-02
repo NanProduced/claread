@@ -19,7 +19,7 @@ from app.infra.bailian_embedding import EmbeddingCallResult
 from app.infra.bailian_rerank import RerankCallResult, RerankResult
 from app.infra.zilliz_client import SearchResult
 from app.schemas.internal.execution_plan import GoalExecutionPlan, GoalPolicy
-from app.services.analysis.prompting.example_strategy import (
+from app.services.prompting.example_strategy import (
     get_grammar_example_strategy,
     get_translation_example_strategy,
     get_vocabulary_example_strategy,
@@ -118,7 +118,7 @@ class TestRAGRestriction:
 class TestGrammarRAGFallback:
     @pytest.mark.anyio
     async def test_empty_sentences_returns_fallback(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         result = await query_grammar_rag("gaokao", [])
@@ -128,7 +128,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_retrieval_error_returns_fallback(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         with patch(
@@ -141,7 +141,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_empty_candidates_returns_fallback(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         with patch(
@@ -154,7 +154,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_low_confidence_returns_fallback(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         mock_rerank = RerankCallResult(
@@ -185,7 +185,7 @@ class TestGrammarRAGFallback:
             "app.infra.bailian_rerank.rerank_with_metadata",
             return_value=mock_rerank,
         ), patch(
-            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+            "app.services.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
             _mock_rag_settings(mock_settings)
             result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
@@ -207,7 +207,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_successful_rag_returns_examples(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         mock_rerank = RerankCallResult(
@@ -255,7 +255,7 @@ class TestGrammarRAGFallback:
             "app.infra.bailian_rerank.rerank_with_metadata",
             return_value=mock_rerank,
         ), patch(
-            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+            "app.services.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
             _mock_rag_settings(mock_settings)
             result = await query_grammar_rag("gaokao", [_TEST_SENTENCE])
@@ -303,7 +303,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_injection_budget_limits_grammar_note_to_2(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
         three_results = [
@@ -341,7 +341,7 @@ class TestGrammarRAGFallback:
             "app.infra.bailian_rerank.rerank_with_metadata",
             return_value=mock_rerank,
         ), patch(
-            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+            "app.services.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
             _mock_rag_settings(mock_settings)
             result = await query_grammar_rag("gaokao", [_SHORT_SENTENCE])
@@ -362,7 +362,7 @@ class TestGrammarRAGFallback:
 
     @pytest.mark.anyio
     async def test_diversity_dedup_removes_duplicate_labels(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             _diversity_dedup,
             _ScoredCandidate,
         )
@@ -411,7 +411,7 @@ class TestRerankDocCanonicalContract:
         from app.infra.bailian_embedding import EmbeddingCallResult
         from app.infra.bailian_rerank import RerankCallResult, RerankResult
         from app.infra.zilliz_client import SearchResult
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
 
@@ -481,7 +481,7 @@ class TestRerankDocCanonicalContract:
         ), patch(
             "app.infra.bailian_rerank.rerank_with_metadata", side_effect=_capture_rerank,
         ), patch(
-            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+            "app.services.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
             mock_settings.return_value.grammar_rag_confidence_threshold = 0.3
             mock_settings.return_value.grammar_rag_ann_topk = 8
@@ -517,7 +517,7 @@ class TestRerankDocCanonicalContract:
         from app.infra.bailian_embedding import EmbeddingCallResult
         from app.infra.bailian_rerank import RerankCallResult, RerankResult
         from app.infra.zilliz_client import SearchResult
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             query_grammar_rag,
         )
 
@@ -568,7 +568,7 @@ class TestRerankDocCanonicalContract:
         ), patch(
             "app.infra.bailian_rerank.rerank_with_metadata", side_effect=_capture,
         ), patch(
-            "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+            "app.services.prompting.rag.grammar_rag_service.get_settings",
         ) as mock_settings:
             mock_settings.return_value.grammar_rag_confidence_threshold = 0.3
             mock_settings.return_value.grammar_rag_ann_topk = 8
@@ -595,7 +595,7 @@ class TestRerankDocCanonicalContract:
 class TestRAGDebugInfo:
     @pytest.mark.anyio
     async def test_debug_info_has_required_fields(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import (
+        from app.services.prompting.rag.grammar_rag_service import (
             build_rag_debug_info,
             query_grammar_rag,
         )

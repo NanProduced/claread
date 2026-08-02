@@ -150,7 +150,6 @@ class Settings(BaseSettings):
     guardian_api_key: str = ""
     daily_reader_admin_openid: str = ""
     daily_reader_admin_api_key: str = ""
-    eval_admin_api_key: str = ""
     server_base_url: str = "http://127.0.0.1:8000"
 
     # Grammar RAG（默认关闭，Readiness Gate 阶段仅做骨架接入）

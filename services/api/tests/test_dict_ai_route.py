@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import dict as dict_route
 from app.api.routes.dict import router as dict_router
-from app.services.analysis.credit_service import CreditReservation, LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT
+from app.services.credits import CreditReservation, LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT
 from app.services.dictionary.errors import WordNotFoundError
 from app.services.dictionary_ai.service import (
     CanonicalDictionaryAvailableError,

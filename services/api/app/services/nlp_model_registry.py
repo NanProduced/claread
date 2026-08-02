@@ -7,14 +7,12 @@ how to use the returned ``Language`` object.
 
 Why this module exists
 ---------------------
-The repository already contains two domain-specific spaCy loaders
-(``app.services.dictionary.nlp`` and
-``app.services.analysis.preprocess.input_preparation``). The reader
+The repository already contains a domain-specific dictionary spaCy loader
+(``app.services.dictionary.nlp``). The Reader
 sentence-segmentation provider needs a parser-backed ``en_core_web_sm``
 pipeline, and adding a third independent loader inline in the reader
 base builder was explicitly ruled out (R7-1). This registry is the
-narrow interface those and future consumers can migrate to; the two
-legacy loaders are intentionally left untouched here (separate task).
+narrow interface that the Reader and future consumers can share.
 
 Guarantees
 ----------

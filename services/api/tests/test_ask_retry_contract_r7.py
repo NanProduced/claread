@@ -121,22 +121,6 @@ async def test_r7_remember_never_demotes_completed() -> None:
     assert hook.intended_status == "completed"
 
 
-def test_r7_legacy_finally_uses_ensure_synced() -> None:
-    src = (
-        REPO_ROOT
-        / "services"
-        / "api"
-        / "app"
-        / "services"
-        / "ask_runtime"
-        / "stream_service.py"
-    ).read_text(encoding="utf-8")
-    assert "ensure_synced" in src
-    assert "submission_terminal_status" in src
-    # Must not set _fired on exception path via finally-only true success
-    assert "self._fired = True" not in src
-
-
 def test_r7_agentic_retries_ensure_synced() -> None:
     src = (
         REPO_ROOT
@@ -180,17 +164,6 @@ async def test_r7_stale_generation_still_cas_guarded() -> None:
         assert await hook.mark("completed") is True
     assert seen["claim_generation"] == gen
     assert seen["status"] == "completed"
-
-
-def test_r7_legacy_stream_wires_submission_hook() -> None:
-    src = inspect.getsource(
-        __import__(
-            "app.services.ask_runtime.stream_service",
-            fromlist=["stream_thread_message"],
-        ).stream_thread_message
-    )
-    assert "SubmissionTerminalHook" in src
-    assert "client_submission_id" in src
 
 
 def test_r7_fe_eof_triggers_reconcile_source() -> None:

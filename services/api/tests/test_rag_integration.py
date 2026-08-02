@@ -97,11 +97,11 @@ _SENTENCES = [
 class TestFullRAGPipeline:
     @pytest.mark.anyio
     async def test_full_rag_pipeline_grammar_note(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", return_value=_MOCK_SEARCH_RESULTS), \
              patch("app.infra.bailian_rerank.rerank_with_metadata", return_value=_MOCK_RERANK_RESULT), \
-             patch("app.services.analysis.prompting.rag.grammar_rag_service.get_settings") as ms:
+             patch("app.services.prompting.rag.grammar_rag_service.get_settings") as ms:
             _mock_rag_settings(ms)
             result = await query_grammar_rag("gaokao", _SENTENCES, output_type="grammar_note")
         assert result.selection_mode == "rag"
@@ -116,7 +116,7 @@ class TestFullRAGPipeline:
 
     @pytest.mark.anyio
     async def test_full_rag_pipeline_sentence_analysis(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         sa_results = [
             SearchResult(id="10", score=0.90, entity={
                 "example_id": "sa-kaoyan-000",
@@ -140,7 +140,7 @@ class TestFullRAGPipeline:
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", return_value=sa_results), \
              patch("app.infra.bailian_rerank.rerank_with_metadata", return_value=sa_rerank), \
-             patch("app.services.analysis.prompting.rag.grammar_rag_service.get_settings") as ms:
+             patch("app.services.prompting.rag.grammar_rag_service.get_settings") as ms:
             _mock_rag_settings(ms)
             result = await query_grammar_rag("kaoyan", _SENTENCES, output_type="sentence_analysis")
         assert result.selection_mode == "rag"
@@ -151,7 +151,7 @@ class TestFullRAGPipeline:
 class TestRAGFallbackScenarios:
     @pytest.mark.anyio
     async def test_rag_fallback_on_embedding_error(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", side_effect=Exception("API error")):
             result = await query_grammar_rag("gaokao", _SENTENCES)
         assert result.is_fallback
@@ -159,7 +159,7 @@ class TestRAGFallbackScenarios:
 
     @pytest.mark.anyio
     async def test_rag_fallback_on_zilliz_error(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", side_effect=Exception("Zilliz down")):
             result = await query_grammar_rag("gaokao", _SENTENCES)
@@ -167,18 +167,18 @@ class TestRAGFallbackScenarios:
 
     @pytest.mark.anyio
     async def test_rag_fallback_on_rerank_error(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", return_value=_MOCK_SEARCH_RESULTS), \
              patch("app.infra.bailian_rerank.rerank_with_metadata", side_effect=Exception("Rerank error")), \
-             patch("app.services.analysis.prompting.rag.grammar_rag_service.get_settings") as ms:
+             patch("app.services.prompting.rag.grammar_rag_service.get_settings") as ms:
             _mock_rag_settings(ms)
             result = await query_grammar_rag("gaokao", _SENTENCES)
         assert result.is_fallback
 
     @pytest.mark.anyio
     async def test_rag_fallback_on_empty_candidates(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", return_value=[]):
             result = await query_grammar_rag("gaokao", _SENTENCES)
@@ -187,7 +187,7 @@ class TestRAGFallbackScenarios:
 
     @pytest.mark.anyio
     async def test_rag_fallback_on_low_confidence(self):
-        from app.services.analysis.prompting.rag.grammar_rag_service import query_grammar_rag
+        from app.services.prompting.rag.grammar_rag_service import query_grammar_rag
         low_score_results = [
             SearchResult(id="1", score=0.85, entity={
                 "example_id": "test-1", "source_sentence": "s1",
@@ -208,7 +208,7 @@ class TestRAGFallbackScenarios:
         with patch("app.infra.bailian_embedding.embed_single_with_metadata", return_value=_MOCK_EMBEDDING_RESULT), \
              patch("app.infra.zilliz_client.zilliz_search", return_value=low_score_results), \
              patch("app.infra.bailian_rerank.rerank_with_metadata", return_value=low_rerank), \
-             patch("app.services.analysis.prompting.rag.grammar_rag_service.get_settings") as ms:
+             patch("app.services.prompting.rag.grammar_rag_service.get_settings") as ms:
             _mock_rag_settings(ms)
             result = await query_grammar_rag("gaokao", _SENTENCES)
         assert result.is_fallback
@@ -218,7 +218,7 @@ class TestRAGFallbackScenarios:
 class TestAsyncStrategyBuilder:
     @pytest.mark.anyio
     async def test_grammar_bundle_async_with_rag_enabled(self):
-        from app.services.analysis.prompting.strategy_builder import (
+        from app.services.prompting.strategy_builder import (
             build_grammar_bundle_async,
         )
         plan = _make_plan(few_shot_mode="baseline")
@@ -226,7 +226,7 @@ class TestAsyncStrategyBuilder:
              patch("app.infra.zilliz_client.zilliz_search", return_value=_MOCK_SEARCH_RESULTS) as mock_search, \
              patch("app.infra.bailian_rerank.rerank_with_metadata", return_value=_MOCK_RERANK_RESULT) as mock_rerank, \
              patch(
-                 "app.services.analysis.prompting.rag.grammar_rag_service.get_settings",
+                 "app.services.prompting.rag.grammar_rag_service.get_settings",
              ) as rag_ms, \
              patch("app.config.settings.get_settings") as cfg_ms:
             _mock_rag_settings(rag_ms)
@@ -260,7 +260,7 @@ class TestAsyncStrategyBuilder:
 
     @pytest.mark.anyio
     async def test_grammar_bundle_async_with_rag_disabled(self):
-        from app.services.analysis.prompting.strategy_builder import (
+        from app.services.prompting.strategy_builder import (
             build_grammar_bundle_async,
         )
         plan = _make_plan(few_shot_mode="rag")
@@ -272,7 +272,7 @@ class TestAsyncStrategyBuilder:
 
     @pytest.mark.anyio
     async def test_grammar_bundle_async_baseline_mode(self):
-        from app.services.analysis.prompting.strategy_builder import (
+        from app.services.prompting.strategy_builder import (
             build_grammar_bundle_async,
         )
         plan = _make_plan(few_shot_mode="baseline")

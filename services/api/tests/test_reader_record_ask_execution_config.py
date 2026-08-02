@@ -32,8 +32,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.config.settings import Settings
-from app.services.reader_ask import model_options as model_options_svc
-from app.services.reader_ask.model_options import (
+from app.services.reader_record_ask import model_options as model_options_svc
+from app.services.reader_record_ask.model_options import (
     ReaderAskRuntimeBudgetConfig,
     ResolvedReaderAskModelOption,
 )

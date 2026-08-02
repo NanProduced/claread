@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.analysis.prompting.rag.grammar_retrieval_hints import (
+from app.services.prompting.rag.grammar_retrieval_hints import (
     SentenceSignals,
     build_query_text,
     extract_grammar_tags_from_sentence,
