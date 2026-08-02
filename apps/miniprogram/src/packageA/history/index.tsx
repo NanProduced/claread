@@ -1,3 +1,5 @@
+// @ts-nocheck
+// CUTOVER-MINI-LONG: deregistered in Logical phase; scheduled for Physical deletion.
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { View, Text, ScrollView, Image } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'

@@ -1,3 +1,5 @@
+// @ts-nocheck
+// CUTOVER-MINI-LONG: deregistered in Logical phase; scheduled for Physical deletion.
 import Taro from '@tarojs/taro'
 import { useArticleStore } from '../../../stores/article'
 import { updateRecord } from '../../../services/storage'

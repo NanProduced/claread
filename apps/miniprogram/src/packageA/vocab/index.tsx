@@ -222,7 +222,7 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
     return list
   }, [vocabList, debouncedQuery, filterStatus, sortMode])
 
-  const goToDailyReader = (articleId: string, e?: StopPropagationEvent) => {
+  const goToDailyReader = (articleId: string | undefined, e?: StopPropagationEvent) => {
     if (e) e.stopPropagation()
     if (!articleId) return
     Taro.navigateTo({ url: `${ROUTES.DAILY_READER}?id=${articleId}` })

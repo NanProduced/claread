@@ -11,6 +11,11 @@
  * 代码在 Logical 阶段可继续 typecheck；Physical 阶段会随旧页面一并删除。
  */
 
+import type {
+  InlineMarkModel,
+  AcademicInlineMarkModel,
+} from './reader-primitive.vm'
+
 export type {
   TextAnchor,
   SpanRef,

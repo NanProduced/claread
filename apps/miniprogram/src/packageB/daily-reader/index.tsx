@@ -13,7 +13,6 @@ import { highlightToInlineMark } from '../../services/api/adapters/daily-reader-
 import type { DailyReaderHighlight } from '../../types/view/daily-reader.vm'
 import type { InlineMarkModel, DictionaryResult } from '../../types/view/reader-primitive.vm'
 import { isFavorited, saveFavorite, removeFavorite, saveVocabEntry } from '../../services/storage'
-import { CloudSyncService } from '../../services/cloudSync.service'
 import { track } from '../../services/analytics'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
 import type { FavoriteRecord } from '../../types/view/favorites.vm'

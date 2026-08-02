@@ -7,7 +7,6 @@
 import Taro from '@tarojs/taro'
 import { useAuthStore } from '../stores/auth'
 import { fetchWeChatLogin } from './api/client'
-import { getAllRecords } from './storage'
 
 export interface LoginResult {
   success: boolean
@@ -69,36 +68,11 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
     // 检查是否首次登录（user_configured 未设置）
     const isFirstLogin = !Taro.getStorageSync('user_configured')
 
-    // 登录成功后，同步本地资产到云端（静默进行，失败不阻塞）
-    // 注意：records 必须先于 favorites/vocab 同步，因为后端 favorites 表依赖 analysis_record_id
-    syncLocalAssetsToCloud()
 
     return { success: true, isFirstLogin }
   } catch (err) {
     console.warn('[auth] ensureLoggedIn failed', err)
     Taro.showToast({ title: '登录失败，请重试', icon: 'none' })
     return { success: false, isFirstLogin: false }
-  }
-}
-
-/**
- * 登录后同步本地记录到云端。
- *
- * 顺序：records
- * 策略：fire-and-forget，失败静默忽略，不阻塞用户体验。
- */
-async function syncLocalAssetsToCloud(): Promise<void> {
-  try {
-    const { CloudSyncService } = await import('./cloudSync.service')
-
-    const records = getAllRecords()
-
-    // 同步 records
-    records.forEach((r) =>
-      CloudSyncService.syncRecord(r).catch(() => {})
-    )
-  } catch (err) {
-    // 静默失败，不影响登录流程
-    console.warn('[auth] syncLocalAssetsToCloud failed', err)
   }
 }
