@@ -8,7 +8,7 @@ import type {
 /**
  * D6-A1 read-only anchor draft projection.
  *
- * The new `/app/reader-record/{recordId}` surface must be able to convert a
+ * The canonical `/app/reader/{recordId}` surface must be able to convert a
  * a read-only source selection into the new Reading Record anchor shape
  *   (record_id, base_id, generation, unit_id, anchor_segment_id,
  *    unit-local UTF-16 start/end, selected_text, text_hash, scope)

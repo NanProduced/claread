@@ -17,7 +17,7 @@ import {
   getUpstreamCurrentAnalysisTask,
   submitUpstreamAnalysisTask,
 } from "@/services/api/tasks";
-import { legacyAppReaderRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import {
   getCurrentAnalysisTaskFromWeb,
   submitAnalysisFromWeb,
@@ -65,7 +65,7 @@ describe("analysis BFF active task projection", () => {
         taskId: "task-1",
         recordId: "record-1",
         status: "running",
-        readerUrl: legacyAppReaderRoute("record-1"),
+        readerUrl: appReaderRoute("record-1"),
         failureCode: null,
         failureMessage: null,
       },
@@ -132,11 +132,11 @@ describe("analysis BFF active task projection", () => {
       taskId: "active-task",
       recordId: "active-record",
       status: "running",
-      readerUrl: legacyAppReaderRoute("active-record"),
+      readerUrl: appReaderRoute("active-record"),
     });
   });
 
-  it("keeps legacy analysis submit landing on the legacy ReaderWorkbench route", async () => {
+  it("keeps analysis submit landing on the canonical Reader route", async () => {
     vi.mocked(submitUpstreamAnalysisTask).mockResolvedValue({
       ok: true,
       data: {
@@ -160,7 +160,7 @@ describe("analysis BFF active task projection", () => {
       taskId: "legacy-task-1",
       recordId: "legacy-cloud-record-1",
       status: "succeeded",
-      readerUrl: legacyAppReaderRoute("legacy-cloud-record-1"),
+      readerUrl: appReaderRoute("legacy-cloud-record-1"),
       message: "解析完成，正在打开 Reader。",
     });
   });

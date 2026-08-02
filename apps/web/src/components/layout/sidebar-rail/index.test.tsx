@@ -72,7 +72,7 @@ describe("SidebarRail z-index contract", () => {
         recentRecords={[
           {
             readingRecordId: "record/a?b",
-            readerUrl: "/app/reader-record/record%2Fa%3Fb",
+            readerUrl: "/app/reader/record%2Fa%3Fb",
             title: "待确认文章",
             createdAt: "2026-07-14T00:00:00Z",
             sourceType: "text",
@@ -106,7 +106,7 @@ describe("SidebarRail z-index contract", () => {
         sidebarMode="locked"
         recentRecords={Array.from({ length: 11 }, (_, index) => ({
           readingRecordId: `record_${index}`,
-          readerUrl: `/app/reader-record/record_${index}`,
+          readerUrl: `/app/reader/record_${index}`,
           title: `文章 ${index}`,
           createdAt: "2026-07-14T00:00:00Z",
           sourceType: "text" as const,
@@ -125,7 +125,7 @@ describe("SidebarRail z-index contract", () => {
 
   it("uses the semantic shell-navigation z-index for the overlay surface in all sidebar states", () => {
     const { container, rerender } = render(
-      <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="closed" />,
+      <SidebarRail pathname="/app/reader/record_1" sidebarMode="closed" />,
     );
 
     const sidebar = container.querySelector<HTMLElement>('[data-app-sidebar="rail"]');
@@ -134,7 +134,7 @@ describe("SidebarRail z-index contract", () => {
 
     // Overlay state.
     rerender(
-      <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="overlay" />,
+      <SidebarRail pathname="/app/reader/record_1" sidebarMode="overlay" />,
     );
     const overlaySidebar = container.querySelector<HTMLElement>(
       '[data-app-sidebar="rail"]',
@@ -143,7 +143,7 @@ describe("SidebarRail z-index contract", () => {
 
     // Locked state.
     rerender(
-      <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="locked" />,
+      <SidebarRail pathname="/app/reader/record_1" sidebarMode="locked" />,
     );
     const lockedSidebar = container.querySelector<HTMLElement>(
       '[data-app-sidebar="rail"]',
@@ -170,7 +170,7 @@ describe("SidebarRail z-index contract", () => {
   it("opens the user menu inside the sidebar interaction boundary", async () => {
     const user = userEvent.setup();
     const { container } = render(
-      <SidebarRail pathname="/app/reader-record/record_1" sidebarMode="locked" />,
+      <SidebarRail pathname="/app/reader/record_1" sidebarMode="locked" />,
     );
     const sidebar = container.querySelector<HTMLElement>('[data-app-sidebar="rail"]');
     expect(sidebar).not.toBeNull();

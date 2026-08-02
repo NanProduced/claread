@@ -227,7 +227,7 @@ export function useContentCheck({
 
   const fetchConfirmedSource = useCallback(async (): Promise<ReadResult> => {
     const response = await fetch(
-      `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/confirmed-source`,
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
       { method: "GET" },
     );
     return (await response.json()) as ReadResult;
@@ -308,7 +308,7 @@ export function useContentCheck({
   const putDraft = useCallback(
     async (expectedRevision: number, markdown: string): Promise<UpdateResult> => {
       const response = await fetch(
-        `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/confirmed-source`,
+      `/api/web/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -503,7 +503,7 @@ export function useContentCheck({
       patchState({ phase: "confirming", errorMessage: null });
       const postConfirm = async (candidateDocumentId: string): Promise<ConfirmResult> => {
         const response = await fetch(
-          `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/candidate-documents/${encodeURIComponent(candidateDocumentId)}/confirm`,
+          `/api/web/reader/records/${encodeURIComponent(recordId)}/candidate-documents/${encodeURIComponent(candidateDocumentId)}/confirm`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },

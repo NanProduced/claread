@@ -20,7 +20,7 @@ import {
   type ReaderRecordReadingVariant,
   normalizeReaderRecordReadingDefaults,
 } from "@/lib/reading-defaults";
-import { appLibraryRoute, appReadingRecordRoute } from "@/lib/routes";
+import { appLibraryRoute, appReaderRoute } from "@/lib/routes";
 import type { ReaderUnifiedInputSubmitResponseDto } from "@/types/api/reader-plate";
 import type {
   ReaderArtifactPipelineStatusResult,
@@ -915,7 +915,7 @@ export function AnalyzeSubmitForm({
   }
 
   async function postInitUpload(body: unknown): Promise<ReaderSourceArtifactUploadInitResult> {
-    const response = await fetch("/api/web/reader-plate/source-artifacts/init-upload", {
+    const response = await fetch("/api/web/reader/source-artifacts/init-upload", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -928,7 +928,7 @@ export function AnalyzeSubmitForm({
     body: unknown,
   ): Promise<ReaderSourceArtifactUploadCompleteResult> {
     const response = await fetch(
-      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/complete-upload`,
+      `/api/web/reader/source-artifacts/${encodeURIComponent(artifactId)}/complete-upload`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -943,7 +943,7 @@ export function AnalyzeSubmitForm({
     body: unknown,
   ): Promise<ReaderSourceArtifactSubmitInputResult> {
     const response = await fetch(
-      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/submit-input`,
+      `/api/web/reader/source-artifacts/${encodeURIComponent(artifactId)}/submit-input`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -955,7 +955,7 @@ export function AnalyzeSubmitForm({
 
   async function fetchPipelineStatus(artifactId: string): Promise<ReaderArtifactPipelineStatusResult> {
     const response = await fetch(
-      `/api/web/reader-plate/source-artifacts/${encodeURIComponent(artifactId)}/pipeline-status`,
+      `/api/web/reader/source-artifacts/${encodeURIComponent(artifactId)}/pipeline-status`,
     );
     return (await response.json()) as ReaderArtifactPipelineStatusResult;
   }
@@ -1012,7 +1012,7 @@ export function AnalyzeSubmitForm({
       }
       clearPendingCandidate();
       setState({ kind: "success", message: "阅读记录已创建，正在打开 Reader。" });
-      router.push(appReadingRecordRoute(readingRecordId) as Route);
+      router.push(appReaderRoute(readingRecordId) as Route);
       return;
     }
 
@@ -1191,7 +1191,7 @@ export function AnalyzeSubmitForm({
     // candidate-document 流；record_state_advanced 直接打开 Reader。
     try {
       const sourceResponse = await fetch(
-        `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/confirmed-source`,
+        `/api/web/reader/records/${encodeURIComponent(recordId)}/confirmed-source`,
         { method: "GET" },
       );
       const sourcePayload = (await sourceResponse.json()) as {
@@ -1212,7 +1212,7 @@ export function AnalyzeSubmitForm({
         return;
       }
       if (sourcePayload.code === "candidate_conflict_open_reader") {
-        router.push(appReadingRecordRoute(recordId));
+        router.push(appReaderRoute(recordId));
         return;
       }
       if (sourcePayload.status !== 404 && sourcePayload.code !== "confirmed_source_not_found") {
@@ -1236,7 +1236,7 @@ export function AnalyzeSubmitForm({
 
     try {
       const response = await fetch(
-        `/api/web/reader-plate/records/${encodeURIComponent(recordId)}/candidate-document`,
+        `/api/web/reader/records/${encodeURIComponent(recordId)}/candidate-document`,
         { method: "GET" },
       );
       const payload = (await response.json()) as ReaderCandidateResumePayload;
@@ -1283,7 +1283,7 @@ export function AnalyzeSubmitForm({
     const message = payload.message?.trim() || "加载失败，请稍后重试。";
     switch (payload.code) {
       case "candidate_conflict_open_reader":
-        router.push(appReadingRecordRoute(recordId));
+        router.push(appReaderRoute(recordId));
         return;
       case "candidate_conflict_return_to_library":
         setState({
@@ -1377,7 +1377,7 @@ export function AnalyzeSubmitForm({
 
       switch (payload.outcome) {
         case "stable_document_ready": {
-          const readerUrl = appReadingRecordRoute(payload.reading_record_id);
+          const readerUrl = appReaderRoute(payload.reading_record_id);
           clearPendingCandidate();
           setState({
             kind: "success",
@@ -1468,11 +1468,11 @@ export function AnalyzeSubmitForm({
             origin={state.origin}
             onOpenReader={(recordId) => {
               clearPendingCandidate();
-              router.push(appReadingRecordRoute(recordId) as Route);
+              router.push(appReaderRoute(recordId) as Route);
             }}
             onConfirmed={(recordId) => {
               clearPendingCandidate();
-              router.push(appReadingRecordRoute(recordId) as Route);
+              router.push(appReaderRoute(recordId) as Route);
             }}
             onLegacyFallback={() => {
               if (state.fallbackCandidate) {
@@ -1801,7 +1801,7 @@ export function AnalyzeSubmitForm({
             onOpenChange={setCandidateDialogOpen}
             mode={state.candidate.origin === "resume" ? "resume" : "submit"}
             onConfirmed={(candidate) => {
-              router.push(appReadingRecordRoute(candidate.readingRecordId));
+              router.push(appReaderRoute(candidate.readingRecordId));
             }}
             onRestart={(candidate) => {
               const snapshot = candidate.inputSnapshot ?? "";

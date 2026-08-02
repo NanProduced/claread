@@ -2,13 +2,15 @@ import "server-only";
 
 import {
   createFavorite,
-  deleteFavoriteByAnalysisRecordId,
+  deleteFavoriteByTargetKey,
   listFavorites,
 } from "@/services/api/favorites";
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
 
-const ANALYSIS_RECORD_TARGET_TYPE = "analysis_record";
+import type { FavoriteTargetType } from "@claread/contracts";
+
+const READING_RECORD_TARGET_TYPE = "reading_record" as FavoriteTargetType;
 
 export type FavoriteBffResult =
   | {
@@ -63,8 +65,7 @@ function upstreamError(status: number, message: string): FavoriteBffResult {
 function findRecordFavorite(items: FavoriteResponseDto[], recordId: string) {
   return items.find(
     (item) =>
-      item.target_type === ANALYSIS_RECORD_TARGET_TYPE &&
-      (item.analysis_record_id === recordId || item.target_key === recordId),
+      item.target_type === READING_RECORD_TARGET_TYPE && item.target_key === recordId,
   );
 }
 
@@ -120,8 +121,7 @@ export async function favoriteRecord(recordId: string): Promise<FavoriteBffResul
   }
 
   const upstreamResult = await createFavorite(session.sessionToken, {
-    analysis_record_id: normalizedRecordId,
-    target_type: ANALYSIS_RECORD_TARGET_TYPE,
+    target_type: READING_RECORD_TARGET_TYPE,
     target_key: normalizedRecordId,
     payload_json: {},
   });
@@ -155,7 +155,7 @@ export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffRes
     return authError(session);
   }
 
-  const upstreamResult = await deleteFavoriteByAnalysisRecordId(session.sessionToken, normalizedRecordId);
+  const upstreamResult = await deleteFavoriteByTargetKey(session.sessionToken, normalizedRecordId);
 
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);

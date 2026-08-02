@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { SidebarRail } from "../sidebar-rail";
 import { CommandPaletteProvider } from "../command-palette";
-import { ReadingRecordActivityIndicator } from "../reading-record-activity-indicator";
 import { useRecentReading } from "../recent-reading-context";
 import {
   AppShellLayoutContext,
@@ -111,7 +110,6 @@ export function AppShell({
           userContact={userContact}
           userPlanLabel={userPlanLabel}
         />
-        <ReadingRecordActivityIndicator pathname={pathname} />
         <ScrollArea
           className="h-full pb-20 md:pl-[var(--app-shell-sidebar-width)] md:pb-0"
           data-app-shell-content="true"

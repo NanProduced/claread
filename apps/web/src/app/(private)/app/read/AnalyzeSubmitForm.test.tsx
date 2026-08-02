@@ -439,7 +439,7 @@ function makeConfirmedSourceReadResponse(
 describe("AnalyzeSubmitForm unified input cutover", () => {
   it("uses Reader Plate input submit mode", () => {
     expect(READ_PAGE_SUBMIT_MODE).toBe("reader-plate-input");
-    expect(readPageSubmitEndpoint()).toBe("/api/web/reader-plate/input");
+    expect(readPageSubmitEndpoint()).toBe("/api/web/reader/records/input");
     expect(
       readPageSubmitRequestBody({
         text: "This is a short English article.",
@@ -457,7 +457,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
   it("forwards reading_goal / reading_variant in the unified submit body", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/web/reader-plate/input");
+      expect(String(input)).toBe("/api/web/reader/records/input");
       expect(init).toEqual(
         expect.objectContaining({
           method: "POST",
@@ -495,7 +495,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -534,15 +534,15 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("submits to the unified endpoint and lands on reader-record", async () => {
+  it("submits to the unified endpoint and lands on the reader route", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/web/reader-plate/input");
+      expect(String(input)).toBe("/api/web/reader/records/input");
       expect(init).toEqual(
         expect.objectContaining({
           method: "POST",
@@ -580,14 +580,14 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(window.localStorage.getItem(PENDING_CANDIDATE_STORAGE_KEY)).toBeNull();
   });
 
-  it("stable_document_ready outcome navigates to /app/reader-record/{id}", async () => {
+  it("stable_document_ready outcome navigates to /app/reader/{id}", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify(makeUnifiedInputStableResponse()), {
         status: 200,
@@ -610,7 +610,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
   });
@@ -669,7 +669,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -896,7 +896,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_artifact_from_form",
+        "/app/reader/rec_artifact_from_form",
       );
     });
 
@@ -975,7 +975,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/input/route.ts",
+        "src/app/api/web/reader/records/input/route.ts",
       ),
       "utf-8",
     );
@@ -990,7 +990,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/source-artifacts/init-upload/route.ts",
+        "src/app/api/web/reader/source-artifacts/init-upload/route.ts",
       ),
       "utf-8",
     );
@@ -1005,7 +1005,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/source-artifacts/[artifactId]/complete-upload/route.ts",
+        "src/app/api/web/reader/source-artifacts/[artifactId]/complete-upload/route.ts",
       ),
       "utf-8",
     );
@@ -1020,7 +1020,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/source-artifacts/[artifactId]/submit-input/route.ts",
+        "src/app/api/web/reader/source-artifacts/[artifactId]/submit-input/route.ts",
       ),
       "utf-8",
     );
@@ -1036,7 +1036,7 @@ describe("AnalyzeSubmitForm unified input cutover", () => {
     const source = readFileSync(
       resolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/source-artifacts/[artifactId]/pipeline-status/route.ts",
+        "src/app/api/web/reader/source-artifacts/[artifactId]/pipeline-status/route.ts",
       ),
       "utf-8",
     );
@@ -1129,7 +1129,7 @@ describe("阶段 3: submit lint 非阻断提示", () => {
   ) {
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1208,7 +1208,7 @@ describe("阶段 3: submit lint 非阻断提示", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
 
@@ -1231,7 +1231,7 @@ describe("阶段 3: submit lint 非阻断提示", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_unified_1",
+        "/app/reader/rec_unified_1",
       );
     });
 
@@ -1363,13 +1363,13 @@ describe("阶段 3: submit lint 非阻断提示", () => {
 
     await waitFor(() => {
       expect(navigationMock.push).toHaveBeenCalledWith(
-        "/app/reader-record/rec_artifact_safe",
+        "/app/reader/rec_artifact_safe",
       );
     });
 
     // 附件路径不应调用 reader-plate/input 端点
     const readerPlateCalls = fetchMock.mock.calls.filter(
-      ([url]) => String(url) === "/api/web/reader-plate/input",
+      ([url]) => String(url) === "/api/web/reader/records/input",
     );
     expect(readerPlateCalls).toHaveLength(0);
     expect(fileTextSpy).not.toHaveBeenCalled();
@@ -1438,7 +1438,7 @@ describe("unified read intake source guards", () => {
 
 describe("candidate-confirm route guard", () => {
   const ROUTE_PATH =
-    "src/app/api/web/reader-plate/records/[recordId]/candidate-documents/[candidateDocumentId]/confirm/route.ts";
+    "src/app/api/web/reader/records/[recordId]/candidate-documents/[candidateDocumentId]/confirm/route.ts";
 
   it("calls confirmReaderCandidateDocumentFromWeb and forwards path params + body, no legacy analysis", () => {
     const source = readFileSync(resolve(process.cwd(), ROUTE_PATH), "utf-8");
@@ -1458,7 +1458,7 @@ describe("candidate-confirm route guard", () => {
 
 describe("candidate-document read route guard (S4)", () => {
   const ROUTE_PATH =
-    "src/app/api/web/reader-plate/records/[recordId]/candidate-document/route.ts";
+    "src/app/api/web/reader/records/[recordId]/candidate-document/route.ts";
 
   it("calls getReaderCandidateDocumentFromWeb and forwards recordId, no legacy analysis", () => {
     const source = readFileSync(resolve(process.cwd(), ROUTE_PATH), "utf-8");
@@ -1476,7 +1476,7 @@ describe("candidate-document read route guard (S4)", () => {
 
 describe("confirmed-source route guard (L2)", () => {
   const ROUTE_PATH =
-    "src/app/api/web/reader-plate/records/[recordId]/confirmed-source/route.ts";
+    "src/app/api/web/reader/records/[recordId]/confirmed-source/route.ts";
 
   it("wires GET/PUT to the confirmed-source BFF wrappers and forwards recordId + body", () => {
     const source = readFileSync(resolve(process.cwd(), ROUTE_PATH), "utf-8");
@@ -1528,7 +1528,7 @@ describe("CandidateConfirmDialog shape (source guard)", () => {
   const DIALOG_PATH =
     "src/app/(private)/app/read/CandidateConfirmDialog.tsx";
   const CALLOUT_PATH =
-    "src/app/(private)/app/reader-record/[recordId]/CandidateConfirmCallout.tsx";
+    "src/app/(private)/app/reader/[recordId]/CandidateConfirmCallout.tsx";
 
   it("wires matching pending candidate → 409 candidate_conflict → 其它 BFF error → success refresh", () => {
     const source = readFileSync(resolve(process.cwd(), DIALOG_PATH), "utf-8");
@@ -1557,7 +1557,7 @@ describe("CandidateConfirmDialog shape (source guard)", () => {
 // These tests lock in the S4 `?resume_candidate=...` entry path. They are
 // pure DOM-level behavioral tests: window.location.search is set before
 // render, the BFF GET to
-// `/api/web/reader-plate/records/{recordId}/candidate-document` is mocked
+// `/api/web/reader/records/{recordId}/candidate-document` is mocked
 // via vi.stubGlobal("fetch", ...), and assertions are made against the
 // visible DOM (dialog open state, button presence, textarea value,
 // preview text).
@@ -1847,7 +1847,7 @@ describe("resume_candidate entry (S4)", () => {
       expect(screen.getByText("未找到可继续确认的内容。")).toBeTruthy();
     });
 
-    // The 404 CTA must route to /app/library (NOT /app/reader-record/{id}):
+    // The 404 CTA must route to /app/library (NOT /app/reader/{id}):
     // 404's four collapsed causes (not found / not owner / soft-deleted /
     // no ready candidate) all mean "don't try Reader again", so re-entering
     // Reader via recordId may loop.
@@ -1867,7 +1867,7 @@ describe("resume_candidate entry (S4)", () => {
     expect(textareaNotFound.value).toBe("");
   });
 
-  it("409 with candidate_conflict_open_reader pushes to the reader-record route and does not show the dialog", async () => {
+  it("409 with candidate_conflict_open_reader pushes to the reader route and does not show the dialog", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
     installResumeFetchMock(
       {
@@ -1887,7 +1887,7 @@ describe("resume_candidate entry (S4)", () => {
     );
 
     await waitFor(() => {
-      expect(navigationMock.push).toHaveBeenCalledWith("/app/reader-record/rec_resume_1");
+      expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_resume_1");
     });
 
     expect(screen.queryByTestId("candidate-confirm-dialog")).toBeNull();

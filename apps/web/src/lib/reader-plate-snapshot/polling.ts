@@ -218,7 +218,7 @@ const DEFAULT_POLL_LIMIT = 100;
  * Polling hook for the D4 readOnly Reader Plate slice.
  *
  * Flow:
- * 1. Poll `GET /api/web/reader-plate/{recordId}/events?after_sequence={cursor}`.
+ * 1. Poll `GET /api/web/reader/records/{recordId}/events?after_sequence={cursor}`.
  * 2. Feed the response to {@link decidePollingAction}.
  * 3. On `reload` → call `onReloadRequired`. The cursor is advanced to
  *    `next_after_sequence` ONLY when the callback resolves to `true` (a fresh
@@ -323,7 +323,7 @@ export function useReaderPlatePolling(
 
       try {
         const url = new URL(
-          `/api/web/reader-plate/${encodeURIComponent(recordId)}/events`,
+          `/api/web/reader/records/${encodeURIComponent(recordId)}/events`,
           window.location.origin,
         );
         url.searchParams.set("after_sequence", String(currentCursor));

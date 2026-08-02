@@ -13,7 +13,7 @@ function makeReadingRecord(
 ): ReadingRecordListItemVm {
   return {
     readingRecordId: "reading_record_1",
-    readerUrl: "/app/reader-record/reading_record_1",
+    readerUrl: "/app/reader/reading_record_1",
     title: "First Reading",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
@@ -125,7 +125,7 @@ describe("ReadingRecordSection", () => {
           makeReadingRecord(),
           makeReadingRecord({
             readingRecordId: "reading_record_2",
-            readerUrl: "/app/reader-record/reading_record_2",
+            readerUrl: "/app/reader/reading_record_2",
             title: "Second Reading",
             createdAt: "2026-06-21T00:00:00Z",
             productState: "processing",
@@ -142,8 +142,8 @@ describe("ReadingRecordSection", () => {
 
     const firstLink = screen.getByText("First Reading").closest("a");
     const secondLink = screen.getByText("Second Reading").closest("a");
-    expect(firstLink?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
-    expect(secondLink?.getAttribute("href")).toBe("/app/reader-record/reading_record_2");
+    expect(firstLink?.getAttribute("href")).toBe("/app/reader/reading_record_1");
+    expect(secondLink?.getAttribute("href")).toBe("/app/reader/reading_record_2");
 
     expect(screen.getByText("可以开始阅读")).toBeTruthy();
     expect(screen.getByText("解析中")).toBeTruthy();
@@ -169,7 +169,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.getAllByText("去处理").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
-    expect(link?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
+    expect(link?.getAttribute("href")).toBe("/app/reader/reading_record_1");
   });
 
   it("renders needs_confirmation rows as resume links with approved copy", () => {
@@ -181,7 +181,7 @@ describe("ReadingRecordSection", () => {
           }),
           makeReadingRecord({
             readingRecordId: "reading_record_2",
-            readerUrl: "/app/reader-record/reading_record_2",
+            readerUrl: "/app/reader/reading_record_2",
             title: "Second Reading",
             productState: "action_required",
           }),
@@ -213,7 +213,7 @@ describe("ReadingRecordSection", () => {
     // action_required 行仍可点击 + 仍有 "去处理" CTA
     const arRow = within(region).getByText("Second Reading").closest("li");
     expect(arRow?.querySelector("a")?.getAttribute("href")).toBe(
-      "/app/reader-record/reading_record_2",
+      "/app/reader/reading_record_2",
     );
     expect(within(arRow as HTMLElement).getByText("去处理")).toBeTruthy();
   });
@@ -233,7 +233,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.getAllByText("查看详情").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
-    expect(link?.getAttribute("href")).toBe("/app/reader-record/reading_record_1");
+    expect(link?.getAttribute("href")).toBe("/app/reader/reading_record_1");
   });
 
   it("renders 可以开始阅读 (ready_to_read fallback) for unknown productState", () => {
@@ -279,19 +279,19 @@ describe("ReadingRecordSection", () => {
           makeReadingRecord({ readingRecordId: "a", productState: "action_required" }),
           makeReadingRecord({
             readingRecordId: "b",
-            readerUrl: "/app/reader-record/b",
+            readerUrl: "/app/reader/b",
             title: "B",
             productState: "needs_confirmation",
           }),
           makeReadingRecord({
             readingRecordId: "c",
-            readerUrl: "/app/reader-record/c",
+            readerUrl: "/app/reader/c",
             title: "C",
             productState: "failed",
           }),
           makeReadingRecord({
             readingRecordId: "d",
-            readerUrl: "/app/reader-record/d",
+            readerUrl: "/app/reader/d",
             title: "D",
             productState: "readable_enhancing",
           }),
@@ -339,14 +339,14 @@ describe("ReadingRecordSection", () => {
         readingRecords={[
           makeReadingRecord({
             readingRecordId: "rr_opened",
-            readerUrl: "/app/reader-record/rr_opened",
+            readerUrl: "/app/reader/rr_opened",
             title: "Opened Record",
             sourceLabel: "上传文件 · report.pdf",
             lastOpenedAt: "2026-07-10T12:00:00Z",
           }),
           makeReadingRecord({
             readingRecordId: "rr_new",
-            readerUrl: "/app/reader-record/rr_new",
+            readerUrl: "/app/reader/rr_new",
             title: "New Record",
             sourceLabel: "粘贴文本",
             lastOpenedAt: null,

@@ -7,7 +7,7 @@ import { SidebarRail } from "./index";
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
 import {
   appLibraryRoute,
-  appReadingRecordRoute,
+  appReaderRoute,
 } from "@/lib/routes";
 
 vi.mock("next/navigation", () => ({
@@ -64,7 +64,7 @@ function makeRecord(
 ): ReadingRecordListItemVm {
   return {
     readingRecordId: "rr_1",
-    readerUrl: appReadingRecordRoute("rr_1"),
+    readerUrl: appReaderRoute("rr_1"),
     title: "Untitled 1",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
@@ -91,8 +91,8 @@ describe("SidebarRail 最近阅读", () => {
     expect(
       screen
         .getAllByRole("link")
-        .some((link) => link.getAttribute("href")?.startsWith("/app/reader/")),
-    ).toBe(false);
+        .filter((link) => link.getAttribute("href")?.startsWith("/app/reader/")),
+    ).toHaveLength(10);
   });
 
   it("shows a short status only for priority product states", () => {
@@ -102,13 +102,13 @@ describe("SidebarRail 最近阅读", () => {
         recentRecords={[
           makeRecord({
             readingRecordId: "rr_p",
-            readerUrl: appReadingRecordRoute("rr_p"),
+            readerUrl: appReaderRoute("rr_p"),
             title: "Parsing",
             productState: "processing",
           }),
           makeRecord({
             readingRecordId: "rr_a",
-            readerUrl: appReadingRecordRoute("rr_a"),
+            readerUrl: appReaderRoute("rr_a"),
             title: "Wait",
             productState: "action_required",
           }),
@@ -119,7 +119,7 @@ describe("SidebarRail 最近阅读", () => {
           }),
           makeRecord({
             readingRecordId: "rr_f",
-            readerUrl: appReadingRecordRoute("rr_f"),
+            readerUrl: appReaderRoute("rr_f"),
             title: "Failed",
             productState: "failed",
           }),
@@ -144,7 +144,7 @@ describe("SidebarRail 最近阅读", () => {
       ["Failed", "rr_f"],
     ] as const) {
       expect(screen.getByText(title).closest("a")?.getAttribute("href")).toBe(
-        appReadingRecordRoute(recordId),
+        appReaderRoute(recordId),
       );
     }
   });
@@ -188,12 +188,12 @@ describe("SidebarRail 最近阅读", () => {
   it("renders the current Reading Record with real title + active state", () => {
     const current = makeRecord({
       readingRecordId: "rr_current",
-      readerUrl: appReadingRecordRoute("rr_current"),
+      readerUrl: appReaderRoute("rr_current"),
       title: "正在读的文章",
     });
     render(
       <SidebarRail
-        pathname={appReadingRecordRoute("rr_current")}
+        pathname={appReaderRoute("rr_current")}
         recentRecords={[current]}
       />,
     );
@@ -230,7 +230,7 @@ describe("SidebarRail 最近阅读", () => {
   it("never renders the legacy 当前解析页 generic label", () => {
     render(
       <SidebarRail
-        pathname={appReadingRecordRoute("rr_current")}
+        pathname={appReaderRoute("rr_current")}
         recentRecords={[]}
       />,
     );
@@ -250,7 +250,7 @@ describe("SidebarRail 最近阅读", () => {
           }),
           makeRecord({
             readingRecordId: "rr_ok",
-            readerUrl: appReadingRecordRoute("rr_ok"),
+            readerUrl: appReaderRoute("rr_ok"),
             title: "ReadToGo",
             productState: "readable_enhancing",
             readinessState: "article_ready",
@@ -275,7 +275,7 @@ describe("SidebarRail 最近阅读", () => {
     const okRow = screen.getByText("ReadToGo");
     const okLi = okRow.closest("li");
     expect(okLi?.querySelector("a")?.getAttribute("href")).toBe(
-      appReadingRecordRoute("rr_ok"),
+      appReaderRoute("rr_ok"),
     );
   });
 

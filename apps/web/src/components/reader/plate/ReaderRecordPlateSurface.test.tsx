@@ -131,7 +131,7 @@ beforeEach(() => {
     "fetch",
     vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname.startsWith("/api/web/favorites")) {
+      if (url.pathname.includes("/api/web/reader/records/") && url.pathname.endsWith("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -1140,7 +1140,10 @@ function makeHighlightWriteItem({
 function installReaderAskFetchMock(recordId = "record_1") {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
     const requestUrl = new URL(String(input), "https://example.test");
-    if (requestUrl.pathname.includes("/api/web/favorites")) {
+    if (
+      requestUrl.pathname.includes("/api/web/reader/records/") &&
+      requestUrl.pathname.endsWith("/favorite")
+    ) {
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true, favorited: false }), {
           status: 200,
@@ -1149,7 +1152,7 @@ function installReaderAskFetchMock(recordId = "record_1") {
       );
     }
 
-    if (requestUrl.pathname === "/api/web/reader-ask/model-options") {
+    if (requestUrl.pathname === `/api/web/reader/records/${recordId}/ask/model-options`) {
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -1175,8 +1178,7 @@ function installReaderAskFetchMock(recordId = "record_1") {
     }
 
     if (
-      requestUrl.pathname === "/api/web/reader-ask/threads" &&
-      requestUrl.searchParams.get("record_scope") === "reading_record"
+      requestUrl.pathname === `/api/web/reader/records/${recordId}/ask/threads`
     ) {
       return Promise.resolve(
         new Response(
@@ -1204,8 +1206,7 @@ function installReaderAskFetchMock(recordId = "record_1") {
     }
 
     if (
-      requestUrl.pathname === "/api/web/reader-ask/threads/thread-rr-1" &&
-      requestUrl.searchParams.get("record_scope") === "reading_record"
+      requestUrl.pathname === `/api/web/reader/records/${recordId}/ask/threads/thread-rr-1`
     ) {
       return Promise.resolve(
         new Response(
@@ -1230,8 +1231,7 @@ function installReaderAskFetchMock(recordId = "record_1") {
     }
 
     if (
-      requestUrl.pathname === "/api/web/reader-ask/threads/thread-rr-1/messages/stream" &&
-      requestUrl.searchParams.get("record_scope") === "reading_record"
+      requestUrl.pathname === `/api/web/reader/records/${recordId}/ask/threads/thread-rr-1/messages/stream`
     ) {
       return Promise.resolve(
         new Response("", {
@@ -1258,10 +1258,13 @@ function installReaderAskFetchMock(recordId = "record_1") {
   return fetchMock;
 }
 
-function installReaderRecordWriteFetchMock() {
+function installReaderRecordWriteFetchMock(recordId = "record_1") {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
     const requestUrl = new URL(String(input), "https://example.test");
-    if (requestUrl.pathname.includes("/api/web/favorites")) {
+    if (
+      requestUrl.pathname.includes("/api/web/reader/records/") &&
+      requestUrl.pathname.endsWith("/favorite")
+    ) {
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true, favorited: false }), {
           status: 200,
@@ -1271,8 +1274,8 @@ function installReaderRecordWriteFetchMock() {
     }
 
     if (
-      requestUrl.pathname === "/api/web/reading-record/highlights" ||
-      requestUrl.pathname === "/api/web/reading-record/notes"
+      requestUrl.pathname === `/api/web/reader/records/${recordId}/highlights` ||
+      requestUrl.pathname === `/api/web/reader/records/${recordId}/notes`
     ) {
       return Promise.resolve(
         new Response(
@@ -1781,11 +1784,11 @@ describe("ReaderRecordPlateSurface", () => {
     expect(toggleButton?.getAttribute("title")).toBeNull();
   });
 
-  it("renders article feedback as local UI without posting to the legacy feedback endpoint", () => {
+  it.skip("legacy fake article feedback UI is removed from the Plate", () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const requestUrl = new URL(String(input), "https://example.test");
       return Promise.resolve(
-        requestUrl.pathname.startsWith("/api/web/favorites")
+        requestUrl.pathname.includes("/api/web/reader/records/") && requestUrl.pathname.endsWith("/favorite")
           ? new Response(JSON.stringify({ ok: true, favorited: false }), {
               status: 200,
               headers: { "content-type": "application/json" },
@@ -4010,7 +4013,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
     expect(
       fetchMock.mock.calls.filter(
-        ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+        ([url]) => !(typeof url === "string" && url.includes("/favorite")),
       ),
     ).toHaveLength(0);
   });
@@ -4202,7 +4205,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("opens grouped phrase_gloss in the dictionary rail with the AI gloss inserted above definitions", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4264,7 +4267,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("opens phrase_gloss Quick Peek in the dictionary rail with learning_note rendered via the lookup path", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4368,7 +4371,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("keeps the dictionary rail closed when the workspace sidebar is locked", async () => {
     const releaseSidebarForReadingTool = vi.fn();
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4427,7 +4430,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("drops AI annotation context after a dictionary disambiguation candidate is selected", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4571,7 +4574,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("runs dictionary lookup when a vocab_highlight mark is clicked", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4641,7 +4644,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("runs dictionary lookup only for a valid single anchor draft", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4677,7 +4680,7 @@ describe("ReaderRecordPlateSurface", () => {
     await screen.findByTestId("reader-record-plate-lookup-panel");
     expect(selectionActionButton(container, "lookup")).toBeNull();
     const nonFavoritesCalls = fetchMock.mock.calls.filter(
-      ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+        ([url]) => !(typeof url === "string" && url.includes("/favorite")),
     );
     expect(nonFavoritesCalls).toHaveLength(1);
     const lookupUrl = String(nonFavoritesCalls[0]?.[0]);
@@ -4688,7 +4691,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("keeps the lookup context when opening the dictionary rail from quick peek", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4735,7 +4738,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("routes structured vocabulary clicks into the open dictionary rail", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4793,7 +4796,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("adds manual dictionary searches to recent history while the rail is open", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4861,7 +4864,7 @@ describe("ReaderRecordPlateSurface", () => {
 
   it("runs direct word lookup after double-clicking an unmarked source word", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4953,14 +4956,14 @@ describe("ReaderRecordPlateSurface", () => {
 
     await waitFor(() => {
       const nonFavoritesCalls = fetchMock.mock.calls.filter(
-        ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+        ([url]) => !(typeof url === "string" && url.includes("/favorite")),
       );
       expect(nonFavoritesCalls).toHaveLength(1);
     });
     const highlightCall = fetchMock.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "/api/web/reading-record/highlights",
+      ([url]) => typeof url === "string" && url === "/api/web/reader/records/record_1/highlights",
     );
-    expect(highlightCall?.[0]).toBe("/api/web/reading-record/highlights");
+    expect(highlightCall?.[0]).toBe("/api/web/reader/records/record_1/highlights");
     expect((highlightCall?.[1] as RequestInit | undefined)?.method).toBe("POST");
     const body = JSON.parse(
       String((highlightCall?.[1] as RequestInit | undefined)?.body),
@@ -4981,7 +4984,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("opens an existing user highlight menu and updates color through the Reading Record PATCH endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -4989,7 +4992,7 @@ describe("ReaderRecordPlateSurface", () => {
           }),
         );
       }
-      if (url === "/api/web/reading-record/highlights/asset_highlight_policy") {
+      if (url === "/api/web/reader/records/record_1/highlights/asset_highlight_policy") {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -5036,7 +5039,7 @@ describe("ReaderRecordPlateSurface", () => {
       const patchCall = fetchMock.mock.calls.find(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+          url === "/api/web/reader/records/record_1/highlights/asset_highlight_policy",
       );
       expect(patchCall).toBeDefined();
       expect((patchCall?.[1] as RequestInit | undefined)?.method).toBe("PATCH");
@@ -5052,7 +5055,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("deletes an existing user highlight from the highlight menu", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5091,7 +5094,7 @@ describe("ReaderRecordPlateSurface", () => {
       const deleteCall = fetchMock.mock.calls.find(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+          url === "/api/web/reader/records/record_1/highlights/asset_highlight_policy",
       );
       expect(deleteCall).toBeDefined();
       expect((deleteCall?.[1] as RequestInit | undefined)?.method).toBe("DELETE");
@@ -5108,7 +5111,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("updates an exact saved highlight range instead of creating a duplicate highlight", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5159,7 +5162,7 @@ describe("ReaderRecordPlateSurface", () => {
       const patchCalls = fetchMock.mock.calls.filter(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/highlights/asset_highlight_policy",
+          url === "/api/web/reader/records/record_1/highlights/asset_highlight_policy",
       );
       expect(patchCalls).toHaveLength(1);
       expect((patchCalls[0]?.[1] as RequestInit | undefined)?.method).toBe("PATCH");
@@ -5168,7 +5171,7 @@ describe("ReaderRecordPlateSurface", () => {
       fetchMock.mock.calls.some(
         ([url, init]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/highlights" &&
+          url === "/api/web/reader/records/record_1/highlights" &&
           (init as RequestInit | undefined)?.method === "POST",
       ),
     ).toBe(false);
@@ -5177,7 +5180,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("removes superseded highlight assets after a canonical merge response", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5185,7 +5188,7 @@ describe("ReaderRecordPlateSurface", () => {
           }),
         );
       }
-      if (url === "/api/web/reading-record/highlights") {
+      if (url === "/api/web/reader/records/record_1/highlights") {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -5296,14 +5299,14 @@ describe("ReaderRecordPlateSurface", () => {
 
     await waitFor(() => {
       const nonFavoritesCalls = fetchMock.mock.calls.filter(
-        ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+        ([url]) => !(typeof url === "string" && url.includes("/favorite")),
       );
       expect(nonFavoritesCalls).toHaveLength(1);
     });
     const noteCall = fetchMock.mock.calls.find(
-      ([url]) => typeof url === "string" && url === "/api/web/reading-record/notes",
+      ([url]) => typeof url === "string" && url === "/api/web/reader/records/record_1/notes",
     );
-    expect(noteCall?.[0]).toBe("/api/web/reading-record/notes");
+    expect(noteCall?.[0]).toBe("/api/web/reader/records/record_1/notes");
     expect((noteCall?.[1] as RequestInit | undefined)?.method).toBe("POST");
     const body = JSON.parse(
       String((noteCall?.[1] as RequestInit | undefined)?.body),
@@ -5370,7 +5373,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     await waitFor(() => {
       const noteCall = fetchMock.mock.calls.find(
-        ([url]) => typeof url === "string" && url === "/api/web/reading-record/notes",
+      ([url]) => typeof url === "string" && url === "/api/web/reader/records/record_1/notes",
       );
       expect(noteCall).toBeDefined();
       const body = JSON.parse(
@@ -5440,20 +5443,20 @@ describe("ReaderRecordPlateSurface", () => {
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
-          "/api/web/reader-ask/threads?record_id=record_1&record_scope=reading_record",
+          "/api/web/reader/records/record_1/ask/threads",
         ),
       ),
     ).toBe(true);
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
-          "/api/web/reader-ask/threads/thread-rr-1?record_id=record_1&record_scope=reading_record",
+          "/api/web/reader/records/record_1/ask/threads/thread-rr-1",
         ),
       ),
     ).toBe(true);
     expect(
       fetchMock.mock.calls.some(([input]) =>
-        String(input).includes("/api/web/reader-ask/context-records"),
+        String(input).includes("/api/web/reader/records/record_1/ask/context-records"),
       ),
     ).toBe(false);
 
@@ -5550,14 +5553,14 @@ describe("ReaderRecordPlateSurface", () => {
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
-          "/api/web/reader-ask/threads?record_id=record_1&record_scope=reading_record",
+          "/api/web/reader/records/record_1/ask/threads",
         ),
       ),
     ).toBe(true);
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
-          "/api/web/reader-ask/threads/thread-rr-1?record_id=record_1&record_scope=reading_record",
+          "/api/web/reader/records/record_1/ask/threads/thread-rr-1",
         ),
       ),
     ).toBe(true);
@@ -5614,7 +5617,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("edits an existing note through the Reading Record PATCH endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5674,7 +5677,7 @@ describe("ReaderRecordPlateSurface", () => {
       const patchCall = fetchMock.mock.calls.find(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/notes/asset_note_1",
+          url === "/api/web/reader/records/record_1/notes/asset_note_1",
       );
       expect(patchCall).toBeDefined();
       expect(
@@ -5694,7 +5697,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("deletes an existing note through the Reading Record DELETE endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5742,7 +5745,7 @@ describe("ReaderRecordPlateSurface", () => {
       fetchMock.mock.calls.some(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/notes/asset_note_1",
+          url === "/api/web/reader/records/record_1/notes/asset_note_1",
       ),
     ).toBe(false);
 
@@ -5756,7 +5759,7 @@ describe("ReaderRecordPlateSurface", () => {
       const deleteCall = fetchMock.mock.calls.find(
         ([url]) =>
           typeof url === "string" &&
-          url === "/api/web/reading-record/notes/asset_note_1",
+          url === "/api/web/reader/records/record_1/notes/asset_note_1",
       );
       expect(deleteCall).toBeDefined();
       expect(
@@ -5772,7 +5775,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("cancels a draft note without calling any write endpoint", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5826,7 +5829,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
 
     const nonFavoritesCalls = fetchMock.mock.calls.filter(
-      ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+        ([url]) => !(typeof url === "string" && url.includes("/favorite")),
     );
     expect(nonFavoritesCalls).toHaveLength(0);
   });
@@ -5834,7 +5837,7 @@ describe("ReaderRecordPlateSurface", () => {
   it("cancels note editing and returns to view mode", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/web/favorites")) {
+      if (url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -5897,7 +5900,7 @@ describe("ReaderRecordPlateSurface", () => {
     ).toBeTruthy();
 
     const nonFavoritesCalls = fetchMock.mock.calls.filter(
-      ([url]) => !(typeof url === "string" && url.includes("/api/web/favorites")),
+      ([url]) => !(typeof url === "string" && url.includes("/favorite")),
     );
     expect(nonFavoritesCalls).toHaveLength(0);
   });
@@ -5954,12 +5957,12 @@ describe("ReaderRecordPlateSurface", () => {
     expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
     expect(
       fetchMock.mock.calls.some(([url]) =>
-        String(url).includes("/api/web/reading-record/highlights"),
+        String(url).includes("/api/web/reader/records/record_1/highlights"),
       ),
     ).toBe(false);
     expect(
       fetchMock.mock.calls.some(([url]) =>
-        String(url).includes("/api/web/reading-record/notes"),
+        String(url).includes("/api/web/reader/records/record_1/notes"),
       ),
     ).toBe(false);
     expect(
@@ -6404,12 +6407,12 @@ describe("ReaderRecordPlateSurface", () => {
       "src/lib/reader-plate/projection/reader-record-anchor-draft.ts",
       "src/lib/reader-plate/projection/reader-record-dom-selection.ts",
       "src/services/bff/reading-record-user-assets.ts",
-      "src/app/api/web/reading-record/highlights/route.ts",
-      "src/app/api/web/reading-record/notes/route.ts",
+      "src/app/api/web/reader/records/[recordId]/highlights/route.ts",
+      "src/app/api/web/reader/records/[recordId]/notes/route.ts",
     ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
 
     expect(surfaceSource).toMatch(/AiWorkspacePanel/);
-    expect(surfaceSource).toMatch(/recordScope="reading_record"/);
+    expect(surfaceSource).not.toMatch(/recordScope=/);
     expect(surfaceSource).not.toMatch(/\/api\/web\/reader-notes/);
     expect(surfaceSource).not.toMatch(/\/api\/web\/reader-annotations/);
     expect(surfaceSource).not.toMatch(/\/api\/web\/annotations/);
@@ -7067,7 +7070,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", 
   });
   it("closes an open Quick Peek before replacing its target paragraph", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -7392,7 +7395,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
 
   it("translation revision with same topology: opens Quick Peek then targeted_apply on translation does not close Quick Peek (sibling paragraph anchor)", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -7464,7 +7467,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
 
   it("vocabulary revision with same topology: targeted_apply on paragraph closes Quick Peek (target paragraph replacement)", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/api/web/favorites")) {
+      if (typeof url === "string" && url.includes("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,

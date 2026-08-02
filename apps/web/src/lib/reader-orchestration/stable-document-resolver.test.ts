@@ -375,7 +375,7 @@ describe("stable-document-resolver — does NOT reach for forbidden truth source
     const routeSource = readFileSync(
       pathResolve(
         process.cwd(),
-        "src/app/api/web/reader-plate/records/[recordId]/stable-document/route.ts",
+        "src/app/api/web/reader/records/[recordId]/stable-document/route.ts",
       ),
       "utf-8",
     );

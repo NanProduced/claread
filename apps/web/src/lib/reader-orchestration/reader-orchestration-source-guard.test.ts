@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 
 import { mapAskArticleRagSidecar } from "./status-mapper";
@@ -130,30 +130,28 @@ describe("F7 source guard: Ask article_rag sidecar strips debug-only fields", ()
 });
 
 // ---------------------------------------------------------------------------
-// 2. Legacy route isolation guard
+// 2. Canonical route isolation guard
 // ---------------------------------------------------------------------------
 
 /**
  * New Reader Orchestration flow source roots (F0-F6). Any file under these
- * roots that imports `legacyAppReaderRoute` or `appReaderRoute` from
- * `@/lib/routes` is a regression: the new flow must navigate via
- * `appReadingRecordRoute` (`/app/reader-record/{recordId}`), never via the
- * legacy `/app/reader/{recordId}` ReaderWorkbench surface.
+ * roots that imports a removed route helper is a regression. The canonical
+ * route is `/app/reader/{recordId}`.
  */
 const NEW_FLOW_ROOTS = [
   "src/lib/reader-orchestration",
   "src/services/bff/reader-plate",
   "src/services/bff/reader-ask",
   "src/services/api/reader-ask",
-  // The `app/read` input page and `app/reader-record` rendering surface
-  // are part of the new flow; they must not call the legacy route helper.
+  // The `app/read` input page and final reader rendering surface are part of
+  // the new flow.
   "src/app/(private)/app/read",
-  "src/app/(private)/app/reader-record",
+  "src/app/(private)/app/reader/[recordId]",
 ] as const;
 
 const LEGACY_ROUTE_IDENTIFIERS = [
   "legacyAppReaderRoute",
-  "appReaderRoute",
+  "appReadingRecordRoute",
 ] as const;
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
@@ -191,7 +189,7 @@ function listSourceFiles(rootDir: string): string[] {
   return results;
 }
 
-describe("F7 source guard: legacy /app/reader/{recordId} route is not re-imported by new flow", () => {
+describe("F7 source guard: removed route helpers are not re-imported by new flow", () => {
   const scannedFiles: { path: string; content: string }[] = [];
 
   for (const root of NEW_FLOW_ROOTS) {
@@ -211,7 +209,7 @@ describe("F7 source guard: legacy /app/reader/{recordId} route is not re-importe
   });
 
   it.each(scannedFiles)(
-    "$path does not import legacyAppReaderRoute or appReaderRoute",
+    "$path does not import removed route helpers",
     ({ path, content }) => {
       for (const identifier of LEGACY_ROUTE_IDENTIFIERS) {
         // Match either an import binding or a dynamic property access.
@@ -225,11 +223,11 @@ describe("F7 source guard: legacy /app/reader/{recordId} route is not re-importe
 
         expect(
           importPattern.test(content),
-          `${path} imports ${identifier} — new flow must use appReadingRecordRoute instead`,
+          `${path} imports removed helper ${identifier}`,
         ).toBe(false);
         expect(
           callPattern.test(content),
-          `${path} calls ${identifier}() — new flow must use appReadingRecordRoute instead`,
+          `${path} calls removed helper ${identifier}()`,
         ).toBe(false);
       }
     },
@@ -237,20 +235,38 @@ describe("F7 source guard: legacy /app/reader/{recordId} route is not re-importe
 });
 
 // ---------------------------------------------------------------------------
-// 3. F7 fixture route — production gate
+// 3. Removed route and BFF namespace guard
 // ---------------------------------------------------------------------------
 
-describe("F7 source guard: Ask sidecar fixture route is production-gated", () => {
-  const fixturePagePath = resolve(
-    process.cwd(),
+describe("F7 source guard: removed pages and old BFF namespaces stay absent", () => {
+  const removedPaths = [
+    "src/app/(private)/app/reader-record/[recordId]/page.tsx",
+    "src/app/(private)/app/reader-plate/page.tsx",
     "src/app/(private)/app/f7-ask-fixture/[recordId]/page.tsx",
-  );
-  const fixturePageSource = readFileSync(fixturePagePath, "utf8");
+    "src/app/api/web/reader-plate",
+    "src/app/api/web/reader-ask",
+    "src/app/api/web/annotations",
+    "src/app/api/web/favorites",
+    "src/app/api/web/reader-notes",
+    "src/app/api/web/reading-record",
+    "src/app/api/web/reading-records",
+    "src/app/api/web/analysis",
+    "src/app/api/web/reader/[recordId]",
+    "src/app/api/web/records",
+  ] as const;
 
-  it("returns notFound() in production builds", () => {
-    expect(fixturePageSource).toContain(
-      'process.env.NODE_ENV === "production"',
+  it.each(removedPaths)("does not retain removed path %s", (relativePath) => {
+    expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false);
+  });
+
+  it("keeps the final route on the Plate surface without a surface switch", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/(private)/app/reader/[recordId]/plate-page.tsx"),
+      "utf8",
     );
-    expect(fixturePageSource).toContain("notFound()");
+    expect(source).toContain("ReaderRecordPlateSurface");
+    expect(source).not.toContain("ReaderRecordWorkbenchSurface");
+    expect(source).not.toContain("getReaderRecordSurfaceMode");
+    expect(source).toContain("/api/web/reader/records/");
   });
 });

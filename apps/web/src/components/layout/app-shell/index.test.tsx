@@ -10,7 +10,7 @@ import { TooltipProvider } from "@/components/primitives/tooltip";
 import { AppShell } from ".";
 
 const navigationMock = vi.hoisted(() => ({
-  pathname: "/app/reader-record/record_1",
+  pathname: "/app/reader/record_1",
   push: vi.fn(),
 }));
 
@@ -32,7 +32,7 @@ vi.mock("../recent-reading-context", () => ({
         readingRecordId: "record_1",
         title: "文章标题一",
         productState: "needs_confirmation",
-        readerUrl: "/app/reader-record/record_1",
+        readerUrl: "/app/reader/record_1",
         createdAt: "2024-01-01T00:00:00.000Z",
         updatedAt: "2024-01-01T00:00:00.000Z",
       },
@@ -40,7 +40,7 @@ vi.mock("../recent-reading-context", () => ({
         readingRecordId: "record_2",
         title: "文章标题二",
         productState: "completed",
-        readerUrl: "/app/reader-record/record_2",
+        readerUrl: "/app/reader/record_2",
         createdAt: "2024-01-02T00:00:00.000Z",
         updatedAt: "2024-01-02T00:00:00.000Z",
       },
@@ -52,7 +52,7 @@ vi.mock("../recent-reading-context", () => ({
 afterEach(() => {
   cleanup();
   navigationMock.push.mockReset();
-  navigationMock.pathname = "/app/reader-record/record_1";
+  navigationMock.pathname = "/app/reader/record_1";
 });
 
 describe("AppShell", () => {

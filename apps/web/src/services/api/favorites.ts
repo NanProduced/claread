@@ -25,12 +25,12 @@ export function createFavorite(
   });
 }
 
-export function deleteFavoriteByAnalysisRecordId(
+export function deleteFavoriteByTargetKey(
   sessionToken: string,
-  analysisRecordId: string,
+  targetKey: string,
 ): Promise<UpstreamResult<FavoriteDeleteResponseDto>> {
   return fastApiFetch<FavoriteDeleteResponseDto>(
-    `/favorites/${encodeURIComponent(analysisRecordId)}`,
+    `/favorites/${encodeURIComponent(targetKey)}`,
     {
       method: "DELETE",
       sessionToken,

@@ -7,7 +7,7 @@ import {
   readingRecordStatusKey,
   readingRecordStatusLabel,
 } from "@/lib/reader-record-status";
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import type { ReadingRecordListItemVm } from "@/services/bff/reading-records";
 import {
   NEEDS_ATTENTION_PRODUCT_STATES,
@@ -20,7 +20,7 @@ function record(
 ): ReadingRecordListItemVm {
   return {
     readingRecordId: "rr",
-    readerUrl: appReadingRecordRoute("rr"),
+    readerUrl: appReaderRoute("rr"),
     title: "t",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
@@ -163,7 +163,7 @@ describe("needs_confirmation 恢复入口", () => {
     // a1 仍可点击
     const a1Item = within(region).getByText("A1").closest("li");
     expect(a1Item?.querySelector("a")?.getAttribute("href")).toBe(
-      "/app/reader-record/rr",
+      "/app/reader/rr",
     );
     // a1 仍渲染 "去处理" CTA + 右箭头
     expect(within(a1Item as HTMLElement).getByText("去处理")).toBeTruthy();

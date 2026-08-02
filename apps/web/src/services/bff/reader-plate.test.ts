@@ -63,7 +63,7 @@ import {
   submitReadingRecordPlainTextFromWeb,
   updateReaderConfirmedSourceFromWeb,
 } from "./reader-plate";
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import type {
   ReaderArticleRagIndexEnsureResponseDto,
   ReaderArticleRagIndexStatusResponseDto,
@@ -336,7 +336,7 @@ describe("reader-plate BFF submit", () => {
       expect(result).toMatchObject({
         message: "阅读记录已创建，正在打开 Reader。",
         readingRecordId: "reading_record_1",
-        readerUrl: appReadingRecordRoute("reading_record_1"),
+        readerUrl: appReaderRoute("reading_record_1"),
         baseId: "base_1",
         articleReadySequence: 1,
       });

@@ -20,9 +20,8 @@ import { ScrollArea } from "@/components/primitives/scroll-area";
 import { Sheet, SheetContent } from "@/components/primitives/sheet";
 import { VocabularyDetailPanel } from "@/components/vocabulary/VocabularyDetailPanel";
 import {
-  appReadingRecordRoute,
+  appReaderRoute,
   appReviewRoute,
-  legacyAppReaderRoute,
 } from "@/lib/routes";
 import type { VocabularyBffStatus } from "@/services/bff/vocabulary";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
@@ -64,11 +63,7 @@ function sourceCountLabel(item: VocabularyItemVm): string {
 
 function sourceHrefForItem(item: VocabularyItemVm): string | null {
   if (item.sourceReadingRecordId) {
-    return appReadingRecordRoute(item.sourceReadingRecordId);
-  }
-
-  if (item.sourceRecordId) {
-    return legacyAppReaderRoute(item.sourceRecordId);
+    return appReaderRoute(item.sourceReadingRecordId);
   }
 
   return null;
@@ -78,8 +73,8 @@ function sourceHrefForItem(item: VocabularyItemVm): string | null {
  * 决定从 Vocabulary 条目（或单条 source ref）跳回 Reader 的最终 URL。
  *
  * 决策规则：
- * - 优先用 readingRecordId → 新链 /app/reader-record/{id}
- * - 否则用 recordId → 旧链 /app/reader/{id}
+ * - 仅用 readingRecordId → /app/reader/{id}
+ * - legacy recordId 不再回退到旧 Reader 页面
  * - 两者都为空 → null（不跳转）
  * - sentenceId 非空时附加为 ?sentenceId= query
  *
@@ -91,11 +86,7 @@ export function resolveReaderSourceHref(target: {
   recordId?: string | null;
   sentenceId?: string;
 }): string | null {
-  const baseUrl = target.readingRecordId
-    ? appReadingRecordRoute(target.readingRecordId)
-    : target.recordId
-      ? legacyAppReaderRoute(target.recordId)
-      : null;
+  const baseUrl = target.readingRecordId ? appReaderRoute(target.readingRecordId) : null;
 
   if (!baseUrl) {
     return null;
