@@ -175,8 +175,7 @@ export default function DailyReaderPage() {
       exchange: detailEntry.exchange || [],
       tags: detailEntry.tags || [],
       sourceRefs: [{
-        clientRecordId: article.id,
-        cloudRecordId: undefined,
+        dailyReaderArticleId: article.id,
         sourceSentence: contextSentence || undefined,
         sourceAnchorText: word,
         sourceOccurrence: activeMark?.anchor.kind === 'text' ? activeMark.anchor.occurrence : undefined,

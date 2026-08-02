@@ -5,7 +5,7 @@ import type { VocabEntry, SourceRef } from '../../types/view/vocabulary.vm'
 import type { DictionaryEntryPayload, DictionaryMeaning } from '../../types/view/reader-primitive.vm'
 import { fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
-import { getRecord, updateVocabEntry } from '../../services/storage'
+import { updateVocabEntry } from '../../services/storage'
 import LucideIcon from '../LucideIcon'
 import './index.scss'
 
@@ -13,7 +13,7 @@ interface VocabDetailViewProps {
   visible: boolean
   entry: VocabEntry | null
   onClose: () => void
-  onGoToResult: (recordId: string, sentenceId?: string) => void
+  onGoToDailyReader: (articleId: string) => void
   onToggleMastery?: (entry: VocabEntry) => void
 }
 
@@ -32,7 +32,7 @@ export default function VocabDetailView({
   visible,
   entry,
   onClose,
-  onGoToResult,
+  onGoToDailyReader,
   onToggleMastery,
 }: VocabDetailViewProps) {
   const [dictEntry, setDictEntry] = useState<DictionaryEntryPayload | null>(null)
@@ -132,14 +132,9 @@ export default function VocabDetailView({
     innerAudio.play()
   }
 
-  const handleGoToResult = (ref: SourceRef) => {
-    if (!ref.clientRecordId) return
-    const record = getRecord(ref.clientRecordId)
-    if (!record || record.tombstone) {
-      Taro.showToast({ title: '原文记录已删除或不可用', icon: 'none' })
-      return
-    }
-    onGoToResult(ref.clientRecordId, ref.sourceSentenceId)
+  const handleGoToDailyReader = (ref: SourceRef) => {
+    if (!ref.dailyReaderArticleId) return
+    onGoToDailyReader(ref.dailyReaderArticleId)
     onClose()
   }
 
@@ -216,7 +211,7 @@ export default function VocabDetailView({
               >
                 {sourceRefs.map((ref, idx) => (
                   <View
-                    key={`${ref.clientRecordId}-${ref.sourceSentenceId || idx}`}
+                    key={`${ref.dailyReaderArticleId || ref.readingRecordId || ''}-${ref.sourceSentenceId || idx}`}
                     id={`ctx-${idx}`}
                     className={`context-card ${idx === contextIndex ? 'is-active' : ''}`}
                     onClick={() => setContextIndex(idx)}
@@ -230,10 +225,10 @@ export default function VocabDetailView({
                           {new Date(ref.collectedAt).toLocaleDateString('zh-CN')}
                         </Text>
                       )}
-                      {ref.clientRecordId && (
+                      {ref.dailyReaderArticleId && (
                         <View
                           className='context-goto-btn'
-                          onClick={(e) => { e.stopPropagation(); handleGoToResult(ref) }}
+                          onClick={(e) => { e.stopPropagation(); handleGoToDailyReader(ref) }}
                         >
                           <LucideIcon name='bookOpen' size={14} color='var(--color-primary)' />
                           <Text className='goto-text'>查看原文</Text>
@@ -375,10 +370,10 @@ export default function VocabDetailView({
             <Text>{entry.mastered ? '已掌握' : '标为已掌握'}</Text>
           </View>
 
-          {sourceRefs.length > 0 && sourceRefs[0].clientRecordId && (
+          {sourceRefs.length > 0 && sourceRefs[0].dailyReaderArticleId && (
             <View
               className='footer-btn source-btn'
-              onClick={() => handleGoToResult(sourceRefs[0])}
+              onClick={() => handleGoToDailyReader(sourceRefs[0])}
             >
               <LucideIcon name='bookOpen' size={20} color='var(--color-white)' />
               <Text>查看原文</Text>

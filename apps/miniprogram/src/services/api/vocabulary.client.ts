@@ -60,9 +60,9 @@ interface ReviewResultDto {
 
 function parseSourceRefs(payload: Record<string, unknown> | undefined): SourceRef[] {
   if (!payload?.source_refs || !Array.isArray(payload.source_refs)) return []
-  return payload.source_refs.map((ref: { client_record_id?: string; cloud_record_id?: string; source_sentence?: string; source_context?: string; source_sentence_id?: string; source_anchor_text?: string; source_occurrence?: number; collected_at?: string }) => ({
-    clientRecordId: ref.client_record_id || '',
-    cloudRecordId: ref.cloud_record_id || undefined,
+  return payload.source_refs.map((ref: { client_record_id?: string; daily_reader_article_id?: string; source_sentence?: string; source_context?: string; source_sentence_id?: string; source_anchor_text?: string; source_occurrence?: number; collected_at?: string }) => ({
+    readingRecordId: ref.client_record_id || undefined,
+    dailyReaderArticleId: ref.daily_reader_article_id || undefined,
     sourceSentence: ref.source_sentence || undefined,
     sourceContext: ref.source_context || undefined,
     sourceSentenceId: ref.source_sentence_id || undefined,
@@ -154,8 +154,8 @@ export async function addVocabToCloud(
   entry: VocabEntry
 ): Promise<{ id: string; created: boolean }> {
   const sourceRefs = (entry.sourceRefs || []).map(ref => ({
-    client_record_id: ref.clientRecordId,
-    cloud_record_id: ref.cloudRecordId || null,
+    client_record_id: ref.readingRecordId || null,
+    daily_reader_article_id: ref.dailyReaderArticleId || null,
     source_sentence: ref.sourceSentence || null,
     source_context: ref.sourceContext || null,
     source_sentence_id: ref.sourceSentenceId || null,

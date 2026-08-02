@@ -140,7 +140,7 @@ export default function VocabStudyCard({
                         <Text className='context-date'>{new Date(primaryRef.collectedAt).toLocaleDateString('zh-CN')}</Text>
                       )}
                     </View>
-                    {primaryRef?.clientRecordId && onGoToOriginal && (
+                    {primaryRef?.dailyReaderArticleId && onGoToOriginal && (
                       <View className='inline-source-link' onClick={() => onGoToOriginal(primaryRef)}>
                         <LucideIcon name='externalLink' size={14} color='var(--text-sub)' />
                         <Text>原文</Text>

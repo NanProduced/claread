@@ -117,7 +117,7 @@ function getSourceArticleCount(entry: VocabEntry): number {
   const refs = entry.sourceRefs || []
   const sourceIds = new Set(
     refs
-      .map(ref => ref.cloudRecordId || ref.clientRecordId)
+      .map(ref => ref.dailyReaderArticleId || ref.readingRecordId)
       .filter(Boolean)
   )
   return sourceIds.size
@@ -222,12 +222,10 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
     return list
   }, [vocabList, debouncedQuery, filterStatus, sortMode])
 
-  const goToResult = (recordId: string, sentenceId?: string, e?: StopPropagationEvent) => {
+  const goToDailyReader = (articleId: string, e?: StopPropagationEvent) => {
     if (e) e.stopPropagation()
-    if (!recordId) return
-    let url = `${ROUTES.RESULT}?recordId=${recordId}&mode=replay`
-    if (sentenceId) url += `&sentenceId=${sentenceId}`
-    Taro.navigateTo({ url })
+    if (!articleId) return
+    Taro.navigateTo({ url: `${ROUTES.DAILY_READER}?id=${articleId}` })
   }
 
   const handleDelete = (entry: VocabEntry, e: StopPropagationEvent) => {
@@ -404,8 +402,8 @@ export default function VocabPage({ isSubView = false }: VocabPageProps) {
                 </View>
                 <View className='card-footer'>
                   <Text className='date-text'>收藏于 {formatDate(entry.addedAt)}</Text>
-                  {primaryRef?.clientRecordId && (
-                    <View className='source-link' onClick={(e) => goToResult(primaryRef.clientRecordId, primaryRef.sourceSentenceId, e)}>
+                  {primaryRef?.dailyReaderArticleId && (
+                    <View className='source-link' onClick={(e) => goToDailyReader(primaryRef.dailyReaderArticleId, e)}>
                       <Text>查看原文</Text>
                       <LucideIcon name='chevronRight' size={14} color='currentColor' />
                     </View>

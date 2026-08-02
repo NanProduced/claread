@@ -355,11 +355,11 @@ function mergeSourceRefs(
 ): SourceRef[] {
   const map = new Map<string, SourceRef>()
   for (const ref of existing) {
-    const key = `${ref.clientRecordId}|${ref.sourceSentenceId || ''}`
+    const key = `${ref.dailyReaderArticleId || ref.readingRecordId || ''}|${ref.sourceSentenceId || ''}`
     map.set(key, ref)
   }
   for (const ref of incoming) {
-    const key = `${ref.clientRecordId}|${ref.sourceSentenceId || ''}`
+    const key = `${ref.dailyReaderArticleId || ref.readingRecordId || ''}|${ref.sourceSentenceId || ''}`
     if (!map.has(key)) {
       map.set(key, ref)
     }
