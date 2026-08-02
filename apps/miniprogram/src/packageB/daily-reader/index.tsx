@@ -15,7 +15,6 @@ import type { InlineMarkModel, DictionaryResult } from '../../types/view/reader-
 import { isFavorited, saveFavorite, removeFavorite, saveVocabEntry } from '../../services/storage'
 import { track } from '../../services/analytics'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
-import type { FavoriteRecord } from '../../types/view/favorites.vm'
 import { getDailyReaderSourceDisplay } from '../../utils/daily-reader-source'
 import LucideIcon from '../../components/LucideIcon'
 import share01 from '../../assets/images/share/daily-reader-01.jpg'
@@ -201,7 +200,7 @@ export default function DailyReaderPage() {
     const isAdding = !favorited
 
     if (isAdding) {
-      saveFavorite({ recordId: article.id, cloudId: undefined, createdAt: Date.now() } as FavoriteRecord)
+      saveFavorite({ dailyReaderArticleId: article.id, createdAt: Date.now() })
       setFavorited(true)
       track('favorite', { isFavorited: true })
       Taro.showToast({ title: '已收藏全文', icon: 'success', duration: 1500 })

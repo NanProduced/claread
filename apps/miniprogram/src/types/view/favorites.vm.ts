@@ -1,15 +1,13 @@
 /**
- * 收藏全文 VM
+ * 收藏 VM
  *
- * 只存对 analysis_records.recordId 的引用
- * 不复制整份 renderScene（按需从 record 读取）
+ * CUTOVER-MINI-LONG: 中性本地收藏模型，仅引用 Daily Reader 文章 ID。
+ * 旧 analysis_records.recordId / cloudId 字段已移除。
  */
 
 export interface FavoriteRecord {
-  /** 来源分析记录的前端稳定主键 (client_record_id) */
-  recordId: string
-  /** 来源分析记录的云端 ID (UUID) */
-  cloudId?: string
+  /** 来源 Daily Reader 文章 ID */
+  dailyReaderArticleId: string
   /** 创建时间 */
   createdAt: number
   /** 同步状态 */

@@ -37,7 +37,7 @@ export function getFavorites(): FavoriteRecord[] {
 export function saveFavorite(favorite: FavoriteRecord): void {
   try {
     const favorites = getFavorites()
-    const exists = favorites.some((f) => f.recordId === favorite.recordId)
+    const exists = favorites.some((f) => f.dailyReaderArticleId === favorite.dailyReaderArticleId)
     if (exists) return
     Taro.setStorageSync(KEYS.FAVORITES, [favorite, ...favorites])
   } catch (e) {
@@ -45,17 +45,17 @@ export function saveFavorite(favorite: FavoriteRecord): void {
   }
 }
 
-export function removeFavorite(recordId: string): void {
+export function removeFavorite(dailyReaderArticleId: string): void {
   try {
-    const favorites = getFavorites().filter((f) => f.recordId !== recordId)
+    const favorites = getFavorites().filter((f) => f.dailyReaderArticleId !== dailyReaderArticleId)
     Taro.setStorageSync(KEYS.FAVORITES, favorites)
   } catch (e) {
     console.error('[storage] removeFavorite failed', e)
   }
 }
 
-export function isFavorited(recordId: string): boolean {
-  return getFavorites().some((f) => f.recordId === recordId)
+export function isFavorited(dailyReaderArticleId: string): boolean {
+  return getFavorites().some((f) => f.dailyReaderArticleId === dailyReaderArticleId)
 }
 
 // ============ Vocabulary (sharded) ============
