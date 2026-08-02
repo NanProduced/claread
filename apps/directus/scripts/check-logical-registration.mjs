@@ -123,6 +123,34 @@ for (const rel of [
   }
 }
 
+// Physical cutover: legacy Console / Eval Center / parse-run / inspector SOURCE
+// TREES must stay deleted, not merely unregistered. This guards against revival
+// by re-adding the source directories behind an unregistered package.json.
+const PHYSICALLY_DELETED_DIRS = [
+  "extensions/modules-bundle/src/claread-eval-center",
+  "extensions/modules-bundle/src/claread-render-scene-inspector",
+  "extensions/modules-bundle/src/claread-ai-rag-generator-interface",
+  "extensions/modules-bundle/src/claread-output-fragment-editor",
+  "extensions/modules-bundle/src/claread-inspector-launcher",
+  "extensions/modules-bundle/src/claread-inspector-launcher-interface",
+  "extensions/modules-bundle/src/claread-observability-groups-layout",
+  "extensions/endpoints-bundle/src/eval-center",
+  "extensions/endpoints-bundle/src/parse-run-observability",
+];
+const PHYSICALLY_DELETED_FILES = [
+  "extensions/modules-bundle/src/shared/inspector-launcher.js",
+];
+for (const rel of PHYSICALLY_DELETED_DIRS) {
+  if (existsSync(resolve(ROOT, rel))) {
+    errors.push(`${rel} must stay physically deleted (directory present)`);
+  }
+}
+for (const rel of PHYSICALLY_DELETED_FILES) {
+  if (existsSync(resolve(ROOT, rel))) {
+    errors.push(`${rel} must stay physically deleted (file present)`);
+  }
+}
+
 // package.json must not expose retired sync commands as normal ops entrypoints.
 for (const cmd of ["parse-run:sync-metadata", "eval-center:sync-metadata"]) {
   if (directusPkg.scripts && Object.prototype.hasOwnProperty.call(directusPkg.scripts, cmd)) {
@@ -214,6 +242,7 @@ console.log(
       panels: panelNames,
       hooks: "example-lab-validation-keep",
       retired_sync: "physically-deleted",
+      physical_deletion: "enforced",
       init_eval_center: "fail-closed",
     },
     null,

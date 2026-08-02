@@ -70,4 +70,6 @@ test("registration gate script exits 0 on current tree", () => {
   assert.equal(payload.init_eval_center, "fail-closed");
   assert.deepEqual(payload.endpoints, ["reader-orch"]);
   assert.equal(payload.panels.length, 0);
+  assert.equal(payload.retired_sync, "physically-deleted");
+  assert.equal(payload.physical_deletion, "enforced");
 });
