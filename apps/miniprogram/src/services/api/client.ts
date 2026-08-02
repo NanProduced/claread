@@ -7,7 +7,6 @@
 
 import Taro from '@tarojs/taro'
 import { apiConfig, getAuthHeaders } from '../../config/api.config'
-import type { AnyAnalyzeResponseDto } from '../../types/api/analyze-response.dto'
 import type { DictEntryResultDto, DictResponseDto } from '../../types/api/dict-response.dto'
 
 /** API 错误类型 */
@@ -218,69 +217,6 @@ export async function fetchSessionLogout(sessionToken: string): Promise<void> {
   })
 }
 
-// ============ /analysis-tasks API ============
-
-export type TaskStatus = 'queued' | 'running' | 'finalizing' | 'succeeded' | 'failed' | 'cancelled' | 'expired'
-
-export interface TaskSubmitRequest extends AnalyzeRequest {
-  wait_for_result?: boolean
-  wait_timeout_seconds?: number
-  client_record_id?: string
-}
-
-export interface TaskSubmitResponse {
-  task_id: string
-  record_id: string
-  cloud_record_id: string
-  client_record_id: string | null
-  status: TaskStatus
-  created: boolean
-  render_scene?: AnyAnalyzeResponseDto | null
-}
-
-export interface TaskStatusResponse {
-  task_id: string
-  record_id: string
-  cloud_record_id: string
-  client_record_id: string | null
-  status: TaskStatus
-  failure_code?: string | null
-  failure_message?: string | null
-  quota_cost_points: number
-  queued_at: string
-  started_at?: string | null
-  finished_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface ActiveTaskResponse {
-  has_active: boolean
-  task?: TaskStatusResponse | null
-}
-
-export async function submitAnalysisTask(dto: TaskSubmitRequest): Promise<TaskSubmitResponse> {
-  return request<TaskSubmitResponse>({
-    url: '/analysis-tasks',
-    method: 'POST',
-    data: dto,
-  })
-}
-
-export async function getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
-  return request<TaskStatusResponse>({
-    url: `/analysis-tasks/${taskId}`,
-    method: 'GET',
-  })
-}
-
-export async function getCurrentTask(): Promise<ActiveTaskResponse> {
-  return request<ActiveTaskResponse>({
-    url: '/analysis-tasks/current',
-    method: 'GET',
-  })
-}
-
 // ============ /me/quota API ============
 
 export interface QuotaResponse {
@@ -294,73 +230,6 @@ export async function fetchUserQuota(): Promise<QuotaResponse> {
   return request<QuotaResponse>({
     url: '/me/quota',
     method: 'GET',
-  })
-}
-
-export interface AnonymousQuotaResponse {
-  remaining_trials: number
-  max_trials_per_day: number
-  reset_at: string
-}
-
-export async function fetchAnonymousQuota(anonymousId: string): Promise<AnonymousQuotaResponse> {
-  return request<AnonymousQuotaResponse>({
-    url: '/me/quota/anonymous',
-    method: 'GET',
-    data: { anonymous_id: anonymousId },
-  })
-}
-
-export interface QuotaCheckResponse {
-  allowed: boolean
-  remaining: number
-  reset_at: string
-  quota_type: string
-}
-
-export async function checkAnonymousQuota(anonymousId: string): Promise<QuotaCheckResponse> {
-  return request<QuotaCheckResponse>({
-    url: '/me/quota/check',
-    method: 'POST',
-    data: { anonymous_id: anonymousId },
-  })
-}
-
-// ============ /analyze API ============
-
-/**
- * /analyze 请求参数
- *
- * 对齐后端 AnalyzeRequest (analysis.py)
- * - reading_goal: exam | daily_reading | academic
- * - reading_variant: 按 reading_goal 分组
- *   - exam: gaokao | cet | kaoyan | tem | ielts_toefl
- *   - daily_reading: beginner_reading | intermediate_reading | intensive_reading
- *   - academic: academic_general
- *
- * 注意：当前联调范围仅限 source_type = 'user_input'
- * daily_article / ocr 不在本联调范围内
- */
-export interface AnalyzeRequest {
-  text: string
-  reading_goal: 'exam' | 'daily_reading' | 'academic'
-  reading_variant: 'gaokao' | 'cet' | 'kaoyan' | 'tem' | 'ielts_toefl' | 'beginner_reading' | 'intermediate_reading' | 'intensive_reading' | 'academic_general'
-  source_type: 'user_input' | 'daily_article' | 'ocr'
-  /** 是否开启深度篇章分析 */
-  extended?: boolean
-}
-
-/**
- * 调用 /analyze 接口
- *
- * 统一返回 AnalyzeResponseDto (snake_case)
- * 由调用方通过 analyzeResponseDtoToVm() 转换为前端 VM (camelCase)
- */
-export async function fetchAnalyze(dto: AnalyzeRequest): Promise<AnyAnalyzeResponseDto> {
-  return request<AnyAnalyzeResponseDto>({
-    url: '/analyze',
-    method: 'POST',
-    data: dto,
   })
 }
 
