@@ -143,7 +143,7 @@ Snapshot wrapper 使用 `schema_kind`，不是 `schema_version`。`schema_versio
 
 D4 Web slice：
 
-- Web BFF 通过 `/api/web/reader-plate/*` 调用后端 Reader API，不回退到旧 `/scene`。
+- Web BFF 通过 `/api/web/reader/records/*` 调用后端 Reader API，不回退到旧 `/scene`。
 - Web Reader 只读 surface 使用 `ReaderPlateSnapshot.value` 渲染 article body。
 - D4 polling 收到 `layer_published`、`projection_reset_required` 或 server reload signal 后 reload snapshot；不应用 `projection_ops`。
 - 用户可见页面不暴露 Plate/Slate path、event cursor、sequence 或 snapshot internals。

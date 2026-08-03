@@ -449,18 +449,18 @@ processor 在 `_configure_pydantic_ai_otel` 中通过 `tracer_provider.add_span_
 
 ### Console endpoint 契约
 
-Directus endpoints-bundle 的 `parse-run-observability/reader-orch.js` 已实现 4 个 SQL endpoint：
+Directus endpoints-bundle 的 `endpoints-bundle/src/reader-orch/index.js` 已实现 4 个只读 JSON endpoint：
 
 - `GET /reader-orch/trace/:trace_id` — 按 trace_id 查询完整 span 树
 - `GET /reader-orch/run/:run_id` — 按 reader_run_id 查询并 LEFT JOIN `ai_usage_events` 取 billing 信息
 - `GET /reader-orch/record/:record_id/summary` — 按 reading_record_id 聚合 worker_type 维度的 latency / token 统计
-- `GET /reader-orch/worker/:worker_type/summary` — 按 worker_type 跨 record 聚合
+- `GET /reader-orch/dashboard` — 跨 record / run 的聚合诊断视图
 
-Console 前端从这些 endpoint 取数据渲染 latency / token / model cost heatmap 与 span tree 可视化。`langsmith_run_id` 字段作为 Console 跳转 LangSmith trace UI 的链接源。
+当前没有 Console heatmap / span-tree / trace 树可视化 UI 组件；reader-orch 只提供 JSON API。未来按新 orchestration 重建 Console 诊断界面属于 post-cutover backlog。`langsmith_run_id` 字段保留为未来 Console 跳转 LangSmith trace UI 的链接源。
 
 ### T4.2a-R2 Budget Diagnostics 持久化
 
-T4.2a-R2-R2 把 budget diagnostics 持久化到 `reader_runtime_spans.metadata_json`（pipeline root span），任务结束后可从 Console / runtime spans 查询：
+T4.2a-R2-R2 把 budget diagnostics 持久化到 `reader_runtime_spans.metadata_json`（pipeline root span），任务结束后可通过 reader-orch JSON endpoint 或直接查询 `reader_runtime_spans` 读取：
 
 | 字段 | 含义 |
 |---|---|

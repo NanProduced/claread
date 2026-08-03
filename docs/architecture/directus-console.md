@@ -43,7 +43,7 @@ cutover 后保留的 Directus custom module：
 
 ### LLM Config Control Plane
 
-`LLM Config` 是 Directus 中的 LLM 配置 authoring 控制面，通过 5 个 collection 覆盖 provider / model / profile / preset / ask option 的 CRUD 管理。
+`LLM Config` 是 Directus 中的 LLM 配置 authoring 控制面，通过 6 个 collection 覆盖 provider / model / profile / preset / ask option / ask config 的 CRUD 管理。
 
 它负责：
 
@@ -57,21 +57,33 @@ cutover 后保留的 Directus custom module：
 - 运行时模型选择逻辑
 - API key 实际鉴权
 
-5 个 collection：
+6 个 collection（源码、metadata sync、当前 UI 可见状态区分如下）：
 
-| Collection | 说明 |
-|------------|------|
-| `llm_providers` | 供应商连接配置（adapter / base_url / api_key_env） |
-| `llm_models` | 远端模型定义（FK → provider，model_name） |
-| `llm_profiles` | 场景级配置（FK → model，model_settings override） |
-| `llm_presets` | route→profile 映射集合（可选继承 base_preset） |
-| `llm_ask_options` | Ask Claread 用户可选模型档位 |
+| Collection | 说明 | 源码保留 | metadata sync (`directus:llm-config:sync-metadata`) | 当前 UI 可见 |
+|------------|------|----------|-----------------------------------------------------|--------------|
+| `llm_providers` | 供应商连接配置（adapter / base_url / api_key_env） | ✅ | ✅ | ✅ |
+| `llm_models` | 远端模型定义（FK → provider，model_name） | ✅ | ✅ | ✅ |
+| `llm_profiles` | 场景级配置（FK → model，model_settings override） | ✅ | ✅ | ✅ |
+| `llm_presets` | route→profile 映射集合（可选继承 base_preset） | ✅ | ✅ | ✅ |
+| `llm_ask_options` | Ask Claread 用户可选模型档位 | ✅ | ✅ | ✅ |
+| `llm_ask_config` | Ask Claread 全局运行档位（单条配置） | ✅ | ✅ | ✅ |
+
+源码与脚本位置：collection 定义与 sync 逻辑在 `apps/directus/scripts/sync-llm-config-metadata.mjs`、`apps/directus/scripts/export-llm-config-bundle.mjs`、`apps/directus/scripts/import-llm-config-bundle.mjs`、`apps/directus/scripts/validate-llm-config-bundle.mjs`；UI module 在 `apps/directus/extensions/modules-bundle/src/claread-llm-config/`。数据源真源是 `services/api/config/` 下的 JSON 配置文件（`model-profiles.json`、`model-presets.json`、`reader-ask-model-options.json`），Directus authoring 后通过 `export-llm-config-bundle.mjs` 导出 bundle 再复制回 `services/api/config/`。
 
 数据流：Directus authoring → `export-llm-config-bundle.mjs` → JSON bundle → `services/api/config/`
 
 ### reader-orch endpoints bundle
 
-`apps/directus/extensions/endpoints-bundle/src/reader-orch/` 提供 Reader orchestration 相关的只读 endpoint，服务 Console 诊断与数据观察。
+`apps/directus/extensions/endpoints-bundle/src/reader-orch/` 提供 Reader orchestration 相关的只读 endpoint，服务 Console 诊断与数据观察。当前源码入口为 `apps/directus/extensions/endpoints-bundle/src/reader-orch/index.js`，共 4 个只读 GET 路由（snake_case 路径参数）：
+
+- `GET /reader-orch/trace/:trace_id`
+- `GET /reader-orch/run/:run_id`
+- `GET /reader-orch/record/:record_id/summary`
+- `GET /reader-orch/dashboard`
+
+四个路由都从 `reader_runtime_spans` 表读取数据，`run` / `record/:record_id/summary` / `dashboard` 额外 LEFT JOIN `ai_usage_events` 取 `billed_points` / `billing_policy_version`。所有路由要求登录（`accountability.user` 或 `admin`），否则返回 403。
+
+**当前没有 Console heatmap / span-tree / trace 树可视化 UI 组件**。reader-orch 只提供 JSON API，未来按新 orchestration 重建 Console 诊断界面属于 post-cutover backlog。
 
 ### Example Lab（Directus Collection）
 

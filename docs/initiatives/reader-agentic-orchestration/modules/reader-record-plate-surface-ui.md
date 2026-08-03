@@ -82,7 +82,7 @@ enable_L1 =
 
 ## Progressive Transition UX 引用
 
-`/app/reader-record/{recordId}` 的 `reloadSnapshot` 已接入 T4.2a-PUX-R2 progressive transition 校验：
+`/app/reader/[recordId]`（cutover 前 `/app/reader-record/{recordId}`）的 `reloadSnapshot` 已接入 T4.2a-PUX-R2 progressive transition 校验：
 
 - canonical replay 与 stale/layer 单调 helpers 来自 T4.2a-PUX-R1 fixture 合同（21 tests）。
 - stale 拒绝时 cursor hold，不覆盖 UI；layer regression 同样不覆盖 UI。
@@ -1029,7 +1029,7 @@ rejected stale/fence snapshot 属于 polling/page seam（见 [`representation-ev
   - 点击 mark 通过 `activeId` 打开 `InlineCommentPanel`
 - 新建 `InlineCommentPanel` 作为个人笔记 composer/view/edit/delete 面板；未接入 `DiscussionKit` / `BlockDiscussion`
 - `ReaderRecordPlateSurface.tsx` 的渲染路径已从 `ReaderRecordNoteComposer` 迁到 `InlineCommentPanel`，但 `ReaderRecordNoteComposer` 函数定义仍是遗留死代码，后续应清理
-- 保留 `/api/web/reading-record/notes` 端点，但前端走 Plate comment projection
+- 保留 `/api/web/reader/records/{recordId}/notes` 端点（cutover 后统一路径，旧 `/api/web/reading-record/notes` 已物理删除），但前端走 Plate comment projection
 
 关键约束：
 - Plate comment id 只是 Web projection key，不持久化为业务事实
@@ -1074,7 +1074,7 @@ rejected stale/fence snapshot 属于 polling/page seam（见 [`representation-ev
 
 目标写入策略：**user asset + source-grounded anchor ranges**。
 
-当前 V1c 最小实现仍是 **single-range first**。这是为了让现有 `/app/reader-record/{recordId}` 能先安全写入，不代表产品最终只允许单段笔记/高亮。
+当前 V1c 最小实现仍是 **single-range first**。这是为了让现有 `/app/reader/[recordId]` 能先安全写入，不代表产品最终只允许单段笔记/高亮。
 
 最终模型应满足：
 
@@ -1090,9 +1090,9 @@ V1c 过渡写入策略：**single-range first**。
 边界判断：
 
 - 旧表可复用：`user_annotations` 保存 quick highlight，`reader_notes` 保存 comment/note body。
-- `/app/reader-record/{recordId}` 新写入必须携带 `anchor: UserEditorialAssetAnchor`；没有 `anchor` 的请求只能属于旧 `/app/reader/{recordId}` legacy 路径。
+- `/app/reader/[recordId]` 新写入必须携带 `anchor: UserEditorialAssetAnchor`；cutover 后旧 legacy 路径已物理删除，没有 `anchor` 的请求不再有对应 BFF 入口。
 - D6-A5 当前代码已经把 `anchor` 做成 optional dual-contract：当 `anchor` 存在时，legacy 必填字段放宽，但服务层必须走 Reading Record anchor gate，绕过 legacy `target_key` / `render_scene` 校验。
-- 旧请求字段（`sentence_id`、`target_key`、`paragraph_id`、offset、hash）只能作为 deprecated compatibility metadata；不能重新成为 `/app/reader-record` 写入校验事实源。
+- 旧请求字段（`sentence_id`、`target_key`、`paragraph_id`、offset、hash）只能作为 deprecated compatibility metadata；不能重新成为 `/app/reader/[recordId]` 写入校验事实源。
 - 旧 `render_scene` 校验不可复用：新 Reading Record 的 source of truth 是 Canonical Text Layer / Anchor Segment；当前过渡实现可继续通过 Stable Reading Base 校验。
 - Plate path / Slate path 不进入 API、不进入数据库、不进入 event log。
 - D6-U2 结论：`UserEditorialAssetAnchor` 和当前 `anchor_gate` 只表达 single range；`multi_text` 不挤进该 DTO。后续 multi-range 必须使用 schema-only 草案 `UserEditorialAssetAnchorSet` 或等价 anchor ranges contract；在 persistence/migration 完成前，相关写入口可作为过渡实现临时 disabled，但这不是产品边界。
@@ -1127,7 +1127,7 @@ type ReaderRecordUserAssetWritePayload = {
 
 - 新 Plate surface 可继续生成 legacy alias metadata 供调试/兼容，但 write action 必须以 `anchor` 为唯一校验输入。
 - D6-U7 当前后端已完成 Reading Record anchor gate + V1c persistence，Web Plate surface 可在 stable-source single-range selection 上启用 Highlight / Note 最小写入。
-- D6-U7 Web 写入口为 `/api/web/reading-record/highlights` 与 `/api/web/reading-record/notes`，请求必须携带 nested `anchor`；保存成功后触发 snapshot reload。
+- D6-U7 Web 写入口为 `/api/web/reader/records/{recordId}/highlights` 与 `/api/web/reader/records/{recordId}/notes`（cutover 后统一在 `/api/web/reader/records/*` 下，旧 `/api/web/reading-record/*` 路径已物理删除），请求必须携带 nested `anchor`；保存成功后触发 snapshot reload。
 - 不允许假设新 Reading Record id 一定能通过旧 `analysis_results.render_scene_json` 校验。
 - Web 可以继续生成 `UserEditorialAssetAnchor` draft 供 Lookup/Copy/Ask 预览使用；Ask / Feedback 写入口仍 disabled。
 
@@ -1306,7 +1306,7 @@ display policy 中处理 grammar_note / sentence_analysis 引发的视觉换行�
 
 V1a 验收：
 
-- `/app/reader-record/{recordId}` 中心文档不再通过旧 `ReaderVm` 适配。
+- `/app/reader/[recordId]` 中心文档不再通过旧 `ReaderVm` 适配。
 - 沉浸模式显示原文、轻量 vocabulary/phrase/context 标注、用户高亮和笔记；不显示译文、grammar explanation、sentence analysis 正文。
 - 精读模式显示译文、grammar note callout、sentence analysis structure block 和系统 marks/cues。
 - unit 级译文显示为“本段译文”，不会插到单个 anchor segment 后面。

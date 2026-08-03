@@ -460,12 +460,12 @@ Reload projection for `/app/reader-record`:
 - Sorting should use Reading Record order: Reading Unit order, Anchor Segment order, `unit_start_utf16`, `unit_end_utf16`, then `created_at`. Do not reuse `anchor_sentence_id` ordering for new rows.
 - Legacy `/app/reader/{recordId}` continues querying by `analysis_record_id`; new Reading Record rows with `analysis_record_id IS NULL` remain invisible to the legacy route.
 
-Legacy isolation rules:
+Legacy isolation rules（D6-U4 transition contract；Architectural Cutover Complete 后旧 routes/BFFs/services 已物理删除，下列条款作为历史过渡合同保留）：
 
-- Old `/app/reader/{recordId}` routes, BFFs and services continue to accept and write legacy payloads without requiring `anchor`.
-- New `/app/reader-record/{recordId}` write routes must be separate route/BFF entry points and must require `anchor`.
+- 旧 `/app/reader/{recordId}` routes、BFFs 和 services 在 cutover 前的 transition 期可继续接受 legacy payloads 而不要求 `anchor`；cutover 后这些路径已物理删除，不再可用。
+- Reading Record 写入路径（cutover 后统一为 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*`）必须要求 `anchor`。
 - There is no silent id remap between `anchor.record_id` and `analysis_record_id`.
-- `render_scene_json` remains allowed only for legacy `/app/reader` behavior and old eval/directus observation surfaces. It is forbidden as a validation source for new Reading Record writes.
+- `render_scene_json` 在 cutover 前仅允许 legacy `/app/reader` behavior 和旧 eval/directus observation surfaces 使用；cutover 后已禁止作为新 Reading Record writes 的 validation source。
 - No production write is enabled until a migration adds the required columns, constraints and focused tests for the table-extension path.
 
 ### D6-U4 V1c Single-range Persistence Implementation
@@ -548,11 +548,11 @@ Residual risk：被跳过的脏 rows 在 DB 中仍然存在，用户不可见。
 
 ### D6-U7 Plate Highlight / Note Minimal Write Path
 
-> 本节是 D6-U4 / D6-U5 后的 Web 写入口收口：默认 `/app/reader-record/{recordId}` Plate surface 在 stable-source single-range selection 上启用 Highlight / Note，仍不启用 Ask / Feedback。
+> 本节是 D6-U4 / D6-U5 后的 Web 写入口收口：默认 `/app/reader/[recordId]` Plate surface 在 stable-source single-range selection 上启用 Highlight / Note，仍不启用 Ask / Feedback。
 
 Runtime contract：
 
-- Web 新增清晰命名的 Reading Record BFF：`/api/web/reading-record/highlights` 与 `/api/web/reading-record/notes`。
+- Web 新增清晰命名的 Reading Record BFF：`/api/web/reader/records/{recordId}/highlights` 与 `/api/web/reader/records/{recordId}/notes`（cutover 后统一在 `/api/web/reader/records/*` 下，不再使用旧 `/api/web/reading-record/*` 路径）。
 - 请求 payload 使用 nested `anchor: UserEditorialAssetAnchor`；不得把 Reading Record id 映射成 legacy `analysis_record_id`。
 - BFF 只做 session、shape 校验和 selected text 一致性校验；持久化继续复用后端 `create_user_annotation` / `create_reader_note` 的 `req.anchor is not None` 分支。
 - 后端写入必须经过 `load_validated_reading_record_anchor`，成功后写入 V1c columns，`analysis_record_id = NULL`；失败返回 typed anchor error。
@@ -1249,11 +1249,11 @@ D5-V2 values:
 
 W3-C2 alignment additions:
 
-- Snapshot top-level `record` is the minimum ReaderWorkbench shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
-- Snapshot `record.display_title_zh` is the only generated Chinese masthead field for `/app/reader-record/{recordId}` Header. It is populated only when `record.title_generation_status = "succeeded"` and follows the generated-title hard max of 32 characters.
+- Snapshot top-level `record` is the minimum Reader Record Plate shell metadata contract for title, created time, source metadata, current `product_state`, and current `readiness_state`.
+- Snapshot `record.display_title_zh` is the only generated Chinese masthead field for `/app/reader/[recordId]` Header. It is populated only when `record.title_generation_status = "succeeded"` and follows the generated-title hard max of 32 characters.
 - Snapshot `record.title_generation_status` has exactly `pending`, `succeeded`, and `failed_retryable`. `failed_retryable` may include `title_generation_error_code` and sanitized `title_generation_error_message` so the client can expose retry/diagnostic affordances without treating the title as present.
 - Snapshot serializers must reject or fail closed if persisted facts claim `title_generation_status = "succeeded"` but `generated_title_zh` is blank. They must not fall back to `reading_records.title`, `reading_bases.title_snapshot`, Stable Reading Document title, or client-generated text as a successful Chinese title.
-- `/app/reader-record/{recordId}` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.
+- `/app/reader/[recordId]` may surface `product_state` as the primary reader-facing status and `readiness_state` as auxiliary milestone text after snapshot reloads.
 - D6-P7A adds `enhancement_progress` so Reader UI can distinguish queued, processing, published and failed enhancement work. It is derived from `reading_records`, current-base/current-generation `reader_jobs`, and `enhancement_layers`; it is not a new source of truth and does not create new DB tables.
 - `enhancement_progress.layers[*].capability` groups existing facts into `translation`, `vocabulary`, or `grammar`. Grammar jobs may have no single `layer_type`; published grammar outputs continue to use existing `grammar_note` and `sentence_analysis` layer types.
 - `reader_jobs.status` maps to progress as follows: `queued` / `retry_later` / `paused` -> `queued`, `claimed` -> `processing`, `succeeded` / `skipped` -> `succeeded`, terminal/cancelled/superseded states -> `failed` unless the D6-P4 user-actionable policy classifies the condition as `action_required`.
@@ -1264,7 +1264,7 @@ W3-C2 alignment additions:
 - `reading_goal` and `reading_variant` are first-class facts on `reading_records` and are exposed on `ReaderPlateSnapshot.record` (via `ReaderSnapshotRecord.reading_goal` / `reading_variant`). They are the truth owner for Reader strategy in the new orchestration. `source_metadata` must not carry them as top-level keys (submit schemas reject with 422). Only `daily_reading` and `exam` (with their scoped variants) are wired into the new orchestration; `academic` / `academic_general` fail closed at submit.
 - Reader strategy is currently active only for the core annotation generation path: submit strategy -> persisted record strategy -> variant-first resolver -> job metadata/fingerprint -> translation/vocabulary/grammar prompt injection. `translation` uses the `translation` policy, `vocabulary` uses the `vocabulary` policy, and grammar jobs use the `grammar_bundle` policy for both `grammar_note` and `sentence_analysis`. There is no separate `sentence_analysis` policy layer in this version.
 - Ask Claread, RAG selection and few-shot/example selection are intentionally deferred from this strategy repair. `reader_variants.yaml` may contain `ask` policy lines as future review input, but the current Ask runtime does not consume them. Any future Ask/RAG/few-shot strategy integration requires a separate design review covering truth owner, filter dimensions, fallback behavior, cache/index versioning and evaluation gates.
-- `summary` / `semantic_outline` are intentionally not formalized as typed snapshot layer schemas in D5-W3-C2. `layer_type: string` keeps room for future experimentation, but production layer contracts must wait until owner, target scope, publish policy and ReaderWorkbench rendering shape are decided.
+- `summary` / `semantic_outline` are intentionally not formalized as typed snapshot layer schemas in D5-W3-C2. `layer_type: string` keeps room for future experimentation, but production layer contracts must wait until owner, target scope, publish policy and Reader Record Plate rendering shape are decided.
 
 Rules:
 

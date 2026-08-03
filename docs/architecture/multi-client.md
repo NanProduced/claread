@@ -1,6 +1,6 @@
 # 多端架构
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 `analysis_*` 数据层与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Analysis service 写入路径与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构；旧 `analysis_*` 表的精确状态见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`）
 
 ## 结论
 
@@ -14,7 +14,7 @@ Claread 使用一套后端业务内核，服务多个客户端。
 
 | 客户端 | 目录 | 定位 |
 |--------|------|------|
-| Web | `apps/web/` | cutover 后唯一用户客户端，通过 `/app/read` 与 `/app/reader/[recordId]` 接入新 Reader orchestration 主链 |
+| Web | `apps/web/` | 新用户提交 Reader orchestration 的唯一客户端（不是 Claread 唯一用户客户端），通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入新 Reader orchestration 主链 |
 | 微信小程序 | `apps/miniprogram/` | 稳定客户端，功能子集，受平台能力限制；旧文章分析在 cutover 中下线，后续按新 contract 单独评估 |
 | Directus / Admin | `apps/directus/` | 当前内部控制面，承接通用 metadata 展示、LLM Config 与后续按新 orchestration 重建的治理化控制面 |
 
@@ -72,7 +72,7 @@ PostgreSQL 是事务型数据真相源。
 - dict_entries / dict_lookup_targets / dict_redirects
 - ai_usage_events（usage/ledger）
 
-旧 `analysis_tasks` / `analysis_records` / `analysis_results` / `analysis_debug_snapshots` 数据层已在 cutover 中作为生产链物理删除，表清理属于 DATA-AUDIT post-cutover backlog。
+旧 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）已在 cutover 中物理删除；对应 `analysis_*` 表分三类：4 张 legacy 孤儿表（`analysis_debug_snapshots`、`analysis_task_events`、`analysis_overview_tasks`、`analysis_overview_task_events`）、3 张 legacy 仍被只读引用表（`analysis_records`、`analysis_results`、`analysis_tasks`，被 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 引用）、2 张新链在用表（`analysis_windows`、`layer_analysis_plans`，必须保护）。表 DROP 与引用迁移属于 DATA-AUDIT post-cutover backlog。
 
 Redis 用于缓存和多 worker 场景下的共享状态。
 
@@ -123,7 +123,7 @@ Stable Document / Reading Units / Anchor Segments
 
 Reader orchestration 的调试摘要通过 `reader_events` 和 `reader_runtime_spans` 承载，记录 runtime span、job lifecycle、layer publish 事实。
 
-旧 `analysis_debug_snapshots` 表已在 cutover 中作为生产链物理删除，表清理属于 DATA-AUDIT post-cutover backlog。
+旧 `analysis_debug_snapshots` 表的写入路径已在 cutover 中物理删除；该表属于 legacy 孤儿表，DROP 属于 DATA-AUDIT post-cutover backlog。
 
 ## 认证策略
 

@@ -34,9 +34,12 @@ pnpm directus:extensions:watch
 pnpm directus:down
 pnpm directus:logs
 pnpm directus:extensions:build
-pnpm directus:parse-run:sync-metadata
-pnpm directus:eval-center:sync-metadata
+pnpm directus:llm-config:sync-metadata   # LLM Config metadata sync（当前唯一保留的 metadata sync 命令）
+pnpm directus:llm-config:export-bundle
+pnpm directus:llm-config:import-bundle
 ```
+
+旧 `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata` 已在 cutover 中从 root 与 `apps/directus` `package.json` 移除，`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮；不要在文档或脚本中再写成可用命令。
 
 ## MCP
 
@@ -62,16 +65,16 @@ http://127.0.0.1:8055/mcp?access_token=<DIRECTUS_ACCESS_TOKEN>
 
 ## Claude Code 项目接入
 
-当前仓库根目录已提供项目级 [`.mcp.json`](/C:/Users/nanpr/claread/claread/.mcp.json)。
+仓库根目录的 `.mcp.json` 是 **gitignored 本地文件**（见 `.gitignore`），不进入版本控制，也不保证每个开发者本地都存在。需要本地接入 Claude Code Directus MCP 时，按下面配置自行创建。
+
+`.mcp.json`（仓库根目录，本地创建，不提交）：
 
 - server name: `directus-local`
 - type: `http`
 - URL 默认值: `http://127.0.0.1:8055/mcp`
 - 认证方式: `headersHelper`
 
-认证 helper:
-
-- [apps/directus/scripts/directus-mcp-headers-helper.mjs](/C:/Users/nanpr/claread/claread/apps/directus/scripts/directus-mcp-headers-helper.mjs)
+认证 helper 脚本（已纳入版本控制）：`apps/directus/scripts/directus-mcp-headers-helper.mjs`
 
 helper 逻辑：
 

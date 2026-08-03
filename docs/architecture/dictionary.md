@@ -80,7 +80,7 @@ Claread 的词典能力不是“通用在线词典替代品”，而是阅读器
 
 ### API 入口
 
-词典相关 API 位于 [services/api/app/api/routes/dict.py](/C:/Users/nanpr/claread/claread/services/api/app/api/routes/dict.py)：
+词典相关 API 位于 [services/api/app/api/routes/dict.py](../../services/api/app/api/routes/dict.py)：
 
 - `GET /dict`
   - 查询单词或短语
@@ -93,7 +93,7 @@ Claread 的词典能力不是“通用在线词典替代品”，而是阅读器
 
 ### 归一化层
 
-[services/api/app/services/dictionary/service.py](/C:/Users/nanpr/claread/claread/services/api/app/services/dictionary/service.py) 先对 query 做统一归一化：
+[services/api/app/services/dictionary/service.py](../../services/api/app/services/dictionary/service.py) 先对 query 做统一归一化：
 
 - 去前后空白
 - 统一中英文引号
@@ -105,7 +105,7 @@ Claread 的词典能力不是“通用在线词典替代品”，而是阅读器
 
 ### Provider 查询顺序
 
-当前 provider 是 [services/api/app/services/dictionary/providers/tecd3.py](/C:/Users/nanpr/claread/claread/services/api/app/services/dictionary/providers/tecd3.py)。
+当前 provider 是 [services/api/app/services/dictionary/providers/tecd3.py](../../services/api/app/services/dictionary/providers/tecd3.py)。
 
 它当前的查询顺序是：
 
@@ -148,7 +148,7 @@ Claread 的点词查询不是单纯 `q=word`，还会带上：
 
 ### lemma fallback
 
-当首轮查词没有命中、且查询是单词级时，系统会使用 [services/api/app/services/dictionary/lemma.py](/C:/Users/nanpr/claread/claread/services/api/app/services/dictionary/lemma.py) 做 lemma fallback。
+当首轮查词没有命中、且查询是单词级时，系统会使用 [services/api/app/services/dictionary/lemma.py](../../services/api/app/services/dictionary/lemma.py) 做 lemma fallback。
 
 当前特点：
 

@@ -81,7 +81,7 @@ components:
 
 `Claread Console` 是内部控制面，不是对外产品页，也不是用户端阅读器的延伸皮肤。
 
-它的默认承载是 Directus Data Studio，因此整体视觉应优先靠近 Directus 原生工作台：干净、克制、可维护、利于高频操作。与此同时，在 `render scene inspector`、`workflow eval`、`RAG / few-shot editor` 这类深诊断模块中，又要具备更强的分层、异常高亮、证据联动和下钻能力，接近 LangSmith / Sentry 的问题详情页。
+它的默认承载是 Directus Data Studio，因此整体视觉应优先靠近 Directus 原生工作台：干净、克制、可维护、利于高频操作。与此同时，在未来按新 orchestration 重建的 Console 诊断模块（如 runtime span / trace 诊断、workflow eval、RAG / few-shot editor）中，又要具备更强的分层、异常高亮、证据联动和下钻能力，接近 LangSmith / Sentry 的问题详情页。当前这些深诊断模块尚未重建，属于 post-cutover backlog。
 
 这个系统的核心不是“统一把所有页面做漂亮”，而是建立一套适用于内部诊断工作的显示规则：
 

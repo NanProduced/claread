@@ -26,15 +26,41 @@ Reader 与 Ask 主链已经单轨化，旧生产链已物理删除，且 Markdow
 
 以下旧入口、旧页面、旧 BFF route、旧 worker、旧 reset 命令在 cutover 中已注销并物理删除。它们仅作为历史路径在本节及历史段落中提及，不再作为当前入口、fallback 或 alias 重定向：
 
-- 旧 Learning Workflow（`learning_workflow.py` 固定全量 graph）与 `analysis_*` 数据层作为生产链。
+- 旧 Learning Workflow（`learning_workflow.py` 固定全量 graph）与对应 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件已删除，仅留 `__pycache__/*.pyc` 缓存）。
 - 旧 Analysis Ask、Ask legacy lane 与 `analysis_record_id` 写入路径。
-- 旧 Web Reader 产品页 `/app/reader/{recordId}`（旧 scene adapter + `ReaderSceneResponseDto`）。
-- 临时验证页 `/app/reader-plate` 与 `/app/reader-record/{recordId}`（已被 `/app/reader/[recordId]` 取代）。
+- 旧 Web Reader 产品页实现：`/app/reader/{recordId}` 与 `/app/reader/[recordId]` 是同一运行时动态路由（Next.js `[recordId]` 渲染为 `{recordId}`），cutover 替换的是该路由的页面实现——旧 scene adapter + `ReaderSceneResponseDto` + `ReaderRecordWorkbenchSurface` / `ReaderWorkbench.tsx` 已物理删除，替换为 `plate-page.tsx` + `ReaderRecordPlateSurface`。URL 本身不变。
+- 临时验证页 `/app/reader-plate` 与 `/app/reader-record/{recordId}`（已物理删除，仅在 e2e 404 断言与 source-guard 测试中保留为负向断言）。
+- 旧 Web 组件 `ReadingRecordCommandGroup.tsx`、`active-analysis-task-indicator.tsx`、`reading-record-activity-indicator.tsx`、`analysis-task-client.ts`、`ReaderNotePanel.tsx`、`ReaderRecordWorkbenchSurface.tsx`、`ReaderPlateSnapshotSurface.tsx`、`snapshot-to-reader-workbench.ts` 及其测试已物理删除（仅在 `reader-orchestration-source-guard.test.ts` 的 `PHYSICAL_DELETED_PATHS` 列表中保留为防回潮断言）。
 - 旧 Web BFF route：`/api/web/analysis/*`、`/api/web/reading-record/*`、`/api/web/reader-plate/*`、`/api/web/reader-ask/*`、`/api/web/command-palette/records`、`/api/web/reader-annotations`、`/api/web/reader-notes` 的 legacy 写入分支。
 - 旧 FastAPI `/reader/records/{id}/scene` 与 `analysis_results.render_scene_json` 作为事实源。
-- 旧 Web 组件 `ReadingRecordCommandGroup.tsx`、`active-analysis-task-indicator.tsx`、`reader_scene.py` 作为 authoritative service。
+- 旧 `reader_scene.py` 作为 authoritative service。
 - 旧 Directus Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module。
-- 旧 reset 命令 `infra/scripts/reset-eval-center-data.ps1`（已删除；`init-eval-center-dev.ps1` 仍保留但不属于当前生产控制面）。
+- 旧 reset 命令 `infra/scripts/reset-eval-center-data.ps1`（已删除；`init-eval-center-dev.ps1` 保留为 `[retired]` fail-closed tombstone，不属于当前生产控制面）。
+- 旧 pnpm scripts `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata`（已从 root 与 `apps/directus` `package.json` 移除；`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮）。
+
+#### 旧 `analysis_*` 表的精确状态
+
+cutover 删除的是 Analysis service **写入路径**，不是表本身。表 DROP 属于 DATA-AUDIT post-cutover backlog。当前数据库中 9 张 `analysis_*` / `layer_analysis_*` 表分三类：
+
+**Legacy 孤儿表（无当前 `.py` 源码引用，待 DATA-AUDIT 清理）**：
+
+- `analysis_debug_snapshots`
+- `analysis_task_events`
+- `analysis_overview_tasks`
+- `analysis_overview_task_events`
+
+**Legacy 仍被只读引用表（写入路径已删除；当前 `.py` 仍只读引用以服务用户资产 CRUD 与 quota 历史，DROP 前必须先迁移引用）**：
+
+- `analysis_records` — 被 `services/api/app/services/user_assets/records.py`（CRUD）、`services/api/app/services/text_anchors.py`（LEFT JOIN）、`services/api/app/services/quota/ledger.py`（LEFT JOIN）引用。
+- `analysis_results` — 被 `services/api/app/services/user_assets/records.py`（CRUD）、`services/api/app/services/text_anchors.py`（LEFT JOIN）引用。
+- `analysis_tasks` — 被 `services/api/app/services/quota/ledger.py`（LEFT JOIN 解析 legacy `analysis_deduct` ledger 条目的文章标题）引用。
+
+**新链在用表（保护，不属于清理范围）**：
+
+- `layer_analysis_plans` — 由 `infra/migrations/0015_layer_analysis_plans.sql` 创建，被 `services/api/app/services/reader_orchestration/` 下 `zplus_bootstrap.py`、`grammar_window_publisher.py`、`pipeline_runner.py`、`repository.py`、`job_bootstrap.py` 读写。
+- `analysis_windows` — 由 `infra/migrations/0015_layer_analysis_plans.sql` 创建，被 `services/api/app/services/reader_orchestration/` 下 `grammar_window_worker.py`、`grammar_window_publisher.py`、`pipeline_runner.py`、`repository.py`、`completion_finalizer.py`、`zplus_bootstrap.py` 读写。
+
+DATA-AUDIT 必须显式保护 `analysis_windows` 与 `layer_analysis_plans`；对仍被只读引用的 3 张 legacy 表必须先迁移 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 中的引用，再 DROP。**禁止使用 "删除 analysis_*" 这类 wildcard 指令。**
 
 ### 必须保护的数据（post-cutover 数据清理仍须遵守）
 
@@ -60,7 +86,7 @@ Claread 尚未上线，受控验证中可重置本地业务数据，但 cutover 
 
 以下事项已登记为 post-cutover backlog，由后续任务单独推进；不在本文写成已完成：
 
-- 12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）。
+- 旧 Eval 表与 legacy `analysis_*` 表清理（DATA-AUDIT）。范围见上方「旧 `analysis_*` 表的精确状态」小节：4 张 legacy 孤儿表可直接 DROP；3 张 legacy 仍被只读引用表需先迁移 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 引用；`analysis_windows` 与 `layer_analysis_plans` 必须保护。
 - Console / Eval 按新 orchestration 重建（治理化控制面）。
 - 统一监测、计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环。
 - Test Governance 与代码架构优化（TEST-GOVERNANCE、ARCH-OPT-AUDIT）。

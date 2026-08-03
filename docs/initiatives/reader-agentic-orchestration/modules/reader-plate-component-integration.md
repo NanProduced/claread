@@ -20,19 +20,19 @@
 
 ## 当前默认页面路径
 
-- `/app/reader-record/{recordId}` 默认 `surfaceMode = "plate"`，渲染 `ReaderRecordPlateSurface`。
+- `/app/reader/[recordId]`（cutover 前 `/app/reader-record/{recordId}`）默认 `surfaceMode = "plate"`，渲染 `ReaderRecordPlateSurface`。
 - `ReaderRecordPlateSurface` 使用 `usePlateEditor({ plugins: [...ReaderPlateKit], value })` 创建 editor，并用 `<Plate editor={editor} readOnly>` 包裹中心文档。
 - `ReaderRecordHeader` 已冻结为独立 editorial column：Header 使用 `max-w-[82ch]`，正文 Plate document 继续使用阅读列宽。Header 由 eyebrow、中文 masthead、hairline action bar 和底部 metadata 四区组成。
 - Header 标题成功态只提升 `snapshot.record.display_title_zh`；`pending` / `failed_retryable` 用中文占位，旧 snapshot 仅在 `title_generation_status` 缺失时允许 `record.title` migration fallback。底部 metadata 使用稳定源文本 word count，不回退到 sentence count 或估算分钟。
 - Group-native translation projection 使用 backend `reader_translation_group`。Web projection 根据 `covered_anchor_segment_ids` 合并 source paragraph，保留 separator leaf，并在译文之后输出 grammar / sentence_analysis / supplement annotations。非法 group defensive skip，不再 append 到 unit 末尾。
 - snapshot 变化时通过 `editor.tf.setValue(plateValue)` 做 full reload。`projection_ops` incremental applier 仍未端到端启用。
-- Workbench fallback 仍保留；旧 `/app/reader/{recordId}` 也仍存在。
+- Cutover 后：旧 `ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface` 已物理删除，不再有 Workbench fallback；`/app/reader/{recordId}` 与 `/app/reader/[recordId]` 是同一运行时动态路由，cutover 替换的是页面实现而不是 URL。
 
 ## Package / Component Matrix
 
 | 依赖或组件 | 当前状态 | 代码落点 | 说明 |
 |---|---|---|---|
-| `platejs` / `platejs/react` | 真实接入 | `ReaderRecordPlateSurface.tsx`、`ReaderPlateSnapshotSurface.tsx`、`PlateReaderSurface.tsx`、`ImmersiveReaderSurface.tsx` | 默认 Reading Record 页面使用 `Plate`、`usePlateEditor`、`Editor`、`EditorContainer`。 |
+| `platejs` / `platejs/react` | 真实接入 | `ReaderRecordPlateSurface.tsx`、`PlateReaderSurface.tsx`、`ImmersiveReaderSurface.tsx` | 默认 Reading Record 页面使用 `Plate`、`usePlateEditor`、`Editor`、`EditorContainer`。旧 `ReaderPlateSnapshotSurface.tsx` 已在 cutover 中物理删除。 |
 | `ReaderPlateKit` | 真实接入 | `apps/web/src/components/editor/plugins/reader-plate-kit.ts` | 聚合 Markdown、reader blocks、reader leaves、floating toolbar、comment、cursor overlay。 |
 | Reader block plugins | 真实接入 | `reader-blocks-kit.tsx` | `reader_paragraph`、`reader_blockquote`、`reader_callout`、`reader_sentence_analysis` 和 Markdown 基础 element/leaf 通过 `createPlatePlugin` 注册 component。 |
 | Reader leaf plugins | 真实接入但视觉仍需打磨 | `reader-leaf-kit.tsx` | vocabulary / grammar / user highlight / user note 通过 leaf plugin 渲染。用户 highlight 已消费 `warm_yellow` / `soft_blue` / `soft_rose` color token。 |

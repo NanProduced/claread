@@ -13,7 +13,7 @@
 - 词典：`dict_entries`、`dict_lookup_targets`、`dict_redirects` 已恢复到 `claread_postgres_data`。
 - 控制面：`apps/directus/` Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
 
-当前基线已推进到 Architectural Cutover Complete：Web 是唯一用户客户端，通过 Next.js BFF 接入新 Reader orchestration 主链；旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除。Operational Readiness（计费、统一监测、Console/Eval 按新 orchestration 重建等）属于 post-cutover backlog。
+当前基线已推进到 Architectural Cutover Complete：Web 是新用户提交 Reader orchestration 的唯一客户端（不是 Claread 唯一用户客户端；小程序仍是稳定客户端），通过 Next.js BFF `/api/web/reader/records/*` 接入新 Reader orchestration 主链；旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web Reader 产品页实现（`ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface`）、旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除。Operational Readiness（计费、统一监测、Console/Eval 按新 orchestration 重建等）属于 post-cutover backlog。
 
 ## 已验证事实
 
@@ -23,9 +23,9 @@
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 和小程序共享 `@claread/contracts` 常量，后端按 UTF-16 offset、`fnv1a32-utf16` hash、Anchor Segment / Reading Unit 切片和 unit/segment 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
 - `Ask Claread` 已完成 Reader 2.0 底座上的 agent-loop-only 重构主线，并在 cutover 中成为唯一 Ask 生产链：旧 Analysis Ask、Ask legacy lane 已物理删除，`reader_record_ask` agentic v2 是唯一 Ask 执行链（article-bound、可回源、可确认写入、统一审计/结算；`planner_first` 仅作为历史 trace value 保留）。当前正式事实以 `docs/product/ask-claread.md` 与 `docs/architecture/ask-claread.md` 为准；已实现 turn-run/eval-trace 持久化、record/asset disambiguation、grammar_note supplement 生命周期、current-run hydration、follow-up suggestions、tool trace/citation 展示和单次 agent-loop repair。
-- Reader 主链已完成从旧 AI Workflow 到 bounded agentic orchestration 的硬切换：旧 `learning_workflow.py`、`analysis_*` 数据层、`analysis_results.render_scene_json` 作为事实源、旧 `/reader/records/{id}/scene`、旧 Web Reader 产品页 `/app/reader/{recordId}` 已物理删除；新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。Academic workflow 在 cutover 中下线，后续按新 contract 单独评估；Daily Reader 保持固定 workflow 不进入本轮 runtime conversion。Reader orchestration 专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。
+- Reader 主链已完成从旧 AI Workflow 到 bounded agentic orchestration 的硬切换：旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件已删除）、`analysis_results.render_scene_json` 作为事实源、旧 `/reader/records/{id}/scene`、旧 Web Reader 产品页实现（`ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface`）已物理删除；新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `analysis_*` 表的精确状态（legacy 孤儿表 / legacy 仍被只读引用表 / 新链在用表）见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`；表 DROP 属于 DATA-AUDIT post-cutover backlog。Academic workflow 在 cutover 中下线，后续按新 contract 单独评估；Daily Reader 保持固定 workflow 不进入本轮 runtime conversion。Reader orchestration 专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。
 - Example Lab 按 Directus 原生 Collection `eval_example_lab_entries` 实现（Collection 仍保留）；旧 Eval Center module、Node Lab、Workflow Lab、Run History、Render Scene Inspector、Parse Run Observability 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。grammar RAG / Example Lab 契约已收口：无 `teaching_goal`、无 `structure_signals`、无 `retrieval_version`；`variant` 是硬边界。
-- ReaderWorkbench 已拆出 Reader canvas、sentence row、annotation overlay 和 selection helper，后续 Reader UI 迭代应优先沿这些边界推进。
+- Web Reader 产品页实现为 `apps/web/src/app/(private)/app/reader/[recordId]/plate-page.tsx` + `ReaderRecordPlateSurface`，基于 Plate.js projection；旧 `ReaderWorkbench` / `ReaderRecordWorkbenchSurface` / `ReaderPlateSnapshotSurface` 已物理删除。后续 Reader UI 迭代应沿 Plate.js projection 边界推进。
 - Docker Compose project 使用 `claread`。
 - 本地 PostgreSQL volume 使用 `claread_postgres_data`。
 - 本地 Redis volume 使用 `claread_redis_data`。
@@ -62,7 +62,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 Reader agentic orchestration 的 Architectural Cutover 已完成：用户提交内容的 `learning` 主链已经从旧固定 AI Workflow 切换到 bounded agentic orchestration，旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除。专项权威上下文位于 `docs/initiatives/reader-agentic-orchestration/`；该目录的目标架构与模块合同同时是当前生产架构的事实源。
 
-当前主线推进重点为 post-cutover backlog：12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）、Console / Eval 按新 orchestration 重建（治理化控制面）、统一监测与计费适配、Test Governance 与代码架构优化（TEST-GOVERNANCE、ARCH-OPT-AUDIT）。`academic workflow` 的 agentic orchestration 重构待 learning workflow 在 post-cutover 稳定后再单独设计。
+当前主线推进重点为 post-cutover backlog：旧 Eval 表与 legacy `analysis_*` 表清理（DATA-AUDIT，范围见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`，保护 `analysis_windows` 与 `layer_analysis_plans`）、Console / Eval 按新 orchestration 重建（治理化控制面）、统一监测与计费适配、Test Governance 与代码架构优化（TEST-GOVERNANCE、ARCH-OPT-AUDIT）。`academic workflow` 的 agentic orchestration 重构待 learning workflow 在 post-cutover 稳定后再单独设计。
 
 `daily_reader_workflow` 不进入本轮 runtime conversion，保持固定 workflow 形态，与旧 Learning Workflow 已解耦。
 
