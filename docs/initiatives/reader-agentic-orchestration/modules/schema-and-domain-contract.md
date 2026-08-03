@@ -1491,7 +1491,7 @@ Academic workflow、旧 Directus parse-run dashboards、旧 eval suites、旧 `/
 
 - `expected_revision` 必须等于当前 `revision`；mismatch → 409 `stale_source_revision`（`resolution=reload`，body 返回 `current_revision`），较新草稿不被覆盖。
 - source 已 `frozen` → 409 `source_frozen`（`resolution=open_reader`）。
-- record 已 advanced → 409 `record_state_advanced`（`resolution=return_to_library`）。
+- record 已 advanced → 409 `record_state_advanced`（`resolution=open_reader`）。
 
 ### Frozen / reparse 生命周期与 Stable Document 边界
 
