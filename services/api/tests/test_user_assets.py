@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from app.main import app
 from app.schemas.user_assets.favorites import FavoriteCreateRequest
-from app.services.user_assets.records import delete_record
 from app.services.user_assets.vocabulary import SOURCE_REFS_MAX, _merge_payload_on_conflict
 
 client = TestClient(app)
@@ -156,23 +155,3 @@ class TestFavoriteRoutes:
         assert response.json() == {"deleted": True}
 
 
-@pytest.mark.asyncio
-class TestRecordDeletion:
-    @patch("app.services.user_assets.records.db_connection.DB_POOL")
-    async def test_delete_record_soft_deletes_reader_notes_too(self, mock_pool):
-        pool, conn = _mock_db_pool()
-        mock_pool.acquire = pool.acquire
-        transaction = MagicMock()
-        transaction.__aenter__ = AsyncMock(return_value=None)
-        transaction.__aexit__ = AsyncMock(return_value=False)
-        conn.transaction = MagicMock(return_value=transaction)
-        conn.fetchrow.return_value = {"deleted_at": None}
-        conn.execute.return_value = "UPDATE 1"
-
-        result = await delete_record(UUID(USER_ID), RECORD_ID)
-
-        assert result == "deleted"
-        queries = [call.args[0] for call in conn.execute.await_args_list]
-        assert any("UPDATE favorite_records" in query for query in queries)
-        assert any("UPDATE user_annotations" in query for query in queries)
-        assert any("UPDATE reader_notes" in query for query in queries)

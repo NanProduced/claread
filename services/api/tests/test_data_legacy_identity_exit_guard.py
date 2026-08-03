@@ -1,15 +1,14 @@
 """DATA-LEGACY-IDENTITY-EXIT zero-residual guard.
 
-Locks L-GATE for DATA-LEGACY-IDENTITY-EXIT-LONG:
+Locks L-GATE + P1 for DATA-LEGACY-IDENTITY-EXIT-LONG:
 
 1. No production module under ``app/`` reads or writes the seven legacy
    analysis tables (exact names — never a wildcard).
 2. The render-scene validation surface (``load_render_scene`` /
    ``validate_*_against_render_scene``) is gone from ``app/``.
-3. The P1 deletion-pending files (``user_assets/records.py``,
-   ``text_anchors.py``, ``schemas/user_assets/records.py``) have ZERO
-   importers anywhere in ``app/`` — their physical deletion lands in the
-   P1 commit, and this guard shrinks to a full scan at that point.
+3. The physically deleted legacy modules (``user_assets/records.py``,
+   ``text_anchors.py``, ``schemas/user_assets/records.py``) have no
+   importers and no surviving files anywhere in ``app/``.
 
 Deliberately NOT banned: ``analysis_record_id`` on protected shared tables
 (reader_ask_*, user_annotations, reader_notes, favorite_records, feedback,
@@ -42,9 +41,8 @@ RENDER_SCENE_SYMBOLS = (
     "validate_multi_text_against_render_scene",
 )
 
-# Physical deletion lands in the P1 commit; until then they must have zero
-# importers. Remove these entries together with the files in P1.
-P1_DELETION_PENDING = {
+# Physically deleted in the P1 commit; they must never reappear.
+DELETED_LEGACY_MODULES = {
     APP_ROOT / "services" / "user_assets" / "records.py",
     APP_ROOT / "services" / "text_anchors.py",
     APP_ROOT / "schemas" / "user_assets" / "records.py",
@@ -61,8 +59,6 @@ def _python_files():
 def test_no_legacy_analysis_table_access_in_app() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        if path in P1_DELETION_PENDING:
-            continue
         text = path.read_text(encoding="utf-8")
         for table in LEGACY_ANALYSIS_TABLES:
             if re.search(rf"\b{re.escape(table)}\b", text):
@@ -75,14 +71,19 @@ def test_no_legacy_analysis_table_access_in_app() -> None:
 def test_no_render_scene_validation_surface_in_app() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        if path in P1_DELETION_PENDING:
-            continue
         text = path.read_text(encoding="utf-8")
         for symbol in RENDER_SCENE_SYMBOLS:
             if re.search(rf"\b{re.escape(symbol)}\b", text):
                 offenders.append(f"{path.relative_to(APP_ROOT)}: {symbol}")
     assert offenders == [], (
         "render-scene validation surface found:\n" + "\n".join(offenders)
+    )
+
+
+def test_deleted_legacy_modules_stay_deleted() -> None:
+    resurrected = [str(p.relative_to(APP_ROOT)) for p in DELETED_LEGACY_MODULES if p.exists()]
+    assert resurrected == [], (
+        "deleted legacy modules reappeared:\n" + "\n".join(resurrected)
     )
 
 
@@ -98,20 +99,18 @@ def _imports_of(path: Path) -> set[str]:
     return names
 
 
-def test_p1_pending_files_have_zero_importers() -> None:
-    pending_modules = {
+def test_no_importers_of_deleted_legacy_modules() -> None:
+    deleted_modules = {
         "app.services.user_assets.records",
         "app.services.text_anchors",
         "app.schemas.user_assets.records",
     }
     importers: list[str] = []
     for path in _python_files():
-        if path in P1_DELETION_PENDING:
-            continue
         imported = _imports_of(path)
-        for module in pending_modules:
+        for module in deleted_modules:
             if any(name == module or name.startswith(module + ".") for name in imported):
                 importers.append(f"{path.relative_to(APP_ROOT)} -> {module}")
     assert importers == [], (
-        "P1 deletion-pending modules still have importers:\n" + "\n".join(importers)
+        "deleted legacy modules still have importers:\n" + "\n".join(importers)
     )

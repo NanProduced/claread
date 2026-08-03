@@ -56,10 +56,6 @@ export interface UserAnnotationResponseDto {
   unit_end_utf16?: number | null;
 }
 
-export interface UserAnnotationListResponseDto {
-  items: UserAnnotationResponseDto[];
-}
-
 export interface WebAnnotationCreateRequest {
   recordId: string;
   paragraphId?: string;

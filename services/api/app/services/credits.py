@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 # Default daily free points for new accounts
 DEFAULT_DAILY_FREE_POINTS = 1000
-LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT = "analysis_deduct"
 LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT = "ai_capability_deduct"
 LEDGER_ENTRY_TYPE_REFUND = "refund"
 
@@ -184,131 +183,6 @@ async def check_quota(user_id: UUID) -> int:
 
             return (daily_free - daily_used) + bonus
 
-
-
-async def deduct_points(
-    user_id: UUID,
-    cost_points: int,
-    *,
-    entry_type: str = LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
-    metadata: dict[str, Any] | None = None,
-    attribution: LedgerAttribution | None = None,
-) -> int:
-    """
-    Deduct credits from user account after successful task completion.
-
-    Deduction order: daily_free first, then bonus.
-    If total available < cost_points, deducts only what's available (clamp to 0).
-    Writes ledger entries only for actual amounts deducted.
-
-    Args:
-        user_id: User to deduct from
-        cost_points: Points to deduct (must be > 0)
-        entry_type: Ledger entry type
-        metadata: Extra metadata (token counts, multipliers, etc.)
-
-    Returns:
-        Actual total points deducted (may be less than cost_points if balance insufficient).
-    """
-    if cost_points <= 0:
-        return 0
-
-    pool = db_connection.DB_POOL
-    if pool is None:
-        raise RuntimeError("Database pool not initialized")
-
-    now = datetime.now(UTC)
-    today = date.today()
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow(
-                """
-                SELECT daily_free_points, daily_used_points, bonus_points, last_reset_on
-                FROM user_credit_accounts
-                WHERE user_id = $1
-                FOR UPDATE
-                """,
-                user_id,
-            )
-
-            if row is None:
-                logger.error("Cannot deduct credits: no account for user %s", user_id)
-                return 0
-
-            daily_free = row["daily_free_points"]
-            daily_used = row["daily_used_points"]
-            bonus = row["bonus_points"]
-            last_reset = row["last_reset_on"]
-
-            if last_reset < today:
-                daily_used = 0
-
-            daily_remaining = max(daily_free - daily_used, 0)
-            deduct_from_daily = min(cost_points, daily_remaining)
-
-            remaining_cost = cost_points - deduct_from_daily
-            available_bonus = max(bonus, 0)
-            deduct_from_bonus = min(remaining_cost, available_bonus)
-
-            actual_total = deduct_from_daily + deduct_from_bonus
-
-            new_daily_used = daily_used + deduct_from_daily
-            new_bonus = bonus - deduct_from_bonus
-
-            # Update account
-            await conn.execute(
-                """
-                UPDATE user_credit_accounts
-                SET daily_used_points = $2,
-                    bonus_points = $3,
-                    last_reset_on = $4,
-                    updated_at = $5
-                WHERE user_id = $1
-                """,
-                user_id,
-                new_daily_used,
-                new_bonus,
-                today,
-                now,
-            )
-
-            balance_after = (daily_free - new_daily_used) + new_bonus
-
-            # Write ledger entries — only for actual amounts deducted
-            if deduct_from_daily > 0:
-                await _insert_ledger_entry(
-                    conn,
-                    user_id=user_id,
-                    entry_type=entry_type,
-                    points=-deduct_from_daily,
-                    bucket_type="daily_free",
-                    balance_after=balance_after,
-                    metadata=metadata,
-                    created_at=now,
-                    attribution=attribution,
-                )
-
-            if deduct_from_bonus > 0:
-                await _insert_ledger_entry(
-                    conn,
-                    user_id=user_id,
-                    entry_type=entry_type,
-                    points=-deduct_from_bonus,
-                    bucket_type="bonus",
-                    balance_after=balance_after,
-                    metadata=metadata,
-                    created_at=now,
-                    attribution=attribution,
-                )
-
-            logger.info(
-                "Deducted %d/%d points from user %s (daily=%d, bonus=%d, remaining=%d)",
-                actual_total, cost_points, user_id,
-                deduct_from_daily, deduct_from_bonus, balance_after,
-            )
-
-            return actual_total
 
 
 async def reserve_points(
@@ -538,21 +412,6 @@ async def refund_reserved_points(
                 balance_after,
             )
             return refunded_total
-
-
-async def deduct_credits(
-    user_id: UUID,
-    cost_points: int,
-    metadata: dict[str, Any] | None = None,
-    attribution: LedgerAttribution | None = None,
-) -> int:
-    return await deduct_points(
-        user_id,
-        cost_points,
-        entry_type=LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
-        metadata=metadata,
-        attribution=attribution,
-    )
 
 
 async def grant_bonus_credits(

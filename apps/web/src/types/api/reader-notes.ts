@@ -45,10 +45,6 @@ export interface ReaderNoteResponseDto {
   unit_end_utf16?: number | null;
 }
 
-export interface ReaderNoteListResponseDto {
-  items: ReaderNoteResponseDto[];
-}
-
 export interface WebReaderNoteVm {
   id: string;
   recordId: string;
