@@ -24,8 +24,10 @@ apps/directus/
   scripts/
     watch-extensions.mjs
     directus-mcp-headers-helper.mjs
-    sync-parse-run-observability-metadata.mjs
-    sync-eval-center-metadata.mjs
+    check-logical-registration.mjs
+    sync-llm-config-metadata.mjs
+    export-llm-config-bundle.mjs
+    import-llm-config-bundle.mjs
 ```
 
 脚本说明见 [scripts/README.md](scripts/README.md)。
@@ -50,8 +52,7 @@ pnpm directus:extensions:watch
 pnpm directus:down
 pnpm directus:logs
 pnpm directus:extensions:build
-pnpm directus:parse-run:sync-metadata
-pnpm directus:eval-center:sync-metadata
+pnpm directus:llm-config:sync-metadata
 ```
 
 默认访问：
@@ -98,9 +99,8 @@ Claude Code 项目级接入已配置在仓库根目录 [`.mcp.json`](/C:/Users/n
 ## 当前状态
 
 - Directus overlay 连接 Claread 本地 PostgreSQL。
-- 扩展 workspace 已承载真实能力：Eval Center module、Render Scene Inspector、Example Lab AI RAG Generator、hooks-bundle、endpoints-bundle。
-- Parse Run Observability 通过 `sync-parse-run-observability-metadata.mjs` 同步 metadata，不直接手改 live Directus metadata。
-- Eval Center / Example Lab 通过 `sync-eval-center-metadata.mjs` 同步 metadata，不直接手改 live Directus metadata。
+- Cutover：旧 Console / Eval Center / Workflow Lab / Node Lab / Parse Run Observability / Render Scene Inspector 的 module、panel、endpoint 已注销并物理删除；相关 metadata sync 脚本与 eval-center 数据 reset 脚本已物理删除。
+- 保留面：`reader-orch` observability endpoint（`/reader-orch/*`，只读）、`claread-llm-config` module、通用 display/interface 扩展，以及 Example Lab `eval_example_lab_entries` validation hook（其 UI/endpoint 仍注销）。
 - 详细脚本说明见 [scripts/README.md](scripts/README.md)。
 
 ## 约束

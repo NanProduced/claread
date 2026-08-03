@@ -9,8 +9,6 @@
     "directus:logs": "docker compose --env-file infra/docker/.env --env-file apps/directus/.env -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml logs -f directus",
     "directus:extensions:build": "pnpm --dir apps/directus run extensions:build",
     "directus:extensions:watch": "pnpm --dir apps/directus run extensions:watch",
-    "directus:parse-run:sync-metadata": "pnpm --dir apps/directus run parse-run:sync-metadata",
-    "directus:eval-center:sync-metadata": "pnpm --dir apps/directus run eval-center:sync-metadata",
     "directus:llm-config:sync-metadata": "pnpm --dir apps/directus run llm-config:sync-metadata",
     "directus:llm-config:export-bundle": "pnpm --dir apps/directus run llm-config:export-bundle",
     "directus:llm-config:import-bundle": "pnpm --dir apps/directus run llm-config:import-bundle",
