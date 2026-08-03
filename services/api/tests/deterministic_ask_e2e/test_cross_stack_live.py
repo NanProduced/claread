@@ -290,10 +290,10 @@ def test_retry_canonical_route_preserves_identity_and_persists(api_ctx):
     A send WITHOUT ``client_submission_id`` creates the user/assistant
     pair through the stream's sequential ``create_message`` path, whose
     rows carry distinct ``created_at`` values; the retry predecessor
-    lookup therefore resolves and the full canonical retry contract
-    (identity reuse, v2 execution trust, persistence, cold history) is
-    proven end-to-end. The composer-shape (submission-id) defect is
-    covered separately below.
+    lookup therefore resolves through the strict fallback and the full
+    canonical retry contract (identity reuse, v2 execution trust,
+    persistence, cold history) is proven end-to-end. The composer-shape
+    (submission-bound) turn is covered separately below.
     """
     client: httpx.Client = api_ctx["client"]
     record_id = api_ctx["record_id"]
@@ -332,20 +332,15 @@ def test_retry_canonical_route_preserves_identity_and_persists(api_ctx):
     assert_public_surface_is_clean(json.dumps(ours[0]))
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Accepted-API defect surfaced by this harness: the client_submission_id "
-        "gateway binds user + assistant messages in ONE transaction sharing one "
-        "created_at (repository.py ~1782-1821), while the retry predecessor "
-        "lookup requires created_at < assistant.created_at (repository.py "
-        "~1386-1399); every submission-id turn's own user message is therefore "
-        "invisible to retry → 404. Owner fix: order-based predecessor (e.g. "
-        "created_at <= AND id <>, or sequence column). Flip this test when fixed."
-    ),
-    strict=False,
-)
 def test_retry_after_submission_id_turn(api_ctx, send_result):
-    """Composer-shape turn (client_submission_id) → retry must work too."""
+    """Composer-shape turn (client_submission_id) → retry must work.
+
+    ASK-SUBMISSION-RETRY-R1: the submission gateway binds user +
+    assistant in ONE transaction sharing one ``created_at``; retry must
+    resolve the predecessor through the explicit
+    ``reader_ask_client_submissions`` binding instead of timestamp
+    ordering. Regression guard for the pre-R1 404.
+    """
     client: httpx.Client = api_ctx["client"]
     record_id = api_ctx["record_id"]
     thread_id = api_ctx["thread_id"]
@@ -358,8 +353,19 @@ def test_retry_after_submission_id_turn(api_ctx, send_result):
     )
     assert r.status_code == 200, r.text
     retried = terminal_completed(parse_sse_frames(r.text))
-    assert retried["message_id"] == message_id
-    assert retried["execution_version"] == EXECUTION_V2
+    assert_completed_is_deterministic_v2(retried, thread_id=thread_id)
+    assert retried["message_id"] == message_id, (
+        "retry of a submission-bound turn must reuse the same assistant message identity"
+    )
+
+    r = client.get(f"/reader/records/{record_id}/ask/threads/{thread_id}")
+    assert r.status_code == 200, r.text
+    messages = r.json()["messages"]
+    ours = [m for m in messages if m["role"] == "assistant" and m["id"] == message_id]
+    assert len(ours) == 1, "retry must not create a second assistant message"
+    assert ours[0]["execution_version"] == EXECUTION_V2
+    cold_texts = [b["text"] for b in ours[0]["agentic_answer_blocks"] or []]
+    assert DETERMINISTIC_ARTICLE_ANSWER in cold_texts
 
 
 def test_old_namespaces_absent_and_guard_counter_zero(api_ctx):
@@ -438,10 +444,11 @@ def test_bff_send_new_message_over_sse_and_bff_retry_abi(api_ctx, web_ctx):
     r = client.post(
         f"/api/web/reader/records/{record_id}/ask/threads/{thread_id}/messages/stream",
         # Composer-shape body required by the BFF DTO (page_identity +
-        # attachments + entry_action). No client_submission_id: the
-        # submission-id pair shares one created_at (accepted-API
-        # predecessor-lookup defect, xfailed at API level); this BFF test
-        # proves the canonical send + retry ABI.
+        # attachments + entry_action).
+        # R1: real composer shape INCLUDING client_submission_id — the
+        # submission-bound turn is exactly what the real Web composer
+        # sends, and retry over it must succeed (binding-first
+        # predecessor resolution).
         json={
             "content": "One more deterministic question: how big is it now?",
             "page_identity": {
@@ -457,6 +464,7 @@ def test_bff_send_new_message_over_sse_and_bff_retry_abi(api_ctx, web_ctx):
             },
             "attachments": [],
             "entry_action": "ask_about_this",
+            "client_submission_id": str(uuid.uuid4()),
         },
     )
     assert r.status_code == 200, r.text

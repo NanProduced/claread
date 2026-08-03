@@ -36,10 +36,9 @@ class SubmissionIdempotencyUnavailable(RuntimeError):
     """Raised when reader_ask_client_submissions is missing (0026 not applied)."""
 
     def __init__(self, *, cause: BaseException | None = None) -> None:
-        super().__init__(
-            "submission_idempotency_unavailable: migration 0026 not applied"
-        )
+        super().__init__("submission_idempotency_unavailable: migration 0026 not applied")
         self.cause = cause
+
 
 # ASK-TURN-LIFECYCLE R1: default wall-clock threshold after which a
 # streaming ``reader_ask_turn_runs`` row is considered orphaned. The
@@ -85,8 +84,10 @@ def _thread_row_to_dict(row: Any) -> dict[str, Any]:
         "user_id": str(row["user_id"]) if row.get("user_id") is not None else None,
         "record_id": str(record_id) if record_id is not None else None,
         "record_scope": (
-            "reading_record" if reading_record_id is not None
-            else "analysis" if analysis_record_id is not None
+            "reading_record"
+            if reading_record_id is not None
+            else "analysis"
+            if analysis_record_id is not None
             else None
         ),
         "analysis_record_id": str(analysis_record_id) if analysis_record_id is not None else None,
@@ -110,12 +111,11 @@ def _turn_run_for_history(row: Any) -> dict[str, Any] | None:
         "message_id": str(row["id"]),
         "thread_id": str(row["thread_id"]),
         "user_id": (
-            str(row["turn_run_user_id"])
-            if row.get("turn_run_user_id") is not None
-            else None
+            str(row["turn_run_user_id"]) if row.get("turn_run_user_id") is not None else None
         ),
         "reading_record_id": str(row["turn_run_reading_record_id"])
-        if row.get("turn_run_reading_record_id") is not None else None,
+        if row.get("turn_run_reading_record_id") is not None
+        else None,
         "status": row.get("turn_run_status"),
         "final_status": row.get("turn_run_final_status"),
         "terminal_reason": row.get("turn_run_terminal_reason"),
@@ -125,7 +125,8 @@ def _turn_run_for_history(row: Any) -> dict[str, Any] | None:
         "reasoning_projection_json": row.get("turn_run_reasoning_projection_json"),
         "envelope_fingerprint": row.get("turn_run_envelope_fingerprint"),
         "usage_event_id": str(row["turn_run_usage_event_id"])
-        if row.get("turn_run_usage_event_id") is not None else None,
+        if row.get("turn_run_usage_event_id") is not None
+        else None,
         "started_at": _iso(row.get("turn_run_started_at")),
         "completed_at": _iso(row.get("turn_run_completed_at")),
         "failed_at": _iso(row.get("turn_run_failed_at")),
@@ -150,12 +151,11 @@ def _message_row_to_history(row: Any) -> dict[str, Any]:
         "tool_trace": row.get("tool_trace_json") or [],
         "metadata_json": metadata,
         "usage_event_id": (
-            str(row["usage_event_id"])
-            if row.get("usage_event_id") is not None
-            else None
+            str(row["usage_event_id"]) if row.get("usage_event_id") is not None else None
         ),
         "current_turn_run_id": str(row["message_current_turn_run_id"])
-        if row.get("message_current_turn_run_id") is not None else None,
+        if row.get("message_current_turn_run_id") is not None
+        else None,
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
     }
@@ -353,14 +353,10 @@ class ReaderRecordAskRepository:
                 else None
             ),
             "analysis_record_id": (
-                str(row["analysis_record_id"])
-                if row["analysis_record_id"] is not None
-                else None
+                str(row["analysis_record_id"]) if row["analysis_record_id"] is not None else None
             ),
             "reading_record_id": (
-                str(row["reading_record_id"])
-                if row["reading_record_id"] is not None
-                else None
+                str(row["reading_record_id"]) if row["reading_record_id"] is not None else None
             ),
             "title": row["title"],
             "is_default": bool(row["is_default"]),
@@ -499,8 +495,7 @@ class ReaderRecordAskRepository:
         async with pool.acquire() as conn:
             if limit is None:
                 rows = await conn.fetch(
-                    _MESSAGE_HISTORY_SELECT
-                    + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC",
+                    _MESSAGE_HISTORY_SELECT + " WHERE m.thread_id = $1 ORDER BY m.created_at ASC",
                     thread_id,
                 )
             else:
@@ -609,9 +604,7 @@ class ReaderRecordAskRepository:
                         message_id,
                     )
                     if active is not None:
-                        raise RuntimeError(
-                            "agentic turn run already streaming for message"
-                        )
+                        raise RuntimeError("agentic turn run already streaming for message")
                 row = await conn.fetchrow(
                     """
                     INSERT INTO reader_ask_turn_runs (
@@ -660,9 +653,7 @@ class ReaderRecordAskRepository:
                     now,
                 )
                 if claim != "UPDATE 1":
-                    raise RuntimeError(
-                        "agentic turn run could not claim assistant message"
-                    )
+                    raise RuntimeError("agentic turn run could not claim assistant message")
         return {
             "id": str(row["id"]),
             "status": row["status"],
@@ -670,9 +661,7 @@ class ReaderRecordAskRepository:
             "envelope_fingerprint": row["envelope_fingerprint"],
             "run_attempt": row.get("run_attempt"),
             "supersedes_run_id": (
-                str(row["supersedes_run_id"])
-                if row.get("supersedes_run_id") is not None
-                else None
+                str(row["supersedes_run_id"]) if row.get("supersedes_run_id") is not None else None
             ),
         }
 
@@ -763,12 +752,8 @@ class ReaderRecordAskRepository:
                         """,
                         message_id,
                     )
-                    raw_meta = (
-                        meta_row.get("metadata_json") if meta_row else None
-                    )
-                    meta: dict[str, Any] = (
-                        dict(raw_meta) if isinstance(raw_meta, dict) else {}
-                    )
+                    raw_meta = meta_row.get("metadata_json") if meta_row else None
+                    meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
                     meta.pop("retry_fallback", None)
                     await conn.execute(
                         """
@@ -838,9 +823,7 @@ class ReaderRecordAskRepository:
                 # is the persisted terminal DTO (if any).
                 "winning_final_status": winning.get("final_status"),
                 "winning_terminal_reason": winning.get("terminal_reason"),
-                "winning_user_visible_output_json": winning.get(
-                    "user_visible_output_json"
-                ),
+                "winning_user_visible_output_json": winning.get("user_visible_output_json"),
             }
         return {
             "id": str(row["id"]),
@@ -930,16 +913,10 @@ class ReaderRecordAskRepository:
                         """,
                         message_id,
                     )
-                    raw_meta = (
-                        meta_row.get("metadata_json") if meta_row else None
-                    )
-                    meta: dict[str, Any] = (
-                        dict(raw_meta) if isinstance(raw_meta, dict) else {}
-                    )
+                    raw_meta = meta_row.get("metadata_json") if meta_row else None
+                    meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
                     fallback = meta.get("retry_fallback")
-                    if isinstance(fallback, dict) and (
-                        fallback.get("content_md") or ""
-                    ).strip():
+                    if isinstance(fallback, dict) and (fallback.get("content_md") or "").strip():
                         restore_status = fallback.get("status") or "completed"
                         if restore_status not in {
                             "completed",
@@ -964,11 +941,7 @@ class ReaderRecordAskRepository:
                             message_id,
                             restore_status,
                             str(fallback.get("content_md") or ""),
-                            (
-                                UUID(str(fallback_run))
-                                if fallback_run
-                                else turn_run_id
-                            ),
+                            (UUID(str(fallback_run)) if fallback_run else turn_run_id),
                             jsonb_param(meta),
                             now,
                             turn_run_id,
@@ -1000,11 +973,7 @@ class ReaderRecordAskRepository:
                       AND status IN ('claimed', 'streaming')
                     """,
                     message_id,
-                    (
-                        "cancelled"
-                        if final_status == "cancelled"
-                        else "failed"
-                    ),
+                    ("cancelled" if final_status == "cancelled" else "failed"),
                     now,
                 )
         if row is None:
@@ -1234,8 +1203,7 @@ class ReaderRecordAskRepository:
                 )
             except Exception:  # noqa: BLE001
                 logger.exception(
-                    "stale_stream_reconcile_batch row failed: "
-                    "turn_run_id=%s message_id=%s",
+                    "stale_stream_reconcile_batch row failed: turn_run_id=%s message_id=%s",
                     row["turn_run_id"],
                     row["message_id"],
                 )
@@ -1358,6 +1326,18 @@ class ReaderRecordAskRepository:
         (when present) so retry preflight can resolve the immutable lane
         without reading the live feature flag.
 
+        ASK-SUBMISSION-RETRY-R1: submission-bound turns create the user +
+        assistant pair and bind them in ONE transaction sharing one
+        ``created_at``, so timestamp ordering can never see the turn's
+        own user message. When the retried assistant message is bound in
+        ``reader_ask_client_submissions`` (same thread fence), the
+        predecessor is resolved through the explicit
+        ``assistant_message_id`` → ``user_message_id`` binding. Any
+        anomalous binding (multiple rows, NULL or cross-thread/role
+        mismatched user) fails closed — never falls back to a timestamp
+        guess. Non-submission turns keep the strict preceding-user
+        fallback unchanged.
+
         Ownership of the thread is enforced by the caller via ``get_thread``
         before this method is invoked; this method only reads message rows
         scoped by ``thread_id``.
@@ -1383,25 +1363,15 @@ class ReaderRecordAskRepository:
             )
             if assistant_row is None:
                 return None, None
-            user_row = await conn.fetchrow(
-                """
-                SELECT id, thread_id, role, status, content_md, created_at,
-                       metadata_json
-                FROM reader_ask_messages
-                WHERE thread_id = $1
-                  AND role = 'user'
-                  AND created_at < $2
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                thread_id,
-                assistant_row["created_at"],
+            user_row = await self._resolve_retry_predecessor_row(
+                conn,
+                thread_id=thread_id,
+                message_id=message_id,
+                assistant_created_at=assistant_row["created_at"],
             )
         raw_assistant_metadata = assistant_row.get("metadata_json")
         assistant_metadata: dict[str, Any] = (
-            dict(raw_assistant_metadata)
-            if isinstance(raw_assistant_metadata, dict)
-            else {}
+            dict(raw_assistant_metadata) if isinstance(raw_assistant_metadata, dict) else {}
         )
         assistant_msg = {
             "id": str(assistant_row["id"]),
@@ -1410,9 +1380,7 @@ class ReaderRecordAskRepository:
             "status": assistant_row["status"],
             "content_md": assistant_row["content_md"],
             "metadata_json": assistant_metadata,
-            "turn_run_execution_version": assistant_row.get(
-                "turn_run_execution_version"
-            ),
+            "turn_run_execution_version": assistant_row.get("turn_run_execution_version"),
             "turn_run_id": (
                 str(assistant_row["turn_run_id"])
                 if assistant_row.get("turn_run_id") is not None
@@ -1426,9 +1394,7 @@ class ReaderRecordAskRepository:
         # an empty dict so callers can safely ``.get()`` any key. The
         # retry path looks up ``web_search_mode`` here.
         raw_metadata = user_row.get("metadata_json")
-        user_metadata: dict[str, Any] = (
-            dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        )
+        user_metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
         user_msg = {
             "id": str(user_row["id"]),
             "thread_id": str(user_row["thread_id"]),
@@ -1438,6 +1404,85 @@ class ReaderRecordAskRepository:
             "metadata_json": user_metadata,
         }
         return assistant_msg, user_msg
+
+    async def _resolve_retry_predecessor_row(
+        self,
+        conn: Any,
+        *,
+        thread_id: UUID,
+        message_id: UUID,
+        assistant_created_at: Any,
+    ) -> Any | None:
+        """Resolve the retry predecessor user row (ASK-SUBMISSION-RETRY-R1).
+
+        Binding-first: a submission-bound assistant message resolves its
+        turn's own user message through the explicit
+        ``reader_ask_client_submissions`` binding, because the R5 gateway
+        creates both messages in one transaction sharing one
+        ``created_at``. Anomalous bindings (multiple rows, NULL user, or a
+        bound user outside this thread / not role='user') fail closed —
+        this method then returns ``None`` and never falls back to a
+        timestamp guess.
+
+        Non-submission turns keep the pre-R1 strict preceding-user
+        fallback (``created_at <`` assistant, most recent first). A
+        missing submissions table (0026/0027 not applied) also falls
+        through to the strict fallback: such a deployment cannot have
+        submission-bound turns because the send path fails closed without
+        the table.
+        """
+        try:
+            binding_rows = await conn.fetch(
+                """
+                SELECT user_message_id
+                FROM reader_ask_client_submissions
+                WHERE thread_id = $1
+                  AND assistant_message_id = $2
+                """,
+                thread_id,
+                message_id,
+            )
+        except Exception as exc:  # pragma: no cover - missing-table path
+            sqlstate = getattr(exc, "sqlstate", None)
+            if sqlstate != "42P01":
+                raise
+            binding_rows = []
+            submissions_table_available = False
+        else:
+            submissions_table_available = True
+
+        if submissions_table_available and binding_rows:
+            bound_user_id = binding_rows[0]["user_message_id"] if len(binding_rows) == 1 else None
+            if bound_user_id is None:
+                # Anomalous binding — fail closed, no timestamp guess.
+                return None
+            return await conn.fetchrow(
+                """
+                SELECT id, thread_id, role, status, content_md, created_at,
+                       metadata_json
+                FROM reader_ask_messages
+                WHERE id = $1
+                  AND thread_id = $2
+                  AND role = 'user'
+                """,
+                bound_user_id,
+                thread_id,
+            )
+
+        return await conn.fetchrow(
+            """
+            SELECT id, thread_id, role, status, content_md, created_at,
+                   metadata_json
+            FROM reader_ask_messages
+            WHERE thread_id = $1
+              AND role = 'user'
+              AND created_at < $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            thread_id,
+            assistant_created_at,
+        )
 
     async def get_message_status(
         self,
@@ -1502,13 +1547,9 @@ class ReaderRecordAskRepository:
                     message_id,
                 )
                 if active is not None and row["status"] == "streaming":
-                    raise RuntimeError(
-                        "agentic turn run already streaming for message"
-                    )
+                    raise RuntimeError("agentic turn run already streaming for message")
                 raw_meta = row.get("metadata_json")
-                meta: dict[str, Any] = (
-                    dict(raw_meta) if isinstance(raw_meta, dict) else {}
-                )
+                meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
                 meta["retry_fallback"] = {
                     "status": row["status"],
                     "content_md": row["content_md"] or "",
@@ -1618,15 +1659,9 @@ class ReaderRecordAskRepository:
                             return {
                                 "may_create_model": False,
                                 "status": existing["status"],
-                                "claim_generation": int(
-                                    existing["claim_generation"] or 1
-                                ),
-                                "user_message_id": str(
-                                    existing["user_message_id"]
-                                ),
-                                "assistant_message_id": str(
-                                    existing["assistant_message_id"]
-                                ),
+                                "claim_generation": int(existing["claim_generation"] or 1),
+                                "user_message_id": str(existing["user_message_id"]),
+                                "assistant_message_id": str(existing["assistant_message_id"]),
                                 "user_message": None,
                                 "assistant_message": None,
                                 "terminal_code": f"submission_{existing['status']}",
@@ -1635,11 +1670,7 @@ class ReaderRecordAskRepository:
                         # claimed without pair
                         lease_at = existing.get("lease_expires_at")
                         lease_expired = lease_at is None or lease_at <= now
-                        if (
-                            existing["status"] == "claimed"
-                            and not has_pair
-                            and lease_expired
-                        ):
+                        if existing["status"] == "claimed" and not has_pair and lease_expired:
                             # Reclaim: bump generation; do NOT delete if
                             # messages somehow appear mid-way (re-check).
                             old_gen = int(existing["claim_generation"] or 1)
@@ -1680,9 +1711,7 @@ class ReaderRecordAskRepository:
                             return {
                                 "may_create_model": False,
                                 "status": "claimed",
-                                "claim_generation": int(
-                                    existing["claim_generation"] or 1
-                                ),
+                                "claim_generation": int(existing["claim_generation"] or 1),
                                 "user_message_id": None,
                                 "assistant_message_id": None,
                                 "terminal_code": "submission_in_progress",
@@ -1692,9 +1721,7 @@ class ReaderRecordAskRepository:
                             return {
                                 "may_create_model": False,
                                 "status": existing["status"],
-                                "claim_generation": int(
-                                    existing["claim_generation"] or 1
-                                ),
+                                "claim_generation": int(existing["claim_generation"] or 1),
                                 "user_message_id": (
                                     str(existing["user_message_id"])
                                     if existing["user_message_id"]
@@ -1748,9 +1775,7 @@ class ReaderRecordAskRepository:
                                 client_submission_id,
                             )
                             if raced is None:
-                                raise RuntimeError(
-                                    "submission conflict row vanished"
-                                )
+                                raise RuntimeError("submission conflict row vanished")
                             if (
                                 raced["user_message_id"] is not None
                                 and raced["assistant_message_id"] is not None
@@ -1758,23 +1783,15 @@ class ReaderRecordAskRepository:
                                 return {
                                     "may_create_model": False,
                                     "status": raced["status"],
-                                    "claim_generation": int(
-                                        raced["claim_generation"] or 1
-                                    ),
-                                    "user_message_id": str(
-                                        raced["user_message_id"]
-                                    ),
-                                    "assistant_message_id": str(
-                                        raced["assistant_message_id"]
-                                    ),
+                                    "claim_generation": int(raced["claim_generation"] or 1),
+                                    "user_message_id": str(raced["user_message_id"]),
+                                    "assistant_message_id": str(raced["assistant_message_id"]),
                                     "terminal_code": f"submission_{raced['status']}",
                                 }
                             return {
                                 "may_create_model": False,
                                 "status": raced["status"],
-                                "claim_generation": int(
-                                    raced["claim_generation"] or 1
-                                ),
+                                "claim_generation": int(raced["claim_generation"] or 1),
                                 "terminal_code": "submission_in_progress",
                             }
                         claim_gen = int(inserted["claim_generation"])
@@ -1846,9 +1863,7 @@ class ReaderRecordAskRepository:
                         # Stale generation — another reclaim won. Do not
                         # leave unbound messages dangling as submission
                         # ownership; fail closed for this owner.
-                        raise RuntimeError(
-                            "submission bind CAS failed (stale claim_generation)"
-                        )
+                        raise RuntimeError("submission bind CAS failed (stale claim_generation)")
                     await conn.execute(
                         """
                         UPDATE reader_ask_threads
@@ -1892,10 +1907,7 @@ class ReaderRecordAskRepository:
         now = datetime.now(UTC)
         try:
             async with pool.acquire() as conn:
-                if (
-                    thread_id is not None
-                    and client_submission_id is not None
-                ):
+                if thread_id is not None and client_submission_id is not None:
                     if claim_generation is not None:
                         result = await conn.execute(
                             """
@@ -1985,9 +1997,7 @@ class ReaderRecordAskRepository:
             "thread_id": str(row["thread_id"]),
             "client_submission_id": str(row["client_submission_id"]),
             "user_message_id": (
-                str(row["user_message_id"])
-                if row["user_message_id"] is not None
-                else None
+                str(row["user_message_id"]) if row["user_message_id"] is not None else None
             ),
             "assistant_message_id": (
                 str(row["assistant_message_id"])
@@ -1996,22 +2006,16 @@ class ReaderRecordAskRepository:
             ),
             "status": row["status"],
             "claim_generation": (
-                int(row["claim_generation"])
-                if row.get("claim_generation") is not None
-                else 1
+                int(row["claim_generation"]) if row.get("claim_generation") is not None else 1
             ),
         }
 
     # Backward-compatible aliases
     async def claim_client_submission(self, **kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError(
-            "claim_client_submission is removed; use ensure_submission_message_pair"
-        )
+        raise RuntimeError("claim_client_submission is removed; use ensure_submission_message_pair")
 
     async def bind_client_submission_messages(self, **kwargs: Any) -> None:
-        raise RuntimeError(
-            "bind_client_submission_messages is removed; bind is atomic in ensure"
-        )
+        raise RuntimeError("bind_client_submission_messages is removed; bind is atomic in ensure")
 
 
 # Module-level thread seam retained for the RR thread service. These thin

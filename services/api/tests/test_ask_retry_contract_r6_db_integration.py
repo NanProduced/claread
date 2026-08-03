@@ -88,7 +88,6 @@ async def test_r6_concurrent_ensure_one_pair_one_model_claim() -> None:
     )
     repo = ReaderRecordAskRepository(pool=pool)
     snap = build_retry_snapshot(
-        lane="agentic",
         model_option_key="ask-clarity",
         web_search_mode="disabled",
     )
@@ -111,9 +110,7 @@ async def test_r6_concurrent_ensure_one_pair_one_model_claim() -> None:
         try:
             a, b = await asyncio.gather(_one(), _one())
         except SubmissionIdempotencyUnavailable as exc:
-            pytest.fail(
-                f"migration 0026/0027 not applied (Owner must apply): {exc}"
-            )
+            pytest.fail(f"migration 0026/0027 not applied (Owner must apply): {exc}")
 
         assert a is not None and b is not None
         winners = [x for x in (a, b) if x.may_create_model]
@@ -168,7 +165,6 @@ async def test_r6_stale_generation_terminal_rejected() -> None:
     )
     repo = ReaderRecordAskRepository(pool=pool)
     snap = build_retry_snapshot(
-        lane="legacy",
         model_option_key="ask-fast",
         web_search_mode="disabled",
     )
