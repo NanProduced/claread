@@ -102,7 +102,7 @@ async def create_supplement(
             row = await conn.fetchrow(
                 """
                 INSERT INTO reader_ask_supplements (
-                    id, user_id, analysis_record_id, reading_record_id, supplement_type,
+                    id, user_id, reading_record_id, supplement_type,
                     target_key, sentence_id, paragraph_id,
                     title, content_md, anchor_payload_json, metadata_json, schema_version,
                     created_from_turn_run_id, created_at, updated_at,
@@ -110,7 +110,7 @@ async def create_supplement(
                     start_offset, end_offset, text_hash, hash_algorithm
                 )
                 VALUES (
-                    $1, $2, NULL, $3, $4,
+                    $1, $2, $3, $4,
                     $5, $6, $7,
                     $8, $9, $10::jsonb, $11::jsonb, $12,
                     $13, $14, $14,
@@ -118,7 +118,7 @@ async def create_supplement(
                     $19, $20, $21, $22
                 )
                 ON CONFLICT (id) DO NOTHING
-                RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                RETURNING id, reading_record_id, supplement_type,
                           target_key, sentence_id, paragraph_id,
                           title, content_md, anchor_payload_json, metadata_json, schema_version,
                           created_from_turn_run_id, created_at, updated_at, deleted_at,
@@ -151,7 +151,7 @@ async def create_supplement(
             if row is None:
                 row = await conn.fetchrow(
                     """
-                    SELECT id, analysis_record_id, reading_record_id, supplement_type,
+                    SELECT id, reading_record_id, supplement_type,
                            target_key, sentence_id, paragraph_id,
                            title, content_md, anchor_payload_json, metadata_json, schema_version,
                            created_from_turn_run_id, created_at, updated_at, deleted_at,
@@ -199,7 +199,7 @@ async def delete_supplement(
                 UPDATE reader_ask_supplements
                 SET deleted_at = $3, updated_at = $3
                 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-                RETURNING id, analysis_record_id, reading_record_id, supplement_type,
+                RETURNING id, reading_record_id, supplement_type,
                           target_key, sentence_id, paragraph_id,
                           title, content_md, anchor_payload_json, metadata_json, schema_version,
                           created_from_turn_run_id, created_at, updated_at, deleted_at,

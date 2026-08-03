@@ -25,11 +25,11 @@ async def create_annotation(
 @router.get("", response_model=UserAnnotationListResponse)
 async def list_annotations(
     current_user: AuthUserDep,
-    record_id: Optional[str] = Query(None, alias="analysis_record_id", description="Filter by specific record ID"),
+    reading_record_id: Optional[str] = Query(None, description="Filter by Reading Record ID"),
     limit: int = Query(50, ge=1, le=200, description="Max items to return"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
 ) -> UserAnnotationListResponse:
-    items = await svc.list_user_annotations(UUID(current_user.user_id), record_id, limit, offset)
+    items = await svc.list_user_annotations(UUID(current_user.user_id), reading_record_id, limit, offset)
     return UserAnnotationListResponse(items=items)
 
 

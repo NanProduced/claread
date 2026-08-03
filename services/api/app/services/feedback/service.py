@@ -23,10 +23,8 @@ async def submit_feedback(
     user_id: UUID,
     feedback_scope: str,
     target_id: str,
-    analysis_record_id: UUID | None,
     sentiment: str,
     feedback_type: str,
-    annotation_type: str | None,
     content: str | None,
     context_json: dict[str, Any],
     context_summary: str | None,
@@ -47,13 +45,14 @@ async def submit_feedback(
                 """
                 INSERT INTO feedback (
                     user_id, feedback_scope, target_id,
-                    analysis_record_id, sentiment, feedback_type,
-                    annotation_type, content, context_json,
+                    sentiment, feedback_type,
+                    content, context_json,
                     context_summary, app_version, client_platform,
                     client_surface, entry_point, created_at, updated_at
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
-                    $10, $11, $12, $13, $14, $15, $15
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8, $9, $10,
+                    $11, $12, $13, $13
                 )
                 RETURNING id, feedback_scope, target_id, sentiment, feedback_type,
                           client_platform, client_surface, entry_point,
@@ -62,10 +61,8 @@ async def submit_feedback(
                 user_id,
                 feedback_scope,
                 target_id,
-                analysis_record_id,
                 sentiment,
                 feedback_type,
-                annotation_type,
                 content,
                 jsonb_param(context_json),
                 context_summary,
@@ -255,8 +252,6 @@ async def get_feedback_stats() -> dict[str, Any]:
                 COUNT(*) FILTER (WHERE status = 'adopted') AS adopted,
                 COUNT(*) FILTER (WHERE status = 'resolved') AS resolved,
                 COUNT(*) FILTER (WHERE status = 'dismissed') AS dismissed,
-                COUNT(*) FILTER (WHERE feedback_scope = 'analysis_result') AS result_count,
-                COUNT(*) FILTER (WHERE feedback_scope = 'annotation') AS annotation_count,
                 COUNT(*) FILTER (WHERE feedback_scope = 'sentence') AS sentence_count,
                 COUNT(*) FILTER (WHERE feedback_scope = 'dictionary') AS dictionary_count,
                 COUNT(*) FILTER (WHERE feedback_scope = 'app') AS app_count,

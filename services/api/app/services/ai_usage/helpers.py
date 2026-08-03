@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from app.config.settings import Settings
 from app.llm.router import resolve_model_config
@@ -48,31 +47,3 @@ def resolve_model_metadata(
             exc,
         )
         return build_model_metadata(None)
-
-
-def extract_request_id_from_render_scene(render_scene: Any) -> str | None:
-    request_payload = None
-    if isinstance(render_scene, dict):
-        request_payload = render_scene.get("request")
-    else:
-        request_payload = getattr(render_scene, "request", None)
-
-    if isinstance(request_payload, dict):
-        request_id = request_payload.get("request_id")
-        return str(request_id) if request_id else None
-
-    request_id = getattr(request_payload, "request_id", None)
-    if request_id:
-        return str(request_id)
-    return None
-
-
-def extract_schema_version_from_render_scene(render_scene: Any) -> str | None:
-    if isinstance(render_scene, dict):
-        schema_version = render_scene.get("schema_version")
-        return str(schema_version) if schema_version else None
-
-    schema_version = getattr(render_scene, "schema_version", None)
-    if schema_version:
-        return str(schema_version)
-    return None

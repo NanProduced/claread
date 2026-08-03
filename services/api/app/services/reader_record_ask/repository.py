@@ -77,20 +77,11 @@ def _iso(value: Any) -> str | None:
 
 def _thread_row_to_dict(row: Any) -> dict[str, Any]:
     reading_record_id = row.get("reading_record_id")
-    analysis_record_id = row.get("analysis_record_id")
-    record_id = reading_record_id or analysis_record_id
     return {
         "id": str(row["id"]),
         "user_id": str(row["user_id"]) if row.get("user_id") is not None else None,
-        "record_id": str(record_id) if record_id is not None else None,
-        "record_scope": (
-            "reading_record"
-            if reading_record_id is not None
-            else "analysis"
-            if analysis_record_id is not None
-            else None
-        ),
-        "analysis_record_id": str(analysis_record_id) if analysis_record_id is not None else None,
+        "record_id": str(reading_record_id) if reading_record_id is not None else None,
+        "record_scope": "reading_record" if reading_record_id is not None else None,
         "reading_record_id": str(reading_record_id) if reading_record_id is not None else None,
         "title": row["title"],
         "is_default": bool(row["is_default"]),
@@ -326,7 +317,7 @@ class ReaderRecordAskRepository:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, user_id, analysis_record_id, reading_record_id, title,
+                SELECT id, user_id, reading_record_id, title,
                        is_default, selected_model_key, archived_at, created_at,
                        updated_at, last_message_at
                 FROM reader_ask_threads
@@ -344,17 +335,8 @@ class ReaderRecordAskRepository:
         return {
             "id": str(row["id"]),
             "user_id": str(row["user_id"]),
-            "record_id": str(row["reading_record_id"] or row["analysis_record_id"]),
-            "record_scope": (
-                "reading_record"
-                if row["reading_record_id"] is not None
-                else "analysis"
-                if row["analysis_record_id"] is not None
-                else None
-            ),
-            "analysis_record_id": (
-                str(row["analysis_record_id"]) if row["analysis_record_id"] is not None else None
-            ),
+            "record_id": str(row["reading_record_id"]) if row["reading_record_id"] is not None else None,
+            "record_scope": "reading_record" if row["reading_record_id"] is not None else None,
             "reading_record_id": (
                 str(row["reading_record_id"]) if row["reading_record_id"] is not None else None
             ),
@@ -377,7 +359,7 @@ class ReaderRecordAskRepository:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, user_id, analysis_record_id, reading_record_id, title,
+                SELECT id, user_id, reading_record_id, title,
                        is_default, selected_model_key, archived_at, created_at,
                        updated_at, last_message_at
                 FROM reader_ask_threads
@@ -407,10 +389,10 @@ class ReaderRecordAskRepository:
             row = await conn.fetchrow(
                 """
                 INSERT INTO reader_ask_threads (
-                    user_id, analysis_record_id, reading_record_id, title,
+                    user_id, reading_record_id, title,
                     selected_model_key, is_default, created_at, updated_at
                 )
-                VALUES ($1, NULL, $2, $3, $4, TRUE, $5, $5)
+                VALUES ($1, $2, $3, $4, TRUE, $5, $5)
                 ON CONFLICT (user_id, reading_record_id)
                 WHERE is_default = TRUE
                   AND archived_at IS NULL
@@ -422,7 +404,7 @@ class ReaderRecordAskRepository:
                         reader_ask_threads.selected_model_key
                     ),
                     updated_at = EXCLUDED.updated_at
-                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                RETURNING id, user_id, reading_record_id, title,
                           is_default, selected_model_key, archived_at, created_at,
                           updated_at, last_message_at
                 """,
@@ -450,7 +432,7 @@ class ReaderRecordAskRepository:
                 UPDATE reader_ask_threads
                 SET selected_model_key = $3, updated_at = $4
                 WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
-                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                RETURNING id, user_id, reading_record_id, title,
                           is_default, selected_model_key, archived_at, created_at,
                           updated_at, last_message_at
                 """,
@@ -475,7 +457,7 @@ class ReaderRecordAskRepository:
                 UPDATE reader_ask_threads
                 SET archived_at = $3, updated_at = $3
                 WHERE id = $1 AND user_id = $2 AND archived_at IS NULL
-                RETURNING id, user_id, analysis_record_id, reading_record_id, title,
+                RETURNING id, user_id, reading_record_id, title,
                           is_default, selected_model_key, archived_at, created_at,
                           updated_at, last_message_at
                 """,
@@ -608,14 +590,14 @@ class ReaderRecordAskRepository:
                 row = await conn.fetchrow(
                     """
                     INSERT INTO reader_ask_turn_runs (
-                        message_id, thread_id, user_id, analysis_record_id,
+                        message_id, thread_id, user_id,
                         reading_record_id, base_id, generation, turn_id,
                         run_attempt, supersedes_run_id, status, execution_version,
                         envelope_fingerprint, envelope_snapshot_json,
                         started_at, created_at, updated_at
                     )
                     VALUES (
-                        $1, $2, $3, NULL,
+                        $1, $2, $3,
                         $4, $5, $6, $7,
                         $8, $9, $10, $11,
                         $12, $13::jsonb,

@@ -65,7 +65,6 @@ function makeHighlightResponse(
 ): UserAnnotationResponseDto {
   return {
     id: "annotation_1",
-    analysis_record_id: null,
     anchor_type: "text_range",
     target_key: "reading-record:record_1:range:14:20",
     paragraph_id: null,

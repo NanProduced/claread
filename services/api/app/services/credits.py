@@ -58,7 +58,6 @@ async def _insert_ledger_entry(
     conn,
     *,
     user_id: UUID,
-    task_id: UUID | None,
     entry_type: str,
     points: int,
     bucket_type: str,
@@ -72,7 +71,6 @@ async def _insert_ledger_entry(
         """
         INSERT INTO user_credit_ledger (
             user_id,
-            task_id,
             subject_type,
             subject_id,
             reading_record_id,
@@ -86,10 +84,9 @@ async def _insert_ledger_entry(
             metadata_json,
             created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         """,
         user_id,
-        task_id,
         details.subject_type,
         details.subject_id,
         details.reading_record_id,
@@ -188,11 +185,11 @@ async def check_quota(user_id: UUID) -> int:
             return (daily_free - daily_used) + bonus
 
 
+
 async def deduct_points(
     user_id: UUID,
     cost_points: int,
     *,
-    task_id: UUID | None = None,
     entry_type: str = LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
     metadata: dict[str, Any] | None = None,
     attribution: LedgerAttribution | None = None,
@@ -207,7 +204,6 @@ async def deduct_points(
     Args:
         user_id: User to deduct from
         cost_points: Points to deduct (must be > 0)
-        task_id: Optional associated task ID
         entry_type: Ledger entry type
         metadata: Extra metadata (token counts, multipliers, etc.)
 
@@ -237,9 +233,7 @@ async def deduct_points(
             )
 
             if row is None:
-                logger.error(
-                    "Cannot deduct credits: no account for user %s", user_id
-                )
+                logger.error("Cannot deduct credits: no account for user %s", user_id)
                 return 0
 
             daily_free = row["daily_free_points"]
@@ -247,11 +241,9 @@ async def deduct_points(
             bonus = row["bonus_points"]
             last_reset = row["last_reset_on"]
 
-            # Auto-reset if needed
             if last_reset < today:
                 daily_used = 0
 
-            # Compute actual deductions, clamped to available balances
             daily_remaining = max(daily_free - daily_used, 0)
             deduct_from_daily = min(cost_points, daily_remaining)
 
@@ -288,7 +280,6 @@ async def deduct_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=entry_type,
                     points=-deduct_from_daily,
                     bucket_type="daily_free",
@@ -302,7 +293,6 @@ async def deduct_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=entry_type,
                     points=-deduct_from_bonus,
                     bucket_type="bonus",
@@ -325,7 +315,6 @@ async def reserve_points(
     user_id: UUID,
     cost_points: int,
     *,
-    task_id: UUID | None = None,
     entry_type: str = LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
     metadata: dict[str, Any] | None = None,
     attribution: LedgerAttribution | None = None,
@@ -333,7 +322,7 @@ async def reserve_points(
     """
     Reserve a fixed amount of credits upfront.
 
-    Unlike `deduct_points`, this only succeeds when the full amount is available.
+    Unlike a plain deduction, this only succeeds when the full amount is available.
     It is intended for short synchronous capabilities that should charge a fixed
     price or not run at all.
     """
@@ -405,7 +394,6 @@ async def reserve_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=entry_type,
                     points=-deduct_from_daily,
                     bucket_type="daily_free",
@@ -419,7 +407,6 @@ async def reserve_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=entry_type,
                     points=-deduct_from_bonus,
                     bucket_type="bonus",
@@ -449,7 +436,6 @@ async def refund_reserved_points(
     user_id: UUID,
     reservation: CreditReservation,
     *,
-    task_id: UUID | None = None,
     metadata: dict[str, Any] | None = None,
     attribution: LedgerAttribution | None = None,
 ) -> int:
@@ -556,7 +542,6 @@ async def refund_reserved_points(
 
 async def deduct_credits(
     user_id: UUID,
-    task_id: UUID,
     cost_points: int,
     metadata: dict[str, Any] | None = None,
     attribution: LedgerAttribution | None = None,
@@ -564,7 +549,6 @@ async def deduct_credits(
     return await deduct_points(
         user_id,
         cost_points,
-        task_id=task_id,
         entry_type=LEDGER_ENTRY_TYPE_ANALYSIS_DEDUCT,
         metadata=metadata,
         attribution=attribution,

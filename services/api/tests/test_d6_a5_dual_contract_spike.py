@@ -1,21 +1,16 @@
 """D6-U4 V1c single-range persistence tests.
 
-These tests lock the D6-U4 persistence contract (superseding the D6-A5
-spike that returned 409 `write_pending`):
+These tests lock the D6-U4 persistence contract. After
+DATA-LEGACY-IDENTITY-EXIT the Reading Record anchor is the ONLY highlight /
+note contract:
 
-- Legacy note / highlight create + list behaviour is unchanged when the
-  request does NOT carry the new `anchor` field.
-- A request with `anchor: UserEditorialAssetAnchor` is accepted by the
-  schema; the legacy required-field validator is relaxed.
-- The new-anchor path routes through `load_validated_reading_record_anchor`.
+- A create request carries `anchor: UserEditorialAssetAnchor`; the anchor
+  gate is the sole validation authority.
+- The anchor path routes through `load_validated_reading_record_anchor`.
 - Gate failure surfaces as a stable HTTP 400 with the gate error code.
-- Gate success now persists a real row into `user_annotations` /
-  `reader_notes` with `analysis_record_id = NULL` and the Reading Record
-  anchor columns populated. No 409 is returned.
-- The new-anchor branch never calls `load_render_scene` /
-  `validate_*_against_render_scene`.
-- The Reading Record id from the new anchor is never silently copied
-  into the legacy `analysis_record_id` field (the INSERT hardcodes NULL).
+- Gate success persists a real row into `user_annotations` / `reader_notes`
+  with the Reading Record anchor columns populated. No 409 is returned.
+- No write path references the legacy analysis identity.
 
 DB writes are simulated by patching `db_connect.acquire_connection` to a
 mock whose `fetchrow` returns a realistic inserted-row dict.
@@ -191,6 +186,25 @@ def _mock_db_pool() -> tuple[MagicMock, AsyncMock]:
     mock_pool.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_pool.__aexit__ = AsyncMock(return_value=False)
     return mock_pool, mock_conn
+
+
+@pytest.fixture(autouse=True)
+def _mock_active_fence():
+    """The active-base fence and projection-event publish are not under test
+    here; persistence tests lock the anchor-gate -> row-write contract only."""
+    with (
+        patch(
+            "app.services.reader_orchestration.event_runtime.ReaderEventRuntime.is_active_fence",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.services.reader_orchestration.event_runtime.ReaderEventRuntime.publish_event_in_transaction",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        yield
 
 
 def _make_inserted_annotation_row(**overrides: object) -> dict:
@@ -389,9 +403,10 @@ def test_user_annotation_schema_accepts_new_anchor_without_legacy_offsets() -> N
         selected_text="🧠",
     )
     assert req.anchor is not None
-    assert req.analysis_record_id is None
-    assert req.sentence_id is None
-    assert req.start_offset is None
+    # Post-exit: the legacy identity / render-scene fields no longer exist.
+    assert not hasattr(req, "analysis_record_id")
+    assert not hasattr(req, "sentence_id")
+    assert not hasattr(req, "start_offset")
 
 
 def test_user_annotation_schema_rejects_new_anchor_with_empty_selected_text() -> None:
@@ -417,13 +432,14 @@ def test_user_annotation_schema_rejects_new_anchor_selected_text_mismatch() -> N
 def test_reader_note_schema_accepts_new_anchor_without_legacy_offsets() -> None:
     req = ReaderNoteCreateRequest(
         anchor=_new_anchor(),
-        quote_mode="text_range",
         selected_text="🧠",
         note_text="remember this",
     )
     assert req.anchor is not None
-    assert req.analysis_record_id is None
-    assert req.anchor_sentence_id is None
+    # Post-exit: the legacy identity / render-scene fields no longer exist.
+    assert not hasattr(req, "analysis_record_id")
+    assert not hasattr(req, "anchor_sentence_id")
+    assert not hasattr(req, "quote_mode")
 
 
 def test_reader_note_schema_requires_note_text_even_on_new_anchor() -> None:
@@ -452,85 +468,6 @@ def test_reader_note_schema_rejects_new_anchor_selected_text_mismatch() -> None:
 
 # ---------------------------------------------------------------------------
 # Legacy path unchanged: an old-shape request still hits the legacy scene
-# validation path; we don't go through the anchor gate.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_legacy_user_annotation_request_does_not_invoke_anchor_gate() -> None:
-    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
-    pool, conn = _mock_db_pool()
-
-    legacy_record_id = str(uuid4())
-    selected_text = "memory"
-    req = UserAnnotationCreateRequest(
-        analysis_record_id=legacy_record_id,
-        anchor_type="text_range",
-        paragraph_id="p1",
-        sentence_id="s_legacy",
-        selected_text=selected_text,
-        start_offset=0,
-        end_offset=len(selected_text),
-        text_hash=compute_text_range_hash(selected_text),
-    )
-
-    with patch(
-        "app.services.user_annotations.db_connect.acquire_connection",
-        return_value=pool,
-    ):
-        # The legacy path calls load_render_scene + tries an INSERT. We just
-        # assert the anchor gate is never touched — i.e., the spike's branch
-        # is gated on `req.anchor is not None`.
-        await _assert_no_repository_call(
-            create_user_annotation(USER_ID, req, repository=repository),
-            repository,
-        )
-
-
-@pytest.mark.asyncio
-async def test_legacy_reader_note_request_does_not_invoke_anchor_gate() -> None:
-    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
-    pool, conn = _mock_db_pool()
-
-    legacy_record_id = str(uuid4())
-    selected_text = "policy"
-    req = ReaderNoteCreateRequest(
-        analysis_record_id=legacy_record_id,
-        quote_mode="text_range",
-        anchor_sentence_id="s_legacy",
-        paragraph_id="p1",
-        sentence_id="s_legacy",
-        selected_text=selected_text,
-        start_offset=0,
-        end_offset=len(selected_text),
-        text_hash=compute_text_range_hash(selected_text),
-        note_text="note",
-    )
-
-    with patch(
-        "app.services.reader_notes.db_connect.acquire_connection",
-        return_value=pool,
-    ):
-        await _assert_no_repository_call(
-            create_reader_note(USER_ID, req, repository=repository),
-            repository,
-        )
-
-
-async def _assert_no_repository_call(coro, repository: _FakeRepository) -> None:
-    try:
-        await coro
-    except HTTPException:
-        # Legacy path may still raise (e.g. from a missing scene in tests).
-        # The assertion that matters is that the repository was not touched.
-        pass
-    except Exception:
-        pass
-    assert repository.calls == [], (
-        "legacy request must not invoke the Reading Record anchor gate"
-    )
-
-
 # ---------------------------------------------------------------------------
 # New-anchor branch: gate failure -> HTTP 400 with typed code.
 # ---------------------------------------------------------------------------
@@ -689,7 +626,7 @@ async def test_user_annotation_new_anchor_persists_row_no_409() -> None:
     assert "INSERT INTO user_annotations" in sql_arg
 
     # Response carries the Reading Record anchor columns.
-    assert response.analysis_record_id is None
+    assert not hasattr(response, "analysis_record_id")
     assert response.reading_record_id == RECORD_ID
     assert response.base_id == BASE_ID
     assert response.generation == 2
@@ -1104,7 +1041,7 @@ async def test_reader_note_new_anchor_persists_row_no_409() -> None:
     assert "INSERT INTO reader_notes" in sql_arg
 
     # Response carries the Reading Record anchor columns.
-    assert response.analysis_record_id is None
+    assert not hasattr(response, "analysis_record_id")
     assert response.reading_record_id == RECORD_ID
     assert response.base_id == BASE_ID
     assert response.generation == 2
@@ -1116,86 +1053,13 @@ async def test_reader_note_new_anchor_persists_row_no_409() -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_annotation_new_anchor_branch_does_not_use_render_scene_validation() -> None:
+async def test_new_anchor_branch_insert_has_no_legacy_analysis_identity() -> None:
     repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
     pool, mock_conn = _mock_db_pool()
     mock_conn.fetchrow.return_value = _make_inserted_annotation_row()
     req = UserAnnotationCreateRequest(
         anchor=_new_anchor(),
         selected_text="🧠",
-    )
-
-    with (
-        patch(
-            "app.services.user_annotations.db_connect.acquire_connection",
-            return_value=pool,
-        ),
-        patch("app.services.user_annotations.load_render_scene") as load_render_scene,
-        patch(
-            "app.services.user_annotations.validate_text_range_against_render_scene"
-        ) as validate_text_range,
-        patch(
-            "app.services.user_annotations.validate_multi_text_against_render_scene"
-        ) as validate_multi_text,
-    ):
-        response = await create_user_annotation(USER_ID, req, repository=repository)
-
-    assert response.reading_record_id == RECORD_ID
-    load_render_scene.assert_not_called()
-    validate_text_range.assert_not_called()
-    validate_multi_text.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_reader_note_new_anchor_branch_does_not_use_render_scene_validation() -> None:
-    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
-    pool, mock_conn = _mock_db_pool()
-    mock_conn.fetchrow.return_value = _make_inserted_note_row()
-    req = ReaderNoteCreateRequest(
-        anchor=_new_anchor(),
-        quote_mode="text_range",
-        selected_text="🧠",
-        note_text="note",
-    )
-
-    with (
-        patch(
-            "app.services.reader_notes.db_connect.acquire_connection",
-            return_value=pool,
-        ),
-        patch("app.services.reader_notes.load_render_scene") as load_render_scene,
-        patch(
-            "app.services.reader_notes.validate_text_range_against_render_scene"
-        ) as validate_text_range,
-        patch(
-            "app.services.reader_notes.validate_multi_text_against_render_scene"
-        ) as validate_multi_text,
-    ):
-        response = await create_reader_note(USER_ID, req, repository=repository)
-
-    assert response.reading_record_id == RECORD_ID
-    load_render_scene.assert_not_called()
-    validate_text_range.assert_not_called()
-    validate_multi_text.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Reading Record id from new anchor is NEVER copied into analysis_record_id.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_new_anchor_branch_never_populates_legacy_analysis_record_id() -> None:
-    repository = _FakeRepository(facts=SimpleNamespace(build_result=_build_result()))
-    pool, mock_conn = _mock_db_pool()
-    mock_conn.fetchrow.return_value = _make_inserted_annotation_row()
-    smuggled_record_id = str(uuid4())
-    req = UserAnnotationCreateRequest(
-        anchor=_new_anchor(),
-        selected_text="🧠",
-        # Deliberately set analysis_record_id to a *different* UUID so we
-        # can detect any silent overwrite.
-        analysis_record_id=smuggled_record_id,
     )
 
     with patch(
@@ -1204,57 +1068,44 @@ async def test_new_anchor_branch_never_populates_legacy_analysis_record_id() -> 
     ):
         response = await create_user_annotation(USER_ID, req, repository=repository)
 
-    # The INSERT was issued and the returned row has analysis_record_id = None.
     assert mock_conn.fetchrow.call_count == 1
-    assert response.analysis_record_id is None
     assert response.reading_record_id == RECORD_ID
+    assert not hasattr(response, "analysis_record_id")
 
-    # The INSERT SQL must hardcode NULL for analysis_record_id rather than
-    # passing the smuggled UUID as a parameter.
+    # Post-exit: the INSERT SQL must not reference the legacy identity at all.
     sql_arg = mock_conn.fetchrow.call_args.args[0]
-    assert "analysis_record_id" in sql_arg
-    # The VALUES clause must contain literal NULL for analysis_record_id.
-    # The smuggled UUID must NOT appear in any positional parameter.
-    assert smuggled_record_id not in mock_conn.fetchrow.call_args.args
+    assert "analysis_record_id" not in sql_arg
 
 
-def test_user_annotation_schema_does_not_silently_remap_anchor_record_id() -> None:
-    """Schemas must not auto-fill analysis_record_id from anchor.record_id."""
+def test_user_annotation_schema_has_no_legacy_identity_fields() -> None:
+    """Schemas must not carry analysis_record_id after the identity exit."""
     rr_id = "11111111-1111-1111-1111-111111111111"
     req = UserAnnotationCreateRequest(
         anchor=_new_anchor(record_id=rr_id),
         selected_text="🧠",
     )
-    assert req.analysis_record_id is None, (
-        "schema must not auto-fill analysis_record_id from anchor.record_id"
-    )
+    assert not hasattr(req, "analysis_record_id")
 
 
-def test_reader_note_schema_does_not_silently_remap_anchor_record_id() -> None:
+def test_reader_note_schema_has_no_legacy_identity_fields() -> None:
     rr_id = "11111111-1111-1111-1111-111111111111"
     req = ReaderNoteCreateRequest(
         anchor=_new_anchor(record_id=rr_id),
-        quote_mode="text_range",
         selected_text="🧠",
         note_text="note",
     )
-    assert req.analysis_record_id is None
-    assert req.anchor_sentence_id is None
+    assert not hasattr(req, "analysis_record_id")
+    assert not hasattr(req, "anchor_sentence_id")
 
 
 # ---------------------------------------------------------------------------
-# Legacy list isolation: list-all must not return Reading Record rows.
+# List contract: Reading Record identity is the only list filter.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_list_user_annotations_without_record_id_excludes_reading_record_rows() -> None:
-    """The legacy list-all path must filter out Reading Record rows.
-
-    New Reading Record rows have analysis_record_id = NULL. The list-all
-    branch (record_id is None) must include `AND analysis_record_id IS NOT NULL`
-    so that legacy consumers don't see Reading Record highlights.
-    """
+async def test_list_user_annotations_without_record_id_only_returns_reading_record_rows() -> None:
+    """The list-all branch must filter to Reading Record rows."""
     from app.services.user_annotations import list_user_annotations
 
     pool, mock_conn = _mock_db_pool()
@@ -1268,26 +1119,24 @@ async def test_list_user_annotations_without_record_id_excludes_reading_record_r
 
     assert mock_conn.fetch.call_count == 1
     sql_arg = mock_conn.fetch.call_args.args[0]
-    assert "analysis_record_id IS NOT NULL" in sql_arg
+    assert "reading_record_id IS NOT NULL" in sql_arg
 
 
 @pytest.mark.asyncio
-async def test_list_reader_notes_filters_by_analysis_record_id() -> None:
-    """list_reader_notes always filters by analysis_record_id = $2, which
-    already excludes Reading Record rows (NULL != any value). This test
-    locks that the filter remains in place."""
+async def test_list_reader_notes_filters_by_reading_record_id() -> None:
+    """list_reader_notes always filters by reading_record_id = $2."""
     from app.services.reader_notes import list_reader_notes
 
     pool, mock_conn = _mock_db_pool()
     mock_conn.fetch.return_value = []
 
-    legacy_record_id = str(uuid4())
+    reading_record_id = str(uuid4())
     with patch(
         "app.services.reader_notes.db_connect.acquire_connection",
         return_value=pool,
     ):
-        await list_reader_notes(USER_ID, legacy_record_id)
+        await list_reader_notes(USER_ID, reading_record_id)
 
     assert mock_conn.fetch.call_count == 1
     sql_arg = mock_conn.fetch.call_args.args[0]
-    assert "analysis_record_id = $2" in sql_arg
+    assert "reading_record_id = $2" in sql_arg

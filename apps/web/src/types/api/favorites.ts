@@ -1,8 +1,7 @@
-import type { FavoriteTargetType } from "@claread/contracts";
-
 export interface FavoriteCreateRequestDto {
-  analysis_record_id?: string | null;
-  target_type?: FavoriteTargetType;
+  // API only accepts "daily_reader_article" today; other values are rejected
+  // upstream with 400 until the D2 schema work widens the DB CHECK.
+  target_type?: string;
   target_key: string;
   payload_json?: Record<string, unknown>;
 }
@@ -15,9 +14,9 @@ export interface FavoriteCreateResponseDto {
 export interface FavoriteResponseDto {
   id: string;
   user_id: string;
-  target_type: FavoriteTargetType;
+  // Plain string: historical rows may still carry legacy target types.
+  target_type: string;
   target_key: string;
-  analysis_record_id: string | null;
   payload_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;

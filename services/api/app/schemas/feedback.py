@@ -13,26 +13,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 FEEDBACK_TYPES_BY_SCOPE: dict[str, dict[str, list[str]]] = {
-    "analysis_result": {
-        "positive": ["thumbs_up"],
-        "negative": [
-            "translation_inaccurate",
-            "too_few_annotations",
-            "too_many_annotations",
-            "wrong_difficulty",
-            "other",
-        ],
-    },
-    "annotation": {
-        "positive": ["helpful"],
-        "negative": [
-            "wrong_label",
-            "inaccurate",
-            "wrong_boundary",
-            "should_not_annotate",
-            "other",
-        ],
-    },
     "sentence": {
         "negative": [
             "translation_inaccurate",
@@ -69,7 +49,7 @@ for _group in FEEDBACK_TYPES_BY_SCOPE.values():
     for _types in _group.values():
         ALL_FEEDBACK_TYPES.update(_types)
 
-FeedbackScope = Literal["analysis_result", "annotation", "sentence", "dictionary", "app"]
+FeedbackScope = Literal["sentence", "dictionary", "app"]
 Sentiment = Literal["positive", "negative", "neutral"]
 ClientPlatform = Literal["web", "wechat_miniprogram"]
 
@@ -79,10 +59,8 @@ class FeedbackCreateRequest(BaseModel):
 
     feedback_scope: FeedbackScope
     target_id: str = Field(min_length=1, max_length=256)
-    analysis_record_id: UUID | None = Field(default=None)
     sentiment: Sentiment
     feedback_type: str = Field(min_length=1, max_length=64)
-    annotation_type: str | None = Field(default=None, max_length=64)
     content: str | None = Field(default=None, max_length=2000)
     context_json: dict[str, Any] = Field(default_factory=dict)
     context_summary: str | None = Field(default=None, max_length=280)
@@ -123,14 +101,6 @@ class FeedbackCreateRequest(BaseModel):
 
         if scope == "dictionary" and sent != "negative":
             raise ValueError("dictionary feedback only allows negative sentiment")
-
-        if scope == "annotation" and not self.annotation_type:
-            raise ValueError("annotation_type is required for annotation scope")
-
-        if scope in ("analysis_result", "annotation") and not self.analysis_record_id:
-            raise ValueError(
-                f"analysis_record_id is required for {scope} scope"
-            )
 
         return self
 

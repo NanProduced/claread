@@ -32,7 +32,7 @@ async def get_db_session() -> AsyncIterator[asyncpg.Connection | None]:
         ):
             if session is None:
                 return []
-            records = await session.fetch("SELECT * FROM analysis_records LIMIT 10")
+            records = await session.fetch("SELECT * FROM users LIMIT 10")
             return [dict(r) for r in records]
 
     Returns None 而不是抛出异常，当数据库不可用时优雅降级。

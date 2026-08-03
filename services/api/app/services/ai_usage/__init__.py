@@ -31,8 +31,6 @@ from .capabilities import (
 )
 from .helpers import (
     build_model_metadata,
-    extract_request_id_from_render_scene,
-    extract_schema_version_from_render_scene,
     resolve_model_metadata,
 )
 from .service import (
@@ -99,8 +97,6 @@ __all__ = [
     "compute_analysis_cost_points",
     "compute_dict_ai_cost_points",
     "compute_reader_ask_cost_points",
-    "extract_request_id_from_render_scene",
-    "extract_schema_version_from_render_scene",
     "fetch_usage_event_id_by_invocation_key",
     "record_ai_usage_event",
     "record_model_invocation_usage_event",

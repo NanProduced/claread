@@ -35,8 +35,6 @@ class AIUsageEventCreate:
     billing_mode: str
     status: str
     user_id: UUID | None = None
-    task_id: UUID | None = None
-    record_id: UUID | None = None
     reading_record_id: UUID | None = None
     reader_run_id: UUID | None = None
     reader_job_id: UUID | None = None
@@ -261,8 +259,11 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 event.billing_mode,
                 event.status,
                 event.user_id,
-                event.task_id,
-                event.record_id,
+                # DATA-LEGACY-IDENTITY-EXIT: task_id / record_id were legacy
+                # analysis-workflow attribution columns; always NULL now.
+                # Column removal lands with the D2 schema drop.
+                None,
+                None,
                 event.reading_record_id,
                 event.reader_run_id,
                 event.reader_job_id,

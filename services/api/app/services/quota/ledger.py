@@ -65,11 +65,8 @@ async def get_credit_ledger(
             f"""
             SELECT l.id, l.entry_type, l.points, l.bucket_type,
                    l.balance_after, l.metadata_json, l.created_at,
-                   l.task_id,
-                   r.title AS article_title
+                   l.task_id
             FROM user_credit_ledger l
-            LEFT JOIN analysis_tasks t ON l.task_id = t.id
-            LEFT JOIN analysis_records r ON t.analysis_record_id = r.id
             WHERE {where_sql}
             ORDER BY l.created_at DESC
             LIMIT {query_limit}
@@ -81,25 +78,22 @@ async def get_credit_ledger(
     for row in rows[:limit_val]:
         entry_type = row["entry_type"]
         description = ENTRY_TYPE_DESCRIPTIONS.get(entry_type, entry_type)
-        article_title = row.get("article_title")
         metadata = _parse_metadata(row.get("metadata_json"))
 
-        if entry_type == "analysis_deduct" and article_title:
-            description = f"分析扣减 · {article_title[:30]}"
-        elif entry_type == "ai_capability_deduct":
+        if entry_type == "ai_capability_deduct":
             capability_code = metadata.get("capability_code")
             query = metadata.get("query")
             if capability_code == "dict_ai_lookup" and query:
                 description = f"AI 词典能力扣减 · {str(query)[:30]}"
             elif capability_code == "reader_ask":
-                description = f"Ask Claread 扣减 · {str(article_title or '当前文章')[:30]}"
+                description = "Ask Claread 扣减"
         elif entry_type == "refund":
             capability_code = metadata.get("capability_code")
             query = metadata.get("query")
             if capability_code == "dict_ai_lookup" and query:
                 description = f"AI 词典能力退款 · {str(query)[:30]}"
             elif capability_code == "reader_ask":
-                description = f"Ask Claread 退款 · {str(article_title or '当前文章')[:30]}"
+                description = "Ask Claread 退款"
 
         items.append({
             "id": str(row["id"]),
@@ -108,7 +102,6 @@ async def get_credit_ledger(
             "bucket_type": row["bucket_type"],
             "balance_after": row["balance_after"],
             "description": description,
-            "article_title": article_title,
             "metadata": metadata,
             "task_id": str(row["task_id"]) if row.get("task_id") else None,
             "created_at": row["created_at"],

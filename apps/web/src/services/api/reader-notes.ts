@@ -10,10 +10,10 @@ import type {
 
 export function listReaderNotes(
   sessionToken: string,
-  analysisRecordId: string,
+  readingRecordId: string,
 ): Promise<UpstreamResult<ReaderNoteListResponseDto>> {
   const searchParams = new URLSearchParams({
-    analysis_record_id: analysisRecordId,
+    reading_record_id: readingRecordId,
   });
   return fastApiFetch<ReaderNoteListResponseDto>(`/reader-notes?${searchParams.toString()}`, {
     sessionToken,

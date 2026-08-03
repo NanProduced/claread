@@ -9,7 +9,7 @@ import type {
 } from "@/types/api/annotations";
 
 export interface ListUserAnnotationsParams {
-  analysisRecordId?: string;
+  readingRecordId?: string;
   limit?: number;
   offset?: number;
 }
@@ -20,8 +20,8 @@ export function listUserAnnotations(
 ): Promise<UpstreamResult<UserAnnotationListResponseDto>> {
   const searchParams = new URLSearchParams();
 
-  if (params.analysisRecordId) {
-    searchParams.set("analysis_record_id", params.analysisRecordId);
+  if (params.readingRecordId) {
+    searchParams.set("reading_record_id", params.readingRecordId);
   }
 
   if (params.limit !== undefined) {

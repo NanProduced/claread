@@ -37,8 +37,6 @@ export default {
         options: {
           choices: [
             { text: "Analysis Record", value: "record" },
-            { text: "Analysis Task", value: "analysis_task" },
-            { text: "Analysis Overview Task", value: "analysis_overview_task" },
           ],
         },
       },

@@ -31,32 +31,6 @@ const FEEDBACK_CONFIG_BY_SCOPE: Record<
     neutralOptions?: { value: FeedbackTypeDto; label: string }[];
   }
 > = {
-  analysis_result: {
-    title: "解读结果反馈",
-    placeholder: "可以补充哪里不准，或希望怎么改",
-    requiresText: false,
-    positiveOptions: [{ value: "thumbs_up", label: "有帮助" }],
-    negativeOptions: [
-      { value: "translation_inaccurate", label: "翻译不准" },
-      { value: "too_few_annotations", label: "标注太少" },
-      { value: "too_many_annotations", label: "标注太多" },
-      { value: "wrong_difficulty", label: "难度不合适" },
-      { value: "other", label: "其他" },
-    ],
-  },
-  annotation: {
-    title: "标注反馈",
-    placeholder: "可以补充这条标注哪里需要调整",
-    requiresText: false,
-    positiveOptions: [{ value: "helpful", label: "有帮助" }],
-    negativeOptions: [
-      { value: "wrong_label", label: "标签错误" },
-      { value: "inaccurate", label: "内容不准" },
-      { value: "wrong_boundary", label: "边界不对" },
-      { value: "should_not_annotate", label: "不该标注" },
-      { value: "other", label: "其他" },
-    ],
-  },
   sentence: {
     title: "句子反馈",
     placeholder: "可以补充句子解析哪里需要调整",
@@ -103,9 +77,7 @@ export interface FeedbackSheetProps {
   scope: FeedbackScopeDto;
   prefillSentiment?: FeedbackSentimentDto;
   prefillType?: FeedbackTypeDto;
-  analysisRecordId?: string;
   targetId: string;
-  annotationType?: string;
   contextJson?: Record<string, unknown>;
   contextSummary?: string;
   clientSurface?: string;
@@ -158,9 +130,7 @@ export function FeedbackSheet({
   scope,
   prefillSentiment,
   prefillType,
-  analysisRecordId,
   targetId,
-  annotationType,
   contextJson,
   contextSummary,
   clientSurface,
@@ -264,8 +234,6 @@ export function FeedbackSheet({
       clientSurface: clientSurface ?? null,
       entryPoint: entryPoint ?? null,
       appVersion: "web",
-      ...(analysisRecordId ? { analysisRecordId } : {}),
-      ...(annotationType ? { annotationType } : {}),
     };
 
     try {
@@ -284,8 +252,6 @@ export function FeedbackSheet({
       setSubmitState("error");
     }
   }, [
-    analysisRecordId,
-    annotationType,
     canSubmit,
     clientSurface,
     content,

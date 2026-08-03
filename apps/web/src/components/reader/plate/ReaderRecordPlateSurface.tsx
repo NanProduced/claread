@@ -3978,8 +3978,7 @@ export function ReaderRecordPlateSurface({
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
     variant: "grammar" | "supplement" | "vocabulary" | "sentence_analysis";
-    feedbackScope: "annotation" | "dictionary";
-    analysisRecordId?: string;
+    feedbackScope: "dictionary";
     anchorSegmentId: string;
     layerId?: string;
     itemId?: string;
@@ -5104,21 +5103,8 @@ export function ReaderRecordPlateSurface({
       setFeedbackTarget(null);
       setFeedbackState({ kind: "saving" });
       try {
-        if (target.feedbackScope === "annotation" && !target.analysisRecordId) {
-          setFeedbackState({
-            kind: "error",
-            message: "当前标注反馈暂不可用。",
-          });
-          return;
-        }
         const feedbackType =
-          target.feedbackScope === "dictionary"
-            ? sentiment === "negative"
-              ? "wrong_definition"
-              : null
-            : sentiment === "positive"
-              ? "helpful"
-              : "inaccurate";
+          sentiment === "negative" ? "wrong_definition" : null;
         if (!feedbackType) {
           setFeedbackState({
             kind: "error",
@@ -5137,18 +5123,6 @@ export function ReaderRecordPlateSurface({
             targetId: target.blockId,
             sentiment,
             feedbackType,
-            ...(target.analysisRecordId
-              ? { analysisRecordId: target.analysisRecordId }
-              : {}),
-            ...(target.feedbackScope === "annotation"
-              ? {
-                  annotationType:
-                    target.annotationType ??
-                    (target.variant === "grammar"
-                      ? "grammar_note"
-                      : "ask_supplement"),
-                }
-              : {}),
             entryPoint:
               target.variant === "vocabulary"
                 ? "reader_record_vocabulary_mark"
@@ -6204,44 +6178,13 @@ export function ReaderRecordPlateSurface({
                 }
               }}
             >
-              {feedbackTarget.feedbackScope === "annotation" ? (
-                <button
-                  type="button"
-                  className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-structure-green/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent"
-                  disabled={!feedbackTarget.analysisRecordId}
-                  data-reader-record-disabled-reason={
-                    feedbackTarget.analysisRecordId
-                      ? undefined
-                      : "当前标注反馈需要 analysisRecordId"
-                  }
-                  onClick={() => handleSubmitFeedback("positive")}
-                >
-                  有帮助
-                </button>
-              ) : null}
               <button
                 type="button"
-                className="mt-0.5 block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent"
-                disabled={
-                  feedbackTarget.feedbackScope === "annotation" &&
-                  !feedbackTarget.analysisRecordId
-                }
-                data-reader-record-disabled-reason={
-                  feedbackTarget.feedbackScope === "annotation" &&
-                  !feedbackTarget.analysisRecordId
-                    ? "当前标注反馈需要 analysisRecordId"
-                    : undefined
-                }
+                className="block w-full rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-error-red/10"
                 onClick={() => handleSubmitFeedback("negative")}
               >
-                {feedbackTarget.feedbackScope === "dictionary" ? "释义有问题" : "有问题"}
+                释义有问题
               </button>
-              {feedbackTarget.feedbackScope === "annotation" &&
-              !feedbackTarget.analysisRecordId ? (
-                <p className="mt-1 px-3 py-1 text-xs leading-5 text-muted-foreground" role="status">
-                  当前标注反馈暂不可用
-                </p>
-              ) : null}
             </ReaderFloatingSurface>
           ) : null}
           <ReaderGrammarInteractionContext.Provider value={grammarInteraction}>

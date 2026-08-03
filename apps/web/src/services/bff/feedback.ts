@@ -19,26 +19,6 @@ const FEEDBACK_TYPES_BY_SCOPE: Record<
   FeedbackScopeDto,
   Partial<Record<FeedbackSentimentDto, FeedbackTypeDto[]>>
 > = {
-  analysis_result: {
-    positive: ["thumbs_up"],
-    negative: [
-      "translation_inaccurate",
-      "too_few_annotations",
-      "too_many_annotations",
-      "wrong_difficulty",
-      "other",
-    ],
-  },
-  annotation: {
-    positive: ["helpful"],
-    negative: [
-      "wrong_label",
-      "inaccurate",
-      "wrong_boundary",
-      "should_not_annotate",
-      "other",
-    ],
-  },
   sentence: {
     negative: [
       "translation_inaccurate",
@@ -73,10 +53,8 @@ const FEEDBACK_TYPES_BY_SCOPE: Record<
 export type WebFeedbackSubmitInput = {
   feedbackScope?: unknown;
   targetId?: unknown;
-  analysisRecordId?: unknown;
   sentiment?: unknown;
   feedbackType?: unknown;
-  annotationType?: unknown;
   content?: unknown;
   contextJson?: unknown;
   contextSummary?: unknown;
@@ -117,8 +95,6 @@ function readString(value: unknown): string | undefined {
 
 function isFeedbackScope(value: unknown): value is FeedbackScopeDto {
   return (
-    value === "analysis_result" ||
-    value === "annotation" ||
     value === "sentence" ||
     value === "dictionary" ||
     value === "app"
@@ -205,20 +181,12 @@ function buildPayload(input: WebFeedbackSubmitInput): FeedbackCreateRequestDto |
     return invalid("Feedback type does not match scope and sentiment.");
   }
 
-  const analysisRecordId = readString(input.analysisRecordId);
-  const annotationType = readString(input.annotationType);
   const content = readString(input.content) ?? null;
   const contextSummary = readString(input.contextSummary) ?? null;
   const clientSurface = readString(input.clientSurface) ?? null;
   const entryPoint = readString(input.entryPoint) ?? null;
   const clientPlatform = input.clientPlatform;
 
-  if ((feedbackScope === "analysis_result" || feedbackScope === "annotation") && !analysisRecordId) {
-    return invalid("Missing analysis record id for this feedback scope.");
-  }
-  if (feedbackScope === "annotation" && !annotationType) {
-    return invalid("Missing annotation type for annotation feedback.");
-  }
   if (!isFeedbackClientPlatform(clientPlatform)) {
     return invalid("Invalid client platform.");
   }
@@ -229,10 +197,8 @@ function buildPayload(input: WebFeedbackSubmitInput): FeedbackCreateRequestDto |
   return {
     feedback_scope: feedbackScope,
     target_id: targetId,
-    analysis_record_id: analysisRecordId ?? null,
     sentiment,
     feedback_type: normalizedType,
-    annotation_type: annotationType ?? null,
     content,
     context_json: isObjectRecord(input.contextJson) ? input.contextJson : {},
     context_summary: contextSummary,

@@ -299,13 +299,12 @@ class TestJsonbWriteContracts:
         })
         mock_pool = _make_mock_pool(mock_conn)
         user_id = uuid4()
-        task_id = uuid4()
 
         with patch("app.services.credits.db_connection.DB_POOL", mock_pool):
             await deduct_points(
                 user_id,
                 5,
-                task_id=task_id,
+
                 metadata={"capability_code": "reader_translation"},
                 attribution=LedgerAttribution(
                     subject_type="reading_record",
@@ -348,10 +347,8 @@ class TestJsonbWriteContracts:
                 user_id=uuid4(),
                 feedback_scope="app",
                 target_id="app_general",
-                analysis_record_id=None,
                 sentiment="positive",
                 feedback_type="feature_request",
-                annotation_type=None,
                 content=None,
                 context_json=context_json,
                 context_summary="Settings form",
@@ -381,7 +378,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json=generated_payload_json,
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id=None,
                 usage_event_id=None,
             )
@@ -409,7 +405,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json={"candidate": {"word": "doomscroll"}},
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id="sent-1",
                 usage_event_id=None,
                 reading_record_id=reading_record_id,
@@ -440,7 +435,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json={"candidate": {"word": "doomscroll"}},
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id=None,
                 usage_event_id=None,
             )

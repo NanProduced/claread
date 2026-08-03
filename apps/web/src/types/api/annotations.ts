@@ -19,19 +19,12 @@ export interface UserAnchorSegmentDto {
 }
 
 export interface UserAnnotationCreateRequestDto {
-  analysis_record_id?: string | null;
-  anchor_type?: UserAnnotationAnchorTypeDto;
-  target_key?: string | null;
-  paragraph_id?: string | null;
-  sentence_id?: string | null;
+  // DATA-LEGACY-IDENTITY-EXIT: the Reading Record anchor is the only
+  // highlight contract accepted by the API.
+  anchor: UserEditorialAssetAnchorDto;
   selected_text: string;
-  start_offset?: number | null;
-  end_offset?: number | null;
-  text_hash?: string | null;
-  segments?: UserAnchorSegmentDto[];
   color?: UserAnnotationColorDto;
   payload_json?: Record<string, unknown>;
-  anchor?: UserEditorialAssetAnchorDto | null;
 }
 
 export interface UserAnnotationUpdateRequestDto {
@@ -40,7 +33,6 @@ export interface UserAnnotationUpdateRequestDto {
 
 export interface UserAnnotationResponseDto {
   id: string;
-  analysis_record_id: string | null;
   anchor_type: UserAnnotationAnchorTypeDto;
   target_key: string;
   paragraph_id: string | null;

@@ -6,13 +6,6 @@ from app.schemas.user_assets.favorites import (
     FavoriteListResponse,
     FavoriteResponse,
 )
-from app.schemas.user_assets.records import (
-    RecordCreateRequest,
-    RecordListResponse,
-    RecordResponse,
-    RecordUpdateRequest,
-    RecordUpsertResponse,
-)
 from app.schemas.user_assets.vocabulary import (
     VocabularyCreateRequest,
     VocabularyListResponse,
@@ -22,12 +15,6 @@ from app.schemas.user_assets.vocabulary import (
 )
 
 __all__ = [
-    # Records
-    "RecordCreateRequest",
-    "RecordUpdateRequest",
-    "RecordResponse",
-    "RecordListResponse",
-    "RecordUpsertResponse",
     # Favorites
     "FavoriteCreateRequest",
     "FavoriteResponse",

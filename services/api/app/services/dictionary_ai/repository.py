@@ -20,7 +20,6 @@ async def insert_candidate_entry(
     confidence: str | None,
     generated_payload_json: dict,
     context_sentence: str,
-    record_id: UUID | None,
     sentence_id: str | None,
     usage_event_id: UUID | None,
     reading_record_id: UUID | None = None,
@@ -39,16 +38,16 @@ async def insert_candidate_entry(
                 INSERT INTO dict_ai_candidate_entries (
                     query, normalized_query, query_type, classification, result_kind,
                     confidence, generated_payload_json, context_sentence,
-                    record_id, sentence_id, usage_event_id,
+                    sentence_id, usage_event_id,
                     reading_record_id, base_id, generation,
                     review_status, created_at, updated_at
                 )
                 VALUES (
                     $1, $2, $3, $4, $5,
                     $6, $7::jsonb, $8,
-                    $9, $10, $11,
-                    $12, $13, $14,
-                    'pending', $15, $15
+                    $9, $10,
+                    $11, $12, $13,
+                    'pending', $14, $14
                 )
                 RETURNING id
                 """,
@@ -60,7 +59,6 @@ async def insert_candidate_entry(
                 confidence,
                 jsonb_param(generated_payload_json),
                 context_sentence,
-                record_id,
                 sentence_id,
                 usage_event_id,
                 reading_record_id,

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from app.services.user_assets import favorites, records, vocabulary
+from app.services.user_assets import favorites, vocabulary
 
-__all__ = ["records", "favorites", "vocabulary"]
+__all__ = ["favorites", "vocabulary"]

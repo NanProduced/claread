@@ -8,9 +8,10 @@ import {
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
 
-import type { FavoriteTargetType } from "@claread/contracts";
-
-const READING_RECORD_TARGET_TYPE = "reading_record" as FavoriteTargetType;
+// NOTE: the API/DB only accept "daily_reader_article" favorites today; the
+// Reading Record target type awaits the D2 schema change. The constant stays
+// so the flow fails loudly upstream instead of masquerading as legacy.
+const READING_RECORD_TARGET_TYPE = "reading_record";
 
 export type FavoriteBffResult =
   | {
@@ -155,7 +156,11 @@ export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffRes
     return authError(session);
   }
 
-  const upstreamResult = await deleteFavoriteByTargetKey(session.sessionToken, normalizedRecordId);
+  const upstreamResult = await deleteFavoriteByTargetKey(
+    session.sessionToken,
+    READING_RECORD_TARGET_TYPE,
+    normalizedRecordId,
+  );
 
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);
