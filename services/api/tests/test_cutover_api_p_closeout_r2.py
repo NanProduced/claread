@@ -115,7 +115,9 @@ def test_model_option_resolution_is_v2_scoped_and_identity_fenced() -> None:
 
     function_source = ast.unparse(node)
     assert "reading_record_id is not None" not in function_source
-    assert "record_scope" in function_source
+    # DATA-LEGACY-IDENTITY-EXIT: record_scope collapsed into the
+    # reading_record_id identity fence.
+    assert "thread.get('reading_record_id') != str(reading_record_id)" in function_source
     assert "reading_record" in function_source
     assert "str(reading_record_id)" in function_source
     assert "legacy stream" not in function_source.lower()

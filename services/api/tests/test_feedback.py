@@ -34,7 +34,7 @@ def _mock_auth():
 
 MOCK_FEEDBACK_ROW = {
     "id": uuid4(),
-    "feedback_scope": "analysis_result",
+    "feedback_scope": "sentence",
     "target_id": "target_001",
     "sentiment": "negative",
     "feedback_type": "translation_inaccurate",
@@ -51,28 +51,27 @@ class TestSubmitFeedback:
     @_mock_auth()
     @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
     def test_submit_feedback_success(self, mock_submit, mock_auth):
-        mock_submit.return_value = {**MOCK_FEEDBACK_ROW, "sentiment": "positive"}
+        mock_submit.return_value = {**MOCK_FEEDBACK_ROW, "sentiment": "negative"}
 
         response = client.post(
             "/feedback",
             json={
-                "feedback_scope": "analysis_result",
+                "feedback_scope": "sentence",
                 "target_id": "target_001",
-                "analysis_record_id": str(uuid4()),
-                "sentiment": "positive",
-                "feedback_type": "thumbs_up",
+                "sentiment": "negative",
+                "feedback_type": "translation_inaccurate",
                 "context_json": {},
-                "context_summary": "整体反馈",
+                "context_summary": "Original sentence",
                 "client_platform": "web",
                 "client_surface": "reader",
-                "entry_point": "feedback_sheet",
+                "entry_point": "selection_toolbar",
             },
             headers=AUTH_HEADERS,
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["feedback_scope"] == "analysis_result"
-        assert data["sentiment"] == "positive"
+        assert data["feedback_scope"] == "sentence"
+        assert data["sentiment"] == "negative"
         assert data["client_platform"] == "web"
 
     @_mock_auth()
