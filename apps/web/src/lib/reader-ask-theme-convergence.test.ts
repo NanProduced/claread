@@ -29,7 +29,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/components/reader/AnnotationGutter.tsx", label: "AnnotationGutter" },
   { rel: "src/components/reader/interaction.ts", label: "interaction" },
   // Reader plate layer
-  { rel: "src/components/reader/plate/ReaderPlateSnapshotSurface.tsx", label: "ReaderPlateSnapshotSurface" },
   { rel: "src/components/reader/plate/InlineCommentPanel.tsx", label: "InlineCommentPanel" },
   { rel: "src/components/reader/plate/ReaderRecordNavigationRail.tsx", label: "ReaderRecordNavigationRail" },
   // Reader plate-ui-adapter / dictionary
@@ -48,8 +47,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/app/(private)/app/read/AnalyzeSubmitForm.tsx", label: "AnalyzeSubmitForm" },
   { rel: "src/components/reader/AiWorkspacePanel.tsx", label: "AiWorkspacePanel" },
   { rel: "src/components/reader/plate/ReaderRecordPlateSurface.tsx", label: "ReaderRecordPlateSurface" },
-  { rel: "src/app/(private)/app/reader/[recordId]/ReaderWorkbench.tsx", label: "ReaderWorkbench" },
-  { rel: "src/components/reader/ReaderRecordWorkbenchSurface.tsx", label: "ReaderRecordWorkbenchSurface" },
 ];
 
 // Patterns that must NOT appear in the converged TSX files.

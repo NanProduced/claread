@@ -12,8 +12,8 @@
  *    `/app/reader/{recordId}`, and its reachable source closure must use
  *    the canonical `/api/web/reader/**` namespace.
  *
- * 3. The F7 Ask sidecar e2e fixture route is not a user-visible app page;
- *    retained harness coverage is a separate Physical-phase deletion item.
+ * 3. Retired Reader Workbench, adapter, and E2E harness paths remain absent
+ *    after the Web Physical cutover.
  *
  * This is a guard test: it scans source files at test time so a future
  * regression fails the test suite before it can ship.
@@ -273,7 +273,155 @@ describe("F7 source guard: removed pages and old BFF namespaces stay absent", ()
 });
 
 // ---------------------------------------------------------------------------
-// 4. Reachable final Reader source closure uses canonical BFF URLs
+// 4. P-WEB Physical deletion and retained production chain guard
+// ---------------------------------------------------------------------------
+
+const PHYSICAL_DELETED_PATHS = [
+  // Retired Workbench surface and projection
+  "src/app/(private)/app/reader/[recordId]/ReaderWorkbench.tsx",
+  "src/components/reader/ReaderRecordWorkbenchSurface.tsx",
+  "src/components/reader/ReaderRecordWorkbenchSurface.source-navigation.test.tsx",
+  "src/components/reader/ReaderNotePanel.tsx",
+  "src/components/reader/plate/ReaderPlateSnapshotSurface.tsx",
+  "src/components/reader/plate/ReaderPlateSnapshotSurface.test.tsx",
+  "src/lib/reader-plate/projection/snapshot-to-reader-workbench.ts",
+  "src/lib/reader-plate/projection/snapshot-to-reader-workbench.test.tsx",
+  // Retired legacy adapters/services/types
+  "src/adapters/records.adapter.ts",
+  "src/adapters/records.adapter.test.ts",
+  "src/services/bff/reader.ts",
+  "src/services/bff/records.ts",
+  "src/services/bff/reader-notes.ts",
+  "src/services/bff/analysis.ts",
+  "src/services/bff/analysis.test.ts",
+  "src/services/bff/annotations.ts",
+  "src/services/api/reader-scene.ts",
+  "src/services/api/records.ts",
+  "src/types/api/reader-scene.ts",
+  "src/types/api/records.ts",
+  "src/types/view/RecordListItemVm.ts",
+  // Retired E2E harness roots, configs, setup, and fixtures
+  "src/app/e2e-plate-spike",
+  "src/app/e2e-plate-paste-spike",
+  "playwright.ask-activity-r2.config.ts",
+  "playwright.ask-process-target-r0.config.ts",
+  "playwright.ask-retry-r7.config.ts",
+  "playwright.e2e-spike-disabled.config.ts",
+  "tests/e2e/ask-activity-r2-server-setup.ts",
+  "tests/e2e/ask-retry-r7-server-setup.ts",
+  "tests/e2e/gate-disabled-server-setup.ts",
+  "src/lib/reader-ask/ask-activity-r2-server-setup.test.ts",
+  "tests/e2e/fixtures/l1-heading-navigation-snapshot.ts",
+  "tests/e2e/fixtures/semantic-outline-navigation-snapshot.ts",
+  "tests/e2e/analysis-loading-state.spec.ts",
+  "tests/e2e/reader-orchestration-flow.spec.ts",
+  "tests/e2e/ask-chain-of-thought.spec.ts",
+  "tests/e2e/ask-retry-submission-r5.spec.ts",
+  "tests/e2e/ask-retry-submission-r6.spec.ts",
+  "tests/e2e/ask-retry-submission-r7.spec.ts",
+  "tests/e2e/ask-ux-history-cold-load.spec.ts",
+  "tests/e2e/ask-ux-mobile-r3-floating-overlay.spec.ts",
+  "tests/e2e/ask-ux-streaming-delta-r2.spec.ts",
+  "tests/e2e/citation-ui-verify.spec.ts",
+  "tests/e2e/plate-grammar-callout-state-r2-1c.spec.ts",
+  "tests/e2e/plate-paste-baseline.spec.ts",
+  "tests/e2e/plate-paste-spike.spec.ts",
+  "tests/e2e/plate-surface-gate-disabled.spec.ts",
+  "tests/e2e/plate-surface-grammar-expansion-scroll-anchor-r3-r2.spec.ts",
+  "tests/e2e/plate-surface-grammar-first-publish-p2c.spec.ts",
+  "tests/e2e/plate-surface-grammar-group-identity-p2a.spec.ts",
+  "tests/e2e/plate-surface-incremental-r2-1d.spec.ts",
+  "tests/e2e/plate-surface-l1-heading-navigation-t5-1d.spec.ts",
+  "tests/e2e/plate-surface-layer-revision-r2-1e.spec.ts",
+  "tests/e2e/plate-surface-quick-peek-reanchor-r3-r1.spec.ts",
+  "tests/e2e/plate-surface-section-translation-t5-6c.spec.ts",
+  "tests/e2e/plate-surface-semantic-outline-t5-5a.spec.ts",
+  "tests/e2e/plate-targeted-ops-s2.spec.ts",
+  "tests/e2e/reader-ask-web-search.spec.ts",
+  "tests/e2e/reader-record-ask-agentic-activity-r2.spec.ts",
+  "tests/e2e/reader-record-ask-process-target-r0.spec.ts",
+  "tests/e2e/reader-record-rail-stable-progress-quiet-t5-1e.spec.ts",
+  "tests/e2e/source-callout-aside.spec.ts",
+] as const;
+
+const PHYSICAL_RETAINED_PATHS = [
+  "src/app/(private)/app/read/page.tsx",
+  "src/app/(private)/app/reader/[recordId]/page.tsx",
+  "src/app/(private)/app/reader/[recordId]/plate-page.tsx",
+  "src/components/reader/AiWorkspacePanel.tsx",
+  "src/components/reader/plate/ReaderRecordPlateSurface.tsx",
+  "src/lib/reader-plate/projection/render-scene-to-plate-document.ts",
+  "src/lib/reader-plate-snapshot/polling.ts",
+  "src/lib/reader-plate-snapshot/progressive-transition.ts",
+  "src/lib/reader-plate-snapshot/incremental-projection-merger.ts",
+  "src/types/view/ReaderMockVm.ts",
+  "src/components/product-page/hero/HeroAppStage.tsx",
+  "src/services/bff/reader-plate.ts",
+  "src/services/bff/reader-ask.ts",
+  "src/services/bff/reading-records.ts",
+  "src/services/bff/reading-record-user-assets.ts",
+  "src/services/api/reader-notes.ts",
+  "src/services/api/annotations.ts",
+  "src/services/api/favorites.ts",
+  "tests/e2e/server-setup.ts",
+] as const;
+
+describe("P-WEB Physical guard: retired clusters stay deleted", () => {
+  it.each(PHYSICAL_DELETED_PATHS)("does not restore deleted path %s", (relativePath) => {
+    expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false);
+  });
+
+  it.each(PHYSICAL_RETAINED_PATHS)("retains production path %s", (relativePath) => {
+    expect(existsSync(resolve(process.cwd(), relativePath))).toBe(true);
+  });
+
+  it("retains the current Plate/Hero projection chain", () => {
+    const projectionIndex = readFileSync(
+      resolve(process.cwd(), "src/lib/reader-plate/projection/index.ts"),
+      "utf8",
+    );
+    const heroSource = readFileSync(
+      resolve(process.cwd(), "src/components/product-page/hero/HeroAppStage.tsx"),
+      "utf8",
+    );
+    expect(projectionIndex).toContain('renderSceneToPlateDocument');
+    expect(projectionIndex).not.toContain('snapshot-to-reader-workbench');
+    expect(heroSource).toContain('renderSceneToPlateDocument');
+    expect(readFileSync(resolve(process.cwd(), "src/types/view/ReaderMockVm.ts"), "utf8")).toContain(
+      "ReaderMockVm",
+    );
+  });
+
+  it("canonical E2E runner has no retired spike/gate wiring", () => {
+    const runnerFiles = [
+      "playwright.config.ts",
+      "tests/e2e/server-setup.ts",
+      "next.config.ts",
+      "package.json",
+    ];
+    const retiredMarkers = [
+      "e2e-plate-spike",
+      "e2e-plate-paste-spike",
+      "CLAREAD_ENABLE_E2E_SPIKE",
+      "CLAREAD_E2E_SPIKE_TEST",
+      "CLAREAD_E2E_GATE_TEST",
+      "ask-activity-r2",
+      "ask-retry-r7",
+      "gate-disabled",
+      "chromium-spike",
+    ];
+
+    for (const relativePath of runnerFiles) {
+      const source = readFileSync(resolve(process.cwd(), relativePath), "utf8");
+      for (const marker of retiredMarkers) {
+        expect(source, `${relativePath} contains retired marker ${marker}`).not.toContain(marker);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Reachable final Reader source closure uses canonical BFF URLs
 // ---------------------------------------------------------------------------
 
 const FINAL_READER_SOURCE_FILES = [
