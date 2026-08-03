@@ -1,8 +1,8 @@
 # Cutover 与旧 AI Workflow 处理
 
-> 状态：`Architectural Cutover Complete（Reader/Ask 主链已单轨化，旧生产链已物理删除）；DOC-R2 代码现场核验与 D6-A0 依赖审计作为历史证据保留`
-> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：重写过时双轨描述，将 cutover milestone 标记 closed，剩余事项移入 post-cutover backlog）
-> 范围：cutover 落地结论、当前单轨架构入口、必须保护的数据、post-cutover backlog，以及历史 cutover 过程证据。
+> 状态：`Frozen closeout record（Architectural Cutover Complete；DOC-R2 代码现场核验与 D6-A0 依赖审计作为历史证据保留；本文不再作为活跃任务入口）`
+> 最后更新：2026-08-03（DOC-TRUTH-LIFECYCLE-R2：冻结为精确 closeout 记录；CUTOVER-DOC-TRUTH-CLOSEOUT-R1 已完成单轨化重写）
+> 范围：cutover 落地结论、当前单轨架构入口、必须保护的数据、post-cutover backlog，以及历史 cutover 过程证据。本文是历史 closeout，新任务入口走 `implementation-plan.md` post-cutover backlog。
 
 ## Architectural Cutover Complete（当前事实）
 

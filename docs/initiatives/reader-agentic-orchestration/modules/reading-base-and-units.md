@@ -240,4 +240,4 @@ D2-S1 已验证：
 - `fnv1a32-utf16` 可复用为 unit、segment 和 selected text hash。
 - 旧 `prepare_input` 可拆件复用，但不能原样作为 Stable Reading Document builder。
 
-详细结果见 [`archive/spikes/D2-S1-reading-unit-builder-result.md`](../archive/spikes/D2-S1-reading-unit-builder-result.md)（DOC-R3 归档）。
+详细结果（DOC-TRUTH-LIFECYCLE-R2 前 `archive/spikes/D2-S1-reading-unit-builder-result.md`）已删除并索引至 [`archive/README.md`](../archive/README.md)；spike verdict `accepted_with_changes` 已压缩进本节上方要点。

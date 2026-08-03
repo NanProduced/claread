@@ -1451,24 +1451,9 @@ D3 reset can delete old development records, but must not erase protected capabi
 
 ## Old Workflow Handling
 
-Safe delete or rewrite after replacement exists:
+Architectural Cutover 已完成，旧 Learning Workflow 写入路径、Analysis service、Ask legacy lane、旧 Web Reader 产品页实现、旧 Directus Eval Center / Workflow Lab / Node Lab / Render Scene Inspector、旧 `reader_scene.py` authoritative service、旧 `/reader/.../scene` route、`analysis_results.render_scene_json` / `page_state_json` 作为事实源均已物理删除，不再保留 fallback 或 alias 重定向。旧 `analysis_*` 表的精确分类（4 张 legacy 孤儿表 / 3 张 legacy 仍被只读引用表 / 2 张新链在用表 `analysis_windows` 与 `layer_analysis_plans`）与 DATA-AUDIT 范围见 [`cutover-and-old-workflow.md`](cutover-and-old-workflow.md)；禁止使用「删除 analysis_*」这类 wildcard 指令，DROP 前必须先迁移 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 中对 legacy 表的引用。
 
-- `analysis_tasks`
-- `analysis_task_events`
-- `analysis_results.render_scene_json`
-- `analysis_results.page_state_json`
-- `analysis_overview_tasks`
-- old `/reader/.../scene`
-- `reader_scene.py` as authoritative service
-- render-scene Directus inspector
-- eval adapters that treat render scene as output truth
-
-Isolation required:
-
-- academic workflow;
-- old Directus parse-run dashboards;
-- old eval suites;
-- old `/analysis-tasks` routes if still needed during transition.
+Academic workflow、旧 Directus parse-run dashboards、旧 eval suites、旧 `/analysis-tasks` routes 已退役；如未来需要类似能力，按新 orchestration 在 Console / Eval 重建任务中单独设计，不复活旧实现。
 
 ## Reset Manifest
 

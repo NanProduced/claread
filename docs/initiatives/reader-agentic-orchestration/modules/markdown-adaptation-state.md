@@ -3,7 +3,7 @@
 > 状态：`R-G0G5-R2.1 已完成；source_callout full support；G0–G5 complete`
 > 最后更新：2026-08-01
 > 范围：Claread 解析链路 Markdown 适配的架构、实现状态、合同、已知问题与延后项。
-> 取代关系：本文件是 Markdown 适配的当前事实源；过程文档（`docs/tmp/**`、`.trae/documents/**` 计划文档）仅作历史参考。
+> 取代关系：本文件是 Markdown 适配的当前事实源；历史过程文档（计划、评审、研究）已清理，结论已压缩进本文件，git history 承担追溯。
 
 ---
 
@@ -133,8 +133,6 @@
 
 ## 6. 已知问题（不阻塞 G0–G5；后续 stage）
 
-来源：`.trae/documents/markdown-adaptation-issues-resolution-plan.md`
-
 | ID | 问题 | 当前状态 |
 |----|------|----------|
 | P0 | Candidate Review 输入端预警 lint（含链接白名单预处理） | ✅ 已关闭“提交阻断”：前端仅展示 warning badge，后端 parser/适配记录负责最终清洗与 candidate routing；仍不承诺前后端共享 parser |
@@ -169,20 +167,7 @@
 - Plate Reader Projection：`docs/initiatives/reader-agentic-orchestration/modules/plate-reader-projection.md`
 - Frontend Integration Contract：`docs/initiatives/reader-agentic-orchestration/modules/frontend-integration-contract.md`
 
-### 8.2 计划文档（已加状态修正，保留作历史参考）
-
-- 主计划：`.trae/documents/markdown-ecosystem-refactor-plan-2026-07-24.md`（A1–A7 / B1–B4 / C1–C2 已基本落地）
-- 遗留问题计划：`.trae/documents/markdown-adaptation-issues-resolution-plan.md`（P0–P3 待实施）
-- 早期 Plate Markdown 化：`.trae/documents/reader-plate-markdown-and-output-strategy.md`（阶段一已完成）
-- 早期续接：`.trae/documents/reader-plate-markdown-and-output-strategy-resume.md`（P0-Step-4/5/6 已完成）
-
-### 8.3 归档 TMP 文档（已完成使命，仅作历史参考）
-
-- 整体评审：`docs/tmp/TMP-reader-markdown-logic-review-2026-07-24.md`
-- 07-22 重校准计划：`docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-22.md`
-- 07-16 早期计划：`docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-16.md`
-- 07-16 深度研究：`docs/tmp/reader-orchestration/TMP-reader-markdown-rich-input-deep-research-2026-07-16.md`
-- Plate v53 能力核验：`docs/tmp/reader-orchestration/research/TMP-plate-v53-markdown-readonly-capability-research-2026-07-16.md`
+历史计划、评审与研究过程文档（原 `.trae/documents/**` 与 `docs/tmp/**` 下的 Markdown TMP）已完成使命并清理，结论已压缩进本文件；如需回溯过程细节见 git history。
 
 ## 9. 验证入口
 
