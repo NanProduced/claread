@@ -3,7 +3,7 @@ import Taro from '@tarojs/taro'
 import { useCallback, useEffect, useState } from 'react'
 import { fetchCloudVocabulary, fetchDueVocabulary, submitVocabReview } from '../../services/api/vocabulary.client'
 import type { VocabEntry, SourceRef } from '../../types/view/vocabulary.vm'
-import { getRecord, getVocabInspectEntry, getVocabulary, updateVocabEntry } from '../../services/storage'
+import { getVocabInspectEntry, getVocabulary, updateVocabEntry } from '../../services/storage'
 import { ROUTES } from '../../config/routes'
 import NavBar from '../../components/NavBar'
 import LucideIcon from '../../components/LucideIcon'
@@ -137,15 +137,8 @@ export default function VocabReviewPage() {
   }
 
   const goToOriginal = (ref: SourceRef) => {
-    if (!ref.clientRecordId) return
-    const record = getRecord(ref.clientRecordId)
-    if (!record || record.tombstone) {
-      Taro.showToast({ title: '原文记录已删除或不可用', icon: 'none' })
-      return
-    }
-    let url = `${ROUTES.RESULT}?recordId=${ref.clientRecordId}&mode=replay`
-    if (ref.sourceSentenceId) url += `&sentenceId=${ref.sourceSentenceId}`
-    Taro.navigateTo({ url })
+    if (!ref.dailyReaderArticleId) return
+    Taro.navigateTo({ url: `${ROUTES.DAILY_READER}?id=${ref.dailyReaderArticleId}` })
   }
 
   const handleNext = async (result: 'known' | 'unfamiliar') => {

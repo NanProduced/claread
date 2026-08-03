@@ -11,12 +11,10 @@ import DailyReaderProgress from '../../components/DailyReaderProgress'
 import WordPopup from '../../components/WordPopup'
 import { highlightToInlineMark } from '../../services/api/adapters/daily-reader-highlight.adapter'
 import type { DailyReaderHighlight } from '../../types/view/daily-reader.vm'
-import type { InlineMarkModel, DictionaryResult } from '../../types/view/render-scene.vm'
+import type { InlineMarkModel, DictionaryResult } from '../../types/view/reader-primitive.vm'
 import { isFavorited, saveFavorite, removeFavorite, saveVocabEntry } from '../../services/storage'
-import { CloudSyncService } from '../../services/cloudSync.service'
 import { track } from '../../services/analytics'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
-import type { FavoriteRecord } from '../../types/view/favorites.vm'
 import { getDailyReaderSourceDisplay } from '../../utils/daily-reader-source'
 import LucideIcon from '../../components/LucideIcon'
 import share01 from '../../assets/images/share/daily-reader-01.jpg'
@@ -175,8 +173,7 @@ export default function DailyReaderPage() {
       exchange: detailEntry.exchange || [],
       tags: detailEntry.tags || [],
       sourceRefs: [{
-        clientRecordId: article.id,
-        cloudRecordId: undefined,
+        dailyReaderArticleId: article.id,
         sourceSentence: contextSentence || undefined,
         sourceAnchorText: word,
         sourceOccurrence: activeMark?.anchor.kind === 'text' ? activeMark.anchor.occurrence : undefined,
@@ -203,7 +200,7 @@ export default function DailyReaderPage() {
     const isAdding = !favorited
 
     if (isAdding) {
-      saveFavorite({ recordId: article.id, cloudId: undefined, createdAt: Date.now() } as FavoriteRecord)
+      saveFavorite({ dailyReaderArticleId: article.id, createdAt: Date.now() })
       setFavorited(true)
       track('favorite', { isFavorited: true })
       Taro.showToast({ title: '已收藏全文', icon: 'success', duration: 1500 })

@@ -1,11 +1,10 @@
 import { View, Text, ScrollView } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { AnyInlineMarkModel, type VisualTone, type AcademicVisualTone, type InlineGlossary, type AcademicInlineGlossary, type DictionaryEntryPayload, type DictionaryDisambiguationResult, type DictionaryResult } from '../../types/view/render-scene.vm'
+import { type InlineMarkModel, type VisualTone, type InlineGlossary, type DictionaryEntryPayload, type DictionaryDisambiguationResult, type DictionaryResult } from '../../types/view/reader-primitive.vm'
 import { ApiError, fetchDict, fetchDictEntry } from '../../services/api/client'
 import { dictResponseDtoToVm } from '../../services/api/adapters/dict.adapter'
 import { getDictCache, setDictCache, getEntryCache, setEntryCache } from '../../services/dictCache'
-import { filterExamTags } from '../../config/purpose'
 import LucideIcon from '../LucideIcon'
 import AnnotationGlyph from '../AnnotationGlyph'
 import FeedbackSheet from '../FeedbackSystem/FeedbackSheet'
@@ -16,15 +15,12 @@ import './index.scss'
 interface WordPopupProps {
   visible: boolean
   mode?: 'mini' | 'full'
-  mark: AnyInlineMarkModel | null
+  mark: InlineMarkModel | null
   word: string
   contextSentence?: string
   occurrence?: number
   x?: number
   y?: number
-  readingVariant?: string
-  readingGoal?: string
-  cloudId?: string
   isSaved?: boolean
   savedMasteryStatus?: string
   savedSourceRefs?: SourceRef[]
@@ -86,17 +82,12 @@ function getEntrySummary(entry: DictionaryEntryPayload | null | undefined): stri
     .join('；')
 }
 
-function isLearningGlossary(g: InlineGlossary | AcademicInlineGlossary | undefined): g is InlineGlossary {
-  return !!g && ('gloss' in g || 'reason' in g || 'phraseType' in g)
-}
 
-const TONE_META: Record<VisualTone | AcademicVisualTone, { label: string; color: string; bg: string }> = {
+const TONE_META: Record<VisualTone, { label: string; color: string; bg: string }> = {
   vocab: { label: '词汇', color: 'var(--tone-vocab-color)', bg: 'var(--tone-vocab-bg)' },
   phrase: { label: '短语', color: 'var(--tone-phrase-color)', bg: 'var(--tone-phrase-bg)' },
   context: { label: '语境', color: 'var(--tone-context-color)', bg: 'var(--tone-context-bg)' },
   grammar: { label: '语法', color: 'var(--tone-grammar-color)', bg: 'var(--tone-grammar-bg)' },
-  term: { label: '术语', color: 'var(--tone-term-color)', bg: 'var(--tone-term-bg)' },
-  logic: { label: '逻辑', color: 'var(--tone-logic-color)', bg: 'var(--tone-logic-bg)' },
 }
 
 const PHRASE_KIND_LABELS: Record<string, string> = {
@@ -231,11 +222,11 @@ function buildMeaningGroups(entry: DictionaryEntryPayload | null | undefined, ex
 
 function getPrimaryAnswer(
   entry: DictionaryEntryPayload | null,
-  glossary: InlineGlossary | AcademicInlineGlossary | undefined,
+  glossary: InlineGlossary | undefined,
   professionalLabel: string
 ): PrimaryAnswer {
-  const glossaryText = glossary?.zh || (isLearningGlossary(glossary) ? glossary.gloss : '')
-  const glossaryReason = isLearningGlossary(glossary) ? glossary.reason : undefined
+  const glossaryText = glossary?.zh || glossary?.gloss || ''
+  const glossaryReason = glossary?.reason
 
   if (glossaryText) {
     return {
@@ -280,7 +271,7 @@ interface ContextHighlightFragment {
 }
 
 function getContextHighlightFragments(
-  mark: AnyInlineMarkModel | null,
+  mark: InlineMarkModel | null,
   lookupText: string,
 ): ContextHighlightFragment[] {
   if (mark?.anchor.kind === 'multi_text') {
@@ -391,7 +382,7 @@ function WordLookupSlip({
   isDisambiguationResult: boolean
   isSavedState: boolean
   saveBtnCopy: string
-  mark: AnyInlineMarkModel | null
+  mark: InlineMarkModel | null
   x: number
   y: number
   screenWidth: number
@@ -508,8 +499,6 @@ function DictionaryNoteSheet({
   mark,
   professionalLabel,
   contextSentence,
-  readingGoal,
-  readingVariant,
   activeTab,
   isSavedState,
   saveBtnCopy,
@@ -525,12 +514,10 @@ function DictionaryNoteSheet({
   softDisambiguation: DictionaryDisambiguationResult | null
   lookupError: DictionaryLookupError | null
   loading: boolean
-  glossary: InlineGlossary | AcademicInlineGlossary | undefined
-  mark: AnyInlineMarkModel | null
+  glossary: InlineGlossary | undefined
+  mark: InlineMarkModel | null
   professionalLabel: string
   contextSentence?: string
-  readingGoal?: string
-  readingVariant?: string
   activeTab: DictTab
   isSavedState: boolean
   saveBtnCopy: string
@@ -752,16 +739,6 @@ function DictionaryNoteSheet({
                     <Text className='word-phonetic'>/{entry.phonetic}/</Text>
                   </View>
                 )}
-                {readingGoal === 'exam' && entry?.tags && entry.tags.length > 0 && (() => {
-                  const filtered = filterExamTags(entry.tags, readingVariant)
-                  return filtered.length > 0 ? (
-                    <View className='exam-tags-row'>
-                      {filtered.map(tag => (
-                        <Text key={tag} className='exam-tag-pill'>{tag}</Text>
-                      ))}
-                    </View>
-                  ) : null
-                })()}
               </View>
             </View>
             <View className='header-right-actions'>
@@ -975,8 +952,8 @@ function DictionaryNoteSheet({
 }
 
 export default function WordPopup({
-  visible, mode = 'mini', mark, word, contextSentence, occurrence, x = 0, y = 0, readingVariant, readingGoal,
-  cloudId, isSaved = false, savedMasteryStatus, savedSourceRefs, currentSentenceId, onClose, onExpand, onAddVocab,
+  visible, mode = 'mini', mark, word, contextSentence, occurrence, x = 0, y = 0,
+  isSaved = false, savedMasteryStatus, savedSourceRefs, currentSentenceId, onClose, onExpand, onAddVocab,
 }: WordPopupProps) {
   const [dictResult, setDictResult] = useState<DictionaryResult | null>(null)
   const [softDisambiguation, setSoftDisambiguation] = useState<DictionaryDisambiguationResult | null>(null)
@@ -992,7 +969,7 @@ export default function WordPopup({
   const glossary = mark?.glossary
   const toneMeta = mark ? TONE_META[mark.visualTone] : null
 
-  const effectivePhraseKind = isLearningGlossary(glossary) ? glossary.phraseType : undefined
+  const effectivePhraseKind = glossary?.phraseType
   const effectiveLookupKind = 'lookupKind' in (mark ?? {}) ? mark!.lookupKind : undefined
   const professionalLabel = ((effectivePhraseKind || effectiveLookupKind) && PHRASE_KIND_LABELS[effectivePhraseKind || effectiveLookupKind || ''])
     ? PHRASE_KIND_LABELS[effectivePhraseKind || effectiveLookupKind || '']
@@ -1004,7 +981,7 @@ export default function WordPopup({
 
   const entry = dictResult?.resultType === 'entry' ? dictResult.entry : null
   const notFoundMessage = dictResult?.resultType === 'not_found' ? '本地词库暂未收录' : undefined
-  const miniMeaning = glossary?.zh || (isLearningGlossary(glossary) ? glossary.gloss : undefined) || notFoundMessage || lookupError?.miniMessage || getEntrySummary(entry) || getDisambiguationMiniMeaning(dictResult)
+  const miniMeaning = glossary?.zh || glossary?.gloss || notFoundMessage || lookupError?.miniMessage || getEntrySummary(entry) || getDisambiguationMiniMeaning(dictResult)
   const isLLMAnnotated = !!glossary
 
   const renderContextExcerpt = () => {
@@ -1158,8 +1135,6 @@ export default function WordPopup({
         mark={mark}
         professionalLabel={professionalLabel}
         contextSentence={contextSentence}
-        readingGoal={readingGoal}
-        readingVariant={readingVariant}
         activeTab={activeTab}
         isSavedState={isSavedState}
         saveBtnCopy={saveBtnCopy}
@@ -1178,7 +1153,6 @@ export default function WordPopup({
             prefillSentiment='negative'
             payload={{
               targetId: entry?.id ? String(entry.id) : lookupText,
-              analysisRecordId: cloudId,
               contextJson: {
                 word: lookupText,
                 phonetic: entry?.phonetic || '',
@@ -1186,7 +1160,6 @@ export default function WordPopup({
                 dict_source: 'tecd3',
                 dict_entry_id: entry?.id,
                 context_sentence: contextSentence || '',
-                reading_variant: readingVariant || '',
               },
               clientSurface: 'dictionary',
               entryPoint: 'feedback_sheet',

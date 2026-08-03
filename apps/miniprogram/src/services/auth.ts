@@ -7,32 +7,28 @@
 import Taro from '@tarojs/taro'
 import { useAuthStore } from '../stores/auth'
 import { fetchWeChatLogin } from './api/client'
-import { getAllRecords } from './storage'
 
 export interface LoginResult {
   success: boolean
-  /** 登录成功时是否为首次登录（user_configured 未设置） */
-  isFirstLogin: boolean
 }
 
 /**
  * 引导用户登录
  *
  * 流程：
- * 1. 检查是否已登录（已登录直接返回 { success: true, isFirstLogin: false }）
+ * 1. 检查是否已登录（已登录直接返回 { success: true }）
  * 2. 如 skipConfirmModal=false（默认），弹出确认对话框；skipConfirmModal=true 时跳过对话框直接登录
  * 3. 用户确认 → 调用 wx.login → 后端换取 session token → 存到 auth store
- * 4. 登录成功后检查是否首次登录（user_configured 未设置）
- * 5. 登录成功后，同步本地收藏和生词本到云端
- * 6. 用户取消 → 返回 { success: false, isFirstLogin: false }
+ * 4. 登录成功后，同步本地收藏和生词本到云端
+ * 5. 用户取消 → 返回 { success: false }
  *
- * @param skipConfirmModal - 为 true 时跳过确认对话框，适用于已有引导层的场景（如 LoginGuideModal）
+ * @param skipConfirmModal - 为 true 时跳过确认对话框，由调用方自行提供确认 UI（如头像 / Profile 入口）
  * @returns LoginResult
  */
 export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginResult> {
   // 已登录，直接放行
   if (useAuthStore.getState().isLoggedIn) {
-    return { success: true, isFirstLogin: false }
+    return { success: true }
   }
 
   // 弹确认框（skipConfirmModal=true 时由调用方自行提供确认 UI）
@@ -45,7 +41,7 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
       cancelText: '稍后',
     })
     if (!confirm) {
-      return { success: false, isFirstLogin: false }
+      return { success: false }
     }
   }
 
@@ -54,7 +50,7 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
     const loginResult = await Taro.login()
     if (!loginResult.code) {
       Taro.showToast({ title: '微信登录失败', icon: 'none' })
-      return { success: false, isFirstLogin: false }
+      return { success: false }
     }
 
     const res = await fetchWeChatLogin(loginResult.code)
@@ -66,39 +62,10 @@ export async function ensureLoggedIn(skipConfirmModal = false): Promise<LoginRes
 
     Taro.showToast({ title: '登录成功', icon: 'success' })
 
-    // 检查是否首次登录（user_configured 未设置）
-    const isFirstLogin = !Taro.getStorageSync('user_configured')
-
-    // 登录成功后，同步本地资产到云端（静默进行，失败不阻塞）
-    // 注意：records 必须先于 favorites/vocab 同步，因为后端 favorites 表依赖 analysis_record_id
-    syncLocalAssetsToCloud()
-
-    return { success: true, isFirstLogin }
+    return { success: true }
   } catch (err) {
     console.warn('[auth] ensureLoggedIn failed', err)
     Taro.showToast({ title: '登录失败，请重试', icon: 'none' })
-    return { success: false, isFirstLogin: false }
-  }
-}
-
-/**
- * 登录后同步本地记录到云端。
- *
- * 顺序：records
- * 策略：fire-and-forget，失败静默忽略，不阻塞用户体验。
- */
-async function syncLocalAssetsToCloud(): Promise<void> {
-  try {
-    const { CloudSyncService } = await import('./cloudSync.service')
-
-    const records = getAllRecords()
-
-    // 同步 records
-    records.forEach((r) =>
-      CloudSyncService.syncRecord(r).catch(() => {})
-    )
-  } catch (err) {
-    // 静默失败，不影响登录流程
-    console.warn('[auth] syncLocalAssetsToCloud failed', err)
+    return { success: false }
   }
 }

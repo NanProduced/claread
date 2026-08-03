@@ -7,10 +7,10 @@
 
 /** 单次收藏来源的语境记录 */
 export interface SourceRef {
-  /** 来源分析记录的前端稳定主键 */
-  clientRecordId: string
-  /** 来源分析记录的云端 UUID */
-  cloudRecordId?: string
+  /** 来源阅读记录 ID（canonical reading_record_id） */
+  readingRecordId?: string
+  /** 来源 Daily Reader 文章 ID（可跳转回 Daily Reader） */
+  dailyReaderArticleId?: string
   /** 来源句子文本 */
   sourceSentence?: string
   /** 来源上下文文本 */

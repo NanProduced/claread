@@ -1,62 +1,19 @@
-import { useState, useEffect, useCallback } from 'react'
 import { Image, Text, View } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { ROUTES } from '../../config/routes'
 import NavBar from '../../components/NavBar'
 import TabBar from '../../components/TabBar'
-import LucideIcon from '../../components/LucideIcon'
 import { useLayoutStore } from '../../stores/layout'
 import { useAuthStore } from '../../stores/auth'
 import { useDailyReaderStore } from '../../stores/daily-reader'
 import { ensureLoggedIn } from '../../services/auth'
-import { fetchAnonymousQuota } from '../../services/api/client'
 import defaultCover from '../../assets/covers/daily-reader-default.jpg'
 import emptyDailyReader from '../../assets/illustrations/empty-daily-reader.png'
 import './index.scss'
 
-const ANONYMOUS_DAILY_TRIAL_LIMIT = 3
-
-function HomeView({ placeholders }: { placeholders: string[] }) {
-  const [placeholderIndex, setPlaceholderIndex] = useState(0)
+function HomeView() {
   const { navBarHeight } = useLayoutStore()
   const { isLoggedIn, userInfo } = useAuthStore()
-
-  // 匿名用户试用 banner 状态
-  const [guestTrials, setGuestTrials] = useState<number | null>(null)
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setPlaceholderIndex((i) => (i + 1) % placeholders.length)
-    }, 3000)
-
-    return () => clearInterval(timer)
-  }, [placeholders.length])
-
-  // 获取匿名用户剩余试用次数
-  const fetchGuestTrials = useCallback(() => {
-    if (isLoggedIn) {
-      setGuestTrials(null)
-      return
-    }
-    const anonymousId = Taro.getStorageSync('anonymous_id') as string | undefined
-    if (!anonymousId) return
-
-    fetchAnonymousQuota(anonymousId)
-      .then((res) => {
-        setGuestTrials(res.remaining_trials)
-      })
-      .catch((e) => {
-        console.error('home/index.tsx: fetchAnonymousQuota failed', e)
-      })
-  }, [isLoggedIn])
-
-  useEffect(() => {
-    fetchGuestTrials()
-  }, [fetchGuestTrials])
-
-  useDidShow(() => {
-    fetchGuestTrials()
-  })
 
   const getGreetingConfig = () => {
     const hour = new Date().getHours()
@@ -105,13 +62,13 @@ function HomeView({ placeholders }: { placeholders: string[] }) {
       )
     }
 
-    // 未登录：显示游客图标
+    // 未登录：显示游客图标，点击触发登录
     return (
       <View
         className='user-avatar guest'
         onClick={async () => {
           const result = await ensureLoggedIn()
-          if (result.success && result.isFirstLogin) {
+          if (result.success) {
             Taro.navigateTo({ url: ROUTES.PROFILE })
           }
         }}
@@ -140,48 +97,12 @@ function HomeView({ placeholders }: { placeholders: string[] }) {
       <View className='nav-placeholder' style={{ height: `${navBarHeight}px` }} />
       <View className='recommendation-list'>
 
-        {/* 游客试用 Banner */}
-        {!isLoggedIn && guestTrials !== null && (
-          <View
-            className='guest-banner'
-            onClick={async () => {
-              const result = await ensureLoggedIn()
-              if (result.success && result.isFirstLogin) {
-                Taro.navigateTo({ url: ROUTES.PROFILE })
-              }
-            }}
-          >
-            <View className='guest-banner-dot' />
-            <Text className='guest-banner-text'>
-              剩余 {guestTrials} 次试用
-              <Text className='guest-banner-link'> · 登录解锁更多</Text>
-            </Text>
-          </View>
-        )}
-
         <View className='header-section'>
           <View className='greeting-row'>
             <Text className='greeting'>{greeting.main}</Text>
             {renderAvatar()}
           </View>
           <Text className='sub-greeting'>{greeting.sub}</Text>
-        </View>
-
-        <View className='light-portal' onClick={() => Taro.navigateTo({ url: ROUTES.INPUT })}>
-          <View className='portal-inner'>
-            <View className='portal-text-area'>
-              <Text className='portal-label'>输入文本</Text>
-              <View className='placeholder-wrapper'>
-                <Text className='well-placeholder' key={placeholderIndex}>
-                  {placeholders[placeholderIndex]}
-                </Text>
-                <View className='typing-cursor' />
-              </View>
-            </View>
-            <View className='portal-action-btn'>
-              <LucideIcon name='plus' size={24} color='var(--color-white)' />
-            </View>
-          </View>
         </View>
 
         <View className='section-header'>
@@ -231,12 +152,5 @@ function HomeView({ placeholders }: { placeholders: string[] }) {
 }
 
 export default function Home() {
-  const placeholders = [
-    '粘贴一段《经济学人》社论...',
-    '粘贴你的 GRE 阅读真题...',
-    '导入一段雅思大作文练习...',
-    '粘贴今日份的纽约时报摘要...',
-  ]
-
-  return <HomeView placeholders={placeholders} />
+  return <HomeView />
 }

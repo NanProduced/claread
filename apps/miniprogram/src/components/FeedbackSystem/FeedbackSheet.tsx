@@ -11,8 +11,6 @@ import './FeedbackSheet.scss'
 
 export interface FeedbackContextPayload {
   targetId: string
-  analysisRecordId?: string
-  annotationType?: string
   content?: string
   contextJson?: Record<string, unknown>
   clientSurface?: string
@@ -68,10 +66,8 @@ export default function FeedbackSheet({
       await submitFeedback({
         feedbackScope: scope,
         targetId: payload.targetId,
-        analysisRecordId: payload.analysisRecordId,
         sentiment: prefillSentiment,
         feedbackType: selectedType,
-        annotationType: payload.annotationType,
         content: content || undefined,
         contextJson: payload.contextJson || {},
         contextSummary: contextSummary,

@@ -112,8 +112,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           }
           Taro.setStorageSync(AUTH_USER_KEY, JSON.stringify(userInfo))
           set({ userInfo })
-          const { useConfigStore } = await import('./config')
-          useConfigStore.getState().initializeFromCloud()
         })
         .catch((err: unknown) => {
           const statusCode = (err as { statusCode?: number })?.statusCode
@@ -147,8 +145,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       Taro.setStorageSync(AUTH_USER_KEY, JSON.stringify(userInfo))
       set({ userInfo })
-      const { useConfigStore } = await import('./config')
-      useConfigStore.getState().initializeFromCloud()
     } catch (e) {
       console.error('auth.ts: fetchUserInfo failed', e)
     }

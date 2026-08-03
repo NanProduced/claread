@@ -90,10 +90,8 @@ function dtoToFeedbackListItem(dto: FeedbackListItemDto): FeedbackListItem {
 export async function submitFeedback(params: {
   feedbackScope: string
   targetId: string
-  analysisRecordId?: string
   sentiment: string
   feedbackType: string
-  annotationType?: string
   content?: string
   contextJson?: Record<string, unknown>
   contextSummary?: string
@@ -108,10 +106,8 @@ export async function submitFeedback(params: {
     data: {
       feedback_scope: params.feedbackScope,
       target_id: params.targetId,
-      analysis_record_id: params.analysisRecordId,
       sentiment: params.sentiment,
       feedback_type: params.feedbackType,
-      annotation_type: params.annotationType,
       content: params.content,
       context_json: params.contextJson || {},
       context_summary: params.contextSummary,

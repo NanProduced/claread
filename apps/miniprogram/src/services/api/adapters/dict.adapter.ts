@@ -8,7 +8,7 @@ import type {
   DictionaryEntryResult,
   DictionaryNotFoundResult,
   DictionaryResult,
-} from '@/types/view/render-scene.vm'
+} from '@/types/view/reader-primitive.vm'
 
 function mapEntryResult(dto: DictEntryResultDto): DictionaryEntryResult {
   return {

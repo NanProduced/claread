@@ -8,7 +8,6 @@
 import { View, Text, ScrollView, Image, Button, Input } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { ROUTES } from '../../config/routes'
-import { setNavigatingToOnboarding } from '../../utils/navigationState'
 import type { ChooseAvatarEvent, InputEvent } from '../../types/taro-events'
 
 interface MenuItem {
@@ -20,11 +19,9 @@ interface MenuItem {
   color: string
 }
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useConfigStore } from '../../stores/config'
 import { useAuthStore } from '../../stores/auth'
 import { ensureLoggedIn } from '../../services/auth'
-import { getAllRecords, getVocabulary, getVocabCount } from '../../services/storage'
-import { fetchCloudRecords } from '../../services/api/records.client'
+import { getVocabulary, getVocabCount } from '../../services/storage'
 import { fetchCloudVocabulary } from '../../services/api/vocabulary.client'
 import type { VocabEntry } from '../../types/view/vocabulary.vm'
 import { fetchUserQuota, updateProfile } from '../../services/api/client'
@@ -32,9 +29,7 @@ import NavBar from '../../components/NavBar'
 import TabBar from '../../components/TabBar'
 import LucideIcon from '../../components/LucideIcon'
 import CenterModal from '../../components/CenterModal'
-import ConfigEditor from '../../components/ConfigEditor'
 import { useLayoutStore } from '../../stores/layout'
-import { getDisplayLabel, getStandardLabel, ReadingGoal } from '../../config/purpose'
 import { getReadingTier, getAllTiers } from '../../utils/achievement'
 import './index.scss'
 
@@ -43,14 +38,12 @@ interface ProfilePageProps {
 }
 
 export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
-  const { purpose, level, setPurpose, setLevel } = useConfigStore()
   const { navBarHeight } = useLayoutStore()
   const { isLoggedIn, userInfo, logout, fetchUserInfo, updateUserInfo } = useAuthStore()
   const [articleCount, setArticleCount] = useState(0)
   const [wordCount, setWordCount] = useState(0)
   const [quota, setQuota] = useState<{ remaining: number, dailyFree: number, bonus: number } | null>(null)
   const [loadingStats, setLoadingStats] = useState(false)
-  const [showModeSheet, setShowModeSheet] = useState(false)
   const [showAchievementSheet, setShowAchievementSheet] = useState(false)
 
   const allTiers = getAllTiers()
@@ -67,14 +60,13 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
       try {
         await fetchUserInfo().catch(() => {})
 
-        const [vocabResult, quotaResult, recordResult] = await Promise.all([
+        const [vocabResult, quotaResult] = await Promise.all([
           fetchCloudVocabulary(1, 1).catch(() => ({ total: 0, items: [] as VocabEntry[] })),
           fetchUserQuota().catch(() => null),
-          fetchCloudRecords(1, 1).catch(() => ({ total: 0 })),
         ])
 
         const latestInfo = useAuthStore.getState().userInfo
-        setArticleCount(latestInfo?.cumulativeArticleCount ?? recordResult.total ?? 0)
+        setArticleCount(latestInfo?.cumulativeArticleCount ?? 0)
 
         const localVocab = getVocabulary()
         const cloudTotal = vocabResult.total
@@ -89,13 +81,11 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
           })
         }
       } catch {
-        const records = getAllRecords()
-        setArticleCount(records.length)
+        setArticleCount(0)
         setWordCount(getVocabCount())
       }
     } else {
-      const records = getAllRecords()
-      setArticleCount(records.length)
+      setArticleCount(0)
       setWordCount(getVocabCount())
       setQuota(null)
     }
@@ -109,11 +99,7 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
   useDidShow(loadStats)
 
   const handleLogin = async () => {
-    setNavigatingToOnboarding(true)
-    const result = await ensureLoggedIn()
-    if (result.success && result.isFirstLogin) {
-      Taro.navigateTo({ url: ROUTES.ONBOARDING })
-    }
+    await ensureLoggedIn()
   }
 
   const handleLogout = () => {
@@ -145,23 +131,12 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
     }, 300)
   }
 
-  const handleModeSelect = (g: ReadingGoal, l: string | null) => {
-    setPurpose(g)
-    setLevel(l)
-    Taro.showToast({ title: '默认配置已更新', icon: 'success' })
-  }
 
   const menuGroups: { title: string; items: MenuItem[] }[] = [
     {
       title: "学习管理",
       items: [
-        {
-          label: "当前模式配置",
-          value: getStandardLabel(purpose as string, level),
-          icon: 'settings',
-          onClick: () => setShowModeSheet(true),
-          color: 'blue',
-        },
+
         {
           label: "我的生词本",
           value: wordCount > 0 ? `${wordCount}词` : "暂无生词",
@@ -370,23 +345,6 @@ export default function ProfilePage({ isSubView = false }: ProfilePageProps) {
 
       {!isSubView && <TabBar current='profile' />}
 
-      <CenterModal
-        visible={showModeSheet}
-        title='设置默认分析模式'
-        onClose={() => setShowModeSheet(false)}
-      >
-        <View className='modal-config-wrapper'>
-          <ConfigEditor
-            mode='detailed'
-            initialGoal={purpose as ReadingGoal}
-            initialLevel={level}
-            onComplete={(g, l) => {
-              handleModeSelect(g, l)
-              setShowModeSheet(false)
-            }}
-          />
-        </View>
-      </CenterModal>
 
       <CenterModal
         visible={showAchievementSheet}
