@@ -17,7 +17,7 @@
  *
  * - HTTP EOF is transport cleanup, NOT a business terminal. Only a
  *   trusted typed terminal event (message.completed /
- *   agentic.terminal / legacy message.interrupted / parse-error /
+ *   agentic.terminal / typed message.interrupted duplicate / parse-error /
  *   abort) may move the lifecycle into a terminal state.
  * - A terminal is TRUSTED only when its message_id / thread_id /
  *   turn_run_id match the active turn identity captured at
@@ -251,9 +251,8 @@ export function parseSubmissionReconcilePayload(
  * user input. The metric set is the union of backend-emitted and
  * frontend-only-emitted kinds:
  *
- * - ``first_reasoning`` — first ``agentic.reasoning.started`` /
- *   ``agentic.reasoning.delta`` arrival. ``null`` if no reasoning was
- *   emitted this turn.
+ * - ``first_reasoning`` — first ``agentic.learner_reasoning.snapshot``
+ *   arrival. ``null`` if no learner snapshot was emitted this turn.
  * - ``first_answer_delta`` / ``last_answer_delta`` — first and last
  *   ``message.delta`` arrival times. ``null`` if no answer delta
  *   arrived (e.g., early validation failure). The gap
@@ -272,7 +271,7 @@ export function parseSubmissionReconcilePayload(
  *   the typed terminal SSE frame). Not tracked on the frontend.
  * - ``terminal_received`` — first typed terminal frame arrival at the
  *   SSE consumer (``message.completed`` / ``agentic.terminal`` /
- *   ``message.interrupted`` for the active turn, or ``parse_error`` /
+ *   typed ``message.interrupted`` for the active turn, or ``parse_error`` /
  *   ``abort`` / ``eof``). Marks the moment the client should be able
  *   to start unlocking the composer.
  * - ``composer_enabled`` — the moment ``setSending(false)`` runs and

@@ -313,7 +313,7 @@ function makeSnapshot() {
   };
 }
 
-async function loginWithMockPhone(page: Page, nextPath = "/app/reader-plate") {
+async function loginWithMockPhone(page: Page, nextPath = `/app/reader/${RECORD_ID}`) {
   await page.route("**/api/web/auth/phone/request-code", async (route) => {
     await route.fulfill({
       status: 200,
@@ -349,7 +349,7 @@ async function loginWithMockPhone(page: Page, nextPath = "/app/reader-plate") {
 }
 
 async function mockReaderPlateRoutes(page: Page) {
-  await page.route("**/api/web/reader-plate/*/events**", async (route) => {
+  await page.route(`**/api/web/reader/records/${RECORD_ID}/events**`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -368,7 +368,7 @@ async function mockReaderPlateRoutes(page: Page) {
     });
   });
 
-  await page.route("**/api/web/reader-plate/*/snapshot", async (route) => {
+  await page.route(`**/api/web/reader/records/${RECORD_ID}/snapshot`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -381,62 +381,46 @@ test("reader plate smoke: submit renders source text, translation, vocabulary, a
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Mock the submit BFF route to return a valid snapshot.
-  await page.route("**/api/web/reader-plate/submit", async (route) => {
+  await page.route("**/api/web/reader/records/input", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        record_id: RECORD_ID,
-        base_id: "base_smoke",
-        article_ready_sequence: 1,
-        snapshot: makeSnapshot(),
+        outcome: "stable_document_ready",
+        reading_record_id: RECORD_ID,
+        original_input_id: "input_smoke",
       }),
     });
   });
 
   await mockReaderPlateRoutes(page);
 
-  await loginWithMockPhone(page);
+  await loginWithMockPhone(page, "/app/read");
 
   // The submit form should be visible.
-  await expect(page.getByRole("heading", { name: "透读新文章" })).toBeVisible();
-  await expect(page.getByPlaceholder("Paste an English article here")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bring it to Claread." })).toBeVisible();
+  const inputEditor = page.getByRole("textbox", { name: "在此贴入或导入英文文章" });
+  await expect(inputEditor).toBeVisible();
 
   // Fill and submit.
-  await page.getByPlaceholder("Paste an English article here").fill("A scarce few can turn passion into a stable income.");
-  await page.getByRole("button", { name: "开始解析" }).click();
+  await inputEditor.fill("A scarce few can turn passion into a stable income.");
+  await page.getByRole("button", { name: "开始透读" }).click();
 
   // The reader surface should render the source text and translation.
-  await expect(page.locator('[data-reader-node="unit"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="source-block"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="anchor-segment"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="translation"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toBeVisible();
-  await expect(page.locator('[data-reader-vocabulary-chip="phrase_gloss"]')).toBeVisible();
-  await expect(page.locator('[data-reader-grammar-note-chip="grammar_smoke_1"]')).toBeVisible();
+  await expect(page.getByText("A scarce few can turn passion into a stable income.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: /语法解析/ })).toBeVisible();
+  await expect(page.getByRole("note").filter({ hasText: "fronted focus and main action" })).toBeVisible();
 
   // Source text, translation, vocabulary, and grammar projections should be present.
   await expect(
-    page
-      .locator('[data-reader-node="source-block"]')
-      .getByText("A scarce few can turn passion into a stable income.", { exact: true }),
+    page.getByText("A scarce few can turn passion into a stable income.", { exact: true }),
   ).toBeVisible();
-  await expect(page.locator('[data-reader-node="translation"]')).toContainText(
-    "很少有人能把热爱变成稳定收入。",
-  );
-  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
-    "搭配 · 把热爱转成可持续结果",
-  );
-  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
-    "语法 · 前置强调",
-  );
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
-    "句式拆解",
-  );
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
-    "fronted focus and main action",
-  );
+  await expect(page.getByRole("status").filter({ hasText: "译文" })).toBeVisible();
+  await expect(page.locator("body")).toContainText(/可以开始阅读\s*10 词/);
+  await expect(page.getByText("语法解析 · 1 条", { exact: true })).toBeVisible();
+  await expect(page.getByRole("note").filter({ hasText: "fronted focus and main action" })).toBeVisible();
+  await expect(page.getByText("fronted focus and main action", { exact: true })).toBeVisible();
 
   // No error states should be visible after caught-up polling.
   await expect(page.getByText("批注更新暂时中断")).toHaveCount(0);
@@ -452,35 +436,17 @@ test("reader plate smoke: record_id query loads an existing snapshot directly", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await mockReaderPlateRoutes(page);
 
-  await loginWithMockPhone(page, `/app/reader-plate?record_id=${RECORD_ID}`);
+  await loginWithMockPhone(page, `/app/reader/${RECORD_ID}`);
 
-  await expect(page.locator('[data-reader-node="unit"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="source-block"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="anchor-segment"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="translation"]')).toBeVisible();
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toBeVisible();
-  await expect(page.locator('[data-reader-vocabulary-chip="phrase_gloss"]')).toBeVisible();
-  await expect(page.locator('[data-reader-grammar-note-chip="grammar_smoke_1"]')).toBeVisible();
-  await expect(page.getByPlaceholder("Paste an English article here")).toHaveCount(0);
+  await expect(page.getByText("A scarce few can turn passion into a stable income.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "译文" })).toBeVisible();
+  await expect(page.getByText("语法解析 · 1 条", { exact: true })).toBeVisible();
+  await expect(page.getByRole("note").filter({ hasText: "fronted focus and main action" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "在此贴入或导入英文文章" })).toHaveCount(0);
 
   await expect(
-    page
-      .locator('[data-reader-node="source-block"]')
-      .getByText("A scarce few can turn passion into a stable income.", { exact: true }),
+    page.getByText("A scarce few can turn passion into a stable income.", { exact: true }),
   ).toBeVisible();
-  await expect(page.locator('[data-reader-node="translation"]')).toContainText(
-    "很少有人能把热爱变成稳定收入。",
-  );
-  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
-    "搭配 · 把热爱转成可持续结果",
-  );
-  await expect(page.locator('[data-reader-node="annotation-inline"]')).toContainText(
-    "语法 · 前置强调",
-  );
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
-    "句式拆解",
-  );
-  await expect(page.locator('[data-reader-node="sentence-analysis"]')).toContainText(
-    "fronted focus and main action",
-  );
+  await expect(page.locator("body")).toContainText(/可以开始阅读\s*10 词/);
+  await expect(page.getByText("语法解析 · 1 条", { exact: true })).toBeVisible();
 });

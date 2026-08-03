@@ -43,10 +43,9 @@ describe("reconcileReaderAskSubmissionForWeb (R4)", () => {
     });
 
     const res = await reconcileReaderAskSubmissionForWeb(
+      "rr-1",
       "thread-1",
       SID,
-      "rr-1",
-      "reading_record",
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -61,10 +60,9 @@ describe("reconcileReaderAskSubmissionForWeb (R4)", () => {
 
   it("rejects non-UUID client_submission_id", async () => {
     const res = await reconcileReaderAskSubmissionForWeb(
+      "rr-1",
       "thread-1",
       "not-uuid",
-      "rr-1",
-      "reading_record",
     );
     expect(res.status).toBe(400);
     expect(getUpstreamReadingRecordAskSubmission).not.toHaveBeenCalled();

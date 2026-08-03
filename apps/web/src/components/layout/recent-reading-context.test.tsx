@@ -4,12 +4,12 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RecentReadingProvider, useRecentReading } from './recent-reading-context';
 import type { ReadingRecordListItemVm } from '@/services/bff/reading-records';
-import { appReadingRecordRoute } from '@/lib/routes';
+import { appReaderRoute } from '@/lib/routes';
 
 function makeItem(id: string): ReadingRecordListItemVm {
   return {
     readingRecordId: id,
-    readerUrl: appReadingRecordRoute(id),
+    readerUrl: appReaderRoute(id),
     title: `R-${id}`,
     createdAt: '2026-07-14T00:00:00Z',
     sourceType: 'text',
@@ -45,7 +45,7 @@ describe('RecentReadingProvider', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
   });
 
-  it('refetch() fetches /api/web/reading-records?limit=10 and updates items', async () => {
+  it('refetch() fetches the canonical records BFF and updates items', async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({ ok: true, items: [makeItem('x')], total: 1, limit: 10 }),
       { status: 200, headers: { 'content-type': 'application/json' } },
@@ -64,7 +64,7 @@ describe('RecentReadingProvider', () => {
     await waitFor(() => expect(screen.queryByText('R-a')).toBeNull());
     expect(screen.getByText('R-x')).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/web/reading-records?limit=10',
+      '/api/web/reader/records?limit=10',
       expect.objectContaining({ cache: 'no-store' }),
     );
   });

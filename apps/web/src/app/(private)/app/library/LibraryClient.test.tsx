@@ -50,7 +50,7 @@ function makeReadingRecord(
 ): ReadingRecordListItemVm {
   return {
     readingRecordId: "reading_record_1",
-    readerUrl: "/app/reader-record/reading_record_1",
+    readerUrl: "/app/reader/reading_record_1",
     title: "New Reading Record",
     createdAt: "2026-06-22T00:00:00Z",
     sourceType: "text",
@@ -105,13 +105,15 @@ describe("LibraryClient", () => {
     expect(screen.getByRole("heading", { name: "阅读记录" })).toBeTruthy();
 
     const newRecordLink = document.querySelector(
-      'a[href="/app/reader-record/reading_record_1"]',
+      'a[href="/app/reader/reading_record_1"]',
     );
     expect(newRecordLink?.getAttribute("href")).toBe(
-      "/app/reader-record/reading_record_1",
+      "/app/reader/reading_record_1",
     );
 
-    const legacyLinks = document.querySelectorAll('a[href^="/app/reader/"]');
+    const legacyLinks = document.querySelectorAll(
+      'a[href^="/app/reader-record/"], a[href^="/app/reader-"], a[href^="/app/f7-ask-fixture/"]',
+    );
     expect(legacyLinks).toHaveLength(0);
 
     expect(screen.getByText("共 1 篇记录")).toBeTruthy();
@@ -124,7 +126,7 @@ describe("LibraryClient", () => {
           makeReadingRecord(),
           makeReadingRecord({
             readingRecordId: "reading_record_2",
-            readerUrl: "/app/reader-record/reading_record_2",
+            readerUrl: "/app/reader/reading_record_2",
             title: "Second Reading",
           }),
         ]}
@@ -144,7 +146,7 @@ describe("LibraryClient", () => {
           makeReadingRecord({ title: "Climate Notes" }),
           makeReadingRecord({
             readingRecordId: "reading_record_2",
-            readerUrl: "/app/reader-record/reading_record_2",
+            readerUrl: "/app/reader/reading_record_2",
             title: "Exam Strategy",
             sourceLabel: "climate keyword buried in source label",
           }),

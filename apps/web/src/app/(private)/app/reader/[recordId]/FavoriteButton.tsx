@@ -69,7 +69,7 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
       setMessage("正在读取收藏状态...");
 
       const response = await fetch(
-        `/api/web/favorites?recordId=${encodeURIComponent(recordId)}`,
+        `/api/web/reader/records/${encodeURIComponent(recordId)}/favorite`,
         { cache: "no-store" },
       );
       const result = await readFavoriteResponse(response);
@@ -115,10 +115,10 @@ export function FavoriteButton({ recordId, variant = "default" }: FavoriteButton
 
     try {
       const response = previousFavorited
-        ? await fetch(`/api/web/favorites/${encodeURIComponent(recordId)}`, {
+        ? await fetch(`/api/web/reader/records/${encodeURIComponent(recordId)}/favorite`, {
             method: "DELETE",
           })
-        : await fetch("/api/web/favorites", {
+        : await fetch(`/api/web/reader/records/${encodeURIComponent(recordId)}/favorite`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ recordId }),

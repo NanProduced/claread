@@ -1,23 +1,12 @@
 import "server-only";
 
 import {
-  confirmUpstreamReaderAskAction,
-  confirmUpstreamReadingRecordAskAction,
-  createUpstreamReaderAskStream,
-  createUpstreamReaderAskThread,
   createUpstreamReadingRecordAskDefaultThread,
   createUpstreamReadingRecordAskStream,
-  deleteUpstreamReaderAskSupplement,
-  deleteUpstreamReadingRecordAskSupplement,
-  getUpstreamReaderAskThread,
   getUpstreamReadingRecordAskThread,
-  listUpstreamReaderAskContextRecords,
-  listUpstreamReaderAskModelOptions,
-  listUpstreamReaderAskThreads,
+  listUpstreamReadingRecordAskModelOptions,
   listUpstreamReadingRecordAskThreads,
-  resetUpstreamReaderAskThread,
   resetUpstreamReadingRecordAskThread,
-  retryUpstreamReaderAskMessage,
   retryUpstreamReadingRecordAskMessage,
   getUpstreamReadingRecordAskSubmission,
   navigateUpstreamReadingRecordAskCitation,
@@ -25,10 +14,6 @@ import {
 } from "@/services/api/reader-ask";
 import { getWebSession } from "@/services/bff/session";
 import type {
-  ReaderAskActionConfirmRequestDto,
-  ReaderAskActionConfirmResponseDto,
-  ReaderAskContextRecordSearchResponseDto,
-  ReaderAskDeleteSupplementResponseDto,
   ReaderAskMessageRetryRequestDto,
   ReaderAskMessageStreamRequestDto,
   ReaderAskModelOptionListResponseDto,
@@ -39,11 +24,7 @@ import type {
   ReaderAskThreadSummaryDto,
 } from "@/types/api/reader-ask";
 
-type ReaderAskRecordScope = "analysis" | "reading_record";
-
-type ReaderAskThreadTransportRequest = ReaderAskThreadCreateRequestDto & {
-  record_scope?: ReaderAskRecordScope | null;
-};
+type ReaderAskThreadTransportRequest = ReaderAskThreadCreateRequestDto;
 
 function isDevelopmentRuntime() {
   return process.env.NODE_ENV !== "production";
@@ -86,10 +67,6 @@ function normalizeUpstreamError(
   return { code: fallbackCode, detail: fallbackDetail };
 }
 
-function normalizeReaderAskScope(scope?: string | null): ReaderAskRecordScope {
-  return scope === "reading_record" ? "reading_record" : "analysis";
-}
-
 function missingReadingRecordIdResponse() {
   return new Response(JSON.stringify({ message: "Missing reading record id." }), {
     status: 400,
@@ -123,13 +100,21 @@ function retryTargetNotPersistedResponse(messageId: string): Response {
   );
 }
 
-export async function listReaderAskModelOptionsForWeb(): Promise<Response> {
+export async function listReaderAskModelOptionsForWeb(
+  recordId: string,
+): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
 
-  const upstream = await listUpstreamReaderAskModelOptions(session.sessionToken);
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
+  }
+  const upstream = await listUpstreamReadingRecordAskModelOptions(
+    recordId,
+    session.sessionToken,
+  );
   if (!upstream.ok) {
     const fallbackDetail = upstream.status === 401 ? "请先登录后再使用 Ask Claread。" : "Ask Claread 模型列表暂时不可用。";
     const { code, detail } = normalizeUpstreamError(
@@ -183,15 +168,15 @@ async function buildStreamErrorResponse(upstream: Response): Promise<Response> {
 
 export async function listReaderAskThreadsForWeb(
   recordId: string,
-  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<ReaderAskThreadListResponseDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const upstream = recordScope === "reading_record"
-    ? await listUpstreamReadingRecordAskThreads(recordId, session.sessionToken)
-    : await listUpstreamReaderAskThreads(recordId, session.sessionToken);
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
+  }
+  const upstream = await listUpstreamReadingRecordAskThreads(recordId, session.sessionToken);
   if (!upstream.ok) {
     const message = upstream.message || "请求失败";
     return new Response(JSON.stringify({ message }), {
@@ -202,45 +187,21 @@ export async function listReaderAskThreadsForWeb(
   return upstream.data;
 }
 
-export async function listReaderAskContextRecordsForWeb(
-  query: string,
-  excludeRecordId: string | null,
-): Promise<ReaderAskContextRecordSearchResponseDto | Response> {
-  const session = await requireUpstreamSession();
-  if (!session) {
-    return authError("请先登录后再使用 Ask Claread。");
-  }
-  const upstream = await listUpstreamReaderAskContextRecords(query, excludeRecordId, session.sessionToken);
-  if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message }), {
-      status: upstream.status || 503,
-      headers: { "content-type": "application/json" },
-    });
-  }
-  return upstream.data;
-}
-
 export async function createReaderAskThreadForWeb(
+  recordId: string,
   body: ReaderAskThreadTransportRequest,
 ): Promise<ReaderAskThreadSummaryDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  const recordScope = normalizeReaderAskScope(body.record_scope);
-  if (!body.record_id?.trim()) {
+  if (!recordId.trim()) {
     return missingReadingRecordIdResponse();
   }
-  const upstream = recordScope === "reading_record"
-    ? await createUpstreamReadingRecordAskDefaultThread(body.record_id, session.sessionToken)
-    : await createUpstreamReaderAskThread(
-        {
-          record_id: body.record_id,
-          title: body.title,
-          model: body.model,
-        },
-        session.sessionToken,
-      );
+  const upstream = await createUpstreamReadingRecordAskDefaultThread(
+    recordId,
+    session.sessionToken,
+  );
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -251,22 +212,17 @@ export async function createReaderAskThreadForWeb(
 }
 
 export async function getReaderAskThreadForWeb(
+  recordId: string,
   threadId: string,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<ReaderAskThreadDetailDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
   }
-  const upstream = recordScope === "reading_record"
-    ? await getUpstreamReadingRecordAskThread(recordId!, threadId, session.sessionToken)
-    : await getUpstreamReaderAskThread(threadId, session.sessionToken);
+  const upstream = await getUpstreamReadingRecordAskThread(recordId, threadId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -277,76 +233,17 @@ export async function getReaderAskThreadForWeb(
 }
 
 export async function resetReaderAskThreadForWeb(
+  recordId: string,
   threadId: string,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<ReaderAskThreadDetailDto | Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
   }
-  const upstream = recordScope === "reading_record"
-    ? await resetUpstreamReadingRecordAskThread(recordId!, threadId, session.sessionToken)
-    : await resetUpstreamReaderAskThread(threadId, session.sessionToken);
-  if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message }), {
-      status: upstream.status || 503,
-      headers: { "content-type": "application/json" },
-    });
-  }
-  return upstream.data;
-}
-
-export async function confirmReaderAskActionForWeb(
-  threadId: string,
-  actionId: string,
-  body: ReaderAskActionConfirmRequestDto,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
-): Promise<ReaderAskActionConfirmResponseDto | Response> {
-  const session = await requireUpstreamSession();
-  if (!session) {
-    return authError("请先登录后再使用 Ask Claread。");
-  }
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
-  }
-  const upstream = recordScope === "reading_record"
-    ? await confirmUpstreamReadingRecordAskAction(recordId!, threadId, actionId, body, session.sessionToken)
-    : await confirmUpstreamReaderAskAction(threadId, actionId, body, session.sessionToken);
-  if (!upstream.ok) {
-    return new Response(JSON.stringify({ message: upstream.message }), {
-      status: upstream.status || 503,
-      headers: { "content-type": "application/json" },
-    });
-  }
-  return upstream.data;
-}
-
-export async function deleteReaderAskSupplementForWeb(
-  supplementId: string,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
-): Promise<ReaderAskDeleteSupplementResponseDto | Response> {
-  const session = await requireUpstreamSession();
-  if (!session) {
-    return authError("请先登录后再使用 Ask Claread。");
-  }
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
-  }
-  const upstream = recordScope === "reading_record"
-    ? await deleteUpstreamReadingRecordAskSupplement(recordId!, supplementId, session.sessionToken)
-    : await deleteUpstreamReaderAskSupplement(supplementId, session.sessionToken);
+  const upstream = await resetUpstreamReadingRecordAskThread(recordId, threadId, session.sessionToken);
   if (!upstream.ok) {
     return new Response(JSON.stringify({ message: upstream.message }), {
       status: upstream.status || 503,
@@ -357,10 +254,9 @@ export async function deleteReaderAskSupplementForWeb(
 }
 
 export async function createReaderAskStreamForWeb(
+  recordId: string,
   threadId: string,
   body: ReaderAskMessageStreamRequestDto,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
   signal?: AbortSignal,
 ): Promise<Response> {
   const session = await requireUpstreamSession();
@@ -378,10 +274,8 @@ export async function createReaderAskStreamForWeb(
     );
   }
 
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
   }
 
   // ASK-TURN-LIFECYCLE R1: forward the browser-supplied AbortSignal to the
@@ -389,9 +283,13 @@ export async function createReaderAskStreamForWeb(
   // the upstream connection. This is what triggers the FastAPI generator's
   // ``finally`` block (ASGI cancellation) which in turn reconciles any
   // still-streaming turn_run / message row to ``cancelled``.
-  const upstream = recordScope === "reading_record"
-    ? await createUpstreamReadingRecordAskStream(recordId!, threadId, body, session.sessionToken, signal)
-    : await createUpstreamReaderAskStream(threadId, body, session.sessionToken, signal);
+  const upstream = await createUpstreamReadingRecordAskStream(
+    recordId,
+    threadId,
+    body,
+    session.sessionToken,
+    signal,
+  );
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }
@@ -409,11 +307,10 @@ export async function createReaderAskStreamForWeb(
 
 /** Regenerate (not resume/continue) the assistant answer for a message. */
 export async function retryReaderAskMessageForWeb(
+  recordId: string,
   threadId: string,
   messageId: string,
   body: ReaderAskMessageRetryRequestDto,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
   signal?: AbortSignal,
 ): Promise<Response> {
   const session = await requireUpstreamSession();
@@ -437,17 +334,20 @@ export async function retryReaderAskMessageForWeb(
     return retryTargetNotPersistedResponse(messageId);
   }
 
-  if (recordScope === "reading_record") {
-    if (!recordId?.trim()) {
-      return missingReadingRecordIdResponse();
-    }
+  if (!recordId.trim()) {
+    return missingReadingRecordIdResponse();
   }
 
   // ASK-TURN-LIFECYCLE R1: see createReaderAskStreamForWeb.
   // Upstream path is always `/retry/stream` (BFF → FastAPI only).
-  const upstream = recordScope === "reading_record"
-    ? await retryUpstreamReadingRecordAskMessage(recordId!, threadId, messageId, body, session.sessionToken, signal)
-    : await retryUpstreamReaderAskMessage(threadId, messageId, body, session.sessionToken, signal);
+  const upstream = await retryUpstreamReadingRecordAskMessage(
+    recordId,
+    threadId,
+    messageId,
+    body,
+    session.sessionToken,
+    signal,
+  );
   if (!upstream.ok || !upstream.body) {
     return buildStreamErrorResponse(upstream);
   }
@@ -468,16 +368,15 @@ export async function retryReaderAskMessageForWeb(
  * Reading-record scope only for R4 (agentic + RR Ask cutover path).
  */
 export async function reconcileReaderAskSubmissionForWeb(
+  recordId: string,
   threadId: string,
   clientSubmissionId: string,
-  recordId?: string | null,
-  recordScope: ReaderAskRecordScope = "analysis",
 ): Promise<Response> {
   const session = await requireUpstreamSession();
   if (!session) {
     return authError("请先登录后再使用 Ask Claread。");
   }
-  if (recordScope !== "reading_record" || !recordId?.trim()) {
+  if (!recordId.trim()) {
     return new Response(
       JSON.stringify({
         code: "reconcile_scope_unsupported",

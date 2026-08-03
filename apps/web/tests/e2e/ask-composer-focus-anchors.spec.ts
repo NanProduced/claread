@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
  * ASK-UX-COT-COMPOSER-R3 P3 — Reading Record Ask composer selection
  * slots + plural focus_anchors transport acceptance.
  *
- * Drives the REAL /app/reader-record/{recordId} page (native selections
+ * Drives the REAL /app/reader/{recordId} page (native selections
  * via the Selection API, real surface + composer + floating toolbar).
  * All BFF routes are mocked at the network layer — no backend.
  *
@@ -340,7 +340,7 @@ function makeSnapshot() {
 async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
   const snapshot = makeSnapshot();
 
-  await page.route(`**/api/web/reader-plate/${RECORD_ID}/snapshot`, async (route) => {
+  await page.route(`**/api/web/reader/records/${RECORD_ID}/snapshot`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -348,7 +348,7 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
     });
   });
 
-  await page.route(`**/api/web/reader-plate/${RECORD_ID}/events**`, async (route) => {
+  await page.route(`**/api/web/reader/records/${RECORD_ID}/events**`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -368,7 +368,7 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
   });
 
   await page.route(
-    `**/api/web/reader-plate/records/${RECORD_ID}/article-rag-index/status`,
+    `**/api/web/reader/records/${RECORD_ID}/article-rag-index/status`,
     async (route) => {
       await route.fulfill({
         status: 200,
@@ -395,7 +395,9 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
   });
 
   // RR Ask threads: list → empty, create → default thread, get → messages [].
-  await page.route("**/api/web/reader-ask/threads", async (route) => {
+  await page.route(
+    `**/api/web/reader/records/${RECORD_ID}/ask/threads`,
+    async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -411,9 +413,12 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
         last_message_at: null,
       }),
     });
-  });
+    },
+  );
 
-  await page.route("**/api/web/reader-ask/threads?**", async (route) => {
+  await page.route(
+    `**/api/web/reader/records/${RECORD_ID}/ask/threads?**`,
+    async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -437,9 +442,12 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
         last_message_at: null,
       }),
     });
-  });
+    },
+  );
 
-  await page.route(`**/api/web/reader-ask/threads/${THREAD_ID}?**`, async (route) => {
+  await page.route(
+    `**/api/web/reader/records/${RECORD_ID}/ask/threads/${THREAD_ID}**`,
+    async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -456,9 +464,12 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
         messages: [],
       }),
     });
-  });
+    },
+  );
 
-  await page.route("**/api/web/reader-ask/model-options**", async (route) => {
+  await page.route(
+    `**/api/web/reader/records/${RECORD_ID}/ask/model-options**`,
+    async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -469,12 +480,13 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
         ],
       }),
     });
-  });
+    },
+  );
 
   // Capture the stream request body (the P2 transport under test) and
   // answer with a minimal completed SSE so the panel settles cleanly.
   await page.route(
-    `**/api/web/reader-ask/threads/${THREAD_ID}/messages/stream**`,
+    `**/api/web/reader/records/${RECORD_ID}/ask/threads/${THREAD_ID}/messages/stream**`,
     async (route) => {
       const body = route.request().postDataJSON();
       capturedStreamBodies.push(body);
@@ -524,7 +536,7 @@ async function loginAndNavigate(page: Page) {
     });
   });
 
-  const targetPath = `/app/reader-record/${RECORD_ID}`;
+  const targetPath = `/app/reader/${RECORD_ID}`;
   await page.goto(`/login?next=${encodeURIComponent(targetPath)}`);
   await page.getByLabel("手机号").fill("13800138000");
   await page.getByRole("button", { name: "发送验证码" }).click();
@@ -733,7 +745,7 @@ for (const viewport of [
         },
       };
       await page.route(
-        `**/api/web/reader-plate/${RECORD_ID}/snapshot`,
+        `**/api/web/reader/records/${RECORD_ID}/snapshot`,
         async (route) => {
           await route.fulfill({
             status: 200,

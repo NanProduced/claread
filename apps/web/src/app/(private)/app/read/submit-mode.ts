@@ -28,7 +28,7 @@ export interface ReadPageSubmitRequestBody {
 export function readPageSubmitEndpoint(
   _mode: ReadPageSubmitMode = READ_PAGE_SUBMIT_MODE,
 ): string {
-  return "/api/web/reader-plate/input";
+  return "/api/web/reader/records/input";
 }
 
 export function readPageSubmitRequestBody(

@@ -9,19 +9,22 @@ import {
 } from "./browser-paths";
 
 describe("browser Ask paths (ASK-RETRY-CONTRACT-R0/R4)", () => {
+  const recordId = "record-1";
+
   it("builds stream path without upstream suffixes", () => {
-    expect(browserAskStreamPath("thread-1")).toBe(
-      "/api/web/reader-ask/threads/thread-1/messages/stream",
+    expect(browserAskStreamPath(recordId, "thread-1")).toBe(
+      "/api/web/reader/records/record-1/ask/threads/thread-1/messages/stream",
     );
   });
 
   it("builds retry path as /retry only — never /retry/stream", () => {
     const path = browserAskRetryPath(
+      recordId,
       "thread-1",
       "11111111-1111-4111-8111-111111111111",
     );
     expect(path).toBe(
-      "/api/web/reader-ask/threads/thread-1/messages/11111111-1111-4111-8111-111111111111/retry",
+      "/api/web/reader/records/record-1/ask/threads/thread-1/messages/11111111-1111-4111-8111-111111111111/retry",
     );
     expect(path).not.toContain("/retry/stream");
     expect(path.endsWith("/retry")).toBe(true);
@@ -30,11 +33,12 @@ describe("browser Ask paths (ASK-RETRY-CONTRACT-R0/R4)", () => {
   it("builds submission reconcile path", () => {
     expect(
       browserAskSubmissionPath(
+        recordId,
         "thread-1",
         "22222222-2222-4222-8222-222222222222",
       ),
     ).toBe(
-      "/api/web/reader-ask/threads/thread-1/submissions/22222222-2222-4222-8222-222222222222",
+      "/api/web/reader/records/record-1/ask/threads/thread-1/submissions/22222222-2222-4222-8222-222222222222",
     );
   });
 

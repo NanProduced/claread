@@ -62,7 +62,6 @@ import {
   type ReaderSnapshotUserAssetDto,
 } from "@/types/api/reader-plate";
 import type {
-  ReaderAskActionConfirmResponseDto,
   ReaderAskEntryActionDto,
 } from "@/types/api/reader-ask";
 import type { ThemePreference } from "@/lib/appearance";
@@ -75,12 +74,9 @@ import {
   Copy,
   Eye,
   Globe,
-  MessageSquareText,
   MoreVertical,
   Palette,
   Sparkles,
-  ThumbsDown,
-  ThumbsUp,
   Trash2,
 } from "lucide-react";
 import { FavoriteButton } from "@/components/reader/FavoriteButton";
@@ -435,146 +431,6 @@ type ReaderRecordWriteState =
   | { kind: "saving"; action: ReaderRecordWriteAction }
   | { kind: "saved"; action: ReaderRecordWriteAction; message: string }
   | { kind: "error"; action: ReaderRecordWriteAction; message: string };
-
-type ReaderRecordArticleFeedbackChoice = "helpful" | "issue" | "suggestion";
-
-const ARTICLE_FEEDBACK_STATUS: Record<ReaderRecordArticleFeedbackChoice, string> = {
-  helpful: "已选择：有帮助",
-  issue: "已选择：有问题",
-  suggestion: "已选择：写建议",
-};
-
-function ReaderRecordArticleFeedbackButton({
-  children,
-  choice,
-  icon,
-  selected,
-  onSelect,
-}: {
-  children: ReactNode;
-  choice: ReaderRecordArticleFeedbackChoice;
-  icon: ReactNode;
-  selected: boolean;
-  onSelect: (choice: ReaderRecordArticleFeedbackChoice) => void;
-}) {
-  const selectedClassName = {
-    helpful:
-      "bg-structure-green/10 text-structure-green",
-    issue:
-      "bg-error-red/10 text-error-red",
-    suggestion:
-      "bg-lens-blue/10 text-lens-blue",
-  }[choice];
-
-  const hoverClassName = {
-    helpful: "hover:bg-structure-green/10 hover:text-structure-green",
-    issue: "hover:bg-error-red/10 hover:text-error-red",
-    suggestion: "hover:bg-lens-blue/10 hover:text-lens-blue",
-  }[choice];
-
-  const dotClassName = {
-    helpful: "bg-structure-green",
-    issue: "bg-error-red",
-    suggestion: "bg-lens-blue",
-  }[choice];
-
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      data-reader-record-article-feedback-action={choice}
-      onClick={() => onSelect(choice)}
-      className={cn(
-        "group relative inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] font-medium text-muted-foreground",
-        "flex-1 bg-transparent sm:flex-none",
-        readerInlineFocusRing,
-        readerTransitionFast,
-        "active:bg-background motion-reduce:transform-none motion-reduce:transition-none",
-        selected ? selectedClassName : hoverClassName,
-      )}
-    >
-      <span
-        className={cn(
-          "inline-flex size-4 items-center justify-center text-current",
-          "transition-transform duration-[160ms] ease-[var(--cl-ease-standard)] motion-reduce:transition-none",
-          selected
-            ? "scale-105"
-            : "group-hover:-translate-y-px group-active:translate-y-0",
-        )}
-      >
-        {icon}
-      </span>
-      <span>{children}</span>
-      {selected ? (
-        <span
-          aria-hidden="true"
-          className={cn("ml-0.5 size-1.5 rounded-full", dotClassName)}
-        />
-      ) : null}
-    </button>
-  );
-}
-
-function ReaderRecordArticleFeedback({
-  selectedChoice,
-  onSelect,
-}: {
-  selectedChoice: ReaderRecordArticleFeedbackChoice | null;
-  onSelect: (choice: ReaderRecordArticleFeedbackChoice) => void;
-}) {
-  return (
-    <section
-      aria-label="文章反馈"
-      data-reader-record-article-feedback="ready"
-      data-reader-record-bottom-spacer="article-feedback"
-      className="mt-[clamp(5rem,9vh,7rem)] border-t border-hairline/65 pb-[clamp(7rem,16vh,12rem)] pt-7"
-    >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-ink">
-            这次解析有帮助吗？
-          </p>
-          {selectedChoice ? (
-            <p
-              className="mt-1.5 text-xs leading-5 text-muted-foreground"
-              role="status"
-              aria-live="polite"
-            >
-              {ARTICLE_FEEDBACK_STATUS[selectedChoice]}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="-mx-1 flex w-full flex-wrap items-center gap-1 sm:mx-0 sm:w-auto sm:justify-end">
-          <ReaderRecordArticleFeedbackButton
-            choice="helpful"
-            icon={<ThumbsUp className="size-3.5" aria-hidden="true" />}
-            selected={selectedChoice === "helpful"}
-            onSelect={onSelect}
-          >
-            有帮助
-          </ReaderRecordArticleFeedbackButton>
-          <ReaderRecordArticleFeedbackButton
-            choice="issue"
-            icon={<ThumbsDown className="size-3.5" aria-hidden="true" />}
-            selected={selectedChoice === "issue"}
-            onSelect={onSelect}
-          >
-            有问题
-          </ReaderRecordArticleFeedbackButton>
-          <ReaderRecordArticleFeedbackButton
-            choice="suggestion"
-            icon={<MessageSquareText className="size-3.5" aria-hidden="true" />}
-            selected={selectedChoice === "suggestion"}
-            onSelect={onSelect}
-          >
-            写建议
-          </ReaderRecordArticleFeedbackButton>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 const HIGHLIGHT_COLOR_OPTIONS: Array<{
   value: string;
@@ -1444,7 +1300,7 @@ function lookupContextFromSnapshot(
 }
 
 async function postReadingRecordUserAsset(
-  endpoint: "/api/web/reading-record/highlights" | "/api/web/reading-record/notes",
+  endpoint: string,
   body: Record<string, unknown>,
 ): Promise<ReadingRecordUserAssetWritePayload | null> {
   const response = await fetch(endpoint, {
@@ -1466,11 +1322,12 @@ async function postReadingRecordUserAsset(
 }
 
 async function patchReadingRecordHighlightColor(
+  recordId: string,
   highlightId: string,
   color: string,
 ): Promise<ReadingRecordUserAssetWritePayload | null> {
   const response = await fetch(
-    `/api/web/reading-record/highlights/${encodeURIComponent(highlightId)}`,
+    `/api/web/reader/records/${encodeURIComponent(recordId)}/highlights/${encodeURIComponent(highlightId)}`,
     {
       method: "PATCH",
       headers: {
@@ -2252,7 +2109,7 @@ function readerRecordPageUrl(recordId: string): string {
   if (typeof window === "undefined") {
     return "";
   }
-  return `${window.location.origin}/app/reader-record/${encodeURIComponent(recordId)}`;
+  return `${window.location.origin}/app/reader/${encodeURIComponent(recordId)}`;
 }
 
 async function copyReaderRecordLink(recordId: string): Promise<boolean> {
@@ -4117,8 +3974,6 @@ export function ReaderRecordPlateSurface({
   ]);
   const [pendingAskRequest, setPendingAskRequest] =
     useState<PendingReaderRecordAskRequest | null>(null);
-  const [articleFeedbackChoice, setArticleFeedbackChoice] =
-    useState<ReaderRecordArticleFeedbackChoice | null>(null);
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -4558,7 +4413,7 @@ export function ReaderRecordPlateSurface({
     setTranslationState({ kind: "submitting" });
     try {
       const response = await fetch(
-        `/api/web/reader-plate/records/${encodeURIComponent(
+        `/api/web/reader/records/${encodeURIComponent(
           snapshot.record_id,
         )}/section-translation`,
         {
@@ -4948,23 +4803,6 @@ export function ReaderRecordPlateSurface({
       current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey),
     );
   }, []);
-
-  const handleAskActionExecuted = useCallback(
-    (result: ReaderAskActionConfirmResponseDto["result"]) => {
-      if (
-        result.annotation_id ||
-        result.note_id ||
-        result.persisted_supplement
-      ) {
-        void onRequestSnapshotReload?.();
-      }
-    },
-    [onRequestSnapshotReload],
-  );
-
-  const handleAskSupplementDeleted = useCallback(() => {
-    void onRequestSnapshotReload?.();
-  }, [onRequestSnapshotReload]);
 
   const openAskPanel = useCallback((
     attachment?: ReaderAskAttachment | null,
@@ -5461,6 +5299,7 @@ export function ReaderRecordPlateSurface({
 
       try {
         const payload = await patchReadingRecordHighlightColor(
+          snapshot.record_id,
           targetAssetId,
           color,
         );
@@ -5518,7 +5357,7 @@ export function ReaderRecordPlateSurface({
     setWriteState({ kind: "saving", action: "highlight" });
 
     try {
-      const payload = await postReadingRecordUserAsset("/api/web/reading-record/highlights", {
+      const payload = await postReadingRecordUserAsset(`/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/highlights`, {
         anchor: draft,
         selectedText: draft.selected_text,
         color,
@@ -5636,7 +5475,7 @@ export function ReaderRecordPlateSurface({
     setWriteState({ kind: "saving", action: "note" });
 
     try {
-      await postReadingRecordUserAsset("/api/web/reading-record/notes", {
+      await postReadingRecordUserAsset(`/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/notes`, {
         anchor: draft,
         selectedText: draft.selected_text,
         noteText,
@@ -5703,7 +5542,7 @@ export function ReaderRecordPlateSurface({
 
     try {
       const response = await fetch(
-        `/api/web/reading-record/highlights/${encodeURIComponent(deletedAssetId)}`,
+        `/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/highlights/${encodeURIComponent(deletedAssetId)}`,
         { method: "DELETE" },
       );
       const payload = (await response.json().catch(() => null)) as
@@ -6110,7 +5949,7 @@ export function ReaderRecordPlateSurface({
 
     try {
       const response = await fetch(
-        `/api/web/reading-record/notes/${encodeURIComponent(targetAssetId)}`,
+        `/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/notes/${encodeURIComponent(targetAssetId)}`,
         {
           method: "PATCH",
           headers: {
@@ -6164,7 +6003,7 @@ export function ReaderRecordPlateSurface({
 
     try {
       const response = await fetch(
-        `/api/web/reading-record/notes/${encodeURIComponent(deletedAssetId)}`,
+        `/api/web/reader/records/${encodeURIComponent(snapshot.record_id)}/notes/${encodeURIComponent(deletedAssetId)}`,
         { method: "DELETE" },
       );
       const payload = (await response.json().catch(() => null)) as
@@ -6495,10 +6334,6 @@ export function ReaderRecordPlateSurface({
               </ReaderCalloutActionContext.Provider>
             </ReaderGrammarExpansionProvider>
           </ReaderGrammarInteractionContext.Provider>
-          <ReaderRecordArticleFeedback
-            selectedChoice={articleFeedbackChoice}
-            onSelect={setArticleFeedbackChoice}
-          />
           {feedbackState.kind !== "idle" ? (
             <div
               data-reader-record-feedback-status={feedbackState.kind}
@@ -6538,7 +6373,6 @@ export function ReaderRecordPlateSurface({
           layout={askSidecarOpen ? "docked" : "overlay"}
           pageIdentity={askPageIdentity}
           recordId={snapshot.record_id}
-          recordScope="reading_record"
           recordTitle={askRecordTitle}
           attachments={askAttachments}
           autoSelectionAttachment={autoAskSelection}
@@ -6552,8 +6386,6 @@ export function ReaderRecordPlateSurface({
           onChangeSurface={setAskSurface}
           onOpenSidecar={() => setAskSurface("sidecar")}
           onToggle={() => setAskOpen((current) => !current)}
-          onActionExecuted={handleAskActionExecuted}
-          onSupplementDeleted={handleAskSupplementDeleted}
           hasSidecarCapacity={hasSidecarCapacity}
           capacityDowngradeNotice={
             showCapacityDowngradeNotice

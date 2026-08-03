@@ -43,7 +43,7 @@ describe("createCurrentPageIdentityLoader", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const firstCall = fetchImpl.mock.calls[0] as unknown as [string, ...unknown[]];
     expect(String(firstCall[0])).toContain(
-      "/api/web/reader-plate/records/record-1/stable-document",
+      "/api/web/reader/records/record-1/stable-document",
     );
   });
 

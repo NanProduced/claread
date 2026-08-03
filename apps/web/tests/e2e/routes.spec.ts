@@ -40,13 +40,13 @@ test.describe("Claread web routes", () => {
   test("public pages render and unauthenticated app routes redirect to login", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("link", { name: "每日精读", exact: true })).toBeVisible();
-    await expect(page.locator("header").getByRole("link", { name: "登录", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "打开 Claread", exact: true }).first()).toBeVisible();
 
     await page.goto("/daily");
-    await expect(page.locator("header").getByRole("link", { name: "公开示例", exact: true })).toBeVisible();
+    await expect(page.getByText("Claread Daily", { exact: true })).toBeVisible();
 
-    await page.goto("/examples/news-brief");
-    await expect(page.getByRole("link", { name: "返回 Daily" })).toBeVisible();
+    const removedExample = await page.goto("/examples/news-brief");
+    expect(removedExample?.status()).toBe(404);
 
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "继续使用 Claread" })).toBeVisible();
@@ -69,46 +69,117 @@ test.describe("Claread web routes", () => {
 
     await page.goto("/app/library");
     await expect(page).toHaveURL(/\/app\/library$/);
-    await expect(page.getByRole("heading", { name: "Reading Archive." })).toBeVisible();
-    await expect(page.getByRole("link", { name: "阅读记录" })).toHaveClass(/app-nav-item--active/);
+    await expect(page.getByRole("heading", { name: "阅读记录" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "全部阅读记录", exact: true })).toHaveAttribute("aria-current", "page");
 
     await page.goto("/app/vocabulary");
     await expect(page).toHaveURL(/\/app\/vocabulary$/);
-    await expect(page.getByRole("heading", { name: "生词本" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "生词本" })).toHaveClass(/app-nav-item--active/);
+    await expect(page.getByRole("heading", { name: "Vocabulary Book." })).toBeVisible();
+    await expect(page.getByRole("link", { name: "生词本", exact: true })).toHaveAttribute("aria-current", "page");
 
     await page.goto("/app/settings");
-    await expect(page).toHaveURL(/\/app\/settings$/);
-    await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "设置" })).toHaveClass(/app-nav-item--active/);
+    await expect(page).toHaveURL(/\/app\/read$/);
 
-    await expect(page.getByRole("link", { name: "返回公共首页" })).toBeVisible();
-    await page.getByRole("link", { name: "返回公共首页" }).click();
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.locator("header").getByRole("link", { name: "打开调试工作区", exact: true })).toBeVisible();
+    await page.goto("/");
+    const publicCta = page.locator("header").getByRole("link", { name: "打开 Claread", exact: true });
+    await expect(publicCta).toBeVisible();
+    await publicCta.click();
+    await expect(page).toHaveURL(/\/app\/read$/);
   });
 
-  test("analysis submit can navigate into the new reader route", async ({ page }) => {
+  test("Reader submit can navigate into the canonical Reader route", async ({ page }) => {
+    const requestedPaths: string[] = [];
+    page.on("request", (request) => {
+      requestedPaths.push(new URL(request.url()).pathname);
+    });
     await loginAsDebugUser(page);
 
-    await page.route("**/api/web/analysis/submit", async (route) => {
+    await page.route("**/api/web/reader/records/input", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           ok: true,
-          status: "succeeded",
-          message: "解析完成。",
-          recordId: "mock-record",
-          readerUrl: "/app/reader/mock-record",
+          outcome: "stable_document_ready",
+          reading_record_id: "mock-record",
+          original_input_id: "mock-input",
         }),
       });
     });
 
-    await page.getByPlaceholder("在此粘贴文章正文...").fill("Cities are not only built to be crossed, but also to be read.");
+    await page.route("**/api/web/reader/records/mock-record/snapshot", async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: false,
+          status: 409,
+          code: "record_not_ready",
+          message: "阅读记录仍在准备中。",
+        }),
+      });
+    });
+
+    await page.getByRole("textbox", { name: "在此贴入或导入英文文章" }).fill("Cities are not only built to be crossed, but also to be read.");
     await page.getByRole("button", { name: "开始透读" }).click();
 
     await page.waitForURL("**/app/reader/mock-record");
-    await expect(page.getByRole("heading", { name: "无法打开阅读记录" })).toBeVisible();
+    await expect(page.getByText("文档仍在解析")).toBeVisible();
+    expect(requestedPaths.some((path) =>
+      /\/api\/web\/(reader-plate|reader-ask|reading-records?|reader-notes|annotations|favorites|analysis)/.test(path),
+    )).toBe(false);
+  });
+
+  test("removed Reader pages return 404 without aliases", async ({ page }) => {
+    await loginAsDebugUser(page);
+
+    const readerRecordResponse = await page.goto("/app/reader-record/mock-record");
+    expect(readerRecordResponse?.status()).toBe(404);
+
+    const readerPlateResponse = await page.goto("/app/reader-plate");
+    expect(readerPlateResponse?.status()).toBe(404);
+
+    const fixtureResponse = await page.goto("/app/f7-ask-fixture/mock-record");
+    expect(fixtureResponse?.status()).toBe(404);
+  });
+
+  test("removed Reader BFF namespaces return 404 without fallback handlers", async ({
+    request,
+  }) => {
+    const removedPaths = [
+      "/api/web/reader-plate/mock-record/snapshot",
+      "/api/web/reader-plate/submit",
+      "/api/web/reader-ask/model-options",
+      "/api/web/reader/records/plain-text",
+      "/api/web/reading-records",
+      "/api/web/reading-record/mock-record/submit",
+      "/api/web/reader-notes",
+      "/api/web/annotations",
+      "/api/web/favorites/mock-record",
+      "/api/web/analysis/current",
+      "/api/web/reader/mock-record",
+      "/api/web/records/mock-record",
+    ];
+
+    for (const path of removedPaths) {
+      const response = await request.get(path);
+      expect(response.status(), path).toBe(404);
+    }
+  });
+
+  test("retired Reader submit endpoints return 404 for write methods", async ({
+    request,
+  }) => {
+    const removedSubmitPaths = [
+      "/api/web/reader/records/plain-text",
+      "/api/web/reader-plate/submit",
+    ];
+
+    for (const path of removedSubmitPaths) {
+      const response = await request.post(path, {
+        data: { plainText: "retired route probe" },
+      });
+      expect(response.status(), path).toBe(404);
+    }
   });
 });

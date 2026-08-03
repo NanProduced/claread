@@ -1,6 +1,6 @@
 import "server-only";
 
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import { listUpstreamReadingRecords } from "@/services/api/reading-records";
 import { getWebSession } from "@/services/bff/session";
 import type {
@@ -117,7 +117,7 @@ export async function getReadingRecordListFromWeb(
     ok: true,
     items: data.items.map((item) => ({
       readingRecordId: item.record_id,
-      readerUrl: appReadingRecordRoute(item.record_id),
+      readerUrl: appReaderRoute(item.record_id),
       // S2.5: Use the backend-decided display_title instead of the raw
       // title field. The backend guarantees display_title is non-empty.
       title: item.display_title,

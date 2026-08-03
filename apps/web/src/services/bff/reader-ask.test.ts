@@ -7,29 +7,16 @@ vi.mock("@/services/bff/session", () => ({
 }));
 
 vi.mock("@/services/api/reader-ask", () => ({
-  confirmUpstreamReaderAskAction: vi.fn(),
-  confirmUpstreamReadingRecordAskAction: vi.fn(),
-  createUpstreamReaderAskStream: vi.fn(),
-  createUpstreamReaderAskThread: vi.fn(),
   createUpstreamReadingRecordAskDefaultThread: vi.fn(),
   createUpstreamReadingRecordAskStream: vi.fn(),
-  deleteUpstreamReaderAskSupplement: vi.fn(),
-  deleteUpstreamReadingRecordAskSupplement: vi.fn(),
-  getUpstreamReaderAskThread: vi.fn(),
   getUpstreamReadingRecordAskThread: vi.fn(),
-  listUpstreamReaderAskContextRecords: vi.fn(),
-  listUpstreamReaderAskModelOptions: vi.fn(),
-  listUpstreamReaderAskThreads: vi.fn(),
   listUpstreamReadingRecordAskThreads: vi.fn(),
-  resetUpstreamReaderAskThread: vi.fn(),
   resetUpstreamReadingRecordAskThread: vi.fn(),
-  retryUpstreamReaderAskMessage: vi.fn(),
   retryUpstreamReadingRecordAskMessage: vi.fn(),
 }));
 
 import { getWebSession } from "@/services/bff/session";
 import {
-  createUpstreamReaderAskThread,
   createUpstreamReadingRecordAskDefaultThread,
   createUpstreamReadingRecordAskStream,
   listUpstreamReadingRecordAskThreads,
@@ -62,7 +49,6 @@ describe("reader-ask BFF RR cutover", () => {
 
     const result = await listReaderAskThreadsForWeb(
       "reading-record-1",
-      "reading_record",
     );
 
     expect(result).toEqual({ items: [] });
@@ -88,9 +74,8 @@ describe("reader-ask BFF RR cutover", () => {
       },
     });
 
-    const result = await createReaderAskThreadForWeb({
+    const result = await createReaderAskThreadForWeb("reading-record-1", {
       record_id: "reading-record-1",
-      record_scope: "reading_record",
       title: "Ignored title",
       model: "ask-fast",
     });
@@ -104,44 +89,11 @@ describe("reader-ask BFF RR cutover", () => {
       "reading-record-1",
       "session-token",
     );
-    expect(createUpstreamReaderAskThread).not.toHaveBeenCalled();
-  });
-
-  it("keeps the legacy create-thread path untouched for analysis scope", async () => {
-    vi.mocked(createUpstreamReaderAskThread).mockResolvedValue({
-      ok: true,
-      data: {
-        id: "thread-legacy-1",
-        record_id: "analysis-record-1",
-        title: "Legacy title",
-        is_default: false,
-        selected_model: null,
-        archived_at: null,
-        created_at: "2026-06-25T00:00:00Z",
-        updated_at: "2026-06-25T00:00:00Z",
-        last_message_at: null,
-      },
-    });
-
-    await createReaderAskThreadForWeb({
-      record_id: "analysis-record-1",
-      record_scope: "analysis",
-      title: "Legacy title",
-      model: "ask-fast",
-    });
-
-    expect(createUpstreamReaderAskThread).toHaveBeenCalledWith(
-      {
-        record_id: "analysis-record-1",
-        title: "Legacy title",
-        model: "ask-fast",
-      },
-      "session-token",
-    );
   });
 
   it("rejects RR stream requests that do not carry a reading record id", async () => {
     const result = await createReaderAskStreamForWeb(
+      "",
       "thread-rr-1",
       {
         content: "Explain this paragraph",
@@ -159,8 +111,6 @@ describe("reader-ask BFF RR cutover", () => {
         },
         attachments: [],
       },
-      null,
-      "reading_record",
     );
 
     expect(result.status).toBe(400);
@@ -179,6 +129,7 @@ describe("reader-ask BFF RR cutover", () => {
     );
 
     const result = await createReaderAskStreamForWeb(
+      "reading-record-1",
       "thread-rr-1",
       {
         content: "Explain this paragraph",
@@ -196,8 +147,6 @@ describe("reader-ask BFF RR cutover", () => {
         },
         attachments: [],
       },
-      "reading-record-1",
-      "reading_record",
     );
 
     expect(result.status).toBe(200);
@@ -228,6 +177,7 @@ describe("reader-ask BFF RR cutover", () => {
 
     const controller = new AbortController();
     await createReaderAskStreamForWeb(
+      "reading-record-1",
       "thread-rr-1",
       {
         content: "Explain this paragraph",
@@ -245,8 +195,6 @@ describe("reader-ask BFF RR cutover", () => {
         },
         attachments: [],
       },
-      "reading-record-1",
-      "reading_record",
       controller.signal,
     );
 

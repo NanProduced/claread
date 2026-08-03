@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { appReadingRecordRoute, legacyAppReaderRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import type { VocabularyItemVm } from "@/types/view/VocabularyItemVm";
 import type { VocabularySourceRefDto } from "@/types/api/vocabulary";
 
@@ -104,14 +104,11 @@ describe("VocabularyClient source links", () => {
     const sourceLink = screen.getByRole("link", { name: "查看来源语境" });
     const href = sourceLink.getAttribute("href");
 
-    expect(href).toBe(appReadingRecordRoute("reading_record_1"));
-    // Explicit guard: even with sourceRecordId present, the legacy path
-    // segment must not appear in the rendered href.
-    expect(href).not.toContain("/app/reader/");
-    expect(href).not.toBe(legacyAppReaderRoute("legacy record 1"));
+    expect(href).toBe(appReaderRoute("reading_record_1"));
+    expect(href).not.toContain("/app/reader-record/");
   });
 
-  it("falls back to the legacy reader route when only sourceRecordId exists", () => {
+  it("does not fall back when only the legacy sourceRecordId exists", () => {
     const item = makeVocabularyItem();
 
     render(
@@ -126,11 +123,7 @@ describe("VocabularyClient source links", () => {
       />,
     );
 
-    const sourceLink = screen.getByRole("link", { name: "查看来源语境" });
-
-    expect(sourceLink.getAttribute("href")).toBe(
-      legacyAppReaderRoute("legacy record 1"),
-    );
+    expect(screen.queryByRole("link", { name: "查看来源语境" })).toBeNull();
   });
 
   it("renders no source link when both sourceReadingRecordId and sourceRecordId are missing", () => {
@@ -172,19 +165,17 @@ describe("VocabularyClient - reader entry priority from source refs", () => {
         recordId: "legacy_record_99",
       });
 
-      expect(url).toBe(appReadingRecordRoute("reading_record_42"));
-      // 显式护栏：双 id 同时存在时，绝不为旧链 URL。
-      expect(url).not.toBe(legacyAppReaderRoute("legacy_record_99"));
-      expect(url).not.toContain("/app/reader/");
+      expect(url).toBe(appReaderRoute("reading_record_42"));
+      expect(url).not.toContain("/app/reader-record/");
     });
 
-    it("returns the legacy route only when readingRecordId is absent", () => {
+    it("returns null when only the legacy recordId is present", () => {
       const url = resolveReaderSourceHref({
         readingRecordId: null,
         recordId: "legacy_record_99",
       });
 
-      expect(url).toBe(legacyAppReaderRoute("legacy_record_99"));
+      expect(url).toBeNull();
     });
 
     it("returns null when neither id is present", () => {
@@ -204,10 +195,10 @@ describe("VocabularyClient - reader entry priority from source refs", () => {
       });
 
       expect(url).toBe(
-        `${appReadingRecordRoute("reading_record_42")}?sentenceId=sentence_7`,
+        `${appReaderRoute("reading_record_42")}?sentenceId=sentence_7`,
       );
       // 绝不混入旧链路径段
-      expect(url).not.toContain("/app/reader/");
+      expect(url).not.toContain("/app/reader-record/");
     });
   });
 
@@ -298,10 +289,10 @@ describe("VocabularyClient - reader entry priority from source refs", () => {
       // 最终 URL 必须是新链，且绝不能是旧链。
       expect(hrefSetter).toHaveBeenCalledTimes(1);
       expect(hrefSetter).toHaveBeenCalledWith(
-        appReadingRecordRoute("reading_record_42"),
+        appReaderRoute("reading_record_42"),
       );
       expect(hrefSetter).not.toHaveBeenCalledWith(
-        legacyAppReaderRoute("legacy_record_99"),
+        "/app/reader-record/legacy_record_99",
       );
     });
   });

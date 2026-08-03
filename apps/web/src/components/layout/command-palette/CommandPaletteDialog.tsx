@@ -35,7 +35,7 @@ function fetchReadingRecords(
     params.set("query", query.trim());
   }
 
-  return fetch(`/api/web/reading-records?${params.toString()}`, { signal })
+  return fetch(`/api/web/reader/records?${params.toString()}`, { signal })
     .then((res) => res.json())
     .then((data: ReadingRecordListResult) => (data.ok ? data.items : []))
     .catch((err: unknown) => {

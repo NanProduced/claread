@@ -159,7 +159,7 @@ export function CandidateConfirmDialog({
     setConfirmState({ kind: "confirming" });
     try {
       const response = await fetch(
-        `/api/web/reader-plate/records/${encodeURIComponent(candidate.readingRecordId)}/candidate-documents/${encodeURIComponent(candidate.candidateDocumentId)}/confirm`,
+        `/api/web/reader/records/${encodeURIComponent(candidate.readingRecordId)}/candidate-documents/${encodeURIComponent(candidate.candidateDocumentId)}/confirm`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },

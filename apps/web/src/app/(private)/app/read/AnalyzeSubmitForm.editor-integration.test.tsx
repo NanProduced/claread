@@ -213,7 +213,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
 
   it("submits structured content from the real editor to the unified endpoint", async () => {
     const submitMock = vi.fn((url: string, init?: RequestInit) => {
-      expect(url).toBe("/api/web/reader-plate/input");
+      expect(url).toBe("/api/web/reader/records/input");
       const sent = JSON.parse(String(init?.body)) as { text: string };
       expect(sent.text).toContain("## 6. Implementation Plan");
       return new Response(
@@ -238,7 +238,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
     });
 
     await waitFor(() => {
-      expect(navigationMock.push).toHaveBeenCalledWith("/app/reader-record/rec_r1_submit");
+      expect(navigationMock.push).toHaveBeenCalledWith("/app/reader/rec_r1_submit");
     });
 
     expect(submitMock).toHaveBeenCalledTimes(1);

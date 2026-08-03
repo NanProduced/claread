@@ -306,12 +306,10 @@ describe("consumeReaderAskSse", () => {
     expect(events[0].data).toMatchObject({ code: "SSE_PARSE_ERROR" });
   });
 
-  it("still parses legacy message.interrupted with typed final_status and identity", async () => {
-    // R4-1: legacy message.interrupted is accepted as a trusted terminal
-    // ONLY when it carries a typed non-ok final_status AND a self-consistent
-    // identity tuple (message_id / thread_id / turn_run_id). The legacy
-    // {content_md only} shape is rejected as untrusted — foreign/stale
-    // terminals must NOT mutate UI state.
+  it("parses a typed message.interrupted v2 terminal duplicate", async () => {
+    // R4-1: message.interrupted is accepted only as a typed v2 non-ok
+    // terminal duplicate with a self-consistent identity tuple. The old
+    // partial-answer shape is rejected as untrusted.
     const interrupted = {
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
       final_status: "cancelled" as const,
@@ -319,7 +317,6 @@ describe("consumeReaderAskSse", () => {
       thread_id: "thread-1",
       turn_run_id: "turn-run-1",
       terminal_reason: "user aborted",
-      content_md: "partial answer",
     };
     const events = await collectEvents(
       [`event: message.interrupted\ndata: ${JSON.stringify(interrupted)}\n\n`],
@@ -331,12 +328,8 @@ describe("consumeReaderAskSse", () => {
     expect(events[0].event).toBe("message.interrupted");
     expect(events[0].data).toMatchObject({
       final_status: "cancelled",
-      content_md: "partial answer",
     });
-    // The payload is structurally a valid typed terminal (it carries
-    // execution_version / final_status / identity), but it arrives on the
-    // legacy ``message.interrupted`` event name rather than
-    // ``agentic.terminal``. It is NOT a completed success payload.
+    // It is not a completed success payload.
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(false);
   });
 

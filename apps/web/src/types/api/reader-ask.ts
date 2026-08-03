@@ -1724,7 +1724,19 @@ export function isReaderAskAgenticCompletedPayload(
     "envelope_fingerprint" in payload ||
     "evidence" in payload ||
     "evidence_scope" in payload ||
-    "handle_id" in payload
+    "handle_id" in payload ||
+    "content_md" in payload ||
+    "reasoning_md" in payload ||
+    "article_rag" in payload ||
+    "action_proposals" in payload ||
+    "tool_trace" in payload ||
+    "response_cards" in payload ||
+    "disambiguation" in payload ||
+    "external_asset_disambiguation" in payload ||
+    "supplement_candidates" in payload ||
+    "persisted_supplements" in payload ||
+    "context_plan" in payload ||
+    "resolved_context" in payload
   ) {
     return false;
   }
@@ -1780,7 +1792,16 @@ export function isReaderAskAgenticTerminalPayload(
     typeof status === "string" &&
     READER_ASK_AGENTIC_TERMINAL_STATUSES.has(status) &&
     !("rejected_handles" in payload) &&
-    !("envelope_fingerprint" in payload)
+    !("envelope_fingerprint" in payload) &&
+    !("content_md" in payload) &&
+    !("reasoning_md" in payload) &&
+    !("article_rag" in payload) &&
+    !("evidence" in payload) &&
+    !("action_proposals" in payload) &&
+    !("tool_trace" in payload) &&
+    !("response_cards" in payload) &&
+    !("supplement_candidates" in payload) &&
+    !("persisted_supplements" in payload)
   );
 }
 

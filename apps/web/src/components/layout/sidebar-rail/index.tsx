@@ -67,7 +67,7 @@ export function isSidebarActive(pathname: string, href: Route) {
 }
 
 function isReaderRecordPath(pathname: string) {
-  return pathname.startsWith("/app/reader-record/");
+  return pathname.startsWith("/app/reader/");
 }
 
 export interface SidebarRailProps {

@@ -95,7 +95,7 @@ beforeEach(() => {
 });
 
 describe("VocabularyDetailPanel - source ref reader entry priority", () => {
-  it("calls onGoToSource with both ids when ref carries reading_record_id and cloud_record_id", () => {
+  it("calls onGoToSource with the Reading Record id and ignores legacy ids", () => {
     const onGoToSource = vi.fn();
     const item = makeItem([
       makeSourceRef({
@@ -114,17 +114,13 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
     fireEvent.click(button!);
 
     expect(onGoToSource).toHaveBeenCalledTimes(1);
-    // readingRecordId 必须上抛（客户端据此走新链 appReadingRecordRoute）。
-    // recordId 同时上抛，保留信息完整性，但客户端 handleGoToSource 仅在
-    // readingRecordId 为空时使用它回退到 legacyAppReaderRoute。
     expect(onGoToSource).toHaveBeenCalledWith({
       readingRecordId: "reading_record_1",
-      recordId: "legacy_record_1",
       sentenceId: undefined,
     });
   });
 
-  it("calls onGoToSource with recordId only (readingRecordId: null) when ref has cloud_record_id but no reading_record_id", () => {
+  it("does not render a locate button when only cloud_record_id is present", () => {
     const onGoToSource = vi.fn();
     const item = makeItem([
       makeSourceRef({
@@ -136,22 +132,11 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
       <VocabularyDetailPanel item={item} onGoToSource={onGoToSource} />,
     );
 
-    const button = locateSourceRefButton(container);
-    expect(button).not.toBeNull();
-
-    fireEvent.click(button!);
-
-    expect(onGoToSource).toHaveBeenCalledTimes(1);
-    // 仅 cloud_record_id 时，readingRecordId 必须为 null（而非 undefined），
-    // 以便客户端 handleGoToSource 走 legacyAppReaderRoute 回退分支。
-    expect(onGoToSource).toHaveBeenCalledWith({
-      readingRecordId: null,
-      recordId: "legacy_record_1",
-      sentenceId: undefined,
-    });
+    expect(locateSourceRefButton(container)).toBeNull();
+    expect(onGoToSource).not.toHaveBeenCalled();
   });
 
-  it("prefers client_record_id as recordId fallback when cloud_record_id is absent", () => {
+  it("does not render a locate button when only client_record_id is present", () => {
     const onGoToSource = vi.fn();
     const item = makeItem([
       makeSourceRef({
@@ -163,19 +148,11 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
       <VocabularyDetailPanel item={item} onGoToSource={onGoToSource} />,
     );
 
-    const button = locateSourceRefButton(container);
-    expect(button).not.toBeNull();
-
-    fireEvent.click(button!);
-
-    expect(onGoToSource).toHaveBeenCalledWith({
-      readingRecordId: null,
-      recordId: "client_record_1",
-      sentenceId: undefined,
-    });
+    expect(locateSourceRefButton(container)).toBeNull();
+    expect(onGoToSource).not.toHaveBeenCalled();
   });
 
-  it("calls onGoToSource with readingRecordId only (recordId: null) when ref has reading_record_id but no cloud/client id", () => {
+  it("calls onGoToSource with readingRecordId only when no legacy id is present", () => {
     const onGoToSource = vi.fn();
     const item = makeItem([
       makeSourceRef({
@@ -193,10 +170,8 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
     fireEvent.click(button!);
 
     expect(onGoToSource).toHaveBeenCalledTimes(1);
-    // 仅 reading_record_id 时，recordId 必须为 null（不虚构旧链 id）。
     expect(onGoToSource).toHaveBeenCalledWith({
       readingRecordId: "reading_record_1",
-      recordId: null,
       sentenceId: undefined,
     });
   });
@@ -221,7 +196,6 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
 
     expect(onGoToSource).toHaveBeenCalledWith({
       readingRecordId: "reading_record_1",
-      recordId: null,
       sentenceId: "sentence_42",
     });
   });
@@ -239,8 +213,7 @@ describe("VocabularyDetailPanel - source ref reader entry priority", () => {
       <VocabularyDetailPanel item={item} onGoToSource={onGoToSource} />,
     );
 
-    // 渲染条件 (ref.reading_record_id ?? ref.cloud_record_id ?? ref.client_record_id)
-    // 为 null 时不渲染按钮。
+    // 没有 Reading Record id 时不渲染按钮。
     expect(locateSourceRefButton(container)).toBeNull();
     expect(onGoToSource).not.toHaveBeenCalled();
   });

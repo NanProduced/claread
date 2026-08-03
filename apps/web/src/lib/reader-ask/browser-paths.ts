@@ -35,8 +35,8 @@ export function isPersistedAssistantMessageId(messageId: string): boolean {
 }
 
 /** Browser-facing stream path (Next BFF). */
-export function browserAskStreamPath(threadId: string): string {
-  return `/api/web/reader-ask/threads/${encodeURIComponent(threadId)}/messages/stream`;
+export function browserAskStreamPath(recordId: string, threadId: string): string {
+  return `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads/${encodeURIComponent(threadId)}/messages/stream`;
 }
 
 /**
@@ -45,10 +45,11 @@ export function browserAskStreamPath(threadId: string): string {
  * — never `/retry/stream` (that is upstream-only).
  */
 export function browserAskRetryPath(
+  recordId: string,
   threadId: string,
   assistantMessageId: string,
 ): string {
-  return `/api/web/reader-ask/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(assistantMessageId)}/retry`;
+  return `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(assistantMessageId)}/retry`;
 }
 
 /**
@@ -57,8 +58,9 @@ export function browserAskRetryPath(
  * client never observed `message.started`.
  */
 export function browserAskSubmissionPath(
+  recordId: string,
   threadId: string,
   clientSubmissionId: string,
 ): string {
-  return `/api/web/reader-ask/threads/${encodeURIComponent(threadId)}/submissions/${encodeURIComponent(clientSubmissionId)}`;
+  return `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/threads/${encodeURIComponent(threadId)}/submissions/${encodeURIComponent(clientSubmissionId)}`;
 }

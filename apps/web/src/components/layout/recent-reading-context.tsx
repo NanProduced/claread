@@ -21,7 +21,7 @@ export function RecentReadingProvider({
 
   const refetch = useCallback(async () => {
     try {
-      const res = await fetch('/api/web/reading-records?limit=10', { cache: 'no-store' });
+      const res = await fetch('/api/web/reader/records?limit=10', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       if (data && data.ok === true && Array.isArray(data.items)) {

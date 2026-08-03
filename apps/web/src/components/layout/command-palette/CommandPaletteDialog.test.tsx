@@ -24,7 +24,7 @@ vi.mock("@/components/settings/SettingsDialogProvider", () => ({
 function makeReadingRecord(overrides: Record<string, unknown> = {}) {
   return {
     readingRecordId: "reading_record_1",
-    readerUrl: "/app/reader-record/reading_record_1",
+    readerUrl: "/app/reader/reading_record_1",
     title: "New Reading Record",
     createdAt: "2026-06-23T08:00:00.000Z",
     sourceType: "text",
@@ -89,9 +89,9 @@ afterEach(() => {
 });
 
 describe("CommandPaletteDialog", () => {
-  it("shows recent Reading Records from /api/web/reading-records and opens readerUrl", async () => {
+  it("shows recent Reading Records from /api/web/reader/records and opens readerUrl", async () => {
     const fetchMock = stubReadingRecordFetch((url) => {
-      expect(url).toBe("/api/web/reading-records?limit=8");
+      expect(url).toBe("/api/web/reader/records?limit=8");
       return [makeReadingRecord()];
     });
 
@@ -103,22 +103,22 @@ describe("CommandPaletteDialog", () => {
     fireEvent.click(screen.getByText("New Reading Record"));
 
     expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader-record/reading_record_1",
+      "/app/reader/reading_record_1",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("searches Reading Records through /api/web/reading-records?query=...", async () => {
+  it("searches Reading Records through /api/web/reader/records?query=...", async () => {
     const fetchMock = stubReadingRecordFetch((url) => {
-      if (url === "/api/web/reading-records?limit=8") {
+      if (url === "/api/web/reader/records?limit=8") {
         return [makeReadingRecord({ title: "Recent Reading Record" })];
       }
 
-      expect(url.startsWith("/api/web/reading-records?limit=8&query=")).toBe(true);
+      expect(url.startsWith("/api/web/reader/records?limit=8&query=")).toBe(true);
       return [
         makeReadingRecord({
           readingRecordId: "reading_record_focus",
-          readerUrl: "/app/reader-record/reading_record_focus",
+          readerUrl: "/app/reader/reading_record_focus",
           title: "Focus Reading Record",
         }),
       ];
@@ -147,7 +147,7 @@ describe("CommandPaletteDialog", () => {
     fireEvent.click(screen.getByText("Focus Reading Record"));
 
     expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader-record/reading_record_focus",
+      "/app/reader/reading_record_focus",
     );
   });
 
@@ -155,7 +155,7 @@ describe("CommandPaletteDialog", () => {
     stubReadingRecordFetch(() => [
       makeReadingRecord({
         readingRecordId: "reading_record_latest",
-        readerUrl: "/app/reader-record/reading_record_latest",
+        readerUrl: "/app/reader/reading_record_latest",
         title: "Latest Reading Record",
       }),
     ]);
@@ -167,7 +167,7 @@ describe("CommandPaletteDialog", () => {
     fireEvent.click(screen.getByText("打开最近文章"));
 
     expect(navigationMock.push).toHaveBeenCalledWith(
-      "/app/reader-record/reading_record_latest",
+      "/app/reader/reading_record_latest",
     );
   });
 
@@ -175,7 +175,7 @@ describe("CommandPaletteDialog", () => {
     const pendingResponses: Array<(response: Response) => void> = [];
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      expect(url).toBe("/api/web/reading-records?limit=8");
+      expect(url).toBe("/api/web/reader/records?limit=8");
 
       return new Promise<Response>((resolve) => {
         pendingResponses.push(resolve);

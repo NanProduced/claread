@@ -175,7 +175,7 @@ beforeEach(() => {
     "fetch",
     vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname.startsWith("/api/web/favorites")) {
+      if (url.pathname.startsWith("/api/web/reader/records/") && url.pathname.endsWith("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,
@@ -831,7 +831,7 @@ function installQuickPeekFetchMock() {
     "fetch",
     vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
-      if (url.pathname.startsWith("/api/web/favorites")) {
+      if (url.pathname.startsWith("/api/web/reader/records/") && url.pathname.endsWith("/favorite")) {
         return Promise.resolve(
           new Response(JSON.stringify({ ok: true, favorited: false }), {
             status: 200,

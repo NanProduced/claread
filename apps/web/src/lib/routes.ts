@@ -15,8 +15,7 @@ export const appReadRoute = "/app/read" as Route;
 export const appLibraryRoute = "/app/library" as Route;
 export const appVocabularyRoute = "/app/vocabulary" as Route;
 export const appReviewRoute = "/app/review" as Route;
-export const appReaderPlateRouteBase = "/app/reader-plate" as Route;
-export const appReadingRecordRouteBase = "/app/reader-record" as Route;
+export const appReaderRouteBase = "/app/reader" as Route;
 
 export const protectedRoutePrefixes = ["/app"] as const;
 export const nextAllowlistPrefixes = [
@@ -27,7 +26,6 @@ export const nextAllowlistPrefixes = [
   "/daily",
   "/share",
   "/app",
-  "/e2e-plate-spike",
 ] as const;
 export const intentAllowlist = ["save"] as const;
 
@@ -55,22 +53,6 @@ export function dailyArticleRoute(articleId: string): Route {
   return `/daily/${encodeURIComponent(articleId)}` as Route;
 }
 
-export function legacyAppReaderRoute(recordId: string): Route {
-  return `/app/reader/${encodeURIComponent(recordId)}` as Route;
-}
-
-export function appReaderPlateRoute(recordId?: string | null): Route {
-  if (!recordId) {
-    return appReaderPlateRouteBase;
-  }
-
-  return `${appReaderPlateRouteBase}?record_id=${encodeURIComponent(recordId)}` as Route;
-}
-
-export function appReadingRecordRoute(recordId: string): Route {
-  return `${appReadingRecordRouteBase}/${encodeURIComponent(recordId)}` as Route;
-}
-
 export function appReadResumeCandidateRoute(recordId: string): Route {
   return `${appReadRoute}?resume_candidate=${encodeURIComponent(recordId)}` as Route;
 }
@@ -79,19 +61,12 @@ function pathWithoutSearch(pathname: string): string {
   return pathname.split(/[?#]/, 1)[0] || pathname;
 }
 
-export function isAppReaderPlatePath(pathname: string): boolean {
-  return pathWithoutSearch(pathname) === appReaderPlateRouteBase;
-}
-
-export function isAppReadingRecordPath(pathname: string): boolean {
-  return matchesRoutePrefix(pathWithoutSearch(pathname), [
-    appReadingRecordRouteBase,
-  ]);
-}
-
-/** @deprecated Use legacyAppReaderRoute for old ReaderWorkbench record ids only. */
 export function appReaderRoute(recordId: string): Route {
-  return legacyAppReaderRoute(recordId);
+  return `${appReaderRouteBase}/${encodeURIComponent(recordId)}` as Route;
+}
+
+export function isAppReaderPath(pathname: string): boolean {
+  return matchesRoutePrefix(pathWithoutSearch(pathname), [appReaderRouteBase]);
 }
 
 export function loginRoute(nextPath?: string | null, intent?: string | null): Route {

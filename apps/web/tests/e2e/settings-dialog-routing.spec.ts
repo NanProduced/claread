@@ -91,7 +91,7 @@ async function mockBffRoutes(page: Page) {
     });
   });
 
-  await page.route("**/api/web/reading-records**", async (route) => {
+  await page.route("**/api/web/reader/records**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

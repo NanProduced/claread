@@ -187,6 +187,7 @@ async function authenticatedSession(): Promise<
 
 export async function createReadingRecordHighlight(
   body: unknown,
+  expectedRecordId?: string,
 ): Promise<ReadingRecordUserAssetResult<UserAnnotationResponseDto>> {
   const sessionResult = await authenticatedSession();
   if (!sessionResult.ok) {
@@ -201,6 +202,9 @@ export async function createReadingRecordHighlight(
   const anchor = parseAnchor(body.anchor);
   if (!anchor) {
     return invalidRequest(session, "anchor 是必填项。");
+  }
+  if (expectedRecordId?.trim() && anchor.record_id !== expectedRecordId.trim()) {
+    return invalidRequest(session, "anchor.record_id 与路由阅读记录不一致。");
   }
 
   const selectedText = readRawString(body.selectedText) ?? anchor.selected_text;
@@ -251,6 +255,7 @@ export async function createReadingRecordHighlight(
 
 export async function createReadingRecordNote(
   body: unknown,
+  expectedRecordId?: string,
 ): Promise<ReadingRecordUserAssetResult<ReaderNoteResponseDto>> {
   const sessionResult = await authenticatedSession();
   if (!sessionResult.ok) {
@@ -266,6 +271,9 @@ export async function createReadingRecordNote(
   const noteText = readString(body.noteText);
   if (!anchor) {
     return invalidRequest(session, "anchor 是必填项。");
+  }
+  if (expectedRecordId?.trim() && anchor.record_id !== expectedRecordId.trim()) {
+    return invalidRequest(session, "anchor.record_id 与路由阅读记录不一致。");
   }
   if (!noteText) {
     return invalidRequest(session, "noteText 是必填项。");

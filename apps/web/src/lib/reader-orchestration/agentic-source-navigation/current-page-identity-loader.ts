@@ -3,7 +3,7 @@
  *
  * Uses only:
  * - Snapshot fence fields (record / base / generation)
- * - Browser Web route GET /api/web/reader-plate/records/{id}/stable-document
+ * - Browser Web route GET /api/web/reader/records/{id}/stable-document
  *
  * Never imports server-only BFF, never reads document text, never uses
  * envelope_fingerprint or DOM-derived identity.
@@ -72,7 +72,7 @@ export function createCurrentPageIdentityLoader(
       return readyCache;
     }
 
-    const url = `/api/web/reader-plate/records/${encodeURIComponent(input.readingRecordId)}/stable-document`;
+    const url = `/api/web/reader/records/${encodeURIComponent(input.readingRecordId)}/stable-document`;
 
     let response: Response;
     try {

@@ -16,7 +16,7 @@ vi.mock("@/services/api/reading-records", () => ({
 import { getWebSession } from "@/services/bff/session";
 import { listUpstreamReadingRecords } from "@/services/api/reading-records";
 import { getReadingRecordListFromWeb } from "./reading-records";
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import type { ReadingRecordListResponseDto } from "@/types/api/reading-records";
 
 const mockSession = {
@@ -121,7 +121,7 @@ describe("reading-records BFF list", () => {
     });
   });
 
-  it("returns ok with items using readingRecordId and appReadingRecordRoute", async () => {
+  it("returns ok with items using readingRecordId and appReaderRoute", async () => {
     vi.mocked(listUpstreamReadingRecords).mockResolvedValue({
       ok: true,
       data: makeListResponse(),
@@ -141,7 +141,7 @@ describe("reading-records BFF list", () => {
 
       const first = result.items[0];
       expect(first.readingRecordId).toBe("reading_record_1");
-      expect(first.readerUrl).toBe(appReadingRecordRoute("reading_record_1"));
+      expect(first.readerUrl).toBe(appReaderRoute("reading_record_1"));
       // S2.5: title is mapped from display_title, not the raw title field
       expect(first.title).toBe("First Reading");
       expect(first.sourceLabel).toBe("粘贴文本");
@@ -151,7 +151,7 @@ describe("reading-records BFF list", () => {
 
       const second = result.items[1];
       expect(second.readingRecordId).toBe("reading_record_2");
-      expect(second.readerUrl).toBe(appReadingRecordRoute("reading_record_2"));
+      expect(second.readerUrl).toBe(appReaderRoute("reading_record_2"));
       // S2.5: title is mapped from display_title ("未命名解读"), not raw
       // title (null) — the BFF must NOT apply its own "未命名解读" fallback
       expect(second.title).toBe("未命名解读");

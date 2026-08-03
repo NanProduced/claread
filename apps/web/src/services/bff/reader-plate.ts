@@ -20,7 +20,7 @@ import {
   submitUpstreamReaderSourceArtifactInput,
   submitUpstreamReaderUnifiedInput,
 } from "@/services/api/reader-plate";
-import { appReadingRecordRoute } from "@/lib/routes";
+import { appReaderRoute } from "@/lib/routes";
 import {
   normalizeReaderRecordReadingDefaults,
   type ReaderRecordReadingDefaultState,
@@ -359,7 +359,7 @@ export async function submitReadingRecordPlainTextFromWeb(input: {
     ok: true,
     message: "阅读记录已创建，正在打开 Reader。",
     readingRecordId: result.record_id,
-    readerUrl: appReadingRecordRoute(result.record_id),
+    readerUrl: appReaderRoute(result.record_id),
     baseId: result.base_id,
     articleReadySequence: result.article_ready_sequence,
     snapshot: result.snapshot,

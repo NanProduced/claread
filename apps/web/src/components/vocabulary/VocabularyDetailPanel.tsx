@@ -36,7 +36,6 @@ export interface VocabularyDetailPanelProps {
   onDelete?: (item: VocabularyItemVm) => void;
   onGoToSource?: (target: {
     readingRecordId?: string | null;
-    recordId?: string | null;
     sentenceId?: string;
   }) => void;
   onClose?: () => void;
@@ -84,13 +83,13 @@ export function VocabularyDetailPanel({
   const handleGoToRef = useCallback(
     (ref: (typeof sourceRefs)[number]) => {
       const readingRecordId = ref.reading_record_id ?? null;
-      const recordId = ref.cloud_record_id ?? ref.client_record_id ?? null;
 
-      if (!readingRecordId && !recordId) return;
+      // Vocabulary can display legacy source metadata, but navigation is
+      // fail-closed: only a Reading Record id may open the canonical Reader.
+      if (!readingRecordId) return;
 
       onGoToSource?.({
         readingRecordId,
-        recordId,
         sentenceId: ref.source_sentence_id ?? undefined,
       });
     },
@@ -235,7 +234,7 @@ export function VocabularyDetailPanel({
               <div className="space-y-3">
                 {sourceRefs.map((ref, i) => (
                   <div key={i} className="group relative rounded-[12px] border border-hairline bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--reader-paper)_30%,transparent),transparent)] p-4 pr-12 shadow-[0_2px_8px_rgba(28,24,18,0.02)]">
-                    {(ref.reading_record_id ?? ref.cloud_record_id ?? ref.client_record_id) && (
+                    {ref.reading_record_id && (
                       <div className="absolute top-3 right-3">
                         <TooltipProvider>
                           <Tooltip>
