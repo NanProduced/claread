@@ -1,10 +1,10 @@
 # Reader Agentic Orchestration 重构专项
 
-> 状态：`进行中专项（Adaptive Reader Orchestration 分阶段落地）`
-> 最后更新：2026-07-13（DOC-R3 归档与 TMP 清理：17 文件归档至 `archive/`，5 TMP 删除；DOC-R2 文档收敛已完成）
-> 权威性：本目录是 Reader AI Workflow -> agentic orchestration 重构期间的专项事实源。
+> 状态：`Architectural Cutover Complete（Reader/Ask 主链已单轨化，旧生产链已物理删除；Operational Readiness 仍为 post-cutover backlog）`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：将已落地的 agentic cutover 收口为正式事实源，清除双轨描述，定义 post-cutover backlog）
+> 权威性：本目录是 Reader AI Workflow -> agentic orchestration 重构的专项事实源。Architectural Cutover 已完成，本目录的目标架构与模块合同同时是当前生产架构的事实源。
 
-本目录用于管理 Reader agentic orchestration 重构的目标架构、阶段计划和 coding agent 上下文。它与当前稳定产品/架构文档分开，因为当前系统处于旧 AI Workflow 与新 Reader orchestration 双线并存、验证和切换阶段，而本目录描述本轮重构的目标状态与过渡设计。
+本目录管理 Reader agentic orchestration 的目标架构、阶段计划和 coding agent 上下文。Architectural Cutover 已完成：旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已注销并物理删除，Reader 与 Ask 主链已单轨化。Operational Readiness（计费、统一监测、Console/Eval 按新 orchestration 重建等）属于 post-cutover backlog，不在本目录写成已完成。
 
 ## 范围
 
@@ -29,14 +29,13 @@
 ## 当前前提
 
 - Claread 仍处于开发阶段，尚未上线生产用户数据。
-- 本地数据库数据可以在重构中清空，但必须保留词典三表：
-  - `dict_entries`
-  - `dict_lookup_targets`
-  - `dict_redirects`
-- 数据库 baseline 可以按目标架构重塑，不需要背负旧开发记录迁移复杂度。
-- Web 是第一验证客户端；小程序后续基于稳定后的 Web / API contract 做降级适配。
-- `daily_reader_workflow` 继续保持固定 workflow。
-- 重构期间解析功能可以暂时不可用；不需要维持旧 Reader UI / 旧 `render_scene_json` contract 可用。
+- 本地数据库数据可以在受控验证中重置，但必须保留词典三表与已冻结的共享产品表：
+  - `dict_entries`、`dict_lookup_targets`、`dict_redirects`
+  - `reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger、Daily Reader、Dictionary、Vocabulary
+- 数据库 baseline 已按目标架构重塑；旧 `analysis_*` 数据层与 12 张旧 Eval 表清理仍是 post-cutover backlog。
+- Web 是 Architectural Cutover 完成后的唯一用户客户端；小程序旧文章分析和 Academic 旧分析在 cutover 中已下线，后续按新 contract 单独评估。
+- `daily_reader_workflow` 保持固定 workflow，与旧 Learning Workflow 已解耦。
+- 旧 Reader UI、旧 `render_scene_json` contract 与旧 Learning Workflow 已物理删除，不再有"重构期间解析功能可暂时不可用"的过渡态。
 
 ## 当前外部服务假设
 
@@ -87,14 +86,13 @@
 | `modules/streaming-and-projection.md` | Reader Events、snapshot、SSE、polling fallback、projection_ops envelope | 修改事件序列、snapshot 重建、SSE 或 polling |
 | `modules/representation-event-contract.md` | 会改变 snapshot 表示的 User Asset / Ask Supplement / record metadata 写入与事务事件合同 | 修改 user asset、Ask supplement、display-title 状态、representation event payload 或 freshness |
 | `modules/plate-reader-projection.md` | Plate.js Article Body、projection operations、document tools、owner 权限表、anchor bridge | 修改 Plate projection 合同、owner 权限或 projection_ops envelope |
-| `modules/ask-claread-reader-workspace.md` | Ask Claread Reader sidecar/floating workspace、outline coexistence、surface state | 修改 Reader Plate Ask workspace、响应式布局或无障碍交互 |
+| `modules/ask-claread-reader-workspace.md` | Ask Claread Reader Workspace v2 设计规范：sidecar/floating 布局、outline coexistence、surface state（`requestedSurface`/`effectiveSurface`）、组件边界、Phase 1/2 切分 | 修改 Reader Plate Ask workspace、Ask 布局/surface 切换、outline 与 Ask 共存、响应式布局或无障碍交互、Phase 2 resize |
 | `modules/rag-substrate.md` | record-scoped RAG、block-scoped citation DTO、provider adapter | 修改 Article RAG substrate、citation 或 vector provider |
 | `modules/cutover-and-old-workflow.md` | 停服重构、旧 workflow 移除、旧依赖审计、Web 路由矩阵 | 评估旧代码删除、cutover 阶段或依赖审计 |
-| `modules/ask-claread-reader-workspace.md` | Ask Claread Reader Workspace v2 设计规范：sidecar/floating 布局、`requestedSurface`/`effectiveSurface`、组件边界、Phase 1/2 切分 | 修改 Ask 布局、surface 切换、outline 与 Ask 共存或 Phase 2 resize |
 | `modules/frontend-integration-contract.md` | 前端可集成的 HTTP route、DTO 字段、polling 建议、truth source 规则 | 修改 BFF route、DTO 字段或前端可消费的 API surface |
 | `modules/frontend-integration-status-map.md` | 前端用户可见 status / reason_code 闭枚举、coercion contract、polling 建议 | 修改 status 枚举、reason_code 映射或前端 fail-soft 行为 |
 | `modules/reader-plate-component-integration.md` | Web Reader Plate.js 真实接入矩阵：package 状态、plugin kit、组件落点、当前弱接入风险 | 修改 Plate plugin、reader block/leaf 组件或评估 package 接入状态 |
-| `modules/reader-record-plate-surface-ui.md` | `/app/reader-record/{recordId}` UI/UX 目标方案：模式、marks/cues、selection toolbar、用户资产、Ask context、移动端 action sheet | 修改 Reader Record 页面 UI/UX、marks 视觉、selection 行为或移动端交互 |
+| `modules/reader-record-plate-surface-ui.md` | Reader Record 页面（cutover 后 `/app/reader/[recordId]`，原 `/app/reader-record/{recordId}`）UI/UX 目标方案：模式、marks/cues、selection toolbar、用户资产、Ask context、移动端 action sheet | 修改 Reader Record 页面 UI/UX、marks 视觉、selection 行为或移动端交互 |
 | `modules/local-real-chain-runbook.md` | D5/D6 本地真实链路 runbook：三进程启动、model profile env、worker CLI、DB 诊断、fail-closed 行为 | 本地实跑 reader enhancement 主链路或排障 |
 | `modules/local-article-rag-runbook.md` | Article RAG 本地运维 runbook：配置、worker 启动、lifecycle status、失败码、真实 smoke gate | 本地实跑 Article RAG 或排障 |
 | `modules/semantic-automatic-layer-policy.md` | Semantic role 分类、automatic T/V/G/S 产品矩阵、off/shadow/enforce 冻结 mode、job fence 与 USER_EXPLICIT section 身份 | 修改 automatic bootstrap 过滤、worker fence、aside/blockquote 语义策略 |
@@ -165,11 +163,11 @@ DOC-R3 已完成物理归档与 TMP 清理：
 
 - **17 文件归档**至 [`archive/`](archive/README.md)：Document Graph 链（8）、Translation V2 链（5）、研究材料（2）、Spike 结果（1）、外部来源研究（1）。归档索引和权威事实归宿见 [`archive/README.md`](archive/README.md)。
 - **5 TMP 删除**（`initiatives/tmp/` 下，git-ignored）：three-mode-adaptive-reader-research、TMP-t4.2a-pux-r3-test-health、TMP-t42a-pux-r1-progressive-transition、TMP-t42a-pux-r2-runtime-integration、TMP-t42a-v2-r1-boundary-samples。结论已压缩进 `implementation-plan.md` / `agent-brief.md` / `adaptive-reader-orchestration-design.md`。
-- **未处理**：LP-R1/LP-R2 TMP（LP-R3.1 未关闭前不处理其报告或相关最新 profiling 文档）；backend-closure verdict 冲突两份 review（仍未裁定，不得删除/归档/改写）。
-- **保留**：`docs/tmp/reader-orchestration/` 下 8 个活跃 TMP（含未迁移独特事实或活跃任务）+ `tmp/README.md` 治理指针。
+- **DOC-TRUTH-CLOSEOUT-R1（2026-08-03）**：Architectural Cutover 已完成，DOC-R2 期间登记的 backend-closure verdict 冲突已由 cutover 落地事实闭环——旧生产链已物理删除，前端 cutover 不存在回退路径，该冲突不再需要裁定。相关两份 review TMP 仍按 TMP 生命周期规则处置，不作为长期事实来源。
+- **保留**：`docs/tmp/reader-orchestration/` 是本专项唯一新增的 L3 证据区（研究、评审、验收、诊断等过程材料）；材料分类、最低元信息与生命周期规则见 `docs/tmp/reader-orchestration/README.md`。`docs/initiatives/reader-agentic-orchestration/tmp/` 中既有 ignored 材料为迁移前 legacy 证据，迁移完成前不得新增，亦不得作为长期事实来源。正式文档不得以 TMP 作为长期事实来源；任务闭合后，TMP 结论必须压缩回本目录权威文档，再按生命周期规则清理。
 
 ## 与稳定文档的关系
 
-`docs/product/current-state.md`、`docs/development/mainline.md` 和既有 `docs/architecture/*` 描述当前已落地基线或稳定子系统。本目录描述重构期间的目标状态。
+Architectural Cutover 已完成，本目录的目标架构与模块合同同时是当前生产架构的事实源。`docs/product/current-state.md`、`docs/development/mainline.md` 和既有 `docs/architecture/*` 中的 Reader/Ask 主链描述应与本目录保持一致；如出现冲突，以本目录与代码为准，并补改稳定文档。
 
-某个阶段稳定落地后，再把已经成为现实的事实压回稳定文档，并删除或归档过期专项内容。
+Operational Readiness（计费、统一监测、Console/Eval 按新 orchestration 重建等）仍在 post-cutover backlog 推进中，稳定文档与本目录都不应将其写成已完成。

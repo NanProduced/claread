@@ -1,5 +1,7 @@
 # 测试与验证
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `reset-eval-center-data.ps1` 已物理删除，相关验证步骤同步移除）
+
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
 ## 后端核心测试
@@ -38,10 +40,10 @@ Ask Claread 的真实 LLM smoke 默认跳过。只有同时满足以下三项才
 cd services/api
 $env:CLAREAD_ALLOW_REAL_LLM_TESTS = "1"
 $env:CLAREAD_REAL_LLM_MODEL = "glm-5.1"
-uv run pytest tests/test_reader_ask_real_llm_smoke.py -m real_llm -v
+uv run pytest tests/test_reader_record_ask_real_llm_eval.py -m real_llm -v
 ```
 
-测试会先校验当前 `reader_ask` route 解析出的 `model_name` 与
+测试会先校验当前 `reader_record_ask` route 解析出的 `model_name` 与
 `CLAREAD_REAL_LLM_MODEL` 完全一致；不一致时跳过，避免误用本地默认模型。
 
 ## Web 验证
@@ -54,7 +56,7 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
-Web smoke 应覆盖手机号登录、分析提交、Reader、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
+Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 当前仓库未提交稳定的 Reader Playwright 用例。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，需在本地浏览器做交互回归；等 committed e2e 恢复后，再把命令补回本文。
 
@@ -151,59 +153,36 @@ pnpm directus:extensions:build
 pnpm --filter @claread/directus-endpoints test
 ```
 
-如触达 metadata 结构，还应补：
+如触达 LLM config metadata 结构，还应补：
 
 ```powershell
-pnpm directus:parse-run:sync-metadata
-pnpm directus:eval-center:sync-metadata
+pnpm directus:llm-config:sync-metadata
 ```
+
+当前 Directus 只保留通用 metadata 展示 module（enum-label-display / enum-label-interface / event-type-display / json-summary / llm-config / record-context-display / status-badge / usage-summary 等）和 reader-orch endpoints bundle。旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
 
 当前建议的人工 smoke 包括：
 
-- Parse Run Observability 列表 / 详情 / saved views 可打开
-- Render Scene Inspector 能读取 learning / academic 样本
-- Eval Center 的 `node-lab` / `workflow-lab` / `run-history` 可进入
-- Example Lab 条目可保存，`output_fragment` 契约校验有效
-- Example Lab 的 AI RAG Generator 可生成 `grammar_tags` / `retrieval_text` / `derived_*`
+- Directus 可正常登录
+- 通用 metadata 展示 module（enum-label / event-type / json-summary / status-badge / usage-summary）可正常加载
+- LLM Config module 可进入并查看 / 导出 / 导入配置 bundle
+- `eval_example_lab_entries` collection 仍可访问（作为 Directus Collection 保留，不属于已删除的 Eval Center module）
 
 ## Eval / Grammar RAG 验证
 
 工作目录：仓库根目录。
 
-当前与 Example Lab / grammar RAG 收口最相关的测试为：
+当前与 grammar RAG 收口最相关的测试为：
 
 ```powershell
-uv run pytest services/api/tests/test_example_lab.py -q
 uv run pytest services/api/tests/test_grammar_retrieval_hints.py -q
 uv run pytest services/api/tests/test_rag_infra.py -q
 uv run pytest services/api/tests/test_rag_integration.py -q
 uv run pytest services/api/tests/test_rag_readiness.py -q
 ```
 
-如变更了 grammar seed / Zilliz schema，还应重建并重新 ingest 测试 collection，再做一次 workflow 侧 RAG smoke。
+如变更了 grammar seed / Zilliz schema，还应重建并重新 ingest 测试 collection，再做一次 Reader orchestration 侧 RAG smoke。
 
-## Eval Center 运维脚本
+## Eval Center 运维脚本（历史）
 
-| 脚本 | 用途 |
-|------|------|
-| `infra/scripts/reset-eval-center-data.ps1` | 清空 eval 控制面表 + 删除 runtime artifact（不清理业务表、Directus 配置、rubrics） |
-| `infra/scripts/init-eval-center-dev.ps1` | 重新应用 migration + 重置数据 + 同步 metadata + 执行 smoke checks |
-
-init 脚本 smoke checks：
-
-- `eval_example_lab_entries` collection metadata 存在
-- `directus_fields` 不残留 `rag_eligible`
-- Node Lab 默认值/constraint 不残留 `judge_compare`/`judge_compare_result`
-- `experiment_fingerprint` 列存在
-- eval-only 表 init 后为空
-- runtime artifact 目录已清空
-
-重置后人工验收：
-
-1. Directus 可正常登录
-2. Eval Center module 可进入
-3. Node Lab 可创建 session
-4. Workflow Lab 可发起 compare
-5. Example Lab 条目可保存
-6. Run History 页面可加载
-7. Parse Run Observability 列表可显示
+旧 Eval Center module 已在 cutover 中物理删除，`infra/scripts/reset-eval-center-data.ps1` 已删除。`infra/scripts/init-eval-center-dev.ps1` 仍保留但不属于当前生产控制面；Console / Eval 按新 orchestration 重建属于 post-cutover backlog，重建前不应依赖该脚本作为当前控制面入口。

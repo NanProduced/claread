@@ -1,7 +1,7 @@
 # Orchestration Runtime
 
-> 状态：`D6 ongoing；T5.6c：显式 section translation HTTP/UI 已提交（同步 job_id-bounded drain、queued recovery、L2 键盘重试）；T5.8c：outline real adapter 可 DI 注入 + opt-in real-LLM smoke harness；默认 Unconfigured + eligibility=false；usage 按 provider-call 规则；harness 默认 skip + 零外呼；一次显式授权的 deepseek-v4-flash smoke 已通过（单 provider call、functional + usage audit）；snapshot 真实验收 seam；T5.8d-dev-activation：开发期 activation_ready 自动装配 PydanticAI 生成器 + settings-aware eligibility（committed defaults 仍关闭）`
-> 最后更新：2026-07-19（T5.8d-dev-activation，commit `0454c2172`：`ReaderEnhancementPipelineRunner.__init__` 接收 `settings: Settings | None = None`，`activation_ready = semantic_outline_generation_enabled AND reader_semantic_outline_model_profile != ""`。activation_ready=True 时条件注入 `PydanticAISemanticOutlineGenerator`（延迟导入，仿 grammar_window）+ `settings_aware_semantic_outline_request_eligibility(settings)`；否则保持 `UnconfiguredSemanticOutlineGenerator` + 默认 always-false 谓词。committed defaults 仍关闭；显式注入优先于自动装配。TDD 20 测试覆盖 A 默认关闭 / B 自动资格 / C 装配 / D 真链路 seam / E runner-level `bootstrap_missing_jobs` 真 seam；已于 2026-07-19 受控真实执行一次并通过（deepseek-v4-flash、单 provider call、functional + usage audit）；不包含 beta / CTA / capability seam / 历史数据兼容）
+> 状态：`Architectural Cutover Complete（Reader/Ask 主链已单轨化，旧生产链已物理删除；本文件描述的 runtime 同时是当前生产 runtime）；Operational Readiness（统一监测、计费适配、Test Governance、ARCH 优化）为 post-cutover backlog`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：状态行同步至 Architectural Cutover Complete；T5.6c/T5.8c/T5.8d 的 runtime 实现细节作为历史推进证据保留在下方正文，不再单独追踪阶段状态）
 > 范围：bounded run/job、worker lease、Authorization Envelope、并发和框架边界。
 
 ## Runtime 形态
@@ -152,27 +152,27 @@ D5-W1 worker loop 评估结论为 `accepted_with_changes`。
 - 不新增 public 或 semi-public worker-control endpoint。
 - 不使用 smoke harness 或 fake executors 作为产品 runtime。
 
-D6-P6 本地验证合同：
+D6-P6 本地验证合同（cutover 后 URL 已更新，原 D6 阶段使用 `/app/reader-plate` 与 `/api/web/reader-plate/*`，现统一为 `/app/read`、`/app/reader/[recordId]` 与 `/api/web/reader/records/*`）：
 
-- `/app/read` 和 `/app/reader-plate` 提交成功只证明 API 写入了 `article_ready` facts，并不代表 enhancement worker 已运行。
-- Web 页面通过 `/api/web/reader-plate/{recordId}/events` polling 和 snapshot reload 等待后续 `layer_published` / `parsed_decision_updated` 等 events；Web 不消费 `reader_jobs`。
+- `/app/read` 提交成功只证明 API 写入了 `article_ready` facts，并不代表 enhancement worker 已运行。
+- Web 页面通过 `/api/web/reader/records/{recordId}/events` polling 和 snapshot reload 等待后续 `layer_published` / `parsed_decision_updated` 等 events；Web 不消费 `reader_jobs`。
 - 本地验证纯文本增强链路时，API、Web 和 `reader-enhancement-worker` 必须同时运行；验证 PDF、Markdown、图片 OCR 等 artifact-backed input 时，还必须启动 `reader-artifact-pipeline-worker`。
 - 当前共有 3 个进程级 worker entrypoint：enhancement 与 artifact 是默认完整链路的 2 个必需 worker；`reader-article-rag-index-worker` 仅在 `READER_ARTICLE_RAG_ENABLED=true` 时启用。
 - 仓库根目录可用 `pnpm reader:dev` 聚合启动 API、Web 和两个默认 worker，日志带进程名前缀；需要隔离日志时使用 `pnpm reader:api`、`pnpm reader:web`、`pnpm reader:worker:enhancement`、`pnpm reader:worker:artifact` 分终端运行。
 - `uv run reader-enhancement-worker --once` 是诊断单次消费入口；`uv run reader-enhancement-worker` 是持续消费入口。
 - 如果 DB 中 `translate_unit` 或后续 jobs 长时间停在 `queued`，且 `reader_events` 只有 `article_ready`，这是 worker 未运行或未消费队列，不是 article parsing failure。具体排查 SQL 见 `local-real-chain-runbook.md`。
 
-D6-E3 页面内验证 closeout：
+D6-E3 页面内验证 closeout（cutover 后 URL 已更新）：
 
-- 本地正常验证入口是 `/app/read -> /api/web/reading-record/submit -> /app/reader-record/{recordId}`，不是旧 `/api/web/analysis/submit` 或 `/app/reader/{recordId}`。
-- `/app/reader-record/{recordId}` 继续用 BFF snapshot/events polling 观察 worker 发布结果；页面应通过 snapshot reload 更新 Workbench-backed Plate read-only 中心区和 `enhancement_progress` 摘要。
+- 本地正常验证入口是 `/app/read -> /api/web/reader/records -> /app/reader/[recordId]`，不是旧 `/api/web/analysis/submit` 或旧 `/app/reader/{recordId}`。
+- `/app/reader/[recordId]` 继续用 BFF snapshot/events polling 观察 worker 发布结果；页面应通过 snapshot reload 更新 Workbench-backed Plate read-only 中心区和 `enhancement_progress` 摘要。
 - 诊断仍以 `reading_records`、`reader_jobs`、`reader_events`、`enhancement_layers` 和 snapshot `enhancement_progress` 为准；完整本地 checklist、recordId 获取和 stuck 判断表见 `local-real-chain-runbook.md`。
 - Worker 独立进程是正式运行形态；不要为了本地页面验证把 worker 挂进 FastAPI lifespan 或 Web submit 请求。
 
 D6-P7A Reader UI 可观察性合同：
 
 - `ReaderPlateSnapshot.enhancement_progress` 是 snapshot projection，只从 `reading_records`、当前 active base/generation 的 `reader_jobs` 和 `enhancement_layers` 推导；它不是新的业务事实源。
-- `enhancement_progress` 让 `/app/reader-record/{recordId}` 区分 enhancement work 的 `not_started`、`queued`、`processing`、`succeeded`、`failed` 和 `action_required`，避免只显示泛化的“批注生成中”。
+- `enhancement_progress` 让 `/app/reader/[recordId]` 区分 enhancement work 的 `not_started`、`queued`、`processing`、`succeeded`、`failed` 和 `action_required`，避免只显示泛化的“批注生成中”。
 - 长时间 `queued` 且没有 `layer_published` / `parsed_decision_updated` events 表示 worker 未运行、未 claim 到 job、或被 lease/eligibility 条件挡住；这仍不是 article_ready 解析失败。
 - Published `translation` / `vocabulary` / `grammar_note` / `sentence_analysis` layers 在 progress 中显示 `succeeded`。`failed_terminal` job 会显示为 `failed` 或 D6-P4 user-actionable 的 `action_required`，但不会由 snapshot projection 改写 `reading_records.product_state`。
 

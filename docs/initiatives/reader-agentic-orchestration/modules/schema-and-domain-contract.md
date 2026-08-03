@@ -1,8 +1,10 @@
 # Schema And Domain Contract
 
 > 状态：`D6 display title generation contract merged`
-> 最后更新：2026-06-29
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：标注 cutover 后 Web 用户页面与 BFF 统一入口；正文历史 `/app/reader-record/{recordId}`、`/api/web/reader-plate/*` 等 cutover 前 URL 按合同替换）
 > 范围：Reader agentic orchestration 的后端 schema 边界、领域对象、运行时事实源、projection DTO、旧 workflow cutover 和 reset 约束。
+
+> **Cutover 注意（2026-08-03）**：Architectural Cutover Complete 后，Web 用户页面统一为 `/app/read` 与 `/app/reader/[recordId]`，Web BFF 统一为 `/api/web/reader/records/*` 与 `/api/web/reader/source-artifacts/*`，Ask 归入 `/api/web/reader/records/[recordId]/ask/*`。本文正文历史段保留 `/app/reader-record/{recordId}`、`/app/reader/{recordId}` legacy、`/api/web/reader-plate/*` 等 cutover 前 URL 作为历史决策证据；当前写入路径与 cutover 后合同一致，旧 legacy 写入分支已物理删除。
 
 ## 目标
 

@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 目标架构
 
-> 状态：`D6 进行中（T5.3–T5.6b semantic outline durable + L2 UI + section_v1 已闭合；T5.7 真实 LLM outline 仍为受控/blocker）`
-> 最后更新：2026-07-18（T5.7：production readiness partial；默认 eligibility=false + Unconfigured generator；真实 route/prompt/profile 未注册）
+> 状态：`Architectural Cutover Complete（Reader/Ask 主链已单轨化，旧生产链已物理删除；本文件描述的目标架构同时是当前生产架构）；Operational Readiness（计费、统一监测、Console/Eval 重建等）为 post-cutover backlog`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：状态行同步至 Architectural Cutover Complete；目标架构与模块合同同时是当前生产架构事实源）
 > 范围：用户提交内容的 `learning` Reader 解析。
 
 ## 目标

@@ -1,8 +1,10 @@
 # Reader Record Plate Surface UI
 
 > 状态：目标方案 + 当前实现基线；T5.1 L0/L1 deterministic navigation 已闭合；T5.3 semantic outline durable 已闭合但 **UI 未交付**；DOC-R2 progressive transition 引用仍有效
-> 最后更新：2026-07-17（T5.3b：修正与 semantic outline durable 的边界表述；不实现大纲 UI）
-> 范围：`/app/reader-record/{recordId}` 在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：标注 cutover 后 URL 统一为 `/app/reader/[recordId]`，正文历史 `/app/reader-record/{recordId}` 路径按 cutover 合同替换）
+> 范围：`/app/reader/[recordId]`（cutover 前 `/app/reader-record/{recordId}`）在 Agentic Orchestration 架构下的 Reader Record 解析页 UI/UX、Plate.js 文档表面、选择交互、词典/Ask 联动、用户高亮/笔记和第一版实现边界。
+
+> **Cutover 注意（2026-08-03）**：Architectural Cutover Complete 后，Web 用户页面统一为 `/app/read` 与 `/app/reader/[recordId]`，Web BFF 统一为 `/api/web/reader/records/*` 与 `/api/web/reader/source-artifacts/*`。本文正文历史段保留 `/app/reader-record/{recordId}`、`/api/web/reader-plate/*` 等 cutover 前 URL 作为历史决策证据；当前产品入口与写入路径以 cutover 后合同为准，不再保留旧 alias、旧 BFF route 与旧 `/app/reader/{recordId}` legacy 写入分支。
 
 当前代码接入矩阵见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文件描述目标 UI/UX 和产品边界；若本文与代码事实冲突，以接入矩阵和当前代码为准，再反向更新本文。
 

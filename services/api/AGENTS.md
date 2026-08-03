@@ -6,7 +6,7 @@
 
 - 不写“小程序专用后端”逻辑。
 - 新客户端差异应通过 request metadata、auth adapter、source type、render profile 或客户端自行渲染处理。
-- PostgreSQL 是用户资产、分析记录、任务、词典和未来评测数据的事实来源。
+- PostgreSQL 是用户资产、阅读记录、词典和未来评测数据的事实来源。
 - Redis、队列、worker、Directus、RAG 都是扩展层，不应破坏当前 API 基线。
 
 ## Serena
@@ -18,11 +18,19 @@
 - 不要从本目录向上激活仓库根目录为 Serena 项目；跨子项目检索优先用 RTK / shell / git diff。
 - 未经用户明确要求，不写 Serena memory；长期事实应更新正式文档或本 `AGENTS.md`。如果 memory 与代码、测试或正式文档冲突，以后者为准，并删除或覆盖过期 memory。
 
-## Workflow
+## Reader Orchestration（当前生产链）
 
-- 当前基线是 v3 思路：preprocess、reading goal strategy、multi-agent generation、normalize/ground/repair、canonical result、render projection。
+- Architectural Cutover 已完成：旧 `learning_workflow.py` 固定全量 graph、`analysis_*` 数据层、`analysis_results.render_scene_json` 作为事实源已物理删除；新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源。
+- 当前生产链路：input adapter -> Candidate Document -> Stable Reading Base -> Reading Units / Anchor Segments -> Enhancement Layers (translation / vocabulary / grammar / sentence / semantic outline) -> snapshot projection。
 - 修改输出结构时同步更新 Pydantic schema、数据库字段、API 文档、前端消费和测试。
-- 保留 `workflow_version`、`schema_version`、prompt version 和 source metadata，方便回看和 eval。
+- 保留 prompt version、source metadata、`reader_runtime_spans` 和 `reader_events`，方便回看和 eval。
+- 专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`；模块合同在对应 `modules/*.md`。
+
+## Ask Claread（cutover 后唯一 Ask 生产链）
+
+- 旧 Analysis Ask、Ask legacy lane 已物理删除；`reader_record_ask` agentic v2 是唯一 Ask 执行链（article-bound、可回源、可确认写入、统一审计/结算）。
+- `planner_first` 仅作为历史 trace value 保留，不恢复 live path。
+- Ask 是侧边助手，不是 orchestration 控制面；Ask supplement 必须标记来源。
 
 ## LLM / Prompt / Trace
 
@@ -38,13 +46,14 @@
 - `0001_initial_schema.sql` 是 fresh init baseline。
 - 词典三表 `dict_entries`、`dict_lookup_targets`、`dict_redirects` 迁移时优先 dump/restore，不轻易重导。
 - 如果重导词典，必须处理 `vocabulary_book.dict_entry_id` 稳定性和 `exam_tags` 覆盖问题。
+- cutover 后必须保护的数据：`dict_*`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger、Daily Reader、Dictionary、Vocabulary。
 
 ## 验证
 
 优先跑：
 
 ```powershell
-rtk test uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tests/test_task_center.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
+rtk test uv run pytest tests/test_reader_orchestration_api.py tests/test_reader_orchestration_runtime_wiring.py tests/test_reader_record_ask_route.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
 ```
 
 按需补 `compileall`、ruff、mypy 和具体模块测试。

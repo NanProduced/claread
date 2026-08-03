@@ -1,22 +1,24 @@
 # 多端架构
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 `analysis_*` 数据层与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构）
+
 ## 结论
 
 Claread 使用一套后端业务内核，服务多个客户端。
 
 不为 Web 端另写一套业务后端。客户端差异通过认证 adapter、render profile 和 capability profile 处理。
 
-当前 Web、小程序和后端的能力差异，按用户可感知功能追踪在 `docs/architecture/multi-client-capability-matrix.md`。该矩阵区分某端“可操作”和“仅展示”，例如 Web 局部 text range 批注可由小程序复现展示，但小程序不一定提供同样的选区操作。
+当前 Web、小程序和后端的能力差异，按用户可感知功能追踪在 `docs/architecture/multi-client-capability-matrix.md`。该矩阵区分某端"可操作"和"仅展示"，例如 Web 局部 text range 批注可由小程序复现展示，但小程序不一定提供同样的选区操作。
 
 ## 客户端
 
 | 客户端 | 目录 | 定位 |
 |--------|------|------|
-| 微信小程序 | `apps/miniprogram/` | 当前第一个客户端，功能子集，受平台能力限制 |
-| Web | `apps/web/` | 当前 baseline 已接入真实后端，后续推进高保真阅读体验 |
-| Directus / Admin | `apps/directus/` | 当前内部控制面，承接解析观察、Eval Center、Example Lab 与后续运营治理能力 |
+| Web | `apps/web/` | cutover 后唯一用户客户端，通过 `/app/read` 与 `/app/reader/[recordId]` 接入新 Reader orchestration 主链 |
+| 微信小程序 | `apps/miniprogram/` | 稳定客户端，功能子集，受平台能力限制；旧文章分析在 cutover 中下线，后续按新 contract 单独评估 |
+| Directus / Admin | `apps/directus/` | 当前内部控制面，承接通用 metadata 展示、LLM Config 与后续按新 orchestration 重建的治理化控制面 |
 
-小程序是第一个客户端，不是一次性冻结的旧客户端。迁移完成后，小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
+小程序是稳定客户端，不是一次性冻结的旧客户端。cutover 后小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
 
 ## 后端
 
@@ -29,10 +31,10 @@ services/api/
 职责：
 
 - 用户与身份。
-- 分析任务。
-- Workflow 编排。
+- Reader orchestration runtime（run/job/event/layer）。
+- Ask agentic v2 执行链。
 - 模型调用。
-- 结构化结果生成。
+- 结构化结果生成（Stable Document / Reading Units / Anchor Segments / Enhancement Layers）。
 - 记录、收藏、生词、批注、反馈。
 - 词典查询。
 - 每日精读。
@@ -50,78 +52,54 @@ services/worker/
 
 PostgreSQL 是事务型数据真相源。
 
-核心数据对象：
+核心数据对象（cutover 后当前生产链）：
 
 - users
 - user_identities
 - user_sessions
-- analysis_tasks
-- analysis_records
-- analysis_results
-- analysis_debug_snapshots
+- reading_records（Reading Record）
+- stable_documents / stable_document_blocks（Stable Document）
+- reading_units / anchor_segments（Reading Units / Anchor Segments）
+- enhancement_layers（Enhancement Layers）
+- reader_events（事件日志）
+- reader_runtime_spans（runtime span）
+- reader_ask_threads / reader_ask_turns / reader_ask_supplements（Ask agentic v2）
 - vocabulary_book
 - favorite_records
-- user_annotations
+- user_annotations / reader_notes
 - feedback
 - daily_readers
-- dict_entries
-- dict_lookup_targets
-- dict_redirects
+- dict_entries / dict_lookup_targets / dict_redirects
+- ai_usage_events（usage/ledger）
+
+旧 `analysis_tasks` / `analysis_records` / `analysis_results` / `analysis_debug_snapshots` 数据层已在 cutover 中作为生产链物理删除，表清理属于 DATA-AUDIT post-cutover backlog。
 
 Redis 用于缓存和多 worker 场景下的共享状态。
 
-Zilliz 用于 grammar few-shot / RAG 示例检索；示例控制面当前由 Directus `Example Lab` 管理。
+Zilliz 用于 grammar few-shot / RAG 示例检索；示例控制面当前由 Directus `Example Lab`（`eval_example_lab_entries` Collection）管理。
 
-`analysis_render_snapshots` 是后续多端 render profile 的建议表，当前 `0001` baseline 中尚不存在。
+## 结果分层（cutover 后）
 
-## 结果分层
-
-分析结果应分成四层：
+Reader orchestration 的结果分层：
 
 ```text
-canonical analysis result
-  -> persisted render scene snapshot
-  -> reader scene view
+Stable Document / Reading Units / Anchor Segments
+  -> Enhancement Layers
+  -> snapshot projection
   -> client local UI state
 ```
 
-### Canonical Result
+### Stable Document / Reading Units / Anchor Segments
 
-后端 workflow 生成的稳定语义结果，尽量跨端复用。
+后端 Reader orchestration 生成的稳定语义结果，是跨端复用的 canonical truth。一经用户确认不可被后续增强改写。
 
-### Persisted Render Scene Snapshot
+### Enhancement Layers
 
-后端当前已经把全量结果快照持久化到：
+增量增强层（translation / vocabulary / grammar / sentence_analysis / semantic_outline），通过 `reader_events` 发布，支撑渐进式渲染。
 
-```text
-analysis_results.render_scene_json
-```
+### Snapshot Projection
 
-它的职责是：
-
-- 作为当前结果真相源
-- 支撑 Directus observability / Inspector
-- 支撑后续 compare / eval / debug
-
-它不是长期面向客户端阅读页的最小 contract。
-
-### Reader Scene View
-
-面向阅读页消费的精简视图层。
-
-当前稳定事实：
-
-- Web / 小程序阅读页后续统一切到专用 `reader scene view`
-- `/records` 继续承担通用记录详情 / 同步真相源职责
-- `reader scene view` 可以保留服务端 supplements 合并与 fallback，但不要求返回全量 render scene
-
-长期如果要继续做多端 render profile，仍可在此基础上继续评估：
-
-```text
-analysis_render_snapshots
-```
-
-但它不是当前开发基线的前置条件。
+面向阅读页消费的精简视图层。Web 通过 BFF `/api/web/reader/records/*` 消费 snapshot projection，不直接吃 FastAPI 原始 DTO。
 
 ### Client Local State
 
@@ -131,65 +109,21 @@ analysis_render_snapshots
 
 记录应该保存来源，但来源不是访问边界。
 
-当前已经稳定落地的来源 / 请求快照字段：
+当前已经稳定落地的来源 / 请求快照字段挂在 Reading Record 上，持久化 reading goal / variant / source_type 等请求侧事实。
 
-```text
-request_payload_json
-```
-
-它当前挂在：
-
-```text
-analysis_records.request_payload_json
-```
-
-用途：
-
-- 持久化 reading goal / variant / source_type 等请求侧事实
-- 支撑 Reader 页来源信息展示
-- 支撑后续 `reader scene view` 组装
-
-除了 `request_payload_json` 之外，下面这些更细的跨客户端来源元数据仍属于后续增强项：
-
-```text
-created_client_type
-created_client_version
-requested_render_target
-workflow_version
-prompt_version
-model_profile
-schema_version
-source_input_type
-```
+更细的跨客户端来源元数据（`created_client_type` / `created_client_version` / `requested_render_target` / `prompt_version` / `model_profile` / `schema_version` / `source_input_type`）仍属于后续增强项。
 
 用途：
 
 - 追踪记录生成来源。
 - 判断当前客户端是否能直接展示。
-- 必要时为目标客户端懒生成新的 render snapshot 或 reader scene view。
+- 必要时为目标客户端懒生成新的 snapshot projection。
 
 ## 调试摘要层
 
-当前已经有独立调试摘要表：
+Reader orchestration 的调试摘要通过 `reader_events` 和 `reader_runtime_spans` 承载，记录 runtime span、job lifecycle、layer publish 事实。
 
-```text
-analysis_debug_snapshots
-```
-
-它的职责不是替代 `render_scene_json`，而是补充：
-
-- preprocess summary
-- normalize / drop summary
-- runtime summary
-- few-shot provenance
-- grammar RAG provenance
-- academic quality summary
-
-当前 v1 采用：
-
-- 一 task 一行
-- `task_id UNIQUE`
-- 历史 task 允许没有 snapshot
+旧 `analysis_debug_snapshots` 表已在 cutover 中作为生产链物理删除，表清理属于 DATA-AUDIT post-cutover backlog。
 
 ## 认证策略
 
@@ -218,7 +152,7 @@ user_sessions
 - API 契约。
 - DTO / OpenAPI 生成类型。
 - 数据库模型。
-- workflow。
+- Reader orchestration runtime。
 - 词典服务。
 - 评测数据。
 - 设计 token。
@@ -234,4 +168,4 @@ user_sessions
 
 ## 后续扩展方向
 
-当前先在双端稳定基线之上评估记录来源元数据、Web 高保真 render profile、Directus、eval 和 RAG 的数据边界。具体落地顺序以后续产品与技术评审为准。
+当前先在 Web 单端稳定基线之上评估记录来源元数据、Web 高保真 render profile、Directus、eval 和 RAG 的数据边界。具体落地顺序以后续产品与技术评审为准。

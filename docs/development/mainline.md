@@ -1,6 +1,6 @@
 # 开发主线
 
-> **状态**: `CURRENT` | **最后验证**: 2026-06-17
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Learning Workflow / Analysis Ask / 旧 Web/Mini 页面 / 旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除）
 
 本文说明 Claread 当前主线方向。它不是任务流水账；已完成的阶段只保留结论，具体实现细节回到代码、测试和对应目录文档。
 
@@ -14,8 +14,8 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
-- workflow 解析主链路可跑通：learning / academic 双模式、grammar RAG 检索、prompt 策略和 canonical result 生成已形成完整链路；但当前 AI Workflow 形态已被判定不足以承接后续 Reader 产品目标，下一阶段先把 learning workflow 转向 bounded agentic Reader orchestration。
-- Claread Console 已进入可用控制面阶段：Eval Center（node-lab / workflow-lab / run-history）、Render Scene Inspector、Parse Run Observability 和 Example Lab 已有可用能力。
+- Reader 主链已完成从旧固定 AI Workflow 到 bounded agentic orchestration 的硬切换（Architectural Cutover Complete）：旧 `learning_workflow.py`、`analysis_*` 数据层、`analysis_results.render_scene_json` 作为事实源、旧 Reader 产品页与 BFF route、旧 Directus Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability 已物理删除。新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。Operational Readiness（计费、统一监测、Console/Eval 重建等）属于 post-cutover backlog。
+- Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
 - 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。
 
@@ -23,40 +23,38 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 ## 当前主线
 
-### 主线：Reader agentic orchestration 方案设计与重构准备
+### 主线：Reader agentic orchestration post-cutover backlog
 
-当前准备把用户提交内容的 `learning workflow` 从固定 AI Workflow 重构为 bounded agentic orchestration。`academic workflow` 暂缓重构，待 learning workflow 验证稳定后再单独设计。重构目标不是把 Reader 页变成常驻 LLM 线程，而是以可审计、可中断、可确认、可回退的 event-triggered run / job 形态生成稳定阅读基座、稳定阅读单元和增量增强层。
+Reader agentic orchestration 的 Architectural Cutover 已完成：用户提交内容的 `learning` 主链已从旧固定 AI Workflow 切换到 bounded agentic orchestration，旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除。新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。
 
-本重构的专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。该目录在重构期间描述目标架构与实施计划；当前正式产品/架构文档仍描述已落地基线。
+本重构的专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。该目录的目标架构与模块合同同时是当前生产架构的事实源；Operational Readiness 属于 post-cutover backlog。
 
-近期重点：
-- 完成 D0-D1 方案收敛：learning-only、无旧开发数据迁移、Web 优先、小程序暂缓、Daily Reader 不进入本轮重构、PostgreSQL-backed bounded run/job 优先
-- 建立当前 workflow 的 token、latency、retry、服务器负载基线，再设计新 orchestration 成本模型
-- 验证 LangGraph、PydanticAI、自建 DB 状态机、worker、SSE / polling 和 observability 的职责边界
-- 明确 Stable Reading Base、Reading Units、Navigation Skeleton、Enhancement Layer 和用户确认流程
-- 用 Eval Center / Directus / trace 体系支撑 planner decision、parsed decision、coverage 和质量评测
+近期重点（post-cutover backlog）：
+- 12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）
+- Console / Eval 按新 orchestration 重建（治理化控制面）
+- 统一监测、计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环
+- Test Governance 与代码架构优化（TEST-GOVERNANCE、ARCH-OPT-AUDIT）
 
 范围边界：
 
-- 本轮包含：用户提交内容的 `learning workflow`
-- 本轮不包含：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；本轮先不做小程序实现
-- 数据策略：项目未上线，本轮不做旧开发记录迁移；本地数据可重置，但保留 `dict_entries`、`dict_lookup_targets`、`dict_redirects`
-- 兼容对象：Daily Reader 公共页面、Reader API、Library、Ask Claread 和 Eval Center；旧开发数据不作为迁移约束
+- 本轮包含：用户提交内容的 `learning workflow` 已完成 cutover
+- 本轮不包含：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；当前不做小程序 Reader orchestration 实现
+- 数据策略：项目未上线，不做旧开发记录迁移；本地数据可重置，但保留 `dict_entries`、`dict_lookup_targets`、`dict_redirects`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger
+- 兼容对象：Daily Reader 公共页面、Reader API、Library、Ask Claread；旧开发数据不作为迁移约束
 
-设计原则：
+设计原则（继续生效）：
 
 - LLM / planner 承担更多策略判断，代码负责红线边界、结构契约、安全校验、审计、计费、限流和回退。
 - 译文是最基础增强，但词汇、语法、长难句、outline 等是否生成以及生成到什么程度，应由 planner 基于 goal / variant / reading unit 价值评估决定，避免机械阈值。
 - 高影响输入适配必须先给用户 Candidate Reading Base 预览、修改和确认；确认后才生成稳定阅读基座和稳定阅读单元，一经确认不可被后续增强改写。
 
-### 副线：Ask Claread baseline 维护与接入准备
+### 副线：Ask Claread post-cutover 维护
 
-Ask Claread 已完成从三段式 planner 编排到 agent-loop-only baseline 的重构。live service 不再调用 planner route resolver 或 semantic planner LLM；`planner_first`、`planning_snapshot_json` 等名称只作为历史 trace / DB 兼容面保留。当前稳定边界是 article-bound、可回源、可确认写入、统一审计/结算。
+Ask Claread 已完成 Reader 2.0 底座上的 agent-loop-only 重构主线，并在 cutover 中成为唯一 Ask 生产链：旧 Analysis Ask、Ask legacy lane 已物理删除，`reader_record_ask` agentic v2 是唯一 Ask 执行链（article-bound、可回源、可确认写入、统一审计/结算；`planner_first` 仅作为历史 trace value 保留）。
 
 近期重点：
-- 作为稳定 baseline 合回主分支，后续不再扩大 Ask 自身架构面
 - 保持 article-bound、可回源、可确认写入、统一审计/结算边界
-- 后续 Reader orchestration 需要把 Ask 作为 consumer / sidecar integration 重新接入 Stable Reading Base 和 Reading Units
+- Ask Claread 作为 consumer / sidecar integration 接入 Stable Reading Base 和 Reading Units，不是 Reader orchestration 控制中心
 - 按需补充真实 LLM smoke、小型 eval dataset 和 correctness 修正，但不恢复 planner-first live path
 
 ### 副线：Web 次要功能补齐与页面设计收口
@@ -68,12 +66,12 @@ Web 主产品链路已形成可用基线，后续重点是次要功能补齐、�
 - 公共区页面设计收口
 - 移动 Web 适配
 
-### 副线：Claread Console 控制面治理化
+### 副线：Claread Console 控制面治理化重建
 
-Claread Console 已进入可用控制面阶段，后续重点转向控制面治理化——按治理价值排序推进，而不是泛化铺开后台功能。
+Claread Console 当前只保留通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除。后续重点转向按新 orchestration 重建治理化控制面——按治理价值排序推进，而不是泛化铺开后台功能。
 
 近期重点：
-- 把 Eval Center、Example Lab、解析观察台和 Inspector 的正式边界压回主线文档
+- Console / Eval 按新 orchestration 重建（治理化控制面），明确与已删除旧 Eval Center 的边界
 - 按治理优先级推进：解析治理、RAG promotion、运营工作台
 
 ### 维护线：小程序与多端稳定性维护
@@ -98,7 +96,7 @@ Claread Console 已进入可用控制面阶段，后续重点转向控制面治�
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级。
 - 是否在 Ask Claread 之外单独产品化"AI 整合总结用户历史数据"能力，以及是否做跨文章/跨资产的长期学习画像。
 - Claread Console 下一阶段优先落哪条工作流：解析治理、RAG promotion、运营工作台，还是 feedback / usage 观察面板。
-- render snapshot / render profile 是否立即建表，以及与现有 `render_scene_json` 的迁移方式。
+- render snapshot / render profile 是否立即建表（旧 `render_scene_json` 已在 cutover 中物理删除，不再作为迁移源）。
 - contracts 生成方式、共享包边界和 CI 门槛。
 
 ## 硬约束

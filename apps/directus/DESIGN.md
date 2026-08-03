@@ -234,7 +234,7 @@ components:
 
 ### Sidebar Jump List
 
-适用于分区较多的诊断页，例如 `Render Scene Inspector`。
+适用于分区较多的诊断页（历史示例：已删除的 `Render Scene Inspector`）。
 
 规则：
 

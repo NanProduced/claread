@@ -1,8 +1,10 @@
 # Plate Reader Projection
 
 > 状态：`D6-I0 document projection decision merged; Plate integration status rebaselined；DOC-R2 收敛为 owner 权威文档`
-> 最后更新：2026-07-13（DOC-R2：本文成为 Owner 权限表、Anchor Bridge、Ask Document Tools、Fragment Sanitize 的权威归宿；`target-architecture.md` 与 `streaming-and-projection.md` 引用本文，不再逐字复制）
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：标注 cutover 后 BFF 统一为 `/api/web/reader/records/*`，正文历史 `/api/web/reader-plate/*` 路径按 cutover 合同替换）
 > 范围：Web Reader Article Body 的 Plate.js 文档投影、projection operations、document tools、owner 权限和 anchor bridge。
+
+> **Cutover 注意（2026-08-03）**：Architectural Cutover Complete 后，Web 用户页面统一为 `/app/read` 与 `/app/reader/[recordId]`，Web BFF 统一为 `/api/web/reader/records/*` 与 `/api/web/reader/source-artifacts/*`。本文正文历史段保留 `/api/web/reader-plate/*`、`/app/reader-plate` 等 cutover 前 URL 作为历史决策证据；当前产品入口以 cutover 后合同为准。
 
 当前 Web 组件与 Plate.js / @platejs package 的真实接入状态见 [`reader-plate-component-integration.md`](./reader-plate-component-integration.md)。本文定义 projection contract；不要用 package 是否安装来判断产品能力是否已落地。
 

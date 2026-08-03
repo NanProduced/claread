@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 概念定义
 
-> 状态：`D6 输入与文档型 Reader 术语修订；DOC-R2 补自适应解析三态路由 / Analysis Window / Ask Surface 术语`
-> 最后更新：2026-07-13（DOC-R2：补 `STRUCTURED_BATCH` / `SHORT_BATCH` / `GROUPED_WINDOWED` / Analysis Window / `requestedSurface` / `effectiveSurface` 术语）
+> 状态：`Architectural Cutover Complete；术语权威`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：吸收 CONTEXT.md 中的 Cutover 生命周期术语；状态同步至 Architectural Cutover Complete）
 > 用途：统一 Reader agentic orchestration 重构中的术语、边界和文档口径。
 
 ## 使用规则
@@ -152,3 +152,85 @@
 | `learning_workflow` | bounded planner + typed jobs + layer publisher。 |
 | `parallel_agents_node` | layer workers。 |
 | `task succeeded` | 明确的 Reader milestone 或 Parsed coverage。 |
+
+## Cutover 生命周期术语
+
+以下术语统一 Reader 主链硬切换（cutover）的生命周期与边界口径。cutover 已完成，这些术语同时是当前事实描述和历史过程记录。
+
+### Reader 主链路
+
+从文章提交、结构化解析、Reading Record 发布，到基于该记录使用 Ask Claread 的产品链路。Agentic orchestration 转变以此链路为核心。
+
+_Avoid_: AI 链路、文章 Workflow、全部 Reader 能力。
+
+### 旧 Learning Workflow
+
+以 `analysis_*` 数据、旧分析任务和 `render_scene_json` 为事实基础的文章解析实现；cutover 中已完整退出，不是 `app/workflow/` 下所有能力的统称。
+
+_Avoid_: AI Workflow、旧 Agentic、整个 workflow 目录。
+
+### Agentic Reader Orchestration
+
+以 Reading Record、Stable Document、持久化 run/job/event/layer 和类型化执行单元为事实基础的新 Reader 主链实现。cutover 后是唯一生产链。
+
+_Avoid_: 新 Workflow、Workflow v4。
+
+### Ask Claread 生产主链
+
+Reading Record Ask agentic v2 是 cutover 后唯一保留的 Ask 执行链；旧 Analysis Record Ask 与 Reading Record Ask legacy lane 均已物理删除。
+
+_Avoid_: Ask agentic lane、三套 Ask、Ask 兼容链。
+
+### Architectural Cutover Complete
+
+Reader 与 Ask 主链已经单轨化，旧生产链已删除，且 Markdown Reading Record 到 Ask evidence/citation 的联合产品路径已经通过验收；计费、统一监测、Console 与 Eval Center 可作为已登记的 post-cutover launch blockers 继续实施。
+
+_Avoid_: 全部完成、运营就绪、可上线。
+
+### Operational Readiness
+
+Architectural Cutover Complete 之后，计费、统一监测、Console、Eval Center 及其他上线门槛也已闭环的状态。当前属于 post-cutover backlog，未达到。
+
+_Avoid_: Cutover 完成、功能开发完成。
+
+### Logical Cutover（历史）
+
+所有产品入口、页面导航和执行请求已经只指向新 Reader 主链与 Ask Claread 生产主链，旧 route、worker 和消费者不再可达；该门禁通过联合产品验收后才进入物理删除。cutover 已完成，该阶段已闭环。
+
+_Avoid_: Feature flag 切流、长期停用 Legacy、双路由兼容。
+
+### Physical Deletion（历史）
+
+Logical Cutover 通过后紧接进行的旧代码、旧表字段、旧 UI/样式和旧测试删除；它与 Logical Cutover 属于同一 milestone，但使用独立可审查的提交和验证门禁。cutover 已完成，旧生产链已物理删除。
+
+_Avoid_: Big-bang commit、保留 Legacy 目录、仅隐藏旧 UI。
+
+### Legacy Design Harvest
+
+cutover 依赖与删除审计中顺带记录的非阻塞观察，仅在明显发现旧链局部设计可能对新链有价值时形成候选；不要求系统比对、覆盖率或候选数量，没有候选也是正常结果。候选必须先记录并通过人工审核，获批后才能作为独立任务修改新链。
+
+_Avoid_: 独立 Harvest 任务线、删除门禁、逐处寻找旧版优点、Legacy 兼容、直接移植旧代码。
+
+### Cutover 客户端边界
+
+Web 是 cutover 后唯一用户客户端，通过 `/app/read` 与 `/app/reader/[recordId]` 接入新 Reader orchestration 主链；小程序旧文章分析和 Academic 旧分析在 cutover 中下线，后续按新 contract 单独评估；Daily Reader 保留但与旧 Learning Workflow 解耦。
+
+_Avoid_: 全端同步迁移、全产品下线。
+
+### 稳定 Reader URL
+
+cutover 后，Web 用户页面仅使用 `/app/read` 与 `/app/reader/[recordId]`；Web BFF 的 Reading Record 业务接口归入 `/api/web/reader/records/*`，source artifact 归入 `/api/web/reader/source-artifacts/*`，Ask 归入 `/api/web/reader/records/[recordId]/ask/*`。FastAPI 继续使用 `/reader/records/*`。旧 Analysis Record 页面、临时验证页、临时 Reading Record 路由与所有兼容重定向均不保留。
+
+_Avoid_: `/app/reader-record`、`/app/reader-plate`、`/api/web/reader-plate`、通用 `/api/web/reader-ask`、旧 URL alias、隐藏页面回退。
+
+### 二级功能 Cutover 规则
+
+与 Reader 主链相关的二级功能必须改用 Reading Record / Stable Base / Anchor Segment 等新事实，无法在本轮建立正确新身份的功能退出 cutover 产品面，不保留 `analysis_record_id`、`render_scene_json` 或旧 route fallback。Library、最近阅读、Reading Record 高亮/笔记、词典和生词本保留；Reading Record 收藏改用明确的 `reading_record` target；旧批注反馈、伪文章反馈和旧分析活动指示器退出。Daily Reader 的 `daily_reader_article` 身份保留并与旧 Learning Workflow 隔离。
+
+_Avoid_: 双事实源、隐藏 fallback、用 Reading Record UUID 冒充 Analysis Record UUID、为了保留 UI 而保留旧表。
+
+### Cutover 数据姿态
+
+Claread 尚未上线；除 `dict_*` 外的本地业务数据可在受控验证中重置。cutover 优先形成干净的最终 schema 和单链架构，不把生产迁移、旧业务数据回填、兼容窗口或灰度发布设为默认门禁；任何 reset 仍须使用仓库脚本并在执行前核对目标环境。
+
+_Avoid_: 为本地旧数据保留双列合同、生产迁移假设、无目标核验的数据删除。

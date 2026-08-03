@@ -34,8 +34,8 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
 | `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
 | `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab / grammar RAG 契约 |
-| `docs/architecture/eval-center-integration-map.md` | Eval Center / Example Lab / grammar RAG 联动说明：模块依赖、字段分层、契约校验、数据流、联动更新清单（已收口） |
-| `docs/architecture/workflow.md` | 当前 workflow 基线 |
+| `docs/architecture/eval-center-integration-map.md` | Eval Center / Example Lab / grammar RAG 联动说明（历史文档，cutover 后旧 Eval Center 已物理删除） |
+| `docs/architecture/workflow.md` | 旧 v3 workflow 架构（历史文档，cutover 后已物理删除；当前架构见 `docs/initiatives/reader-agentic-orchestration/`） |
 | `docs/operations/directus-local-dev.md` | Directus 本地开发与热更新说明 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
 | `docs/operations/model-config.md` | 模型 profile / preset 配置 |
@@ -77,7 +77,7 @@ claread/
 │   ├── docker/
 │   ├── migrations/
 │   └── deploy/        # 后续
-├── evals/             # 评测数据与样本集（Eval Center 控制面已落地）
+├── evals/             # 评测数据与样本集（旧 Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog）
 ├── docs/
 │   ├── design/
 │   ├── initiatives/  # 当前重构专项文档

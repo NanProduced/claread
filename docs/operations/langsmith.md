@@ -1,6 +1,8 @@
 # LangSmith Tracing
 
-本文记录 Claread 通用后端的 LangSmith 使用规范。它服务本地调试、workflow 质量分析和后续 LLM-as-a-Judge 数据回看。
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / node-lab / workflow-lab 子路径已物理删除，相关 trace 行为表标记为历史）
+
+本文记录 Claread 通用后端的 LangSmith 使用规范。它服务本地调试、Reader orchestration 质量分析和后续 LLM-as-a-Judge 数据回看。
 
 ## 当前结论
 
@@ -45,7 +47,9 @@ LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 
 **eval-center 路径默认不产生 LangSmith trace。** 完整名单见下。
 
-## eval-center 子路径 trace 行为
+> 以下 eval-center 子路径 trace 行为表为历史记录：cutover 后旧 Eval Center / node-lab / workflow-lab 子路径已物理删除，按新 orchestration 重建属于 post-cutover backlog。当前 Reader orchestration 与 Ask agentic v2 的 trace 行为以本节"当前结论"和 `services/api/` 代码为准。
+
+## eval-center 子路径 trace 行为（历史）
 
 | 子路径 | 默认行为 | 备注 |
 |--------|----------|------|

@@ -1,5 +1,7 @@
 # Directus 本地开发
 
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata` 命令已物理删除）
+
 本文描述 `Claread Console` 的本地 Directus runtime、metadata sync 和当前扩展开发方式。
 
 ## 本地地址
@@ -118,17 +120,17 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 ## 开发坑点
 
 - `module_bar` 配置必须写成对象数组 `[{ type: "module", id: "<module-id>", enabled: true }]`，不能写成字符串数组
-- `ai_usage_events` 需按 capability scope 观察（同一 record_id 下可能同时有 `analysis_full` / `analysis_overview_hint` / `reader_ask`）
-- JSONB 字段可能存在双重编码（字符串化 JSON 被存入 JSONB），Render Scene Inspector 侧已修复，但防御性编程时仍需注意
+- `ai_usage_events` 需按 capability scope 观察（同一 record_id 下可能同时有 Reader orchestration 各层 / `reader_ask`）
+- JSONB 字段可能存在双重编码（字符串化 JSON 被存入 JSONB），防御性编程时仍需注意
 
 ## 当前约束
 
 - Directus 只承担控制面。
 - 当前已存在真实扩展与 metadata sync 链路，不再只是空骨架。
 - 业务核心表是否只读保护、如何做原生展示，后续单独设计。
-- parse-run observability 当前优先走原始业务表 + 关系建模，复杂跨表摘要按需补轻量只读接口。
-- Parse run observability 的 Task 1 / Task 2 metadata 通过 repo 内脚本同步，不直接手改 live Directus metadata。
-- Eval Center / Example Lab metadata 同样通过 repo 内脚本同步，不直接手改 live Directus metadata。
+- 旧 Parse Run Observability / Eval Center module 已在 cutover 中物理删除，相关 metadata sync 命令（`directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata`）已移除；Console / Eval 按新 orchestration 重建属于 post-cutover backlog。
+- LLM Config metadata 通过 `pnpm directus:llm-config:sync-metadata` 同步，不直接手改 live Directus metadata。
+- Example Lab 作为 Directus Collection 保留，不属于已删除的 Eval Center module。
 
 ## 业务表 reset 与 Directus 配置
 
@@ -137,7 +139,7 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 需要区分：
 
 - 业务表
-  - `analysis_*`、`ai_usage_events`、`reader_ask_*` 等
+  - `reader_*`、`ai_usage_events`、`reader_ask_*` 等（旧 `analysis_*` 数据层清理属于 DATA-AUDIT post-cutover backlog）
 - Directus system tables
   - `directus_collections`
   - `directus_fields`
@@ -150,10 +152,10 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 
 - 重置业务表后，Directus 的 collection / fields / relations / presets 配置默认仍在
 - 页面可视化不会因为 reset 直接消失，只是业务数据被清空
-- 如果业务 schema 有新增或删减，重建业务表后应再执行一次：
+- 如果业务 schema 有新增或删减，重建业务表后应再执行一次 LLM Config metadata sync：
 
 ```powershell
-pnpm directus:parse-run:sync-metadata
+pnpm directus:llm-config:sync-metadata
 ```
 
 建议：
@@ -173,8 +175,10 @@ pnpm directus:parse-run:sync-metadata
 
 当前这些 bundle 已承载真实能力，包括：
 
-- Parse Run Observability collections / views / panels
-- Render Scene Inspector
-- Eval Center module
-- Example Lab AI RAG Generator interface
-- Eval / parse-run 相关 endpoints 与 hooks
+- 通用 metadata 展示 module（enum-label / event-type / json-summary / status-badge / usage-summary / record-context / relational-events / text-preview）
+- LLM Config module（含 Advanced / AskClaread / Catalog / Overview / Validation 五种 mode）
+- reader-orch endpoints bundle（Reader orchestration 诊断只读 endpoint）
+- Example Lab AI RAG Generator interface（作为 Directus Collection 保留）
+- hooks-bundle 与 panels-bundle 基础能力
+
+旧 Parse Run Observability、Render Scene Inspector、Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。

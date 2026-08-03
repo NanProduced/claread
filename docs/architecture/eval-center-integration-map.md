@@ -1,6 +1,8 @@
-# Eval Center / Example Lab / Grammar RAG 联动说明
+# Eval Center / Example Lab / Grammar RAG 联动说明（历史文档）
 
-本文档说明 Directus / Eval Center / Example Lab / services/api / PostgreSQL / Zilliz 之间的耦合关系与联动更新点。后续改 workflow、Directus UI、RAG、metadata sync、seed、Zilliz schema 时，应先查本文档避免漏改。
+> **状态**: `HISTORICAL` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Node Lab / Workflow Lab / Run History / Parse Run Observability / Render Scene Inspector module 已物理删除。本文档保留作历史证据，不再代表当前控制面状态。当前控制面状态见 `docs/architecture/directus-console.md`。）
+
+本文档说明 cutover 前 Directus / Eval Center / Example Lab / services/api / PostgreSQL / Zilliz 之间的耦合关系与联动更新点。cutover 后旧 Eval Center module 已物理删除，按新 orchestration 重建属于 post-cutover backlog；Example Lab 作为 Directus Collection 保留。当前控制面状态以 `docs/architecture/directus-console.md` 为准。
 
 > LangSmith trace 行为（每条子路径是否写、`trace_scope` 取值、`surface` tag 约定）以 `docs/operations/langsmith.md` 为准，本文档不重复维护。简而言之：eval-center 默认 `trace_scope="off"` 不写 trace；唯一可被显式 `inherit` 进入主 LangSmith project 的入口是 Workflow Lab compare（它复用 `/analyze` 主链）。
 

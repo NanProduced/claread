@@ -1,7 +1,8 @@
 # Reader Agentic Orchestration 执行简报
 
-> 状态：`权威简报`
-> 最后更新：2026-07-17（T5.3b-P1：对齐 T5.2a/T5.3 semantic outline durable 已闭合；T4.2a 历史事实不变）
+> 状态：`权威简报（Architectural Cutover Complete）`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：状态同步至 Architectural Cutover Complete；正文历史里程碑中出现的 `/app/reader-plate`、`/app/reader-record/{recordId}`、`/api/web/reader-plate/*` 等为 cutover 前 URL，cutover 后统一为 `/app/read`、`/app/reader/[recordId]`、`/api/web/reader/records/*`。）
+> 前次更新：2026-07-17（T5.3b-P1：对齐 T5.2a/T5.3 semantic outline durable 已闭合；T4.2a 历史事实不变）
 
 给 coding agent 分配 Reader agentic orchestration 重构任务时，使用本简报作为最小上下文。
 

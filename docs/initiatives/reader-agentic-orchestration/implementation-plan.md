@@ -1,7 +1,7 @@
 # Reader Agentic Orchestration 实施计划
 
-> 状态：`D5 active / T4.2a-V1 closed；T5.1 L0/L1 已闭合；T5.2a validation contract + T5.3 semantic outline worker durable 已闭合；T5.4-R0 snapshot projection 为下一设计门；DOC-R2/R3 归档完成`
-> 最后更新：2026-07-17（T5.3b：同步 semantic outline worker durable 长期事实；不扩 snapshot/UI）
+> 状态：`Architectural Cutover Complete（Reader/Ask 主链已单轨化，旧生产链已物理删除；Cutover milestone 已 closed）；Operational Readiness（计费、统一监测、Console/Eval 重建、Test Governance、ARCH 优化）为 post-cutover backlog`
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：cutover milestone 标记 closed；DOC-R2 backend-closure verdict 冲突由 cutover 落地事实闭环；剩余事项移入 post-cutover backlog）
 
 ## 当前实施口径
 
@@ -418,17 +418,23 @@ Reader enhancement 的当前主链路按层分开理解：
 - 不用前端按标点或句子拆译文来修复后端 group 输出错误。
 - 不把 bounded enhancement planner 一开始扩到全部 layer；优先先管 long/very-long 的 vocabulary/grammar selective enhancement，再根据证据判断是否扩到 translation。
 - 不把 provider prompt cache 当作三模式路由替代品；它是成本优化杠杆，不是模式设计本身。
-- 不先删除旧 AI Workflow。旧链路仍是质量和成本对照基线，除非人工确认不再需要 fallback。
 
-### 待裁定项（DOC-R2 显式标记）
+### Cutover milestone closure（2026-08-03，CUTOVER-DOC-TRUTH-CLOSEOUT-R1）
 
-以下冲突由 DOC-R1 inventory 发现，DOC-R2 不自行裁定，仅在此显式标记待用户裁决：
+Architectural Cutover 已完成：旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已注销并物理删除，Reader 与 Ask 主链已单轨化。早期版本中"不先删除旧 AI Workflow / 旧链路仍是质量和成本对照基线"的暂缓项已由 cutover 落地事实闭环，不再适用。
 
-| # | 冲突 | 涉及 TMP 文件 | 影响 | 裁定所需输入 |
-|---|------|--------------|------|-------------|
-| 1 | **同日后端闭环 review verdict 冲突** | `docs/tmp/reader-orchestration/reader-orchestration-backend-closure-review-2026-07-01.md`（verdict ⛔ 不建议进入前端 UI/UX 全量对接，6 P0 findings）vs `docs/tmp/reader-orchestration/` 中的 closed-loop-review（verdict ✅ 可以进入前端 UI/UX 对接，仅 P1 findings） | 若以 backend-closure-review 为准，前端已开始对接（commit `07964a96`）可能需回退；若以 closed-loop-review 为准，6 P0 findings 可忽略 | 用户确认以哪份 review 为准；6 P0 findings 是否已对照代码修复 |
+DOC-R2 期间曾登记的"同日后端闭环 review verdict 冲突"（`docs/tmp/reader-orchestration/review/reader-orchestration-backend-closure-review-2026-07-01.md` 与 `closed-loop-review-2026-07-01.md`）已由 cutover 落地事实闭环——旧生产链已物理删除，前端 cutover 不存在回退路径，6 P0 findings 不再需要逐项裁定。两份 review TMP 仍按 TMP 生命周期规则处置，不作为长期事实来源；如需回看 verdict，应在 TMP 中查阅，不在正式文档中写为唯一结论。
 
-> **DOC-R2 边界**：不自行裁定上述冲突；不在正式文档中将任一 verdict 写为唯一结论。在用户裁定前，`cutover-and-old-workflow.md` 的 DOC-R2 代码现场核验结论只陈述当前代码事实（旧依赖审计、delete/rewrite/keep matrix），不采用任一 TMP review 的 verdict 作为正式结论。
+### Post-cutover backlog（不在本文展开任务细节）
+
+以下事项已登记为 post-cutover backlog，由后续任务单独推进；不在本文写成已完成：
+
+- 12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）。
+- Console / Eval 按新 orchestration 重建（治理化控制面）。
+- 统一监测、计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环。
+- Test Governance 与代码架构优化（TEST-GOVERNANCE、ARCH-OPT-AUDIT）。
+
+> **DOC-R2 边界（历史保留）**：在用户裁定前，`cutover-and-old-workflow.md` 的 DOC-R2 代码现场核验结论只陈述当前代码事实（旧依赖审计、delete/rewrite/keep matrix），不采用任一 TMP review 的 verdict 作为正式结论。Cutover 落地后该边界已无回退路径，但 DOC-R2 的"代码事实优先于 TMP verdict"原则继续生效。
 
 ### 任务派发规则
 

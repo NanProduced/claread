@@ -1,5 +1,7 @@
 # D5/D6 Real Local Chain Runbook
 
+> **Cutover 注意（2026-08-03）**：本文 URL 仍保留 D5/D6 阶段的 `/app/reader-plate`、`/app/reader-record/{recordId}`、`/api/web/reader-plate/*`、`/api/web/reading-record/submit` 等路径。Architectural Cutover Complete 后，Web 用户页面统一为 `/app/read` 与 `/app/reader/[recordId]`，BFF 统一为 `/api/web/reader/records/*` 与 `/api/web/reader/source-artifacts/*`。运行手册中的操作步骤仍适用，但 URL 需按 cutover 后合同替换。后续 runbook 重建时统一更新。
+
 本文记录 Reader orchestration 主链路的本地真实运行方式：
 
 `plain_text / artifact-backed input -> active base -> enhancement worker loop -> snapshot reload`

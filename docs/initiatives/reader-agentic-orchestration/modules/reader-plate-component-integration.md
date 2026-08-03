@@ -1,12 +1,14 @@
 # Reader Plate Component Integration
 
 > 状态：`2026-07-01 header/control-strip and group-native translation projection frozen; code-aligned status`
-> 最后更新：2026-07-01
+> 最后更新：2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：标注 cutover 后页面统一为 `/app/reader/[recordId]`，正文历史 `/app/reader-record/{recordId}` 路径按 cutover 合同替换）
 > 范围：当前 Web Reader Record 解析页与 Plate.js / @platejs packages 的真实接入状态。本文只记录代码事实和产品接入边界，不替代 UI 设计稿。
+
+> **Cutover 注意（2026-08-03）**：Architectural Cutover Complete 后，Web 用户页面统一为 `/app/read` 与 `/app/reader/[recordId]`，Web BFF 统一为 `/api/web/reader/records/*` 与 `/api/web/reader/source-artifacts/*`。本文正文历史段保留 `/app/reader-record/{recordId}` 等 cutover 前 URL 作为历史决策证据；当前产品入口以 cutover 后合同为准。
 
 ## 结论
 
-`/app/reader-record/{recordId}` 的默认解析页已经回到真实 `<Plate readOnly>` 文档表面，不再是完全手写 block renderer。Header / control strip 已完成旧版 editorial masthead 骨架回归并冻结；group-native translation 已接入 Web projection，当前阅读节奏是 `source group paragraph -> translation blockquote -> annotations`。当前差距不是"没有接 Plate"，而是"Plate 已接入 selection、toolbar、comment mark、Markdown children、reader blocks/leaves；移动端密度、mark 叠色、source decorations 和部分 Plate 官方组件体验仍需继续产品化"。
+`/app/reader/[recordId]`（cutover 前 `/app/reader-record/{recordId}`）的默认解析页已经回到真实 `<Plate readOnly>` 文档表面，不再是完全手写 block renderer。Header / control strip 已完成旧版 editorial masthead 骨架回归并冻结；group-native translation 已接入 Web projection，当前阅读节奏是 `source group paragraph -> translation blockquote -> annotations`。当前差距不是"没有接 Plate"，而是"Plate 已接入 selection、toolbar、comment mark、Markdown children、reader blocks/leaves；移动端密度、mark 叠色、source decorations 和部分 Plate 官方组件体验仍需继续产品化"。
 
 当前应把 Plate 接入分成三档：
 
