@@ -1,11 +1,12 @@
 """L2 阶段 2 Gate — Confirmed Source 生命周期（真实 PostgreSQL）。
 
-封住的合同（docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 confirmed-source）：
+封住的合同（docs/initiatives/reader-agentic-orchestration/modules/
+schema-and-domain-contract.md — Confirmed Source 生命周期）：
 
 1. 文本路径（candidate 创建 + stable-ready）：original_inputs.source_text
    恒 NULL；confirmed_source_documents 是该 generation 唯一完整正文
-   （§1 验证 SQL：oi JOIN cs 中 oi.source_text 非空计数为 0）；
-   candidate source_refs_json 含三 key（§6）。
+   （“Identity / Truth ownership” 验证 SQL：oi JOIN cs 中 oi.source_text
+   非空计数为 0）；candidate source_refs_json 含三 key（同节）。
 2. PUT：stale revision 不覆盖（409 stale_source_revision）；同 hash
    幂等 no-op（revision 不变、不 supersede）；编辑后版本化
    candidate supersede（仅一份 ready candidate）。
@@ -191,7 +192,7 @@ async def _fetch_original_input(pool: asyncpg.Pool, record_id: UUID):
 
 
 async def _double_body_count(pool: asyncpg.Pool) -> int:
-    """设计文档 §1 验证 SQL：每 generation 仅一份完整 Markdown。"""
+    """合同 “Identity / Truth ownership” 验证 SQL：每 generation 仅一份完整 Markdown。"""
     async with pool.acquire() as conn:
         count = await conn.fetchval(
             """
@@ -269,7 +270,7 @@ async def test_text_candidate_creation_writes_confirmed_source(
     assert original_input["source_text"] is None
     assert original_input["content_sha256"] is not None
 
-    # §1 验证 SQL：每 generation 仅一份完整 Markdown（无双正文）。
+    # “Identity / Truth ownership” 验证 SQL：每 generation 仅一份完整 Markdown（无双正文）。
     assert await _double_body_count(db_env) == 0
 
     # candidate source_refs_json 三 key 与 source 行一致。

@@ -409,7 +409,7 @@ function makeUnifiedInputRejectedResponse() {
 
 /**
  * L2 mock BFF：GET /records/{id}/confirmed-source 200 响应
- * （冻结合同 §4.1 + 前端 mock 扩展字段 quality/adaptation_notice/content_check）。
+ * （冻结合同 “GET draft / resume 语义” + 前端 mock 扩展字段 quality/adaptation_notice/content_check）。
  */
 function makeConfirmedSourceReadResponse(
   overrides: Record<string, unknown> = {},

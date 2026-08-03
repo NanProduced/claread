@@ -1455,6 +1455,53 @@ Architectural Cutover 已完成，旧 Learning Workflow 写入路径、Analysis 
 
 Academic workflow、旧 Directus parse-run dashboards、旧 eval suites、旧 `/analysis-tasks` routes 已退役；如未来需要类似能力，按新 orchestration 在 Console / Eval 重建任务中单独设计，不复活旧实现。
 
+## Confirmed Source 生命周期
+
+`confirmed_source_documents`（migration 0025）是 Reading Record 在一个 `record_generation` 内的完整 Markdown 正文唯一身份与 truth owner。证据：`infra/migrations/0025_confirmed_source_documents.sql`、`services/api/app/api/routes/reader_orchestration.py` 的 GET/PUT `/records/{record_id}/confirmed-source`、`services/api/app/services/reader_orchestration/confirmed_source_application_service.py`、`confirmed_source_repository.py`、`services/api/tests/test_l2_confirmed_source_lifecycle_db.py`。
+
+### Identity / Truth ownership
+
+- 每个 `(reading_record_id, record_generation)` 至多一行；全库任意时刻每个 generation 只有本表 `markdown_text` 一份完整正文（DB UNIQUE 约束 + `oi.source_text IS NULL` 不变量）。
+- `original_inputs.source_text` 恒为 NULL，仅保留 lineage 与 `content_sha256`；`original_input_id` 为 lineage FK，`ON DELETE SET NULL`，不作为生命周期依赖。
+- `content_sha256` 由 DB CHECK 自校验等于 `sha256(markdown_text)`，与 `reading_bases` 的 hash 自校验先例一致。
+- candidate 的 `source_refs_json` 三 key（`confirmed_source_document_id` / `source_revision` / `source_content_sha256`）通过 JSONB 引用 source 行，不新增列。
+
+### Lifecycle
+
+- `revision` 从 1 起，每次 PUT 成功更新正文 +1。
+- `status`：`draft`（可编辑）与 `frozen`（不可变）；`frozen_at` 仅在 `frozen` 时非空，DB CHECK 保证二者一致。
+- `edit_source` 为审计标签（`initial` / `extraction` / `wysiwyg` / `source_mode` / `content_check`），不保存旧版正文。
+
+### GET draft / resume 语义
+
+- 路由：`GET /records/{record_id}/confirmed-source`。
+- 仅当 source 处于 `draft` 且 record 可编辑时返回 200，body 含 `markdown_text` 与最新 ready candidate 的三级分类信息（`quality` / `adaptation_notice` / `content_check`）。
+- 其余状态 collapse 为 404（`not_found`：not found / not owner / deleted / 无 draft source，不区分原因）或 409（`record_state_advanced`）。
+- 无 ready candidate 时返回空 `quality` 与空分类列表。
+
+### PUT whole-document update
+
+- 路由：`PUT /records/{record_id}/confirmed-source`，请求体含 `expected_revision` + `markdown_text` + `edit_source`。
+- 单事务锁顺序：record → source → candidate（复用 `lock_record_for_candidate_write` + `lock_confirmed_source_for_update`）。
+- 规范化后 `content_sha256` 与现有行相同 → 幂等 no-op（`outcome=idempotent_noop`，revision 不变，candidate 不 supersede）。
+- 内容不同 → `UPDATE` 推进 `revision + 1`，reparse 一次，supersede 既有 ready candidate 并插入新 candidate（新 `source_refs` 三 key 指向新 revision）。
+- 分支：`candidate_document_required`（默认）/ stable-ready 镜像 submit 自动 freeze / rejected 推进 `product_state=action_required`。
+
+### `expected_revision` 乐观并发
+
+- `expected_revision` 必须等于当前 `revision`；mismatch → 409 `stale_source_revision`（`resolution=reload`，body 返回 `current_revision`），较新草稿不被覆盖。
+- source 已 `frozen` → 409 `source_frozen`（`resolution=open_reader`）。
+- record 已 advanced → 409 `record_state_advanced`（`resolution=return_to_library`）。
+
+### Frozen / reparse 生命周期与 Stable Document 边界
+
+- stable-ready / direct-freeze 路径在 stable document freeze 同一事务内调用 `freeze_confirmed_source`：`status` 置 `frozen`，`frozen_at` 落地，此后不可再 PUT。
+- 编辑后 confirm 使用修改后原文；frozen source 的 `revision` / `content_sha256` 与 stable blocks / canonical text 同步落地（插入点 A/B 一致）。
+- 重复 confirm 幂等：`stable_document_id` / `base_id` 复用，`revision` / `hash` 不漂移。
+- candidate 引用过期 source revision → `stale_candidate_revision` fail closed，无 stable document 写入。
+- legacy candidate（无 source 行 / 引用）走旧 confirm 逻辑向后兼容，不创建 source 行。
+- 边界：frozen source 是正文 truth；Stable Reading Document / Stable Document Blocks / Canonical Text Layer 从 source 派生，不反向回写。
+
 ## Reset Manifest
 
 Reset scripts must require an explicit profile. Current local reset scripts are not automatically considered D3-protected reset profiles until audited.

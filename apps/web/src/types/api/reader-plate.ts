@@ -974,7 +974,7 @@ export type ReaderUnifiedInputSubmitResponseDto =
 // GET/PUT /reader/records/{record_id}/confirmed-source — L2 Confirmed Source
 //
 // Frozen contract:
-// `docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md` §4 (confirmed-source).
+// `docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md` — Confirmed Source 生命周期.
 // The backend L2 endpoints are being implemented by another owner; the web
 // client is developed against this frozen shape with a mock BFF.
 // ---------------------------------------------------------------------------
@@ -1009,7 +1009,7 @@ export interface ReaderConfirmedSourceCandidateSummaryDto {
   canonical_text_preview: string;
 }
 
-/** 200 body of `GET /reader/records/{record_id}/confirmed-source` (design §4.1). */
+/** 200 body of `GET /reader/records/{record_id}/confirmed-source` (design — Confirmed Source 生命周期 / “GET draft / resume 语义”). */
 export interface ReaderConfirmedSourceReadResponseDto {
   source_document_id: string;
   record_generation: number;
@@ -1031,7 +1031,7 @@ export interface ReaderConfirmedSourceReadResponseDto {
   content_check?: ReaderAdaptationRecordDto[];
 }
 
-/** Request body of `PUT /reader/records/{record_id}/confirmed-source` (design §4.2). */
+/** Request body of `PUT /reader/records/{record_id}/confirmed-source` (design — Confirmed Source 生命周期 / “PUT whole-document update”). */
 export interface ReaderConfirmedSourceUpdateRequestDto {
   expected_revision: number;
   markdown_text: string;
@@ -1043,12 +1043,12 @@ export type ReaderConfirmedSourceUpdateOutcomeDto =
   | "stable_document_ready"
   | "input_rejected_or_action_required"
   /**
-   * 同 hash 幂等 no-op（设计 §4.2 步骤 4）：revision 不推进、candidate
+   * 同 hash 幂等 no-op（合同 “PUT whole-document update”）：revision 不推进、candidate
    * 未 supersede。前端视为良性成功：清 dirty，不重取、不报错。
    */
   | "idempotent_noop";
 
-/** 200 body of `PUT /reader/records/{record_id}/confirmed-source` (design §4.2 step 7). */
+/** 200 body of `PUT /reader/records/{record_id}/confirmed-source` (合同 “PUT whole-document update”). */
 export interface ReaderConfirmedSourceUpdateResponseDto {
   revision: number;
   content_sha256: string;
@@ -1056,7 +1056,7 @@ export interface ReaderConfirmedSourceUpdateResponseDto {
   candidate: ReaderConfirmedSourceCandidateSummaryDto | null;
   /**
    * `_candidate_quality_json` 超集（creation version + suitability 五元组，
-   * 设计 §4.4）。rejected outcome 的原因通道在 `quality.suitability.reasons`
+   * 合同 “PUT whole-document update”）。rejected outcome 的原因通道在 `quality.suitability.reasons`
    * 与 `content_check`，真实后端不下发顶层 suitability 字段。
    */
   quality: Record<string, unknown> | null;
@@ -1065,7 +1065,7 @@ export interface ReaderConfirmedSourceUpdateResponseDto {
 }
 
 /**
- * 409 error codes from the confirmed-source endpoints (design §4.1/§4.2):
+ * 409 error codes from the confirmed-source endpoints (合同 “GET draft / resume 语义” / “PUT whole-document update” / “`expected_revision` 乐观并发”):
  * - `record_state_advanced` (GET): product state left needs_confirmation;
  *   `resolution: "open_reader"`.
  * - `stale_source_revision` (PUT): optimistic-concurrency miss; body carries
@@ -1520,7 +1520,7 @@ export interface ReaderStableDocumentResponseDto {
 // stable-document-resolver continue to read the wide string. The literal
 // union below is the renderer's view of the G0 closed block-type set.
 //
-// Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §4 / §5 M2
+// Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §4 / §5 合同与 Fixture
 // ---------------------------------------------------------------------------
 
 export type ReaderStructuredSourceBlockType =

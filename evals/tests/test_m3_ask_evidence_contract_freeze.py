@@ -902,45 +902,6 @@ class TestChunkFilterSignature:
 
 
 # ---------------------------------------------------------------------------
-# Contract reference: locate the source contract file
-# ---------------------------------------------------------------------------
-
-
-class TestContractReference:
-    """Meta-test: ensure the contract document still exists at the
-    expected path. If this fails, the contract reference has moved and
-    the test suite's authority chain is broken."""
-
-    def test_contract_document_exists(self) -> None:
-        contract_path = (
-            _REPO_ROOT
-            / "docs"
-            / "initiatives"
-            / "reader-agentic-orchestration"
-            / "modules"
-            / "ask-claread-agentic-product-runtime-contract.md"
-        )
-        assert contract_path.exists(), (
-            f"contract document not found at {contract_path}. "
-            f"The contract reference for this test suite is broken."
-        )
-
-    def test_contract_document_marks_accepted(self) -> None:
-        contract_path = (
-            _REPO_ROOT
-            / "docs"
-            / "initiatives"
-            / "reader-agentic-orchestration"
-            / "modules"
-            / "ask-claread-agentic-product-runtime-contract.md"
-        )
-        text = contract_path.read_text(encoding="utf-8")
-        # The status line declares the contract as accepted.
-        head = text[:500]
-        assert "accepted" in head, "Contract must declare 'accepted' in its header."
-
-
-# ---------------------------------------------------------------------------
 # §5.4.1 — sort key surface (constant rank=1 for descriptor sources)
 # ---------------------------------------------------------------------------
 

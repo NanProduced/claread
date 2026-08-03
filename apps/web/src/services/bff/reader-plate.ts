@@ -87,7 +87,7 @@ export type ReaderPlateBffError = {
     | "candidate_not_found"
     | "candidate_conflict_open_reader"
     | "candidate_conflict_return_to_library"
-    // L2 confirmed-source conflicts (409 pass-through, design §4.1/§4.2).
+    // L2 confirmed-source conflicts (409 pass-through, 合同 “GET draft / resume 语义” / “PUT whole-document update”).
     | "confirmed_source_not_found"
     | "stale_source_revision"
     | "stale_candidate_revision"
@@ -97,7 +97,7 @@ export type ReaderPlateBffError = {
   recordId?: string;
   /**
    * L2 confirmed-source: `current_revision` carried by a 409
-   * `stale_source_revision` body (design §4.2 step 3) so the client can
+   * `stale_source_revision` body (合同 “`expected_revision` 乐观并发”) so the client can
    * rebase its optimistic-concurrency expectation after reloading.
    */
   currentRevision?: number;
@@ -969,8 +969,8 @@ export async function getReaderCandidateDocumentFromWeb(
 // ---------------------------------------------------------------------------
 // Confirmed Source (L2): draft read / resume entry + whole-document update
 //
-// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 (confirmed-source).
-// The GET endpoint returns the full draft markdown (edit entry, §4.1), so
+// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md — Confirmed Source 生命周期.
+// The GET endpoint returns the full draft markdown (edit entry, “GET draft / resume 语义”), so
 // the same runtime allowlist projection discipline as the candidate read
 // applies: only the declared keys below reach the browser.
 // ---------------------------------------------------------------------------
@@ -1086,7 +1086,7 @@ function mapConfirmedSourceConflict(
       conflict.code === "source_frozen" ||
       conflict.code === "record_state_advanced"
     ) {
-      // Both carry `resolution: "open_reader"` (design §4.1/§4.2): the
+      // Both carry `resolution: "open_reader"` (合同 “GET draft / resume 语义” / “`expected_revision` 乐观并发”): the
       // record has left the needs_confirmation lifecycle, so the reader
       // route is the only safe destination.
       return candidateConflictOpenReader(message, recordId);
@@ -1116,7 +1116,7 @@ export async function getReaderConfirmedSourceFromWeb(
 
   if (!upstreamResult.ok) {
     if (upstreamResult.status === 404) {
-      // §4.1 404 collapse: not found / not owner / deleted / no draft
+      // “GET draft / resume 语义” 404 collapse: not found / not owner / deleted / no draft
       // source are indistinguishable. The client uses this signal to fall
       // back to the legacy candidate-document read for pre-L2 records.
       return {

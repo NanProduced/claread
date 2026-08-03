@@ -227,7 +227,7 @@ export function getUpstreamReaderCandidateDocument(
 
 // ---------------------------------------------------------------------------
 // Confirmed Source (L2): draft read / resume entry + whole-document update
-// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 (confirmed-source)
+// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md — Confirmed Source 生命周期
 // ---------------------------------------------------------------------------
 
 export function getUpstreamReaderConfirmedSource(

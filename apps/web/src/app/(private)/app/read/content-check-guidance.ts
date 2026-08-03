@@ -4,7 +4,7 @@
  * 数据来源：PUT/GET confirmed-source 响应里的 `content_check` 数组
  * （`ReaderAdaptationRecordDto = {code, message, classification}`，L1 后端
  * 已落地的 AdaptationRecord 形状）。合同只冻结 code/message/classification
- * 三个字段（设计 §4.4：内部 schema 由 L1 gate 产出），因此"原文上下文"
+ * 三个字段（合同 “PUT whole-document update”：内部 schema 由 L1 gate 产出），因此"原文上下文"
  * 与"处理建议"由客户端按 code 从草稿文本派生——这是 mock 合同的一部分，
  * 联调时若后端直接下发 excerpt/suggestion 字段，可在此层优先采用。
  */

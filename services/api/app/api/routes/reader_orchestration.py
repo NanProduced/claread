@@ -895,7 +895,7 @@ async def get_reader_confirmed_source(
     record_id: UUID,
     current_user: AuthUserDep,
 ) -> ReaderConfirmedSourceGetResponse | JSONResponse:
-    """L2 设计文档 §4.1：draft 读取 / resume 入口（编辑入口，返回正文）。"""
+    """L2 合同 “GET draft / resume 语义”：draft 读取 / resume 入口（编辑入口，返回正文）。"""
     service = ConfirmedSourceApplicationService()
     try:
         result = await service.get_confirmed_source(
@@ -951,7 +951,7 @@ async def put_reader_confirmed_source(
     body: ReaderConfirmedSourceUpdateRequest,
     current_user: AuthUserDep,
 ) -> ReaderConfirmedSourceUpdateResponse | JSONResponse:
-    """L2 设计文档 §4.2：整篇更新 + reparse（revision 乐观并发、同 hash
+    """L2 合同 “PUT whole-document update”：整篇更新 + reparse（revision 乐观并发、同 hash
     幂等 no-op、三级分类、版本化 candidate supersede、stable 镜像自动
     freeze 并同事务冻结 source）。"""
     service = ConfirmedSourceApplicationService()

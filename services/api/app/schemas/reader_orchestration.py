@@ -1259,7 +1259,7 @@ class ReaderCandidateDocumentNotFoundResponseDto(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# L2 — Confirmed Source 端点 DTO（migration 0025 / 设计文档 §4）
+# L2 — Confirmed Source 端点 DTO（migration 0025 / 合同 “Confirmed Source 生命周期”）
 # ---------------------------------------------------------------------------
 
 # 客户端可写的编辑来源；'initial' / 'extraction' 由服务端写入。

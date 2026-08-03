@@ -1,4 +1,4 @@
-"""L2 — Confirmed Source 应用服务（设计文档 §4 GET/PUT 端点后端）。
+"""L2 — Confirmed Source 应用服务（合同 “Confirmed Source 生命周期” GET/PUT 端点后端）。
 
 GET /records/{id}/confirmed-source：draft 读取 / resume 入口（编辑入口，
 返回正文；仅当 source 为 draft 且 record 处于可编辑状态时返回 200，
@@ -119,7 +119,7 @@ class ConfirmedSourceApplicationError(ValueError):
 
 class ConfirmedSourceNotFoundError(ValueError):
     """404 collapse：not found / not owner / deleted / 无 draft source
-    （不区分原因，设计文档 §4.1 Q6）。"""
+    （不区分原因，合同 “GET draft / resume 语义”）。"""
 
 
 class ConfirmedSourceConflictError(ValueError):
@@ -713,7 +713,7 @@ class ConfirmedSourceApplicationService:
         updated_source: ConfirmedSourceDocument,
         now: datetime,
     ) -> ConfirmedSourceCandidateSummary:
-        """版本化 candidate supersede（设计文档 §4.2 步骤 6）。"""
+        """版本化 candidate supersede（合同 “PUT whole-document update”）。"""
         original_input_id = (
             UUID(updated_source.original_input_id)
             if updated_source.original_input_id is not None

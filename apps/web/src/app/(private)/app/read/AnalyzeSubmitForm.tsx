@@ -1187,7 +1187,7 @@ export function AnalyzeSubmitForm({
 
   async function runResumeFlow(recordId: string) {
     // L2：resume 入口改为 GET confirmed-source（draft + 最新 candidate，
-    // 设计 §4.1）。404（L2 前存量记录无 source 行）回退旧
+    // 合同 “GET draft / resume 语义”）。404（L2 前存量记录无 source 行）回退旧
     // candidate-document 流；record_state_advanced 直接打开 Reader。
     try {
       const sourceResponse = await fetch(

@@ -3,11 +3,11 @@
 /**
  * Content Check 状态机（L2 Confirmed Source，mock BFF 开发）。
  *
- * 冻结合同：docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 (confirmed-source)
- *   - GET  /records/{id}/confirmed-source — draft 读取 / resume 入口（§4.1）
- *   - PUT  /records/{id}/confirmed-source — 整篇更新 + reparse（§4.2，
- *     expected_revision 乐观并发；stale 409 可恢复：重取最新草稿重放编辑）
- *   - POST /records/{id}/candidate-documents/{cid}/confirm — 请求体不变（§4.3）
+ * 冻结合同：docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md — Confirmed Source 生命周期
+ *   - GET  /records/{id}/confirmed-source — draft 读取 / resume 入口（“GET draft / resume 语义”）
+ *   - PUT  /records/{id}/confirmed-source — 整篇更新 + reparse（“PUT whole-document update” +
+ *     “`expected_revision` 乐观并发”；stale 409 可恢复：重取最新草稿重放编辑）
+ *   - POST /records/{id}/candidate-documents/{cid}/confirm — 请求体不变（“Frozen / reparse 生命周期与 Stable Document 边界”）
  *
  * 恢复语义：
  *   - stale_source_revision：自动重取最新 revision，以用户当前编辑文本重放
@@ -157,7 +157,7 @@ function applyUpdateToDraft(
   payload: ReaderConfirmedSourceUpdateResponseDto,
   savedMarkdown: string,
 ): ContentCheckDraft {
-  // idempotent_noop（同 hash 幂等，合同 §4.2 步骤 4）：revision 不推进、
+  // idempotent_noop（同 hash 幂等，合同 “PUT whole-document update”）：revision 不推进、
   // candidate 未 supersede——保留现有 revision/candidate/outcome，仅对齐
   // 已保存文本与 hash。
   if (payload.outcome === "idempotent_noop") {
@@ -484,8 +484,8 @@ export function useContentCheck({
       const draft = draftRef.current;
       if (!draft) return;
 
-      // PUT outcome=stable_document_ready：服务端已同事务冻结（合同 §4.2
-      // 步骤 7 镜像 submit 行为），直接打开 Reader。
+      // PUT outcome=stable_document_ready：服务端已同事务冻结（合同
+      // “Frozen / reparse 生命周期与 Stable Document 边界”镜像 submit 行为），直接打开 Reader。
       if (draft.outcome === "stable_document_ready") {
         onConfirmedRef.current(recordId);
         return;
@@ -515,7 +515,7 @@ export function useContentCheck({
 
       let payload = await postConfirm(candidate.candidate_document_id);
       if (!payload.ok && payload.code === "stale_candidate_revision") {
-        // 候选引用了过期 source revision：重取最新 candidate 重试一次（§4.3）。
+        // 候选引用了过期 source revision：重取最新 candidate 重试一次（“Frozen / reparse 生命周期与 Stable Document 边界”）。
         const latest = await loadLatest().catch(() => null);
         if (latest?.candidate) {
           patchState({ draft: latest });
