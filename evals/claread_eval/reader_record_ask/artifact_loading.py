@@ -41,7 +41,7 @@ Safety contract:
 - A corrupt/invalid/foreign artifact file MUST NOT silently disappear
   — it is counted and forces the aggregate verdict to
   ``blocked_incomplete_real_model_run`` (via
-  :func:`run_reader_record_ask_r4_a3._decide_final_verdict`).
+  :func:`run_reader_record_ask_eval._decide_final_verdict`).
 - ``absent manifest + 0 discovered files`` is the ONLY combination
   that may yield ``blocked_by_real_model_run``. Any non-zero
   ``discovered_file_count`` with an absent manifest indicates the run

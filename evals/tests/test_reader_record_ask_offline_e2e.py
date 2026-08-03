@@ -76,7 +76,7 @@ from claread_eval.reader_record_ask.phase_planner import (  # noqa: E402
     PhasePlanner,
 )
 from claread_eval.reader_record_ask.report import (  # noqa: E402
-    generate_r4_a3_report,
+    generate_eval_report,
 )
 from claread_eval.reader_record_ask.schema import (  # noqa: E402
     ReaderRecordAskR4A3Case,
@@ -384,7 +384,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
       under ``<runs_root>/<run_id>/artifacts/``.
     - evaluate_artifact on each artifact → Phase 2 case selection via
       PhasePlanner(phase=2, prior_eval_results=...).
-    - aggregate_results + generate_r4_a3_report.
+    - aggregate_results + generate_eval_report.
 
     Asserts all 9 spec requirements (a)–(i).
     """
@@ -650,7 +650,7 @@ def test_offline_e2e_full_closure_flow(tmp_path: Path) -> None:
     # (h) report no secret leak
     # ---------------------------------------------------------------
     # Generate the report using the aggregated Phase 1 results.
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         aggregated=aggregated,
         dataset=dataset,
         artifacts=loaded_artifacts,

@@ -22,7 +22,7 @@ from claread_eval.reader_record_ask.evaluators.artifact import (
 from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.report import (
     REQUIRED_SECTION_HEADERS,
-    generate_r4_a3_report,
+    generate_eval_report,
 )
 from claread_eval.reader_record_ask.schema import (
     ReaderRecordAskR4A3Case,
@@ -280,7 +280,7 @@ def _default_report_kwargs(
 
 def test_report_contains_all_required_sections() -> None:
     """Report markdown contains all required section headers (15 + 4 rework)."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     for header in REQUIRED_SECTION_HEADERS:
         assert header in report, (
             f"missing required section header: {header!r}\n"
@@ -290,7 +290,7 @@ def test_report_contains_all_required_sections() -> None:
 
 def test_report_contains_title_and_dataset_metadata() -> None:
     """Report has a title block + dataset id."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "# TMP — Reader Record Ask R4-A3 评测报告" in report
     assert "dataset: `reader-record-ask-r4-a3`" in report
     assert "verdict: **blocked**" in report
@@ -298,7 +298,7 @@ def test_report_contains_title_and_dataset_metadata() -> None:
 
 def test_report_contains_rework_closure_sections() -> None:
     """Sections 16-19 (rework closure) contain expected key content."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     # Section 16: 能力边界声明
     assert "## 16. 能力边界声明" in report
     assert "能验证" in report
@@ -347,7 +347,7 @@ def test_report_sanitized_no_bbc_body() -> None:
         "model_route": "reader_ask",
         "leaked_bbc_body": long_bbc_chunk,
     }
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     # The full long chunk must not appear verbatim.
     assert long_bbc_chunk not in report
     # Truncation marker must appear (sanitization truncated the value).
@@ -380,7 +380,7 @@ def test_report_sanitized_no_reasoning_content_leak() -> None:
         "reasoning_content": "some leaked chain-of-thought text",
         "other_notes": "harmless value with reasoning_content mention",
     }
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     # The leaked VALUE must not appear anywhere in the report.
     assert "some leaked chain-of-thought text" not in report, (
         "reasoning_content value must be stripped from run_metadata"
@@ -410,7 +410,7 @@ def test_report_sanitized_no_api_key() -> None:
         "leaked_key": "sk-test-leaked-key-1234567890",
         "leaked_env": "OPENAI_API_KEY=sk-proj-leaked",
     }
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     assert "sk-test-leaked-key-1234567890" not in report
     assert "sk-proj-leaked" not in report
     assert "api_key=" not in report.lower()
@@ -423,7 +423,7 @@ def test_report_sanitized_no_api_key() -> None:
 
 def test_report_blocked_verdict_when_no_artifacts() -> None:
     """Empty artifacts → real_model_blocked=True → verdict='blocked'."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "BLOCKED" in report
     assert "verdict: **blocked**" in report
     assert "real model run was not executed; results are not fabricated" in report
@@ -435,7 +435,7 @@ def test_report_section6_does_not_hardcode_pytest_counts() -> None:
     Aggregate path does not invoke pytest; inventing ``4 passed, 3 skipped``
     is unauditable and was historically wrong when the suite grew.
     """
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "4 passed" not in report
     assert "3 skipped" not in report
     assert "不得在此断言精确 passed/skipped 计数" in report or (
@@ -452,7 +452,7 @@ def test_report_failure_clusters_rendered() -> None:
     """AggregatedReport with 2 failure clusters renders them in §10."""
     aggregated = _make_aggregated_with_clusters()
     dataset = _make_dataset()
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         **_default_report_kwargs(
             aggregated=aggregated,
             dataset=dataset,
@@ -475,7 +475,7 @@ def test_report_failure_clusters_rendered() -> None:
 
 def test_report_failure_clusters_blocked_falls_back_to_spec_anticipated() -> None:
     """When real_model_blocked=True, §10 lists spec-anticipated clusters."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "## 10. 明确失败簇" in report
     assert "N/A (blocked / 无真实运行数据)" in report
     assert "2025-year-hallucination" in report
@@ -487,9 +487,9 @@ def test_report_failure_clusters_blocked_falls_back_to_spec_anticipated() -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_report_r4_a4_candidates_present() -> None:
+def test_report_remediation_candidates_present() -> None:
     """§11 R4-A4 candidate suggestions are present and marked not-implement."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "## 11. R4-A4 候选修复建议" in report
     assert "不实施" in report
     assert "待 R4-A4 立项" in report
@@ -507,7 +507,7 @@ def test_report_verdict_rework_when_artifacts_have_failures() -> None:
     """When artifacts exist with high-severity failures, verdict is rework."""
     aggregated = _make_aggregated_with_clusters()
     artifact = _make_artifact()
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         **_default_report_kwargs(
             aggregated=aggregated,
             artifacts=[artifact],
@@ -525,7 +525,7 @@ def test_report_verdict_rework_when_artifacts_have_failures() -> None:
 
 def test_report_tracker_section_points_to_tracker_file() -> None:
     """§14 references the tracker file path."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "## 14. R4 tracker 更新" in report
     assert (
         "docs/tmp/reader-orchestration/"
@@ -535,7 +535,7 @@ def test_report_tracker_section_points_to_tracker_file() -> None:
 
 def test_report_no_commit_section_present() -> None:
     """§15 declares no git commit/reset/restore/checkout/stash."""
-    report = generate_r4_a3_report(**_default_report_kwargs())
+    report = generate_eval_report(**_default_report_kwargs())
     assert "## 15. 未 commit" in report
     assert "git commit" in report
     assert "git reset" in report
@@ -609,7 +609,7 @@ def test_report_renders_real_flash_config_key() -> None:
     existed. The fixed report matches by regex.
     """
     aggregated = _make_aggregated_with_real_flash_config()
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         **_default_report_kwargs(
             aggregated=aggregated,
             real_model_blocked=False,
@@ -631,7 +631,7 @@ def test_report_date_parameter_used_in_title() -> None:
     """
     kwargs = _default_report_kwargs()
     kwargs["report_date"] = "2026-07-19"
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     assert "生成时间: 2026-07-19" in report
     # Old hardcoded date must NOT appear when an explicit date is passed.
     assert "生成时间: 2026-07-17" not in report
@@ -649,7 +649,7 @@ def test_modified_files_parameter_used_in_section_2() -> None:
         "evals/claread_eval/reader_record_ask/report.py",
     ]
     kwargs["task_label"] = "R4-A4-0"
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     assert "### 2.1 本轮修改文件（R4-A4-0）" in report
     assert "numeric_grounding.py" in report
     assert "report.py" in report
@@ -665,7 +665,7 @@ def test_tracker_path_parameter_used_in_section_14() -> None:
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
     )
     kwargs["report_date"] = "2026-07-19"
-    report = generate_r4_a3_report(**kwargs)
+    report = generate_eval_report(**kwargs)
     assert (
         "docs/tmp/reader-orchestration/"
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
@@ -680,7 +680,7 @@ def test_per_config_total_runs_rendered_in_section_7() -> None:
     buckets; the report reads it via ``metrics.get('total_runs', 0)``.
     """
     aggregated = _make_aggregated_with_real_flash_config()
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         **_default_report_kwargs(
             aggregated=aggregated,
             real_model_blocked=False,
@@ -796,7 +796,7 @@ def test_30_artifact_fixture_regression() -> None:
         cases=cases,
     )
 
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         **_default_report_kwargs(
             aggregated=aggregated,
             dataset=dataset,

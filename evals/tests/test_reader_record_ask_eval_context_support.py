@@ -69,7 +69,7 @@ from claread_eval.reader_record_ask.evaluators.result import EvalDimensionResult
 from claread_eval.reader_record_ask.loader import (
     _migrate_legacy_required_article_facts,
 )
-from claread_eval.reader_record_ask.report import generate_r4_a3_report
+from claread_eval.reader_record_ask.report import generate_eval_report
 from claread_eval.reader_record_ask.schema import (
     AtomicExpectedFact,
     ReaderRecordAskR4A3Case,
@@ -1767,7 +1767,7 @@ def test_required_12_two_configs_match_flash_phase_ambiguous_fail_closed() -> No
 
     # Generate the report — the Flash non-thinking phase row MUST be
     # AMBIGUOUS because two per_config keys matched the same phase.
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         aggregated=aggregated,
         dataset=dataset,
         artifacts=[artifact_flash, artifact_chat],
@@ -2023,7 +2023,7 @@ _RUNNER_PATH = (
     _REPO_ROOT_FOR_RUNNER
     / "evals"
     / "scripts"
-    / "run_reader_record_ask_r4_a3.py"
+    / "run_reader_record_ask_eval.py"
 )
 _HARNESS_PATH = (
     _REPO_ROOT_FOR_RUNNER
@@ -2037,12 +2037,12 @@ _HARNESS_PATH = (
 def _load_runner_module():
     """Load the runner script as a module (it's not in a package)."""
     spec = _importlib_util.spec_from_file_location(
-        "run_reader_record_ask_r4_a3", _RUNNER_PATH
+        "run_reader_record_ask_eval", _RUNNER_PATH
     )
     assert spec is not None
     assert spec.loader is not None
     module = _importlib_util.module_from_spec(spec)
-    _sys.modules["run_reader_record_ask_r4_a3"] = module
+    _sys.modules["run_reader_record_ask_eval"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -2218,7 +2218,7 @@ def _decide_verdict(
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_01_legacy_artifact_blocked_in_aggregate() -> None:
+def test_context_support_final_gate_01_legacy_artifact_blocked_in_aggregate() -> None:
     """Spec test 1: a legacy artifact (``version=None, status=None``)
     MUST be classified as ``legacy_artifact`` by the evaluator, and
     the authoritative aggregate MUST block it
@@ -2288,7 +2288,7 @@ def test_r4_a4_0_final_gate_01_legacy_artifact_blocked_in_aggregate() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_02_runtime_exception_failed_not_legacy() -> None:
+def test_context_support_final_gate_02_runtime_exception_failed_not_legacy() -> None:
     """Spec test 2: a new artifact with ``capture_status="failed"``
     MUST be classified as ``runtime_exception`` (an instrumentation
     blocker), NOT as legacy. The authoritative aggregate MUST block
@@ -2345,7 +2345,7 @@ def test_r4_a4_0_final_gate_02_runtime_exception_failed_not_legacy() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_03_baseline_unavailable_no_empty_sha() -> None:
+def test_context_support_final_gate_03_baseline_unavailable_no_empty_sha() -> None:
     """Spec test 3: a new artifact with ``capture_status="unavailable"``
     (baseline produced no chunks — e.g. envelope_mismatch / no_units)
     MUST:
@@ -2406,7 +2406,7 @@ def test_r4_a4_0_final_gate_03_baseline_unavailable_no_empty_sha() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_04_captured_fingerprint_mismatch_blocked() -> None:
+def test_context_support_final_gate_04_captured_fingerprint_mismatch_blocked() -> None:
     """Spec test 4: a captured artifact whose observation carries a
     DIFFERENT fingerprint than the artifact's
     ``model_context_fingerprint`` MUST be classified as
@@ -2455,7 +2455,7 @@ def test_r4_a4_0_final_gate_04_captured_fingerprint_mismatch_blocked() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_05_captured_missing_required_observation() -> None:
+def test_context_support_final_gate_05_captured_missing_required_observation() -> None:
     """Spec test 5: a captured artifact that has a fingerprint and
     handle_ids but is MISSING the observation for a required atomic
     fact (with source_aliases) MUST be classified as
@@ -2498,7 +2498,7 @@ def test_r4_a4_0_final_gate_05_captured_missing_required_observation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_06_captured_duplicate_unknown_observation() -> None:
+def test_context_support_final_gate_06_captured_duplicate_unknown_observation() -> None:
     """Spec test 6: a captured artifact with a duplicate ``fact_id``
     in observations OR an observation whose ``fact_id`` is not in the
     case's atomic_facts MUST be classified as
@@ -2559,7 +2559,7 @@ def test_r4_a4_0_final_gate_06_captured_duplicate_unknown_observation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_07_captured_supporting_handle_not_in_model_context() -> None:
+def test_context_support_final_gate_07_captured_supporting_handle_not_in_model_context() -> None:
     """Spec test 7: a captured artifact whose observation carries a
     ``supporting_handle_id`` that is NOT in the artifact's
     ``model_context_handle_ids`` MUST be classified as
@@ -2630,7 +2630,7 @@ def test_r4_a4_0_final_gate_07_captured_supporting_handle_not_in_model_context()
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_08_captured_fact_not_supported_rework() -> None:
+def test_context_support_final_gate_08_captured_fact_not_supported_rework() -> None:
     """Spec test 8: a captured artifact where a required fact is
     mentioned in the answer but the observation says ``support=False``
     (the fact is NOT grounded in the model-visible baseline) MUST be
@@ -2691,7 +2691,7 @@ def test_r4_a4_0_final_gate_08_captured_fact_not_supported_rework() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_09_captured_fact_not_cited_rework() -> None:
+def test_context_support_final_gate_09_captured_fact_not_cited_rework() -> None:
     """Spec test 9: a captured artifact where a required fact IS
     grounded in the model context (``support=True`` with valid
     supporting handles) but the answer does NOT cite any of those
@@ -2753,7 +2753,7 @@ def test_r4_a4_0_final_gate_09_captured_fact_not_cited_rework() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_10_captured_all_success_accepted() -> None:
+def test_context_support_final_gate_10_captured_all_success_accepted() -> None:
     """Spec test 10: a captured artifact where all required facts are
     mentioned, grounded, and cited MUST be classified as ``supported``
     and the aggregate verdict MUST be ``accepted`` with
@@ -2804,7 +2804,7 @@ def test_r4_a4_0_final_gate_10_captured_all_success_accepted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_11_instrumentation_cluster_not_fact_not_grounded() -> None:
+def test_context_support_final_gate_11_instrumentation_cluster_not_fact_not_grounded() -> None:
     """Spec test 11: when an artifact has an instrumentation failure
     (capture_status=unavailable/failed, fingerprint mismatch, missing
     required observation, duplicate/unknown observation, or supporting
@@ -2958,7 +2958,7 @@ def test_r4_a4_0_final_gate_11_instrumentation_cluster_not_fact_not_grounded() -
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_12_compute_model_context_support_empty_chunks() -> None:
+def test_context_support_final_gate_12_compute_model_context_support_empty_chunks() -> None:
     """Spec test 12: calling
     :func:`_compute_model_context_support` with an EMPTY
     ``model_context_chunks`` list MUST NOT raise. It MUST return
@@ -3011,7 +3011,7 @@ def test_r4_a4_0_final_gate_12_compute_model_context_support_empty_chunks() -> N
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_0_final_gate_13_metadata_only_no_facts_not_incomplete() -> None:
+def test_context_support_final_gate_13_metadata_only_no_facts_not_incomplete() -> None:
     """Spec test 13: a captured artifact for a case with NO required
     source facts (metadata-only or no atomic_facts) MUST NOT be
     misreported as instrumentation_incomplete. The harness correctly
@@ -3622,7 +3622,7 @@ def test_contract_single_source_no_mirror_definitions() -> None:
         matches: list[str] = []
         for file_path in candidate_files:
             assert file_path is not None
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 source = f.read()
             if pattern.search(source):
                 matches.append(file_path)
@@ -3637,7 +3637,7 @@ def test_contract_single_source_no_mirror_definitions() -> None:
     # re-export the contract constants without redefining the
     # vocabulary. Verify the contract module itself does NOT import
     # from any of the three call sites (no circular dependency).
-    with open(contract_path, "r", encoding="utf-8") as f:
+    with open(contract_path, encoding="utf-8") as f:
         contract_source = f.read()
     forbidden_imports = [
         "from claread_eval.reader_record_ask.evaluators.context_support import",

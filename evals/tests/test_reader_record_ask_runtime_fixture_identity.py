@@ -52,7 +52,7 @@ from claread_eval.reader_record_ask.schema import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = (
-    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_r4_a3.py"
+    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_eval.py"
 )
 _DATASET_DIR = (
     _REPO_ROOT / "evals" / "tmp" / "reader-record-ask-r4-a3"
@@ -62,12 +62,12 @@ _DATASET_DIR = (
 def _load_runner_module():
     """Load the runner script as a module (it's not in a package)."""
     spec = importlib.util.spec_from_file_location(
-        "run_reader_record_ask_r4_a3", _RUNNER_PATH
+        "run_reader_record_ask_eval", _RUNNER_PATH
     )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["run_reader_record_ask_r4_a3"] = module
+    sys.modules["run_reader_record_ask_eval"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -770,7 +770,7 @@ class TestScenario5ThreeLayerInconsistency:
         assert mismatch is False
         assert reason is None
 
-    def test_pre_r4_a4_2r2_manifest_backwards_compat(self) -> None:
+    def test_pre_v2_manifest_backwards_compat(self) -> None:
         """R4-A4-2R3: a V1 manifest (``audit_contract_version=None``
         or ``"r4-a4-2r2"``) skips the three-layer check — checks 4-7
         do NOT fire. This is selected by EXPLICIT version, NOT by

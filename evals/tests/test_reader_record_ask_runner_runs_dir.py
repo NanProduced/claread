@@ -38,19 +38,19 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = (
-    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_r4_a3.py"
+    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_eval.py"
 )
 
 
 def _load_runner_module():
     """Load the runner script as a module (it's not in a package)."""
     spec = importlib.util.spec_from_file_location(
-        "run_reader_record_ask_r4_a3", _RUNNER_PATH
+        "run_reader_record_ask_eval", _RUNNER_PATH
     )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["run_reader_record_ask_r4_a3"] = module
+    sys.modules["run_reader_record_ask_eval"] = module
     spec.loader.exec_module(module)
     return module
 
