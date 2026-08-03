@@ -1,6 +1,6 @@
 """SourceEvidenceDescriptor — server-only adapter for rag_ask_only blocks.
 
-Implements contract TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md
+Implements contract docs/initiatives/reader-agentic-orchestration/modules/ask-claread-agentic-product-runtime-contract.md
 v5 sections §3.2 (field definitions), §3.3 (expansion_text assembly rules
 with fail-closed fallback), §3.5.1.2 (precise chunk filtering with frozen
 field-read source), §5.4.4 (display label rules), and §5.4.1/§5.4.2

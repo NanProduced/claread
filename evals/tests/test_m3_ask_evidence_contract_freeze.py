@@ -1,8 +1,8 @@
 """M3 Stage C — Ask Evidence Contract Freeze (v5) regression tests.
 
 Spec:
-    docs/tmp/reader-orchestration/TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md
-    (v5 — 正式通过 2026-07-23)
+    docs/initiatives/reader-agentic-orchestration/modules/ask-claread-agentic-product-runtime-contract.md
+    (accepted design specification, 2026-07-25)
 
 Purpose
 -------
@@ -907,7 +907,7 @@ class TestChunkFilterSignature:
 
 
 class TestContractReference:
-    """Meta-test: ensure the v5 contract document still exists at the
+    """Meta-test: ensure the contract document still exists at the
     expected path. If this fails, the contract reference has moved and
     the test suite's authority chain is broken."""
 
@@ -915,30 +915,29 @@ class TestContractReference:
         contract_path = (
             _REPO_ROOT
             / "docs"
-            / "tmp"
-            / "reader-orchestration"
-            / "TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md"
+            / "initiatives"
+            / "reader-agentic-orchestration"
+            / "modules"
+            / "ask-claread-agentic-product-runtime-contract.md"
         )
         assert contract_path.exists(), (
-            f"v5 contract document not found at {contract_path}. "
+            f"contract document not found at {contract_path}. "
             f"The contract reference for this test suite is broken."
         )
 
-    def test_contract_document_marks_v5_passed(self) -> None:
+    def test_contract_document_marks_accepted(self) -> None:
         contract_path = (
             _REPO_ROOT
             / "docs"
-            / "tmp"
-            / "reader-orchestration"
-            / "TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md"
+            / "initiatives"
+            / "reader-agentic-orchestration"
+            / "modules"
+            / "ask-claread-agentic-product-runtime-contract.md"
         )
         text = contract_path.read_text(encoding="utf-8")
-        # The first status line declares v5 — 正式通过.
+        # The status line declares the contract as accepted.
         head = text[:500]
-        assert "v5" in head, "Contract must declare v5 in its header."
-        assert "正式通过" in head, (
-            "Contract must declare '正式通过' (formally passed) in its header."
-        )
+        assert "accepted" in head, "Contract must declare 'accepted' in its header."
 
 
 # ---------------------------------------------------------------------------

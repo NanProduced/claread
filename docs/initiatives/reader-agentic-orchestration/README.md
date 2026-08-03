@@ -58,7 +58,8 @@
 5. `adaptive-reader-orchestration-design.md`：Reader 自适应解析策略、分析窗口、渐进发布、长文/超长文处理的当前设计入口。**自适应解析设计权威。**
 6. `modules/*.md`：D1 模块合同与 runbook。每份 module 文档是自身领域的详细事实源；架构总览见 `target-architecture.md`。
 7. `implementation-plan.md`：阶段计划、门禁、任务包和验收标准。**任务状态权威。**
-8. `spikes/README.md`：D2 spikes 启动清单和执行顺序。
+
+> **过渡事实源声明**：本目录是 Reader agentic orchestration 重构的过渡专项事实源。所有 post-cutover 工作流 `DOC_MIGRATED` 后，本目录整目录退役；当前事实最终归宿为 `docs/product/`、`docs/architecture/`、`docs/operations/`、`docs/development/` 等稳定文档。D2 spike 全文已删除，verdict 已压缩进 `target-architecture.md` 决策记录与对应 `modules/*.md`，不再维护独立的 spike 索引。
 
 ### 入口职责切分
 
@@ -71,7 +72,6 @@
 | `adaptive-reader-orchestration-design.md` | 自适应解析策略、Analysis Window、渐进发布、长文/超长文处理 | 模块级 schema、任务进度 |
 | `modules/*.md` | 各模块详细合同、runbook、代码接入矩阵 | 跨模块架构总览、任务计划 |
 | `implementation-plan.md` | 任务 ID、依赖、状态、验收口径、门禁 | review fix 细节、coding agent prompt、验收报告全文 |
-| `spikes/README.md` | D2 spike 启动清单、执行顺序、verdict | spike 详细输出（归 `spikes/*.md`） |
 
 ## 模块文档
 
@@ -134,7 +134,7 @@
 | 自适应解析设计 | `adaptive-reader-orchestration-design.md` | Analysis Window、三态路由、渐进发布 |
 | 任务状态与验收 | `implementation-plan.md` | T4.2a-V1 closed、Sample A UNRESOLVED |
 | Agent 必读与不可违反决策 | `agent-brief.md` | 必读顺序、durable ExecutionBudget 决策 |
-| 任务过程材料 | `docs/tmp/reader-orchestration/` 或 `docs/initiatives/reader-agentic-orchestration/tmp/` | review fix 细节、验收报告全文、诊断快照 |
+| 任务过程材料 | `docs/tmp/reader-orchestration/` | review fix 细节、验收报告全文、诊断快照 |
 
 ### TMP 生命周期
 
@@ -161,10 +161,10 @@
 
 DOC-R3 已完成物理归档与 TMP 清理：
 
-- **17 文件归档**至 [`archive/`](archive/README.md)：Document Graph 链（8）、Translation V2 链（5）、研究材料（2）、Spike 结果（1）、外部来源研究（1）。归档索引和权威事实归宿见 [`archive/README.md`](archive/README.md)。
-- **5 TMP 删除**（`initiatives/tmp/` 下，git-ignored）：three-mode-adaptive-reader-research、TMP-t4.2a-pux-r3-test-health、TMP-t42a-pux-r1-progressive-transition、TMP-t42a-pux-r2-runtime-integration、TMP-t42a-v2-r1-boundary-samples。结论已压缩进 `implementation-plan.md` / `agent-brief.md` / `adaptive-reader-orchestration-design.md`。
+- **17 文件归档**（Document Graph 链 8、Translation V2 链 5、研究材料 2、Spike 结果 1、外部来源研究 1）：归档二级索引已删除；独有事实已压缩进 `target-architecture.md` 决策记录与对应 `modules/*.md`，已删除文件可通过 Git history 回看。
+- **5 TMP 删除**（git-ignored）：three-mode-adaptive-reader-research、TMP-t4.2a-pux-r3-test-health、TMP-t42a-pux-r1-progressive-transition、TMP-t42a-pux-r2-runtime-integration、TMP-t42a-v2-r1-boundary-samples。结论已压缩进 `implementation-plan.md` / `agent-brief.md` / `adaptive-reader-orchestration-design.md`。
 - **DOC-TRUTH-CLOSEOUT-R1（2026-08-03）**：Architectural Cutover 已完成，DOC-R2 期间登记的 backend-closure verdict 冲突已由 cutover 落地事实闭环——旧生产链已物理删除，前端 cutover 不存在回退路径，该冲突不再需要裁定。相关两份 review TMP 仍按 TMP 生命周期规则处置，不作为长期事实来源。
-- **保留**：`docs/tmp/reader-orchestration/` 是本专项唯一新增的 L3 证据区（研究、评审、验收、诊断等过程材料）；材料分类、最低元信息与生命周期规则见 `docs/tmp/reader-orchestration/README.md`。`docs/initiatives/reader-agentic-orchestration/tmp/` 中既有 ignored 材料为迁移前 legacy 证据，迁移完成前不得新增，亦不得作为长期事实来源。正式文档不得以 TMP 作为长期事实来源；任务闭合后，TMP 结论必须压缩回本目录权威文档，再按生命周期规则清理。
+- **保留**：`docs/tmp/reader-orchestration/` 是本专项唯一新增的 L3 证据区（研究、评审、验收、诊断等过程材料）；材料分类、最低元信息与生命周期规则见 `docs/tmp/reader-orchestration/README.md`。正式文档不得以 TMP 作为长期事实来源；任务闭合后，TMP 结论必须压缩回本目录权威文档，再按生命周期规则清理。
 
 ## 与稳定文档的关系
 

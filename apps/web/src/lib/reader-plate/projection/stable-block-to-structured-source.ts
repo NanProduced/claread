@@ -28,7 +28,7 @@
  *   - `block_id`, `parent_block_id`, `order_index`, `text_content` are
  *     preserved as-is. `text_content: null` is preserved (not coerced).
  *
- * Reference: docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-22.md §5 M2
+ * Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5 M2
  */
 
 import type {

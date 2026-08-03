@@ -1,7 +1,7 @@
 """Tests for SourceEvidenceDescriptor adapter (M3 stage C, C3).
 
-Contract: docs/tmp/reader-orchestration/
-TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md (v5).
+Contract: docs/initiatives/reader-agentic-orchestration/modules/
+ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
 Covers:
   * §3.5.1.2 — chunk_qualifies_for_descriptor 4 AND conditions +

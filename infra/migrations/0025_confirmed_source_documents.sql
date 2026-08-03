@@ -1,7 +1,7 @@
 -- 0025_confirmed_source_documents.sql
 -- L2 单一 Confirmed Source 生命周期实体。
--- 依据 docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md §1
--- 与 docs/tmp/TMP-reader-markdown-adaptation-analysis-2026-07-28.md §5.3。
+-- 依据 docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §1 (confirmed-source)
+-- 与 docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5.3。
 -- 不变量：每个 (reading_record_id, record_generation) 至多一行，
 -- 全库任意时刻每个 generation 只有本表 markdown_text 一份完整正文。
 -- 不动 0001/0004 任何已有 migration（遵循 0004 文件头与 0023 增量修正先例）。

@@ -9,7 +9,7 @@ T4.2a-PUX-R4-R2.2-P2b-R1 — Grammar First-Publish Layer Event Payload
 sequence 增量全部回滚。
 
 参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
-参考设计: ``docs/initiatives/reader-agentic-orchestration/tmp/TMP-t4.2a-pux-r4-r2-2-p2b-d1-grammar-first-publish-event-contract-2026-07-15.md`` §Q5
+参考设计: ``docs/initiatives/reader-agentic-orchestration/modules/representation-event-contract.md`` §Q5
 """
 
 from __future__ import annotations

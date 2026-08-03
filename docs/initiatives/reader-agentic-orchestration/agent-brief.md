@@ -17,7 +17,7 @@
 8. `docs/initiatives/reader-agentic-orchestration/implementation-plan.md`
 9. 涉及代码目录最近的 `AGENTS.md`
 
-除非任务明确要求研究回溯，不要读取 `docs/initiatives/reader-agentic-orchestration/tmp/` 与 `docs/tmp/reader-orchestration/` 下的过程材料。
+除非任务明确要求研究回溯，不要读取 `docs/tmp/reader-orchestration/` 下的过程材料。
 
 ## 当前状态
 
@@ -124,4 +124,4 @@
 
 ## 关键 backlog 指针
 
-post-cutover backlog 与路线详见 [`implementation-plan.md`](implementation-plan.md)；cutover 落地结论与旧依赖审计见 [`modules/cutover-and-old-workflow.md`](modules/cutover-and-old-workflow.md)；D2 spike 历史索引见 [`archive/README.md`](archive/README.md)（spike 全文已删除，结论已压缩进 `target-architecture.md` 与对应 `modules/*.md`）。
+post-cutover backlog 与路线详见 [`implementation-plan.md`](implementation-plan.md)；cutover 落地结论与旧依赖审计见 [`modules/cutover-and-old-workflow.md`](modules/cutover-and-old-workflow.md)；D2 spike 全文已删除，verdict 已压缩进 `target-architecture.md` 决策记录与对应 `modules/*.md`，已删除文件可通过 Git history 回看。

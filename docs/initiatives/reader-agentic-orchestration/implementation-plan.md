@@ -86,4 +86,13 @@ Architectural Cutover 已完成，Reader 与 Ask 主链已单轨化：
 
 ## 任务历史
 
-D0-D6 阶段流水账、每轮 coding agent prompt、T 系列任务的详细验收报告与已删除 TMP 的引用不在本计划维护。任务级 commit 与 verdict 由 git history 承担；cutover 落地与旧依赖审计结论见 [`modules/cutover-and-old-workflow.md`](modules/cutover-and-old-workflow.md)；D2 spike 结论历史索引见 [`archive/README.md`](archive/README.md)（spike 全文已删除，结论已压缩进 `target-architecture.md` 决策记录与对应 `modules/*.md`）。
+D0-D6 阶段流水账、每轮 coding agent prompt、T 系列任务的详细验收报告与已删除 TMP 的引用不在本计划维护。任务级 commit 与 verdict 由 git history 承担；cutover 落地与旧依赖审计结论见 [`modules/cutover-and-old-workflow.md`](modules/cutover-and-old-workflow.md)；D2 spike 全文已删除，结论已压缩进 `target-architecture.md` 决策记录与对应 `modules/*.md`，已删除文件可通过 Git history 回看。
+
+## DOC-DECOMMISSION 门禁
+
+本目录与 `docs/tmp/` 的最终删除必须同时满足以下条件：
+
+- 每个 post-cutover backlog 完成正式文档迁移（`DOC_MIGRATED`）。
+- 全仓库对 `docs/tmp/` 和 `docs/initiatives/reader-agentic-orchestration/` 路径的有效引用归零。
+- ignored / untracked 材料删除前必须重新归档到仓库外，并生成逐文件 size / SHA256 manifest。
+- 最终使用独立、可审查的 docs-only commit 删除两个目录；同一提交不得修改生产代码。

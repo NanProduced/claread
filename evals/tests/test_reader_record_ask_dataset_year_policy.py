@@ -1,6 +1,5 @@
 """R4-A4-2R dataset year-policy tests.
 
-Spec: docs/tmp/reader-orchestration/review/TMP-reader-record-ask-r4-a4-2-phase1-real-2026-07-20.md
 Covers audit-finding repair scenarios (4) and (5):
 
 * (4) synthetic absent-year fixture contains no year — the design property

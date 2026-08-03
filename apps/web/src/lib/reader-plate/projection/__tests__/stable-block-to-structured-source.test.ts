@@ -12,7 +12,7 @@
  *   - empty input → empty output
  *   - text_content: null preserved (not coerced)
  *
- * Reference: docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-22.md §5 M2
+ * Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5 M2
  */
 
 import { describe, expect, it } from "vitest";

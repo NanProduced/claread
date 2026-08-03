@@ -3,7 +3,7 @@
 /**
  * Content Check 状态机（L2 Confirmed Source，mock BFF 开发）。
  *
- * 冻结合同：docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md §4
+ * 冻结合同：docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 (confirmed-source)
  *   - GET  /records/{id}/confirmed-source — draft 读取 / resume 入口（§4.1）
  *   - PUT  /records/{id}/confirmed-source — 整篇更新 + reparse（§4.2，
  *     expected_revision 乐观并发；stale 409 可恢复：重取最新草稿重放编辑）

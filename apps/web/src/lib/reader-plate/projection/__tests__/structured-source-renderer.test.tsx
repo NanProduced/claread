@@ -11,7 +11,7 @@
  * against the G0 Structured Source Contract
  * (`services/api/tests/fixtures/markdown_structured_source/CONTRACT.md`).
  *
- * Reference: docs/tmp/TMP-reader-markdown-rich-input-refactor-plan-2026-07-22.md §5 M2
+ * Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5 M2
  */
 
 import { cleanup, render, screen } from "@testing-library/react";

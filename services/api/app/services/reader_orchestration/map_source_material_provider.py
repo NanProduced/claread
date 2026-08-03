@@ -1,6 +1,6 @@
 """MapSourceMaterialProvider — server-only map-source material provider.
 
-Implements contract TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md
+Implements contract docs/initiatives/reader-agentic-orchestration/modules/ask-claread-agentic-product-runtime-contract.md
 v5 sections §3.5.1.1 (唯一规范签名), §3.5.1 (opt-in control plane),
 §3.4 (preflight fence validation), §5.1 6(b) (material fence failure
 fallback), §5.1 26 (provider authorization subject), §4.2 / §5.2

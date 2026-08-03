@@ -15,7 +15,7 @@
  *
  * Rationale: the backend stable document model is the source of truth and the
  * Plate/value layer is a web projection (see
- * docs/tmp/reader-orchestration/research/TMP-plate-v53-markdown-readonly-capability-research-2026-07-16.md);
+ * docs/initiatives/reader-agentic-orchestration/modules/reader-plate-component-integration.md);
  * binding the UI to a source-agnostic view model — rather than to either
  * `semantic_outline` or a Markdown AST — keeps that boundary clean.
  */

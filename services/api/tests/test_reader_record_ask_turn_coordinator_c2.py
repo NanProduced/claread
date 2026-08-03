@@ -1,7 +1,7 @@
 """M3 stage C — C2 coordinator map-source ingress tests.
 
-Contract: docs/tmp/reader-orchestration/
-TMP-m3-stage-b-ask-evidence-contract-freeze-2026-07-23.md (v5).
+Contract: docs/initiatives/reader-agentic-orchestration/modules/
+ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
 Covers the Ask-owner side of the C2 task — consumption of
 ``MapSourceMaterial`` inside ``TurnCoordinator``:

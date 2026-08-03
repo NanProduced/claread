@@ -1,6 +1,6 @@
 """L2 阶段 2 Gate — Confirmed Source 生命周期（真实 PostgreSQL）。
 
-封住的合同（docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md）：
+封住的合同（docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 confirmed-source）：
 
 1. 文本路径（candidate 创建 + stable-ready）：original_inputs.source_text
    恒 NULL；confirmed_source_documents 是该 generation 唯一完整正文

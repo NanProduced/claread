@@ -969,7 +969,7 @@ export async function getReaderCandidateDocumentFromWeb(
 // ---------------------------------------------------------------------------
 // Confirmed Source (L2): draft read / resume entry + whole-document update
 //
-// Frozen contract: docs/tmp/TMP-reader-confirmed-source-schema-api-design-2026-07-28.md §4.
+// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md §4 (confirmed-source).
 // The GET endpoint returns the full draft markdown (edit entry, §4.1), so
 // the same runtime allowlist projection discipline as the candidate read
 // applies: only the declared keys below reach the browser.
