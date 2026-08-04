@@ -3,7 +3,7 @@
 > Frontend integration contract for status / reason_code mapping: see `frontend-integration-status-map.md` in this directory.
 
 > 状态：D6 文档型 Reader 修订（Article RAG operational readiness）
-> 最后更新：2026-07-01
+> 最后更新：2026-08-05
 > 范围：当前 Reading Record 内 Article RAG substrate 的本地启动、状态查询、排障、可交接的运维手册。
 > 与 `rag-substrate.md` 的关系：substrate 文档讲 truth / contract / citation；本文讲**怎么把这条链跑起来、怎么定位常见 fail-soft、怎么安全交接**。
 
@@ -21,9 +21,11 @@ article_ready
   -> DashScope embed + Zilliz upsert                      (I4D)
   -> reader_article_rag_index_runs.status = 'indexed'    (I4C)
   -> ArticleRagRetrievalService.retrieve_for_record      (I4E)
-  -> ArticleRagContextService.build_context_pack_*        (I4F)
-  -> ArticleRagAskContextProvider.build_for_ask           (I4N / I4O)
+  -> RetrievalBackedArticleRagPort.search_current_article (Ask port)
+  -> production_stream.stream_agentic_thread_message      (agentic Ask)
 ```
+
+Ask 侧生产链说明：`reader_record_ask` 是唯一生产 Ask 路径。`build_production_article_rag_port`（`production_wiring.py`）在 `reader_article_rag_enabled` 开启且 embedding / vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`（实现 `ArticleRagSearchPort`），否则返回 `None` —— 此时 Ask 的 `search_current_article` 工具返回 typed `unavailable`，零 RAG I/O。旧的 Ask prompt-integration 簇（reader_orchestration 下 9 个已退役模块）生产代码 / 验收 / 本 runbook 均不再引用；物理删除留待后续阶段。
 
 不覆盖：
 
@@ -83,7 +85,7 @@ Zilliz URI/token 支持本地复用 few-shot/Grammar RAG 的配置：`READER_ART
 
 具体落地点：
 
-- Article RAG index / retrieval / context / Ask facade 的 `repr()` / `str()` 仅暴露稳定 reason_code / status，不含任何 token。
+- Article RAG index / retrieval / Ask port 的 `repr()` / `str()` 仅暴露稳定 reason_code / status，不含任何 token。
 - 409 异常路径的 HTTP detail 是固定字符串 `article_rag_index_status_unexpected_error` / `article_rag_index_ensure_unexpected_error`，不 echo `str(exc)`。
 - 路由层（I4T）的 404 / 200 typed response 也不携带任何 token。
 - `reader_article_rag_zilliz_token` 在 settings 加载阶段进入内存，但只通过 `build_default_article_rag_vector_writer` 工厂注入到 `ZillizArticleRagVectorWriter` 实例，从来不打 log / repr。
@@ -206,7 +208,7 @@ Invoke-RestMethod `
 | lifecycle `superseded_or_stale` | index_run 与当前 base/generation 不一致 | 不可重试 | 重新 POST ensure |
 | retrieval `retrieval_no_indexed_run` | record 没有 indexed 状态 | 不可重试 | POST ensure，等 worker |
 | retrieval `retrieval_embedding_failed` | embedding provider 抛错 | 视情况 | 报 ops |
-| Ask facade `article_rag_context_unexpected_error` | 内部组件抛错 | 不可重试 | 看 server log |
+| Ask port outcome `unavailable` / typed non-ok | retrieval 失败、identity fence 或 substrate identity 缺失 | 视情况 | 看 outcome.detail_code（如 `retrieval_no_indexed_run` / `identity_mismatch` / `stable_document_id_missing`），必要时报 ops |
 
 ## 5. 本地诊断
 
@@ -317,9 +319,24 @@ uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/te
 
 预期结果：所有 default-passes 测试 `passed`，**无** `failed`。`test_d6_i4z_article_rag_local_dry_run.py` 已经不再注册任何 `article_rag_smoke` 标记的真实 smoke 测试 —— 真实链路 smoke 已收敛到唯一入口（见 7.2）。
 
-### 7.2 真实链路验收（opt-in，唯一入口，生产禁止）
+### 7.2 验收：默认 deterministic gate + 显式 opt-in real-provider smoke
 
-**唯一真实验收入口**：`tests/test_article_rag_single_path_real_acceptance.py::test_single_path_real_chain_acceptance`。该测试是 Article RAG 单路径收敛后的 canonical 真实链路 smoke，替代了之前在本文件里基于 smoke-collection 命名空间的旧设计（旧设计与 worker frozen-contract collection enforcement 互斥，已退役）。
+验收入口集中在 `tests/test_article_rag_single_path_real_acceptance.py`，分两层：
+
+#### 7.2.1 默认 deterministic gate（CI / 日常验收，零外部调用）
+
+- 测试：`test_single_path_production_chain_default_path_is_deterministic`（无 marker、无 env gate，普通 `pytest` collect 就会实际执行）。
+- 驱动生产链 seam：`build_production_article_rag_port`（flag off → `None`；flag on 但 provider Unconfigured → `None` 且不构造 retrieval service，零 I/O）+ `execute_search_current_article`（`FakeArticleRagSearchPort` scripted 结果 → `ok`；port 缺失 → typed `unavailable`，绝不伪造答案）。
+- 全程处于 `tests/deterministic_ask_e2e/guard.py` 传输层拦截（httpx / DashScope SDK / pymilvus）之下，断言 `blocked_call_count == 0` —— 默认路径绝不触发真实 LLM / embedding / rerank / Zilliz / 网络。
+
+```powershell
+cd services/api
+uv run pytest -q tests/test_article_rag_single_path_real_acceptance.py::test_single_path_production_chain_default_path_is_deterministic
+```
+
+#### 7.2.2 显式 opt-in real-provider smoke（唯一真实验收入口，生产禁止）
+
+`test_single_path_real_chain_acceptance`（`article_rag_smoke` + `real_llm` marker + env gate，默认 skip；未 opt-in 时只 collect 不执行、零外部调用）。它是 Article RAG 单路径收敛后的 canonical 真实链路 smoke，替代了之前在本文件里基于 smoke-collection 命名空间的旧设计（旧设计与 worker frozen-contract collection enforcement 互斥，已退役）。真实 provider 索引 + 检索完成后，Ask 侧走生产链 `RetrievalBackedArticleRagPort.search_current_article`（即 `build_production_article_rag_port` 在 ready 时返回的同一个 adapter），停在 Ask port 边界 —— 不调用真实 Ask 模型。
 
 设计合同：
 
@@ -331,7 +348,7 @@ uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/te
   - 1 vector write
   - 1 vector search
   - 1 vector delete（精确 chunk_id 集合）
-  - **0 Ask model calls**（R1/R2 只走到 Ask context assembly；真实 Ask 模型验收单列 BLOCKED）
+  - **0 Ask model calls**（R1/R2 只走到 Ask port 边界；真实 Ask 模型验收单列 BLOCKED）
 - **失败不重试**：单次执行；任何 D1-D8 assertion 失败都直接 fail，`finally` 仍按精确 chunk_id 完成清理，不第二次发起真实调用。
 - **默认 skip**：未 opt-in 时测试 `skipped`，provider attempts=0，无任何 socket 调用。
 
