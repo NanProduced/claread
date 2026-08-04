@@ -321,7 +321,7 @@ describe("projectAgenticEvidenceForDisplay", () => {
 //   - have null ragNavigation (article_seed is non-RAG)
 // ---------------------------------------------------------------------------
 
-describe("projectAgenticEvidenceForDisplay — article_seed (R4-A1)", () => {
+describe("projectAgenticEvidenceForDisplay — article_seed", () => {
   it("projects article_seed with concise title and snippet only", () => {
     const input: ReaderAskAgenticEvidenceItemDto[] = [
       {
@@ -451,7 +451,7 @@ describe("projectAgenticEvidenceForDisplay — article_seed (R4-A1)", () => {
 // every legal combination without crashing.
 // ---------------------------------------------------------------------------
 
-describe("agentic evidence legal-map — guard and projection integration (R4-A1 rework)", () => {
+describe("agentic evidence legal-map — guard and projection integration", () => {
   const HANDLE = "evh_aabbccddeeff00112233445566778899";
 
   describe("guard accepts all 5 legal kind/source pairs", () => {
@@ -836,7 +836,7 @@ describe("agentic evidence legal-map — guard and projection integration (R4-A1
 // preserved. The projection must not invent fields or mutate the input.
 // ---------------------------------------------------------------------------
 
-describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB-G0/G1)", () => {
+describe("projectAgenticCitationsForDisplay — web citation projection", () => {
   it("projects an article citation with article-stable title and null web fields", () => {
     const input: ReaderAskAgenticCitationDto[] = [
       {

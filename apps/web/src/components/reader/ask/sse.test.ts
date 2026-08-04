@@ -333,7 +333,7 @@ describe("consumeReaderAskSse", () => {
     expect(isReaderAskAgenticCompletedPayload(events[0].data)).toBe(false);
   });
 
-  it("rejects legacy message.interrupted without identity as untrusted (R4-1)", async () => {
+  it("rejects legacy message.interrupted without identity as untrusted", async () => {
     // R4-1: a legacy message.interrupted that carries only content_md and
     // no identity tuple is NOT a trusted terminal. It MUST NOT be
     // dispatched, MUST NOT mutate UI state, and MUST NOT unlock the
@@ -437,7 +437,7 @@ describe("consumeReaderAskSse", () => {
     expect("evidence" in completed).toBe(false);
   });
 
-  it("parses failed agentic terminal and ignores the legacy message.interrupted follow-up (R1 contract)", async () => {
+  it("parses failed agentic terminal and ignores the legacy message.interrupted follow-up", async () => {
     // R1 contract: agentic.terminal is a trusted terminal. The consumer
     // must cancel the reader immediately and ignore any later frames in
     // the same chunk — including the legacy message.interrupted alias
@@ -476,7 +476,7 @@ describe("consumeReaderAskSse", () => {
     });
   });
 
-  it("parses context_stale agentic terminal without treating it as success (R1: late interrupted ignored)", async () => {
+  it("parses context_stale agentic terminal without treating it as success (late interrupted ignored)", async () => {
     // R1 contract: only the first trusted terminal is emitted; the
     // legacy message.interrupted follow-up is dropped.
     const terminal = {
@@ -536,7 +536,7 @@ describe("consumeReaderAskSse", () => {
   // do not match the active identity captured at agentic.run_started)
   // MUST NOT be dispatched to onEvent, MUST NOT terminate the consumer,
   // and MUST NOT unlock the composer.
-  describe("R4-1: terminal identity verification before UI mutation", () => {
+  describe("terminal identity verification before UI mutation", () => {
     const RUN_STARTED = {
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
       message_id: "msg-active",
@@ -712,7 +712,7 @@ describe("consumeReaderAskSse", () => {
     });
   });
 
-  describe("R6 submission.reconcile logical terminal", () => {
+  describe("submission.reconcile logical terminal", () => {
     const RECONCILE_COMPLETED = {
       client_submission_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
       thread_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1",
@@ -1049,7 +1049,7 @@ describe("agentic payload type guards", () => {
 // Cold hydration via thread detail also relies on the same list guard.
 // ---------------------------------------------------------------------------
 
-describe("agentic payload type guards — article_seed (R4-A1)", () => {
+describe("agentic payload type guards — article_seed", () => {
   const ARTICLE_SEED_EVIDENCE = {
     handle_id: "evh_seed_aabbccddeeff00112233445566778899",
     kind: "article_seed",
@@ -1219,7 +1219,7 @@ describe("agentic payload type guards — article_seed (R4-A1)", () => {
 // `LEGAL_EVIDENCE_KIND_SOURCE` + rag_citation rules.
 // ---------------------------------------------------------------------------
 
-describe("agentic evidence legal-map — illegal combinations (R4-A1 rework)", () => {
+describe("agentic evidence legal-map — illegal combinations", () => {
   const BASE_COMPLETED = {
     execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
     final_status: "ok",

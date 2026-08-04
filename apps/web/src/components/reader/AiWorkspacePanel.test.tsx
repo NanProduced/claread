@@ -661,7 +661,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
   });
 
-  it("ASK-UX-HISTORY-COT-R2 P0-2: current record is implicit and cross-record search is absent in v2", async () => {
+  it("current record is implicit and cross-record search is absent in v2", async () => {
     render(
       <AiWorkspacePanel
         open
@@ -1970,7 +1970,7 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("回答过程")).toBeNull();
   });
 
-  it.skip("legacy provider reasoning shimmer UI is removed from the v2 Ask panel (ASK-REASONING-R1)", async () => {
+  it.skip("legacy provider reasoning shimmer UI is removed from the v2 Ask panel", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "streaming",
@@ -2389,7 +2389,7 @@ describe("AiWorkspacePanel", () => {
     });
   });
 
-  it("renders no reasoning element when the model returned no reasoning text (ASK-REASONING-R1)", async () => {
+  it("renders no reasoning element when the model returned no reasoning text", async () => {
     mockThreadMessages([
       createAssistantMessage({
         status: "completed",
@@ -2693,7 +2693,7 @@ describe("AiWorkspacePanel", () => {
       },
     };
 
-    it("ASK-UX-HISTORY-COT-R2 P0-2: no provenance row when only the implicit current article is present (no explicit attachments)", async () => {
+    it("no provenance row when only the implicit current article is present (no explicit attachments)", async () => {
       // The current article is fixed implicit context — it must NOT
       // produce a default "基于：当前文章" provenance row. With no
       // explicit selection / notes / other articles, the provenance
@@ -2713,7 +2713,7 @@ describe("AiWorkspacePanel", () => {
       expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("ASK-UX-HISTORY-COT-R2 P0-2: provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
+    it("provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
       renderPanel({
         recordTitle: "Test Reader",
         liveContextAttachment: sentenceAttachment,
@@ -2731,7 +2731,7 @@ describe("AiWorkspacePanel", () => {
       expect(summary.textContent).toContain("1 条笔记");
     });
 
-    it("ASK-UX-HISTORY-COT-R2 P0-2: no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
+    it("no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
       renderPanel({
         recordTitle: "",
         attachments: [],
@@ -2747,7 +2747,7 @@ describe("AiWorkspacePanel", () => {
       expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("ASK-UX-HISTORY-COT-R2 P0-2: thread title differs from page title — page identity title is the sole article title source, never thread title", async () => {
+    it("thread title differs from page title — page identity title is the sole article title source, never thread title", async () => {
       // The thread title is a conversation label; the page identity title
       // is the sole source of truth for the current-record chip.
       renderPanel({
@@ -3689,7 +3689,7 @@ describe("createSseMessageHandler – context compression UX", () => {
     expect(getMessages()[0].content_md).toBe("");
   });
 
-  it("ASK-UX-HISTORY-COT-R2 P0-4: after run_started, delta without turn identity is rejected; delta with matching identity + generation_id is accepted", () => {
+  it("after run_started, delta without turn identity is rejected; delta with matching identity + generation_id is accepted", () => {
     // Regression for the streaming contract: the backend message.delta
     // MUST carry message_id / thread_id / turn_run_id / generation_id so
     // the frontend activeRunIdentity guard (set on agentic.run_started)
@@ -6303,7 +6303,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
 // foreign terminal guard, optional-tool warning, dismiss, CTA semantics.
 // ---------------------------------------------------------------------------
 
-describe("createSseMessageHandler – ASK-UX-MOBILE-R3 canonical terminal-notice path", () => {
+describe("createSseMessageHandler – canonical terminal-notice path", () => {
   type Msg = ReaderAskUiMessageDto;
   const VERSION = "reader_record_ask_agentic_v2";
 
@@ -6739,7 +6739,7 @@ describe("createSseMessageHandler – ASK-UX-MOBILE-R3 canonical terminal-notice
   });
 });
 
-describe("AiWorkspacePanel – ASK-UX-MOBILE-R3 panel-level notice wiring", () => {
+describe("AiWorkspacePanel – panel-level notice wiring", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllEnvs();
@@ -7454,7 +7454,7 @@ function rrSelectionAttachment(
   } as unknown as ReaderAskAttachment;
 }
 
-describe("ASK-UX-COT-COMPOSER-R3 P1 — RR composer selection slots", () => {
+describe("RR composer selection slots", () => {
   afterEach(() => {
     cleanup();
   });

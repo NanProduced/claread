@@ -389,7 +389,7 @@ describe("reduceAgenticActivityEvent", () => {
 // like any other phase/tool — no special handling, no internal data leak.
 // ---------------------------------------------------------------------------
 
-describe("reduceAgenticActivityEvent — searching_web phase + search_web tool (ASK-WEB-G0/G1)", () => {
+describe("reduceAgenticActivityEvent — searching_web phase + search_web tool", () => {
   it("accepts searching_web as a valid phase", () => {
     let state = runningState();
     state = reduceAgenticActivityEvent(

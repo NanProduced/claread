@@ -131,7 +131,7 @@ const FOREIGN_TERMINAL_PAYLOAD = {
 // R0 contract: typed state machine
 // ---------------------------------------------------------------------------
 
-describe("R0 TurnLifecycle contract", () => {
+describe("TurnLifecycle contract", () => {
   it("terminal states are exactly committed / failed / cancelled", () => {
     expect(TERMINAL_STATES).toEqual(new Set(["committed", "failed", "cancelled"]));
   });
@@ -179,7 +179,7 @@ describe("R0 TurnLifecycle contract", () => {
 // R0 contract: TurnIdentity — foreign / stale rejection
 // ---------------------------------------------------------------------------
 
-describe("R0 TurnIdentity matching", () => {
+describe("TurnIdentity matching", () => {
   const identity: TurnIdentity = {
     messageId: "msg-1",
     threadId: "thread-1",
@@ -255,7 +255,7 @@ describe("R0 TurnIdentity matching", () => {
 // R0 contract: LogicalTerminalResult
 // ---------------------------------------------------------------------------
 
-describe("R0 LogicalTerminalResult", () => {
+describe("LogicalTerminalResult", () => {
   it("completed is trusted and results in committed", () => {
     const r = makeLogicalTerminalResult("completed", { finalStatus: "ok" });
     expect(isTrustedTerminal(r)).toBe(true);
@@ -323,7 +323,7 @@ describe("R0 LogicalTerminalResult", () => {
 // terminal frame is observed, NOT when EOF arrives.
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: terminal-then-EOF composer unlock", () => {
+describe("red-light: terminal-then-EOF composer unlock", () => {
   it("consumeReaderAskSse returns a LogicalTerminalResult (not void)", async () => {
     // This test will FAIL on the current code because consumeReaderAskSse
     // returns Promise<void>. R1 must change the return type.
@@ -395,7 +395,7 @@ describe("R0 red-light: terminal-then-EOF composer unlock", () => {
 // R0 red-light: agentic.terminal / message.interrupted handled exactly once
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: terminal handled exactly once", () => {
+describe("red-light: terminal handled exactly once", () => {
   it("agentic.terminal is a trusted terminal", () => {
     expect(isTrustedTerminalEvent("agentic.terminal")).toBe(true);
   });
@@ -414,7 +414,7 @@ describe("R0 red-light: terminal handled exactly once", () => {
 // R0 red-light: foreign / stale terminal must not unlock the active turn
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: foreign terminal rejection", () => {
+describe("red-light: foreign terminal rejection", () => {
   it("foreign terminal payload does not match active turn identity", () => {
     const activeIdentity: TurnIdentity = {
       messageId: "msg-active-1",
@@ -448,7 +448,7 @@ describe("R0 red-light: foreign terminal rejection", () => {
 // R0 red-light: provisional invalid output must not become canonical
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: invalid provisional not canonical", () => {
+describe("red-light: invalid provisional not canonical", () => {
   it("terminal payload must not carry answer_text / content_md / answer_blocks", () => {
     const terminal = makeTerminalPayload("failed", "agent_output_invalid");
     for (const forbiddenField of [
@@ -484,7 +484,7 @@ describe("R0 red-light: invalid provisional not canonical", () => {
 // R0 red-light: stale-stream reconciliation
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: stale-stream reconciliation", () => {
+describe("red-light: stale-stream reconciliation", () => {
   it("STALE_STREAM_TERMINAL_REASON is the typed constant", () => {
     expect(STALE_STREAM_TERMINAL_REASON).toBe("stale_stream_reconciled");
   });
@@ -502,7 +502,7 @@ describe("R0 red-light: stale-stream reconciliation", () => {
 // R0 red-light: reasoning truncation typed contract
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: reasoning truncation typed", () => {
+describe("red-light: reasoning truncation typed", () => {
   it("truncation marker must not appear in reasoning body", () => {
     const forbiddenMarkers = [
       "思考内容已截断",
@@ -532,7 +532,7 @@ describe("R0 red-light: reasoning truncation typed", () => {
 // R0 red-light: 30K CJK / Markdown cadence + performance
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: 30K CJK/Markdown streaming cadence", () => {
+describe("red-light: 30K CJK/Markdown streaming cadence", () => {
   function build30kCjkMarkdownPayload(): string {
     const blockText = "段落正文 ".repeat(400); // ~2000 chars per block
     const blocks = Array.from({ length: 15 }, () => ({
@@ -563,7 +563,7 @@ describe("R0 red-light: 30K CJK/Markdown streaming cadence", () => {
 // R0 red-light: timing metrics contract
 // ---------------------------------------------------------------------------
 
-describe("R0 red-light: timing metrics", () => {
+describe("red-light: timing metrics", () => {
   it("required metric kinds are named", () => {
     const required = new Set([
       "first_reasoning",
@@ -603,7 +603,7 @@ describe("R0 red-light: timing metrics", () => {
 // R3: TurnLifecycleMetrics — frontend per-turn timing metrics
 // ---------------------------------------------------------------------------
 
-describe("R3 TurnLifecycleMetrics", () => {
+describe("TurnLifecycleMetrics", () => {
   it("all metric fields start null", () => {
     const metrics = new TurnLifecycleMetrics(0);
     const snap = metrics.toJSON();
