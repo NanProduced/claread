@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-04（TEST-GOVERNANCE-FOUNDATION-LONG-R1：API 扁平 marker + `--strict-markers` + 任务编号 naming guard；Web naming guard；real-LLM probe 纳入 triple gate）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-EVALS-P2-LONG：API 存量 77 个任务编号测试文件全部改为业务名并补 chain/seam/life marker，test-file allowlist 收缩至 0；evals 非持久化任务码测试函数改业务名；清理 4 条 B905 Ruff 债）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -55,7 +55,7 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
 
-- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号，同时覆盖 snake_case（`d5_`/`d6_i4b` / `t58a` / `round20`）与 CamelCase / UPPER_SNAKE 任务代号（`ReaderD5SchemaHealthReport` / `READER_D5_*` / `READER_D6_*` / `ZPlus*`）。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file 77、production-symbol 24），收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
+- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号，同时覆盖 snake_case（`d5_`/`d6_i4b` / `t58a` / `round20`）与 CamelCase / UPPER_SNAKE 任务代号（`ReaderD5SchemaHealthReport` / `READER_D5_*` / `READER_D6_*` / `ZPlus*`）。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file 0、production-symbol 24；API 测试文件存量已在 P2 全部改名为业务名，allowlist 清空），收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
 - **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的相等 ratchet 规则（上限 1）。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
