@@ -125,6 +125,11 @@ LIMIT 20;
 
 `vocabulary_book.dict_entry_id` 依赖 `dict_entries.id`。词典重导导致 ID 变化时，生词详情可能无法加载完整词条；长期应评估稳定 key 方案。
 
+## 词典恢复脚本与 canonical dump
+
+- canonical dump：`infra/backups/d2_dict_backup.dump`（DATA-D2 期间生成，SHA256 `fbaf2455…8316`，已写入脚本默认值）。该文件被 `.gitignore` 排除，不进版本库，但永远不要删除——它是 `restore_dict_tables.ps1` 的回滚源。
+- `infra/scripts/restore_dict_tables.ps1` 为加固版恢复脚本：先校验 dump SHA256 和 `pg_restore --list` 覆盖面（任何破坏性语句之前），再 TRUNCATE、`--single-transaction` 数据恢复、序列修复，最后跑 `check_dict_integrity.sql`。每个阶段独立原子、显式检查退出码；失败后重跑脚本即回滚路径。
+
 ## 后续可考虑
 
 - 设计 `dict_entry_id` 长期稳定引用策略。
