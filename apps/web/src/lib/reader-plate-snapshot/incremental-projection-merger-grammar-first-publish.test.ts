@@ -9,7 +9,7 @@
  * - Fallback：descriptor 与 next callout-group 不匹配、item_ids 集合不等、
  *   layer_id 不一致、cross-unit、mixed event、fence mismatch、非目标 block 变化、
  *   canonical order 不匹配等 → fallback_full_reload。
- * - 回归：无 P2b 扩展字段的 layer_published 仍走 R2.1E changed-block-only 路径。
+ * - 回归：无 grammar 首发 descriptor 扩展字段的 layer_published 仍走 layer_published changed-block-only 路径。
  */
 
 import type { Descendant } from "platejs";
@@ -25,7 +25,7 @@ import type {
 // 常量
 // ---------------------------------------------------------------------------
 
-const BASE_ID = "base_test_p2c";
+const BASE_ID = "base_test_grammar_first_publish";
 const GENERATION = 1;
 const RECORD_ID = "rec_1";
 const UNIT_ID = "unit_1";
@@ -115,7 +115,7 @@ function makeSentenceAnalysisBlock(
 }
 
 /**
- * 创建 translation blockquote block（用于 R2.1E 回归测试）。
+ * 创建 translation blockquote block（用于 changed-block-only 回归测试）。
  */
 function makeTranslationBlockquote(
   layerId: string,
@@ -179,7 +179,7 @@ function makeBaseSnapshot(
 }
 
 /**
- * 创建 grammar_note 首发 layer_published 事件（携带 P2b 扩展字段）。
+ * 创建 grammar_note 首发 layer_published 事件（携带 grammar 首发 descriptor 扩展字段）。
  * 单 descriptor 版本。
  */
 function makeGrammarFirstPublishEvent(
@@ -275,7 +275,7 @@ function makeGrammarFirstPublishEventMultiDescriptor(
 }
 
 /**
- * 创建无 P2b 扩展字段的 layer_published 事件（用于 R2.1E 回归测试）。
+ * 创建无 grammar 首发 descriptor 扩展字段的 layer_published 事件（用于 changed-block-only 回归测试）。
  */
 function makePlainLayerPublishedEvent(
   layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis",
@@ -310,7 +310,7 @@ function makePlainLayerPublishedEvent(
 }
 
 /**
- * 创建携带 P2b operation 字段但非 grammar_note 的 layer_published 事件
+ * 创建携带 grammar 首发 operation 字段但非 grammar_note 的 layer_published 事件
  * （用于 unsupported_layer_type 测试）。
  */
 function makeNonGrammarP2bEvent(
@@ -831,7 +831,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
 
   it("test_mixed_event_fallback", () => {
     // 2 个事件（grammar_note 首发 + translation）→ detectGrammarFirstPublish
-    // 返回 null（非单一事件），回落到 R2.1E，由结构变化触发 fallback。
+    // 返回 null（非单一事件），回落到 changed-block-only 路径，由结构变化触发 fallback。
     const prevSnapshot = makeBaseSnapshot();
     const nextSnapshot = makeBaseSnapshot();
     const grammarEvent = makeGrammarFirstPublishEvent(
@@ -852,7 +852,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
       makeParagraphBlock("seg_1", UNIT_ID, "source text"),
       makeSentenceAnalysisBlock("seg_1", UNIT_ID),
     ];
-    // next 含新增 callout-group —— R2.1E 检测到目标 unit block 数量变化。
+    // next 含新增 callout-group —— changed-block-only 路径检测到目标 unit block 数量变化。
     const nextChildren = [
       makeParagraphBlock("seg_1", UNIT_ID, "source text"),
       makeCalloutGroupBlock(UNIT_ID, "seg_1", LAYER_ID, [
@@ -955,7 +955,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
   });
 
   it("layer_published without grammar extension fields still uses the changed-block-only path", () => {
-    // 回归：无 P2b 扩展字段的 layer_published 仍走 R2.1E changed-block-only 路径。
+    // 回归：无 grammar 首发 descriptor 扩展字段的 layer_published 仍走 layer_published changed-block-only 路径。
     // 通过构造 translation 同拓扑 revision（产生 targeted_apply replace）来验证
     // 未进入 grammar 首发路径（否则会因找不到 callout-group 而 fallback）。
     const prevSnapshot = makeBaseSnapshot();
@@ -988,7 +988,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
       snapshotFence,
     });
 
-    // 走 R2.1E → targeted_apply replace blockquote；若误进 grammar 首发路径
+    // 走 changed-block-only → targeted_apply replace blockquote；若误进 grammar 首发路径
     // 会 fallback。
     expect(result.kind).toBe("targeted_apply");
     if (result.kind !== "targeted_apply") return;
@@ -1000,7 +1000,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
   });
 
   it("layer_published with grammar extension fields on a non-grammar layer falls back to full reload", () => {
-    // 事件携带 P2b operation 字段但 layer_type === "translation" → fallback
+    // 事件携带 grammar 首发 operation 字段但 layer_type === "translation" → fallback
     // "grammar_first_publish_unsupported_layer_type"。
     const prevSnapshot = makeBaseSnapshot();
     const nextSnapshot = makeBaseSnapshot();

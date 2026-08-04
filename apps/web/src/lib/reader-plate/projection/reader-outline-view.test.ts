@@ -402,7 +402,7 @@ describe("pickReaderOutlineSource (priority seam)", () => {
   });
 });
 
-describe("projectMarkdownOutlineView (B4 implementation)", () => {
+describe("projectMarkdownOutlineView", () => {
   it("returns an unavailable model when there are no navigation units", () => {
     const view = projectMarkdownOutlineView(
       makeSnapshot([], readyOutline()),
@@ -461,7 +461,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.every((i) => i.role === "section")).toBe(true);
     expect(view.panelItems.every((i) => i.parentKey === null)).toBe(true);
     expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
-    // Coverage: h1 covers [h1, p1] (last unit before h2); h2 covers [h2, p2] (last)
+    // Coverage: h1 covers [h1, paragraph-1] (last unit before h2); h2 covers [h2, paragraph-2] (last)
     expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p1" });
     expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p2" });
     // Tick items are depth===1 only.
@@ -508,13 +508,13 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
       makeSnapshot(units, readyOutline()),
       makeDoc(["h1", "h2", "p1", "h3", "p2", "h4", "p3"]),
     );
-    // h1 covers [h1, p2] (everything before h4, the next level-1 heading).
+    // h1 covers [h1, paragraph-2] (everything before h4, the next level-1 heading).
     expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p2" });
-    // h2 covers [h2, p1] (everything before h3, the next level-2 heading).
+    // h2 covers [h2, paragraph-1] (everything before h3, the next level-2 heading).
     expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p1" });
-    // h3 covers [h3, p2] (everything before h4, which is level-1 <= level-2).
+    // h3 covers [h3, paragraph-2] (everything before h4, which is level-1 <= level-2).
     expect(view.panelItems[2]!.coverage).toEqual({ startUnitId: "h3", endUnitId: "p2" });
-    // h4 covers [h4, p3] (last unit).
+    // h4 covers [h4, paragraph-3] (last unit).
     expect(view.panelItems[3]!.coverage).toEqual({ startUnitId: "h4", endUnitId: "p3" });
   });
 

@@ -137,8 +137,8 @@ describe("reader-dom-navigation-adapter (public resolveAndScroll only)", () => {
 
   it("27. scrolls only once on first hit", () => {
     const plate = mountPlateBody();
-    const s1 = addAnchor(plate, "s1");
-    const s2 = addAnchor(plate, "s2");
+    const anchorOne = addAnchor(plate, "s1");
+    const anchorTwo = addAnchor(plate, "s2");
     const u1 = addParagraph(plate, "u1", { unitStart: true });
 
     const adapter = createReaderDomNavigationAdapter(document);
@@ -148,21 +148,21 @@ describe("reader-dom-navigation-adapter (public resolveAndScroll only)", () => {
       { mode: "unit", targetId: "u1" },
     ]);
 
-    expect(s1.scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(s2.scrollIntoView).not.toHaveBeenCalled();
+    expect(anchorOne.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(anchorTwo.scrollIntoView).not.toHaveBeenCalled();
     expect(u1.scrollIntoView).not.toHaveBeenCalled();
   });
 
   it("28. no scroll when nothing matches", () => {
     const plate = mountPlateBody();
-    const s1 = addAnchor(plate, "s1");
+    const anchorOne = addAnchor(plate, "s1");
     const adapter = createReaderDomNavigationAdapter(document);
     const hit = adapter.resolveAndScroll([
       { mode: "anchor_segment", targetId: "missing" },
       { mode: "unit", targetId: "missing-unit" },
     ]);
     expect(hit).toBeNull();
-    expect(s1.scrollIntoView).not.toHaveBeenCalled();
+    expect(anchorOne.scrollIntoView).not.toHaveBeenCalled();
   });
 
   it("SSR/Node: adapter with no Document fail-closes without throw", () => {

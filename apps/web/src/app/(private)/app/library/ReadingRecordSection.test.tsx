@@ -165,7 +165,7 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    // P2 dedup: 1 priority item 出现在顶部 region，主列表里没有重复行
+    // 去重：1 priority item 出现在顶部 region，主列表里没有重复行
     expect(screen.getAllByText("去处理").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
@@ -190,7 +190,7 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    // needs_confirmation 行在顶部 region 渲染 1 次；P2 dedup 后主列表中不再重复
+    // needs_confirmation 行在顶部 region 渲染 1 次；去重后主列表中不再重复
     const ncRow = screen.getByText("First Reading").closest("li");
     expect(ncRow?.querySelector("a")?.getAttribute("href")).toBe(
       "/app/read?resume_candidate=reading_record_1",

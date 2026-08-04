@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 /**
- * R1 Phase 1 — AnalyzeSubmitForm × 真实 MarkdownTextInput 集成红灯测试。
+ * AnalyzeSubmitForm × 真实 MarkdownTextInput 集成红灯测试。
  *
  * AnalyzeSubmitForm.test.tsx 把编辑器 mock 成 textarea，无法覆盖真实
  * contenteditable 的状态一致性。本套件**不做该 mock**：渲染真实 Plate
@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 import { PENDING_CANDIDATE_STORAGE_KEY } from "./pending-candidate";
-import { SUBMIT_TEST_MARKDOWN } from "./submit-test-markdown";
+import { SUBMIT_TEST_MARKDOWN } from "./__tests__/submit-test-markdown";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),

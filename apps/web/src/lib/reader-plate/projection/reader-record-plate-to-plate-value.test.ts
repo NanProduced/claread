@@ -493,7 +493,7 @@ describe("textLeafToPlateTextNode", () => {
   });
 });
 
-// --- B3: inline marks (Markdown bold / italic / strikethrough / code / link) ---
+// --- inline marks (Markdown bold / italic / strikethrough / code / link) ---
 
 function makeInlineMark(
   overrides: Partial<ReaderRecordPlateInlineMark> & {
@@ -600,7 +600,7 @@ describe("inlineMarksToPlateProps", () => {
   });
 });
 
-describe("textLeafToPlateTextNode (B3 inline marks)", () => {
+describe("textLeafToPlateTextNode (inline marks)", () => {
   it("preserves inline marks on text leaf alongside vocabulary marks", () => {
     const vocabMark = makeVocabularyMark({ startsHere: true });
     const leaf = makeTextLeaf({

@@ -1453,7 +1453,7 @@ describe("candidate-confirm route guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// S4: candidate-document read route guard
+// candidate-document read route guard
 // ---------------------------------------------------------------------------
 
 describe("candidate-document read route guard", () => {
@@ -1552,9 +1552,9 @@ describe("CandidateConfirmDialog shape (source guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resume_candidate entry (S4)
+// resume_candidate entry
 //
-// These tests lock in the S4 `?resume_candidate=...` entry path. They are
+// These tests lock in the `?resume_candidate=...` entry path. They are
 // pure DOM-level behavioral tests: window.location.search is set before
 // render, the BFF GET to
 // `/api/web/reader/records/{recordId}/candidate-document` is mocked
@@ -1623,7 +1623,7 @@ function installResumeFetchMock(payload: unknown, status = 200) {
     const url = String(input);
     if (url.includes("/confirmed-source")) {
       // L2 resume 入口先探测 confirmed-source；存量记录返回 404，
-      // 前端回退旧 candidate-document 流（本组 S4 用例锁定的行为）。
+      // 前端回退旧 candidate-document 流（本组用例锁定的行为）。
       return new Response(
         JSON.stringify({
           ok: false,

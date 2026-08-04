@@ -70,7 +70,7 @@ describe("TurnProcessDisclosure — Answer Process surface", () => {
     ).toBeNull();
   });
 
-  it("does not render legacy reasoning fields or fabricate a step at T0", () => {
+  it("does not render legacy reasoning fields or fabricate a step at stream start", () => {
     render(
       <TurnProcessDisclosure
         activity={activity([])}

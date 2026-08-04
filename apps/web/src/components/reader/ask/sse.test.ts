@@ -160,7 +160,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses multi-event chunk with reasoning.delta and message.completed", async () => {
-    // R4-1: message.completed is dispatched only after run_started binds
+    // message.completed is dispatched only after run_started binds
     // the active identity. The helper filters that setup frame from the
     // collected application events.
     const completed = {
@@ -256,7 +256,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses message.completed with full payload", async () => {
-    // R4-1: message.completed must match the identity established by
+    // message.completed must match the identity established by
     // agentic.run_started. The canonical v2 payload shape is used here;
     // the helper injects the matching setup frame.
     const completed = {
@@ -307,7 +307,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses a typed message.interrupted v2 terminal duplicate", async () => {
-    // R4-1: message.interrupted is accepted only as a typed v2 non-ok
+    // message.interrupted is accepted only as a typed v2 non-ok
     // terminal duplicate with a self-consistent identity tuple. The old
     // partial-answer shape is rejected as untrusted.
     const interrupted = {
@@ -334,7 +334,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("rejects legacy message.interrupted without identity as untrusted", async () => {
-    // R4-1: a legacy message.interrupted that carries only content_md and
+    // a legacy message.interrupted that carries only content_md and
     // no identity tuple is NOT a trusted terminal. It MUST NOT be
     // dispatched, MUST NOT mutate UI state, and MUST NOT unlock the
     // composer. The consumer falls through to eof.
@@ -438,7 +438,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses failed agentic terminal and ignores the legacy message.interrupted follow-up", async () => {
-    // R1 contract: agentic.terminal is a trusted terminal. The consumer
+    // contract: agentic.terminal is a trusted terminal. The consumer
     // must cancel the reader immediately and ignore any later frames in
     // the same chunk — including the legacy message.interrupted alias
     // that producers historically emitted as a redundant follow-up.
@@ -477,7 +477,7 @@ describe("consumeReaderAskSse", () => {
   });
 
   it("parses context_stale agentic terminal without treating it as success (late interrupted ignored)", async () => {
-    // R1 contract: only the first trusted terminal is emitted; the
+    // contract: only the first trusted terminal is emitted; the
     // legacy message.interrupted follow-up is dropped.
     const terminal = {
       execution_version: READER_ASK_AGENTIC_EXECUTION_VERSION,
@@ -531,7 +531,7 @@ describe("consumeReaderAskSse", () => {
     expect(reexportedCompletedGuard({ content_md: "legacy" })).toBe(false);
   });
 
-  // R4-1: Terminal identity MUST be verified before any UI mutation.
+  // Terminal identity MUST be verified before any UI mutation.
   // A foreign / stale terminal (whose message_id / thread_id / turn_run_id
   // do not match the active identity captured at agentic.run_started)
   // MUST NOT be dispatched to onEvent, MUST NOT terminate the consumer,
@@ -1041,7 +1041,7 @@ describe("agentic payload type guards", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A1: article_seed evidence wire guard
+// article_seed evidence wire guard
 //
 // article_seed is a new EvidenceKind with provenance `baseline_context`. The
 // strict completed guard must accept legal article_seed evidence items and
@@ -1211,7 +1211,7 @@ describe("agentic payload type guards — article_seed", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A1 rework: strict cold/hot evidence legal-map contract
+// strict cold/hot evidence legal-map contract
 //
 // The guard must reject illegal (kind, source_tool) combinations and
 // rag_citation presence violations on both hot completed (SSE) and cold
@@ -1590,7 +1590,7 @@ describe("agentic evidence legal-map — illegal combinations", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-REASONING-R1: agentic.reasoning.* payload guards
+// agentic.reasoning.* payload guards
 // ---------------------------------------------------------------------------
 
 describe("agentic reasoning payload guards", () => {

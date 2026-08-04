@@ -253,7 +253,7 @@ describe("decidePollingAction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-O4-R2-D: payload-aware representation event classification.
+// Payload-aware representation event classification.
 // These tests verify that decidePollingAction delegates to the
 // payload-aware classifier for representation events (G1/G2/G3) and that
 // invalid payloads / fence mismatches force a reload (never cursor-only).
@@ -537,7 +537,7 @@ describe("decidePollingAction — payload-aware representation events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T2.1 goal #4 / T4.2a-O4-R2-D: reader event payload audit.
+// Reader event payload audit.
 // Enumerate every ReaderEventType and classify it into one of three tiers:
 //
 //   1. Unconditional reload (3 types): always force a snapshot reload
@@ -639,7 +639,7 @@ describe("reader event reload audit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T2.1: hook-level tests for reload cursor semantics.
+// Hook-level tests for reload cursor semantics.
 // The cursor advances to `next_after_sequence` ONLY when `onReloadRequired`
 // resolves to `true` (a fresh snapshot was applied). On `false` (skip /
 // in-flight) or rejection, the cursor stays put so the next tick re-asks

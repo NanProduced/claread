@@ -273,7 +273,7 @@ describe("Source guard: removed pages and old BFF namespaces stay absent", () =>
 });
 
 // ---------------------------------------------------------------------------
-// 4. P-WEB Physical deletion and retained production chain guard
+// 4. Physical deletion and retained production chain guard
 // ---------------------------------------------------------------------------
 
 const PHYSICAL_DELETED_PATHS = [
@@ -366,7 +366,7 @@ const PHYSICAL_RETAINED_PATHS = [
   "tests/e2e/server-setup.ts",
 ] as const;
 
-describe("P-WEB Physical guard: retired clusters stay deleted", () => {
+describe("Physical guard: retired clusters stay deleted", () => {
   it.each(PHYSICAL_DELETED_PATHS)("does not restore deleted path %s", (relativePath) => {
     expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false);
   });

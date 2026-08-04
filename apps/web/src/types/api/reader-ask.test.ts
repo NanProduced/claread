@@ -14,7 +14,7 @@ import {
 } from "@/types/api/reader-ask";
 
 // ---------------------------------------------------------------------------
-// ASK-WEB-G0/G1: web search guard tests
+// Web search guard tests
 //
 // Mirrors backend `services/api/app/services/reader_record_ask/web_search_contracts.py`:
 //   - WebSearchMode: "disabled" | "allowed"

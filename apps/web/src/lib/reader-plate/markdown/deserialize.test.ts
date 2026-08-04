@@ -310,7 +310,7 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
 });
 
 // ===========================================================================
-// R2 Phase 4 — Web-side structural fixtures (deserialize equivalence).
+// Web-side structural fixtures (deserialize equivalence).
 //
 // These fixtures mirror the backend Phase 4 reload tests in
 // `services/api/tests/test_reader_snapshot_stable_block_reload.py` for

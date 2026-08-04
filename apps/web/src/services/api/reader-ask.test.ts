@@ -133,11 +133,11 @@ describe("reader-ask API transport", () => {
       content: "Explain this selection",
       entry_action: "explain_this",
       model: "ask-fast",
-      // ASK-WEB-G1-R2: reader-ask transport always forwards a typed
+      // reader-ask transport always forwards a typed
       // web_search_mode so the host can decide capability without
       // guessing. Default is "disabled" when the caller omits it.
       web_search_mode: "disabled",
-      // ASK-RETRY-CONTRACT-R2: submission identity always forwarded
+      // submission identity always forwarded
       // (null when the caller omits it).
       client_submission_id: null,
       anchor: {
@@ -154,7 +154,7 @@ describe("reader-ask API transport", () => {
         text_hash: "9fd7545a",
         hash_algorithm: "fnv1a32-utf16",
       },
-      // ASK-UX-COT-COMPOSER-R3 P2: the plural contract carries the same
+      // the plural contract carries the same
       // single anchor for a single-selection turn.
       focus_anchors: [
         {

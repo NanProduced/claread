@@ -1,5 +1,5 @@
 /**
- * R4-A6-T3: unit coverage for the Ask Claread user-facing error mapping.
+ * Unit coverage for the Ask Claread user-facing error mapping.
  *
  * The module is the single source of truth for fixed Chinese error copy:
  * terminal_reason / final_status / stream-error-code maps, network vs abort

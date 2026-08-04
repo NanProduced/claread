@@ -1174,7 +1174,7 @@ describe("reader-plate BFF article rag index ensure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Candidate document read (S4: input-page recovery)
+// Candidate document read (input-page recovery)
 // ---------------------------------------------------------------------------
 
 describe("reader-plate BFF candidate document read", () => {
@@ -1877,7 +1877,7 @@ describe("reader-plate BFF confirmed source update", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T5.6c — section translation (synchronous explicit-section command)
+// Section translation (synchronous explicit-section command)
 // ---------------------------------------------------------------------------
 
 function makeSectionTranslationResponse(

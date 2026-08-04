@@ -382,7 +382,7 @@ describe("reduceAgenticActivityEvent", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-WEB-G0/G1: searching_web phase + search_web tool projection
+// searching_web phase + search_web tool projection
 //
 // The web search phase and tool are user-visible progress signals. They must
 // be accepted by the reducer (whitelisted in PHASES / TOOLS) and projected

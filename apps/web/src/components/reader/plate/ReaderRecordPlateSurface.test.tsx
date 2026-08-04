@@ -2875,7 +2875,7 @@ describe("ReaderRecordPlateSurface", () => {
       "[data-reader-record-reading-title]",
     );
     expect(title?.previousElementSibling).toBeNull();
-    // Hero eyebrow 已在 R1 中移除；模式标签只出现在 More Menu 与 action bar tab。
+    // Hero eyebrow 已移除；模式标签只出现在 More Menu 与 action bar tab。
     expect(header.textContent).not.toContain("精读模式 · 2026年6月24日");
     expect(header.textContent).not.toContain("2026年6月24日");
   });
@@ -6665,7 +6665,7 @@ describe("ReaderRecordPlateSurface", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2: Incremental projection merge integration tests
+// Incremental projection merge integration tests
 //
 // Verifies that the Surface correctly wires mergeIncrementalProjection into
 // its value swap effect: targeted_apply uses editor.tf.replaceNodes (non-target
@@ -7123,9 +7123,9 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2.1E: layer_published changed-block-only integration tests.
+// layer_published changed-block-only integration tests.
 //
-// Verifies the Surface correctly applies the R2.1E changed-block-only path
+// Verifies the Surface correctly applies the layer_published changed-block-only path
 // for valid `layer_published` events (same topology revision) and falls back
 // to setValue for structural changes.
 // ---------------------------------------------------------------------------
@@ -7443,7 +7443,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
 
     // Quick Peek anchored on paragraph: targeted_apply on blockquote does NOT
     // close Quick Peek (paragraph block_id !== "paragraph:..." being replaced).
-    // Per R2.1E contract: only target paragraph replacement closes Quick Peek.
+    // Per the changed-block-only contract: only target paragraph replacement closes Quick Peek.
     // Translation revision targets blockquote → Quick Peek should stay open.
     await waitFor(() => {
       const panel = screen.queryByTestId("reader-record-plate-lookup-panel");
@@ -7856,12 +7856,12 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R2.2-P2a: Grammar Callout-Group Identity Stabilization
+// Grammar Callout-Group Identity Stabilization
 //
 // Method A2: group ID = `callout-group:{unitId}:{anchorSegmentId}` (no
 // position index). Cross-anchor callouts are split into independent groups.
 // Tests verify: stable ID, cross-anchor split, unique block IDs, independent
-// expansion, and R2.1E/R2.1C regression safety.
+// expansion, and changed-block-only regression safety.
 // ===========================================================================
 
 function defaultSeg1GrammarMarks(): ReaderGrammarNoteMarkDto[] {
@@ -8491,7 +8491,7 @@ describe("ReaderRecordPlateSurface — grammar group identity", () => {
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R2.2-P2a P1 Evidence: tuple comparison, missing-identity
+// Group identity evidence: tuple comparison, missing-identity
 // conservative behavior, non-contiguous duplicate fail-closed, and global
 // block ID uniqueness.
 //
@@ -8525,7 +8525,7 @@ function makeSyntheticParagraph(id: string): unknown {
 }
 
 describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, fail-closed, uniqueness)", () => {
-  // P1-A: Explicit tuple comparison — different unitId, same anchorSegmentId
+  // Explicit tuple comparison — different unitId, same anchorSegmentId
   // must NOT enter the same group. This proves the grouping condition
   // compares the complete (unitId, anchorSegmentId) tuple, not just
   // anchorSegmentId.
@@ -8552,7 +8552,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(groupBlocks[1]!.id).toBe("callout-group:unit_2:seg_1");
   });
 
-  // P1-B: Missing unitId — conservative fallback behavior.
+  // Missing unitId — conservative fallback behavior.
   it("missing unitId produces non-stable fallback ID, not a fake stable ID", () => {
     const calloutMissingUnitId = makeSyntheticGrammarCallout({
       itemId: "item_missing_unit",
@@ -8571,7 +8571,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(groupBlocks[0]!.id).not.toBe("callout-group::seg_1");
   });
 
-  // P1-C: Missing anchorSegmentId — conservative fallback behavior.
+  // Missing anchorSegmentId — conservative fallback behavior.
   it("missing anchorSegmentId produces non-stable fallback ID, not a fake stable ID", () => {
     const calloutMissingAnchor = makeSyntheticGrammarCallout({
       itemId: "item_missing_anchor",
@@ -8589,7 +8589,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(groupBlocks[0]!.id).not.toBe("callout-group:unit_1:");
   });
 
-  // P1-D: Missing-identity callouts never group with stable-identity
+  // Missing-identity callouts never group with stable-identity
   // callouts, even if adjacent.
   it("missing-identity callout does NOT group with stable-identity callout", () => {
     const stableCallout = makeSyntheticGrammarCallout({
@@ -8614,7 +8614,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(groupBlocks[1]!.id).toContain("fallback");
   });
 
-  // P1-E: Non-contiguous same (unitId, anchorSegmentId) must not create a
+  // Non-contiguous same (unitId, anchorSegmentId) must not create a
   // duplicate group ID or make the Reader unrenderable. The first run keeps
   // its stable group; the later anomalous run remains standalone callouts.
   it("non-contiguous same tuple keeps the article renderable without duplicate group IDs", () => {
@@ -8649,7 +8649,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(new Set(result.map((node) => node.id)).size).toBe(result.length);
   });
 
-  // P1-F: All top-level block IDs in the output are globally unique.
+  // All top-level block IDs in the output are globally unique.
   // This includes both callout-group blocks and non-callout blocks.
   it("all top-level block IDs are globally unique", () => {
     const calloutA = makeSyntheticGrammarCallout({
@@ -8677,7 +8677,7 @@ describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, f
     expect(allIds.length).toBe(uniqueIds.size);
   });
 
-  // P1-G: Multiple fallback (missing-identity) callouts each get unique
+  // Multiple fallback (missing-identity) callouts each get unique
   // fallback IDs — no collision among fallbacks.
   it("multiple missing-identity callouts get unique fallback IDs", () => {
     const missing1 = makeSyntheticGrammarCallout({

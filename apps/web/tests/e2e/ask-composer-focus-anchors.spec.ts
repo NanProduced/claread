@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * ASK-UX-COT-COMPOSER-R3 P3 — Reading Record Ask composer selection
+ * Reading Record Ask composer selection
  * slots + plural focus_anchors transport acceptance.
  *
  * Drives the REAL /app/reader/{recordId} page (native selections
@@ -23,7 +23,7 @@ import { expect, test, type Page } from "@playwright/test";
  *      page identity; chips persist after send.
  *
  * CoT streaming/settled reasoning + expand interactions are covered by
- * ask-chain-of-thought.spec.ts and ask-ux-streaming-delta-r2.spec.ts
+ * the retired ask chain-of-thought and streaming-delta specs
  * (both viewports included there).
  */
 
@@ -42,7 +42,7 @@ const HEADING_TEXT = "Markets reward patience over time.";
 const BLOCKQUOTE_TEXT = "Patience is the quiet engine of sustainable growth.";
 const LIST_ITEM_TEXT = "Compounding turns small gains into large outcomes.";
 
-// Selection phrases (distinct stable segments s1..s4).
+// Selection phrases (distinct stable segments).
 const PHRASE_A = "Institutional memory";
 const PHRASE_B = "Markets reward patience";
 const PHRASE_C = "quiet engine";
@@ -483,7 +483,7 @@ async function mockBff(page: Page, capturedStreamBodies: unknown[]) {
     },
   );
 
-  // Capture the stream request body (the P2 transport under test) and
+  // Capture the stream request body (the transport under test) and
   // answer with a minimal completed SSE so the panel settles cleanly.
   await page.route(
     `**/api/web/reader/records/${RECORD_ID}/ask/threads/${THREAD_ID}/messages/stream**`,
@@ -707,7 +707,7 @@ for (const viewport of [
       const focusAnchors = focusAttachments.map(
         (attachment) => attachment.metadata.reading_record_anchor!,
       );
-      // Auto first, then manuals in pin order: C(s3), B(s2), D(s4).
+      // Auto first, then manuals in pin order.
       expect(focusAnchors.map((a) => a.anchor_segment_id)).toEqual([
         "s3",
         "s2",

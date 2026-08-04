@@ -451,7 +451,7 @@ describe("createNavigateAgenticSource — candidates", () => {
       mode: "anchor_segment",
       targetId: "s2",
     });
-    // Adapter receives full ordered list; first success is s2
+    // Adapter receives full ordered list; first success is the second source
     expect(adapter.calls[0]?.map((c) => c.targetId)).toEqual([
       "s1",
       "s2",
@@ -525,7 +525,7 @@ describe("createNavigateAgenticSource — candidates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A1: article_seed source navigation
+// article_seed source navigation
 //
 // article_seed is a non-RAG evidence kind. When it carries a valid
 // unit_id / anchor_segment_id, it navigates the same way as initial_anchor

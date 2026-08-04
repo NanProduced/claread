@@ -1,5 +1,5 @@
 /**
- * ASK-UX-MOBILE-R0-R2 / Task 3: unit coverage for AskSystemNotice projection
+ * Unit coverage for AskSystemNotice projection
  * functions. Verifies scope, severity, dismissibility, CTA and
  * relatedMessageId binding — and that the `message` field is sourced from
  * ask-error-messages.ts typed copy (never raw error text).

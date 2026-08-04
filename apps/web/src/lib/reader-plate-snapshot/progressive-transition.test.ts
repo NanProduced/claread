@@ -1,5 +1,5 @@
 /**
- * T4.2a-PUX-R1 focused tests: progressive transition fixture / event replay.
+ * Progressive transition fixture / event replay.
  *
  * No real LLM. Pure projection + polling decision contract only.
  */
@@ -168,13 +168,13 @@ describe("canonical progressive transition replay", () => {
 
 describe("stale / duplicate / out-of-order event safety", () => {
   function loadedAtTranslation() {
-    const s1 = makePuxSnapshot({
+    const firstSnapshot = makePuxSnapshot({
       snapshotId: "snap_a",
       lastEventSequence: 1,
       readiness: "article_ready",
       layers: [],
     });
-    const s2 = makePuxSnapshot({
+    const secondSnapshot = makePuxSnapshot({
       snapshotId: "snap_b",
       lastEventSequence: 2,
       readiness: "article_ready",
@@ -183,7 +183,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
     return replayProgressiveSteps([
       {
         kind: "load_snapshot",
-        snapshot: s1,
+        snapshot: firstSnapshot,
         expectPhase: "article_ready_no_layers",
       },
       {
@@ -197,7 +197,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
           ],
         }),
         expectDecision: "reload",
-        snapshotOnReload: s2,
+        snapshotOnReload: secondSnapshot,
         expectCursor: 2,
       },
       {
@@ -325,7 +325,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Interaction preservation pure helpers (T2.1 surface contract)
+// Interaction preservation pure helpers (surface contract)
 // ---------------------------------------------------------------------------
 
 describe("interaction preservation across value swap", () => {

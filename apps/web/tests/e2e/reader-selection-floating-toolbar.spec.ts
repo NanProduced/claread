@@ -9,7 +9,7 @@ import { expect, test, type Page } from "@playwright/test";
  * drag). Plate/Slate intercepts `mousedown` with `preventDefault()` in
  * readonly mode, which blocks the browser from initiating a drag-based text
  * selection, so `selectText()` is the faithful way to create a genuine
- * native browser selection that fires `selectionchange`. It verifies the P0
+ * native browser selection that fires `selectionchange`. It verifies the core
  * fix: the selection-actions toolbar appears after the user selects stable
  * source text, and dismisses on Escape / blank click / out-of-document
  * selection.
@@ -51,7 +51,7 @@ const TRANSLATION_TEXT = "制度记忆以微妙的方式塑造政策选择。";
  * three parallel arrays (`navigation.units`, `anchor_segments`, `value`).
  *
  * `stableBlockType` / `headingLevel` / `contentRole` are camelCase DTO
- * fields on `reader_source_block` (A5/B2 stable block metadata). All other
+ * fields on `reader_source_block` (stable block metadata). All other
  * fields mirror the existing paragraph unit shape.
  */
 function buildStableSourceUnit(params: {

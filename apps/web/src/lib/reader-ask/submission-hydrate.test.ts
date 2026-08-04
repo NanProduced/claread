@@ -1,5 +1,5 @@
 /**
- * ASK-RETRY-CONTRACT-R6 — pure unit coverage for browser path + hydrate
+ * Pure unit coverage for browser path + hydrate
  * target selection (no React / no real network).
  */
 import { describe, expect, it } from "vitest";

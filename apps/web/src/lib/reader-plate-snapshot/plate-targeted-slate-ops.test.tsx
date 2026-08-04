@@ -8,7 +8,7 @@
  * editor.tf.setValue(), WITHOUT rebuilding the entire Slate DOM, and while
  * preserving unrelated component local state.
  *
- * P1 FIX: Previous version rendered a Plate with one editor but operated
+ * Note: an earlier version rendered a Plate with one editor but operated
  * on a DIFFERENT editor created via renderHook. This version uses a single
  * editor exposed via callback from the mounted component, renders real
  * visible Plate content via registered Plate plugins (NOT the renderElement
@@ -314,8 +314,8 @@ describe("mounted Plate targeted Slate ops", () => {
       const { editor, setValueSpy } = await renderMountedPlate(makeInitialValue());
 
       const childrenBefore = editor.children as SpikeValue;
-      const p0Before = childrenBefore[0];
-      const p2Before = childrenBefore[2];
+      const firstBefore = childrenBefore[0];
+      const thirdBefore = childrenBefore[2];
 
       await act(async () => {
         editor.tf.replaceNodes(makeReplacementCallout() as never, { at: [1] } as never);
@@ -327,17 +327,17 @@ describe("mounted Plate targeted Slate ops", () => {
       // L1: Slate model — target replaced, non-target identity preserved.
       const childrenAfter = editor.children as SpikeValue;
       expect(childrenAfter[1]).toEqual(makeReplacementCallout());
-      expect(childrenAfter[0]).toBe(p0Before);
-      expect(childrenAfter[2]).toBe(p2Before);
+      expect(childrenAfter[0]).toBe(firstBefore);
+      expect(childrenAfter[2]).toBe(thirdBefore);
     });
 
     it("updates target DOM text while preserving non-target DOM node identity (isSameNode)", async () => {
       const { editor, setValueSpy, container } = await renderMountedPlate(makeInitialValue());
 
       // Capture non-target DOM nodes BEFORE the op.
-      const p0Before = container.querySelector('[data-spike-node="p"]');
-      expect(p0Before).not.toBeNull();
-      const p0TextBefore = p0Before!.getAttribute("data-spike-text");
+      const firstBefore = container.querySelector('[data-spike-node="p"]');
+      expect(firstBefore).not.toBeNull();
+      const firstTextBefore = firstBefore!.getAttribute("data-spike-text");
 
       // Verify target DOM exists before.
       const calloutBefore = container.querySelector('[data-spike-node="callout"]');
@@ -354,9 +354,9 @@ describe("mounted Plate targeted Slate ops", () => {
       expect(calloutAfter!.textContent).toContain("Updated callout body via targeted op.");
 
       // L2: Non-target DOM node identity preserved — same DOM node.
-      const p0After = container.querySelector('[data-spike-node="p"]');
-      expect(p0Before!.isSameNode(p0After)).toBe(true);
-      expect(p0After!.getAttribute("data-spike-text")).toBe(p0TextBefore);
+      const firstAfter = container.querySelector('[data-spike-node="p"]');
+      expect(firstBefore!.isSameNode(firstAfter)).toBe(true);
+      expect(firstAfter!.getAttribute("data-spike-text")).toBe(firstTextBefore);
     });
   });
 
@@ -368,8 +368,8 @@ describe("mounted Plate targeted Slate ops", () => {
     it("removes and re-inserts target at same path without setValue; non-target DOM preserved", async () => {
       const { editor, setValueSpy, container } = await renderMountedPlate(makeInitialValue());
 
-      const p0Before = container.querySelector('[data-spike-node="p"]');
-      expect(p0Before).not.toBeNull();
+      const firstBefore = container.querySelector('[data-spike-node="p"]');
+      expect(firstBefore).not.toBeNull();
 
       await act(async () => {
         editor.tf.removeNodes({ at: [1] } as never);
@@ -383,8 +383,8 @@ describe("mounted Plate targeted Slate ops", () => {
       expect(calloutAfter!.textContent).toContain("Updated callout body via targeted op.");
 
       // Non-target DOM identity preserved.
-      const p0After = container.querySelector('[data-spike-node="p"]');
-      expect(p0Before!.isSameNode(p0After)).toBe(true);
+      const firstAfter = container.querySelector('[data-spike-node="p"]');
+      expect(firstBefore!.isSameNode(firstAfter)).toBe(true);
     });
   });
 

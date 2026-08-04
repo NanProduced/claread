@@ -2257,7 +2257,7 @@ describe("AiWorkspacePanel", () => {
         });
       expect(retryCall).toBeTruthy();
       expect(String(retryCall?.[0])).not.toContain("/retry/stream");
-      // ASK-WEB-G1-R3: Retry body only carries ``model``. The backend
+      // Retry body only carries ``model``. The backend
       // replays the persisted ``web_search_mode`` from the original user
       // message metadata after ownership verification — no client input
       // for retry capability. The FastAPI ``ReaderAskMessageRetryRequest``
@@ -3017,7 +3017,7 @@ describe("createSseMessageHandler – replan.started", () => {
     });
     flushRaf();
 
-    // ASK-TURN-LIFECYCLE R2 — delta goes into provisional_content_md, not
+    // delta goes into provisional_content_md, not
     // content_md. The old canonical answer is preserved until a new one
     // is committed via message.completed.
     expect(updatedMessages[0].provisional_content_md).toBe("新的开头");
@@ -3403,7 +3403,7 @@ describe("createSseMessageHandler – v2 reasoning firewall", () => {
 });
 
 // ---------------------------------------------------------------------------
-// createSseMessageHandler – learner_reasoning snapshot (R1.2)
+// createSseMessageHandler – learner_reasoning snapshot
 // ---------------------------------------------------------------------------
 
 describe("createSseMessageHandler – learner_reasoning snapshot", () => {
@@ -3683,7 +3683,7 @@ describe("createSseMessageHandler – context compression UX", () => {
     flushRaf();
 
     expect(getMessages()[0].compacting).toBe(false);
-    // ASK-TURN-LIFECYCLE R2 — delta accumulates into provisional_content_md,
+    // delta accumulates into provisional_content_md,
     // not content_md.
     expect(getMessages()[0].provisional_content_md).toBe("开始回答");
     expect(getMessages()[0].content_md).toBe("");
@@ -3945,7 +3945,7 @@ describe("createSseMessageHandler – agentic stream", () => {
       );
     });
     const onAgenticActivity = vi.fn();
-    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // terminal errors now flow through onTerminalNotice
     // (typed fields) instead of onError (formatted string). The panel uses
     // projectTurnTerminalNotice to build the AskSystemNotice from these
     // fields. onError is reserved for legacy stream-level `error` events.
@@ -4009,7 +4009,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.thread_id).toBe("thread-1");
     expect(message.status).toBe("completed");
     expect(message.content_md).toBe("Climate change is discussed in paragraph 2.");
-    // ASK-TURN-LIFECYCLE R2 — canonical answer atomically replaces provisional.
+    // canonical answer atomically replaces provisional.
     // The provisional slot must be cleared on committed terminal.
     expect(message.provisional_content_md).toBeNull();
     expect(message.compacting).toBe(false);
@@ -4065,7 +4065,7 @@ describe("createSseMessageHandler – agentic stream", () => {
 
     const message = getMessages()[0];
     expect(message.status).toBe("failed");
-    // ASK-TURN-LIFECYCLE R2 — non-ok terminal must not preserve provisional
+    // non-ok terminal must not preserve provisional
     // preview as canonical. content_md stays empty, provisional is dropped.
     expect(message.content_md).toBe("");
     expect(message.provisional_content_md).toBeNull();
@@ -4073,7 +4073,7 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(message.replan_status).toBe("idle");
     expect(message.agentic_evidence ?? null).toBeNull();
     expect(message.agentic_evidence_scope ?? null).toBeNull();
-    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // terminal errors now flow through onTerminalNotice
     // (typed fields) instead of onError (formatted string). The formatted
     // message is produced by projectTurnTerminalNotice in the panel, not by
     // the SSE handler.
@@ -4104,12 +4104,12 @@ describe("createSseMessageHandler – agentic stream", () => {
 
     const message = getMessages()[0];
     expect(message.status).toBe("interrupted");
-    // ASK-TURN-LIFECYCLE R2 — non-ok terminal drops provisional preview.
+    // non-ok terminal drops provisional preview.
     // Canonical content_md is preserved from before this turn.
     expect(message.content_md).toBe("should stay");
     expect(message.provisional_content_md).toBeNull();
     expect(message.regenerate_preview).toBe(false);
-    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // terminal errors now flow through onTerminalNotice
     // (typed fields). The formatted "阅读上下文已更新，请重试提问。" message
     // is produced by projectTurnTerminalNotice in the panel, not by the
     // SSE handler.
@@ -4665,7 +4665,7 @@ describe("createSseMessageHandler – agentic stream", () => {
       type: "terminal",
       finalStatus: "failed",
     });
-    // ASK-UX-MOBILE-R3 — terminal errors flow through onTerminalNotice
+    // terminal errors flow through onTerminalNotice
     // (typed fields) instead of onError (formatted string).
     expect(onTerminalNotice).toHaveBeenCalledWith({
       messageId: "msg-failed-1",
@@ -4923,7 +4923,7 @@ describe("AiWorkspacePanel – agentic evidence disclosure", () => {
 
   it("clears agentic evidence on regenerate placeholder before the next stream", async () => {
     // First stream stores agentic evidence; retry should clear it immediately.
-    // Canonical UUID required for regenerate CTA (ASK-RETRY-CONTRACT-R4).
+    // Canonical UUID required for regenerate CTA.
     const canonicalId = "cccccccc-dddd-4eee-8fff-000000000001";
     const completed = { ...agenticCompletedPayload, message_id: canonicalId };
     vi.mocked(consumeReaderAskSse)
@@ -5339,7 +5339,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ASK-WEB-G0/G1: agentic_web_search cold-history normalization
+  // agentic_web_search cold-history normalization
   //
   // Mirrors the hot SSE path: a valid summary must survive normalization on
   // completed turns; non-ok terminals and legacy messages must clear it;
@@ -5699,7 +5699,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
     expect(normalized.agentic_web_search).toBeNull();
   });
 
-  it("ASK-COT: cold history never carries an agentic process snapshot (both branches)", () => {
+  it("cold history never carries an agentic process snapshot (both branches)", () => {
     // Agentic v2 branch.
     const [agenticCold] = normalizeReaderAskMessages([
       createAssistantMessage({
@@ -5738,7 +5738,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ASK-UX-HISTORY-COT-R2 P0-1: cold-loaded user messages must keep their
+  // cold-loaded user messages must keep their
   // content_md. The real persisted shape is: role='user', status='completed',
   // content_md=<user text>, NO execution_version on the message DTO (it lives
   // only in metadata_json as a retry-snapshot marker; the history projector
@@ -5831,7 +5831,7 @@ describe("normalizeReaderAskMessages – agentic history cold reload", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-PROV-P3-R2: v2 inline citations (no fake jump until typed-location adapter)
+// v2 inline citations (no fake jump until typed-location adapter)
 // ---------------------------------------------------------------------------
 
 describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
@@ -5902,7 +5902,7 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A6-T3: terminal_reason classification + raw error containment.
+// terminal_reason classification + raw error containment.
 //
 // terminal_reason must be consumed in production (fixed Chinese copy), raw
 // error strings (Failed to fetch / UnexpectedModelBehavior / backend detail)
@@ -5952,7 +5952,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
       updatedMessages = updater(updatedMessages);
     };
     const onError = vi.fn();
-    // ASK-UX-MOBILE-R3 — terminal errors now flow through onTerminalNotice
+    // terminal errors now flow through onTerminalNotice
     // (typed fields) instead of onError (formatted string). The panel uses
     // projectTurnTerminalNotice to build the AskSystemNotice. The formatted
     // message tests live in ask-system-notice.test.ts.
@@ -5994,7 +5994,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
     (reason, expected) => {
       const { handler, onTerminalNotice } = setupHandler([makeStreamingAssistant()]);
       handler({ event: "agentic.terminal", data: agenticTerminal({ terminal_reason: reason }) });
-      // ASK-UX-MOBILE-R3 — the SSE handler now fires onTerminalNotice with
+      // the SSE handler now fires onTerminalNotice with
       // typed fields (reason string). The formatted Chinese copy is produced
       // by projectTurnTerminalNotice in the panel (tested in
       // ask-system-notice.test.ts). We verify the typed reason is passed
@@ -6015,7 +6015,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
   );
 
   it("unknown terminal_reason: production shows the fallback, DEV shows raw", () => {
-    // ASK-UX-MOBILE-R3 — the SSE handler no longer formats messages. It
+    // the SSE handler no longer formats messages. It
     // passes the raw terminal_reason through onTerminalNotice unchanged,
     // regardless of NODE_ENV. The DEV-vs-production fallback behavior now
     // lives in projectTurnTerminalNotice (tested in ask-system-notice.test.ts).
@@ -6082,7 +6082,7 @@ describe("AiWorkspacePanel – terminal error classification", () => {
     expect(message.status).toBe("interrupted");
     expect(message.final_status).toBe("context_stale");
     expect(message.content_md).toBe("");
-    // ASK-TURN-LIFECYCLE R2 — non-ok terminal drops provisional preview.
+    // non-ok terminal drops provisional preview.
     expect(message.provisional_content_md).toBeNull();
   });
 });
@@ -6164,10 +6164,10 @@ describe("AiWorkspacePanel – error banner and interrupted bubble copy", () => 
 });
 
 // ---------------------------------------------------------------------------
-// ASK-UX-MOBILE R2 — surface capacity gating, turn-scoped notices, panel banner
+// surface capacity gating, turn-scoped notices, panel banner
 // ---------------------------------------------------------------------------
 
-describe("AiWorkspacePanel – ASK-UX-MOBILE surface capacity gating", () => {
+describe("AiWorkspacePanel – surface capacity gating", () => {
   afterEach(() => {
     cleanup();
   });
@@ -6227,7 +6227,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE surface capacity gating", () => {
   });
 });
 
-describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
+describe("AiWorkspacePanel – turn-scoped error notices", () => {
   afterEach(() => {
     cleanup();
   });
@@ -6299,7 +6299,7 @@ describe("AiWorkspacePanel – ASK-UX-MOBILE turn-scoped error notices", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-UX-MOBILE-R3 — canonical notice wiring: live terminal projector,
+// canonical notice wiring: live terminal projector,
 // foreign terminal guard, optional-tool warning, dismiss, CTA semantics.
 // ---------------------------------------------------------------------------
 
@@ -6953,7 +6953,7 @@ describe("AiWorkspacePanel – panel-level notice wiring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-COT — Chain of Thought convergence (B1)
+// Chain of Thought convergence
 //
 // v2 turns converge reasoning + activity into one turn-scoped disclosure:
 // - live: TurnProcessDisclosure driven by the live activity state;
@@ -6963,7 +6963,7 @@ describe("AiWorkspacePanel – panel-level notice wiring", () => {
 // - warnings/errors stay the SystemMessage turn notice's sole property.
 // ---------------------------------------------------------------------------
 
-describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
+describe("AiWorkspacePanel – chain of thought convergence", () => {
   const VERSION = "reader_record_ask_agentic_v2";
 
   afterEach(() => {
@@ -7342,16 +7342,16 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
   });
 
   // -------------------------------------------------------------------------
-  // ASK-UX-HISTORY-COT-R2 P0-3: agentic v2 optimistic message enters
-  // TurnProcessDisclosure at T0 — the moment the bubble is created with a
+  // agentic v2 optimistic message enters
+  // TurnProcessDisclosure at stream start — the moment the bubble is created with a
   // bound (even idle) activity. The old AssistantStreamingIndicator
   // (two-line status card) must NOT flash before the typed disclosure
   // takes over.
   // -------------------------------------------------------------------------
 
-  it("agentic-capable panel renders TurnProcessDisclosure at T0 before run_started (no old status card)", async () => {
+  it("agentic-capable panel renders TurnProcessDisclosure before run_started (no old status card)", async () => {
     // Stall the SSE stream after message.started so the optimistic
-    // assistant message stays in the T0 state: streaming, idle activity,
+    // assistant message stays in the initial state: streaming, idle activity,
     // no execution_version, no snapshot. This is the exact window where
     // the old code flashed AssistantStreamingIndicator before
     // agentic.run_started switched to TurnProcessDisclosure.
@@ -7362,7 +7362,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
       onEvent({ event: "message.started", data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" } });
       // Stall — never fire agentic.run_started. The optimistic message
-      // stays in T0 state.
+      // stays in the initial state.
       await streamReleased;
       onEvent({ event: "message.completed", data: agenticCompletedPayload() });
       return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
@@ -7372,14 +7372,14 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     renderPanel();
     await sendTurn();
 
-    // T0: TurnProcessDisclosure is already rendered with neutral work copy;
+    // Initial state: TurnProcessDisclosure is already rendered with neutral work copy;
     // no future analysis step is fabricated before a typed wire phase.
     const cot = await screen.findByTestId("ask-turn-process");
     expect(cot.getAttribute("data-turn-process-state")).toBe("running");
     expect(cot.textContent).toContain("Ask Claread 正在工作");
     expect(cot.textContent).not.toContain("正在理解问题");
 
-    // The old two-line status card copy must NOT appear at T0.
+    // The old two-line status card copy must NOT appear before run_started.
     expect(screen.queryByText("正在整理问题")).toBeNull();
 
     // Release the stalled stream so the test can complete cleanly.
@@ -7389,7 +7389,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
     });
   });
 
-  it("v2 keeps TurnProcessDisclosure at T0 without a fabricated phase", async () => {
+  it("v2 keeps TurnProcessDisclosure before run_started without a fabricated phase", async () => {
     // A stalled v2 turn must not synthesize an analysis step before a typed
     // progress event proves that phase.
     let releaseStream: () => void = () => {};
@@ -7418,7 +7418,7 @@ describe("AiWorkspacePanel – ASK-COT chain of thought convergence", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ASK-UX-COT-COMPOSER-R3 P1 — Reading Record composer selection slots
+// Reading Record composer selection slots
 // ---------------------------------------------------------------------------
 
 function rrSelectionAttachment(

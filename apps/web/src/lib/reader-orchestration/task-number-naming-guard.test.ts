@@ -2,78 +2,149 @@
 /**
  * Naming governance guard — task numbers are historical tracking
  * metadata, not business identity. This guard prevents their *backflow*
- * into new Web test file names (vitest `*.test.ts(x)` under `src/` and
- * Playwright `*.spec.ts(x)` under `tests/`) and into describe/it/test
- * titles (TEST-GOVERNANCE-WEB-P2).
+ * into Web tests on two fronts:
  *
- * Existing stock lives in TASK_NUMBER_TEST_FILE_ALLOWLIST below. The
- * allowlist is a ratchet: entries may only be REMOVED (when a file is
- * renamed to a business name or deleted); adding new entries fails this
- * suite. Reuses the node:fs scan pattern of
- * reader-orchestration-source-guard.test.ts.
+ * 1. File names: vitest `*.test.ts(x)` under `src/` and Playwright
+ *    `*.spec.ts(x)` under `tests/`. Existing stock lives in
+ *    TASK_NUMBER_TEST_FILE_ALLOWLIST below. The allowlist is a ratchet:
+ *    entries may only be REMOVED (when a file is renamed to a business
+ *    name or deleted); adding new entries fails this suite. Reuses the
+ *    node:fs scan pattern of reader-orchestration-source-guard.test.ts.
+ *
+ * 2. Source lines (fail-closed): every line of every test file is
+ *    scanned. A task code may only appear on an explicit `task-history:`
+ *    line or on a line carrying one of the formal protocol/fixture
+ *    identities listed in CODE_IDENTITY_ALLOWLIST (equality ratchet).
  *
  * Exempt by design (product/persisted identity, not task numbers):
- * `-v2` product versions (reader-ask-v2), article grades (`-g5-`), and
- * domain terms such as `l1-heading`.
+ * `-v2` product versions (reader-ask-v2), article grades (`-g5-`),
+ * domain terms such as `l1-heading`, and representation-event contract
+ * names such as G1/G2/G3 — none of these match the task-code regexes.
  */
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 
-// Task-number signature in hyphen/underscore-separated Web names
-// (audit 2026-07-23 §1.1-10). `r[0-9]` covers `-r0`, `-r2-1d`, `-r3-r1`.
+// Task-number signature in Web test file names. Hyphen, underscore and
+// dot separators are all recognized so no separator style can bypass
+// the guard.
 const TASK_NUMBER_NAME_RE =
-  /[-_](?:d6[-_]|a[345][-_]|t5[0-9]|t6[0-9]|r[0-9][0-9a-z._-]*|p[0-9][a-z]?|s[0-9][a-z]?|round[0-9]+|lp-r[0-9])/;
+  /[-_.](?:d6[-_.]|a[345][-_.]|t5[0-9]|t6[0-9]|r[0-9][0-9a-z._-]*|p[0-9][a-z]?|s[0-9][a-z]?|round[0-9]+|lp-r[0-9])/;
 
 // Existing stock of task-numbered test files (relative to apps/web).
 // RATCHET: only shrink this list. Renamed/deleted files must have their
 // entry removed in the same change; new task-numbered file names are
 // forbidden and must be renamed to business names instead. The stock is
-// now empty: the last file was renamed to a business name in
-// TEST-GOVERNANCE-WEB-P2, and the ceiling was lowered to 0 in the same
-// change.
+// empty: every stock file has been renamed to a business name and the
+// ceiling is 0.
 const TASK_NUMBER_TEST_FILE_ALLOWLIST = [] as const;
 
-// Ratchet ceiling (GOVERNANCE-CLOSEOUT-R1): equality ratchet — the
-// allowlist size must match exactly, so a shrunk list can never grow
-// back. Every governance rename lowers the ceiling in the same change.
+// Ratchet ceiling: equality ratchet — the allowlist size must match
+// exactly, so a shrunk list can never grow back. Every governance
+// rename lowers the ceiling in the same change.
 const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 0;
 
-// Task-number scan for describe/it/test titles (TEST-GOVERNANCE-WEB-P2).
-// Same code family as file names; titles keep the same exemptions
-// (product versions, article grades, domain terms), plus a small identity
-// allowlist for persisted fixture names referenced from titles.
-// Known gap: titles assembled from it.each tables or string concatenation
-// are not scanned — direct string-literal titles are the contract.
-const TASK_NUMBER_TITLE_RE =
-  /\b(?:d6[-_]|a[345][-_]|t5[0-9]|t6[0-9]|r[0-9][0-9a-z._-]*|p[0-9][a-z]?(?![a-z0-9])|s[0-9][a-z]?(?![a-z0-9])|round[0-9]+|lp-r[0-9])/i;
+// Fail-closed source scan: task-code token shapes (round/phase/stage/
+// batch/task letters followed by a digit, plus epic prefixes).
+// Deliberately excludes formal identity shapes that never carry
+// tracking meaning: product versions (v2), article grades (g5),
+// navigation levels (l1-heading), representation-event contract groups
+// (G1/G2/G3).
+const TASK_CODE_LINE_RE =
+  /\b(?:b|p|r|s|t)[0-9]|\bd6[-_.]|\ba[345][-_.]|\bround[0-9]|\blp-r[0-9]/i;
 
-// Business identities that legitimately carry a task-number-shaped token
-// inside a title. RATCHET: only shrink.
-const TITLE_IDENTITY_ALLOWLIST = ["r14_complex"] as const;
-const TITLE_IDENTITY_ALLOWLIST_CEILING = 1;
+// Epic/project prefixes match case-sensitively: lowercase `ask-*` model
+// keys, testids and `data-ask-*` markers are product identities, not
+// task codes.
+const TASK_CODE_EPIC_RE = /ASK-[A-Z0-9]/;
 
-const TITLE_CALL_RE = /\b(?:describe|it|test)(?:\.[a-zA-Z]+)*\s*\(\s*(["'`])/;
+// Formal protocol/fixture identities that legitimately carry a
+// task-code-shaped token on a test source line. RATCHET: only shrink;
+// every entry must still appear in a scanned test source.
+const CODE_IDENTITY_ALLOWLIST = [
+  // The file-name regex literal above (guard self-match).
+  "t5[0-9]|t6[0-9]",
+  // Structured-source renderer fixture name (fixture identity).
+  "r14_complex",
+  // Quoted synthetic fixture ids asserted across reader/ask suites:
+  // sentence/paragraph/block ids, library stub titles, article
+  // difficulty grades, and one fixture record title.
+  '"s1"',
+  '"s2"',
+  '"s3"',
+  '"s4"',
+  '"s9"',
+  '"p1"',
+  '"p2"',
+  '"p3"',
+  '"p4"',
+  '"t1"',
+  '"r1"',
+  '"P1"',
+  '"P2"',
+  '"P3"',
+  '"P4"',
+  '"b1"',
+  '"B1"',
+  '"B2"',
+  '"R1 submit"',
+  "'r1'",
+  "&quot;r1&quot;",
+  // Composite annotation target keys built from those sentence ids.
+  "record-1:sentence:s1",
+  "record-1:range:s1",
+  "record-1:range:s2",
+  // Dictionary request keys and outline node testids built from them.
+  "context::record-1::s1",
+  "reader-record-outline-node-s2",
+  // Reader route URL fixtures (settings dialog history tests).
+  "/app/reader/r1",
+  // Selector-injection attack payload fixture (data value, not a title).
+  "evilId = 's1",
+  // Inline-marks projection fixture record title.
+  '"R1 Inline Marks Fixture"',
+  // Structured-source / projection fixture block ids (field-anchored).
+  'block_id: "b',
+  'parent_block_id: "b',
+  'data-block-id="b',
+  'stableBlockId: "b',
+  // Snapshot/segment fixture ids (field-anchored) plus two exact values.
+  'snapshotId: "s',
+  '"s5_accepted"',
+  'segmentId: "s',
+  "deterministic-e2e-r0",
+  // Retired e2e/config paths the source guard asserts stay deleted.
+  "playwright.ask-activity-r2.config.ts",
+  "playwright.ask-process-target-r0.config.ts",
+  "playwright.ask-retry-r7.config.ts",
+  "tests/e2e/ask-activity-r2-server-setup.ts",
+  "tests/e2e/ask-retry-r7-server-setup.ts",
+  "src/lib/reader-ask/ask-activity-r2-server-setup.test.ts",
+  "tests/e2e/ask-retry-submission-r5.spec.ts",
+  "tests/e2e/ask-retry-submission-r6.spec.ts",
+  "tests/e2e/ask-retry-submission-r7.spec.ts",
+  "tests/e2e/ask-ux-mobile-r3-floating-overlay.spec.ts",
+  "tests/e2e/ask-ux-streaming-delta-r2.spec.ts",
+  "tests/e2e/plate-grammar-callout-state-r2-1c.spec.ts",
+  "tests/e2e/plate-surface-grammar-expansion-scroll-anchor-r3-r2.spec.ts",
+  "tests/e2e/plate-surface-grammar-first-publish-p2c.spec.ts",
+  "tests/e2e/plate-surface-grammar-group-identity-p2a.spec.ts",
+  "tests/e2e/plate-surface-incremental-r2-1d.spec.ts",
+  "tests/e2e/plate-surface-l1-heading-navigation-t5-1d.spec.ts",
+  "tests/e2e/plate-surface-layer-revision-r2-1e.spec.ts",
+  "tests/e2e/plate-surface-quick-peek-reanchor-r3-r1.spec.ts",
+  "tests/e2e/plate-surface-section-translation-t5-6c.spec.ts",
+  "tests/e2e/plate-surface-semantic-outline-t5-5a.spec.ts",
+  "tests/e2e/plate-targeted-ops-s2.spec.ts",
+  "tests/e2e/reader-record-ask-agentic-activity-r2.spec.ts",
+  "tests/e2e/reader-record-ask-process-target-r0.spec.ts",
+  "tests/e2e/reader-record-rail-stable-progress-quiet-t5-1e.spec.ts",
+  "ask-activity-r2",
+  "ask-retry-r7",
+] as const;
 
-function extractTitle(line: string): string | null {
-  const match = TITLE_CALL_RE.exec(line);
-  if (!match) return null;
-  const quote = match[1];
-  const start = match.index + match[0].length;
-  let end = start;
-  while (end < line.length) {
-    const ch = line[end];
-    if (ch === "\\") {
-      end += 2;
-      continue;
-    }
-    if (quote === "`" && ch === "$" && line[end + 1] === "{") break;
-    if (ch === quote) break;
-    end += 1;
-  }
-  return line.slice(start, end);
-}
+const CODE_IDENTITY_ALLOWLIST_CEILING = 66;
 
 const SCAN_ROOTS = ["src", "tests"] as const;
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
@@ -110,7 +181,7 @@ function listTestFiles(rootDir: string): string[] {
   return results;
 }
 
-describe("Naming governance guard: task-numbered Web test file names", () => {
+describe("Naming governance guard: task numbers stay out of Web test names and sources", () => {
   const scannedFiles: string[] = [];
   for (const root of SCAN_ROOTS) {
     scannedFiles.push(...listTestFiles(root));
@@ -150,50 +221,40 @@ describe("Naming governance guard: task-numbered Web test file names", () => {
     },
   );
 
-  // --- Title scan (TEST-GOVERNANCE-WEB-P2) ---
-  const scannedTitles: { file: string; title: string }[] = [];
+  // --- Fail-closed source line scan ---
+  const scannedLines: { file: string; line: number; text: string }[] = [];
   for (const file of scannedFiles) {
-    const content = readFileSync(file, "utf8");
-    for (const line of content.split("\n")) {
-      const title = extractTitle(line);
-      if (title !== null) {
-        scannedTitles.push({ file, title });
-      }
-    }
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((text, index) => {
+      scannedLines.push({ file, line: index + 1, text });
+    });
   }
 
-  const titleViolations = scannedTitles.filter(
-    ({ title }) =>
-      TASK_NUMBER_TITLE_RE.test(title) &&
-      !TITLE_IDENTITY_ALLOWLIST.some((identity) => title.includes(identity)),
+  const codeLines = scannedLines.filter(
+    ({ text }) =>
+      !text.includes("task-history:") &&
+      (TASK_CODE_LINE_RE.test(text) || TASK_CODE_EPIC_RE.test(text)) &&
+      !CODE_IDENTITY_ALLOWLIST.some((identity) => text.includes(identity)),
   );
 
-  it("scanned at least one Web test title (title guard is not vacuous)", () => {
-    expect(scannedTitles.length).toBeGreaterThan(0);
-  });
-
-  it("no new task-numbered test titles outside the allowed identities", () => {
+  it("no task codes in test sources outside task-history lines and listed identities", () => {
     expect(
-      titleViolations.map(
-        (violation) => `${violation.file}: ${violation.title}`,
-      ),
-      "new task-numbered test titles are forbidden; rename the title to a " +
-        "business description instead of allowlisting",
+      codeLines.map((hit) => `${hit.file}:${hit.line}: ${hit.text.trim()}`),
+      "task codes may only survive on task-history lines or on lines " +
+        "carrying a listed formal protocol/fixture identity",
     ).toEqual([]);
   });
 
-  it("title identity allowlist size equals its ratchet ceiling", () => {
-    expect(TITLE_IDENTITY_ALLOWLIST.length).toBe(
-      TITLE_IDENTITY_ALLOWLIST_CEILING,
-    );
+  it("code identity allowlist size equals its ratchet ceiling", () => {
+    expect(CODE_IDENTITY_ALLOWLIST.length).toBe(CODE_IDENTITY_ALLOWLIST_CEILING);
   });
 
-  it.each(TITLE_IDENTITY_ALLOWLIST)(
-    "allowed title identity %s still appears in a scanned title (ratchet only shrinks)",
+  it.each(CODE_IDENTITY_ALLOWLIST)(
+    "listed code identity %s still appears in a scanned test source (ratchet only shrinks)",
     (identity) => {
       expect(
-        scannedTitles.some(({ title }) => title.includes(identity)),
-        `remove stale title identity allowlist entry ${identity}`,
+        scannedLines.some(({ text }) => text.includes(identity)),
+        `remove stale code identity allowlist entry ${identity}`,
       ).toBe(true);
     },
   );
