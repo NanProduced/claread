@@ -213,7 +213,7 @@ describe("needs_confirmation 恢复入口", () => {
   });
 });
 
-describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
+describe("去重 — 主列表排除已置顶的前 3 条", () => {
   it("4 priority + 1 non-priority → 顶部 3 + 主列表 2 (1 priority + 1 non-priority)", () => {
     render(
       <ReadingRecordSection

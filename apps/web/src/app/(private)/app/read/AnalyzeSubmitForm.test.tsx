@@ -1456,7 +1456,7 @@ describe("candidate-confirm route guard", () => {
 // S4: candidate-document read route guard
 // ---------------------------------------------------------------------------
 
-describe("candidate-document read route guard (S4)", () => {
+describe("candidate-document read route guard", () => {
   const ROUTE_PATH =
     "src/app/api/web/reader/records/[recordId]/candidate-document/route.ts";
 
@@ -1503,7 +1503,7 @@ describe("confirmed-source route guard (L2)", () => {
 describe("pending-candidate helper shape (source guard)", () => {
   const HELPER_PATH = "src/app/(private)/app/read/pending-candidate.ts";
 
-  it("exposes the unified handoff fields required by F3 (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
+  it("exposes the unified handoff fields (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
     const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
     expect(source).toContain("readingRecordId");
     expect(source).toContain("candidateDocumentId");
@@ -1652,7 +1652,7 @@ function setLocationSearch(search: string) {
   window.history.replaceState({}, "", url.toString());
 }
 
-describe("resume_candidate entry (S4)", () => {
+describe("resume_candidate entry", () => {
   it("200 with full_text preview opens the dialog in resume mode and does not prefill the textarea", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
     installResumeFetchMock(makeResumeResponse("full_text"));

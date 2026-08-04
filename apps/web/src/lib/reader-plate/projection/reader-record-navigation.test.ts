@@ -303,8 +303,8 @@ describe("buildReaderRecordNavigationItems", () => {
   });
 });
 
-describe("L1 navigation projection (T5.1c)", () => {
-  it("F1: heading-rich projects L1 with heading-only rows and closed coverage", () => {
+describe("L1 navigation projection", () => {
+  it("heading-rich projects L1 with heading-only rows and closed coverage", () => {
     const units = headingRichUnits();
     const snapshot = makeSnapshot(units);
     const document = docFromUnits(units);
@@ -338,7 +338,7 @@ describe("L1 navigation projection (T5.1c)", () => {
     expect(projection.l1Items?.[0]).not.toHaveProperty("children");
   });
 
-  it("F2: pure-body stays L0 with full unit list", () => {
+  it("pure-body stays L0 with full unit list", () => {
     const units: SnapshotUnitInput[] = Array.from({ length: 6 }, (_, i) => ({
       unit_id: `u${i + 1}`,
       order_index: i + 1,
@@ -357,7 +357,7 @@ describe("L1 navigation projection (T5.1c)", () => {
     );
   });
 
-  it("F3: heading + list/quote/body only lists headings; coverage includes non-heading", () => {
+  it("heading + list/quote/body only lists headings; coverage includes non-heading", () => {
     const units: SnapshotUnitInput[] = [
       { unit_id: "u1", order_index: 1, unit_type: "body", label: null },
       { unit_id: "u2", order_index: 2, unit_type: "heading", label: "Intro" },
@@ -376,7 +376,7 @@ describe("L1 navigation projection (T5.1c)", () => {
     expect(projection.l1Items?.[1]?.coveredUnitIds).toEqual(["u5", "u6"]);
   });
 
-  it("F4: single heading with unit_count < 6 stays L0", () => {
+  it("single heading with unit_count < 6 stays L0", () => {
     const units: SnapshotUnitInput[] = [
       { unit_id: "u1", order_index: 1, unit_type: "heading", label: "Only" },
       { unit_id: "u2", order_index: 2, unit_type: "body", label: null },
@@ -425,7 +425,7 @@ describe("L1 navigation projection (T5.1c)", () => {
     expect(projectReaderRecordNavigation(snapshot, document).mode).toBe("L0");
   });
 
-  it("F5: empty navigation.units with document paragraphs forces L0 (no L1 guess)", () => {
+  it("empty navigation.units with document paragraphs forces L0 (no L1 guess)", () => {
     const snapshot = makeSnapshot([]);
     const document = makeDocument([
       makeParagraph("unit_first", "First paragraph."),
@@ -443,7 +443,7 @@ describe("L1 navigation projection (T5.1c)", () => {
     expect(buildReaderRecordL1NavigationItems(snapshot, document)).toEqual([]);
   });
 
-  it("F6: empty nav + empty document yields empty items (rail will not render)", () => {
+  it("empty nav + empty document yields empty items (rail will not render)", () => {
     const snapshot = makeSnapshot([]);
     const document = makeDocument([]);
     const projection = projectReaderRecordNavigation(snapshot, document);

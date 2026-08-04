@@ -1634,7 +1634,7 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
 // the snapshot carried the marks).
 // ---------------------------------------------------------------------------
 
-describe("R1 stable paragraph inline marks projection", () => {
+describe("stable paragraph inline marks projection", () => {
   const EM_TEXT = "How we will roll this out safely.";
   const EM_END = EM_TEXT.length;
 

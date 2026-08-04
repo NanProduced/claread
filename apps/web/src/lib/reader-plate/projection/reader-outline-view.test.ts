@@ -581,7 +581,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
   });
 
-  it("P0: treats unit_type === 'heading' as a heading even without stable_block_type (legacy heuristic path)", () => {
+  it("treats unit_type === 'heading' as a heading even without stable_block_type (legacy heuristic path)", () => {
     // Legacy snapshot: _classify_unit_type heuristically detected headings,
     // so unit_type === "heading" but stable_block_type is null and
     // heading_level is null. The frontend must still project these so the
@@ -602,7 +602,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.title)).toEqual(["Intro", "Body"]);
   });
 
-  it("P0: defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
+  it("defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
     // Defensive case: A5 annotation marked the block as heading but the
     // payload did not carry a level. Should still project at level 1
     // instead of being skipped.
@@ -618,7 +618,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
   });
 
-  it("P0: prefers explicit heading_level over the default-1 fallback when unit_type is heading", () => {
+  it("prefers explicit heading_level over the default-1 fallback when unit_type is heading", () => {
     const units: UnitIn[] = [
       { unit_id: "h1", order_index: 1, unit_type: "heading", heading_level: 2, label: "Sub" },
       { unit_id: "h2", order_index: 2, unit_type: "heading", heading_level: 3, label: "SubSub" },
@@ -631,7 +631,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.depth)).toEqual([2, 3]);
   });
 
-  it("P0: does not double-count a unit that has both unit_type and stable_block_type set to heading", () => {
+  it("does not double-count a unit that has both unit_type and stable_block_type set to heading", () => {
     const units: UnitIn[] = [
       {
         unit_id: "h1",

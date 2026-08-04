@@ -613,7 +613,7 @@ for (const viewport of [
   { width: 1440, height: 900 },
   { width: 390, height: 844 },
 ]) {
-  test.describe(`ASK-UX-COT-COMPOSER-R3 P3 focus anchors @ ${viewport.width}x${viewport.height}`, () => {
+  test.describe(`Ask composer focus anchors @ ${viewport.width}x${viewport.height}`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize(viewport);
     });

@@ -1177,7 +1177,7 @@ describe("reader-plate BFF article rag index ensure", () => {
 // Candidate document read (S4: input-page recovery)
 // ---------------------------------------------------------------------------
 
-describe("reader-plate BFF candidate document read (S4)", () => {
+describe("reader-plate BFF candidate document read", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getWebSession).mockResolvedValue(mockSession);
@@ -1891,7 +1891,7 @@ function makeSectionTranslationResponse(
   };
 }
 
-describe("reader-plate BFF section translation (T5.6c)", () => {
+describe("reader-plate BFF section translation", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getWebSession).mockResolvedValue(mockSession);

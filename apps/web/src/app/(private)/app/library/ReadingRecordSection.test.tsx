@@ -153,7 +153,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.queryByText("可读·增强中")).toBeNull();
   });
 
-  it("renders 去处理 CTA for action_required records (priority region only after P2 dedup)", () => {
+  it("renders 去处理 CTA for action_required records (priority region only after dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -218,7 +218,7 @@ describe("ReadingRecordSection", () => {
     expect(within(arRow as HTMLElement).getByText("去处理")).toBeTruthy();
   });
 
-  it("renders 查看详情 CTA for failed records (priority region only after P2 dedup)", () => {
+  it("renders 查看详情 CTA for failed records (priority region only after dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[

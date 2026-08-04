@@ -202,7 +202,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
 // 7. 大文本（30k+ 字符）不崩溃且只 fire 一次。
 // ===========================================================================
 
-describe("MarkdownTextInput scheduling & lifecycle (R2 Phase 2/3)", () => {
+describe("MarkdownTextInput scheduling & lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -514,7 +514,7 @@ describe("MarkdownTextInput scheduling & lifecycle (R2 Phase 2/3)", () => {
   });
 });
 
-describe("R2R Phase 0/3: Strict Mode safety", () => {
+describe("Strict Mode safety", () => {
   it("onDegraded fires exactly once under <StrictMode>", async () => {
     const onDegraded = vi.fn();
     const { container } = render(
@@ -542,7 +542,7 @@ describe("R2R Phase 0/3: Strict Mode safety", () => {
   });
 });
 
-describe("R2R Phase 0/3: real serialize round-trip", () => {
+describe("real serialize round-trip", () => {
   it("Markdown → Plate → Markdown round-trip preserves h1-h3, nested list, code fence language, blockquote", async () => {
     const { ref } = renderEditor();
 

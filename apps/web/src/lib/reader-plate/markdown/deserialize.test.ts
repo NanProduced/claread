@@ -326,7 +326,7 @@ describe("deserializeMarkdownToBlocksWithStatus", () => {
 // so the input page can render pasted tables WYSIWYG before submit.
 // ===========================================================================
 
-describe("R2 Phase 4: structural fixtures (deserialize equivalence)", () => {
+describe("structural fixtures (deserialize equivalence)", () => {
   describe("fenced code block with language", () => {
     it("deserializes ```python fence into code_block with code_line children", () => {
       const md = "```python\ndef hello():\n    print(\"hi\")\n```\n";

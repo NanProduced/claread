@@ -533,7 +533,7 @@ describe("createNavigateAgenticSource — candidates", () => {
 // It must not be confused with search_hit (no ragNavigation expected).
 // ---------------------------------------------------------------------------
 
-describe("createNavigateAgenticSource — article_seed (R4-A1)", () => {
+describe("createNavigateAgenticSource — article_seed", () => {
   function seedSource(
     overrides: Partial<AgenticSourceDescriptor> = {},
   ): AgenticSourceDescriptor {
@@ -681,7 +681,7 @@ describe("createNavigateAgenticSource — privacy / interface", () => {
 });
 
 describe("createNavigateAgenticSource — SSR / loader resilience", () => {
-  it("P0: factory without domAdapter is safe under Node (no document at construct)", async () => {
+  it("factory without domAdapter is safe under Node (no document at construct)", async () => {
     // This file uses the default vitest environment (node) — no jsdom.
     // Constructing without injecting domAdapter must not throw ReferenceError.
     let navigate!: NavigateAgenticSource;
@@ -700,7 +700,7 @@ describe("createNavigateAgenticSource — SSR / loader resilience", () => {
     });
   });
 
-  it("P1: identity loader rejection → page_identity_incomplete; DOM not called; no leak", async () => {
+  it("identity loader rejection → page_identity_incomplete; DOM not called; no leak", async () => {
     const secret = "SECRET_LOADER_STACK_TRACE_xyz";
     const adapter = firstCandidateAdapter();
     const navigate = createNavigateAgenticSource({

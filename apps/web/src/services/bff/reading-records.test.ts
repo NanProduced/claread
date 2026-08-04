@@ -188,7 +188,7 @@ describe("reading-records BFF list", () => {
     }
   });
 
-  it("does not leak raw source_metadata to the browser VM (P1-2)", async () => {
+  it("does not leak raw source_metadata to the browser VM", async () => {
     // The upstream API may still return source_metadata for backward
     // compat, but the BFF VM must NOT include it. Simulate an upstream
     // response with secret metadata and verify the VM is clean.
