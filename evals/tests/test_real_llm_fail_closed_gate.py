@@ -9,10 +9,11 @@ driven directly with stub request/config objects:
    ``CLAREAD_ALLOW_REAL_LLM_TESTS=1``, non-empty
    ``CLAREAD_REAL_LLM_MODEL``, and a mark expression that is exactly
    ``real_llm``.
-2. When the gate is closed, a blocked real-provider attempt recorded
-   through ``app.llm.call_guard`` (the exact call every patched
-   provider boundary stub makes) fails the test at teardown and the
-   failure reports the attempt surface.
+2. When the gate is closed, touching the REAL patched provider
+   boundary (``app.llm.structured_completion.httpx.AsyncClient``)
+   raises ``RealLLMCallBlockedError`` and fails the test at teardown,
+   reporting the attempt surface. This scenario skips in minimal
+   environments where the boundary is not importable.
 3. With all three gates open the fixtures permit entry — and this test
    still never touches a real provider.
 """
@@ -43,6 +44,15 @@ if call_guard is None:
         "services/api app.llm.call_guard unavailable",
         allow_module_level=True,
     )
+
+# Real production provider boundary used by the blocked-attempt
+# scenario. Importable only where the services/api third-party deps
+# exist (e.g. the services/api venv); in minimal evals environments the
+# boundary cannot be reached at all and that scenario skips.
+try:
+    from app.llm import structured_completion
+except ImportError:
+    structured_completion = None
 
 
 def _request_stub(*, marked: bool, markexpr: str) -> SimpleNamespace:
@@ -75,9 +85,7 @@ def _set_gate_env(
         monkeypatch.delenv(_MODEL_ENV, raising=False)
 
 
-def _expect_skip_reason(
-    monkeypatch: pytest.MonkeyPatch, *, markexpr: str
-) -> str:
+def _expect_skip_reason(*, markexpr: str) -> str:
     with pytest.raises(pytest.skip.Exception) as excinfo:
         conftest.skip_real_llm_tests.__wrapped__(
             _request_stub(marked=True, markexpr=markexpr)
@@ -104,14 +112,14 @@ class TestTripleGateSkipSemantics:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _set_gate_env(monkeypatch, allow=False, model=True)
-        reason = _expect_skip_reason(monkeypatch, markexpr="real_llm")
+        reason = _expect_skip_reason(markexpr="real_llm")
         assert _ALLOW_ENV in reason
 
     def test_missing_model_env_skips(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _set_gate_env(monkeypatch, allow=True, model=False)
-        reason = _expect_skip_reason(monkeypatch, markexpr="real_llm")
+        reason = _expect_skip_reason(markexpr="real_llm")
         assert _MODEL_ENV in reason
 
     def test_inexact_markexpr_skips(
@@ -119,7 +127,7 @@ class TestTripleGateSkipSemantics:
     ) -> None:
         _set_gate_env(monkeypatch, allow=True, model=True)
         for markexpr in ("", "not real_llm", "real_llm and seam_pure_unit"):
-            reason = _expect_skip_reason(monkeypatch, markexpr=markexpr)
+            reason = _expect_skip_reason(markexpr=markexpr)
             assert "-m real_llm" in reason
 
 
@@ -147,13 +155,20 @@ class TestGateOpenEntry:
 
 
 class TestBlockedAttemptFailClosed:
-    """Scenario 2 — a closed-gate test touching a blocked provider
-    boundary fails and reports the attempt. ``block_real_llm_attempt``
-    is exactly what every patched boundary stub calls."""
+    """Scenario 2 — with the gate closed, touching the REAL patched
+    provider boundary fails the test and reports the attempt. The
+    boundary is exercised through the monkeypatch the conftest fixture
+    actually installed, not through the guard registry directly."""
+
+    _SURFACE = "app.llm.structured_completion.httpx.AsyncClient"
 
     def test_blocked_attempt_fails_teardown_and_reports_surface(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        if structured_completion is None:
+            pytest.skip(
+                "provider boundary not importable in this environment"
+            )
         _set_gate_env(monkeypatch, allow=False, model=False)
         mp = pytest.MonkeyPatch()
         try:
@@ -161,14 +176,14 @@ class TestBlockedAttemptFailClosed:
                 mp, _request_stub(marked=False, markexpr="")
             )
             next(gen)
-            surface = "evals.fail_closed.regression_probe"
+            # Touch the real boundary the fixture just patched.
             with pytest.raises(call_guard.RealLLMCallBlockedError):
-                call_guard.block_real_llm_attempt(surface)
+                structured_completion.httpx.AsyncClient()
             with pytest.raises(pytest.fail.Exception) as excinfo:
                 next(gen)
             message = str(excinfo.value)
             assert "attempted to call a real LLM provider" in message
-            assert surface in message
+            assert self._SURFACE in message
         finally:
             mp.undo()
 
