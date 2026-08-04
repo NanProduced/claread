@@ -100,9 +100,9 @@ class FeedbackResponse(BaseModel):
     """POST /feedback — submit response."""
 
     id: UUID
-    feedback_scope: str
+    feedback_scope: FeedbackScope
     target_id: str
-    sentiment: str
+    sentiment: Sentiment
     feedback_type: str
     client_platform: ClientPlatform
     client_surface: str | None = None
@@ -118,9 +118,9 @@ class FeedbackListItem(BaseModel):
     """GET /feedback — list item."""
 
     id: UUID
-    feedback_scope: str
+    feedback_scope: FeedbackScope
     feedback_type: str
-    sentiment: str
+    sentiment: Sentiment
     content: str | None
     context_summary: str | None = None
     client_platform: ClientPlatform

@@ -167,3 +167,36 @@ async def test_credit_ledger_list_projects_title_snapshot_as_article_title(
     assert item["entry_type"] == "ai_capability_deduct"
     assert item["points"] == -3
     assert "task_id" not in item
+
+
+async def test_feedback_rejects_legacy_scopes_at_db_level(
+    d2_schema_pool: asyncpg.Pool,
+) -> None:
+    async with d2_schema_pool.acquire() as conn:
+        user_id = await conn.fetchval("INSERT INTO users DEFAULT VALUES RETURNING id")
+        for legacy_scope in ("analysis_result", "annotation", "sentence"):
+            with pytest.raises(asyncpg.CheckViolationError):
+                await conn.execute(
+                    """
+                    INSERT INTO feedback (
+                        user_id, feedback_scope, target_id, sentiment,
+                        feedback_type, client_platform
+                    )
+                    VALUES ($1, $2, 'legacy_target', 'negative',
+                            'other', 'web')
+                    """,
+                    user_id,
+                    legacy_scope,
+                )
+        # Current contract stays writable.
+        await conn.execute(
+            """
+            INSERT INTO feedback (
+                user_id, feedback_scope, target_id, sentiment,
+                feedback_type, client_platform
+            )
+            VALUES ($1, 'dictionary', 'entry:word', 'negative',
+                    'wrong_definition', 'web')
+            """,
+            user_id,
+        )

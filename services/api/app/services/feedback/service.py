@@ -252,7 +252,6 @@ async def get_feedback_stats() -> dict[str, Any]:
                 COUNT(*) FILTER (WHERE status = 'adopted') AS adopted,
                 COUNT(*) FILTER (WHERE status = 'resolved') AS resolved,
                 COUNT(*) FILTER (WHERE status = 'dismissed') AS dismissed,
-                COUNT(*) FILTER (WHERE feedback_scope = 'sentence') AS sentence_count,
                 COUNT(*) FILTER (WHERE feedback_scope = 'dictionary') AS dictionary_count,
                 COUNT(*) FILTER (WHERE feedback_scope = 'app') AS app_count,
                 SUM(reward_points) FILTER (WHERE status = 'adopted') AS total_rewarded

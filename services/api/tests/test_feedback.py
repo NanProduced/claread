@@ -114,6 +114,24 @@ class TestSubmitFeedback:
         )
         assert response.status_code == 422
 
+    @_mock_auth()
+    @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
+    def test_rejects_removed_annotation_and_analysis_result_scopes(self, mock_submit, mock_auth):
+        for legacy_scope in ("annotation", "analysis_result"):
+            response = client.post(
+                "/feedback",
+                json={
+                    "feedback_scope": legacy_scope,
+                    "target_id": "target_legacy",
+                    "sentiment": "negative",
+                    "feedback_type": "other",
+                    "context_json": {},
+                    "client_platform": "web",
+                },
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 422, legacy_scope
+
 
 class TestListFeedback:
     @_mock_auth()
@@ -135,11 +153,11 @@ class TestListFeedback:
     def test_list_feedback_with_items(self, mock_pool, mock_auth):
         item_row = {
             "id": uuid4(),
-            "feedback_scope": "annotation",
-            "feedback_type": "inaccurate",
+            "feedback_scope": "dictionary",
+            "feedback_type": "wrong_definition",
             "sentiment": "negative",
             "content": "Wrong label",
-            "context_summary": "Annotation summary",
+            "context_summary": "Dictionary summary",
             "client_platform": "web",
             "client_surface": "reader",
             "entry_point": "inline_feedback_row",
@@ -168,7 +186,7 @@ class TestListFeedback:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        response = client.get("/feedback?feedback_scope=annotation", headers=AUTH_HEADERS)
+        response = client.get("/feedback?feedback_scope=dictionary", headers=AUTH_HEADERS)
         assert response.status_code == 200
 
     @_mock_auth()

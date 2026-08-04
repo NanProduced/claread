@@ -630,16 +630,16 @@ CREATE TABLE feedback (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT feedback_client_platform_check CHECK ((client_platform = ANY (ARRAY['web'::text, 'wechat_miniprogram'::text]))),
-    CONSTRAINT feedback_feedback_scope_check CHECK ((feedback_scope = ANY (ARRAY['analysis_result'::text, 'annotation'::text, 'sentence'::text, 'dictionary'::text, 'app'::text]))),
+    CONSTRAINT feedback_feedback_scope_check CHECK ((feedback_scope = ANY (ARRAY['dictionary'::text, 'app'::text]))),
     CONSTRAINT feedback_sentiment_check CHECK ((sentiment = ANY (ARRAY['positive'::text, 'negative'::text, 'neutral'::text]))),
     CONSTRAINT feedback_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'adopted'::text, 'resolved'::text, 'dismissed'::text])))
 );
 
-COMMENT ON TABLE feedback IS '用户反馈表，统一存储结果页整体反馈、批注级反馈、句子级反馈、词典反馈和应用功能反馈。';
+COMMENT ON TABLE feedback IS '用户反馈表，存储词典反馈和应用功能反馈。';
 
-COMMENT ON COLUMN feedback.feedback_scope IS '反馈作用域：analysis_result（结果页整体）、annotation（批注级）、sentence（句子级）、dictionary（词典）、app（应用功能）。';
+COMMENT ON COLUMN feedback.feedback_scope IS '反馈作用域：dictionary（词典）、app（应用功能）。';
 
-COMMENT ON COLUMN feedback.target_id IS '反馈目标标识：analysis_result 为 record_id，annotation 为 mark.id/sentence_entry.id，dictionary 为 dict_entry_id 或 word，app 为功能区域标识。';
+COMMENT ON COLUMN feedback.target_id IS '反馈目标标识：dictionary 为 dict_entry_id 或 word，app 为功能区域标识。';
 
 COMMENT ON COLUMN feedback.sentiment IS '情感倾向：positive（正面）、negative（负面）、neutral（中性）。dictionary 作用域仅允许 negative。';
 
@@ -2163,7 +2163,7 @@ CREATE INDEX idx_feedback_client_surface_created ON feedback USING btree (client
 
 CREATE INDEX idx_feedback_context ON feedback USING gin (context_json);
 
-CREATE INDEX idx_feedback_rag_harvested ON feedback USING btree (rag_harvested) WHERE ((rag_harvested = false) AND (feedback_scope = ANY (ARRAY['annotation'::text, 'dictionary'::text])));
+CREATE INDEX idx_feedback_rag_harvested ON feedback USING btree (rag_harvested) WHERE ((rag_harvested = false) AND (feedback_scope = 'dictionary'::text));
 
 CREATE INDEX idx_feedback_scope_type ON feedback USING btree (feedback_scope, feedback_type);
 
