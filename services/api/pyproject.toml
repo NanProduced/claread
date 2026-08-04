@@ -121,8 +121,6 @@ markers = [
     "seam_service_integration: service integration, temp schema + asyncpg / fake executor",
     "seam_api_contract: API contract, TestClient",
     "seam_cross_app_contract: cross-app contract, reader<->ask<->article_rag",
-    "seam_browser_journey: browser journey, Playwright",
-    "seam_visual: visual, Ladle build/mount only (not a pixel regression gate)",
     "seam_real_llm: real-LLM provider call",
     # lifecycle (life_*) — a test file may carry several
     "life_permanent_regression: permanent regression, must always pass",

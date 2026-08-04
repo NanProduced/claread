@@ -33,6 +33,10 @@ const TASK_NUMBER_TEST_FILE_ALLOWLIST = [
   "src/lib/reader-plate-snapshot/incremental-projection-merger-p2c.test.ts",
 ] as const;
 
+// Ratchet ceiling (GOVERNANCE-CLOSEOUT-R1): the allowlist may shrink but
+// must never grow beyond this size.
+const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 1;
+
 const SCAN_ROOTS = ["src", "tests"] as const;
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
 
@@ -90,6 +94,12 @@ describe("Naming governance guard: task-numbered Web test file names", () => {
       "new task-numbered test file names are forbidden; rename to a " +
         "business name instead of allowlisting",
     ).toEqual([]);
+  });
+
+  it("allowlist stays under its ratchet ceiling", () => {
+    expect(TASK_NUMBER_TEST_FILE_ALLOWLIST.length).toBeLessThanOrEqual(
+      TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING,
+    );
   });
 
   it.each(TASK_NUMBER_TEST_FILE_ALLOWLIST)(

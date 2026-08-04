@@ -47,6 +47,27 @@ _TASK_NUMBER_NAME_RE = re.compile(
     r"round[0-9]+|lp_r[0-9])"
 )
 
+# CamelCase / UPPER_SNAKE task codes (R1 closeout): ``ReaderD5SchemaHealthReport``,
+# ``READER_D5_*`` / ``READER_D6_*``, ``ZPlus*``. Digit-token boundary rules keep
+# business words out (``D5``/``D6`` must not sit inside a longer digit run).
+# Persisted identities stay exempt because only AST identifiers are scanned;
+# string literals (protocol values, migration versions, ``execution_version``,
+# workflow versions) never reach these matchers.
+_TASK_CODE_IDENTIFIER_RE = re.compile(
+    r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])ZPlus|(?<![A-Za-z0-9])zplus"
+)
+
+# Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes may shrink but
+# must never grow beyond these caps.
+TEST_FILE_ALLOWLIST_CEILING = 78
+PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 19
+
+
+def _name_has_task_number(name: str) -> bool:
+    return bool(_TASK_NUMBER_NAME_RE.search("_" + name)) or bool(
+        _TASK_CODE_IDENTIFIER_RE.search(name)
+    )
+
 # Existing stock of task-numbered test files (relative to services/api).
 # RATCHET: only shrink this list. Renamed/deleted files must have their
 # entry removed in the same change; new task-numbered file names are
@@ -138,9 +159,24 @@ TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
 # listed symbol requires removing its entry in the same change.
 TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "app/services/reader_orchestration/job_bootstrap.py:ZPlusBootstrapService",
+        "app/services/reader_orchestration/job_bootstrap.py:_bootstrap_grammar_jobs_or_zplus",
+        "app/services/reader_orchestration/job_bootstrap.py:use_zplus_grammar_path",
+        "app/services/reader_orchestration/job_bootstrap.py:zplus_service",
+        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_COLUMNS",
+        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_CONSTRAINTS",
+        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_INDEXES",
+        "app/services/reader_orchestration/schema_health.py:READER_D6_ANCHOR_COLUMNS",
+        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS",
+        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_COLUMNS",
+        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_INDEXES",
+        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_NULLABLE_COLUMNS",
+        "app/services/reader_orchestration/schema_health.py:ReaderD5SchemaHealthReport",
         "app/services/reader_orchestration/schema_health.py:_has_reader_d6_schema_drift",
         "app/services/reader_orchestration/schema_health.py:d6_constraint_names",
         "app/services/reader_orchestration/schema_health.py:d6_table_prefixes",
+        "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapResult",
+        "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapService",
         "app/services/reader_record_ask/production_stream.py:_sync_submission_terminal_r6",
     }
 )
@@ -169,6 +205,9 @@ def test_new_test_file_names_carry_no_task_numbers() -> None:
         "allowlist is a ratchet and only shrinks; these entries no longer "
         f"match an existing task-numbered file, remove them: {sorted(stale)}"
     )
+    assert len(TASK_NUMBER_TEST_FILE_ALLOWLIST) <= TEST_FILE_ALLOWLIST_CEILING, (
+        "test-file allowlist ceiling exceeded; ratchet only shrinks"
+    )
 
 
 def _production_symbol_hits() -> set[str]:
@@ -190,7 +229,7 @@ def _production_symbol_hits() -> set[str]:
             for alias in stmt.names
         )
         hits.update(
-            f"{rel}:{name}" for name in names if _TASK_NUMBER_NAME_RE.search("_" + name)
+            f"{rel}:{name}" for name in names if _name_has_task_number(name)
         )
     return hits
 
@@ -213,3 +252,7 @@ def test_production_symbols_carry_no_task_numbers() -> None:
         "allowlist is a ratchet and only shrinks; remove stale entries: "
         f"{sorted(stale)}"
     )
+    assert (
+        len(TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST)
+        <= PRODUCTION_SYMBOL_ALLOWLIST_CEILING
+    ), "production-symbol allowlist ceiling exceeded; ratchet only shrinks"

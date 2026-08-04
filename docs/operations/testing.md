@@ -24,31 +24,45 @@ uv run pytest services/api/tests -q
 
 - 门禁类（既有）：`real_llm` / `article_rag_smoke` / `no_network_default`。
 - 业务链路 `chain_*`（一个测试文件打一个）：`chain_reader_parse` / `chain_reader_orchestration` / `chain_reading_record` / `chain_reader_ask` / `chain_article_rag` / `chain_markdown_input` / `chain_vocabulary` / `chain_console_eval` / `chain_auth` / `chain_infra`。
-- seam `seam_*`（一个测试文件打一个）：`seam_pure_unit` / `seam_service_integration` / `seam_api_contract` / `seam_cross_app_contract` / `seam_browser_journey` / `seam_visual` / `seam_real_llm`。
+- seam `seam_*`（一个测试文件打一个）：`seam_pure_unit` / `seam_service_integration` / `seam_api_contract` / `seam_cross_app_contract` / `seam_real_llm`。Playwright/Ladle 维度属于 Web runner，不在 API pytest 声明；真正需要时再添加。
 - 生命周期 `life_*`（可多个）：`life_permanent_regression` / `life_migration_guard` / `life_characterization` / `life_spike` / `life_temporary_compatibility` / `life_external_smoke`。
 
-存量测试打标是渐进的，不强制一次性完成；新增测试按上述三维度打标。任务编号（`T5.6b`、`D6-I4b`、`round20` 等）**不设 marker**，只放文件顶部注释 `# task-history: ...`，不进入 `-m` 运行选择。
+**当前态 / 规划态**（渐进 taxonomy）：
 
-组合示例：
+| 状态 | marker |
+|---|---|
+| 门禁类，已有消费者 | `real_llm` / `article_rag_smoke` / `no_network_default` |
+| 治理 marker，已有消费者（naming guard 测试） | `chain_infra` / `seam_pure_unit` / `life_permanent_regression` |
+| 渐进 taxonomy，尚无消费者，随存量补标逐步启用 | 其余全部 `chain_*` / `seam_*` / `life_*` |
+
+尚无消费者的 marker 只保证“已声明、可用于 `-m`”，不保证当前能选中任何测试；不要把零消费者组合写成当前可用命令。任务编号（`T5.6b`、`D6-I4b`、`round20` 等）**不设 marker**，只放文件顶部注释 `# task-history: ...`，不进入 `-m` 运行选择。
+
+当前可用的 marker 选择命令（有实际消费者）：
 
 ```powershell
 cd services/api
+uv run pytest -m chain_infra -q
+uv run pytest -m "real_llm" -v   # 需同时满足三重门禁环境变量
+```
+
+规划态示例（存量补标完成后才有意义，当前会选中 0 个测试）：
+
+```powershell
 uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
-uv run pytest -m "seam_pure_unit and not real_llm" -q
 ```
 
 ## 任务编号 naming guard 与 allowlist ratchet
 
 任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
 
-- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号。存量进入精确 allowlist，**只减不增**：改名/删除文件必须在同一变更中移除对应条目；新文件禁止带任务编号，必须改用业务名。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
-- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的 ratchet 规则。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
+- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号，同时覆盖 snake_case（`d6_i4b` / `t58a` / `round20`）与 CamelCase / UPPER_SNAKE 任务代号（`ReaderD5SchemaHealthReport` / `READER_D5_*` / `READER_D6_*` / `ZPlus*`）。存量进入精确 allowlist，**只减不增**且设有数量上限（test-file 78、production-symbol 19）：改名/删除必须在同一变更中移除对应条目；新文件/新符号禁止带任务编号。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
+- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的 ratchet 规则（上限 1）。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist。
 
 ## 后续 API/Web 并行治理边界
 
-- **API/Evals ownership**：`services/api` marker 补标、allowlist 收缩、剩余任务编号文件改名归 API 治理任务；`evals/` 是独立 pytest 项目，**不继承** API conftest 的 real-LLM fail-closed，evals 在落地自己的 guard 前不得声明 `real_llm` 可选运行。
+- **API/Evals ownership**：`services/api` marker 补标、allowlist 收缩、剩余任务编号文件改名归 API 治理任务。`evals/` 是独立 pytest 项目，**不继承** API conftest，但已有自己的 `evals/tests/conftest.py`：声明 `real_llm` marker、镜像同一三重门禁并 monkeypatch 相同 provider 边界，fail-closed regression 已落地；后续 evals 治理（naming guard / 补标）独立排期，不与 API 治理任务混批。
 - **Web ownership**：vitest guard、命名治理、`// task-history:` 注释归 Web 治理任务；不拆分 ReaderRecordPlateSurface mega-suite、不改 Web 生产逻辑，除非另行审批。
 - 两侧 guard 均为纯文件系统/AST 检查，无 DB、无网络、无 LLM，可在任何 PR 门禁运行。
 
