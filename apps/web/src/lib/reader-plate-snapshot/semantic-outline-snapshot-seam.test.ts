@@ -150,7 +150,7 @@ function emptyDoc(): ReaderRecordPlateDocument {
   } as ReaderRecordPlateDocument;
 }
 
-describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
+describe("semantic outline snapshot seam (B1–B10)", () => {
   it("B1: null and absent are both untrusted and safe", () => {
     expect(hasTrustedSemanticOutline(null)).toBe(false);
     expect(hasTrustedSemanticOutline(undefined)).toBe(false);

@@ -370,7 +370,7 @@ function extractBlockIds(children: Descendant[]): Array<string | null> {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("mergeIncrementalProjection — grammar 首发语义 insert (P2c)", () => {
+describe("mergeIncrementalProjection — grammar 首发语义 insert", () => {
   const snapshotFence = makeFence();
 
   // --- Happy path ---
@@ -954,7 +954,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert (P2c)", () 
     expect(result.reason).toBe("unrepresented_projection_change");
   });
 
-  it("test_no_p2b_fields_still_uses_r2_1e", () => {
+  it("layer_published without grammar extension fields still uses the changed-block-only path", () => {
     // 回归：无 P2b 扩展字段的 layer_published 仍走 R2.1E changed-block-only 路径。
     // 通过构造 translation 同拓扑 revision（产生 targeted_apply replace）来验证
     // 未进入 grammar 首发路径（否则会因找不到 callout-group 而 fallback）。
@@ -999,7 +999,7 @@ describe("mergeIncrementalProjection — grammar 首发语义 insert (P2c)", () 
     );
   });
 
-  it("test_p2b_fields_non_grammar_note_fallback", () => {
+  it("layer_published with grammar extension fields on a non-grammar layer falls back to full reload", () => {
     // 事件携带 P2b operation 字段但 layer_type === "translation" → fallback
     // "grammar_first_publish_unsupported_layer_type"。
     const prevSnapshot = makeBaseSnapshot();

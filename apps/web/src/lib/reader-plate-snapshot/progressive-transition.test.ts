@@ -298,7 +298,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
     expect(poll.nextCursor).toBe(5);
   });
 
-  it("does not advance cursor on failed snapshot reload (T2.1 hold)", () => {
+  it("does not advance cursor on failed snapshot reload (hold)", () => {
     const base = loadedAtTranslation();
     const poll = applyEventPoll(
       base.state,

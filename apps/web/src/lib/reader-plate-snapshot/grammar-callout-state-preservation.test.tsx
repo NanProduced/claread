@@ -308,7 +308,7 @@ async function renderHarness(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2.1C — Grammar callout state preservation", () => {
+describe("Grammar callout state preservation", () => {
   beforeEach(() => {
     if (!Range.prototype.getBoundingClientRect) {
       Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -624,7 +624,7 @@ describe("T4.2a-PUX-R4-R2.1C — Grammar callout state preservation", () => {
   // 6. P2: grammar callout WITHOUT itemId falls back to localExpanded
   // -------------------------------------------------------------------------
 
-  describe("6. P2: grammar callout without itemId uses localExpanded", () => {
+  describe("6. grammar callout without itemId uses localExpanded", () => {
     it("can be expanded and collapsed via local state when itemId is missing", async () => {
       const { container } = await renderHarness(
         makeProjectedPlateValueWithCalloutNoItemId(),
