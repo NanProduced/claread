@@ -490,6 +490,15 @@ async function syncModuleBar(token) {
 // DATA-SCHEMA-BASELINE D2: llm_* physical tables come from the single
 // infra/migrations/0001_initial.sql baseline; this script is metadata-only
 // (directus_collections rows for the LLM Config module).
+// DATA-SCHEMA-BASELINE D2: eval_example_lab_entries is a PROTECTED
+// collection whose physical table comes from the single baseline
+// (infra/migrations/0001_initial.sql). Its Directus registration is
+// metadata-only and must survive a fresh database boot.
+runSql(`
+  INSERT INTO directus_collections (collection, accountability, collapse)
+  VALUES ('eval_example_lab_entries', 'all', 'open')
+  ON CONFLICT (collection) DO NOTHING;
+`);
 runSql(buildCollectionMetadataSql());
 if (!DIRECTUS_SKIP_RESTART) {
   restartDirectus();
