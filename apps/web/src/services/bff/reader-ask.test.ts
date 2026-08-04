@@ -163,7 +163,7 @@ describe("reader-ask BFF RR cutover", () => {
     );
   });
 
-  it("forwards the browser AbortSignal to the upstream fetch (R1)", async () => {
+  it("forwards the browser AbortSignal to the upstream fetch", async () => {
     // ASK-TURN-LIFECYCLE R1: a user stop / network abort / page navigation
     // must cancel the upstream SSE connection too, so the FastAPI
     // generator's ``finally`` block fires and reconciles any still-

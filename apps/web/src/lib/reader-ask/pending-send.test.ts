@@ -32,7 +32,7 @@ function makePending(localAssistantId: string): PendingSendRequest {
   };
 }
 
-describe("R8 pending rekey + recovery target", () => {
+describe("pending rekey + recovery target", () => {
   it("resolveActiveAssistantId prefers streaming UUID", () => {
     expect(resolveActiveAssistantId(CANONICAL, LOCAL)).toBe(CANONICAL);
     expect(resolveActiveAssistantId(null, LOCAL)).toBe(LOCAL);

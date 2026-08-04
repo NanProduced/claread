@@ -8,7 +8,7 @@ import {
   isPersistedAssistantMessageId,
 } from "./browser-paths";
 
-describe("browser Ask paths (ASK-RETRY-CONTRACT-R0/R4)", () => {
+describe("browser Ask paths", () => {
   const recordId = "record-1";
 
   it("builds stream path without upstream suffixes", () => {

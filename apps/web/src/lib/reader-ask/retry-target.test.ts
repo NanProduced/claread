@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { classifyRetryTarget } from "./retry-target";
 
-describe("classifyRetryTarget (ASK-RETRY-CONTRACT-R1/R4)", () => {
+describe("classifyRetryTarget", () => {
   it("classifies UUID assistants as regenerate targets", () => {
     const target = classifyRetryTarget(
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
