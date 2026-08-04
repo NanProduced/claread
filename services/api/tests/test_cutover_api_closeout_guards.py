@@ -1,3 +1,4 @@
+# task-history: CUTOVER-API-P-CLOSEOUT-R2 (renamed from test_cutover_api_p_closeout_r2.py)
 """Static closeout guards for CUTOVER-API-P-CLOSEOUT-R2."""
 
 from __future__ import annotations
@@ -14,6 +15,12 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.schemas.reader_record_ask_stream import ReaderRecordAskHistoryMessage
 from app.services.reader_record_ask import thread_service
+
+pytestmark = [
+    pytest.mark.chain_infra,
+    pytest.mark.seam_api_contract,
+    pytest.mark.life_permanent_regression,
+]
 
 API_ROOT = Path(__file__).resolve().parents[1]
 RECORD_ID = UUID("00000000-0000-0000-0000-0000000000a6")

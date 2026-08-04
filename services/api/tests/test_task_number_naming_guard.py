@@ -60,7 +60,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
-TEST_FILE_ALLOWLIST_CEILING = 1
+TEST_FILE_ALLOWLIST_CEILING = 0
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
@@ -75,7 +75,6 @@ def _name_has_task_number(name: str) -> bool:
 # forbidden and must be renamed to business names instead.
 TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "tests/test_cutover_api_p_closeout_r2.py",
     }
 )
 
