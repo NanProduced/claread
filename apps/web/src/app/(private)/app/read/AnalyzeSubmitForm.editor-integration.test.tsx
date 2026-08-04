@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 import { PENDING_CANDIDATE_STORAGE_KEY } from "./pending-candidate";
-import { R1_TEST_MARKDOWN } from "./r1-test-fixtures";
+import { SUBMIT_TEST_MARKDOWN } from "./submit-test-markdown";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -159,7 +159,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   });
 
   it("structured Markdown in the real editor drives placeholder, CTA, chars, hint, clear and DOM semantics", async () => {
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN);
 
     // placeholder 状态关闭（内容已渲染）。
     await waitFor(() => {
@@ -189,7 +189,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   });
 
   it("clearing after content resets placeholder, CTA and badges", async () => {
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN);
     await waitFor(() => {
       expect(getSubmitButton().getAttribute("data-ready")).toBe("true");
     });
@@ -228,7 +228,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
       );
     });
 
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN, submitMock);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN, submitMock);
     await waitFor(() => {
       expect(getSubmitButton().getAttribute("data-ready")).toBe("true");
     });

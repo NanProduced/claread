@@ -39,7 +39,7 @@ import {
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
 
-import { R1_TEST_MARKDOWN } from "./r1-test-fixtures";
+import { SUBMIT_TEST_MARKDOWN } from "./submit-test-markdown";
 
 function renderEditor(props?: {
   onChange?: (markdown: string) => void;
@@ -79,7 +79,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
     const { ref, onChange, editorEl } = renderEditor();
 
     await act(async () => {
-      ref.current?.setValue(R1_TEST_MARKDOWN);
+      ref.current?.setValue(SUBMIT_TEST_MARKDOWN);
     });
 
     await waitFor(() => {
@@ -139,7 +139,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
     const { ref, onChange } = renderEditor();
 
     await act(async () => {
-      ref.current?.setValue(R1_TEST_MARKDOWN);
+      ref.current?.setValue(SUBMIT_TEST_MARKDOWN);
     });
     await waitFor(() => {
       expect(onChange).toHaveBeenCalled();

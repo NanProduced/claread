@@ -1,9 +1,10 @@
+// task-history: R1
 /**
- * R1 共享测试夹具：精确测试文本（任务书原文）。
+ * 提交编辑器共享测试夹具：精确测试文本（任务书原文）。
  * 放在非 `.test.ts` 模块，避免被多个测试文件 import 时重复注册 describe。
  */
 
-export const R1_TEST_MARKDOWN = `## 6. Implementation Plan
+export const SUBMIT_TEST_MARKDOWN = `## 6. Implementation Plan
 
 *How we will roll this out safely, step by step.*
 

@@ -1,5 +1,6 @@
+// task-history: T4.2a-PUX-R4-R2-S1
 /**
- * T4.2a-PUX-R4-R2-S1 — Read-only Plate targeted update technical spike.
+ * Read-only Plate targeted update characterization tests.
  *
  * Spike goal: verify whether the real installed platejs@53.2.1 +
  * @platejs/slate@53.0.7 + @platejs/core@53.2.1 APIs can update a single
@@ -299,7 +300,7 @@ async function renderMountedPlate(initialValue: SpikeValue) {
 // Spike tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2-S1 — mounted Plate targeted ops spike", () => {
+describe("mounted Plate targeted Slate ops", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

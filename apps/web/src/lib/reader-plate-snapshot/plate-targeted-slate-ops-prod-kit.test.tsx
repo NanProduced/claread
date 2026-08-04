@@ -1,5 +1,6 @@
+// task-history: T4.2a-PUX-R4-R2-S1-P2
 /**
- * T4.2a-PUX-R4-R2-S1-P2 — Production ReaderRecordPlateKit mounted spike.
+ * Production ReaderRecordPlateKit mounted targeted-ops characterization tests.
  *
  * P2 goal: verify that the real production ReaderRecordPlateKit (the same
  * plugin collection used by ReaderRecordPlateSurface) renders real
@@ -380,7 +381,7 @@ async function renderMountedPlate(initialValue: Descendant[]) {
 // Spike tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2-S1-P2 — production ReaderRecordPlateKit mounted spike", () => {
+describe("production ReaderRecordPlateKit mounted targeted ops", () => {
   beforeEach(() => {
     // jsdom lacks Range.getBoundingClientRect and scrollIntoView.
     if (!Range.prototype.getBoundingClientRect) {

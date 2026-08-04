@@ -40,7 +40,7 @@ import type {
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 
 // ---------------------------------------------------------------------------
-// Fixture builders (same shape as spike-targeted-slate-ops-prod-kit.test.tsx)
+// Fixture builders (same shape as plate-targeted-slate-ops-prod-kit.test.tsx)
 // ---------------------------------------------------------------------------
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
