@@ -10,11 +10,9 @@ Locks L-GATE + P1 for DATA-LEGACY-IDENTITY-EXIT-LONG:
    ``text_anchors.py``, ``schemas/user_assets/records.py``) have no
    importers and no surviving files anywhere in ``app/``.
 
-Deliberately NOT banned: ``analysis_record_id`` on protected shared tables
-(reader_ask_*, user_annotations, reader_notes, favorite_records, feedback,
-dict_ai_candidate_entries, ai_usage_events) — those columns stay until the
-D2 schema drop, and new-chain fences / scrubbers legitimately reference
-them. The ban is on the seven legacy TABLES and the render-scene helpers.
+DATA-SCHEMA-BASELINE D2 has since dropped those legacy columns from the
+baseline schema; the guard below still locks the code-level exit (the seven
+legacy tables and the render-scene helpers must never reappear in ``app/``).
 """
 
 from __future__ import annotations

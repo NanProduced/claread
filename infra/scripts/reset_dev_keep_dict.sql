@@ -1,59 +1,63 @@
 -- ============================================================
 -- reset_dev_keep_dict.sql
--- 重置开发库：清空所有业务表，保留词典数据（dict_*）
---
--- 词典三表数据量约 205 万行 / 1.25 GB，重新导入需 20+ 分钟，
--- 且 exam_tags 字段需额外脚本标注，因此重置时必须保留。
---
--- 保留的表：dict_entries, dict_lookup_targets, dict_redirects
--- 保留的函数/触发器：set_updated_at() 及各 trg_*_set_updated_at
+-- 开发库软重置:TRUNCATE 全部业务表(保留结构与受保护数据)
+-- DATA-SCHEMA-BASELINE D2: 表清单与单一基线
+-- infra/migrations/0001_initial.sql 精确对齐,但排除两类受保护数据:
+--   - 词典三表 dict_entries/dict_lookup_targets/dict_redirects(约 205 万行)
+--   - eval_example_lab_entries(受保护 Directus Collection,Example Lab 数据)
 -- ============================================================
 
 BEGIN;
 
 TRUNCATE TABLE
-  reader_ask_eval_traces,
-  reader_ask_turn_runs,
-  reader_ask_supplements,
-  reader_ask_messages,
-  reader_ask_threads,
-  parsed_decisions,
+  ai_usage_events,
   analysis_windows,
-  layer_analysis_plans,
+  anchor_segments,
+  anonymous_quotas,
+  candidate_reading_documents,
+  confirmed_source_documents,
+  daily_readers,
+  dict_ai_candidate_entries,
   enhancement_layers,
-  reader_events,
+  favorite_records,
+  feedback,
+  layer_analysis_plans,
+  llm_ask_config,
+  llm_ask_options,
+  llm_models,
+  llm_presets,
+  llm_profiles,
+  llm_providers,
+  original_inputs,
+  parsed_decisions,
+  pipeline_runs,
+  reader_article_rag_index_runs,
+  reader_ask_client_submissions,
+  reader_ask_messages,
+  reader_ask_supplements,
+  reader_ask_thread_memory,
+  reader_ask_threads,
+  reader_ask_turn_runs,
   reader_event_sequences,
-  reader_runtime_spans,
+  reader_events,
   reader_job_events,
   reader_jobs,
+  reader_notes,
   reader_runs,
-  anchor_segments,
-  reading_units,
-  original_inputs,
+  reader_runtime_spans,
   reading_bases,
   reading_records,
-  reader_notes,
+  reading_units,
+  source_artifacts,
+  stable_document_blocks,
+  stable_reading_documents,
   user_annotations,
-  dict_ai_candidate_entries,
-  ai_usage_events,
-  analysis_debug_snapshots,
-  analysis_overview_task_events,
-  analysis_overview_tasks,
-  analysis_task_events,
-  analysis_tasks,
-  analysis_results,
-  favorite_records,
-  vocabulary_book,
-  feedback,
-  user_credit_ledger,
   user_credit_accounts,
-  daily_readers,
-  pipeline_runs,
-  user_sessions,
+  user_credit_ledger,
   user_identities,
-  analysis_records,
-  anonymous_quotas,
-  users
-RESTART IDENTITY CASCADE;
+  user_sessions,
+  users,
+  vocabulary_book
+  RESTART IDENTITY CASCADE;
 
 COMMIT;

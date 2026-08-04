@@ -1,3 +1,16 @@
+"""DATA-SCHEMA-BASELINE D2: single-baseline compose mount pin.
+
+The local fresh-init path applies exactly one file:
+``infra/migrations/0001_initial.sql`` mounted into
+``/docker-entrypoint-initdb.d/``. This test fails closed if:
+
+- ``infra/migrations/`` contains anything other than ``0001_initial.sql``
+  (legacy per-step migrations and the eval-center / llm-config subdirs must
+  stay deleted), or
+- ``docker-compose.local.yml`` mounts any other initdb file (which could
+  resurrect legacy Eval control-plane tables).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,44 +18,30 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_PATH = REPO_ROOT / "infra" / "docker" / "docker-compose.local.yml"
 MIGRATIONS_DIR = REPO_ROOT / "infra" / "migrations"
+BASELINE_NAME = "0001_initial.sql"
 
 
-def _top_level_migrations() -> list[Path]:
-    """Return top-level migration SQL files (excluding subdirs like eval-center)."""
-    return sorted(
-        path
-        for path in MIGRATIONS_DIR.iterdir()
-        if path.is_file() and path.suffix == ".sql"
+def test_migrations_dir_contains_only_the_single_baseline() -> None:
+    assert MIGRATIONS_DIR.is_dir(), "infra/migrations must exist"
+    entries = sorted(path.name for path in MIGRATIONS_DIR.iterdir())
+    assert entries == [BASELINE_NAME], (
+        "infra/migrations must contain ONLY 0001_initial.sql after "
+        f"DATA-SCHEMA-BASELINE D2; found: {entries}"
     )
 
 
-def test_local_compose_mounts_every_top_level_migration() -> None:
-    """Pin that docker-compose.local.yml initdb mounts cover all top-level migrations.
-
-    A fresh local DB volume is initialized exclusively from the files mounted into
-    ``/docker-entrypoint-initdb.d/``. If a migration is added under
-    ``infra/migrations/`` but not mounted here, a rebuilt volume will silently miss
-    the schema change (this exact gap caused 0007_source_artifacts and
-    0008_reader_jobs_input_artifact_extraction to be absent from local DBs).
-
-    This static test fails closed the moment a new top-level migration lands without
-    a matching compose mount line, so the drift cannot recur silently.
-    """
-    migrations = _top_level_migrations()
-    assert migrations, "expected at least one top-level migration file"
+def test_compose_mounts_only_the_single_baseline() -> None:
     compose_text = COMPOSE_PATH.read_text(encoding="utf-8")
-
-    missing: list[str] = []
-    for migration in migrations:
-        # Mount lines look like:
-        #   - ../migrations/0007_reader_source_artifacts.sql:/docker-entrypoint-initdb.d/0007_reader_source_artifacts.sql:ro
-        # Matching on the destination filename is sufficient and stable.
-        destination = f"/docker-entrypoint-initdb.d/{migration.name}"
-        if destination not in compose_text:
-            missing.append(migration.name)
-
-    assert not missing, (
-        "docker-compose.local.yml is missing initdb mounts for top-level migrations: "
-        f"{missing}. Add a volume mount line for each under services.postgres.volumes "
-        f"so a fresh local DB volume applies every migration."
+    initdb_lines = [
+        line.strip()
+        for line in compose_text.splitlines()
+        if "docker-entrypoint-initdb.d" in line
+    ]
+    assert len(initdb_lines) == 1, (
+        "docker-compose.local.yml must mount exactly one initdb file; found: "
+        f"{initdb_lines}"
+    )
+    assert f"/docker-entrypoint-initdb.d/{BASELINE_NAME}" in initdb_lines[0], (
+        "docker-compose.local.yml must mount ../migrations/0001_initial.sql "
+        f"into initdb; found: {initdb_lines[0]}"
     )

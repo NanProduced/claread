@@ -43,7 +43,7 @@
 
 ## 数据库
 
-- `0001_initial_schema.sql` 是 fresh init baseline。
+- DATA-SCHEMA-BASELINE D2 后唯一 schema 基线是 `infra/migrations/0001_initial.sql`（单一 fresh baseline；legacy analysis 表、旧 Eval 控制面表、`reader_ask_eval_traces` 与共享表 legacy identity 列均不在其中）。
 - 词典三表 `dict_entries`、`dict_lookup_targets`、`dict_redirects` 迁移时优先 dump/restore，不轻易重导。
 - 如果重导词典，必须处理 `vocabulary_book.dict_entry_id` 稳定性和 `exam_tags` 覆盖问题。
 - cutover 后必须保护的数据：`dict_*`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger、Daily Reader、Dictionary、Vocabulary。

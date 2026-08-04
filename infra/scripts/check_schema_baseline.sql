@@ -1,577 +1,214 @@
-DO $$
+-- DATA-SCHEMA-BASELINE D2 fail-closed guard for the single fresh baseline.
+-- Run with: psql -v ON_ERROR_STOP=1 -f check_schema_baseline.sql
+-- Verifies infra/migrations/0001_initial.sql end state:
+--   1. exactly the 52 baseline tables exist,
+--   2. legacy analysis / Eval control-plane tables are absent,
+--   3. the confirmed legacy columns on protected shared tables are absent,
+--   4. the contract CHECKs/indexes of the exited contracts are present.
+
+DO $guard$
+DECLARE
+    expected_tables text[] := ARRAY[
+        'ai_usage_events',
+        'analysis_windows',
+        'anchor_segments',
+        'anonymous_quotas',
+        'candidate_reading_documents',
+        'confirmed_source_documents',
+        'daily_readers',
+        'dict_ai_candidate_entries',
+        'dict_entries',
+        'dict_lookup_targets',
+        'dict_redirects',
+        'enhancement_layers',
+        'eval_example_lab_entries',
+        'favorite_records',
+        'feedback',
+        'layer_analysis_plans',
+        'llm_ask_config',
+        'llm_ask_options',
+        'llm_models',
+        'llm_presets',
+        'llm_profiles',
+        'llm_providers',
+        'original_inputs',
+        'parsed_decisions',
+        'pipeline_runs',
+        'reader_article_rag_index_runs',
+        'reader_ask_client_submissions',
+        'reader_ask_messages',
+        'reader_ask_supplements',
+        'reader_ask_thread_memory',
+        'reader_ask_threads',
+        'reader_ask_turn_runs',
+        'reader_event_sequences',
+        'reader_events',
+        'reader_job_events',
+        'reader_jobs',
+        'reader_notes',
+        'reader_runs',
+        'reader_runtime_spans',
+        'reading_bases',
+        'reading_records',
+        'reading_units',
+        'source_artifacts',
+        'stable_document_blocks',
+        'stable_reading_documents',
+        'user_annotations',
+        'user_credit_accounts',
+        'user_credit_ledger',
+        'user_identities',
+        'user_sessions',
+        'users',
+        'vocabulary_book'
+    ];
+    tbl text;
+    missing text[] := '{}';
+    extra text[] := '{}';
+    actual text;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_notes'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_notes';
-  END IF;
+    FOREACH tbl IN ARRAY expected_tables LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+              AND table_name = tbl
+        ) THEN
+            missing := array_append(missing, tbl);
+        END IF;
+    END LOOP;
+    IF cardinality(missing) > 0 THEN
+        RAISE EXCEPTION 'baseline tables missing: %', missing;
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'user_annotations'
-  ) THEN
-    RAISE EXCEPTION 'missing table: user_annotations';
-  END IF;
+    FOREACH actual IN ARRAY ARRAY(
+        SELECT t.table_name FROM information_schema.tables t
+        WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+    ) LOOP
+        IF NOT (actual = ANY (expected_tables)) THEN
+            extra := array_append(extra, actual);
+        END IF;
+    END LOOP;
+    IF cardinality(extra) > 0 THEN
+        RAISE EXCEPTION 'tables outside the baseline present: %', extra;
+    END IF;
+END
+$guard$;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'ai_usage_events'
-  ) THEN
-    RAISE EXCEPTION 'missing table: ai_usage_events';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'dict_ai_candidate_entries'
-  ) THEN
-    RAISE EXCEPTION 'missing table: dict_ai_candidate_entries';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_ask_threads'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_ask_threads';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_ask_messages'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_ask_messages';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_ask_supplements'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_ask_supplements';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_ask_turn_runs'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_ask_turn_runs';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_ask_eval_traces'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_ask_eval_traces';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'analysis_overview_tasks'
-  ) THEN
-    RAISE EXCEPTION 'missing table: analysis_overview_tasks';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'analysis_overview_task_events'
-  ) THEN
-    RAISE EXCEPTION 'missing table: analysis_overview_task_events';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reading_records'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reading_records';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reading_bases'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reading_bases';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'original_inputs'
-  ) THEN
-    RAISE EXCEPTION 'missing table: original_inputs';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reading_units'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reading_units';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'anchor_segments'
-  ) THEN
-    RAISE EXCEPTION 'missing table: anchor_segments';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_runs'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_runs';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_jobs'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_jobs';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_job_events'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_job_events';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_event_sequences'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_event_sequences';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'reader_events'
-  ) THEN
-    RAISE EXCEPTION 'missing table: reader_events';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'enhancement_layers'
-  ) THEN
-    RAISE EXCEPTION 'missing table: enhancement_layers';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'parsed_decisions'
-  ) THEN
-    RAISE EXCEPTION 'missing table: parsed_decisions';
-  END IF;
-END $$;
-
-DO $$
+DO $guard$
+DECLARE
+    banned_tables text[] := ARRAY[
+        'analysis_records',
+        'analysis_results',
+        'analysis_tasks',
+        'analysis_task_events',
+        'analysis_overview_tasks',
+        'analysis_overview_task_events',
+        'analysis_debug_snapshots',
+        'eval_prompt_variant_drafts',
+        'eval_workflow_run_requests',
+        'eval_workflow_compares',
+        'eval_workflow_compare_judge_requests',
+        'eval_judge_run_requests',
+        'eval_review_notes',
+        'eval_node_lab_candidate_drafts',
+        'eval_node_lab_sessions',
+        'eval_node_lab_trials',
+        'eval_node_lab_judge_configs',
+        'eval_node_lab_judge_requests',
+        'eval_node_lab_review_notes',
+        'reader_ask_eval_traces'
+    ];
+    tbl text;
+    found text[] := '{}';
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reader_notes'
-      AND column_name = 'anchor_sentence_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reader_notes.anchor_sentence_id';
-  END IF;
+    FOREACH tbl IN ARRAY banned_tables LOOP
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = tbl
+        ) THEN
+            found := array_append(found, tbl);
+        END IF;
+    END LOOP;
+    IF cardinality(found) > 0 THEN
+        RAISE EXCEPTION 'legacy tables must not exist in the baseline: %', found;
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reader_notes'
-      AND column_name = 'quote_mode'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reader_notes.quote_mode';
-  END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND (table_name, column_name) IN (
+              ('user_annotations', 'analysis_record_id'),
+              ('reader_notes', 'analysis_record_id'),
+              ('reader_notes', 'anchor_sentence_id'),
+              ('favorite_records', 'analysis_record_id'),
+              ('feedback', 'analysis_record_id'),
+              ('feedback', 'annotation_type'),
+              ('dict_ai_candidate_entries', 'record_id'),
+              ('ai_usage_events', 'record_id'),
+              ('ai_usage_events', 'task_id'),
+              ('user_credit_ledger', 'task_id'),
+              ('reader_ask_threads', 'analysis_record_id'),
+              ('reader_ask_turn_runs', 'analysis_record_id'),
+              ('reader_ask_supplements', 'analysis_record_id')
+          )
+    ) THEN
+        RAISE EXCEPTION 'legacy identity columns must be dropped from protected shared tables';
+    END IF;
+END
+$guard$;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reader_notes'
-      AND column_name = 'note_text'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reader_notes.note_text';
-  END IF;
-
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_annotations'
-      AND column_name IN ('note', 'annotation_type')
-  ) THEN
-    RAISE EXCEPTION 'unexpected legacy columns remain on user_annotations';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reader_ask_messages'
-      AND column_name = 'metadata_json'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reader_ask_messages.metadata_json';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reader_ask_messages'
-      AND column_name = 'current_turn_run_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reader_ask_messages.current_turn_run_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'ai_usage_events'
-      AND column_name = 'reading_record_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: ai_usage_events.reading_record_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'ai_usage_events'
-      AND column_name = 'reader_run_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: ai_usage_events.reader_run_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'ai_usage_events'
-      AND column_name = 'reader_job_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: ai_usage_events.reader_job_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'ai_usage_events'
-      AND column_name = 'enhancement_layer_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: ai_usage_events.enhancement_layer_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'ai_usage_events'
-      AND column_name = 'operation_fingerprint'
-  ) THEN
-    RAISE EXCEPTION 'missing column: ai_usage_events.operation_fingerprint';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_credit_ledger'
-      AND column_name = 'subject_type'
-  ) THEN
-    RAISE EXCEPTION 'missing column: user_credit_ledger.subject_type';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_credit_ledger'
-      AND column_name = 'subject_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: user_credit_ledger.subject_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_credit_ledger'
-      AND column_name = 'reading_record_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: user_credit_ledger.reading_record_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_credit_ledger'
-      AND column_name = 'reader_run_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: user_credit_ledger.reader_run_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'user_credit_ledger'
-      AND column_name = 'reader_job_id'
-  ) THEN
-    RAISE EXCEPTION 'missing column: user_credit_ledger.reader_job_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'reading_records'
-      AND column_name = 'generation'
-  ) THEN
-    RAISE EXCEPTION 'missing column: reading_records.generation';
-  END IF;
-END $$;
-
-DO $$
+DO $guard$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_reader_notes_record_created'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_reader_notes_record_created';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'uq_ai_usage_events_invocation_key'
+    ) THEN
+        RAISE EXCEPTION 'missing uq_ai_usage_events_invocation_key index';
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_reader_notes_anchor_sentence'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_reader_notes_anchor_sentence';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'reader_jobs_job_type_check'
+          AND pg_get_constraintdef(oid) LIKE '%build_semantic_outline%'
+    ) THEN
+        RAISE EXCEPTION 'reader_jobs_job_type_check must carry the final 12-value job type set';
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_record'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_record';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'stable_document_blocks_block_type_check'
+          AND pg_get_constraintdef(oid) LIKE '%thematic_break%'
+    ) THEN
+        RAISE EXCEPTION 'stable_document_blocks_block_type_check must carry the final 15-value block type set';
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reading_record'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reading_record';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'favorite_records_target_type_check'
+          AND pg_get_constraintdef(oid) LIKE '%reading_record%'
+          AND pg_get_constraintdef(oid) LIKE '%daily_reader_article%'
+    ) THEN
+        RAISE EXCEPTION 'favorite_records_target_type_check must be the exact daily_reader_article/reading_record union';
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reader_run'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reader_run';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'reader_ask_threads_scope_check'
+          AND pg_get_constraintdef(oid) LIKE '%reading_record_id IS NOT NULL%'
+    ) THEN
+        RAISE EXCEPTION 'reader_ask_threads_scope_check must be Reading Record only';
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_reader_job'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_reader_job';
-  END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'user_annotations_text_anchor_payload_check'
+          AND pg_get_constraintdef(oid) LIKE '%reading_record_id IS NOT NULL%'
+          AND pg_get_constraintdef(oid) LIKE '%unit_end_utf16%'
+    ) THEN
+        RAISE EXCEPTION 'user_annotations_text_anchor_payload_check must be Reading Record anchor only';
+    END IF;
+END
+$guard$;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_ai_usage_events_enhancement_layer'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_enhancement_layer';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexname = 'idx_ai_usage_events_operation_fingerprint'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_ai_usage_events_operation_fingerprint';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_subject'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_credit_ledger_subject';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reading_record'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_credit_ledger_reading_record';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reader_run'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_credit_ledger_reader_run';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_credit_ledger_reader_job'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_credit_ledger_reader_job';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_dict_ai_candidates_usage_event'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_dict_ai_candidates_usage_event';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'uq_reader_ask_default_thread'
-  ) THEN
-    RAISE EXCEPTION 'missing index: uq_reader_ask_default_thread';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_reader_ask_messages_current_turn_run'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_reader_ask_messages_current_turn_run';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_reader_ask_turn_runs_usage_event'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_reader_ask_turn_runs_usage_event';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'uq_analysis_overview_tasks_record_active'
-  ) THEN
-    RAISE EXCEPTION 'missing index: uq_analysis_overview_tasks_record_active';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_vocabulary_book_dict_entry_id'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_vocabulary_book_dict_entry_id';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_dict_entries_source_entry_key'
-  ) THEN
-    RAISE EXCEPTION 'missing index: idx_dict_entries_source_entry_key';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'uq_reading_records_user_client_active'
-  ) THEN
-    RAISE EXCEPTION 'missing index: uq_reading_records_user_client_active';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'uq_reader_jobs_active_fingerprint'
-  ) THEN
-    RAISE EXCEPTION 'missing index: uq_reader_jobs_active_fingerprint';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'uq_enhancement_layers_active_published'
-  ) THEN
-    RAISE EXCEPTION 'missing index: uq_enhancement_layers_active_published';
-  END IF;
-END $$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'ai_usage_events'
-      AND c.conname = 'fk_ai_usage_events_reading_record'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reading_record';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'ai_usage_events'
-      AND c.conname = 'fk_ai_usage_events_reader_run'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reader_run';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'ai_usage_events'
-      AND c.conname = 'fk_ai_usage_events_reader_job'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_reader_job';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'ai_usage_events'
-      AND c.conname = 'fk_ai_usage_events_enhancement_layer'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_ai_usage_events_enhancement_layer';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'user_credit_ledger'
-      AND c.conname = 'fk_user_credit_ledger_reading_record'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reading_record';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'user_credit_ledger'
-      AND c.conname = 'fk_user_credit_ledger_reader_run'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reader_run';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'user_credit_ledger'
-      AND c.conname = 'fk_user_credit_ledger_reader_job'
-  ) THEN
-    RAISE EXCEPTION 'missing constraint: fk_user_credit_ledger_reader_job';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint c
-    JOIN pg_class t ON t.oid = c.conrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
-      AND t.relname = 'reader_jobs'
-      AND c.contype = 'c'
-      AND pg_get_constraintdef(c.oid) LIKE '%build_grammar_bundle%'
-  ) THEN
-    RAISE EXCEPTION 'reader_jobs job_type check missing build_grammar_bundle';
-  END IF;
-END $$;
+SELECT 'schema baseline OK' AS check_schema_baseline;

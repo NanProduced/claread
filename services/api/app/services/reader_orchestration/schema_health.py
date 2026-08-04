@@ -71,12 +71,9 @@ READER_D6_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     READER_NOTES_TABLE: READER_D6_ANCHOR_COLUMNS,
 }
 
-READER_D6_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    READER_NOTES_TABLE: (
-        "analysis_record_id",
-        "anchor_sentence_id",
-    ),
-}
+# DATA-SCHEMA-BASELINE D2: legacy dual-contract columns are dropped from the
+# baseline, so there are no legacy columns left to require-nullable.
+READER_D6_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {}
 
 READER_D6_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     USER_ANNOTATIONS_TABLE: (
@@ -94,6 +91,7 @@ READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
 ] = {
     USER_ANNOTATIONS_TABLE: {
         "user_annotations_text_anchor_payload_check": (
+            "anchor_type = 'text_range'",
             "reading_record_id IS NOT NULL",
             "base_id IS NOT NULL",
             "generation IS NOT NULL",
@@ -101,7 +99,10 @@ READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
             "anchor_segment_id IS NOT NULL",
             "unit_start_utf16 IS NOT NULL",
             "unit_end_utf16 IS NOT NULL",
-            "analysis_record_id IS NULL",
+            "paragraph_id IS NULL",
+            "sentence_id IS NULL",
+            "start_offset IS NULL",
+            "end_offset IS NULL",
         ),
     },
 }
