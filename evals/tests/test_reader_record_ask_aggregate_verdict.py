@@ -14,7 +14,7 @@ would try to open the real-LLM gate, when the actual problem was
 dataset drift between phases.
 
 The rework establishes a SINGLE source of truth —
-:func:`run_reader_record_ask_r4_a3._decide_final_verdict` — implementing
+:func:`run_reader_record_ask_eval._decide_final_verdict` — implementing
 the 7-row verdict/gate table (frozen contract)::
 
     1. dataset/manifest/artifact identity mismatch
@@ -69,19 +69,19 @@ from claread_eval.reader_record_ask.session import RunSessionLayout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = (
-    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_r4_a3.py"
+    _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_eval.py"
 )
 
 
 def _load_runner_module():
     """Load the runner script as a module (it's not in a package)."""
     spec = importlib.util.spec_from_file_location(
-        "run_reader_record_ask_r4_a3", _RUNNER_PATH
+        "run_reader_record_ask_eval", _RUNNER_PATH
     )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["run_reader_record_ask_r4_a3"] = module
+    sys.modules["run_reader_record_ask_eval"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -637,7 +637,7 @@ class TestAggregateEndToEndVerdictPrecedence:
 
         load dataset snapshot → load artifacts from disk →
         find mismatched → filter → _decide_final_verdict →
-        generate_r4_a3_report → write report
+        generate_eval_report → write report
 
     The verdict is extracted from the generated report's title block
     (``> verdict: **<verdict>**``).

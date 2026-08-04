@@ -414,7 +414,7 @@ def test_coverage_audit_corrupt_manifest_treated_as_missing(
     The aggregate's coverage audit then falls back to manifest=None
     (verified here by directly calling validate_manifest_coverage with
     None). The aggregate's error-handling path in
-    ``run_reader_record_ask_r4_a3.aggregate`` wraps read_manifest in a
+    ``run_reader_record_ask_eval.aggregate`` wraps read_manifest in a
     try/except RunManifestError and proceeds with manifest=None.
     """
     layout = RunSessionLayout(runs_root=tmp_path, run_id="phase1-corrupt")

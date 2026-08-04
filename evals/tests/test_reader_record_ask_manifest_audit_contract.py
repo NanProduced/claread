@@ -1,9 +1,8 @@
-"""R4-A4-2R3 — Manifest V2 strict contract tests.
+"""Run manifest V2 audit contract tests.
 
-Spec: R4-A4-2R3 — Actual Fixture Capture 与 Manifest Version 闭合
-(P0-2 + P1).
+Spec: Actual Fixture Capture 与 Manifest Version 闭合.
 
-This file covers two of the 9 required R4-A4-2R3 test scenarios:
+This file covers two of the 9 required audit-contract scenarios:
 
 * Scenario 4 — new manifest identity map missing/empty/partial/extra
   MUST be rejected at parse time (``corrupt_manifest``). V2 manifests
@@ -13,7 +12,7 @@ This file covers two of the 9 required R4-A4-2R3 test scenarios:
   is strictly typed. V2 Rules 18e/18f/18g/18h are enforced at parse
   time.
 
-The other R4-A4-2R3 scenarios are covered elsewhere:
+The other audit-contract scenarios are covered elsewhere:
 
 * Scenario 1 (preflight == actual pass), 2 (monkeypatch mismatch
   blocked), 3 (runtime exception → null + incomplete) — covered in
@@ -31,7 +30,7 @@ The other R4-A4-2R3 scenarios are covered elsewhere:
 * Scenario 8 (old manifest only via explicit version → compat) —
   covered in
   ``evals/tests/test_reader_record_ask_runtime_fixture_identity.py``
-  by ``test_pre_r4_a4_2r2_manifest_backwards_compat`` and
+  by ``test_pre_v2_manifest_backwards_compat`` and
   ``test_v1_explicit_version_skips_three_layer_check``.
 * Scenario 9 (full test suite pass) — verification step (ruff + git
   diff --check + pytest).
@@ -137,7 +136,7 @@ def _serialize_and_parse(manifest_dict: dict[str, Any]) -> ReaderRecordAskRunMan
 
 
 class TestScenario4V2IdentityMapStrictness:
-    """R4-A4-2R3 Scenario 4: V2 manifests MUST carry a complete
+    """Scenario 4: V2 manifests MUST carry a complete
     identity map. Missing / empty / partial / extra identity maps are
     rejected at parse time (``corrupt_manifest``). There is NO legacy
     bypass for V2 — selection is by EXPLICIT
@@ -241,7 +240,7 @@ class TestScenario4V2IdentityMapStrictness:
             _serialize_and_parse(d)
 
     def test_v1_explicit_version_with_empty_identity_map_passes(self) -> None:
-        """R4-A4-2R3 P0-2: a V1 manifest (explicit
+        """A V1 manifest (explicit
         ``audit_contract_version="r4-a4-2r2"``) with an empty identity
         map parses successfully — V1 is selected by EXPLICIT version,
         NOT by empty-dict guessing.
@@ -264,7 +263,7 @@ class TestScenario4V2IdentityMapStrictness:
         assert manifest.runtime_fixture_identities == {}
 
     def test_v1_none_version_with_empty_identity_map_passes(self) -> None:
-        """R4-A4-2R3 P0-2: a manifest with
+        """A manifest with
         ``audit_contract_version=None`` (no field in JSON) and an empty
         identity map parses successfully — V1 default.
 
@@ -279,7 +278,7 @@ class TestScenario4V2IdentityMapStrictness:
         assert manifest.runtime_fixture_identities == {}
 
     def test_v2_unknown_audit_contract_version_rejected(self) -> None:
-        """R4-A4-2R3 P0-2: an unknown ``audit_contract_version`` (not
+        """An unknown ``audit_contract_version`` (not
         V1, not V2, not None) → ``corrupt_manifest`` (Rule 17).
 
         Forward / backward incompatibility is fail-closed: a future
@@ -297,7 +296,7 @@ class TestScenario4V2IdentityMapStrictness:
 
 
 class TestScenario7RetryPolicyRoundTrip:
-    """R4-A4-2R3 Scenario 7: ``retry_policy`` (typed dict) and
+    """Scenario 7: ``retry_policy`` (typed dict) and
     ``retry_headroom`` (non-negative int) round-trip through
     JSON serialization strictly. V2 Rules 18e/18f/18g/18h enforced at
     parse time.
@@ -480,11 +479,11 @@ class TestScenario7RetryPolicyRoundTrip:
     def test_v1_legacy_retry_policy_string_default_migrates_to_empty_dict(
         self,
     ) -> None:
-        """R4-A4-2R3: V1 manifests may carry the legacy string
+        """V1 manifests may carry the legacy string
         ``"default"`` for ``retry_policy``. ``from_json`` migrates it
         to ``{}`` so the dataclass type stays ``dict[str, Any]``.
 
-        This preserves backwards-compat with pre-R4-A4-2R3 manifests.
+        This preserves backwards-compat with pre-V2 audit-contract manifests.
         """
         d = _base_valid_v2_manifest_dict()
         d["audit_contract_version"] = AUDIT_CONTRACT_VERSION_V1
@@ -494,7 +493,7 @@ class TestScenario7RetryPolicyRoundTrip:
         assert manifest.retry_policy == {}
 
     def test_v1_legacy_retry_policy_unknown_string_rejected(self) -> None:
-        """R4-A4-2R3: V1 manifests with a string ``retry_policy``
+        """V1 manifests with a string ``retry_policy``
         other than ``"default"`` → ``corrupt_manifest`` (Rule 15).
 
         Only the literal ``"default"`` is the legacy V1 value; any
@@ -530,7 +529,7 @@ class TestScenario7RetryPolicyRoundTrip:
 
 
 class TestBudgetManifestJsonExample:
-    """R4-A4-2R3 P1: produce a real V2 budget manifest JSON example
+    """Produce a real V2 budget manifest JSON example
     that demonstrates the typed retry_policy / non-null retry_headroom
     contract. This test exists primarily to surface the actual JSON
     structure for the report (``json.dumps`` output is deterministic

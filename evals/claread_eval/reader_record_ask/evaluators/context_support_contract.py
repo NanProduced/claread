@@ -11,7 +11,7 @@ constants and frozensets:
   classification tags)
 - :mod:`evaluators.aggregator` (consumes tags to route failure
   clusters)
-- :mod:`scripts.run_reader_record_ask_r4_a3` (consumes tags to
+- :mod:`scripts.run_reader_record_ask_eval` (consumes tags to
   populate :class:`AggregateReadinessAudit`)
 
 The three copies had to be kept manually in sync — a typo in any
@@ -24,7 +24,7 @@ Module boundary rules (do NOT violate):
 - This module MUST NOT import from
   :mod:`evaluators.context_support`, :mod:`evaluators.aggregator`,
   :mod:`evaluators.result`, :mod:`evaluators.artifact`, or
-  :mod:`scripts.run_reader_record_ask_r4_a3`. It is a leaf module
+  :mod:`scripts.run_reader_record_ask_eval`. It is a leaf module
   with no evaluator / aggregator / runner dependencies — importing
   it from any of those call sites must not create a cycle.
 - This module MUST NOT depend on Pydantic models. It only exports

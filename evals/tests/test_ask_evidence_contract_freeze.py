@@ -1,4 +1,4 @@
-"""M3 Stage C — Ask Evidence Contract Freeze (v5) regression tests.
+"""Ask Evidence Contract Freeze (v5) regression tests.
 
 Spec:
     docs/initiatives/reader-agentic-orchestration/modules/ask-claread-agentic-product-runtime-contract.md
@@ -7,7 +7,8 @@ Spec:
 Purpose
 -------
 This module is a **contract freeze** regression suite. It locks down the
-v5 contract surface of the M3 owner's C1 / C3 deliverables so that
+v5 contract surface of the map-source-material provider and the
+source-evidence descriptor so that
 future refactoring cannot silently break the contract that the Ask owner
 depends on.
 
@@ -102,14 +103,14 @@ except ImportError as _exc:  # pragma: no cover - environment-dependent skip
 # Module source text — used for negative guards (no forbidden calls).
 # ---------------------------------------------------------------------------
 
-_C1_MODULE_PATH = (
+_MATERIAL_PROVIDER_MODULE_PATH = (
     _SERVICES_API_DIR
     / "app"
     / "services"
     / "reader_orchestration"
     / "map_source_material_provider.py"
 )
-_C3_MODULE_PATH = (
+_DESCRIPTOR_MODULE_PATH = (
     _SERVICES_API_DIR
     / "app"
     / "services"
@@ -117,8 +118,8 @@ _C3_MODULE_PATH = (
     / "source_evidence_descriptor.py"
 )
 
-_C1_SOURCE = _C1_MODULE_PATH.read_text(encoding="utf-8")
-_C3_SOURCE = _C3_MODULE_PATH.read_text(encoding="utf-8")
+_MATERIAL_PROVIDER_SOURCE = _MATERIAL_PROVIDER_MODULE_PATH.read_text(encoding="utf-8")
+_DESCRIPTOR_SOURCE = _DESCRIPTOR_MODULE_PATH.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -575,8 +576,8 @@ class TestMapSourceMaterialShape:
     """§5.1 9 + §5.1 25 — MapSourceMaterial is a pure candidate carrier.
 
     Must NOT carry RAG provenance (index_run_id / plan_content_sha256)
-    or visible retention fields. Only fence state + candidate tuple +
-    diagnostic enum.
+    or visible retention fields. Only fence state + candidate descriptor
+    tuple + heading tuple + diagnostic enum.
     """
 
     def test_is_frozen_slots_dataclass(self) -> None:
@@ -590,6 +591,7 @@ class TestMapSourceMaterialShape:
         expected = {
             "material_fence_ok",
             "descriptor_sources",
+            "heading_enrichments",
             "material_failure_reason",
         }
         assert names == expected, (
@@ -670,10 +672,11 @@ class TestMapSourceMaterialShape:
 
 
 class TestModuleSourceGuards:
-    """Negative hygiene guards: neither C1 nor C3 module may call
+    """Negative hygiene guards: neither the material provider nor the
+    descriptor module may call
     forbidden seams.
 
-    Per task scope: M3 owner produces pure preflight computation. Does
+    The material provider produces pure preflight computation. Does
     NOT call ``ledger.issue``, ``assemble_article_map``, registry /
     cursor mutation, embedding/Zilliz, or import the Ask runtime
     coordinator.
@@ -695,10 +698,10 @@ class TestModuleSourceGuards:
             "dashscope.TextEmbedding",
         ],
     )
-    def test_c1_module_does_not_call_forbidden_seams(self, forbidden: str) -> None:
-        assert forbidden not in _C1_SOURCE, (
-            f"C1 module (map_source_material_provider.py) must NOT contain "
-            f"{forbidden!r} — M3 owner produces pure preflight computation."
+    def test_material_provider_module_does_not_call_forbidden_seams(self, forbidden: str) -> None:
+        assert forbidden not in _MATERIAL_PROVIDER_SOURCE, (
+            f"map_source_material_provider.py must NOT contain "
+            f"{forbidden!r} — the material provider is pure preflight computation."
         )
 
     @pytest.mark.parametrize(
@@ -717,17 +720,17 @@ class TestModuleSourceGuards:
             "dashscope.TextEmbedding",
         ],
     )
-    def test_c3_module_does_not_call_forbidden_seams(self, forbidden: str) -> None:
-        assert forbidden not in _C3_SOURCE, (
-            f"C3 module (source_evidence_descriptor.py) must NOT contain "
+    def test_descriptor_module_does_not_call_forbidden_seams(self, forbidden: str) -> None:
+        assert forbidden not in _DESCRIPTOR_SOURCE, (
+            f"source_evidence_descriptor.py must NOT contain "
             f"{forbidden!r} — adapter is pure computation over plan."
         )
 
-    def test_c1_module_does_not_directly_import_asyncpg(self) -> None:
+    def test_material_provider_module_does_not_directly_import_asyncpg(self) -> None:
         """asyncpg is only transitive via article_rag_index_plan.py — the
-        C1 module itself must not establish a direct DB dependency."""
+        material provider itself must not establish a direct DB dependency."""
         # Allow only in docstrings/comments — check import statements.
-        for line in _C1_SOURCE.splitlines():
+        for line in _MATERIAL_PROVIDER_SOURCE.splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
@@ -737,12 +740,12 @@ class TestModuleSourceGuards:
                 stripped.startswith("import asyncpg")
                 or stripped.startswith("from asyncpg")
             ), (
-                f"C1 module must not directly import asyncpg (only transitive "
+                f"map_source_material_provider must not directly import asyncpg (only transitive "
                 f"via article_rag_index_plan). Found: {stripped!r}."
             )
 
-    def test_c3_module_does_not_directly_import_asyncpg(self) -> None:
-        for line in _C3_SOURCE.splitlines():
+    def test_descriptor_module_does_not_directly_import_asyncpg(self) -> None:
+        for line in _DESCRIPTOR_SOURCE.splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
@@ -752,7 +755,7 @@ class TestModuleSourceGuards:
                 stripped.startswith("import asyncpg")
                 or stripped.startswith("from asyncpg")
             ), (
-                f"C3 module must not directly import asyncpg. "
+                f"source_evidence_descriptor must not directly import asyncpg. "
                 f"Found: {stripped!r}."
             )
 
@@ -809,23 +812,26 @@ class TestModulePublicSurface:
     consumers (Ask owner) cannot accidentally depend on internal symbols.
     """
 
-    def test_c1_module_all_exports(self) -> None:
+    def test_material_provider_module_all_exports(self) -> None:
         from app.services.reader_orchestration import (
-            map_source_material_provider as c1_mod,
+            map_source_material_provider as material_provider_mod,
         )
 
         expected = {
+            "HeadingEnrichment",
             "MapSourceMaterial",
             "MapSourceMaterialProvider",
             "MaterialFailureReason",
         }
-        assert set(c1_mod.__all__) == expected, (
-            f"C1 __all__ must be exactly {expected!r}; got {set(c1_mod.__all__)!r}."
+        got = set(material_provider_mod.__all__)
+        assert got == expected, (
+            f"material provider __all__ must be exactly {expected!r}; "
+            f"got {got!r}."
         )
 
-    def test_c3_module_all_exports(self) -> None:
+    def test_descriptor_module_all_exports(self) -> None:
         from app.services.reader_orchestration import (
-            source_evidence_descriptor as c3_mod,
+            source_evidence_descriptor as descriptor_mod,
         )
 
         expected = {
@@ -841,8 +847,8 @@ class TestModulePublicSurface:
             "chunk_qualifies_for_descriptor",
             "descriptor_to_candidate_source",
         }
-        assert set(c3_mod.__all__) == expected, (
-            f"C3 __all__ must be exactly {expected!r}; got {set(c3_mod.__all__)!r}."
+        assert set(descriptor_mod.__all__) == expected, (
+            f"descriptor __all__ must be exactly {expected!r}; got {set(descriptor_mod.__all__)!r}."
         )
 
 
@@ -921,10 +927,10 @@ class TestSortKeySurface:
         # Access the internal class via the module — it's not in __all__
         # but it is referenced by build_descriptor_candidates.
         from app.services.reader_orchestration import (
-            source_evidence_descriptor as c3_mod,
+            source_evidence_descriptor as descriptor_mod,
         )
 
-        candidate_cls = getattr(c3_mod, "_DescriptorCandidate", None)
+        candidate_cls = getattr(descriptor_mod, "_DescriptorCandidate", None)
         assert candidate_cls is not None, (
             "_DescriptorCandidate internal class must exist for §5.4.1 sort."
         )
@@ -950,7 +956,7 @@ class TestSortKeySurface:
 
 class TestArticleMapEntrySourceSurface:
     """The candidate output type must remain constructible with the
-    minimal (heading, window_text) fields the C3 conversion uses.
+    minimal (heading, window_text) fields the descriptor conversion uses.
     """
 
     def test_constructible_with_heading_and_window_text(self) -> None:
@@ -961,10 +967,10 @@ class TestArticleMapEntrySourceSurface:
         sig = inspect.signature(ArticleMapEntrySource)
         params = sig.parameters
         assert "heading" in params, (
-            "ArticleMapEntrySource must accept 'heading' (C3 conversion depends on it)."
+            "ArticleMapEntrySource must accept 'heading' (descriptor conversion depends on it)."
         )
         assert "window_text" in params, (
-            "ArticleMapEntrySource must accept 'window_text' (C3 conversion depends on it)."
+            "ArticleMapEntrySource must accept 'window_text' (descriptor conversion depends on it)."
         )
 
     def test_heading_field_accepts_none(self) -> None:

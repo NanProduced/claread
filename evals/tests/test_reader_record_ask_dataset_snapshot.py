@@ -126,7 +126,7 @@ def _write_dataset(
 # ---------------------------------------------------------------------------
 
 
-def test_p1_b_each_file_read_exactly_once(tmp_path: Path) -> None:
+def test_each_file_read_exactly_once(tmp_path: Path) -> None:
     """P1-b: the snapshot loader reads each file exactly ONCE.
 
     Prior to the rework, :func:`load_r4_a3_dataset` read files for
@@ -208,7 +208,7 @@ def test_p1_b_each_file_read_exactly_once(tmp_path: Path) -> None:
         )
 
 
-def test_p1_b_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> None:
+def test_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> None:
     """P1-b: the snapshot loader MUST NOT call the legacy
     :func:`compute_dataset_identity` (which re-reads files from disk).
 
@@ -252,7 +252,7 @@ def test_p1_b_loader_does_not_call_compute_dataset_identity(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_p1_b_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
+def test_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
     """P1-b: schema parsing and content SHA-256 are derived from the
     SAME captured bytes.
 
@@ -327,7 +327,7 @@ def test_p1_b_parse_and_hash_use_same_bytes(tmp_path: Path) -> None:
     )
 
 
-def test_p1_b_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
+def test_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
     tmp_path: Path,
 ) -> None:
     """P1-b: mutating ``dataset.yaml`` AFTER capture MUST NOT affect
@@ -373,7 +373,7 @@ def test_p1_b_dataset_yaml_mutation_after_capture_does_not_affect_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def test_p1_b_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
+def test_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
     """P1-b: :class:`LoadedReaderRecordAskDatasetSnapshot` is a
     ``@dataclass(frozen=True)`` — the snapshot is immutable after
     capture.
@@ -405,7 +405,7 @@ def test_p1_b_snapshot_is_frozen_dataclass(tmp_path: Path) -> None:
         snapshot.identity.content_sha256 = "0" * 64  # type: ignore[misc]
 
 
-def test_p1_b_load_r4_a3_dataset_returns_snapshot_dataset(tmp_path: Path) -> None:
+def test_load_dataset_returns_snapshot_dataset(tmp_path: Path) -> None:
     """P1-b: the legacy :func:`load_r4_a3_dataset` adapter MUST reuse
     :func:`load_r4_a3_dataset_with_snapshot` internally.
 
@@ -434,7 +434,7 @@ def test_p1_b_load_r4_a3_dataset_returns_snapshot_dataset(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_p1_b_snapshot_identity_same_for_same_dataset_in_different_paths(
+def test_snapshot_identity_same_for_same_dataset_in_different_paths(
     tmp_path: Path,
 ) -> None:
     """P1-b: the snapshot identity is stable across absolute paths.
@@ -461,7 +461,7 @@ def test_p1_b_snapshot_identity_same_for_same_dataset_in_different_paths(
     assert snapshot_a.identity.schema_version == snapshot_b.identity.schema_version
 
 
-def test_p1_b_snapshot_identity_changes_on_case_content_mutation(
+def test_snapshot_identity_changes_on_case_content_mutation(
     tmp_path: Path,
 ) -> None:
     """P1-b: editing a case file's content changes the snapshot identity."""
@@ -484,7 +484,7 @@ def test_p1_b_snapshot_identity_changes_on_case_content_mutation(
     )
 
 
-def test_p1_b_snapshot_identity_changes_on_filename_rename(tmp_path: Path) -> None:
+def test_snapshot_identity_changes_on_filename_rename(tmp_path: Path) -> None:
     """P1-b: renaming a case file changes the snapshot identity (the
     fingerprint binds relative path AND content)."""
     cases = [_make_case(case_id="case-a")]
@@ -506,7 +506,7 @@ def test_p1_b_snapshot_identity_changes_on_filename_rename(tmp_path: Path) -> No
     )
 
 
-def test_p1_b_snapshot_identity_changes_on_dataset_yaml_mutation(
+def test_snapshot_identity_changes_on_dataset_yaml_mutation(
     tmp_path: Path,
 ) -> None:
     """P1-b: editing ``dataset.yaml`` changes the snapshot identity."""
@@ -531,7 +531,7 @@ def test_p1_b_snapshot_identity_changes_on_dataset_yaml_mutation(
     )
 
 
-def test_p1_b_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
+def test_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> None:
     """P1-b: content under ``runs/`` MUST NOT affect the snapshot identity.
 
     The loader excludes ``runs/`` from both parsing and identity
@@ -571,7 +571,7 @@ def test_p1_b_snapshot_identity_unaffected_by_runs_content(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_p1_b_artifact_stamping_uses_snapshot_identity(tmp_path: Path) -> None:
+def test_artifact_stamping_uses_snapshot_identity(tmp_path: Path) -> None:
     """P1-b: an artifact stamped with ``snapshot.identity`` round-trips
     through :func:`find_identity_mismatched_artifacts` as a MATCH.
 

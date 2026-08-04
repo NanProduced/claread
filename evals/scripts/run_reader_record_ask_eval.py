@@ -1,24 +1,24 @@
-"""R4-A3 Reader Record Ask evaluation runner (rework).
+"""Reader Record Ask real-LLM evaluation runner.
 
 Usage (run from ``evals/``)::
 
     # Phase 1: real LLM run (requires env gate)
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-chat \\
-        uv run python scripts/run_reader_record_ask_r4_a3.py --phase 1 --run-id phase1-<ts>
+        uv run python scripts/run_reader_record_ask_eval.py --phase 1 --run-id phase1-<ts>
 
     # Phase 2: prior-run-id points at the Phase 1 run
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-chat \\
-        uv run python scripts/run_reader_record_ask_r4_a3.py --phase 2 \\
+        uv run python scripts/run_reader_record_ask_eval.py --phase 2 \\
         --run-id phase2-<ts> --prior-run-id phase1-<ts>
 
     # Phase 3: prior-run-id points at the Phase 2 run
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_R4_A3_RUN=1 CLAREAD_REAL_LLM_MODEL=deepseek-pro \\
         CLAREAD_R4_A3_PRO_PROFILE=<pro_profile> \\
-        uv run python scripts/run_reader_record_ask_r4_a3.py --phase 3 \\
+        uv run python scripts/run_reader_record_ask_eval.py --phase 3 \\
         --run-id phase3-<ts> --prior-run-id phase2-<ts>
 
     # Aggregate: load artifacts, run 11 evaluators, generate report.
-    uv run python scripts/run_reader_record_ask_r4_a3.py --phase aggregate --run-id <id> \\
+    uv run python scripts/run_reader_record_ask_eval.py --phase aggregate --run-id <id> \\
         --report-output ../docs/tmp/reader-orchestration/review/\\
 TMP-reader-record-ask-r4-a3-eval-2026-07-17.md
 
@@ -69,10 +69,10 @@ from claread_eval.reader_record_ask.evaluators.context_support_contract import (
 
 EVALS_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EVALS_ROOT.parent
-# Dataset Git governance: the R4-A3 working dataset lives under
+# Dataset Git governance: the Reader Record Ask working dataset lives under
 # ``evals/tmp/`` which is gitignored by the ``**/tmp/`` rule. The
 # tracked ``evals/datasets/`` tree hosts canonical datasets like
-# ``vocabulary-seed-v1`` only — the R4-A3 working dataset is local,
+# ``vocabulary-seed-v1`` only — the Reader Record Ask working dataset is local,
 # env-bound, and never committed.
 #
 # P0 explicit dataset-dir binding: the previous ``DEFAULT_DATASET_DIR``
@@ -103,11 +103,11 @@ _TRACKER_PATH = (
 # Real runs MUST set one of these — the runner exits with code 2 before
 # invoking the pytest subprocess when neither is provided. The harness
 # also fail-closes before any paid call when the env is missing.
-R4_A3_DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
+DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
 
 # R4-A4-2R P1-Budget: provider request cap env var — SAME name the
 # in-process harness reads (services/api/tests/test_reader_record_ask_
-# real_llm_eval.py:_DEFAULT_MAX_REQUESTS + R4_A3_MAX_REQUESTS_ENV).
+# real_llm_eval.py:_DEFAULT_MAX_REQUESTS + MAX_REQUESTS_ENV).
 # The aggregate reads this env to surface ``request_cap`` in
 # ``run_metadata.budget_semantics`` so the operator can see the
 # configured cap alongside the planned logical runs and retry
@@ -116,7 +116,7 @@ R4_A3_DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
 # may have used its own default; the aggregate cannot know it
 # authoritatively without a manifest field, which we deliberately do
 # not add to avoid expanding the manifest schema in this round).
-R4_A3_MAX_REQUESTS_ENV = "CLAREAD_R4_A3_MAX_REQUESTS"
+MAX_REQUESTS_ENV = "CLAREAD_R4_A3_MAX_REQUESTS"
 
 
 # ---------------------------------------------------------------------------
@@ -141,18 +141,18 @@ def _resolve_request_cap_from_env() -> int | None:
     matches what the harness actually used (when the operator set
     the env explicitly).
     """
-    raw = os.environ.get(R4_A3_MAX_REQUESTS_ENV, "").strip()
+    raw = os.environ.get(MAX_REQUESTS_ENV, "").strip()
     if not raw:
         return None
     try:
         cap = int(raw)
     except ValueError as exc:
         raise ValueError(
-            f"{R4_A3_MAX_REQUESTS_ENV}={raw!r} is not a valid int"
+            f"{MAX_REQUESTS_ENV}={raw!r} is not a valid int"
         ) from exc
     if cap < 0:
         raise ValueError(
-            f"{R4_A3_MAX_REQUESTS_ENV}={cap} must be non-negative"
+            f"{MAX_REQUESTS_ENV}={cap} must be non-negative"
         )
     return cap
 
@@ -332,7 +332,7 @@ def _compute_budget_semantics(
 
 
 def _resolve_dataset_dir(cli_value: str | None) -> Path | None:
-    """Resolve the R4-A3 dataset dir from CLI flag or env (no fallback).
+    """Resolve the evaluation dataset dir from CLI flag or env (no fallback).
 
     Priority (clear, single rule):
     1. ``--dataset-dir`` CLI flag (if explicitly set; non-empty)
@@ -348,7 +348,7 @@ def _resolve_dataset_dir(cli_value: str | None) -> Path | None:
     """
     if cli_value is not None and cli_value.strip():
         return Path(cli_value).resolve()
-    env_val = os.environ.get(R4_A3_DATASET_DIR_ENV, "").strip()
+    env_val = os.environ.get(DATASET_DIR_ENV, "").strip()
     if env_val:
         return Path(env_val).resolve()
     return None
@@ -365,8 +365,8 @@ def _preflight_dataset_dir(dataset_dir: Path | None) -> None:
     """
     if dataset_dir is None:
         print(
-            "ERROR: R4-A3 dataset dir not configured.\n"
-            f"Set {R4_A3_DATASET_DIR_ENV}=<path> or pass --dataset-dir <path>. "
+            "ERROR: evaluation dataset dir not configured.\n"
+            f"Set {DATASET_DIR_ENV}=<path> or pass --dataset-dir <path>. "
             f"Suggested local working dir: {SUGGESTED_DATASET_DIR} "
             "(gitignored; not used automatically).",
             file=sys.stderr,
@@ -374,8 +374,8 @@ def _preflight_dataset_dir(dataset_dir: Path | None) -> None:
         sys.exit(2)
     if not dataset_dir.is_dir():
         print(
-            f"ERROR: R4-A3 dataset dir not found: {dataset_dir}\n"
-            f"Set {R4_A3_DATASET_DIR_ENV}=<path> or pass --dataset-dir <path>.",
+            f"ERROR: evaluation dataset dir not found: {dataset_dir}\n"
+            f"Set {DATASET_DIR_ENV}=<path> or pass --dataset-dir <path>.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -440,7 +440,7 @@ def run_phase(
         "CLAREAD_R4_A3_RUNS_DIR": str(runs_dir),
     }
     if dataset_dir is not None:
-        env[R4_A3_DATASET_DIR_ENV] = str(dataset_dir)
+        env[DATASET_DIR_ENV] = str(dataset_dir)
     if prior_run_id is not None:
         env["CLAREAD_R4_A3_PRIOR_RUN_ID"] = prior_run_id
     cmd = [
@@ -1493,7 +1493,7 @@ def aggregate(
     from claread_eval.reader_record_ask.loader import (
         load_r4_a3_dataset_with_snapshot,
     )
-    from claread_eval.reader_record_ask.report import generate_r4_a3_report
+    from claread_eval.reader_record_ask.report import generate_eval_report
     from claread_eval.reader_record_ask.run_manifest import (
         CoverageAuditResult,
         ManifestState,
@@ -2035,7 +2035,7 @@ def aggregate(
         readiness=readiness,
     )
 
-    report = generate_r4_a3_report(
+    report = generate_eval_report(
         aggregated=aggregated,
         dataset=dataset,
         artifacts=artifacts,
@@ -2318,7 +2318,7 @@ def main() -> int:
         "--dataset-dir",
         default=None,
         help=(
-            "Path to the R4-A3 dataset directory. REQUIRED for real runs "
+            "Path to the evaluation dataset directory. REQUIRED for real runs "
             "(Phase 1/2/3) and aggregate. Priority: "
             "CLI --dataset-dir > env CLAREAD_R4_A3_DATASET_DIR. "
             "If neither is set, the runner exits with code 2 before any "
@@ -2377,7 +2377,7 @@ def main() -> int:
     # or paid call.
     dataset_dir = _resolve_dataset_dir(args.dataset_dir)
     _preflight_dataset_dir(dataset_dir)
-    print(f"R4-A3 dataset dir: {dataset_dir}", file=sys.stderr)
+    print(f"Evaluation dataset dir: {dataset_dir}", file=sys.stderr)
 
     if args.phase == "aggregate":
         # ``_preflight_dataset_dir`` above already exits with code 2 if

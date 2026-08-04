@@ -1,15 +1,14 @@
-"""R4-A3 Reader Record Ask evaluation report generator.
+"""Reader Record Ask evaluation report generator.
 
-Produces the markdown evaluation report defined by the R4-A3 spec
-(`.trae/specs/reader-record-ask-r4-a3-correctness-eval/spec.md` —
-Requirement: 交付报告内容 + 报告脱敏与可聚合).
+Produces the markdown evaluation report (Requirement: 交付报告内容 +
+报告脱敏与可聚合).
 
 The report is intentionally a pure function over the inputs: it never
 reads the network or the DB, never re-runs evaluators, and never
 imports production code. Callers (the runner script in
-``evals/scripts/run_reader_record_ask_r4_a3.py``) are responsible for
+``evals/scripts/run_reader_record_ask_eval.py``) are responsible for
 loading artifacts, running the 11 evaluators, and calling
-:func:`generate_r4_a3_report` with the resulting
+:func:`generate_eval_report` with the resulting
 :class:`AggregatedReport`.
 
 Sanitization invariants enforced here (spec Requirement: 报告脱敏与可聚合):
@@ -54,7 +53,7 @@ _CANONICAL_PHASES: tuple[tuple[str, str, str], ...] = (
 )
 
 # 15 required content sections per spec Requirement: 交付报告内容.
-# Sections 16-19 are the rework closure additions (spec: R4-A3 rework —
+# Sections 16-19 are the rework closure additions (
 # 能力边界 / 覆盖状态 / budget 语义 / thinking 验证).
 REQUIRED_SECTION_HEADERS: tuple[str, ...] = (
     "1. 开始/结束 HEAD",
@@ -494,7 +493,7 @@ def _render_failure_clusters(
     )
 
 
-def _render_r4_a4_candidates(
+def _render_remediation_candidates(
     aggregated: AggregatedReport,
     real_model_blocked: bool,
 ) -> str:
@@ -924,7 +923,7 @@ def _render_thinking_verification(real_model_blocked: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
-def generate_r4_a3_report(
+def generate_eval_report(
     *,
     aggregated: AggregatedReport,
     dataset: ReaderRecordAskR4A3Dataset,
@@ -952,7 +951,7 @@ def generate_r4_a3_report(
     task_label: str = "Task 5",
     tracker_path: str | None = None,
 ) -> str:
-    """Generate the R4-A3 evaluation markdown report.
+    """Generate the Reader Record Ask evaluation markdown report.
 
     Returns a markdown string with the 15 required content items per
     spec Requirement: 交付报告内容.
@@ -1033,7 +1032,7 @@ def generate_r4_a3_report(
         )
     )
     sections.append(
-        _render_r4_a4_candidates(
+        _render_remediation_candidates(
             aggregated=aggregated,
             real_model_blocked=real_model_blocked,
         )
