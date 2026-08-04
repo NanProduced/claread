@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `reset-eval-center-data.ps1` 已物理删除，相关验证步骤同步移除）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-04（TEST-GOVERNANCE-FOUNDATION-LONG-R1：API 扁平 marker + `--strict-markers` + 任务编号 naming guard；Web naming guard；real-LLM probe 纳入 triple gate）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -15,6 +15,42 @@ uv run pytest services/api/tests -q
 ```
 
 如果在 `services/api/` 目录内执行，可改为 `uv run pytest tests -q`。
+
+默认命令即 **offline 门禁**：全部 real-LLM / real-provider 测试被 conftest 三重门禁跳过（见下文），不需要额外断网参数。
+
+## pytest marker 语义
+
+`services/api/pyproject.toml` 启用 `--strict-markers`：未声明 marker 直接报错。已声明 marker 分四类：
+
+- 门禁类（既有）：`real_llm` / `article_rag_smoke` / `no_network_default`。
+- 业务链路 `chain_*`（一个测试文件打一个）：`chain_reader_parse` / `chain_reader_orchestration` / `chain_reading_record` / `chain_reader_ask` / `chain_article_rag` / `chain_markdown_input` / `chain_vocabulary` / `chain_console_eval` / `chain_auth` / `chain_infra`。
+- seam `seam_*`（一个测试文件打一个）：`seam_pure_unit` / `seam_service_integration` / `seam_api_contract` / `seam_cross_app_contract` / `seam_browser_journey` / `seam_visual` / `seam_real_llm`。
+- 生命周期 `life_*`（可多个）：`life_permanent_regression` / `life_migration_guard` / `life_characterization` / `life_spike` / `life_temporary_compatibility` / `life_external_smoke`。
+
+存量测试打标是渐进的，不强制一次性完成；新增测试按上述三维度打标。任务编号（`T5.6b`、`D6-I4b`、`round20` 等）**不设 marker**，只放文件顶部注释 `# task-history: ...`，不进入 `-m` 运行选择。
+
+组合示例：
+
+```powershell
+cd services/api
+uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
+uv run pytest -m "seam_pure_unit and not real_llm" -q
+```
+
+## 任务编号 naming guard 与 allowlist ratchet
+
+任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
+
+- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号。存量进入精确 allowlist，**只减不增**：改名/删除文件必须在同一变更中移除对应条目；新文件禁止带任务编号，必须改用业务名。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
+- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的 ratchet 规则。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
+
+改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist。
+
+## 后续 API/Web 并行治理边界
+
+- **API/Evals ownership**：`services/api` marker 补标、allowlist 收缩、剩余任务编号文件改名归 API 治理任务；`evals/` 是独立 pytest 项目，**不继承** API conftest 的 real-LLM fail-closed，evals 在落地自己的 guard 前不得声明 `real_llm` 可选运行。
+- **Web ownership**：vitest guard、命名治理、`// task-history:` 注释归 Web 治理任务；不拆分 ReaderRecordPlateSurface mega-suite、不改 Web 生产逻辑，除非另行审批。
+- 两侧 guard 均为纯文件系统/AST 检查，无 DB、无网络、无 LLM，可在任何 PR 门禁运行。
 
 ## 后端静态检查
 
@@ -33,6 +69,8 @@ Ask Claread 的真实 LLM smoke 默认跳过。只有同时满足以下三项才
 - `CLAREAD_ALLOW_REAL_LLM_TESTS=1`
 - `CLAREAD_REAL_LLM_MODEL=<已授权模型名>`
 - pytest 显式传入 `-m real_llm`
+
+这是 **real-LLM 三重门禁（triple gate）**，由 `services/api/tests/conftest.py` 的 autouse fixture 实现：门禁关闭时 monkeypatch 所有 provider 客户端（structured completion / dashscope stream / bailian embedding / rerank），任何绕过尝试会被记录并在测试后硬失败（fail-closed）。所有会触达真实 provider 的测试必须打 `real_llm` marker 走同一门禁（包括 thinking probe scaffold），禁止自设环境变量旁路。
 
 运行示例：
 

@@ -1,8 +1,9 @@
 """R4-A5-8A1: skip-by-default real-LLM thinking probes.
 
-Does **not** run unless the existing real_llm gate is enabled by the
-operator. Never logs raw reasoning — report only provider/model/phase
-order and character counts.
+Does **not** run unless the real_llm triple gate is opened by the
+operator: CLAREAD_ALLOW_REAL_LLM_TESTS=1 + CLAREAD_REAL_LLM_MODEL=<model>
++ ``-m real_llm`` (enforced by tests/conftest.py). Never logs raw
+reasoning — report only provider/model/phase order and character counts.
 
 This module is a scaffold only; do not invoke real providers from CI or
 from agent sessions without explicit human authorization.
@@ -10,22 +11,13 @@ from agent sessions without explicit human authorization.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-# Reuse the project’s existing real-LLM gate convention when present.
-_REAL_LLM = os.environ.get("CLAREAD_REAL_LLM", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-
-pytestmark = pytest.mark.skipif(
-    not _REAL_LLM,
-    reason="real-LLM thinking probes disabled (set CLAREAD_REAL_LLM=1)",
-)
+# TG-FOUNDATION R1: route these probes through the standard real_llm
+# triple gate (conftest skip_real_llm_tests / fail_on_real_llm_attempts)
+# instead of an ad-hoc env var, so any future real call is fail-closed
+# by the same mechanism as every other real_llm test.
+pytestmark = pytest.mark.real_llm
 
 
 def _phase_report(

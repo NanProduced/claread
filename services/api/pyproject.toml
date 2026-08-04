@@ -97,10 +97,40 @@ select = ["E", "F", "I", "UP", "B"]
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = ["--strict-markers"]
 markers = [
     "real_llm: calls a real LLM provider; requires CLAREAD_ALLOW_REAL_LLM_TESTS=1 + CLAREAD_REAL_LLM_MODEL=<model> + -m real_llm",
     "article_rag_smoke: opt-in real-provider Article RAG integration smoke; requires READER_ARTICLE_RAG_SMOKE=1 + -m article_rag_smoke",
     "no_network_default: default-passes I4Y test that must not hit any real network / LLM / vector store",
+    # Flat governance markers (TG-FOUNDATION R1): composable with plain
+    # `pytest -m`, no plugins. Marking existing tests is progressive and
+    # NOT required yet; --strict-markers only forbids undeclared markers.
+    # business chains (chain_*) — one per test file
+    "chain_reader_parse: business chain — reader parse (markdown input / stable document / providers / extraction)",
+    "chain_reader_orchestration: business chain — reader orchestration (three-mode routing / section / semantic outline)",
+    "chain_reading_record: business chain — reading record (layer publish / lifecycle)",
+    "chain_reader_ask: business chain — ask claread (route boundary / trace semantics / agentic activity)",
+    "chain_article_rag: business chain — article rag (index plan/bootstrap/worker/adapters/retrieval/context/prompt/runtime/lifecycle/routes)",
+    "chain_markdown_input: business chain — markdown input (pasted_text / txt_file / code_dominant)",
+    "chain_vocabulary: business chain — vocabulary / dictionary",
+    "chain_console_eval: business chain — console/eval infrastructure (judge/runner/bridge/node-lab)",
+    "chain_auth: business chain — auth (routes/identity/phone/wechat)",
+    "chain_infra: business chain — infrastructure (migration / config / generic)",
+    # seams (seam_*) — one per test file
+    "seam_pure_unit: pure unit, in-memory, no DB/no network",
+    "seam_service_integration: service integration, temp schema + asyncpg / fake executor",
+    "seam_api_contract: API contract, TestClient",
+    "seam_cross_app_contract: cross-app contract, reader<->ask<->article_rag",
+    "seam_browser_journey: browser journey, Playwright",
+    "seam_visual: visual, Ladle build/mount only (not a pixel regression gate)",
+    "seam_real_llm: real-LLM provider call",
+    # lifecycle (life_*) — a test file may carry several
+    "life_permanent_regression: permanent regression, must always pass",
+    "life_migration_guard: migration guard, retire only after legacy workflow offline",
+    "life_characterization: characterization, locks historical field semantics",
+    "life_spike: spike, no exit condition yet, retire-when documented",
+    "life_temporary_compatibility: temporary compatibility, retire-when documented",
+    "life_external_smoke: external provider smoke",
 ]
 
 [tool.mypy]
