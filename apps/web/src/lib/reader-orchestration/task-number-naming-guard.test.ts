@@ -3,7 +3,8 @@
  * Naming governance guard — task numbers are historical tracking
  * metadata, not business identity. This guard prevents their *backflow*
  * into new Web test file names (vitest `*.test.ts(x)` under `src/` and
- * Playwright `*.spec.ts(x)` under `tests/`).
+ * Playwright `*.spec.ts(x)` under `tests/`) and into describe/it/test
+ * titles (TEST-GOVERNANCE-WEB-P2).
  *
  * Existing stock lives in TASK_NUMBER_TEST_FILE_ALLOWLIST below. The
  * allowlist is a ratchet: entries may only be REMOVED (when a file is
@@ -17,7 +18,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 
 // Task-number signature in hyphen/underscore-separated Web names
@@ -38,6 +39,41 @@ const TASK_NUMBER_TEST_FILE_ALLOWLIST = [] as const;
 // allowlist size must match exactly, so a shrunk list can never grow
 // back. Every governance rename lowers the ceiling in the same change.
 const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 0;
+
+// Task-number scan for describe/it/test titles (TEST-GOVERNANCE-WEB-P2).
+// Same code family as file names; titles keep the same exemptions
+// (product versions, article grades, domain terms), plus a small identity
+// allowlist for persisted fixture names referenced from titles.
+// Known gap: titles assembled from it.each tables or string concatenation
+// are not scanned — direct string-literal titles are the contract.
+const TASK_NUMBER_TITLE_RE =
+  /\b(?:d6[-_]|a[345][-_]|t5[0-9]|t6[0-9]|r[0-9][0-9a-z._-]*|p[0-9][a-z]?(?![a-z0-9])|s[0-9][a-z]?(?![a-z0-9])|round[0-9]+|lp-r[0-9])/i;
+
+// Business identities that legitimately carry a task-number-shaped token
+// inside a title. RATCHET: only shrink.
+const TITLE_IDENTITY_ALLOWLIST = ["r14_complex"] as const;
+const TITLE_IDENTITY_ALLOWLIST_CEILING = 1;
+
+const TITLE_CALL_RE = /\b(?:describe|it|test)(?:\.[a-zA-Z]+)*\s*\(\s*(["'`])/;
+
+function extractTitle(line: string): string | null {
+  const match = TITLE_CALL_RE.exec(line);
+  if (!match) return null;
+  const quote = match[1];
+  const start = match.index + match[0].length;
+  let end = start;
+  while (end < line.length) {
+    const ch = line[end];
+    if (ch === "\\") {
+      end += 2;
+      continue;
+    }
+    if (quote === "`" && ch === "$" && line[end + 1] === "{") break;
+    if (ch === quote) break;
+    end += 1;
+  }
+  return line.slice(start, end);
+}
 
 const SCAN_ROOTS = ["src", "tests"] as const;
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
@@ -111,6 +147,54 @@ describe("Naming governance guard: task-numbered Web test file names", () => {
         actual,
         `remove stale allowlist entry ${relativePath}`,
       ).toContain(relativePath);
+    },
+  );
+
+  // --- Title scan (TEST-GOVERNANCE-WEB-P2) ---
+  const scannedTitles: { file: string; title: string }[] = [];
+  for (const file of scannedFiles) {
+    const content = readFileSync(file, "utf8");
+    for (const line of content.split("\n")) {
+      const title = extractTitle(line);
+      if (title !== null) {
+        scannedTitles.push({ file, title });
+      }
+    }
+  }
+
+  const titleViolations = scannedTitles.filter(
+    ({ title }) =>
+      TASK_NUMBER_TITLE_RE.test(title) &&
+      !TITLE_IDENTITY_ALLOWLIST.some((identity) => title.includes(identity)),
+  );
+
+  it("scanned at least one Web test title (title guard is not vacuous)", () => {
+    expect(scannedTitles.length).toBeGreaterThan(0);
+  });
+
+  it("no new task-numbered test titles outside the allowed identities", () => {
+    expect(
+      titleViolations.map(
+        (violation) => `${violation.file}: ${violation.title}`,
+      ),
+      "new task-numbered test titles are forbidden; rename the title to a " +
+        "business description instead of allowlisting",
+    ).toEqual([]);
+  });
+
+  it("title identity allowlist size equals its ratchet ceiling", () => {
+    expect(TITLE_IDENTITY_ALLOWLIST.length).toBe(
+      TITLE_IDENTITY_ALLOWLIST_CEILING,
+    );
+  });
+
+  it.each(TITLE_IDENTITY_ALLOWLIST)(
+    "allowed title identity %s still appears in a scanned title (ratchet only shrinks)",
+    (identity) => {
+      expect(
+        scannedTitles.some(({ title }) => title.includes(identity)),
+        `remove stale title identity allowlist entry ${identity}`,
+      ).toBe(true);
     },
   );
 });
