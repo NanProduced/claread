@@ -39,7 +39,10 @@ from app.services.reader_orchestration.window_selector import (
     SelectionGate,
     SelectorLedger,
 )
-from app.services.reader_orchestration.zplus_bootstrap import ZPlusBootstrapService
+from app.services.reader_orchestration.zplus_bootstrap import (
+    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+    ZPlusBootstrapService,
+)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -177,6 +180,17 @@ async def _claim_job(pool: asyncpg.Pool, job_id: UUID) -> UUID:
             lease_token,
         )
     return lease_token
+
+
+async def _set_job_fingerprint(
+    pool: asyncpg.Pool, job_id: UUID, fingerprint: str
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE reader_jobs SET operation_fingerprint = $2 WHERE id = $1",
+            job_id,
+            fingerprint,
+        )
 
 
 def _make_candidates(
@@ -506,6 +520,111 @@ async def test_publish_window_rejects_when_job_status_not_claimed(
             plan_id=plan_id,
             window_id=window_id,
             candidates=[],
+        )
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        # Exact legacy base fingerprint.
+        ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+        # Composed strategy fingerprint (base:{strategy_hash}).
+        f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:strategy_hash_abc123",
+        # Composed strategy + semantic token (base:{strategy_hash}:{semantic}),
+        # shape written by zplus_bootstrap; semantic token itself may contain ':'.
+        f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}"
+        ":strategy_hash_abc123:sem:legacy:legacy_open:mode:enforce",
+    ],
+)
+async def test_publish_window_accepts_exact_or_composed_fingerprint(
+    test_db_pool_with_window_and_candidates: tuple[
+        asyncpg.Pool,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+        list[CandidateItem],
+        list[WindowCandidateContent],
+        UUID,
+        UUID,
+    ],
+    fingerprint: str,
+) -> None:
+    """Publisher accepts the exact base or a ``base:`` composed fingerprint."""
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        candidates,
+        candidate_contents,
+        _base_id,
+        _record_id,
+    ) = test_db_pool_with_window_and_candidates
+    await _set_job_fingerprint(pool, job_id, fingerprint)
+    publisher = GrammarWindowPublisher(pool=pool)
+    result = await publisher.publish_window_grammar_bundle(
+        job_id=job_id,
+        lease_token=lease_token,
+        plan_id=plan_id,
+        window_id=window_id,
+        candidates=candidates,
+        candidate_contents=candidate_contents,
+    )
+    assert result.skipped is False
+    assert result.accepted_count > 0
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        # Boundary: version bump must not match v1.
+        "grammar_bundle_window_v10",
+        # Pseudo-prefix without ':' separator must not match.
+        "grammar_bundle_window_v1abc",
+        # Unrelated fingerprint.
+        "grammar_bundle_v1",
+    ],
+)
+async def test_publish_window_rejects_boundary_invalid_fingerprint(
+    test_db_pool_with_window_and_candidates: tuple[
+        asyncpg.Pool,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+        list[CandidateItem],
+        list[WindowCandidateContent],
+        UUID,
+        UUID,
+    ],
+    fingerprint: str,
+) -> None:
+    """Boundary-aware rejection: v10 / non-':' suffix / other fingerprints."""
+    (
+        pool,
+        job_id,
+        lease_token,
+        plan_id,
+        window_id,
+        candidates,
+        candidate_contents,
+        _base_id,
+        _record_id,
+    ) = test_db_pool_with_window_and_candidates
+    await _set_job_fingerprint(pool, job_id, fingerprint)
+    publisher = GrammarWindowPublisher(pool=pool)
+    from app.services.reader_orchestration.job_runtime import IllegalTransitionError
+
+    with pytest.raises(IllegalTransitionError, match="operation_fingerprint mismatch"):
+        await publisher.publish_window_grammar_bundle(
+            job_id=job_id,
+            lease_token=lease_token,
+            plan_id=plan_id,
+            window_id=window_id,
+            candidates=candidates,
+            candidate_contents=candidate_contents,
         )
 
 

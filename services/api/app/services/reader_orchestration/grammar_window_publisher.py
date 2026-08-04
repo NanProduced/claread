@@ -47,6 +47,9 @@ from app.services.reader_orchestration.grammar_layer_payload import (
 from app.services.reader_orchestration.grammar_layer_payload_validator import (
     validate_grammar_layer_published_payload,
 )
+from app.services.reader_orchestration.job_bootstrap import (
+    _fingerprint_matches_base,
+)
 from app.services.reader_orchestration.job_runtime import (
     FenceViolationError,
     IllegalTransitionError,
@@ -311,9 +314,13 @@ class GrammarWindowPublisher:
                     raise IllegalTransitionError("job_type mismatch")
                 if job_row["target_type"] != ZPLUS_TARGET_TYPE:
                     raise IllegalTransitionError("target_type mismatch")
-                if (
-                    job_row["operation_fingerprint"]
-                    != ZPLUS_GRAMMAR_OPERATION_FINGERPRINT
+                # zplus_bootstrap writes composed fingerprints
+                # (base:{strategy_hash}[:{semantic_token}]); accept the exact
+                # base or a base + ":" composition, boundary-aware (v1 must
+                # not match v10 / v1abc).
+                if not _fingerprint_matches_base(
+                    str(job_row["operation_fingerprint"] or ""),
+                    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
                 ):
                     raise IllegalTransitionError("operation_fingerprint mismatch")
 
