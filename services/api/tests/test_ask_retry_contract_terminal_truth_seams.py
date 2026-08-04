@@ -1,3 +1,4 @@
+# task-history: ASK-RETRY-CONTRACT-R8 (renamed from test_ask_retry_contract_r8.py)
 """ASK-RETRY-CONTRACT-R8/R8.1 — executable terminal-truth seams (no source-text)."""
 
 from __future__ import annotations
@@ -15,6 +16,12 @@ from app.services.reader_record_ask.production_stream import (
     resolve_agentic_submission_write_status,
 )
 from app.services.reader_record_ask.submission_gateway import SubmissionTerminalHook
+
+pytestmark = [
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 # ---------------------------------------------------------------------------
 # R8.1 monotonic merge

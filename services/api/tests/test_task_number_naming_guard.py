@@ -60,7 +60,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
-TEST_FILE_ALLOWLIST_CEILING = 9
+TEST_FILE_ALLOWLIST_CEILING = 1
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
@@ -75,15 +75,7 @@ def _name_has_task_number(name: str) -> bool:
 # forbidden and must be renamed to business names instead.
 TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "tests/services/reader_record_ask/thread_memory/test_r1a_integration.py",
-        "tests/test_ask_retry_contract_r5_db_integration.py",
-        "tests/test_ask_retry_contract_r6_db_integration.py",
-        "tests/test_ask_retry_contract_r6.py",
-        "tests/test_ask_retry_contract_r7.py",
-        "tests/test_ask_retry_contract_r8.py",
-        "tests/test_ask_submission_retry_r1_db_integration.py",
         "tests/test_cutover_api_p_closeout_r2.py",
-        "tests/test_reader_record_ask_a5_7_production_wiring.py",
     }
 )
 

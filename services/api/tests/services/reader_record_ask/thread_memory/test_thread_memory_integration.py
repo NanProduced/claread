@@ -1,3 +1,4 @@
+# task-history: R1A (renamed from test_r1a_integration.py)
 """R1B: 端到端集成测试 — 验证 R1A 三 agent 产出的协同工作。
 
 这些测试使用**真实模块**（非 mock），覆盖跨模块数据流：
@@ -48,6 +49,12 @@ from app.services.reader_record_ask.thread_memory.schema import (
     StructuredFact,
     ThreadMemorySnapshot,
 )
+
+pytestmark = [
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 # ---------------------------------------------------------------------------
 # Fixtures

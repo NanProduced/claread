@@ -1,3 +1,4 @@
+# task-history: ASK-RETRY-CONTRACT-R6 (renamed from test_ask_retry_contract_r6.py)
 """ASK-RETRY-CONTRACT-R6 unit gates (no real DB / no migration execution)."""
 
 from __future__ import annotations
@@ -16,6 +17,12 @@ from app.services.reader_record_ask.submission_gateway import (
     build_retry_snapshot,
     ensure_submission_for_send,
 )
+
+pytestmark = [
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

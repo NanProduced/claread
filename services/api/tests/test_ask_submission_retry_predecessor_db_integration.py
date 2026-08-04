@@ -1,3 +1,4 @@
+# task-history: ASK-SUBMISSION-RETRY-R1 (renamed from test_ask_submission_retry_r1_db_integration.py)
 """ASK-SUBMISSION-RETRY-R1 real PostgreSQL integration — OPT-IN only.
 
 Fixes the retry predecessor lookup for client_submission_id turns: the R5
@@ -33,13 +34,13 @@ import pytest
 from app.config.settings import get_settings
 from app.database.connection import init_connection
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.skipif(
     os.environ.get("CLAREAD_RUN_SUBMISSION_DB_TESTS") != "1",
     reason=(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
         "migrations 0026+0027 to local DB"
     ),
-)
+), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 async def _seed_thread(conn) -> tuple[object, object, object]:

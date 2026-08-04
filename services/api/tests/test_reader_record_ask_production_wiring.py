@@ -1,3 +1,4 @@
+# task-history: R4-A5-7 (renamed from test_reader_record_ask_a5_7_production_wiring.py)
 """R4-A5-7 commit-2: production Ask model-view wiring.
 
 FunctionModel only — no real LLM / RAG / embedding / vector I/O.
@@ -53,6 +54,12 @@ from app.services.reader_record_ask.tool_contracts import (
     TOOL_SEARCH_CURRENT_ARTICLE,
 )
 from app.services.reader_record_ask.turn_coordinator import HostBudgetExhausted
+
+pytestmark = [
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 _USER = UUID("11111111-1111-1111-1111-111111111111")
 _RECORD = UUID("22222222-2222-2222-2222-222222222222")
