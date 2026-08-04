@@ -72,7 +72,7 @@ def clean_runs_dir_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_p0_runs_dir_resolved_to_absolute_before_subprocess(
+def test_runs_dir_resolved_to_absolute_before_subprocess(
     runner_module, clean_runs_dir_env, tmp_path, monkeypatch
 ) -> None:
     """``--runs-dir`` MUST be resolved to an absolute path BEFORE the
@@ -144,7 +144,7 @@ def test_p0_runs_dir_resolved_to_absolute_before_subprocess(
         )
 
 
-def test_p0_runs_dir_same_absolute_path_from_different_cwd(
+def test_runs_dir_same_absolute_path_from_different_cwd(
     runner_module, clean_runs_dir_env, tmp_path, monkeypatch
 ) -> None:
     """The cross-cwd contract: from any cwd, with the appropriate
@@ -229,7 +229,7 @@ def test_p0_runs_dir_same_absolute_path_from_different_cwd(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_run_session_layout_normalizes_relative_runs_root(
+def test_run_session_layout_normalizes_relative_runs_root(
     runner_module, tmp_path, monkeypatch
 ) -> None:
     """``RunSessionLayout`` MUST normalize ``runs_root`` to an absolute
@@ -256,7 +256,7 @@ def test_p0_run_session_layout_normalizes_relative_runs_root(
     )
 
 
-def test_p0_run_session_layout_writer_and_reader_share_absolute_root(
+def test_run_session_layout_writer_and_reader_share_absolute_root(
     runner_module, tmp_path, monkeypatch
 ) -> None:
     """Writer (harness) and reader (aggregate) MUST resolve to the same
@@ -309,7 +309,7 @@ def test_p0_run_session_layout_writer_and_reader_share_absolute_root(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_no_services_services_api_tmp_path_can_arise(
+def test_no_services_services_api_tmp_path_can_arise(
     runner_module, clean_runs_dir_env, tmp_path, monkeypatch
 ) -> None:
     """The historical ``services/services/api/tmp/...`` double-resolution
@@ -401,7 +401,7 @@ def test_p0_no_services_services_api_tmp_path_can_arise(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_aggregate_uses_absolute_runs_dir(
+def test_aggregate_uses_absolute_runs_dir(
     runner_module, clean_runs_dir_env, tmp_path, monkeypatch
 ) -> None:
     """Aggregate MUST receive an absolute runs-dir too.

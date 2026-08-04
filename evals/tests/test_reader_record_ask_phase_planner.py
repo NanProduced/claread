@@ -478,7 +478,7 @@ def test_phase2_default_repetitions_is_1() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
+def test_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
     """P0-1: 10 cases × 3 reps = 30 (exactly equals max) must NOT trigger
     budget_exhausted.
 
@@ -511,7 +511,7 @@ def test_p0_1_exact_cap_10_cases_3_reps_30_max_not_exhausted() -> None:
     )
 
 
-def test_p0_1_over_cap_11_cases_3_reps_30_max_only_11th_remains() -> None:
+def test_over_cap_11_cases_3_reps_30_max_only_11th_remains() -> None:
     """P0-1: 11 cases × 3 reps = 33 > 30 → only the 11th case is remaining.
     """
     cases = [
@@ -538,7 +538,7 @@ def test_p0_1_over_cap_11_cases_3_reps_30_max_only_11th_remains() -> None:
     assert stop.stop_reason == "phase1_independent_run_cap"
 
 
-def test_p0_1_offline_only_never_enters_remaining() -> None:
+def test_offline_only_never_enters_remaining() -> None:
     """P0-1: ``offline_only`` cases are excluded BEFORE the cap is applied,
     so they never enter ``selected`` or ``remaining`` — even when the
     eligible count exceeds the cap.
@@ -582,7 +582,7 @@ def test_p0_1_offline_only_never_enters_remaining() -> None:
     )
 
 
-def test_p0_1_under_cap_no_truncation() -> None:
+def test_under_cap_no_truncation() -> None:
     """P0-1: under cap → all eligible selected, no BudgetStopResult."""
     cases = [
         _make_case(case_id=f"c{i}", phase_tags=[PHASE_TAG_REAL_PHASE1])
@@ -600,7 +600,7 @@ def test_p0_1_under_cap_no_truncation() -> None:
     assert planner.budget_stop_result is None
 
 
-def test_p0_1_cases_to_run_multiple_reads_stable() -> None:
+def test_cases_to_run_multiple_reads_stable() -> None:
     """P0-1: ``cases_to_run`` is idempotent — multiple reads must return
     the same list with no side effects (no extra BudgetStopResult, no
     mutation of selected/remaining).
@@ -632,7 +632,7 @@ def test_p0_1_cases_to_run_multiple_reads_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p0_2_fail_then_pass_then_pass_enters_phase2() -> None:
+def test_fail_then_pass_then_pass_enters_phase2() -> None:
     """P0-2: a case whose first rep fails content checks but subsequent
     reps pass must STILL enter Phase 2.
 
@@ -677,7 +677,7 @@ def test_p0_2_fail_then_pass_then_pass_enters_phase2() -> None:
     )
 
 
-def test_p0_2_pass_then_pass_then_fail_enters_phase2() -> None:
+def test_pass_then_pass_then_fail_enters_phase2() -> None:
     """P0-2: a case whose last rep fails but first two pass must enter
     Phase 2. The prior implementation would have caught this (last rep
     wins), but the new implementation must also catch it via the
@@ -713,7 +713,7 @@ def test_p0_2_pass_then_pass_then_fail_enters_phase2() -> None:
     assert [c.id for c in planner.cases_to_run] == ["bbc-flicker-end"]
 
 
-def test_p0_2_three_passes_does_not_enter_phase2() -> None:
+def test_three_passes_does_not_enter_phase2() -> None:
     """P0-2: a case where all 3 reps pass content checks must NOT enter
     Phase 2.
     """
@@ -744,7 +744,7 @@ def test_p0_2_three_passes_does_not_enter_phase2() -> None:
     assert planner.cases_to_run == []
 
 
-def test_p0_2_shuffled_artifacts_same_selection() -> None:
+def test_shuffled_artifacts_same_selection() -> None:
     """P0-2: aggregation must be order-invariant. The same set of
     per-repetition results, passed in different orders, must produce
     the same Phase 2 selection.
@@ -783,7 +783,7 @@ def test_p0_2_shuffled_artifacts_same_selection() -> None:
         )
 
 
-def test_p0_2_terminal_ok_plus_deterministic_hallucination_enters_phase2() -> None:
+def test_terminal_ok_plus_deterministic_hallucination_enters_phase2() -> None:
     """P0-2: a case with ``finalized_status='ok'`` but a deterministic
     hallucination failure (e.g. ``2025`` year token) must enter Phase 2.
 
@@ -815,7 +815,7 @@ def test_p0_2_terminal_ok_plus_deterministic_hallucination_enters_phase2() -> No
     )
 
 
-def test_p0_2_usage_gap_only_across_reps_does_not_enter_phase2() -> None:
+def test_usage_gap_only_across_reps_does_not_enter_phase2() -> None:
     """P0-2: a case where the ONLY failure across ALL reps is
     ``usage_observability`` must NOT enter Phase 2.
 

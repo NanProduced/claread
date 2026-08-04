@@ -124,7 +124,7 @@ def _load(dataset_dir: Path) -> ReaderRecordAskR4A3Dataset:
 # ---------------------------------------------------------------------------
 
 
-def test_p0_2_same_dataset_in_two_absolute_paths_same_hash(tmp_path: Path) -> None:
+def test_same_dataset_in_two_absolute_paths_same_hash(tmp_path: Path) -> None:
     """Test 1: same dataset copied to a different absolute directory
     produces the same ``content_sha256`` (only relative paths + bytes
     are hashed, never the absolute ``dataset_dir`` path).
@@ -150,7 +150,7 @@ def test_p0_2_same_dataset_in_two_absolute_paths_same_hash(tmp_path: Path) -> No
     assert all(c in "0123456789abcdef" for c in identity_a.content_sha256)
 
 
-def test_p0_2_case_content_change_hash_changes(tmp_path: Path) -> None:
+def test_case_content_change_hash_changes(tmp_path: Path) -> None:
     """Test 2: editing a case file's content changes the hash."""
     cases = [_make_case(case_id="case-a", article_text="original content")]
     dataset_dir = tmp_path / "dataset"
@@ -171,7 +171,7 @@ def test_p0_2_case_content_change_hash_changes(tmp_path: Path) -> None:
     )
 
 
-def test_p0_2_case_filename_change_hash_changes(tmp_path: Path) -> None:
+def test_case_filename_change_hash_changes(tmp_path: Path) -> None:
     """Test 3: renaming a case file changes the hash (the fingerprint
     binds relative path AND content, so a renamed file is detected).
     """
@@ -197,7 +197,7 @@ def test_p0_2_case_filename_change_hash_changes(tmp_path: Path) -> None:
     )
 
 
-def test_p0_2_dataset_yaml_change_hash_changes(tmp_path: Path) -> None:
+def test_dataset_yaml_change_hash_changes(tmp_path: Path) -> None:
     """Test 4: editing ``dataset.yaml`` changes the hash."""
     cases = [_make_case(case_id="case-a")]
     dataset_dir = tmp_path / "dataset"
@@ -223,7 +223,7 @@ def test_p0_2_dataset_yaml_change_hash_changes(tmp_path: Path) -> None:
     )
 
 
-def test_p0_2_runs_content_change_does_not_affect_hash(tmp_path: Path) -> None:
+def test_runs_content_change_does_not_affect_hash(tmp_path: Path) -> None:
     """Test 5: content under ``runs/`` MUST NOT affect the hash.
 
     ``runs/`` holds per-run artifacts/reports, not dataset content. The
@@ -303,7 +303,7 @@ def _current_identity() -> DatasetIdentity:
     )
 
 
-def test_p0_2_phase2_current_prior_hash_same_continues() -> None:
+def test_phase2_current_prior_hash_same_continues() -> None:
     """Test 6: Phase 2 continues when prior artifacts all carry the same
     identity AND it matches the current dataset identity.
 
@@ -322,7 +322,7 @@ def test_p0_2_phase2_current_prior_hash_same_continues() -> None:
     )
 
 
-def test_p0_2_phase2_hash_mismatch_calls_zero() -> None:
+def test_phase2_hash_mismatch_calls_zero() -> None:
     """Test 7: Phase 2 fail-closes (raises) when prior artifacts carry a
     fingerprint that does NOT match the current dataset.
 
@@ -348,7 +348,7 @@ def test_p0_2_phase2_hash_mismatch_calls_zero() -> None:
     assert "prior_current_mismatch" in str(exc_info.value)
 
 
-def test_p0_2_prior_artifacts_mixed_hash_calls_zero() -> None:
+def test_prior_artifacts_mixed_hash_calls_zero() -> None:
     """Test 8: Phase 2 fail-closes when prior artifacts carry mixed
     fingerprints (some Phase 1 runs against version A, some against
     version B). The caller cannot pick a "consistent" prior — must
@@ -369,7 +369,7 @@ def test_p0_2_prior_artifacts_mixed_hash_calls_zero() -> None:
     assert exc_info.value.reason == "prior_mixed_identity"
 
 
-def test_p0_2_prior_artifact_missing_hash_calls_zero() -> None:
+def test_prior_artifact_missing_hash_calls_zero() -> None:
     """Test 9: Phase 2 fail-closes when a prior artifact is missing
     identity fields (e.g. an old local artifact from before P0-2).
 
@@ -413,7 +413,7 @@ def test_p0_2_prior_artifact_missing_hash_calls_zero() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p0_2_aggregate_mismatch_no_normal_verdict() -> None:
+def test_aggregate_mismatch_no_normal_verdict() -> None:
     """Test 10: aggregate MUST NOT produce a normal verdict when any
     artifact's identity does not match the current dataset.
 
@@ -475,7 +475,7 @@ def test_p0_2_aggregate_mismatch_no_normal_verdict() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p0_2_artifact_json_and_metadata_carry_same_identity(tmp_path: Path) -> None:
+def test_artifact_json_and_metadata_carry_same_identity(tmp_path: Path) -> None:
     """Test 11: the dataset identity must be consistently carried across:
     - RawArtifact JSON serialization (written to disk)
     - RawArtifact.model_dump() (used in hot report generation)
@@ -579,7 +579,7 @@ def test_p0_2_artifact_json_and_metadata_carry_same_identity(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_p0_2_framing_prevents_path_content_collision() -> None:
+def test_framing_prevents_path_content_collision() -> None:
     """Extra: the length-prefixed framing prevents path/content boundary
     collisions. Two ``(path, content)`` pairs whose simple concatenation
     is identical MUST hash differently under framed encoding.

@@ -55,7 +55,7 @@ def clean_dataset_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_cli_dataset_dir_overrides_env(
+def test_cli_dataset_dir_overrides_env(
     runner_module, clean_dataset_env, tmp_path
 ) -> None:
     """CLI ``--dataset-dir`` takes priority over env."""
@@ -72,7 +72,7 @@ def test_p0_1_cli_dataset_dir_overrides_env(
     assert resolved == cli_dir.resolve()
 
 
-def test_p0_1_env_used_when_cli_missing(
+def test_env_used_when_cli_missing(
     runner_module, clean_dataset_env, tmp_path
 ) -> None:
     """Env is used when CLI flag is not provided."""
@@ -85,7 +85,7 @@ def test_p0_1_env_used_when_cli_missing(
     assert resolved == env_dir.resolve()
 
 
-def test_p0_1_returns_none_when_neither_cli_nor_env(
+def test_returns_none_when_neither_cli_nor_env(
     runner_module, clean_dataset_env
 ) -> None:
     """Returns None when neither CLI nor env is set (no silent fallback)."""
@@ -98,7 +98,7 @@ def test_p0_1_returns_none_when_neither_cli_nor_env(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_preflight_exits_2_when_dataset_dir_none(
+def test_preflight_exits_2_when_dataset_dir_none(
     runner_module, clean_dataset_env, capsys
 ) -> None:
     """Runner exits with code 2 when dataset-dir is not configured."""
@@ -110,7 +110,7 @@ def test_p0_1_preflight_exits_2_when_dataset_dir_none(
     assert "not configured" in captured.err
 
 
-def test_p0_1_preflight_exits_2_when_dataset_dir_missing(
+def test_preflight_exits_2_when_dataset_dir_missing(
     runner_module, clean_dataset_env, tmp_path, capsys
 ) -> None:
     """Runner exits with code 2 when dataset dir does not exist."""
@@ -122,7 +122,7 @@ def test_p0_1_preflight_exits_2_when_dataset_dir_missing(
     assert "not found" in captured.err
 
 
-def test_p0_1_preflight_exits_2_when_dataset_yaml_missing(
+def test_preflight_exits_2_when_dataset_yaml_missing(
     runner_module, clean_dataset_env, tmp_path, capsys
 ) -> None:
     """Runner exits with code 2 when dataset.yaml is absent."""
@@ -135,7 +135,7 @@ def test_p0_1_preflight_exits_2_when_dataset_yaml_missing(
     assert "dataset.yaml" in captured.err
 
 
-def test_p0_1_preflight_passes_when_dir_valid(
+def test_preflight_passes_when_dir_valid(
     runner_module, clean_dataset_env, tmp_path
 ) -> None:
     """Preflight passes when dir exists and contains dataset.yaml."""
@@ -151,7 +151,7 @@ def test_p0_1_preflight_passes_when_dir_valid(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_subprocess_not_started_when_dataset_dir_missing(
+def test_subprocess_not_started_when_dataset_dir_missing(
     runner_module, clean_dataset_env, tmp_path, monkeypatch
 ) -> None:
     """When dataset-dir is missing, runner exits before subprocess.call.
@@ -187,7 +187,7 @@ def test_p0_1_subprocess_not_started_when_dataset_dir_missing(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_aggregate_requires_explicit_dataset_dir(
+def test_aggregate_requires_explicit_dataset_dir(
     runner_module, clean_dataset_env, tmp_path, monkeypatch
 ) -> None:
     """Aggregate phase must also have explicit dataset-dir.
