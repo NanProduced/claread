@@ -22,7 +22,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   // Reader settings
   { rel: "src/components/reader/settings/ReaderSettingsPanel.tsx", label: "ReaderSettingsPanel" },
   // Reader component layer
-  { rel: "src/components/reader/FeedbackSheet.tsx", label: "FeedbackSheet" },
   { rel: "src/components/reader/FavoriteButton.tsx", label: "FavoriteButton (component)" },
   { rel: "src/components/reader/ReaderGlobalFeedbackPrompt.tsx", label: "ReaderGlobalFeedbackPrompt" },
   { rel: "src/components/reader/ReaderContextPanel.tsx", label: "ReaderContextPanel" },

@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -52,10 +51,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0015_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
 
 ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -104,7 +99,6 @@ async def _setup_test_env() -> _TestEnv:
     await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
     await admin_conn.execute(BASELINE_SQL)
-    await admin_conn.execute(MIGRATION_0015_SQL)
     pool = await make_pool(schema_name)
     db_connection.DB_POOL = pool
 

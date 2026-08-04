@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,40 +16,21 @@ pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BASELINE_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0001_initial_schema.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0002_reader_record_anchor_columns.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0003_reader_ask_dual_scope.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0004_reader_document_blocks.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0006_reader_ask_supplements_nullable_analysis_record_id.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0008_reader_jobs_input_artifact_extraction.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0009_reader_jobs_extracted_artifact_materialization.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0010_reader_article_rag_index_state.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0011_reader_display_title_generation.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0012_reader_record_reading_strategy.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0013_user_annotation_color_palette.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0014_reader_runtime_spans.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    # 0023 把 list / thematic_break 加入 stable_document_blocks 的 block_type
-    # 允许列表和 text_content 豁免列表。M1 Structured Source Contract 已把
-    # 这两个类型加入 StableDocumentBlockType 枚举，但 0004 的 DB constraint
-    # 未同步。测试 baseline 需要包含 0023 才能构造 list wrapper block。
-    REPO_ROOT / "infra" / "migrations" / "0023_stable_document_blocks_text_constraint_extend.sql"
-).read_text(encoding="utf-8") + "\n" + (
-    # 0025 L2 Confirmed Source 生命周期实体（confirmed_source_documents）。
-    REPO_ROOT / "infra" / "migrations" / "0025_confirmed_source_documents.sql"
+_RAW_BASELINE_SQL = (
+    # DATA-SCHEMA-BASELINE D2: the single fresh baseline replaces all
+    # per-step migrations; the constraint contracts below are verified
+    # against it.
+    REPO_ROOT / "infra" / "migrations" / "0001_initial.sql"
 ).read_text(encoding="utf-8")
+# DATA-D2-CLOSEOUT-R1: 0001 pins ``search_path`` to ``public`` for the
+# fresh-init path; isolated-schema tests strip that pin and apply the DDL
+# into their own schema instead.
+BASELINE_SQL = re.sub(
+    r"^\s*SET search_path = public, pg_catalog;\s*$",
+    "",
+    _RAW_BASELINE_SQL,
+    flags=re.MULTILINE,
+)
 
 
 def _load_database_url() -> str:
@@ -302,12 +284,16 @@ async def test_user_annotations_color_contract_matches_r1_palette(
         default_color = await conn.fetchval(
             """
             INSERT INTO user_annotations (
-                user_id, anchor_type, target_key, sentence_id, selected_text
+                user_id, anchor_type, target_key, selected_text,
+                reading_record_id, base_id, generation, unit_id,
+                anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash
             )
-            VALUES ($1, 'sentence', 'default-color', 's1', 'Default color')
+            VALUES ($1, 'text_range', 'default-color', 'Default color',
+                    $2, $2, 1, 'u1', 's1', 0, 4, 'hash-default')
             RETURNING color
             """,
             user_id,
+            uuid4(),
         )
         assert default_color == "warm_yellow"
 
@@ -323,19 +309,26 @@ async def test_user_annotations_color_contract_matches_r1_palette(
             "用户高亮颜色，固定支持 warm_yellow、soft_mint、soft_rose。"
         )
 
+        # DATA-SCHEMA-BASELINE D2: highlights are Reading Record anchor rows
+        # only; the color contract is verified against that row shape.
         for color in ("warm_yellow", "soft_mint", "soft_rose"):
             stored_color = await conn.fetchval(
                 """
                 INSERT INTO user_annotations (
-                    user_id, anchor_type, target_key, sentence_id, selected_text, color
+                    user_id, anchor_type, target_key, selected_text, color,
+                    reading_record_id, base_id, generation, unit_id,
+                    anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash
                 )
-                VALUES ($1, 'sentence', $2, 's1', $3, $4)
+                VALUES ($1, 'text_range', $2, $3, $4,
+                        $5, $5, 1, 'u1', 's1', 0, 4, $6)
                 RETURNING color
                 """,
                 user_id,
                 f"supported-{color}",
                 f"Supported {color}",
                 color,
+                uuid4(),
+                f"hash-{color}",
             )
             assert stored_color == color
 
@@ -344,14 +337,20 @@ async def test_user_annotations_color_contract_matches_r1_palette(
                 await conn.execute(
                     """
                     INSERT INTO user_annotations (
-                        user_id, anchor_type, target_key, sentence_id, selected_text, color
+                        user_id, anchor_type, target_key, selected_text, color,
+                        reading_record_id, base_id, generation, unit_id,
+                        anchor_segment_id, unit_start_utf16, unit_end_utf16, text_hash
                     )
-                    VALUES ($1, 'sentence', $2, 's1', $3, $4)
+                    VALUES ($1, 'text_range', $2, $3, $4,
+                            $5, $5, 1, 'u1', $6, 0, 4, $7)
                     """,
                     user_id,
                     f"rejected-{color}",
                     f"Rejected {color}",
                     color,
+                    uuid4(),
+                    f"seg-{color}",
+                    f"hash-{color}",
                 )
     finally:
         await conn.close()
@@ -1311,11 +1310,6 @@ async def test_parsed_decisions_unique_constraint(reader_schema: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-_MIGRATION_0016_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
-
-
 async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
     """0016 extends ``reader_runtime_spans.worker_type`` CHECK so the Z+
     window worker can write ``worker_tick`` spans.
@@ -1331,7 +1325,6 @@ async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(_MIGRATION_0016_SQL)
 
         # grammar_bundle_window is accepted (the whole point of 0016).
         await admin_conn.execute(

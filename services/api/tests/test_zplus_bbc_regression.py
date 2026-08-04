@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -85,20 +84,10 @@ from tests.test_reader_orchestration_pipeline_runner import (
 
 pytestmark = pytest.mark.anyio
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0016_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
 # T4.2a-R1: migration 0017 adds ``translate_article`` and
 # ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
 # constraint. Required because the BBC article (>6000 chars) triggers the
 # T3.1 grouped translation/vocabulary path which creates these job types.
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
 
 LEASE_DURATION = timedelta(seconds=30)
 
@@ -247,9 +236,6 @@ async def bbc_regression_env() -> AsyncIterator[
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
-    await admin.execute(_MIGRATION_0015_SQL)
-    await admin.execute(_MIGRATION_0016_SQL)
-    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

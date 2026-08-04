@@ -4,15 +4,13 @@ Provider unit tests construct :class:`ArtifactExtractionJobContext` directly
 and inject a :class:`FakeStorageObjectReader` — no DB needed.
 
 The end-to-end test seeds a full schema, injects the provider into the worker,
-and verifies ``original_inputs.source_text`` / ``content_sha256`` /
-``metadata_json`` are persisted correctly.
+and verifies confirmed-source output plus ``original_inputs`` lineage metadata.
 """
 
 from __future__ import annotations
 
 import hashlib
 from datetime import timedelta
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -34,20 +32,13 @@ from app.services.reader_orchestration.text_artifact_extraction_provider import 
     FAILURE_CODE_STORAGE_READ_ERROR,
     FAILURE_CODE_UNSUPPORTED_CONTENT_TYPE,
     StorageObjectReadResult,
-    StorageObjectReader,
     TextArtifactExtractionProvider,
 )
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_ARTIFACTS_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
-).read_text(encoding="utf-8")
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
-
-EXTRACTION_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
 
 # Fixed UUIDs for deterministic seeding
 _USER_ID = UUID("00000000-0000-0000-0000-00000000c001")
@@ -59,6 +50,7 @@ _RUN_ID = UUID("00000000-0000-0000-0000-00000000c005")
 _TEXT_CONTENT = "The quick brown fox jumps over the lazy dog."
 _TEXT_BYTES = _TEXT_CONTENT.encode("utf-8")
 _TEXT_SHA256 = hashlib.sha256(_TEXT_BYTES).hexdigest()
+_ORIGINAL_INPUT_SHA256 = "a" * 64
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +445,7 @@ async def e2e_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(EXTRACTION_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await _make_pool(schema_name)
         try:
             yield pool
@@ -537,7 +529,7 @@ async def _seed_text_artifact_environment(
             _RECORD_ID,
             _USER_ID,
             source_ref_json,
-            "a" * 64,  # placeholder sha before extraction
+            _ORIGINAL_INPUT_SHA256,
         )
         await conn.execute(
             """
@@ -631,9 +623,9 @@ async def _count_article_ready_events(pool: asyncpg.Pool) -> int:
 async def test_worker_with_text_provider_end_to_end(e2e_env: asyncpg.Pool) -> None:
     """Full pipeline: fake storage -> TextArtifactExtractionProvider -> worker -> DB.
 
-    Verifies that original_inputs.source_text / content_sha256 / metadata_json
-    are updated, the job transitions to succeeded, and no reading_bases or
-    article_ready events are created (I3L invariant preserved).
+    Verifies that source text stays out of ``original_inputs``, extraction
+    metadata is updated, the job transitions to succeeded, and no
+    reading_bases or article_ready events are created (I3L invariant).
     """
     job_id = await _seed_text_artifact_environment(e2e_env)
 
@@ -655,10 +647,10 @@ async def test_worker_with_text_provider_end_to_end(e2e_env: asyncpg.Pool) -> No
     assert result.extracted_text == _TEXT_CONTENT
     assert result.content_sha256 == _TEXT_SHA256
 
-    # Verify original_inputs persistence
+    # original_inputs remains lineage-only; source truth is confirmed-source.
     input_row = await _fetch_original_input(e2e_env, _ORIGINAL_INPUT_ID)
-    assert input_row["source_text"] == _TEXT_CONTENT
-    assert input_row["content_sha256"] == _TEXT_SHA256
+    assert input_row["source_text"] is None
+    assert input_row["content_sha256"] == _ORIGINAL_INPUT_SHA256
     metadata = input_row["metadata_json"]
     assert metadata["extraction_status"] == "succeeded"
     assert metadata["extractor_name"] == EXTRACTOR_NAME
@@ -751,6 +743,6 @@ async def test_worker_with_text_provider_markdown_end_to_end(
     assert result.extracted_text == md_content
 
     input_row = await _fetch_original_input(e2e_env, _ORIGINAL_INPUT_ID)
-    assert input_row["source_text"] == md_content
-    assert input_row["content_sha256"] == md_sha
+    assert input_row["source_text"] is None
+    assert input_row["content_sha256"] == _ORIGINAL_INPUT_SHA256
     assert input_row["metadata_json"]["extraction_quality"]["content_type"] == "text/markdown"

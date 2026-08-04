@@ -12,19 +12,25 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-FavoriteTargetType = Literal["analysis_record", "daily_reader_article"]
+# DATA-SCHEMA-BASELINE D2: exact favorite target union. No bare strings,
+# no legacy targets, no aliases.
+FavoriteTargetType = Literal["daily_reader_article", "reading_record"]
 
 
 class FavoriteCreateRequest(BaseModel):
-    analysis_record_id: UUID | None = Field(default=None)
-    target_type: FavoriteTargetType = Field(default="analysis_record")
+    target_type: FavoriteTargetType
     target_key: str = Field(min_length=1, max_length=256)
     payload_json: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_article_favorite_payload(self):
-        if self.target_type == "analysis_record" and self.analysis_record_id is None:
-            raise ValueError("analysis_record_id is required for analysis_record favorites")
+    def validate_reading_record_target_key(self):
+        if self.target_type == "reading_record":
+            try:
+                UUID(self.target_key)
+            except ValueError as exc:
+                raise ValueError(
+                    "reading_record favorites require a reading_record_id target_key"
+                ) from exc
         return self
 
 
@@ -33,7 +39,6 @@ class FavoriteResponse(BaseModel):
     user_id: UUID
     target_type: FavoriteTargetType
     target_key: str
-    analysis_record_id: UUID | None
     payload_json: dict
     created_at: datetime
     updated_at: datetime

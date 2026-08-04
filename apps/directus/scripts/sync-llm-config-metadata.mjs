@@ -13,11 +13,6 @@ const DIRECTUS_CONTAINER = process.env.DIRECTUS_CONTAINER ?? "claread-directus";
 const POSTGRES_CONTAINER = process.env.POSTGRES_CONTAINER ?? "claread-postgres";
 const POSTGRES_DB = process.env.POSTGRES_DB ?? "claread";
 const POSTGRES_USER = process.env.POSTGRES_USER ?? "claread";
-const LLM_CONFIG_MIGRATION = resolve(
-  SCRIPT_DIR,
-  "../../../infra/migrations/llm-config/0001_llm_config_control_plane.sql",
-);
-const DIRECTUS_SKIP_SQL_BOOTSTRAP = isTruthyEnv(process.env.DIRECTUS_SKIP_SQL_BOOTSTRAP);
 const DIRECTUS_SKIP_RESTART = isTruthyEnv(process.env.DIRECTUS_SKIP_RESTART);
 
 const DIRECTUS_EMAIL = process.env.DIRECTUS_EMAIL ?? process.env.ADMIN_EMAIL ?? "admin@claread.dev";
@@ -311,10 +306,6 @@ function runSql(sql) {
   );
 }
 
-function readMigrationSql() {
-  return readFileSync(LLM_CONFIG_MIGRATION, "utf8").replace(/^\uFEFF/, "");
-}
-
 function restartDirectus() {
   execFileSync("docker", ["restart", DIRECTUS_CONTAINER], { stdio: "pipe" });
 }
@@ -496,10 +487,19 @@ async function syncModuleBar(token) {
   await request(token, "PATCH", "/settings", { module_bar: nextModuleBar });
 }
 
-if (!DIRECTUS_SKIP_SQL_BOOTSTRAP) {
-  runSql(readMigrationSql());
-  runSql(buildCollectionMetadataSql());
-}
+// DATA-SCHEMA-BASELINE D2: llm_* physical tables come from the single
+// infra/migrations/0001_initial.sql baseline; this script is metadata-only
+// (directus_collections rows for the LLM Config module).
+// DATA-SCHEMA-BASELINE D2: eval_example_lab_entries is a PROTECTED
+// collection whose physical table comes from the single baseline
+// (infra/migrations/0001_initial.sql). Its Directus registration is
+// metadata-only and must survive a fresh database boot.
+runSql(`
+  INSERT INTO directus_collections (collection, accountability, collapse)
+  VALUES ('eval_example_lab_entries', 'all', 'open')
+  ON CONFLICT (collection) DO NOTHING;
+`);
+runSql(buildCollectionMetadataSql());
 if (!DIRECTUS_SKIP_RESTART) {
   restartDirectus();
   await waitForDirectusReady();
@@ -512,5 +512,5 @@ await syncFields(token);
 await syncModuleBar(token);
 
 console.log(
-  `LLM Config metadata synced. Enabled modules: ${MODULE_BAR_ITEMS.map((item) => item.id).join(", ")}; collections: ${COLLECTIONS.map((item) => item.collection).join(", ")}; bootstrap=${DIRECTUS_SKIP_SQL_BOOTSTRAP ? "skipped" : "applied"}; restart=${DIRECTUS_SKIP_RESTART ? "skipped" : "performed"}`,
+  `LLM Config metadata synced (metadata-only). Enabled modules: ${MODULE_BAR_ITEMS.map((item) => item.id).join(", ")}; collections: ${COLLECTIONS.map((item) => item.collection).join(", ")}; restart=${DIRECTUS_SKIP_RESTART ? "skipped" : "performed"}`,
 );

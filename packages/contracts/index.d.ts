@@ -13,8 +13,8 @@ export declare const USER_ANNOTATION_ANCHOR_TYPES: readonly ["sentence", "text_r
 export type UserAnnotationAnchorType = (typeof USER_ANNOTATION_ANCHOR_TYPES)[number];
 
 export declare const FAVORITE_TARGET_TYPES: readonly [
-  "analysis_record",
   "daily_reader_article",
+  "reading_record",
 ];
 export type FavoriteTargetType = (typeof FAVORITE_TARGET_TYPES)[number];
 

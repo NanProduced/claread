@@ -25,9 +25,9 @@ async def create_reader_note(
 @router.get("", response_model=ReaderNoteListResponse)
 async def list_reader_notes(
     current_user: AuthUserDep,
-    record_id: str = Query(alias="analysis_record_id", min_length=1),
+    reading_record_id: str = Query(min_length=1),
 ) -> ReaderNoteListResponse:
-    items = await svc.list_reader_notes(UUID(current_user.user_id), record_id)
+    items = await svc.list_reader_notes(UUID(current_user.user_id), reading_record_id)
     return ReaderNoteListResponse(items=items)
 
 

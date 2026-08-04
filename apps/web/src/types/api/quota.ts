@@ -14,7 +14,6 @@ export interface LedgerEntryResponseDto {
   description: string;
   article_title: string | null;
   metadata?: Record<string, unknown>;
-  task_id: string | null;
   created_at: string;
 }
 

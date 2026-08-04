@@ -42,9 +42,8 @@ class LedgerEntryResponse(BaseModel):
     bucket_type: str
     balance_after: int
     description: str
-    article_title: str | None
+    article_title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    task_id: str | None = None
     created_at: datetime
 
 

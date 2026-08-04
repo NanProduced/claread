@@ -3,22 +3,9 @@ import "server-only";
 import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
   ReaderNoteCreateRequestDto,
-  ReaderNoteListResponseDto,
   ReaderNoteResponseDto,
   ReaderNoteUpdateRequestDto,
 } from "@/types/api/reader-notes";
-
-export function listReaderNotes(
-  sessionToken: string,
-  analysisRecordId: string,
-): Promise<UpstreamResult<ReaderNoteListResponseDto>> {
-  const searchParams = new URLSearchParams({
-    analysis_record_id: analysisRecordId,
-  });
-  return fastApiFetch<ReaderNoteListResponseDto>(`/reader-notes?${searchParams.toString()}`, {
-    sessionToken,
-  });
-}
 
 export function createReaderNote(
   sessionToken: string,

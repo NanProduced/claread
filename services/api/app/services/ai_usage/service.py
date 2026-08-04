@@ -35,8 +35,6 @@ class AIUsageEventCreate:
     billing_mode: str
     status: str
     user_id: UUID | None = None
-    task_id: UUID | None = None
-    record_id: UUID | None = None
     reading_record_id: UUID | None = None
     reader_run_id: UUID | None = None
     reader_job_id: UUID | None = None
@@ -226,7 +224,7 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 """
                 INSERT INTO ai_usage_events (
                     usage_scope, capability_code, billing_mode, status,
-                    user_id, task_id, record_id, reading_record_id,
+                    user_id, reading_record_id,
                     reader_run_id, reader_job_id, enhancement_layer_id,
                     daily_reader_article_id, client_platform, request_id,
                     workflow_name, workflow_version, schema_version, prompt_version,
@@ -241,18 +239,18 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 )
                 VALUES (
                     $1, $2, $3, $4,
-                    $5, $6, $7, $8,
-                    $9, $10, $11,
-                    $12, $13, $14,
-                    $15, $16, $17, $18,
-                    $19, $20, $21, $22, $23,
-                    $24, $25, $26, $27, $28,
-                    $29, $30, $31,
-                    $32, $33,
-                    $34, $35, $36,
-                    $37, $38,
-                    $39, $40, $41,
-                    $42, $43, $44, $45::jsonb, $46
+                    $5, $6,
+                    $7, $8, $9,
+                    $10, $11, $12,
+                    $13, $14, $15, $16,
+                    $17, $18, $19, $20, $21,
+                    $22, $23, $24, $25, $26,
+                    $27, $28, $29,
+                    $30, $31,
+                    $32, $33, $34,
+                    $35, $36,
+                    $37, $38, $39,
+                    $40, $41, $42, $43::jsonb, $44
                 )
                 RETURNING id
                 """,
@@ -261,8 +259,6 @@ async def record_ai_usage_event(event: AIUsageEventCreate) -> UUID | None:
                 event.billing_mode,
                 event.status,
                 event.user_id,
-                event.task_id,
-                event.record_id,
                 event.reading_record_id,
                 event.reader_run_id,
                 event.reader_job_id,

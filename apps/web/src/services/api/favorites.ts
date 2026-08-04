@@ -27,10 +27,15 @@ export function createFavorite(
 
 export function deleteFavoriteByTargetKey(
   sessionToken: string,
+  targetType: string,
   targetKey: string,
 ): Promise<UpstreamResult<FavoriteDeleteResponseDto>> {
+  const searchParams = new URLSearchParams({
+    target_type: targetType,
+    target_key: targetKey,
+  });
   return fastApiFetch<FavoriteDeleteResponseDto>(
-    `/favorites/${encodeURIComponent(targetKey)}`,
+    `/favorites/target?${searchParams.toString()}`,
     {
       method: "DELETE",
       sessionToken,

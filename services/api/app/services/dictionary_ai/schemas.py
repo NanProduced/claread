@@ -30,7 +30,6 @@ class DictionaryAIRequestBase(BaseModel):
     query_type: Literal["word", "phrase"]
     context_sentence: str = Field(min_length=1, max_length=5000)
     occurrence: int | None = Field(default=None, ge=1)
-    record_id: UUID | None = None
     reading_record_id: UUID | None = None
     base_id: UUID | None = None
     generation: int | None = Field(default=None, ge=1)

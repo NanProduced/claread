@@ -62,6 +62,8 @@ cutover 删除的是 Analysis service **写入路径**，不是表本身。表 D
 
 DATA-AUDIT 必须显式保护 `analysis_windows` 与 `layer_analysis_plans`；对仍被只读引用的 3 张 legacy 表必须先迁移 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 中的引用，再 DROP。**禁止使用 "删除 analysis_*" 这类 wildcard 指令。**
 
+**DATA-LEGACY-IDENTITY-EXIT 状态（2026-08-04）**：上述代码引用已全部退出并物理删除 — `user_assets/records.py`、`text_anchors.py`、`schemas/user_assets/records.py` 已删除（L1 logical exit + P1 physical deletion，commit `0670c197` / `7ec356ca`），`quota/ledger.py` 不再 JOIN legacy 表，annotations/notes/favorites/feedback/usage 不再有 analysis identity。app 代码对 7 张 legacy 表零消费，由 `services/api/tests/test_data_legacy_identity_exit_guard.py` 静态锁定。剩余工作属于 D2 schema baseline：7 张 legacy 表的 DDL DROP 与共享表 legacy 列删除。
+
 ### 必须保护的数据（post-cutover 数据清理仍须遵守）
 
 Claread 尚未上线，受控验证中可重置本地业务数据，但 cutover 后的数据清理仍须保护以下共享产品表与已冻结能力，不得误删：

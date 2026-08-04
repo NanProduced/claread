@@ -27,26 +27,11 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 API_ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS_DIR = REPO_ROOT / "infra" / "migrations"
 
-# These are the migrations the reader-orchestration test suite
-# applies to bring a fresh schema up to the same state the dev DB
-# has. We deliberately exclude 0001+ utility migrations (such as
-# grammar seed data) and only load the DDL we actually need.
+# DATA-SCHEMA-BASELINE D2 / DATA-D2-CLOSEOUT-R1: the single fresh
+# baseline replaces every per-step migration; the isolated schema
+# loads exactly this file.
 REQUIRED_MIGRATION_NAMES: tuple[str, ...] = (
-    "0001_initial_schema.sql",
-    "0002_reader_record_anchor_columns.sql",
-    "0003_reader_ask_dual_scope.sql",
-    "0004_reader_document_blocks.sql",
-    "0006_reader_ask_supplements_nullable_analysis_record_id.sql",
-    "0008_reader_jobs_input_artifact_extraction.sql",
-    "0009_reader_jobs_extracted_artifact_materialization.sql",
-    "0010_reader_article_rag_index_state.sql",
-    "0011_reader_display_title_generation.sql",
-    "0012_reader_record_reading_strategy.sql",
-    "0013_user_annotation_color_palette.sql",
-    "0014_reader_runtime_spans.sql",
-    "0015_layer_analysis_plans.sql",
-    "0016_reader_runtime_spans_grammar_bundle_window.sql",
-    "0017_reader_jobs_batch_path_job_types.sql",
+    "0001_initial.sql",
 )
 
 # Whitelist pattern for the isolated schema name. We intentionally
@@ -162,7 +147,15 @@ def _build_baseline_sql() -> str:
         if not path.exists():
             raise FileNotFoundError(f"required migration missing: {path}")
         parts.append(path.read_text(encoding="utf-8"))
-    return "\n".join(parts)
+    sql = "\n".join(parts)
+    # The baseline pins ``search_path`` to ``public`` for the fresh-init
+    # path; the isolated schema must receive the DDL in its own schema.
+    return re.sub(
+        r"^\s*SET search_path = public, pg_catalog;\s*$",
+        "",
+        sql,
+        flags=re.MULTILINE,
+    )
 
 
 def get_database_url() -> str:

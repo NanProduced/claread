@@ -794,10 +794,10 @@ async def _enqueue_materialization_job(
 ) -> UUID:
     """Enqueue an extracted_artifact_materialization job (D6-I3O).
 
-    Called from the extraction worker's persist transaction after
-    ``original_inputs.source_text`` is written and the extraction job is
-    transitioned to ``succeeded``. Runs in the SAME transaction so extraction
-    success + materialization enqueue are atomic.
+    Called from the extraction worker's persist transaction after the
+    confirmed-source row is written and the extraction job is transitioned to
+    ``succeeded``. Runs in the SAME transaction so extraction success and
+    materialization enqueue are atomic.
 
     The job reuses the existing ``reader_runs`` / ``reader_jobs`` tables.
     Duplicate enqueue prevention is provided by the partial unique index

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MyFeedbackList } from "./MyFeedbackList";
 
-vi.mock("@/components/reader/FeedbackSheet", () => ({
+vi.mock("./feedback-config", () => ({
   FEEDBACK_CONFIG_BY_SCOPE: {
     app: {
       positiveOptions: [],

@@ -415,17 +415,20 @@ def test_candidate_status_must_match_schema_literal() -> None:
 
 
 def _migration_sql() -> str:
-    """Load 0004_reader_document_blocks.sql from disk for static checks.
+    """Load the single fresh baseline migration from disk for static checks.
 
-    Tests use this to assert that the on-disk migration actually
+    Tests use this to assert that the on-disk baseline actually
     matches the Python contract — without requiring a live Postgres
     connection. The static guard catches drift early.
+
+    The original 0004_reader_document_blocks.sql was folded into
+    infra/migrations/0001_initial.sql (DATA-SCHEMA-BASELINE D2).
     """
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
     migration_path = (
-        repo_root.parent.parent / "infra" / "migrations" / "0004_reader_document_blocks.sql"
+        repo_root.parent.parent / "infra" / "migrations" / "0001_initial.sql"
     )
     assert migration_path.is_file(), (
         f"migration file not found at {migration_path}; the static "
@@ -444,19 +447,19 @@ def test_migration_parent_block_id_is_text_not_uuid() -> None:
     assert re.search(
         r"parent_block_id\s+TEXT",
         sql,
-        flags=re.MULTILINE,
+        flags=re.MULTILINE | re.IGNORECASE,
     ), "migration must declare parent_block_id as TEXT"
     # The previous UUID FK is gone; no REFERENCES against
     # stable_document_blocks(id) using only parent_block_id.
     assert not re.search(
         r"parent_block_id\s+UUID",
         sql,
-        flags=re.MULTILINE,
+        flags=re.MULTILINE | re.IGNORECASE,
     ), "parent_block_id must not be UUID"
     assert not re.search(
         r"parent_block_id\s+UUID\s+REFERENCES\s+stable_document_blocks\(id\)",
         sql,
-        flags=re.MULTILINE,
+        flags=re.MULTILINE | re.IGNORECASE,
     ), "parent_block_id must not UUID-FK into the row id"
 
 
@@ -478,7 +481,7 @@ def test_migration_has_self_parent_check() -> None:
     """parent_block_id = block_id must be rejected at the DB level."""
     sql = _migration_sql()
     assert re.search(
-        r"parent_block_id\s+IS\s+NULL\s+OR\s+parent_block_id\s*<>\s*block_id",
+        r"parent_block_id\s+IS\s+NULL\s*\)?\s*OR\s*\(?\s*parent_block_id\s*<>\s*block_id",
         sql,
         flags=re.MULTILINE | re.IGNORECASE,
     ), "missing self-parent CHECK"
@@ -1010,7 +1013,7 @@ def test_migration_documents_storage_default_split() -> None:
     """
     sql = _migration_sql()
     assert re.search(
-        r"interpretation_policy_json\s+JSONB\s+NOT NULL\s+DEFAULT\s+'\{\}'::jsonb",
+        r"interpretation_policy_json\s+JSONB\s+(?:NOT\s+NULL\s+)?DEFAULT\s+'\{\}'::jsonb\s+NOT\s+NULL",
         sql,
         flags=re.MULTILINE | re.IGNORECASE,
     ), "expected storage-default placeholder on interpretation_policy_json"

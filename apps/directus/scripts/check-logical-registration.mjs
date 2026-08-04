@@ -35,15 +35,6 @@ const REQUIRED_ENDPOINT_ENTRIES = new Set(["reader-orch"]);
 const REQUIRED_MODULE_ENTRIES = new Set(["claread-llm-config"]);
 
 const INIT_SCRIPT_REL = "infra/scripts/init-eval-center-dev.ps1";
-const INIT_FORBIDDEN_SIDE_EFFECTS = [
-  "docker cp",
-  "docker exec",
-  "drop_eval_center_tables",
-  "0001_eval_center_control_plane.sql",
-  "directus:eval-center:sync-metadata",
-  "eval-center:sync-metadata",
-  "reset-eval-center-data",
-];
 
 const errors = [];
 
@@ -163,46 +154,45 @@ for (const rel of [
   }
 }
 
-// drop_eval_center_tables.sql is the Data owner DROP manifest: exactly the 12
-// legacy control-plane tables, and it MUST NOT include the protected
-// eval_example_lab_entries (KEEP/REHOME). Cutover does not execute it.
 const DROP_MANIFEST_REL = "infra/scripts/drop_eval_center_tables.sql";
-const EXPECTED_DROP_TABLES = [
-  "eval_prompt_variant_drafts",
-  "eval_workflow_run_requests",
-  "eval_workflow_compares",
-  "eval_workflow_compare_judge_requests",
-  "eval_judge_run_requests",
-  "eval_review_notes",
-  "eval_node_lab_candidate_drafts",
-  "eval_node_lab_sessions",
-  "eval_node_lab_trials",
-  "eval_node_lab_judge_configs",
-  "eval_node_lab_judge_requests",
-  "eval_node_lab_review_notes",
-];
-const dropManifestPath = resolve(REPO_ROOT, DROP_MANIFEST_REL);
-if (!existsSync(dropManifestPath)) {
-  errors.push(`${DROP_MANIFEST_REL} missing; expected the Data owner 12-table DROP manifest`);
-} else {
-  // Strip full-line SQL comments so the prohibition header may document the
-  // exclusion; only executable SQL is checked.
-  const dropBody = readFileSync(dropManifestPath, "utf8")
-    .split(/\r?\n/)
-    .filter((line) => !line.trim().startsWith("--"))
-    .join("\n");
-  if (/eval_example_lab_entries/.test(dropBody)) {
-    errors.push(`${DROP_MANIFEST_REL} MUST NOT include protected eval_example_lab_entries`);
-  }
-  for (const table of EXPECTED_DROP_TABLES) {
-    if (!new RegExp(`\\b${table}\\b`).test(dropBody)) {
-      errors.push(`${DROP_MANIFEST_REL} missing expected legacy table: ${table}`);
-    }
-  }
+
+// DATA-SCHEMA-BASELINE D2: the Data owner 12-table DROP manifest is
+// obsolete and must stay physically deleted — the legacy tables are
+// absent from infra/migrations/0001_initial.sql, so there is nothing to
+// drop. eval_example_lab_entries (KEEP) lives on in the baseline.
+if (existsSync(resolve(REPO_ROOT, DROP_MANIFEST_REL))) {
+  errors.push(`${DROP_MANIFEST_REL} must stay physically deleted; legacy Eval tables are absent from the single baseline`);
 }
 
-// Broad protection: NO executable SQL under infra/scripts may reference the
-// protected eval_example_lab_entries table (comment mentions are allowed). This
+// Single fresh baseline: infra/migrations contains exactly 0001_initial.sql,
+// and docker-compose.local.yml mounts exactly that file into initdb.
+const migrationsDir = resolve(REPO_ROOT, "infra/migrations");
+if (!existsSync(migrationsDir)) {
+  errors.push("infra/migrations missing");
+} else {
+  const migrationEntries = readdirSync(migrationsDir);
+  if (!migrationEntries.includes("0001_initial.sql")) {
+    errors.push("infra/migrations must contain 0001_initial.sql (single fresh baseline)");
+  }
+  const unexpectedEntries = migrationEntries.filter((entry) => entry !== "0001_initial.sql");
+  if (unexpectedEntries.length > 0) {
+    errors.push(`infra/migrations must contain ONLY 0001_initial.sql; unexpected: ${unexpectedEntries.join(", ")}`);
+  }
+}
+const composeBody = readFileSync(
+  resolve(REPO_ROOT, "infra/docker/docker-compose.local.yml"),
+  "utf8",
+);
+const initdbMounts = composeBody
+  .split(/\r?\n/)
+  .filter((line) => line.includes("docker-entrypoint-initdb.d"));
+if (initdbMounts.length !== 1 || !initdbMounts[0].includes("0001_initial.sql")) {
+  errors.push("docker-compose.local.yml must mount exactly ../migrations/0001_initial.sql into initdb");
+}
+
+// Broad protection: NO executable SQL under infra/scripts may TRUNCATE, DROP
+// or DELETE the protected eval_example_lab_entries table (existence checks in
+// baseline guards are allowed; destructive statements are not). This
 // guarantees no ops reset/drop script can empty or drop the KEEP table.
 const infraScriptsDir = resolve(REPO_ROOT, "infra/scripts");
 if (existsSync(infraScriptsDir)) {
@@ -212,8 +202,11 @@ if (existsSync(infraScriptsDir)) {
       .split(/\r?\n/)
       .filter((line) => !line.trim().startsWith("--"))
       .join("\n");
-    if (/\beval_example_lab_entries\b/.test(executableSql)) {
-      errors.push(`infra/scripts/${entry} must not touch protected eval_example_lab_entries in executable SQL`);
+    for (const statement of executableSql.split(";")) {
+      if (!/\beval_example_lab_entries\b/.test(statement)) continue;
+      if (/\b(TRUNCATE|DROP TABLE|DELETE FROM)\b/i.test(statement)) {
+        errors.push(`infra/scripts/${entry} must not TRUNCATE/DROP/DELETE protected eval_example_lab_entries`);
+      }
     }
   }
 }
@@ -233,49 +226,11 @@ for (const cmd of [
   }
 }
 
-// init-eval-center-dev.ps1 must fail-closed before any Docker/DDL side effect.
-const initPath = resolve(REPO_ROOT, INIT_SCRIPT_REL);
-if (!existsSync(initPath)) {
-  errors.push(`${INIT_SCRIPT_REL} missing; expected retired fail-closed tombstone`);
-} else {
-  const initBody = readFileSync(initPath, "utf8");
-  if (!/\[retired\]/i.test(initBody)) {
-    errors.push(`${INIT_SCRIPT_REL} missing [retired] tombstone`);
-  }
-  if (!/\bexit\s+1\b/i.test(initBody)) {
-    errors.push(`${INIT_SCRIPT_REL} must exit 1 (fail-closed)`);
-  }
-  for (const token of INIT_FORBIDDEN_SIDE_EFFECTS) {
-    if (initBody.toLowerCase().includes(token.toLowerCase())) {
-      // Allow mention only inside the retired error message if it's clearly non-executing.
-      // Hard-fail if docker commands appear as executable lines (not only in error string).
-      const lines = initBody.split(/\r?\n/);
-      const executable = lines.some((line) => {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("Write-Error") || trimmed.startsWith("Write-Host")) {
-          return false;
-        }
-        // String concatenation inside Write-Error block still may include tokens;
-        // only flag bare command-like lines.
-        return (
-          trimmed.toLowerCase().startsWith("docker ") ||
-          trimmed.includes("docker cp") ||
-          trimmed.includes("docker exec") ||
-          trimmed.includes("& $resetScript") ||
-          trimmed.includes("pnpm directus:eval-center:sync-metadata") ||
-          trimmed.includes("psql ")
-        );
-      });
-      if (executable) {
-        errors.push(`${INIT_SCRIPT_REL} still has executable side-effect involving: ${token}`);
-        break;
-      }
-    }
-  }
-  // Stronger: no docker/psql executable invocation at all.
-  if (/(^|\n)\s*docker\s+/i.test(initBody) || /(^|\n)\s*pnpm\s+directus:eval-center/i.test(initBody)) {
-    errors.push(`${INIT_SCRIPT_REL} still contains executable docker/pnpm side effects`);
-  }
+// DATA-SCHEMA-BASELINE D2: the retired init tombstone is physically
+// deleted; the legacy Eval control-plane tables are simply not part of
+// the single fresh baseline anymore.
+if (existsSync(resolve(REPO_ROOT, INIT_SCRIPT_REL))) {
+  errors.push(`${INIT_SCRIPT_REL} must stay physically deleted after DATA-SCHEMA-BASELINE D2`);
 }
 
 // reader-orch source must expose the four read-only routes (relative to endpoint name).
@@ -311,7 +266,7 @@ console.log(
       retired_sync: "physically-deleted",
       physical_deletion: "enforced",
       eval_example_lab: "protected",
-      init_eval_center: "fail-closed",
+      init_eval_center: "physically-deleted",
     },
     null,
     2,

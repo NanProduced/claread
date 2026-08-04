@@ -24,7 +24,6 @@ import hashlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -57,7 +56,6 @@ from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
     STATUS_STARTED,
-    STATUS_SKIPPED,
     STATUS_SUCCEEDED,
     STATUS_SUPERSEDED,
     ReaderSpanRecorder,
@@ -77,10 +75,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0016_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +108,6 @@ async def span_recorder_env() -> AsyncIterator[tuple[asyncpg.Pool, ReaderSpanRec
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(_MIGRATION_0016_SQL)
         pool = await make_pool(schema_name)
         recorder = ReaderSpanRecorder(pool=pool)
         set_default_recorder(recorder)

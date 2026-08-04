@@ -1,8 +1,7 @@
 import type { FavoriteTargetType } from "@claread/contracts";
 
 export interface FavoriteCreateRequestDto {
-  analysis_record_id?: string | null;
-  target_type?: FavoriteTargetType;
+  target_type: FavoriteTargetType;
   target_key: string;
   payload_json?: Record<string, unknown>;
 }
@@ -17,7 +16,6 @@ export interface FavoriteResponseDto {
   user_id: string;
   target_type: FavoriteTargetType;
   target_key: string;
-  analysis_record_id: string | null;
   payload_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;

@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from app.main import app
 from app.schemas.user_assets.favorites import FavoriteCreateRequest
-from app.services.user_assets.records import delete_record
 from app.services.user_assets.vocabulary import SOURCE_REFS_MAX, _merge_payload_on_conflict
 
 client = TestClient(app)
@@ -48,10 +47,9 @@ def _make_favorite_row(**overrides):
     defaults = {
         "id": uuid4(),
         "user_id": UUID(USER_ID),
-        "target_type": "analysis_record",
-        "target_key": f"analysis_record:{RECORD_ID}",
-        "analysis_record_id": RECORD_ID,
-        "payload_json": {"title": "Test article"},
+        "target_type": "daily_reader_article",
+        "target_key": "daily_reader_article:2026-05-21",
+        "payload_json": {"article_id": "2026-05-21"},
         "created_at": now,
         "updated_at": now,
     }
@@ -82,9 +80,9 @@ class TestVocabularyMergeLogic:
 
 
 class TestFavoriteSchema:
-    def test_analysis_record_requires_record_id(self):
+    def test_rejects_legacy_analysis_record_target(self):
         with pytest.raises(ValidationError):
-            FavoriteCreateRequest(
+            FavoriteCreateRequest(  # type: ignore[arg-type]
                 target_type="analysis_record",
                 target_key="analysis_record:missing",
             )
@@ -96,37 +94,33 @@ class TestFavoriteSchema:
                 target_key="range:s1:0:4",
             )
 
-    def test_daily_reader_article_does_not_require_analysis_record_id(self):
+    def test_requires_target_type(self):
+        with pytest.raises(ValidationError):
+            FavoriteCreateRequest(target_key="daily_reader_article:2026-05-21")  # type: ignore[call-arg]
+
+    def test_daily_reader_article_favorite_request_is_valid(self):
         req = FavoriteCreateRequest(
             target_type="daily_reader_article",
             target_key="daily_reader_article:2026-05-21",
         )
-        assert req.analysis_record_id is None
+        assert req.target_type == "daily_reader_article"
+
+    def test_reading_record_favorite_request_is_valid(self):
+        req = FavoriteCreateRequest(
+            target_type="reading_record",
+            target_key=str(RECORD_ID),
+        )
+        assert req.target_type == "reading_record"
+
+    def test_reading_record_favorite_requires_uuid_target_key(self):
+        with pytest.raises(ValidationError):
+            FavoriteCreateRequest(
+                target_type="reading_record",
+                target_key="not-a-reading-record-id",
+            )
 
 
 class TestFavoriteRoutes:
-    @_mock_auth()
-    @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
-    def test_add_analysis_record_favorite(self, mock_pool, _mock_session):
-        pool, conn = _mock_db_pool()
-        mock_pool.acquire = pool.acquire
-        favorite_id = uuid4()
-        conn.fetchrow.return_value = {"id": favorite_id}
-
-        response = client.post(
-            "/favorites",
-            json={
-                "target_type": "analysis_record",
-                "target_key": f"analysis_record:{RECORD_ID}",
-                "analysis_record_id": str(RECORD_ID),
-                "payload_json": {"title": "Test article"},
-            },
-            headers=AUTH_HEADERS,
-        )
-
-        assert response.status_code == 200
-        assert response.json() == {"id": str(favorite_id), "ok": True}
-
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
     def test_add_daily_reader_article_favorite(self, mock_pool, _mock_session):
@@ -150,6 +144,54 @@ class TestFavoriteRoutes:
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
+    def test_reading_record_favorite_create_list_delete(self, mock_pool, _mock_session):
+        """Service-level round-trip for the reading_record favorite target.
+
+        The real-DB chain (against the fresh baseline CHECK) is locked by
+        the D2 fresh-init acceptance.
+        """
+        pool, conn = _mock_db_pool()
+        mock_pool.acquire = pool.acquire
+        favorite_id = uuid4()
+        reading_record_id = uuid4()
+        conn.fetchrow.return_value = {"id": favorite_id}
+        conn.fetch.return_value = [
+            _make_favorite_row(
+                id=favorite_id,
+                target_type="reading_record",
+                target_key=str(reading_record_id),
+                payload_json={},
+            )
+        ]
+        conn.execute.return_value = "UPDATE 1"
+
+        create = client.post(
+            "/favorites",
+            json={
+                "target_type": "reading_record",
+                "target_key": str(reading_record_id),
+            },
+            headers=AUTH_HEADERS,
+        )
+        assert create.status_code == 200
+        assert create.json() == {"id": str(favorite_id), "ok": True}
+        insert_sql = conn.fetchrow.await_args.args[0]
+        assert "reading_record_id" not in insert_sql
+
+        listed = client.get("/favorites", headers=AUTH_HEADERS)
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["target_type"] == "reading_record"
+        assert listed.json()["items"][0]["target_key"] == str(reading_record_id)
+
+        removed = client.delete(
+            f"/favorites/target?target_type=reading_record&target_key={reading_record_id}",
+            headers=AUTH_HEADERS,
+        )
+        assert removed.status_code == 200
+        assert removed.json() == {"deleted": True}
+
+    @_mock_auth()
+    @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
     def test_list_favorites(self, mock_pool, _mock_session):
         pool, conn = _mock_db_pool()
         mock_pool.acquire = pool.acquire
@@ -160,7 +202,7 @@ class TestFavoriteRoutes:
         assert response.status_code == 200
         payload = response.json()
         assert payload["total"] == 1
-        assert payload["items"][0]["target_type"] == "analysis_record"
+        assert payload["items"][0]["target_type"] == "daily_reader_article"
 
     @_mock_auth()
     @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
@@ -170,43 +212,11 @@ class TestFavoriteRoutes:
         conn.execute.return_value = "UPDATE 1"
 
         response = client.delete(
-            f"/favorites/target?target_type=analysis_record&target_key=analysis_record:{RECORD_ID}",
+            f"/favorites/target?target_type=daily_reader_article&target_key=daily_reader_article:2026-05-21",
             headers=AUTH_HEADERS,
         )
 
         assert response.status_code == 200
         assert response.json() == {"deleted": True}
 
-    @_mock_auth()
-    @patch("app.services.user_assets.favorites.db_connection.DB_POOL")
-    def test_remove_favorite_by_analysis_record(self, mock_pool, _mock_session):
-        pool, conn = _mock_db_pool()
-        mock_pool.acquire = pool.acquire
-        conn.execute.return_value = "UPDATE 1"
 
-        response = client.delete(f"/favorites/{RECORD_ID}", headers=AUTH_HEADERS)
-
-        assert response.status_code == 200
-        assert response.json() == {"deleted": True}
-
-
-@pytest.mark.asyncio
-class TestRecordDeletion:
-    @patch("app.services.user_assets.records.db_connection.DB_POOL")
-    async def test_delete_record_soft_deletes_reader_notes_too(self, mock_pool):
-        pool, conn = _mock_db_pool()
-        mock_pool.acquire = pool.acquire
-        transaction = MagicMock()
-        transaction.__aenter__ = AsyncMock(return_value=None)
-        transaction.__aexit__ = AsyncMock(return_value=False)
-        conn.transaction = MagicMock(return_value=transaction)
-        conn.fetchrow.return_value = {"deleted_at": None}
-        conn.execute.return_value = "UPDATE 1"
-
-        result = await delete_record(UUID(USER_ID), RECORD_ID)
-
-        assert result == "deleted"
-        queries = [call.args[0] for call in conn.execute.await_args_list]
-        assert any("UPDATE favorite_records" in query for query in queries)
-        assert any("UPDATE user_annotations" in query for query in queries)
-        assert any("UPDATE reader_notes" in query for query in queries)

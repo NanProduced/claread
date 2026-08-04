@@ -1,9 +1,9 @@
 """D6-I3N Extracted Artifact Text → Stable/Candidate Materialization.
 
 Takes an **existing** reading_record + original_input (created by
-``ArtifactInputApplicationService.submit_input`` and populated by the
-``ArtifactExtractionWorkerService``) and materializes the extracted
-``original_inputs.source_text`` into either:
+``ArtifactInputApplicationService.submit_input``) and materializes the
+confirmed-source text persisted by ``ArtifactExtractionWorkerService`` into
+either:
 
 - a **stable document** + reading_base + units + segments (when the input is
   suitable for direct stable freeze), or

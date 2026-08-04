@@ -34,10 +34,10 @@ def _mock_auth():
 
 MOCK_FEEDBACK_ROW = {
     "id": uuid4(),
-    "feedback_scope": "analysis_result",
+    "feedback_scope": "dictionary",
     "target_id": "target_001",
     "sentiment": "negative",
-    "feedback_type": "translation_inaccurate",
+    "feedback_type": "wrong_definition",
     "client_platform": "web",
     "client_surface": "reader",
     "entry_point": "selection_toolbar",
@@ -51,28 +51,27 @@ class TestSubmitFeedback:
     @_mock_auth()
     @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
     def test_submit_feedback_success(self, mock_submit, mock_auth):
-        mock_submit.return_value = {**MOCK_FEEDBACK_ROW, "sentiment": "positive"}
+        mock_submit.return_value = {**MOCK_FEEDBACK_ROW, "sentiment": "negative"}
 
         response = client.post(
             "/feedback",
             json={
-                "feedback_scope": "analysis_result",
+                "feedback_scope": "dictionary",
                 "target_id": "target_001",
-                "analysis_record_id": str(uuid4()),
-                "sentiment": "positive",
-                "feedback_type": "thumbs_up",
+                "sentiment": "negative",
+                "feedback_type": "wrong_definition",
                 "context_json": {},
-                "context_summary": "整体反馈",
+                "context_summary": "Wrong definition",
                 "client_platform": "web",
                 "client_surface": "reader",
-                "entry_point": "feedback_sheet",
+                "entry_point": "dictionary_panel",
             },
             headers=AUTH_HEADERS,
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["feedback_scope"] == "analysis_result"
-        assert data["sentiment"] == "positive"
+        assert data["feedback_scope"] == "dictionary"
+        assert data["sentiment"] == "negative"
         assert data["client_platform"] == "web"
 
     @_mock_auth()
@@ -100,13 +99,7 @@ class TestSubmitFeedback:
 
     @_mock_auth()
     @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
-    def test_submit_sentence_feedback(self, mock_submit, mock_auth):
-        mock_submit.return_value = {
-            **MOCK_FEEDBACK_ROW,
-            "feedback_scope": "sentence",
-            "feedback_type": "selection_issue",
-        }
-
+    def test_rejects_removed_sentence_scope(self, mock_submit, mock_auth):
         response = client.post(
             "/feedback",
             json={
@@ -114,17 +107,30 @@ class TestSubmitFeedback:
                 "target_id": "record:abc:sentence:s1",
                 "sentiment": "negative",
                 "feedback_type": "selection_issue",
-                "annotation_type": "sentence_action",
-                "context_json": {"sentence_id": "s1"},
-                "context_summary": "Sentence issue",
+                "context_json": {},
                 "client_platform": "web",
-                "client_surface": "reader",
-                "entry_point": "selection_toolbar",
             },
             headers=AUTH_HEADERS,
         )
-        assert response.status_code == 200
-        assert response.json()["feedback_scope"] == "sentence"
+        assert response.status_code == 422
+
+    @_mock_auth()
+    @patch("app.api.routes.feedback.feedback_svc.submit_feedback", new_callable=AsyncMock)
+    def test_rejects_removed_annotation_and_analysis_result_scopes(self, mock_submit, mock_auth):
+        for legacy_scope in ("annotation", "analysis_result"):
+            response = client.post(
+                "/feedback",
+                json={
+                    "feedback_scope": legacy_scope,
+                    "target_id": "target_legacy",
+                    "sentiment": "negative",
+                    "feedback_type": "other",
+                    "context_json": {},
+                    "client_platform": "web",
+                },
+                headers=AUTH_HEADERS,
+            )
+            assert response.status_code == 422, legacy_scope
 
 
 class TestListFeedback:
@@ -147,11 +153,11 @@ class TestListFeedback:
     def test_list_feedback_with_items(self, mock_pool, mock_auth):
         item_row = {
             "id": uuid4(),
-            "feedback_scope": "annotation",
-            "feedback_type": "inaccurate",
+            "feedback_scope": "dictionary",
+            "feedback_type": "wrong_definition",
             "sentiment": "negative",
             "content": "Wrong label",
-            "context_summary": "Annotation summary",
+            "context_summary": "Dictionary summary",
             "client_platform": "web",
             "client_surface": "reader",
             "entry_point": "inline_feedback_row",
@@ -180,7 +186,7 @@ class TestListFeedback:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        response = client.get("/feedback?feedback_scope=annotation", headers=AUTH_HEADERS)
+        response = client.get("/feedback?feedback_scope=dictionary", headers=AUTH_HEADERS)
         assert response.status_code == 200
 
     @_mock_auth()

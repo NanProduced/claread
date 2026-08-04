@@ -11,7 +11,6 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -99,16 +98,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0020_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0020_reader_semantic_outline_layer.sql"
-).read_text(encoding="utf-8")
 
 
 @contextmanager
@@ -412,9 +401,6 @@ async def fence_env(tmp_path_factory=None):
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
         # Batch job types + analysis window + semantic_outline layer type.
-        await admin_conn.execute(_MIGRATION_0015_SQL)
-        await admin_conn.execute(_MIGRATION_0017_SQL)
-        await admin_conn.execute(_MIGRATION_0020_SQL)
     except (OSError, asyncpg.PostgresError) as exc:  # pragma: no cover
         await admin_conn.close()
         pytest.skip(f"PostgreSQL unavailable: {exc}")

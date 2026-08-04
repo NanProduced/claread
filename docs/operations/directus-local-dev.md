@@ -41,6 +41,16 @@ pnpm directus:llm-config:import-bundle
 
 旧 `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata` 已在 cutover 中从 root 与 `apps/directus` `package.json` 移除，`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮；不要在文档或脚本中再写成可用命令。
 
+## Fresh volume 启动（DATA-SCHEMA-BASELINE D2）
+
+全新 PostgreSQL volume（仅由 `infra/migrations/0001_initial.sql` 初始化）没有任何 `directus_*` system tables，`directus start` 会拒绝启动。首次启动前执行一次性 bootstrap（compose entrypoint 固定为 `directus start`，所以要用 entrypoint override）：
+
+```powershell
+docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml run --rm --entrypoint npx directus directus bootstrap
+```
+
+bootstrap 安装 Directus system tables 并创建首个管理员（凭据来自 `apps/directus/.env.example` 的 `ADMIN_EMAIL` / `ADMIN_PASSWORD`）。之后正常 `pnpm directus:up`，再执行 `pnpm directus:llm-config:sync-metadata` —— 该脚本保持 metadata-only：`llm_*` 物理表来自单一 baseline，脚本只注册 Directus collection metadata（含受保护的 `eval_example_lab_entries` collection）。
+
 ## MCP
 
 当前本地 Directus 已启用原生 MCP。

@@ -35,7 +35,6 @@ async def add_favorite(
             user_id=UUID(current_user.user_id),
             target_type=body.target_type,
             target_key=body.target_key,
-            analysis_record_id=body.analysis_record_id,
             payload_json=body.payload_json,
         )
         return {"id": str(fav_id), "ok": True}
@@ -84,23 +83,4 @@ async def remove_favorite_by_target(
         raise
     except Exception as e:
         logger.error("remove_favorite_by_target failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error") from e
-
-
-@router.delete("/{analysis_record_id}", response_model=FavoriteDeleteResponse, summary="取消收藏")
-async def remove_favorite(
-    current_user: AuthUserDep,
-    analysis_record_id: UUID,
-) -> FavoriteDeleteResponse:
-    """根据分析记录 ID 取消收藏。"""
-    try:
-        count = await fav_svc.remove_favorite_by_analysis_record(
-            user_id=UUID(current_user.user_id),
-            analysis_record_id=analysis_record_id,
-        )
-        return FavoriteDeleteResponse(deleted=count > 0)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("remove_favorite failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e

@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -76,17 +75,7 @@ from tests.test_reader_orchestration_pipeline_runner import (
 
 pytestmark = pytest.mark.anyio
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0016_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
 # T1.1: add translate_article / build_vocabulary_layer_article job types
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
 
 _OBS_BASE_PARAGRAPH = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -295,9 +284,6 @@ async def zplus_obs_env() -> AsyncIterator[asyncpg.Pool]:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
-    await admin.execute(_MIGRATION_0015_SQL)
-    await admin.execute(_MIGRATION_0016_SQL)
-    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

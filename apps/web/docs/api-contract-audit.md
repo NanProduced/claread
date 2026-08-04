@@ -147,7 +147,7 @@ Web BFF 必须使用 `cloud_record_id` 作为 Reader 记录 ID。`record_id` 仍
 | `AnchorType` | `sentence / paragraph / text_range / multi_text` | DB CHECK + `@claread/contracts` |
 | `AnnotationColor` | `soft_green / soft_blue / soft_purple / warm_yellow / sage_green` | DB CHECK + `@claread/contracts` |
 | `FavoriteTargetType` | `analysis_record / daily_reader_article` | `@claread/contracts` |
-| `FeedbackScope` | `analysis_result / annotation / sentence / dictionary / app` | `schemas/feedback.py` |
+| `FeedbackScope` | `dictionary / app` | `schemas/feedback.py` |
 | `Sentiment` | `positive / negative / neutral` | `schemas/feedback.py` |
 | `InlineMarkRenderType` | `background / underline` | `schemas/analysis.py` |
 | `VisualTone` | `vocab / phrase / context / grammar` | `schemas/analysis.py` |

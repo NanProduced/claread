@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -65,12 +64,8 @@ from tests.test_reader_orchestration_schema_baseline import (
     DATABASE_URL,
 )
 
-# artifact 路径测试需要 source_artifacts 表（0007 不在 BASELINE_SQL
-# 链内，与 test_d6_i3n 同模式追加）。
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCHEMA_SQL = BASELINE_SQL + "\n" + (
-    REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
-).read_text(encoding="utf-8")
+# source_artifacts 已并入单一基线 0001_initial.sql，直接用 BASELINE_SQL。
+SCHEMA_SQL = BASELINE_SQL
 
 # candidate 触发器：image 是合法 content_check 信号（media truth）。
 _CANDIDATE_MD = """## Quarterly Review Notes

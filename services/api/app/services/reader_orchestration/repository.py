@@ -1615,8 +1615,8 @@ class ReaderOrchestrationRepository:
         """Load D6-U4 Reading Record user assets for the current snapshot.
 
         Only rows matching the active base_id + generation are returned.
-        Legacy analysis_record_id rows are excluded. Stale base/generation
-        rows are excluded by the base_id + generation filter.
+        Stale base/generation rows are excluded by the base_id + generation
+        filter.
 
         D6-U5.1 defensive validation: each row is validated against the
         active base facts (unit_text, anchor_segment range, selected_text,
@@ -1655,7 +1655,6 @@ class ReaderOrchestrationRepository:
               AND ua.generation = $3
               AND ua.user_id = $4
               AND ua.deleted_at IS NULL
-              AND ua.analysis_record_id IS NULL
             ORDER BY ua.created_at, ua.id
             """,
             record_id,
@@ -1680,7 +1679,6 @@ class ReaderOrchestrationRepository:
               AND rn.generation = $3
               AND rn.user_id = $4
               AND rn.deleted_at IS NULL
-              AND rn.analysis_record_id IS NULL
             ORDER BY rn.created_at, rn.id
             """,
             record_id,
@@ -1730,9 +1728,7 @@ class ReaderOrchestrationRepository:
 
         Mirrors the user_assets contract: only rows matching the active
         base_id + generation with reading_record_id matching the current
-        record and deleted_at IS NULL are returned. Legacy
-        analysis_record_id rows are excluded so they do not leak into the
-        Reading Record Plate projection.
+        record and deleted_at IS NULL are returned.
 
         Defensive validation: each row's anchor is validated against the
         active base facts (unit_text, anchor_segment range, selected_text,
@@ -1772,7 +1768,6 @@ class ReaderOrchestrationRepository:
               AND s.generation = $3
               AND s.user_id = $4
               AND s.deleted_at IS NULL
-              AND s.analysis_record_id IS NULL
             ORDER BY s.created_at, s.id
             """,
             record_id,

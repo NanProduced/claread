@@ -12,34 +12,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - claread_postgres_data:/var/lib/postgresql/data
-      - ../migrations/0001_initial_schema.sql:/docker-entrypoint-initdb.d/0001_initial_schema.sql:ro
-      - ../migrations/0002_reader_record_anchor_columns.sql:/docker-entrypoint-initdb.d/0002_reader_record_anchor_columns.sql:ro
-      - ../migrations/0003_reader_ask_dual_scope.sql:/docker-entrypoint-initdb.d/0003_reader_ask_dual_scope.sql:ro
-      - ../migrations/0004_reader_document_blocks.sql:/docker-entrypoint-initdb.d/0004_reader_document_blocks.sql:ro
-      - ../migrations/0005_dict_ai_candidate_reading_record_anchor.sql:/docker-entrypoint-initdb.d/0005_dict_ai_candidate_reading_record_anchor.sql:ro
-      - ../migrations/0006_reader_ask_supplements_nullable_analysis_record_id.sql:/docker-entrypoint-initdb.d/0006_reader_ask_supplements_nullable_analysis_record_id.sql:ro
-      - ../migrations/0007_reader_source_artifacts.sql:/docker-entrypoint-initdb.d/0007_reader_source_artifacts.sql:ro
-      - ../migrations/0008_reader_jobs_input_artifact_extraction.sql:/docker-entrypoint-initdb.d/0008_reader_jobs_input_artifact_extraction.sql:ro
-      - ../migrations/0009_reader_jobs_extracted_artifact_materialization.sql:/docker-entrypoint-initdb.d/0009_reader_jobs_extracted_artifact_materialization.sql:ro
-      - ../migrations/0010_reader_article_rag_index_state.sql:/docker-entrypoint-initdb.d/0010_reader_article_rag_index_state.sql:ro
-      - ../migrations/0011_reader_display_title_generation.sql:/docker-entrypoint-initdb.d/0011_reader_display_title_generation.sql:ro
-      - ../migrations/0012_reader_record_reading_strategy.sql:/docker-entrypoint-initdb.d/0012_reader_record_reading_strategy.sql:ro
-      - ../migrations/0013_user_annotation_color_palette.sql:/docker-entrypoint-initdb.d/0013_user_annotation_color_palette.sql:ro
-      - ../migrations/0014_reader_runtime_spans.sql:/docker-entrypoint-initdb.d/0014_reader_runtime_spans.sql:ro
-      - ../migrations/0015_layer_analysis_plans.sql:/docker-entrypoint-initdb.d/0015_layer_analysis_plans.sql:ro
-      - ../migrations/0016_reader_runtime_spans_grammar_bundle_window.sql:/docker-entrypoint-initdb.d/0016_reader_runtime_spans_grammar_bundle_window.sql:ro
-      - ../migrations/0017_reader_jobs_batch_path_job_types.sql:/docker-entrypoint-initdb.d/0017_reader_jobs_batch_path_job_types.sql:ro
-      - ../migrations/0018_reader_record_ask_agentic_turn_runs.sql:/docker-entrypoint-initdb.d/0018_reader_record_ask_agentic_turn_runs.sql:ro
-      - ../migrations/0019_reader_ask_dual_scope_nullable_analysis_record_id.sql:/docker-entrypoint-initdb.d/0019_reader_ask_dual_scope_nullable_analysis_record_id.sql:ro
-      - ../migrations/0022_ai_usage_events_invocation_key.sql:/docker-entrypoint-initdb.d/0022_ai_usage_events_invocation_key.sql:ro
-      - ../migrations/0023_stable_document_blocks_text_constraint_extend.sql:/docker-entrypoint-initdb.d/0023_stable_document_blocks_text_constraint_extend.sql:ro
-      - ../migrations/0024_reader_ask_turn_runs_reasoning_projection.sql:/docker-entrypoint-initdb.d/0024_reader_ask_turn_runs_reasoning_projection.sql:ro
-      # ASK-RETRY-CONTRACT-R2/R4: client_submission_id claim table (after 0024).
-      # 0020/0025 intentionally not mounted here (pre-existing residual, not this task).
-      - ../migrations/0026_reader_ask_client_submission_idempotency.sql:/docker-entrypoint-initdb.d/0026_reader_ask_client_submission_idempotency.sql:ro
-      - ../migrations/0027_reader_ask_client_submission_claim_generation.sql:/docker-entrypoint-initdb.d/0027_reader_ask_client_submission_claim_generation.sql:ro
-      - ../migrations/0028_reader_ask_thread_memory.sql:/docker-entrypoint-initdb.d/0028_reader_ask_thread_memory.sql:ro
-      - ../migrations/eval-center/0001_eval_center_control_plane.sql:/docker-entrypoint-initdb.d/0001_eval_center_control_plane.sql:ro
+      # DATA-SCHEMA-BASELINE D2: single fresh-init baseline. Legacy analysis
+      # tables, legacy Eval control-plane tables and reader_ask_eval_traces are
+      # not part of this file; directus_* tables are managed by Directus itself.
+      - ../migrations/0001_initial.sql:/docker-entrypoint-initdb.d/0001_initial.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claread} -d ${POSTGRES_DB:-claread}"]
       interval: 5s

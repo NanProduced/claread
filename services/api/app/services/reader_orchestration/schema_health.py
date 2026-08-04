@@ -71,12 +71,9 @@ READER_D6_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     READER_NOTES_TABLE: READER_D6_ANCHOR_COLUMNS,
 }
 
-READER_D6_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    READER_NOTES_TABLE: (
-        "analysis_record_id",
-        "anchor_sentence_id",
-    ),
-}
+# DATA-SCHEMA-BASELINE D2: legacy dual-contract columns are dropped from the
+# baseline, so there are no legacy columns left to require-nullable.
+READER_D6_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {}
 
 READER_D6_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     USER_ANNOTATIONS_TABLE: (
@@ -94,6 +91,7 @@ READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
 ] = {
     USER_ANNOTATIONS_TABLE: {
         "user_annotations_text_anchor_payload_check": (
+            "anchor_type = 'text_range'",
             "reading_record_id IS NOT NULL",
             "base_id IS NOT NULL",
             "generation IS NOT NULL",
@@ -101,7 +99,10 @@ READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
             "anchor_segment_id IS NOT NULL",
             "unit_start_utf16 IS NOT NULL",
             "unit_end_utf16 IS NOT NULL",
-            "analysis_record_id IS NULL",
+            "paragraph_id IS NULL",
+            "sentence_id IS NULL",
+            "start_offset IS NULL",
+            "end_offset IS NULL",
         ),
     },
 }
@@ -225,18 +226,17 @@ def format_reader_d5_schema_health_failure(
             (
                 "",
                 "D6 Reading Record user asset schema is incomplete.",
-                "Required migration: "
-                "`infra/migrations/0002_reader_record_anchor_columns.sql`.",
+                "Required baseline: `infra/migrations/0001_initial.sql`.",
                 "Old Docker volumes do not automatically re-run "
-                "`/docker-entrypoint-initdb.d/` when a new migration file is "
-                "mounted.",
-                "To keep existing local data, apply the migration once manually:",
+                "`/docker-entrypoint-initdb.d/` when the baseline changes.",
+                "To keep existing local data, reset or rebuild the local "
+                "development database, or apply the baseline once manually:",
                 "  docker cp "
-                ".\\infra\\migrations\\0002_reader_record_anchor_columns.sql "
-                "claread-postgres:/tmp/0002_reader_record_anchor_columns.sql",
+                ".\\infra\\migrations\\0001_initial.sql "
+                "claread-postgres:/tmp/0001_initial.sql",
                 "  docker exec claread-postgres psql -v ON_ERROR_STOP=1 "
                 "-U claread -d claread "
-                "-f /tmp/0002_reader_record_anchor_columns.sql",
+                "-f /tmp/0001_initial.sql",
             )
         )
     if _has_reader_d5_schema_drift(report):
@@ -248,17 +248,15 @@ def format_reader_d5_schema_health_failure(
         )
     lines.extend(
         (
-            "The current repo baseline already includes these D5 attribution fields, "
-            "indexes, and FKs in `infra/migrations/0001_initial_schema.sql`, "
-            "and the D6 user asset anchor columns/indexes in "
-            "`infra/migrations/0002_reader_record_anchor_columns.sql`.",
+            "The current repo baseline includes these D5 attribution fields, "
+            "indexes, and FKs plus the D6 user asset anchor columns/indexes in "
+            "`infra/migrations/0001_initial.sql`.",
             "This usually means your local database was created before the current "
             "fresh baseline or was only partially reset.",
             "Recommended fix:",
             "1. Reset or rebuild the local development database, or apply the "
-            "missing migration manually.",
-            "2. Re-apply `infra/migrations/0001_initial_schema.sql` and "
-            "`infra/migrations/0002_reader_record_anchor_columns.sql` as needed.",
+            "baseline manually.",
+            "2. Re-apply `infra/migrations/0001_initial.sql` as needed.",
             "3. Re-run `uv run python scripts/check_reader_schema_health.py`.",
         )
     )

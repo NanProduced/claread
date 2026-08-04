@@ -9,14 +9,13 @@ import pytest
 from app.api.routes.vocabulary import _vocab_row_to_response
 from app.database.json_compat import ensure_json_array, ensure_json_object
 from app.services.ai_usage.service import AIUsageEventCreate, record_ai_usage_event
-from app.services.credits import LedgerAttribution, deduct_points
+from app.services.credits import LedgerAttribution, reserve_points
 from app.services.auth.identity import get_or_create_user_by_identity
 from app.services.auth.profile import get_user_profile, update_user_profile
 from app.services.daily_reader.pipeline_tracker import PipelineRunTracker
 from app.services.dictionary_ai.repository import insert_candidate_entry
 from app.services.feedback.service import submit_feedback
 from app.services.user_annotations import _row_to_response as annotation_row_to_response
-from app.services.user_assets.records import update_record
 from app.services.user_assets.vocabulary import (
     _merge_payload_on_conflict,
     upsert_vocabulary,
@@ -91,7 +90,6 @@ class TestJsonCompatibilityReads:
         now = datetime.now(UTC)
         row = {
             "id": uuid4(),
-            "analysis_record_id": uuid4(),
             "anchor_type": "sentence",
             "target_key": "record:r:sentence:s1",
             "paragraph_id": "p1",
@@ -201,33 +199,6 @@ class TestJsonbWriteContracts:
         assert result.user_id == user_id
         insert_args = mock_conn.execute.await_args_list[-1].args
         assert any(isinstance(arg, dict) and arg["verified_by"] == "mock" for arg in insert_args)
-
-    @pytest.mark.anyio
-    async def test_records_update_record_writes_native_jsonb(self):
-        mock_conn = _make_mock_conn_with_tx()
-        mock_pool = _make_mock_pool(mock_conn)
-        user_id = uuid4()
-        record_id = uuid4()
-
-        with (
-            patch("app.services.user_assets.records.db_connection.DB_POOL", mock_pool),
-            patch(
-                "app.services.user_assets.records.get_record_by_id",
-                AsyncMock(return_value={"id": record_id}),
-            ),
-        ):
-            await update_record(
-                user_id,
-                record_id,
-                render_scene_json={"article": {"title": "Test"}},
-            )
-
-        execute_args = mock_conn.execute.await_args.args
-        assert any(
-            isinstance(arg, dict) and arg["article"]["title"] == "Test"
-            for arg in execute_args
-        )
-
     @pytest.mark.anyio
     async def test_ai_usage_event_writes_native_metadata_json(self):
         metadata_json = {"source": "test"}
@@ -299,13 +270,11 @@ class TestJsonbWriteContracts:
         })
         mock_pool = _make_mock_pool(mock_conn)
         user_id = uuid4()
-        task_id = uuid4()
 
         with patch("app.services.credits.db_connection.DB_POOL", mock_pool):
-            await deduct_points(
+            await reserve_points(
                 user_id,
                 5,
-                task_id=task_id,
                 metadata={"capability_code": "reader_translation"},
                 attribution=LedgerAttribution(
                     subject_type="reading_record",
@@ -348,10 +317,8 @@ class TestJsonbWriteContracts:
                 user_id=uuid4(),
                 feedback_scope="app",
                 target_id="app_general",
-                analysis_record_id=None,
                 sentiment="positive",
                 feedback_type="feature_request",
-                annotation_type=None,
                 content=None,
                 context_json=context_json,
                 context_summary="Settings form",
@@ -381,7 +348,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json=generated_payload_json,
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id=None,
                 usage_event_id=None,
             )
@@ -409,7 +375,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json={"candidate": {"word": "doomscroll"}},
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id="sent-1",
                 usage_event_id=None,
                 reading_record_id=reading_record_id,
@@ -440,7 +405,6 @@ class TestJsonbWriteContracts:
                 confidence="medium",
                 generated_payload_json={"candidate": {"word": "doomscroll"}},
                 context_sentence="She spent the whole night doomscrolling.",
-                record_id=None,
                 sentence_id=None,
                 usage_event_id=None,
             )

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -47,11 +45,7 @@ from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABA
 pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
-_REPO_ROOT = Path(__file__).resolve().parents[3]
 # translate_article / unit_range batch job types (T1.1)
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -96,7 +90,6 @@ async def section_seam_env() -> asyncpg.Pool:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(_MIGRATION_0017_SQL)
         pool = await _make_pool(schema_name)
         try:
             yield pool

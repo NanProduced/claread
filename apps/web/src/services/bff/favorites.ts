@@ -7,10 +7,9 @@ import {
 } from "@/services/api/favorites";
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
-
 import type { FavoriteTargetType } from "@claread/contracts";
 
-const READING_RECORD_TARGET_TYPE = "reading_record" as FavoriteTargetType;
+const READING_RECORD_TARGET_TYPE: FavoriteTargetType = "reading_record";
 
 export type FavoriteBffResult =
   | {
@@ -155,7 +154,11 @@ export async function unfavoriteRecord(recordId: string): Promise<FavoriteBffRes
     return authError(session);
   }
 
-  const upstreamResult = await deleteFavoriteByTargetKey(session.sessionToken, normalizedRecordId);
+  const upstreamResult = await deleteFavoriteByTargetKey(
+    session.sessionToken,
+    READING_RECORD_TARGET_TYPE,
+    normalizedRecordId,
+  );
 
   if (!upstreamResult.ok) {
     return upstreamError(upstreamResult.status, upstreamResult.message);

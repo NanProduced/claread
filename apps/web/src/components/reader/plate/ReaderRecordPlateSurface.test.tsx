@@ -1112,7 +1112,6 @@ function makeHighlightWriteItem({
   const end = start + selectedText.length;
   return {
     id,
-    analysis_record_id: null,
     anchor_type: "text_range",
     target_key: `reading-record:record_1:unit_1:seg_1:${start}:${end}`,
     paragraph_id: null,

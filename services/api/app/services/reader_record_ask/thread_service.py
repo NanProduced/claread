@@ -131,10 +131,6 @@ async def get_reading_record_thread_detail(
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    if thread.get("record_scope") != "reading_record":
-        raise HTTPException(
-            status_code=404, detail="Reader ask thread not found for this Reading Record"
-        )
     if thread.get("reading_record_id") != str(reading_record_id):
         raise HTTPException(
             status_code=404, detail="Reader ask thread not found for this Reading Record"
@@ -177,11 +173,6 @@ async def resolve_and_persist_thread_model_option(
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    if thread.get("record_scope") != "reading_record":
-        raise HTTPException(
-            status_code=404,
-            detail="Reader ask thread not found for this Reading Record",
-        )
     if thread.get("reading_record_id") != str(reading_record_id):
         raise HTTPException(
             status_code=404,
@@ -217,10 +208,6 @@ async def reset_reading_record_thread(
     thread = await repo.get_thread(user_id, thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Reader ask thread not found")
-    if thread.get("record_scope") != "reading_record":
-        raise HTTPException(
-            status_code=404, detail="Reader ask thread not found for this Reading Record"
-        )
     if thread.get("reading_record_id") != str(reading_record_id):
         raise HTTPException(
             status_code=404, detail="Reader ask thread not found for this Reading Record"

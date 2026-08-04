@@ -101,7 +101,6 @@ async def _record_dict_ai_failure_event(
             billing_mode=BILLING_MODE_USER_POINTS,
             status=STATUS_FAILED,
             user_id=user_id,
-            record_id=body.record_id,
             workflow_name="dictionary_ai",
             workflow_version="1.0.0",
             schema_version="dict-ai-v1",
@@ -207,7 +206,6 @@ async def dictionary_ai(
         reservation = await reserve_points(
             user_id,
             DICT_AI_FIXED_POINTS,
-            task_id=None,
             entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
             metadata=reservation_metadata,
         )
@@ -242,7 +240,6 @@ async def dictionary_ai(
                 billing_mode=BILLING_MODE_USER_POINTS,
                 status=STATUS_SUCCEEDED,
                 user_id=user_id,
-                record_id=body.record_id,
                 request_id=None,
                 workflow_name="dictionary_ai",
                 workflow_version="1.0.0",
@@ -279,7 +276,6 @@ async def dictionary_ai(
                 confidence=run_result.response.confidence,
                 generated_payload_json=run_result.response.model_dump(mode="json", exclude_none=True),
                 context_sentence=body.context_sentence,
-                record_id=body.record_id,
                 sentence_id=body.sentence_id,
                 usage_event_id=usage_event_id,
                 reading_record_id=body.reading_record_id,

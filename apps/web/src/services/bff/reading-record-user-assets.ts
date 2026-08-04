@@ -217,7 +217,6 @@ export async function createReadingRecordHighlight(
     return invalidRequest(session, "color 必须是 warm_yellow、soft_mint 或 soft_rose。");
   }
   const upstreamBody: UserAnnotationCreateRequestDto = {
-    anchor_type: "text_range",
     selected_text: anchor.selected_text,
     color,
     payload_json: {
@@ -285,7 +284,6 @@ export async function createReadingRecordNote(
   }
 
   const upstreamBody: ReaderNoteCreateRequestDto = {
-    quote_mode: "text_range",
     selected_text: anchor.selected_text,
     note_text: noteText,
     payload_json: {

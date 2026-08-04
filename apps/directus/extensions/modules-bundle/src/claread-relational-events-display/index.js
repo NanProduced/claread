@@ -7,16 +7,8 @@ function normalizeItems(value) {
   return value.filter((item) => item && typeof item === "object");
 }
 
-const QUERY_CONFIG = {
-  analysis_tasks: {
-    path: (primaryKey) =>
-      `/items/analysis_task_events?fields=id,event_type,created_at&sort=created_at&filter[task_id][_eq]=${encodeURIComponent(primaryKey)}`,
-  },
-  analysis_overview_tasks: {
-    path: (primaryKey) =>
-      `/items/analysis_overview_task_events?fields=id,event_type,created_at&sort=created_at&filter[task_id][_eq]=${encodeURIComponent(primaryKey)}`,
-  },
-};
+// DATA-LEGACY-IDENTITY-EXIT: the legacy analysis_task / analysis_overview_task
+// event-fetch branches are gone; this display renders directly provided items only.
 
 export default {
   id: "claread-relational-events-display",
@@ -32,37 +24,8 @@ export default {
     setup(props) {
       const items = ref(normalizeItems(props.value));
 
-      const load = async () => {
-        const directValue = normalizeItems(props.value);
-        if (directValue.length > 0) {
-          items.value = directValue;
-          return;
-        }
-
-        const config = QUERY_CONFIG[props.collection];
-        if (!config || !props.primaryKey) {
-          items.value = [];
-          return;
-        }
-
-        try {
-          const response = await fetch(config.path(props.primaryKey), {
-            credentials: "include",
-            headers: {
-              Accept: "application/json",
-            },
-          });
-
-          if (!response.ok) {
-            items.value = [];
-            return;
-          }
-
-          const payload = await response.json();
-          items.value = normalizeItems(payload?.data ?? []);
-        } catch {
-          items.value = [];
-        }
+      const load = () => {
+        items.value = normalizeItems(props.value);
       };
 
       onMounted(load);

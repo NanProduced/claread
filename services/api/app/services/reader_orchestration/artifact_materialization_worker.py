@@ -1,8 +1,8 @@
 """Artifact materialization worker execution shell (D6-I3O).
 
-Claims ``extracted_artifact_materialization`` reader_jobs (enqueued by the
-extraction worker after ``original_inputs.source_text`` is populated), loads
-the job payload, and calls
+Claims ``extracted_artifact_materialization`` reader_jobs (enqueued after the
+extraction worker persists the confirmed-source document), loads the job
+payload, and calls
 ``ExtractedArtifactMaterializationService.materialize_extracted_artifact_in_transaction``
 to freeze a stable document / create a candidate / mark action_required.
 

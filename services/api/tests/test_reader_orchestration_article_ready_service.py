@@ -815,25 +815,6 @@ def test_article_ready_service_modules_do_not_reference_render_scene_json() -> N
 # ---------------------------------------------------------------------------
 
 
-async def _insert_analysis_record(
-    pool: asyncpg.Pool,
-    *,
-    user_id: UUID,
-) -> UUID:
-    """Insert a minimal analysis_records row for legacy FK references."""
-    async with pool.acquire() as conn:
-        record_id = await conn.fetchval(
-            """
-            INSERT INTO analysis_records (user_id, source_text, source_text_hash)
-            VALUES ($1, 'legacy source', 'legacy-hash')
-            RETURNING id
-            """,
-            user_id,
-        )
-    assert isinstance(record_id, UUID)
-    return record_id
-
-
 async def _insert_reading_record_user_annotation(
     pool: asyncpg.Pool,
     *,
@@ -847,8 +828,7 @@ async def _insert_reading_record_user_annotation(
     unit_end_utf16: int,
     selected_text: str,
     text_hash: str,
-    color: str = "soft_green",
-    analysis_record_id: UUID | None = None,
+    color: str = "warm_yellow",
     sentence_id: str | None = None,
     start_offset: int | None = None,
     end_offset: int | None = None,
@@ -861,7 +841,7 @@ async def _insert_reading_record_user_annotation(
         annotation_id = await conn.fetchval(
             """
             INSERT INTO user_annotations (
-                user_id, analysis_record_id, anchor_type, target_key,
+                user_id, anchor_type, target_key,
                 paragraph_id, sentence_id, selected_text,
                 start_offset, end_offset, text_hash, color,
                 reading_record_id, base_id, generation,
@@ -869,18 +849,17 @@ async def _insert_reading_record_user_annotation(
                 unit_start_utf16, unit_end_utf16,
                 created_at, updated_at
             ) VALUES (
-                $1, $2, 'text_range', $3,
-                NULL, $4, $5,
-                $6, $7, $8, $9,
-                $10, $11, $12,
-                $13, $14,
-                $15, $16,
-                $17, $18
+                $1, 'text_range', $2,
+                NULL, $3, $4,
+                $5, $6, $7, $8,
+                $9, $10, $11,
+                $12, $13,
+                $14, $15,
+                $16, $17
             )
             RETURNING id
             """,
             user_id,
-            analysis_record_id,
             f"reading-record:{record_id}:base:{base_id}:gen:{generation}:"
             f"unit:{unit_id}:segment:{anchor_segment_id}:"
             f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}",
@@ -918,7 +897,6 @@ async def _insert_reading_record_reader_note(
     selected_text: str,
     text_hash: str,
     note_text: str,
-    analysis_record_id: UUID | None = None,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
 ) -> UUID:
@@ -928,7 +906,7 @@ async def _insert_reading_record_reader_note(
         note_id = await conn.fetchval(
             """
             INSERT INTO reader_notes (
-                user_id, analysis_record_id, anchor_sentence_id, quote_mode,
+                user_id, quote_mode,
                 target_key, paragraph_id, sentence_id,
                 selected_text, start_offset, end_offset, text_hash,
                 note_text, payload_json,
@@ -937,19 +915,18 @@ async def _insert_reading_record_reader_note(
                 unit_start_utf16, unit_end_utf16,
                 created_at, updated_at
             ) VALUES (
-                $1, $2, NULL, 'text_range',
-                $3, NULL, NULL,
-                $4, NULL, NULL, $5,
-                $6, '{}'::jsonb,
-                $7, $8, $9,
-                $10, $11,
-                $12, $13,
-                $14, $15
+                $1, 'text_range',
+                $2, NULL, NULL,
+                $3, NULL, NULL, $4,
+                $5, '{}'::jsonb,
+                $6, $7, $8,
+                $9, $10,
+                $11, $12,
+                $13, $14
             )
             RETURNING id
             """,
             user_id,
-            analysis_record_id,
             f"reading-record:{record_id}:base:{base_id}:gen:{generation}:"
             f"unit:{unit_id}:segment:{anchor_segment_id}:"
             f"range:{unit_start_utf16}:{unit_end_utf16}:{text_hash}",
@@ -1296,110 +1273,6 @@ async def test_snapshot_excludes_stale_base_generation_user_assets(
     )
     assert str(stale_generation_highlight_id) not in asset_ids, (
         "stale generation user asset must not appear in snapshot"
-    )
-
-
-async def test_snapshot_excludes_legacy_analysis_record_id_user_assets(
-    reader_service_env: asyncpg.Pool,
-) -> None:
-    """D6-U5: legacy analysis_record_id rows do not appear in snapshot."""
-    user_id = await _insert_user(reader_service_env)
-    service = ArticleReadyPersistenceService(pool=reader_service_env)
-    request = PlainTextArticleReadySubmitRequest(
-        user_id=user_id,
-        plain_text="Legacy exclusion test.",
-        title="Legacy Exclusion",
-        language="en",
-    )
-    result = await service.submit_plain_text(request)
-    record_id = result.record_id
-    base_id = result.base_id
-
-    async with reader_service_env.acquire() as conn:
-        seg_row = await conn.fetchrow(
-            """
-            SELECT unit_id, anchor_segment_id,
-                   unit_start_utf16, unit_end_utf16, text_hash, sentence_id
-            FROM anchor_segments
-            WHERE reading_record_id = $1 AND base_id = $2
-            ORDER BY order_index ASC
-            LIMIT 1
-            """,
-            record_id,
-            base_id,
-        )
-        selected_text = await conn.fetchval(
-            """
-            SELECT substring(text from $1 + 1 for $2 - $1)
-            FROM reading_bases
-            WHERE id = $3
-            """,
-            int(seg_row["unit_start_utf16"]),
-            int(seg_row["unit_end_utf16"]),
-            base_id,
-        )
-    assert seg_row is not None
-    unit_id = str(seg_row["unit_id"])
-    anchor_segment_id = str(seg_row["anchor_segment_id"])
-    seg_start = int(seg_row["unit_start_utf16"])
-    seg_end = int(seg_row["unit_end_utf16"])
-    assert isinstance(selected_text, str) and selected_text
-    text_hash = str(seg_row["text_hash"])
-    sentence_id = str(seg_row["sentence_id"])
-    legacy_record_id = await _insert_analysis_record(
-        reader_service_env,
-        user_id=user_id,
-    )
-
-    # Insert a legacy highlight that carries analysis_record_id (NOT NULL)
-    # alongside the Reading Record anchor columns. The check constraint is
-    # satisfied via the legacy path (sentence_id + start_offset + end_offset).
-    # The snapshot query filters analysis_record_id IS NULL, so this row must
-    # not appear even though base_id and generation match the active base.
-    legacy_highlight_id = await _insert_reading_record_user_annotation(
-        reader_service_env,
-        user_id=user_id,
-        record_id=record_id,
-        base_id=base_id,
-        generation=1,
-        unit_id=unit_id,
-        anchor_segment_id=anchor_segment_id,
-        unit_start_utf16=seg_start,
-        unit_end_utf16=seg_end,
-        selected_text=selected_text,
-        text_hash=text_hash,
-        analysis_record_id=legacy_record_id,
-        sentence_id=sentence_id,
-        start_offset=seg_start,
-        end_offset=seg_end,
-    )
-    legacy_note_id = await _insert_reading_record_reader_note(
-        reader_service_env,
-        user_id=user_id,
-        record_id=record_id,
-        base_id=base_id,
-        generation=1,
-        unit_id=unit_id,
-        anchor_segment_id=anchor_segment_id,
-        unit_start_utf16=seg_start,
-        unit_end_utf16=seg_end,
-        selected_text=selected_text,
-        text_hash=text_hash,
-        note_text="legacy note should be hidden",
-        analysis_record_id=legacy_record_id,
-    )
-
-    snapshot = await service.load_snapshot(
-        record_id=record_id,
-        user_id=user_id,
-    )
-
-    asset_ids = {asset.asset_id for asset in snapshot.user_assets}
-    assert str(legacy_highlight_id) not in asset_ids, (
-        "legacy analysis_record_id user asset must not appear in snapshot"
-    )
-    assert str(legacy_note_id) not in asset_ids, (
-        "legacy analysis_record_id note must not appear in snapshot"
     )
 
 

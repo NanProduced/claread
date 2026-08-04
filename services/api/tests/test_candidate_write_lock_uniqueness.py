@@ -29,18 +29,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 
 from app.database.connection import init_connection
-from app.services.reader_orchestration.candidate_document_creation_service import (
-    CandidateDocumentCreationService,
-)
 from app.services.reader_orchestration.extracted_artifact_materialization_service import (
-    ExtractedArtifactMaterializationError,
     ExtractedArtifactMaterializationService,
 )
 from app.services.reader_orchestration.repository import (
@@ -51,10 +46,6 @@ from app.services.reader_orchestration.repository import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_ARTIFACTS_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
-).read_text(encoding="utf-8")
 
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     BASELINE_SQL,
@@ -63,7 +54,6 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
 
 # 0004 (document_blocks) is in BASELINE_SQL. Materialization needs
 # 0007 (source_artifacts) on top.
-MATERIALIZATION_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
 
@@ -123,7 +113,7 @@ async def mat_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(MATERIALIZATION_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await _make_pool(schema_name)
         try:
             yield pool

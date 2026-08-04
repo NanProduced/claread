@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -31,16 +30,9 @@ from tests.reader_orchestration_test_support import (
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
 # based on Z+ plan existence in ``layer_analysis_plans`` (Task C3).
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
 
 # T1.1 short-article batch path: migration 0017 adds the new batch job types
 # and worker types to the CHECK constraints (see pipeline runner fixture).
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -51,8 +43,6 @@ async def smoke_harness_env() -> asyncpg.Pool:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
-    await admin.execute(_MIGRATION_0015_SQL)
-    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)
