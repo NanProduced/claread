@@ -35,15 +35,6 @@ const REQUIRED_ENDPOINT_ENTRIES = new Set(["reader-orch"]);
 const REQUIRED_MODULE_ENTRIES = new Set(["claread-llm-config"]);
 
 const INIT_SCRIPT_REL = "infra/scripts/init-eval-center-dev.ps1";
-const INIT_FORBIDDEN_SIDE_EFFECTS = [
-  "docker cp",
-  "docker exec",
-  "drop_eval_center_tables",
-  "0001_eval_center_control_plane.sql",
-  "directus:eval-center:sync-metadata",
-  "eval-center:sync-metadata",
-  "reset-eval-center-data",
-];
 
 const errors = [];
 
@@ -212,8 +203,8 @@ if (existsSync(infraScriptsDir)) {
       .filter((line) => !line.trim().startsWith("--"))
       .join("\n");
     for (const statement of executableSql.split(";")) {
-      if (!/eval_example_lab_entries/.test(statement)) continue;
-      if (/(TRUNCATE|DROP TABLE|DELETE FROM)/i.test(statement)) {
+      if (!/\beval_example_lab_entries\b/.test(statement)) continue;
+      if (/\b(TRUNCATE|DROP TABLE|DELETE FROM)\b/i.test(statement)) {
         errors.push(`infra/scripts/${entry} must not TRUNCATE/DROP/DELETE protected eval_example_lab_entries`);
       }
     }

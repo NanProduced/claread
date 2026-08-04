@@ -1,10 +1,13 @@
 -- DATA-SCHEMA-BASELINE D2 fail-closed guard for the single fresh baseline.
 -- Run with: psql -v ON_ERROR_STOP=1 -f check_schema_baseline.sql
 -- Verifies infra/migrations/0001_initial.sql end state:
---   1. exactly the 52 baseline tables exist,
+--   1. exactly the 52 baseline application tables exist
+--      (directus_* tables are Directus-managed and always allowed, so the
+--      guard passes both before and after Directus bootstrap),
 --   2. legacy analysis / Eval control-plane tables are absent,
 --   3. the confirmed legacy columns on protected shared tables are absent,
---   4. the contract CHECKs/indexes of the exited contracts are present.
+--   4. the contract CHECKs/indexes of the exited contracts are present,
+--   5. the Reader D5 attribution columns/indexes/FKs are present.
 
 DO $guard$
 DECLARE
@@ -84,6 +87,9 @@ BEGIN
         SELECT t.table_name FROM information_schema.tables t
         WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
     ) LOOP
+        IF actual LIKE 'directus_%' THEN
+            CONTINUE;
+        END IF;
         IF NOT (actual = ANY (expected_tables)) THEN
             extra := array_append(extra, actual);
         END IF;
@@ -207,6 +213,71 @@ BEGIN
           AND pg_get_constraintdef(oid) LIKE '%unit_end_utf16%'
     ) THEN
         RAISE EXCEPTION 'user_annotations_text_anchor_payload_check must be Reading Record anchor only';
+    END IF;
+END
+$guard$;
+
+DO $guard$
+DECLARE
+    expected_columns text[] := ARRAY[
+        'ai_usage_events.reader_run_id',
+        'ai_usage_events.reader_job_id',
+        'ai_usage_events.enhancement_layer_id',
+        'ai_usage_events.operation_fingerprint',
+        'user_credit_ledger.subject_id',
+        'user_credit_ledger.reading_record_id',
+        'user_credit_ledger.reader_run_id',
+        'user_credit_ledger.reader_job_id'
+    ];
+    expected_indexes text[] := ARRAY[
+        'idx_ai_usage_events_reader_run',
+        'idx_ai_usage_events_reader_job',
+        'idx_ai_usage_events_enhancement_layer',
+        'idx_ai_usage_events_operation_fingerprint',
+        'idx_credit_ledger_subject',
+        'idx_credit_ledger_reading_record',
+        'idx_credit_ledger_reader_run',
+        'idx_credit_ledger_reader_job'
+    ];
+    expected_fks text[] := ARRAY[
+        'fk_ai_usage_events_reader_run',
+        'fk_ai_usage_events_reader_job',
+        'fk_ai_usage_events_enhancement_layer',
+        'fk_user_credit_ledger_reading_record',
+        'fk_user_credit_ledger_reader_run',
+        'fk_user_credit_ledger_reader_job'
+    ];
+    marker text;
+    missing text[] := '{}';
+BEGIN
+    FOREACH marker IN ARRAY expected_columns LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = split_part(marker, '.', 1)
+              AND column_name = split_part(marker, '.', 2)
+        ) THEN
+            missing := array_append(missing, marker);
+        END IF;
+    END LOOP;
+    FOREACH marker IN ARRAY expected_indexes LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public' AND indexname = marker
+        ) THEN
+            missing := array_append(missing, marker);
+        END IF;
+    END LOOP;
+    FOREACH marker IN ARRAY expected_fks LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = marker AND contype = 'f'
+        ) THEN
+            missing := array_append(missing, marker);
+        END IF;
+    END LOOP;
+    IF cardinality(missing) > 0 THEN
+        RAISE EXCEPTION 'Reader D5 attribution objects missing from the baseline: %', missing;
     END IF;
 END
 $guard$;

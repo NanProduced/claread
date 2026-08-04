@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -7,70 +7,65 @@ import test from "node:test";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../../..");
-const INIT = resolve(REPO_ROOT, "infra/scripts/init-eval-center-dev.ps1");
 const GATE = resolve(HERE, "check-logical-registration.mjs");
+const INIT = resolve(REPO_ROOT, "infra/scripts/init-eval-center-dev.ps1");
 
-test("init-eval-center-dev.ps1 is retired tombstone before any Docker/DDL", () => {
-  assert.equal(existsSync(INIT), true);
-  const body = readFileSync(INIT, "utf8");
-  assert.match(body, /\[retired\]/i);
-  assert.match(body, /\bexit\s+1\b/i);
-  // No executable docker/psql/pnpm sync lines
-  const executable = body
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#") && !l.startsWith("Write-Error") && !l.startsWith("Write-Host") && !l.startsWith("param") && !l.startsWith("$ErrorActionPreference") && !l.startsWith("exit"));
-  for (const line of executable) {
-    assert.equal(
-      /^(docker|pnpm|psql)\b/i.test(line),
-      false,
-      `unexpected executable side-effect line: ${line}`,
-    );
-  }
-  assert.equal(/\bdocker\s+(cp|exec)\b/i.test(body) && !/Write-Error|retired/i.test(body), false);
-});
-
-test("init-eval-center-dev.ps1 exits non-zero without Docker side effects", () => {
-  // Run via pwsh if available; otherwise parse-only guarantee already covered.
-  const shell = process.platform === "win32" ? "pwsh" : "pwsh";
-  const result = spawnSync(shell, ["-NoProfile", "-File", INIT], {
+function runGate() {
+  return spawnSync(process.execPath, [GATE], {
     encoding: "utf8",
-    timeout: 15000,
+    timeout: 30000,
   });
-  // On environments without pwsh, spawn may fail to launch; treat launch failure separately.
-  if (result.error && result.error.code === "ENOENT") {
-    // Fallback: windows powershell
-    const result2 = spawnSync("powershell", ["-NoProfile", "-File", INIT], {
-      encoding: "utf8",
-      timeout: 15000,
-    });
-    if (result2.error && result2.error.code === "ENOENT") {
-      assert.ok(true, "shell unavailable; static tombstone already asserted");
-      return;
-    }
-    assert.notEqual(result2.status, 0, result2.stdout + result2.stderr);
-    const combined = `${result2.stdout || ""}\n${result2.stderr || ""}`;
-    assert.match(combined, /retired/i);
-    return;
-  }
-  assert.notEqual(result.status, 0, result.stdout + result.stderr);
-  const combined = `${result.stdout || ""}\n${result.stderr || ""}`;
-  assert.match(combined, /retired/i);
-});
+}
 
 test("registration gate script exits 0 on current tree", () => {
-  const result = spawnSync(process.execPath, [GATE], {
-    encoding: "utf8",
-    timeout: 15000,
-  });
+  const result = runGate();
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ok, true);
   assert.equal(payload.hooks, "example-lab-validation-keep");
-  assert.equal(payload.init_eval_center, "fail-closed");
+  assert.equal(payload.init_eval_center, "physically-deleted");
   assert.deepEqual(payload.endpoints, ["reader-orch"]);
   assert.equal(payload.panels.length, 0);
   assert.equal(payload.retired_sync, "physically-deleted");
   assert.equal(payload.physical_deletion, "enforced");
   assert.equal(payload.eval_example_lab, "protected");
+});
+
+test("init-eval-center-dev.ps1 stays physically deleted", () => {
+  assert.equal(existsSync(INIT), false);
+});
+
+test("gate rejects executable destructive SQL against eval_example_lab_entries", () => {
+  const scratchDir = resolve(REPO_ROOT, "infra/scripts");
+  mkdirSync(scratchDir, { recursive: true });
+  const scratch = resolve(scratchDir, "zz-d2-negative-test.sql");
+  writeFileSync(
+    scratch,
+    "TRUNCATE TABLE eval_example_lab_entries;\n",
+    "utf8",
+  );
+  try {
+    const result = runGate();
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /must not TRUNCATE\/DROP\/DELETE protected eval_example_lab_entries/);
+  } finally {
+    unlinkSync(scratch);
+  }
+  // Gate returns to green once the destructive scratch file is gone.
+  assert.equal(runGate().status, 0);
+});
+
+test("gate allows comment-only mentions of eval_example_lab_entries", () => {
+  const scratch = resolve(REPO_ROOT, "infra/scripts/zz-d2-negative-comment.sql");
+  writeFileSync(
+    scratch,
+    "-- TRUNCATE TABLE eval_example_lab_entries; (comment only)\nSELECT 1;\n",
+    "utf8",
+  );
+  try {
+    const result = runGate();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  } finally {
+    unlinkSync(scratch);
+  }
 });

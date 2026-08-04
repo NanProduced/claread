@@ -10,6 +10,8 @@
 -- (IF NOT EXISTS / guarded ALTERs) so reset_full_keep_dict.sql can
 -- re-apply this file while dictionary and Example Lab data survive.
 
+SET search_path = public, pg_catalog;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
