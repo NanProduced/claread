@@ -1,3 +1,4 @@
+# task-history: D6-I4J (renamed from test_d6_i4j_article_rag_ask_integration_adapter.py)
 """D6-I4J: tests for Reader Ask RAG integration adapter.
 
 Covers:
@@ -37,6 +38,12 @@ from app.services.reader_orchestration.article_rag_ask_integration_adapter impor
 from app.services.reader_orchestration.article_rag_ask_prompt_attachment import (
     ArticleRagAskPromptAttachment,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+# task-history: D6-I4Y (renamed from test_d6_i4y_article_rag_operational_readiness.py)
 """D6-I4Y Article RAG Operational Readiness tests.
 
 Proves the Article RAG pipeline is **locally operable, debuggable, and
@@ -50,6 +51,12 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 # Markers for the test categorisation:
 #   - default: any test that runs with no env gate

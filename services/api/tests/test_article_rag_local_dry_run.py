@@ -1,3 +1,4 @@
+# task-history: D6-I4Z (renamed from test_d6_i4z_article_rag_local_dry_run.py)
 """D6-I4Z Article RAG local dry-run (no-network offline tests).
 
 Single surface:
@@ -104,6 +105,12 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     BASELINE_SQL,
     DATABASE_URL,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 # The Article RAG index is a single path.  BASELINE_SQL (which includes
 # migration 0010) is sufficient.

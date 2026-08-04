@@ -1,3 +1,4 @@
+# task-history: D6-I4D (renamed from test_d6_i4d_article_rag_provider_adapters.py)
 """Tests for D6-I4D: Article RAG Provider Adapter Foundation.
 
 Covers:
@@ -65,6 +66,13 @@ from app.services.reader_orchestration.article_rag_vector_store import (
     _FORBIDDEN_VECTOR_PAYLOAD_KEYS,
     build_default_article_rag_vector_writer,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+    pytest.mark.life_characterization,
+]
 
 # ---------------------------------------------------------------------------
 # Fixed UUIDs + canonical fixtures (deterministic across runs)

@@ -1,3 +1,4 @@
+# task-history: D6-I4G (renamed from test_d6_i4g_article_rag_ask_context_composer.py)
 """D6-I4G: tests for Article RAG ask context composer.
 
 Covers:
@@ -50,6 +51,12 @@ from app.services.reader_orchestration.article_rag_context_service import (
 from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerError,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

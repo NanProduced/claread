@@ -1,3 +1,4 @@
+# task-history: D6-I4W (renamed from test_d6_i4w_article_rag_service_e2e_smoke.py)
 """D6-I4W Article RAG service-level E2E smoke.
 
 Wires the full RAG lifecycle end-to-end at the service layer — no FastAPI
@@ -106,7 +107,7 @@ from app.services.reader_orchestration.article_rag_vector_search import (
     FakeArticleRagVectorSearcher,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

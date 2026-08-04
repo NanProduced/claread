@@ -1,3 +1,4 @@
+# task-history: D6-I4T (renamed from test_d6_i4t_article_rag_index_lifecycle_route.py)
 """Route tests for D6-I4T Article RAG Index Lifecycle API.
 
 Covers:
@@ -46,7 +47,7 @@ from app.services.reader_orchestration.article_rag_index_lifecycle_service impor
     ArticleRagIndexLifecycleStatus,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 AUTH_HEADERS = {"Authorization": "Bearer test_token"}
 

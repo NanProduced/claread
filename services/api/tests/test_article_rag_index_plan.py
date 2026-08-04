@@ -1,3 +1,4 @@
+# task-history: D6-I4A (renamed from test_d6_i4a_article_rag_index_plan.py)
 """Tests for D6-I4A Reader Article RAG Index Plan Foundation.
 
 Covers the 14 test requirements from the task spec:
@@ -42,7 +43,7 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     compute_plan_content_sha256,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression, pytest.mark.life_characterization]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

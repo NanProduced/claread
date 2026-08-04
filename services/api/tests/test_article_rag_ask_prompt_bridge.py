@@ -1,3 +1,4 @@
+# task-history: D6-I4O (renamed from test_d6_i4o_article_rag_ask_prompt_bridge.py)
 """D6-I4O: tests for Article RAG ask prompt bridge.
 
 Covers:
@@ -53,6 +54,12 @@ from app.services.reader_orchestration.article_rag_ask_prompt_bridge import (
     ArticleRagAskPromptBridge,
     ArticleRagAskPromptBridgeResult,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

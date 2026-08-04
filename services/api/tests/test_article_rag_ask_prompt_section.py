@@ -1,3 +1,4 @@
+# task-history: D6-I4K (renamed from test_d6_i4k_article_rag_ask_prompt_section.py)
 """D6-I4K: tests for Article RAG ask prompt section builder.
 
 Covers:
@@ -49,6 +50,12 @@ from app.services.reader_orchestration.article_rag_ask_prompt_section import (
     ArticleRagAskPromptSection,
     ArticleRagAskPromptSectionBuilder,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

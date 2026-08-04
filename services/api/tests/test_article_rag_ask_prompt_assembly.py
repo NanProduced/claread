@@ -1,3 +1,4 @@
+# task-history: D6-I4M (renamed from test_d6_i4m_article_rag_ask_prompt_assembly.py)
 """D6-I4M: tests for Article RAG ask prompt assembly boundary.
 
 Covers:
@@ -36,6 +37,12 @@ from app.services.reader_orchestration.article_rag_ask_prompt_assembly import (
 from app.services.reader_orchestration.article_rag_ask_runtime_adapter import (
     ArticleRagAskRuntimeContext,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

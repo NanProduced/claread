@@ -1,3 +1,4 @@
+# task-history: D6-I4F (renamed from test_d6_i4f_article_rag_context_service.py)
 """D6-I4F: tests for Article RAG context pack service.
 
 Covers:
@@ -51,6 +52,12 @@ from app.services.reader_orchestration.article_rag_retrieval_service import (
     ArticleRagRetrievalResult,
     ArticleRagRetrievalServiceError,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

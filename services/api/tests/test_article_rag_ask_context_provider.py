@@ -1,3 +1,4 @@
+# task-history: D6-I4N (renamed from test_d6_i4n_article_rag_ask_context_provider.py)
 """D6-I4N: tests for Article RAG ask context provider facade.
 
 Covers:
@@ -34,6 +35,12 @@ from app.services.reader_orchestration.article_rag_ask_integration_adapter impor
 from app.services.reader_orchestration.article_rag_ask_runtime_adapter import (
     ArticleRagAskRuntimeContext,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 _RECORD_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")

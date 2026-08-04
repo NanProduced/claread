@@ -1,3 +1,4 @@
+# task-history: D6-I4C (renamed from test_d6_i4c_article_rag_index_worker.py)
 """Tests for D6-I4C Article RAG Index Worker Foundation.
 
 Covers the 12+ test requirements from the task spec:
@@ -68,7 +69,7 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     UnconfiguredArticleRagVectorWriter,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression, pytest.mark.life_characterization]
 
 # Reuse seed helpers + UUIDs from the I4A test module.
 from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402

@@ -1,3 +1,4 @@
+# task-history: D6-I4E (renamed from test_d6_i4e_article_rag_vector_search.py)
 """D6-I4E: tests for Article RAG vector search adapter foundation.
 
 Covers:
@@ -47,6 +48,12 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     FAILURE_CODE_VECTOR_WRITER_UNCONFIGURED,
     ArticleRagIndexWorkerError,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 _FAKE_URI = "https://example.zilliz.cloud"

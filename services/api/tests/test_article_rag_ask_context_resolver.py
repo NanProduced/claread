@@ -1,3 +1,4 @@
+# task-history: D6-I4H (renamed from test_d6_i4h_article_rag_ask_context_resolver.py)
 """D6-I4H: tests for Article RAG ask context resolver.
 
 Covers:
@@ -62,6 +63,12 @@ from app.services.reader_orchestration.article_rag_context_service import (
 from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerError,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------

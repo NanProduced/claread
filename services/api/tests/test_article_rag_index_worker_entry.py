@@ -1,3 +1,4 @@
+# task-history: D6-I4U (renamed from test_d6_i4u_article_rag_index_worker_entry.py)
 """Tests for D6-I4U Article RAG Index Operational Worker Entry.
 
 Covers the standalone ``scripts/run_reader_article_rag_index_worker.py``:
@@ -43,7 +44,7 @@ from scripts.run_reader_article_rag_index_worker import (
     build_worker_service,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_pure_unit, pytest.mark.life_permanent_regression]
 
 
 # ---------------------------------------------------------------------------

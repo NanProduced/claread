@@ -1,3 +1,4 @@
+# task-history: D6-I4B (renamed from test_d6_i4b_article_rag_index_bootstrap.py)
 """Tests for D6-I4B Article RAG Index Job Bootstrap + Index State Foundation.
 
 Covers the 12+ test requirements from the task spec:
@@ -46,7 +47,7 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     compute_plan_content_sha256,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 # Reuse seed helpers + UUIDs from the I4A test module.
 from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402

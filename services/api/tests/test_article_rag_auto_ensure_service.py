@@ -1,3 +1,4 @@
+# task-history: D6-I4V (renamed from test_d6_i4v_article_rag_auto_ensure_service.py)
 """Tests for D6-I4V Article RAG Index Auto-Ensure Hook.
 
 Covers:
@@ -21,6 +22,7 @@ from typing import Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import pytest
 from app.services.reader_orchestration.article_rag_auto_ensure_service import (
     AUTO_ENSURE_STATUS_DISABLED,
     AUTO_ENSURE_STATUS_FAIL_SOFT_ERROR,
@@ -46,6 +48,12 @@ from app.services.reader_orchestration.extracted_artifact_materialization_servic
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationService,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 # ===========================================================================
 # Fakes

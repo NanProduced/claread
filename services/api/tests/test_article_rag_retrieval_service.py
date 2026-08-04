@@ -1,3 +1,4 @@
+# task-history: D6-I4E (renamed from test_d6_i4e_article_rag_retrieval_service.py)
 """D6-I4E: tests for Article RAG retrieval service.
 
 Covers:
@@ -73,6 +74,12 @@ from app.services.reader_orchestration.article_rag_vector_search import (
     ArticleRagVectorSearcherError,
     FakeArticleRagVectorSearcher,
 )
+
+pytestmark = [
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 # ---------------------------------------------------------------------------
