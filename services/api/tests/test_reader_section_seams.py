@@ -1,4 +1,5 @@
-"""T5.6b-P1 dynamic seam tests against real PostgreSQL.
+# task-history: T5.6b-P1 (renamed from test_reader_section_seams_t56b.py)
+"""Dynamic seam tests against real PostgreSQL.
 
 Covers CV-02 (coverage count isolation), WL-01/02/03 (worker candidate SQL),
 SU-01/02/03 (ordinary supersede isolation), and dual-drain concurrency.

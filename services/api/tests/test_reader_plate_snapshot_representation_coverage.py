@@ -1,4 +1,5 @@
-"""LP-R4: Reader Plate Snapshot Representation Coverage characterization tests.
+# task-history: LP-R4 (renamed from test_lp_r4_snapshot_representation_coverage.py)
+"""Reader Plate Snapshot Representation Coverage characterization tests.
 
 These tests describe the CURRENT behavior of ``_build_snapshot_id`` and
 ``build_reader_plate_snapshot``. They are characterization tests — they

@@ -1,4 +1,5 @@
-"""ASK-TURN-LIFECYCLE R0 — backend red-light tests.
+# task-history: ASK-TURN-LIFECYCLE R0 (renamed from test_reader_record_ask_turn_lifecycle_r0.py)
+"""Ask turn lifecycle backend red-light tests.
 
 These tests freeze the unified turn lifecycle contract before R1/R2/R3
 implementation. They assert behaviors the current code does NOT yet
