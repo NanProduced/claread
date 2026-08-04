@@ -842,7 +842,7 @@ def test_input_list_not_mutated() -> None:
 
     # Same length, same identities, same content.
     assert len(inputs) == 2
-    for original, snapshot in zip(inputs, inputs_snapshot):
+    for original, snapshot in zip(inputs, inputs_snapshot, strict=False):
         assert original == snapshot
     # Output is sorted by order_index (p1 first, p2 second), independent
     # of the input list order.

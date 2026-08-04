@@ -494,7 +494,7 @@ async def test_citations_structured_and_score_descending() -> None:
         "rag-3",
     ]
     # Citation dicts are preserved verbatim.
-    for src, dst in zip(citations, attachment.citations):
+    for src, dst in zip(citations, attachment.citations, strict=False):
         assert dst["chunk_id"] == src.chunk_id
         assert dst["citation"] == src.citation
     # Citations are NOT in the prompt text (we do not parse

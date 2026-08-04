@@ -175,7 +175,7 @@ def test_happy_path_prompt_text_and_citations() -> None:
         "rag-3",
     ]
     # Citation dicts preserved verbatim.
-    for item, citation in zip(items, bundle.citations):
+    for item, citation in zip(items, bundle.citations, strict=False):
         assert citation.chunk_id == item.chunk_id
         assert citation.citation == item.citation
 

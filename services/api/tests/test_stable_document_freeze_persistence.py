@@ -893,7 +893,7 @@ class TestNonMutation:
         assert plan.canonical_text == original_canonical_text
         assert plan.content_sha256 == original_content_sha256
         assert len(plan.blocks) == len(original_blocks)
-        for original, actual in zip(original_blocks, plan.blocks):
+        for original, actual in zip(original_blocks, plan.blocks, strict=False):
             assert original.block_id == actual.block_id
             assert original.canonical_text_start_utf16 == actual.canonical_text_start_utf16
             assert original.canonical_text_end_utf16 == actual.canonical_text_end_utf16
