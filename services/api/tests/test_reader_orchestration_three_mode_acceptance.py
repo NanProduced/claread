@@ -59,7 +59,10 @@ from app.services.reader_orchestration.grammar_window_publisher import (
 from app.services.reader_orchestration.grammar_window_worker import (
     GrammarWindowWorkerService,
 )
-from app.services.reader_orchestration.grammar_worker import GrammarBundleWorkerService
+from app.services.reader_orchestration.grammar_worker import (
+    GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED,
+    GrammarBundleWorkerService,
+)
 from app.services.reader_orchestration.layer_publisher import (
     VocabularyLayerPublisher,
 )
@@ -559,7 +562,10 @@ async def test_short_batch_acceptance_through_worker_loop(
     assert int(event["output_tokens"]) == 30, (
         f"output_tokens={event['output_tokens']!r}, expected 30"
     )
-    assert event["status"] == "succeeded", (
+    # R7-3 contract: a grammar batch model call that completes AND
+    # publishes is persisted with terminal status ``layer_published``
+    # (never ``succeeded``); see grammar_worker GRAMMAR_USAGE_STATUS_*.
+    assert event["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED, (
         f"usage event status={event['status']!r}"
     )
 
@@ -799,10 +805,10 @@ async def test_short_batch_usage_event_tokens_match_runtime_span(
         e for e in usage_events
         if e["operation_fingerprint"]
         and e["operation_fingerprint"].startswith("grammar_bundle_article_v1")
-        and e["status"] == "succeeded"
+        and e["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
     ]
     assert len(grammar_batch_events) == 1, (
-        f"expected 1 succeeded grammar batch usage event, got "
+        f"expected 1 layer_published grammar batch usage event, got "
         f"{len(grammar_batch_events)}"
     )
     event = grammar_batch_events[0]
@@ -819,7 +825,7 @@ async def test_short_batch_usage_event_tokens_match_runtime_span(
     # Fetch the corresponding worker_tick span via ai_usage_event_id FK.
     span = await _fetch_grammar_span(pool, event["id"])
     assert span is not None, (
-        "expected a succeeded worker_tick span linked to the grammar "
+        "expected a worker_tick span linked to the grammar "
         "batch usage event"
     )
     assert span["worker_type"] == "grammar_bundle", (
