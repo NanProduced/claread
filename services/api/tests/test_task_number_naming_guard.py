@@ -60,7 +60,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
-TEST_FILE_ALLOWLIST_CEILING = 54
+TEST_FILE_ALLOWLIST_CEILING = 18
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
@@ -76,8 +76,6 @@ def _name_has_task_number(name: str) -> bool:
 TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
     {
         "tests/services/reader_record_ask/thread_memory/test_r1a_integration.py",
-        "tests/test_a4_parser_result_sharing_diagnostics.py",
-        "tests/test_a5_stable_block_unit_classification.py",
         "tests/test_ask_retry_contract_r5_db_integration.py",
         "tests/test_ask_retry_contract_r6_db_integration.py",
         "tests/test_ask_retry_contract_r6.py",
@@ -85,42 +83,8 @@ TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
         "tests/test_ask_retry_contract_r8.py",
         "tests/test_ask_submission_retry_r1_db_integration.py",
         "tests/test_cutover_api_p_closeout_r2.py",
-        "tests/test_d6_a0_static_boundary.py",
-        "tests/test_d6_a5_dual_contract_spike.py",
-        "tests/test_d6_i1_stable_document_blocks.py",
-        "tests/test_d6_i2_candidate_document_freeze_plan.py",
-        "tests/test_d6_i2_stable_document_freeze_persistence.py",
-        "tests/test_d6_i2d_candidate_document_confirm_application_service.py",
-        "tests/test_d6_i2d_candidate_document_confirm_route.py",
-        "tests/test_d6_i2d_candidate_document_confirm_service.py",
-        "tests/test_d6_i2e_stable_document_query_service.py",
-        "tests/test_d6_i2e_stable_document_route.py",
-        "tests/test_d6_i3a_input_suitability_gate.py",
-        "tests/test_d6_i3b_input_document_normalizer.py",
-        "tests/test_d6_i3c_stable_ready_input_application_service.py",
-        "tests/test_d6_i3d_stable_ready_input_route.py",
-        "tests/test_d6_i3e_candidate_document_creation_service.py",
-        "tests/test_d6_i3f_unified_input_submit_route.py",
-        "tests/test_d6_i3g_source_artifact_service.py",
-        "tests/test_d6_i3h_source_artifact_upload_init_route.py",
-        "tests/test_d6_i3i_source_artifact_upload_complete_route.py",
-        "tests/test_d6_i3j_artifact_input_application_service.py",
-        "tests/test_d6_i3j_artifact_input_route.py",
-        "tests/test_d6_i3l_artifact_extraction_worker.py",
-        "tests/test_d6_i3m_text_artifact_extraction_provider.py",
-        "tests/test_d6_i3n_extracted_artifact_materialization_service.py",
-        "tests/test_d6_i3o_materialization_job_runtime.py",
-        "tests/test_d6_i3p_artifact_pipeline_worker_service.py",
-        "tests/test_d6_i3q_oss_artifact_io.py",
-        "tests/test_d6_i3r_artifact_pipeline_worker_entry.py",
-        "tests/test_d6_i3s_pdf_artifact_extraction_provider.py",
-        "tests/test_d6_i3t_ocr_artifact_extraction_provider.py",
-        "tests/test_d6_i3u_qwen_ocr_adapter.py",
-        "tests/test_d6_i3v_artifact_input_status_query.py",
-        "tests/test_d6_i3v_artifact_pipeline_status_route.py",
         "tests/test_p2b_r1_1_zplus_strict_fence_rollback.py",
         "tests/test_p2b_section_translation_semantic_fence.py",
-        "tests/test_reader_parse_eval_r1.py",
         "tests/test_reader_record_ask_a5_7_production_wiring.py",
         "tests/test_reader_section_translation_t56b.py",
         "tests/test_reader_section_translation_t56c.py",
