@@ -1,5 +1,6 @@
+// task-history: T4.2a-PUX-R4-R2.2-P2c-R1
 /**
- * Tests for T4.2a-PUX-R4-R2.2-P2c-R1: grammar_note 首发语义 insert 纯函数测试。
+ * grammar_note 首发语义 insert 纯函数测试。
  *
  * 覆盖 merger 的 grammar 首发专用 merge 路径（detectGrammarFirstPublish +
  * mergeGrammarFirstPublish）：

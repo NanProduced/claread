@@ -28,15 +28,16 @@ const TASK_NUMBER_NAME_RE =
 // Existing stock of task-numbered test files (relative to apps/web).
 // RATCHET: only shrink this list. Renamed/deleted files must have their
 // entry removed in the same change; new task-numbered file names are
-// forbidden and must be renamed to business names instead.
-const TASK_NUMBER_TEST_FILE_ALLOWLIST = [
-  "src/lib/reader-plate-snapshot/incremental-projection-merger-p2c.test.ts",
-] as const;
+// forbidden and must be renamed to business names instead. The stock is
+// now empty: the last file was renamed to a business name in
+// TEST-GOVERNANCE-WEB-P2, and the ceiling was lowered to 0 in the same
+// change.
+const TASK_NUMBER_TEST_FILE_ALLOWLIST = [] as const;
 
 // Ratchet ceiling (GOVERNANCE-CLOSEOUT-R1): equality ratchet — the
 // allowlist size must match exactly, so a shrunk list can never grow
 // back. Every governance rename lowers the ceiling in the same change.
-const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 1;
+const TASK_NUMBER_TEST_FILE_ALLOWLIST_CEILING = 0;
 
 const SCAN_ROOTS = ["src", "tests"] as const;
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;
