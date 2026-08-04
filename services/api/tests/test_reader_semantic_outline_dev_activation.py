@@ -60,9 +60,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0020_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0020_reader_semantic_outline_layer.sql"
-).read_text(encoding="utf-8")
+MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 OUTLINE_SCHEMA_SQL = BASELINE_SQL + "\n" + MIGRATION_0020_SQL
 
 # Settings that turn ON dev activation (tests / dev only; never committed).

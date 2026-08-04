@@ -95,22 +95,16 @@ pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 # T1.1 short-article batch path: migration 0017 adds ``translate_article``
 # and ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type``
 # CHECK constraint. Required because the default fixture text is well under
 # the 6000-char short-article threshold, so bootstrap creates batch jobs.
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 # T5.3/T5.7: semantic_outline job_type + layer_type + worker_type CHECK.
 # Without 0020, pipeline worker_tick spans with worker_type=semantic_outline
 # fail CHECK and block real-chain readiness finalization.
-_MIGRATION_0020_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0020_reader_semantic_outline_layer.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 LEASE_DURATION = timedelta(seconds=30)
 
 

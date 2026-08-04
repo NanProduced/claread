@@ -28,9 +28,7 @@ from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
 pytestmark = pytest.mark.anyio
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_ARTIFACTS_SQL = (
-    REPO_ROOT / "infra" / "migrations" / "0007_reader_source_artifacts.sql"
-).read_text(encoding="utf-8")
+SOURCE_ARTIFACTS_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
 

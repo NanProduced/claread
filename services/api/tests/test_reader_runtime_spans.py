@@ -78,9 +78,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0016_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0016_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 
 # ---------------------------------------------------------------------------

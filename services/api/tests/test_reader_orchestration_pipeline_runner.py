@@ -86,17 +86,13 @@ from tests.reader_orchestration_test_support import (
 # pipeline runner's worker_order dispatch depends on whether a window worker
 # is registered (Task C4).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 # T1.1 short-article batch path: migration 0017 adds ``translate_article`` and
 # ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
 # constraint, and ``translation_batch`` / ``vocabulary_batch`` to the
 # ``reader_runtime_spans.worker_type`` CHECK constraint.
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 LEASE_DURATION = timedelta(seconds=30)
 WORD_RE = re.compile(r"[A-Za-z]+")

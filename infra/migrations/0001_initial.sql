@@ -1400,6 +1400,13 @@ CREATE TABLE source_artifacts (
     CONSTRAINT source_artifacts_storage_provider_check CHECK ((storage_provider = ANY (ARRAY['oss'::text, 'local'::text])))
 );
 
+-- stable_document_blocks.interpretation_policy_json DEFAULT '{}'::jsonb is a
+-- storage placeholder only (D6-I2 contract): the D6-I2 service code is
+-- responsible for writing the Python-model-generated per-block-type policy
+-- (see default_interpretation_policy_for) into the column, so the DB default
+-- is never relied on at runtime. Do not "fix" the DB default to match the
+-- Python default; that would silently couple storage defaults to projection
+-- rules.
 CREATE TABLE stable_document_blocks (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     stable_document_id uuid NOT NULL,

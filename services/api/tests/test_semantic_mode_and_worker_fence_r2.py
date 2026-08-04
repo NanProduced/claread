@@ -100,15 +100,9 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0020_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0020_reader_semantic_outline_layer.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
+_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
+_MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 
 @contextmanager

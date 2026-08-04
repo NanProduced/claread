@@ -103,18 +103,9 @@ from tests.test_zplus_bbc_regression import _StaticGrammarWindowExecutor
 pytestmark = pytest.mark.anyio
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0016_SQL = (
-    _REPO_ROOT
-    / "infra"
-    / "migrations"
-    / "0016_reader_runtime_spans_grammar_bundle_window.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
+_MIGRATION_0016_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
+_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 LEASE_DURATION = timedelta(seconds=30)
 

@@ -2491,12 +2491,8 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 # short articles to the grammar batch path.
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0015_layer_analysis_plans.sql"
-).read_text(encoding="utf-8")
-_MIGRATION_0017_SQL = (
-    _REPO_ROOT / "infra" / "migrations" / "0017_reader_jobs_batch_path_job_types.sql"
-).read_text(encoding="utf-8")
+_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
+_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 _T41C_BATCH_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline.\n\n"
