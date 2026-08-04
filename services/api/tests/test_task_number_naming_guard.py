@@ -42,7 +42,7 @@ APP_DIR = SERVICE_ROOT / "app"
 # ``lp`` is only matched as the ``_lp_r<N>`` task form (plain ``_lp_``
 # is the length-prefixed encoding in section_identity, a business term).
 _TASK_NUMBER_NAME_RE = re.compile(
-    r"_(?:d6_[a-z0-9]|a[345]_[a-z0-9]|t5[0-9][a-z0-9]?|t6[0-9][a-z0-9]?|"
+    r"_(?:d[56]_[a-z0-9]|a[345]_[a-z0-9]|t5[0-9][a-z0-9]?|t6[0-9][a-z0-9]?|"
     r"r[0-9][a-z0-9._]*|p[0-9][a-z0-9]*|s[0-9][a-z0-9]*|"
     r"round[0-9]+|lp_r[0-9])"
 )
@@ -57,10 +57,11 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
     r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])ZPlus|(?<![A-Za-z0-9])zplus"
 )
 
-# Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes may shrink but
-# must never grow beyond these caps.
-TEST_FILE_ALLOWLIST_CEILING = 78
-PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 19
+# Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
+# exactly — an equality ratchet, so a shrunk allowlist can never grow
+# back. Every governance rename lowers the ceiling in the same change.
+TEST_FILE_ALLOWLIST_CEILING = 77
+PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
 def _name_has_task_number(name: str) -> bool:
@@ -172,9 +173,14 @@ TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset(
         "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_INDEXES",
         "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_NULLABLE_COLUMNS",
         "app/services/reader_orchestration/schema_health.py:ReaderD5SchemaHealthReport",
+        "app/services/reader_orchestration/schema_health.py:_has_reader_d5_schema_drift",
         "app/services/reader_orchestration/schema_health.py:_has_reader_d6_schema_drift",
+        "app/services/reader_orchestration/schema_health.py:check_reader_d5_schema_health",
+        "app/services/reader_orchestration/schema_health.py:d5_constraint_names",
+        "app/services/reader_orchestration/schema_health.py:d5_table_prefixes",
         "app/services/reader_orchestration/schema_health.py:d6_constraint_names",
         "app/services/reader_orchestration/schema_health.py:d6_table_prefixes",
+        "app/services/reader_orchestration/schema_health.py:format_reader_d5_schema_health_failure",
         "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapResult",
         "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapService",
         "app/services/reader_record_ask/production_stream.py:_sync_submission_terminal_r6",
@@ -205,8 +211,9 @@ def test_new_test_file_names_carry_no_task_numbers() -> None:
         "allowlist is a ratchet and only shrinks; these entries no longer "
         f"match an existing task-numbered file, remove them: {sorted(stale)}"
     )
-    assert len(TASK_NUMBER_TEST_FILE_ALLOWLIST) <= TEST_FILE_ALLOWLIST_CEILING, (
-        "test-file allowlist ceiling exceeded; ratchet only shrinks"
+    assert len(TASK_NUMBER_TEST_FILE_ALLOWLIST) == TEST_FILE_ALLOWLIST_CEILING, (
+        "test-file allowlist size must equal its ratchet ceiling; when "
+        "renaming stock, remove the entry AND lower the ceiling together"
     )
 
 
@@ -254,5 +261,8 @@ def test_production_symbols_carry_no_task_numbers() -> None:
     )
     assert (
         len(TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST)
-        <= PRODUCTION_SYMBOL_ALLOWLIST_CEILING
-    ), "production-symbol allowlist ceiling exceeded; ratchet only shrinks"
+        == PRODUCTION_SYMBOL_ALLOWLIST_CEILING
+    ), (
+        "production-symbol allowlist size must equal its ratchet ceiling; "
+        "when renaming stock, remove the entry AND lower the ceiling together"
+    )
