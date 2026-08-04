@@ -10,7 +10,6 @@ import LucideIcon from '../../components/LucideIcon'
 import './index.scss'
 
 const TYPE_CONFIG: Record<string, { label: string; icon: string; iconColor: string }> = {
-  analysis_deduct: { label: '分析扣减', icon: 'search', iconColor: '#7A7D86' },
   feedback_reward: { label: '反馈奖励', icon: 'gift', iconColor: '#059669' },
   daily_grant: { label: '每日发放', icon: 'sun', iconColor: '#059669' },
   bonus_grant: { label: '奖励到账', icon: 'sparkles', iconColor: '#D97706' },

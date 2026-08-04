@@ -7,11 +7,9 @@ import {
 } from "@/services/api/favorites";
 import { getWebSession, type WebSession } from "@/services/bff/session";
 import type { FavoriteResponseDto } from "@/types/api/favorites";
+import type { FavoriteTargetType } from "@claread/contracts";
 
-// NOTE: the API/DB only accept "daily_reader_article" favorites today; the
-// Reading Record target type awaits the D2 schema change. The constant stays
-// so the flow fails loudly upstream instead of masquerading as legacy.
-const READING_RECORD_TARGET_TYPE = "reading_record";
+const READING_RECORD_TARGET_TYPE: FavoriteTargetType = "reading_record";
 
 export type FavoriteBffResult =
   | {

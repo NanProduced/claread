@@ -10,24 +10,34 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# DATA-LEGACY-IDENTITY-EXIT: only the Daily Reader article target remains.
-# Response rows keep a plain str target_type because historical rows may
-# still carry legacy values; the API never creates them anymore.
-FavoriteTargetType = Literal["daily_reader_article"]
+# DATA-SCHEMA-BASELINE D2: exact favorite target union. No bare strings,
+# no legacy targets, no aliases.
+FavoriteTargetType = Literal["daily_reader_article", "reading_record"]
 
 
 class FavoriteCreateRequest(BaseModel):
-    target_type: FavoriteTargetType = Field(default="daily_reader_article")
+    target_type: FavoriteTargetType
     target_key: str = Field(min_length=1, max_length=256)
     payload_json: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_reading_record_target_key(self):
+        if self.target_type == "reading_record":
+            try:
+                UUID(self.target_key)
+            except ValueError as exc:
+                raise ValueError(
+                    "reading_record favorites require a reading_record_id target_key"
+                ) from exc
+        return self
 
 
 class FavoriteResponse(BaseModel):
     id: UUID
     user_id: UUID
-    target_type: str
+    target_type: FavoriteTargetType
     target_key: str
     payload_json: dict
     created_at: datetime

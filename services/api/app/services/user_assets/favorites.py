@@ -15,7 +15,7 @@ from fastapi import HTTPException
 
 from app.database import connection as db_connection
 
-ALLOWED_TARGET_TYPES = {"daily_reader_article"}
+ALLOWED_TARGET_TYPES = {"daily_reader_article", "reading_record"}
 
 
 def _ensure_payload_dict(row: dict) -> dict:

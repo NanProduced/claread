@@ -19,15 +19,6 @@ const FEEDBACK_TYPES_BY_SCOPE: Record<
   FeedbackScopeDto,
   Partial<Record<FeedbackSentimentDto, FeedbackTypeDto[]>>
 > = {
-  sentence: {
-    negative: [
-      "translation_inaccurate",
-      "sentence_analysis_wrong",
-      "annotation_conflict",
-      "selection_issue",
-      "other",
-    ],
-  },
   dictionary: {
     negative: [
       "wrong_definition",
@@ -95,7 +86,6 @@ function readString(value: unknown): string | undefined {
 
 function isFeedbackScope(value: unknown): value is FeedbackScopeDto {
   return (
-    value === "sentence" ||
     value === "dictionary" ||
     value === "app"
   );

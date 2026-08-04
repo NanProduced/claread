@@ -1,5 +1,4 @@
 export type FeedbackScopeDto =
-  | "sentence"
   | "dictionary"
   | "app";
 
@@ -7,10 +6,6 @@ export type FeedbackSentimentDto = "positive" | "negative" | "neutral";
 export type FeedbackClientPlatformDto = "web" | "wechat_miniprogram";
 
 export type FeedbackTypeDto =
-  | "translation_inaccurate"
-  | "sentence_analysis_wrong"
-  | "annotation_conflict"
-  | "selection_issue"
   | "wrong_definition"
   | "missing_definition"
   | "wrong_pos"

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowDown, ArrowUp, BookOpenText, CalendarDays, Check, ChevronDown, Clock, MessageCircle, RotateCcw, Search, Sparkles, Ticket } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronDown, Clock, MessageCircle, RotateCcw, Search, Sparkles, Ticket } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -32,7 +32,6 @@ const ENTRY_TYPE_CONFIG: Record<
   string,
   { label: string; action: string; filter: EntryFilter }
 > = {
-  analysis_deduct: { label: "文章分析", action: "分析扣减", filter: "deduct" },
   ai_capability_deduct: { label: "Ask Claread", action: "能力扣减", filter: "deduct" },
   feedback_reward: { label: "反馈奖励", action: "奖励到账", filter: "grant" },
   daily_grant: { label: "每日发放", action: "免费点数到账", filter: "grant" },
@@ -161,17 +160,6 @@ function getEntryText(entry: LedgerEntryVm) {
   const reason = readMetadataString(entry, "reason");
   const articleTitle = entry.articleTitle || readMetadataString(entry, "article_title");
   const fallbackSubject = parsed.subject || entry.description || config.label;
-
-  if (entry.entryType === "analysis_deduct") {
-    return {
-      subject: articleTitle || fallbackSubject,
-      action: "文章分析",
-      detail: "生成透读解析",
-      label: "分析",
-      filter: config.filter,
-      icon: BookOpenText,
-    };
-  }
 
   if (entry.entryType === "ai_capability_deduct" && capabilityCode === "dict_ai_lookup") {
     return {

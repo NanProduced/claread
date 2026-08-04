@@ -3,8 +3,8 @@ export const USER_ANNOTATION_TYPES = ["highlight"];
 export const USER_ANNOTATION_ANCHOR_TYPES = ["sentence", "text_range", "multi_text"];
 
 export const FAVORITE_TARGET_TYPES = [
-  "analysis_record",
   "daily_reader_article",
+  "reading_record",
 ];
 
 export const USER_ANNOTATION_COLORS = [

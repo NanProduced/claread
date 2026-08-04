@@ -16,7 +16,6 @@ from app.database import connection as db_connection
 logger = logging.getLogger(__name__)
 
 ENTRY_TYPE_DESCRIPTIONS: dict[str, str] = {
-    "analysis_deduct": "分析扣减",
     "ai_capability_deduct": "AI 能力扣减",
     "feedback_reward": "反馈奖励 · 你的反馈已被采纳",
     "daily_grant": "每日常规额度刷新",

@@ -167,11 +167,11 @@ class TestCreditLedgerRoute:
             "items": [
                 {
                     "id": str(uuid4()),
-                    "entry_type": "analysis_deduct",
-                    "points": -100,
+                    "entry_type": "daily_grant",
+                    "points": 100,
                     "bucket_type": "daily_free",
-                    "balance_after": 900,
-                    "description": "分析扣减",
+                    "balance_after": 1000,
+                    "description": "每日常规额度刷新",
                     "article_title": None,
                     "created_at": datetime.now(UTC).isoformat(),
                 },
@@ -184,7 +184,7 @@ class TestCreditLedgerRoute:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["entry_type"] == "analysis_deduct"
+        assert data["items"][0]["entry_type"] == "daily_grant"
 
     @_mock_auth()
     @patch("app.api.routes.quota.get_credit_ledger", new_callable=AsyncMock)
