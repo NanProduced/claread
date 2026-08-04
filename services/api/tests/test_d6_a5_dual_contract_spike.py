@@ -212,7 +212,6 @@ def _make_inserted_annotation_row(**overrides: object) -> dict:
     now = datetime(2026, 6, 24, 12, 0, 0)
     row = {
         "id": uuid4(),
-        "analysis_record_id": None,
         "anchor_type": "text_range",
         "target_key": (
             f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"
@@ -365,8 +364,6 @@ def _make_inserted_note_row() -> dict:
     now = datetime(2026, 6, 24, 12, 0, 0)
     return {
         "id": uuid4(),
-        "analysis_record_id": None,
-        "anchor_sentence_id": None,
         "quote_mode": "text_range",
         "target_key": (
             f"reading-record:{RECORD_ID}:base:{BASE_ID}:gen:2:"

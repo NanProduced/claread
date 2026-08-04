@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,12 +16,21 @@ pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BASELINE_SQL = (
+_RAW_BASELINE_SQL = (
     # DATA-SCHEMA-BASELINE D2: the single fresh baseline replaces all
     # per-step migrations; the constraint contracts below are verified
     # against it.
     REPO_ROOT / "infra" / "migrations" / "0001_initial.sql"
 ).read_text(encoding="utf-8")
+# DATA-D2-CLOSEOUT-R1: 0001 pins ``search_path`` to ``public`` for the
+# fresh-init path; isolated-schema tests strip that pin and apply the DDL
+# into their own schema instead.
+BASELINE_SQL = re.sub(
+    r"^\s*SET search_path = public, pg_catalog;\s*$",
+    "",
+    _RAW_BASELINE_SQL,
+    flags=re.MULTILINE,
+)
 
 
 def _load_database_url() -> str:

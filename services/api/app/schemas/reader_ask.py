@@ -819,8 +819,7 @@ class ReaderRecordAskMessageRequest(BaseModel):
     """D6-A6: new Reading Record Ask message request contract.
 
     This is the canonical Reading Record Ask v2 request contract.
-    It accepts Reading Record anchors and never accepts an
-    ``analysis_record_id`` disguised as ``record_id``.
+    It accepts Reading Record anchors only.
 
     ASK-UX-COT-COMPOSER-R3 P2 — plural focus anchors:
     - ``focus_anchors`` is the canonical multi-selection field (≤4: one

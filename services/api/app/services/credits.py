@@ -3,8 +3,8 @@ Credit Service.
 
 Handles quota checking, credit deduction, fixed-cost reservation/refund,
 daily reset, and ledger entries.
-Integrated with task submission (pre-check), task execution (post-deduct),
-and synchronous AI capabilities that need upfront reservation.
+Integrated with synchronous AI capabilities that need upfront reservation
+and their refund flows.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ LEDGER_ENTRY_TYPE_REFUND = "refund"
 
 
 class InsufficientCredits(Exception):
-    """Raised when user has insufficient credits to submit a task."""
+    """Raised when user has insufficient credits to submit a request."""
 
     def __init__(self, remaining: int, required: int = 1) -> None:
         self.remaining = remaining
@@ -378,7 +378,6 @@ async def refund_reserved_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=LEDGER_ENTRY_TYPE_REFUND,
                     points=refund_to_daily,
                     bucket_type="daily_free",
@@ -392,7 +391,6 @@ async def refund_reserved_points(
                 await _insert_ledger_entry(
                     conn,
                     user_id=user_id,
-                    task_id=task_id,
                     entry_type=LEDGER_ENTRY_TYPE_REFUND,
                     points=bonus_refund,
                     bucket_type="bonus",
@@ -475,7 +473,6 @@ async def grant_bonus_credits(
             await _insert_ledger_entry(
                 conn,
                 user_id=user_id,
-                task_id=None,
                 entry_type=entry_type,
                 points=points,
                 bucket_type="bonus",

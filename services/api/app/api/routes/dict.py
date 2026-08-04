@@ -206,7 +206,6 @@ async def dictionary_ai(
         reservation = await reserve_points(
             user_id,
             DICT_AI_FIXED_POINTS,
-            task_id=None,
             entry_type=LEDGER_ENTRY_TYPE_AI_CAPABILITY_DEDUCT,
             metadata=reservation_metadata,
         )

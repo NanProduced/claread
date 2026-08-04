@@ -90,7 +90,6 @@ class TestJsonCompatibilityReads:
         now = datetime.now(UTC)
         row = {
             "id": uuid4(),
-            "analysis_record_id": uuid4(),
             "anchor_type": "sentence",
             "target_key": "record:r:sentence:s1",
             "paragraph_id": "p1",

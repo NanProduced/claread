@@ -7,7 +7,6 @@ export interface LedgerEntryVm {
   description: string;
   articleTitle: string | null;
   metadata: Record<string, unknown>;
-  taskId: string | null;
   createdAt: string;
 }
 

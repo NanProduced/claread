@@ -33,7 +33,6 @@ function projectLedgerEntry(dto: LedgerEntryResponseDto): LedgerEntryVm {
     description: dto.description,
     articleTitle: dto.article_title,
     metadata: dto.metadata ?? {},
-    taskId: dto.task_id,
     createdAt: dto.created_at,
   };
 }

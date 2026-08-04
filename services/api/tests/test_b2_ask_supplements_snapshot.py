@@ -7,7 +7,6 @@ These tests verify that Reading Record ask supplements are loaded from
 Constraints mirrored from the user_assets contract:
 - Only rows matching active base_id + generation with reading_record_id
   matching the current record and deleted_at IS NULL are returned.
-- Legacy analysis_record_id rows are excluded.
 - Rows failing defensive anchor validation are silently skipped.
 """
 
@@ -148,7 +147,7 @@ async def _insert_reading_record_supplement(
         supplement_id = await conn.fetchval(
             """
             INSERT INTO reader_ask_supplements (
-                id, user_id, analysis_record_id, reading_record_id, supplement_type,
+                id, user_id, reading_record_id, supplement_type,
                 target_key, sentence_id, paragraph_id,
                 title, content_md, anchor_payload_json, metadata_json, schema_version,
                 created_from_turn_run_id, created_at, updated_at, deleted_at,
@@ -156,7 +155,7 @@ async def _insert_reading_record_supplement(
                 start_offset, end_offset, text_hash, hash_algorithm
             )
             VALUES (
-                $1, $2, NULL, $3, $4,
+                $1, $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10::jsonb, $11::jsonb, $12,
                 $13, $14, $14, $15,
@@ -188,68 +187,6 @@ async def _insert_reading_record_supplement(
             end_offset,
             text_hash,
             "fnv1a32-utf16",
-        )
-    assert isinstance(supplement_id, UUID)
-    return supplement_id
-
-
-async def _insert_legacy_analysis_supplement(
-    pool: asyncpg.Pool,
-    *,
-    user_id: UUID,
-    record_id: UUID,
-    supplement_type: str = "grammar_note",
-    title: str = "Legacy supplement",
-    content_md: str = "Legacy content that should not leak into Reading Record snapshot.",
-    target_key: str = "legacy-target-key",
-    sentence_id: str = "legacy-sentence",
-    created_at: datetime | None = None,
-) -> UUID:
-    """Insert a legacy analysis_record_id supplement row.
-
-    These rows must NOT appear in the Reading Record Plate snapshot.
-    """
-    effective_created_at = created_at or datetime.now(UTC)
-    async with pool.acquire() as conn:
-        analysis_record_id = await conn.fetchval(
-            """
-            INSERT INTO analysis_records (
-                user_id, source_text, source_text_hash, reading_goal, reading_variant
-            )
-            VALUES ($1, 'legacy source text', 'legacy-hash', 'daily_reading', 'intermediate_reading')
-            RETURNING id
-            """,
-            user_id,
-        )
-        supplement_id = await conn.fetchval(
-            """
-            INSERT INTO reader_ask_supplements (
-                id, user_id, analysis_record_id, reading_record_id, supplement_type,
-                target_key, sentence_id, paragraph_id,
-                title, content_md, anchor_payload_json, metadata_json, schema_version,
-                created_from_turn_run_id, created_at, updated_at,
-                base_id, generation, unit_id, anchor_segment_id,
-                start_offset, end_offset, text_hash, hash_algorithm
-            )
-            VALUES (
-                $1, $2, $3, NULL, $4,
-                $5, $6, NULL,
-                $7, $8, '{}'::jsonb, '{}'::jsonb, 'reader-ask-supplement-v1',
-                '', $9, $9,
-                NULL, NULL, NULL, NULL,
-                NULL, NULL, NULL, NULL
-            )
-            RETURNING id
-            """,
-            uuid4(),
-            user_id,
-            analysis_record_id,
-            supplement_type,
-            target_key,
-            sentence_id,
-            title,
-            content_md,
-            effective_created_at,
         )
     assert isinstance(supplement_id, UUID)
     return supplement_id
@@ -367,64 +304,6 @@ async def test_snapshot_includes_reading_record_ask_supplements(
     assert content_payload["record_id"] == str(record_id)
     assert content_payload["base_id"] == str(base_id)
     assert content_payload["generation"] == 1
-
-
-async def test_snapshot_excludes_legacy_analysis_record_supplements(
-    reader_service_env: asyncpg.Pool,
-) -> None:
-    """B2-1: legacy analysis_record_id supplements must not leak into snapshot."""
-    user_id = await _insert_user(reader_service_env)
-    service = ArticleReadyPersistenceService(pool=reader_service_env)
-    request = PlainTextArticleReadySubmitRequest(
-        user_id=user_id,
-        plain_text="Reading record text for legacy exclusion test.",
-        title="Legacy Exclusion",
-        language="en",
-    )
-    result = await service.submit_plain_text(request)
-    record_id = result.record_id
-    base_id = result.base_id
-
-    unit_id, anchor_segment_id, seg_start, seg_end, base_text = (
-        await _fetch_first_anchor_segment(
-            reader_service_env,
-            record_id=record_id,
-            base_id=base_id,
-        )
-    )
-    selected_text = slice_by_utf16_offsets(base_text, seg_start, seg_end)
-    text_hash = compute_text_range_hash(selected_text)
-
-    await _insert_reading_record_supplement(
-        reader_service_env,
-        user_id=user_id,
-        record_id=record_id,
-        base_id=base_id,
-        generation=1,
-        unit_id=unit_id,
-        anchor_segment_id=anchor_segment_id,
-        start_offset=seg_start,
-        end_offset=seg_end,
-        selected_text=selected_text,
-        text_hash=text_hash,
-        content_md="Reading Record supplement that should appear.",
-    )
-    await _insert_legacy_analysis_supplement(
-        reader_service_env,
-        user_id=user_id,
-        record_id=record_id,
-        title="Legacy supplement that must be excluded",
-        content_md="Legacy content that should not leak.",
-    )
-
-    snapshot = await service.load_snapshot(
-        record_id=record_id,
-        user_id=user_id,
-    )
-
-    assert len(snapshot.ask_supplements) == 1
-    titles = {s.content.get("title") for s in snapshot.ask_supplements}
-    assert "Legacy supplement that must be excluded" not in titles
 
 
 async def test_snapshot_excludes_deleted_supplements(

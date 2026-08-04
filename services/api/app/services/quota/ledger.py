@@ -64,7 +64,7 @@ async def get_credit_ledger(
             f"""
             SELECT l.id, l.entry_type, l.points, l.bucket_type,
                    l.balance_after, l.metadata_json, l.created_at,
-                   l.task_id
+                   l.title_snapshot
             FROM user_credit_ledger l
             WHERE {where_sql}
             ORDER BY l.created_at DESC
@@ -101,8 +101,8 @@ async def get_credit_ledger(
             "bucket_type": row["bucket_type"],
             "balance_after": row["balance_after"],
             "description": description,
+            "article_title": row["title_snapshot"],
             "metadata": metadata,
-            "task_id": str(row["task_id"]) if row.get("task_id") else None,
             "created_at": row["created_at"],
         })
 
