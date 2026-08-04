@@ -127,8 +127,8 @@ LIMIT 20;
 
 ## 词典恢复脚本与 canonical dump
 
-- canonical dump：`infra/backups/d2_dict_backup.dump`（DATA-D2 期间生成，SHA256 `fbaf2455…8316`，已写入脚本默认值）。该文件被 `.gitignore` 排除，不进版本库，但永远不要删除——它是 `restore_dict_tables.ps1` 的回滚源。
-- `infra/scripts/restore_dict_tables.ps1` 为加固版恢复脚本：先校验 dump SHA256 和 `pg_restore --list` 覆盖面（任何破坏性语句之前），再 TRUNCATE、`--single-transaction` 数据恢复、序列修复，最后跑 `check_dict_integrity.sql`。每个阶段独立原子、显式检查退出码；失败后重跑脚本即回滚路径。
+- canonical dump 必须保存在 worktree 之外的操作者备份目录（SHA256 `fbaf2455…8316`，完整值已写入脚本默认值）。worktree 内的 ignored 副本只是可删除的本地材料，不是归档事实源；调用脚本时通过 `-DumpPath` 显式传入外部副本。
+- `infra/scripts/restore_dict_tables.ps1` 先校验 dump SHA256 和 `pg_restore --list` 覆盖面，再预生成 data-only SQL；TRUNCATE、数据恢复和序列修复在同一个 PostgreSQL 事务中执行，任一步失败都会保留恢复前数据。提交成功后再运行 `check_dict_integrity.sql`。
 
 ## 后续可考虑
 

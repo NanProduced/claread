@@ -10,25 +10,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# DATA-D2-CLOSEOUT-R1 hardened dictionary restore.
-# Stages (every native command's exit code is checked explicitly):
+# Dictionary restore stages (every native command's exit code is checked):
 #   0. dump exists + SHA256 matches the canonical D2 backup
 #   1. pg_restore --list: archive readable, covers the three dict tables
 #      (all validation happens BEFORE any destructive statement)
-#   2. TRUNCATE (atomic statement)
-#   3. pg_restore --single-transaction (atomic: commits or rolls back as one)
-#   4. sequence repair (atomic statement)
-#   5. check_dict_integrity.sql
-# Each stage is individually atomic and the script is idempotent: a failed
-# run leaves either the pre-restore data or empty dict tables, and re-running
-# the script from the top is the rollback path (never delete the dump).
+#   2. render the archive's data SQL to a temporary file
+#   3. TRUNCATE + restore SQL + sequence repair in one transaction
+#   4. check_dict_integrity.sql
+# A failure during stage 3 rolls the whole transaction back to the pre-restore
+# data. The canonical dump remains immutable and is never used as scratch space.
 
-if (-not (Test-Path $DumpPath)) {
+if (-not (Test-Path -LiteralPath $DumpPath)) {
   throw "Dump file not found: $DumpPath"
 }
 
 # --- Stage 0: SHA256 of the dump must match the canonical backup ---
-$actualSha256 = (Get-FileHash -Path $DumpPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualSha256 = (Get-FileHash -LiteralPath $DumpPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
   throw "Dump SHA256 mismatch: expected $ExpectedSha256, got $actualSha256 (refusing to touch dict tables)"
 }
@@ -45,34 +42,59 @@ foreach ($table in @('dict_entries', 'dict_lookup_targets', 'dict_redirects')) {
 }
 Write-Host "pg_restore --list OK: archive covers dict_entries, dict_lookup_targets, dict_redirects"
 
-# --- Stage 2: TRUNCATE ---
-psql $DatabaseUrl -v ON_ERROR_STOP=1 -c "TRUNCATE dict_lookup_targets, dict_redirects, dict_entries RESTART IDENTITY CASCADE;"
-if ($LASTEXITCODE -ne 0) {
-  throw "TRUNCATE failed (exit $LASTEXITCODE); dict tables untouched or partially truncated - fix and re-run"
+$tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$restoreTempDir = [System.IO.Path]::GetFullPath(
+  (Join-Path $tempRoot "claread-dict-restore-$([guid]::NewGuid().ToString('N'))")
+)
+if (-not $restoreTempDir.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw "Refusing unsafe restore temp path: $restoreTempDir"
 }
 
-# --- Stage 3: data-only restore in a single transaction ---
-pg_restore `
-  --dbname=$DatabaseUrl `
-  --data-only `
-  --no-owner `
-  --no-privileges `
-  --single-transaction `
-  --table=dict_entries `
-  --table=dict_lookup_targets `
-  --table=dict_redirects `
-  $DumpPath
-if ($LASTEXITCODE -ne 0) {
-  throw "pg_restore failed (exit $LASTEXITCODE); single transaction rolled back - re-run this script to restore"
+New-Item -ItemType Directory -Path $restoreTempDir | Out-Null
+$dataSqlPath = Join-Path $restoreTempDir 'dictionary-data.sql'
+$transactionSqlPath = Join-Path $restoreTempDir 'restore-transaction.sql'
+
+try {
+  # --- Stage 2: render data SQL without connecting to the target database ---
+  pg_restore `
+    --data-only `
+    --no-owner `
+    --no-privileges `
+    --table=dict_entries `
+    --table=dict_lookup_targets `
+    --table=dict_redirects `
+    --file=$dataSqlPath `
+    $DumpPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "pg_restore SQL generation failed (exit $LASTEXITCODE); dict tables untouched"
+  }
+
+  # --- Stage 3: all destructive work shares one PostgreSQL transaction ---
+  $psqlIncludePath = $dataSqlPath.Replace('\', '/').Replace("'", "''")
+  $transactionSql = @"
+\set ON_ERROR_STOP on
+BEGIN;
+TRUNCATE dict_lookup_targets, dict_redirects, dict_entries RESTART IDENTITY CASCADE;
+\ir '$psqlIncludePath'
+SELECT setval('dict_entries_id_seq', COALESCE((SELECT MAX(id) FROM dict_entries), 1));
+SELECT setval('dict_lookup_targets_id_seq', COALESCE((SELECT MAX(id) FROM dict_lookup_targets), 1));
+SELECT setval('dict_redirects_id_seq', COALESCE((SELECT MAX(id) FROM dict_redirects), 1));
+COMMIT;
+"@
+  Set-Content -LiteralPath $transactionSqlPath -Value $transactionSql -Encoding UTF8
+
+  psql $DatabaseUrl -v ON_ERROR_STOP=1 -f $transactionSqlPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "dictionary restore transaction failed (exit $LASTEXITCODE); pre-restore data retained"
+  }
+}
+finally {
+  if (Test-Path -LiteralPath $restoreTempDir) {
+    Remove-Item -LiteralPath $restoreTempDir -Recurse -Force
+  }
 }
 
-# --- Stage 4: sequence repair ---
-psql $DatabaseUrl -v ON_ERROR_STOP=1 -c "SELECT setval('dict_entries_id_seq', COALESCE((SELECT MAX(id) FROM dict_entries), 1)); SELECT setval('dict_lookup_targets_id_seq', COALESCE((SELECT MAX(id) FROM dict_lookup_targets), 1)); SELECT setval('dict_redirects_id_seq', COALESCE((SELECT MAX(id) FROM dict_redirects), 1));"
-if ($LASTEXITCODE -ne 0) {
-  throw "sequence repair failed (exit $LASTEXITCODE); re-run this script to restore"
-}
-
-# --- Stage 5: integrity check ---
+# --- Stage 4: integrity check ---
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 psql $DatabaseUrl -v ON_ERROR_STOP=1 -f (Join-Path $scriptDir 'check_dict_integrity.sql')
 if ($LASTEXITCODE -ne 0) {

@@ -1310,11 +1310,6 @@ async def test_parsed_decisions_unique_constraint(reader_schema: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-# DATA-SCHEMA-BASELINE D2: 0016 is folded into the single baseline; the
-# contract below is verified against 0001_initial.sql directly.
-_MIGRATION_0016_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
-
-
 async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
     """0016 extends ``reader_runtime_spans.worker_type`` CHECK so the Z+
     window worker can write ``worker_tick`` spans.
@@ -1330,7 +1325,6 @@ async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(_MIGRATION_0016_SQL)
 
         # grammar_bundle_window is accepted (the whole point of 0016).
         await admin_conn.execute(

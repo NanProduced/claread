@@ -87,7 +87,7 @@ BEGIN
         SELECT t.table_name FROM information_schema.tables t
         WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
     ) LOOP
-        IF actual LIKE 'directus_%' THEN
+        IF left(actual, length('directus_')) = 'directus_' THEN
             CONTINUE;
         END IF;
         IF NOT (actual = ANY (expected_tables)) THEN

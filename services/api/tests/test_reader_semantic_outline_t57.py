@@ -7,7 +7,6 @@ explicit eligibility + fake real-chain, bounded input.
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
@@ -45,9 +44,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
-OUTLINE_SCHEMA_SQL = BASELINE_SQL + "\n" + MIGRATION_0020_SQL
 
 
 @pytest.fixture
@@ -63,7 +59,7 @@ async def outline_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(OUTLINE_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:

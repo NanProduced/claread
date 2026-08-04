@@ -8,9 +8,9 @@ inventing a new queue table or scheduler.
 Pipeline order (per ``process_once`` call):
 
 1. Try to claim + process one ``input_artifact_extraction`` job. If a job is
-   found, the extraction worker runs the provider, persists
-   ``original_inputs.source_text``, transitions the job to ``succeeded``,
-   and — in the same transaction — enqueues an
+   found, the extraction worker runs the provider, persists the
+   confirmed-source document, transitions the job to ``succeeded``, and — in
+   the same transaction — enqueues an
    ``extracted_artifact_materialization`` job. ``process_once`` returns.
 2. If no extraction job is available, try to claim + process one
    ``extracted_artifact_materialization`` job. The materialization worker

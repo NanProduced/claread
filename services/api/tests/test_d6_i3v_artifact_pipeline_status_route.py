@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -27,12 +26,8 @@ from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABA
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_ARTIFACTS_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
-# 0004 (document_blocks) is now in BASELINE_SQL, so the route schema is
-# BASELINE_SQL + 0007 (reader_source_artifacts).
-ROUTE_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
+# The single baseline includes document blocks and source artifacts.
 
 AUTH_HEADERS = {"Authorization": "Bearer test_token"}
 
@@ -82,7 +77,7 @@ async def route_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(ROUTE_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await _make_pool(schema_name)
         monkeypatch.setattr(db_connection, "DB_POOL", pool)
 

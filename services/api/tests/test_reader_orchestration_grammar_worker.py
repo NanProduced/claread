@@ -31,7 +31,6 @@ from app.services.reader_orchestration.grammar_worker import (
     GrammarAnchorSegmentContext,
     GrammarBatchExecutionResult,
     GrammarBatchJobContext,
-    GrammarBatchJobProcessResult,
     GrammarBatchUnitContext,
     GrammarBatchCandidateOutput,
     GrammarBundleCandidateOutput,
@@ -2490,9 +2489,6 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 # ``EnhancementJobBootstrapService.bootstrap_missing_jobs`` can route
 # short articles to the grammar batch path.
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
-_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 _T41C_BATCH_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline.\n\n"
@@ -2595,8 +2591,6 @@ async def grammar_batch_env() -> asyncpg.Pool:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(_MIGRATION_0015_SQL)
-        await admin_conn.execute(_MIGRATION_0017_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:

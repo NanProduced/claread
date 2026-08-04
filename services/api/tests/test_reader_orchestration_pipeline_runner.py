@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from datetime import timedelta
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -64,7 +63,6 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyBatchExecutionResult,
     VocabularyBatchJobContext,
     VocabularyBatchUnitCandidateOutput,
-    VocabularyCandidateOutput,
     VocabularyExecutionResult,
     VocabularyHighlightCandidateItem,
     VocabularyJobContext,
@@ -85,14 +83,11 @@ from tests.reader_orchestration_test_support import (
 # based on Z+ plan existence in ``layer_analysis_plans`` (Task C3), and the
 # pipeline runner's worker_order dispatch depends on whether a window worker
 # is registered (Task C4).
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 # T1.1 short-article batch path: migration 0017 adds ``translate_article`` and
 # ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type`` CHECK
 # constraint, and ``translation_batch`` / ``vocabulary_batch`` to the
 # ``reader_runtime_spans.worker_type`` CHECK constraint.
-_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 LEASE_DURATION = timedelta(seconds=30)
 WORD_RE = re.compile(r"[A-Za-z]+")
@@ -587,8 +582,6 @@ async def pipeline_runner_env() -> asyncpg.Pool:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
-    await admin.execute(_MIGRATION_0015_SQL)
-    await admin.execute(_MIGRATION_0017_SQL)
     await admin.close()
 
     pool = await make_pool(schema_name)

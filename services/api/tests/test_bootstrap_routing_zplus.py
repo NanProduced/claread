@@ -14,7 +14,6 @@ Routing contract (P1-1 修正后):
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -37,8 +36,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 ZPLUS_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -64,7 +61,6 @@ async def _build_test_schema_and_pool() -> tuple[asyncpg.Pool, str]:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(MIGRATION_0015_SQL)
     finally:
         await admin_conn.close()
     pool = await make_pool(schema_name)

@@ -244,8 +244,8 @@ class TextArtifactExtractionProvider:
     Downloads object bytes via an injected :class:`StorageObjectReader`,
     validates content_type / sha256 / byte_size, and decodes as UTF-8
     (stripping BOM if present). Returns an :class:`ArtifactExtractionResult`
-    suitable for the :class:`ArtifactExtractionWorkerService` to persist into
-    ``original_inputs.source_text``.
+    suitable for the :class:`ArtifactExtractionWorkerService` to persist as
+    the confirmed-source document.
     """
 
     def __init__(self, reader: StorageObjectReader) -> None:

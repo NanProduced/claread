@@ -94,17 +94,13 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 API_ROOT = Path(__file__).resolve().parents[1]
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 # T1.1 short-article batch path: migration 0017 adds ``translate_article``
 # and ``build_vocabulary_layer_article`` to the ``reader_jobs.job_type``
 # CHECK constraint. Required because the default fixture text is well under
 # the 6000-char short-article threshold, so bootstrap creates batch jobs.
-_MIGRATION_0017_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 # T5.3/T5.7: semantic_outline job_type + layer_type + worker_type CHECK.
 # Without 0020, pipeline worker_tick spans with worker_type=semantic_outline
 # fail CHECK and block real-chain readiness finalization.
-_MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 LEASE_DURATION = timedelta(seconds=30)
 
 
@@ -466,9 +462,6 @@ async def worker_loop_env() -> asyncpg.Pool:
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
     await admin.execute(f'SET search_path TO "{schema_name}", public')
     await admin.execute(BASELINE_SQL)
-    await admin.execute(_MIGRATION_0015_SQL)
-    await admin.execute(_MIGRATION_0017_SQL)
-    await admin.execute(_MIGRATION_0020_SQL)
     await admin.close()
     pool = await make_pool(schema_name)
     db_connection.DB_POOL = pool

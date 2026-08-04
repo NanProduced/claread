@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
@@ -40,9 +39,7 @@ from app.services.reader_orchestration.semantic_outline_worker import (
     OUTLINE_MAX_TOTAL_PREVIEW_CHARS,
     OUTLINE_MAX_UNIT_PREVIEW_CHARS,
     FakeSemanticOutlineGenerator,
-    SemanticOutlineGenerationError,
     SemanticOutlineWorkerService,
-    UnconfiguredSemanticOutlineGenerator,
     build_bounded_worker_input,
     clamp_candidates,
 )
@@ -57,9 +54,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
-OUTLINE_SCHEMA_SQL = BASELINE_SQL + "\n" + MIGRATION_0020_SQL
 
 
 def _always_request(_state) -> bool:
@@ -74,7 +68,7 @@ async def outline_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(OUTLINE_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:
@@ -284,7 +278,6 @@ async def test_migration_0020_extends_layer_job_worker_types() -> None:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(MIGRATION_0020_SQL)
 
         user_id = await admin_conn.fetchval(
             "INSERT INTO users DEFAULT VALUES RETURNING id"

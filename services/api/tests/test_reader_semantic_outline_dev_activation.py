@@ -14,7 +14,6 @@ Tests use only fakes and DI — no real provider calls.
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -59,9 +58,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0020_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
-OUTLINE_SCHEMA_SQL = BASELINE_SQL + "\n" + MIGRATION_0020_SQL
 
 # Settings that turn ON dev activation (tests / dev only; never committed).
 _DEV_ACTIVATION_SETTINGS = Settings(
@@ -83,7 +79,7 @@ async def outline_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(OUTLINE_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:
@@ -383,8 +379,14 @@ def test_dev_c4_composition_bootstrap_uses_settings_aware_eligibility() -> None:
 
 
 def test_dev_c5_composition_default_settings_keeps_unconfigured() -> None:
-    """Default Settings() → UnconfiguredSemanticOutlineGenerator + default always-false predicate (committed default)."""
-    runner = _build_runner_with_stubs(settings=Settings())
+    """Committed outline defaults keep the generator unconfigured."""
+    assert Settings.model_fields["semantic_outline_generation_enabled"].default is False
+    assert Settings.model_fields["reader_semantic_outline_model_profile"].default == ""
+    settings = Settings(
+        semantic_outline_generation_enabled=False,
+        reader_semantic_outline_model_profile="",
+    )
+    runner = _build_runner_with_stubs(settings=settings)
     worker = runner._semantic_outline_worker_service
     assert isinstance(worker._generator, UnconfiguredSemanticOutlineGenerator)
     bootstrap = runner._bootstrap_service

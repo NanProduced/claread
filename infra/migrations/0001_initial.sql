@@ -595,7 +595,7 @@ COMMENT ON COLUMN favorite_records.id IS '收藏记录主键，使用 UUID。';
 
 COMMENT ON COLUMN favorite_records.user_id IS '所属用户 ID。';
 
-COMMENT ON COLUMN favorite_records.target_type IS '收藏目标类型，仅允许 analysis_record 或 daily_reader_article。';
+COMMENT ON COLUMN favorite_records.target_type IS '收藏目标类型，仅允许 reading_record 或 daily_reader_article。';
 
 COMMENT ON COLUMN favorite_records.target_key IS '收藏目标的逻辑键，用于唯一定位收藏对象。';
 

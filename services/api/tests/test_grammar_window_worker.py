@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -61,8 +60,6 @@ from tests.reader_orchestration_test_support import (
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION_0015_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 ZPLUS_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
@@ -97,7 +94,6 @@ async def test_db_pool_with_record_and_base() -> AsyncIterator[
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
         await admin_conn.execute(BASELINE_SQL)
-        await admin_conn.execute(MIGRATION_0015_SQL)
         pool = await make_pool(schema_name)
         db_connection.DB_POOL = pool
         try:

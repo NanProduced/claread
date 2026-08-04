@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -37,8 +36,6 @@ from app.services.reader_orchestration.artifact_input_status_query_service impor
 
 pytestmark = pytest.mark.anyio
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_ARTIFACTS_SQL = "SELECT 1"  # folded into infra/migrations/0001_initial.sql
 
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     BASELINE_SQL,
@@ -46,8 +43,7 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
 )
 
 # 0004 (document_blocks) is now in BASELINE_SQL, so the pipeline status
-# schema is BASELINE_SQL + 0007 (reader_source_artifacts).
-PIPELINE_STATUS_SCHEMA_SQL = BASELINE_SQL + "\n" + SOURCE_ARTIFACTS_SQL
+# The single baseline includes the source-artifact schema.
 
 # Fixed UUIDs for deterministic seeding
 _USER_ID = UUID("00000000-0000-0000-0000-0000000d3e01")
@@ -103,7 +99,7 @@ async def status_env() -> asyncpg.Pool:
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
         await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
-        await admin_conn.execute(PIPELINE_STATUS_SCHEMA_SQL)
+        await admin_conn.execute(BASELINE_SQL)
         pool = await _make_pool(schema_name)
         try:
             yield pool
