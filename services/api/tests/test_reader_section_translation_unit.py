@@ -1,3 +1,4 @@
+# task-history: T5.6b (renamed from test_reader_section_translation_t56b.py)
 """T5.6b — focused unit tests for bootstrap/drain/publisher contracts (fake executor)."""
 
 from __future__ import annotations
@@ -61,6 +62,12 @@ from app.services.reader_orchestration.section_candidates import (
     TrustedOutlineInput,
 )
 from app.services.reader_orchestration.job_bootstrap import _fingerprint_matches_base
+
+pytestmark = [
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 _UNITS = (
     SectionUnit("u1", 1),

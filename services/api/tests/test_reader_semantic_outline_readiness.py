@@ -1,3 +1,4 @@
+# task-history: T5.7 (renamed from test_reader_semantic_outline_t57.py)
 """T5.7 — semantic outline production readiness (controlled real path).
 
 Covers: unconfigured default generator, permanent vs transient errors,
@@ -42,7 +43,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 

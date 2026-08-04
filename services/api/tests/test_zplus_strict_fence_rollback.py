@@ -1,3 +1,4 @@
+# task-history: P2B-R1.1 (renamed from test_p2b_r1_1_zplus_strict_fence_rollback.py)
 """P2B-R1.1 — Z+ Strict Fence Rollback Closure.
 
 Proves ``ZPlusBootstrapService.bootstrap_grammar_window_plan()`` delegates
@@ -44,7 +45,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 # Two-paragraph prose so the article produces at least one grammar-eligible

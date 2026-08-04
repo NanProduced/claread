@@ -1,3 +1,4 @@
+# task-history: P2B (renamed from test_p2b_section_translation_semantic_fence.py)
 """P2B — Production Section Translation Semantic Fence Closure.
 
 Proves ``SectionTranslationBootstrapService.request_section_translation()``
@@ -67,7 +68,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 

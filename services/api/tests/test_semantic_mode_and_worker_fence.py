@@ -1,3 +1,4 @@
+# task-history: R2 (renamed from test_semantic_mode_and_worker_fence_r2.py)
 """R2: frozen mode, mode-aware worker fence, real worker services.
 
 Proves off/shadow/enforce do not collapse to enforce at worker time, and
@@ -96,7 +97,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 

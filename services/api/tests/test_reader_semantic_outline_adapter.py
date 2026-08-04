@@ -1,3 +1,4 @@
+# task-history: T5.8b (renamed from test_reader_semantic_outline_t58b_adapter.py)
 """T5.8b — controlled real adapter, policy pre-call, usage/provenance wiring."""
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
 
 _USAGE = {

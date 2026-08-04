@@ -1,3 +1,4 @@
+# task-history: T5.8c (renamed from test_reader_semantic_outline_t58c_real_llm.py)
 """T5.8c — opt-in real-LLM smoke harness for semantic outline.
 
 Skipped by default. Runs only when ALL three gates are open:
@@ -91,7 +92,7 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_real_llm, pytest.mark.life_external_smoke]
 
 
 _REAL_LLM_MODEL_ENV = "CLAREAD_REAL_LLM_MODEL"

@@ -1,3 +1,4 @@
+# task-history: T5.8a (renamed from test_reader_semantic_outline_t58a_registration.py)
 """T5.8a — semantic outline route / settings / prompt / capability registration.
 
 Default-off registration only. No real adapter, no provider calls.
@@ -5,6 +6,7 @@ Default-off registration only. No real adapter, no provider calls.
 
 from __future__ import annotations
 
+import pytest
 from app.config.settings import Settings
 from app.llm.registry import build_model_registry
 from app.llm.router import build_model_for_route
@@ -24,6 +26,12 @@ from app.services.reader_orchestration.semantic_outline_worker import (
     UnconfiguredSemanticOutlineGenerator,
     SemanticOutlineWorkerService,
 )
+
+pytestmark = [
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_pure_unit,
+    pytest.mark.life_permanent_regression,
+]
 
 SEMANTIC_OUTLINE_PROMPT_AGENT = "reader_semantic_outline"
 

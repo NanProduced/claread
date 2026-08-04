@@ -60,7 +60,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
-TEST_FILE_ALLOWLIST_CEILING = 18
+TEST_FILE_ALLOWLIST_CEILING = 9
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
@@ -83,16 +83,7 @@ TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
         "tests/test_ask_retry_contract_r8.py",
         "tests/test_ask_submission_retry_r1_db_integration.py",
         "tests/test_cutover_api_p_closeout_r2.py",
-        "tests/test_p2b_r1_1_zplus_strict_fence_rollback.py",
-        "tests/test_p2b_section_translation_semantic_fence.py",
         "tests/test_reader_record_ask_a5_7_production_wiring.py",
-        "tests/test_reader_section_translation_t56b.py",
-        "tests/test_reader_section_translation_t56c.py",
-        "tests/test_reader_semantic_outline_t57.py",
-        "tests/test_reader_semantic_outline_t58a_registration.py",
-        "tests/test_reader_semantic_outline_t58b_adapter.py",
-        "tests/test_reader_semantic_outline_t58c_real_llm.py",
-        "tests/test_semantic_mode_and_worker_fence_r2.py",
     }
 )
 

@@ -1,3 +1,4 @@
+# task-history: T5.6c (renamed from test_reader_section_translation_t56c.py)
 """T5.6c — FastAPI command route tests for explicit section translation.
 
 Verifies the synchronous orchestration of
@@ -66,6 +67,12 @@ from app.services.reader_orchestration.section_identity import (
     SectionIdentity,
     encode_section_target_key,
 )
+
+pytestmark = [
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_api_contract,
+    pytest.mark.life_permanent_regression,
+]
 
 # ---------------------------------------------------------------------------
 # Shared constants
