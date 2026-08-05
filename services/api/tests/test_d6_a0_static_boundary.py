@@ -362,10 +362,10 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
 # The 9 ``article_rag_ask_*`` modules under ``reader_orchestration`` are
 # the retired Ask prompt-integration chain.  Production Ask flows through
 # ``reader_record_ask`` (production_stream -> article_rag_adapter ->
-# ArticleRagSearchPort).  The legacy files may still exist (physical
-# deletion is a later phase), but production code, the canonical
-# acceptance test, and the operational runbook must never import or
-# recommend them again.
+# ArticleRagSearchPort).  Phase P physically deleted the legacy
+# files; the guards below keep the cluster dead — production code,
+# the canonical acceptance test, and the operational runbook must
+# never import or recommend them again.
 # ---------------------------------------------------------------------------
 
 ARTICLE_RAG_ASK_EXIT_MODULES: tuple[str, ...] = (
@@ -390,10 +390,10 @@ def test_production_app_does_not_import_legacy_article_rag_ask_chain() -> None:
     """ARCH-OPT-C1 Phase L: zero production consumers of the old Ask chain.
 
     Every ``app/`` module must stay off the 9 retired
-    ``article_rag_ask_*`` modules.  The legacy files themselves are
-    exempt (they may still cross-reference each other until physical
-    deletion); everything else — services, agents, routes, schemas —
-    must not import them.
+    ``article_rag_ask_*`` modules.  The legacy files were physically
+    deleted in Phase P, so the exemption below is now a no-op; any
+    other ``app/`` module — services, agents, routes, schemas —
+    importing them is caught.
     """
     offenders: list[str] = []
     for path in sorted(APP_DIR.rglob("*.py")):

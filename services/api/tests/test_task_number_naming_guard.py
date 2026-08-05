@@ -60,7 +60,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
-TEST_FILE_ALLOWLIST_CEILING = 77
+TEST_FILE_ALLOWLIST_CEILING = 67
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
 
 
@@ -125,20 +125,10 @@ TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
         "tests/test_d6_i4e_article_rag_retrieval_service.py",
         "tests/test_d6_i4e_article_rag_vector_search.py",
         "tests/test_d6_i4f_article_rag_context_service.py",
-        "tests/test_d6_i4g_article_rag_ask_context_composer.py",
-        "tests/test_d6_i4h_article_rag_ask_context_resolver.py",
-        "tests/test_d6_i4i_article_rag_ask_prompt_attachment.py",
-        "tests/test_d6_i4j_article_rag_ask_integration_adapter.py",
-        "tests/test_d6_i4k_article_rag_ask_prompt_section.py",
-        "tests/test_d6_i4l_article_rag_ask_runtime_adapter.py",
-        "tests/test_d6_i4m_article_rag_ask_prompt_assembly.py",
-        "tests/test_d6_i4n_article_rag_ask_context_provider.py",
-        "tests/test_d6_i4o_article_rag_ask_prompt_bridge.py",
         "tests/test_d6_i4s_article_rag_index_lifecycle_service.py",
         "tests/test_d6_i4t_article_rag_index_lifecycle_route.py",
         "tests/test_d6_i4u_article_rag_index_worker_entry.py",
         "tests/test_d6_i4v_article_rag_auto_ensure_service.py",
-        "tests/test_d6_i4w_article_rag_service_e2e_smoke.py",
         "tests/test_d6_i4y_article_rag_operational_readiness.py",
         "tests/test_d6_i4z_article_rag_local_dry_run.py",
         "tests/test_p2b_r1_1_zplus_strict_fence_rollback.py",
