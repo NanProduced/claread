@@ -36,6 +36,9 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import reader_orchestration
 from app.database.connection import init_connection
+from app.services.reader_orchestration.artifact_extraction_worker import (
+    ArtifactExtractionError,
+)
 from app.services.reader_orchestration.artifact_input_application_service import (
     EXTRACTION_JOB_TYPE,
     EXTRACTION_OPERATION_FINGERPRINT,
@@ -43,9 +46,6 @@ from app.services.reader_orchestration.artifact_input_application_service import
 )
 from app.services.reader_orchestration.artifact_pipeline_worker_service import (
     ArtifactInputPipelineWorkerService,
-)
-from app.services.reader_orchestration.artifact_extraction_worker import (
-    ArtifactExtractionError,
 )
 from app.services.reader_orchestration.oss_presigner import (
     AliyunOssPresigner,
@@ -59,17 +59,22 @@ from app.services.reader_orchestration.source_artifact_service import (
     SourceArtifactRegistrationResult,
 )
 from app.services.reader_orchestration.text_artifact_extraction_provider import (
-    AliyunOssObjectReader,
     FAILURE_CODE_OSS_ACCESS_DENIED,
     FAILURE_CODE_OSS_BUCKET_ENDPOINT_MISMATCH,
     FAILURE_CODE_OSS_NETWORK_ERROR,
     FAILURE_CODE_OSS_OBJECT_NOT_FOUND,
     FAILURE_CODE_OSS_SDK_MISSING,
+    AliyunOssObjectReader,
     StorageObjectReadResult,
     TextArtifactExtractionProvider,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_parse, pytest.mark.seam_api_contract, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_parse,
+    pytest.mark.seam_api_contract,
+    pytest.mark.life_permanent_regression,
+]
 
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
@@ -1158,7 +1163,7 @@ async def _connect_admin(schema_name: str | None = None) -> asyncpg.Connection:
 
 
 @pytest.fixture
-async def i3q_env() -> asyncpg.Pool:
+async def artifact_io_env() -> asyncpg.Pool:
     schema_name = f"test_i3q_{uuid4().hex}"
     admin_conn = await _connect_admin()
     try:
@@ -1334,10 +1339,10 @@ class _FakeStorageReader:
         )
 
 
-async def test_pipeline_regression_stable_text_end_to_end(i3q_env: asyncpg.Pool) -> None:
+async def test_pipeline_regression_stable_text_end_to_end(artifact_io_env: asyncpg.Pool) -> None:
     """Regression: stable text artifact drained through the pipeline still
     reaches article_ready with a stable document + reading base."""
-    pool = i3q_env
+    pool = artifact_io_env
     await _seed_extraction_job(pool, source_text=_STABLE_TEXT)
     reader = _FakeStorageReader(data=_STABLE_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(pool=pool, storage_reader=reader)
@@ -1370,7 +1375,8 @@ async def test_pipeline_regression_stable_text_end_to_end(i3q_env: asyncpg.Pool)
         assert base_count == 1
 
         record = await conn.fetchrow(
-            "SELECT readiness_state, product_state, active_base_id FROM reading_records WHERE id = $1",
+            "SELECT readiness_state, product_state, active_base_id"
+            " FROM reading_records WHERE id = $1",
             _RECORD_ID,
         )
         assert record["readiness_state"] == "article_ready"

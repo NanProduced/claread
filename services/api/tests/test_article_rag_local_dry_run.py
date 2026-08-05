@@ -773,12 +773,12 @@ class TestNoNetworkGuard:
 
 
 # ---------------------------------------------------------------------------
-# Runbook doc — I4Z sections
+# Runbook doc — dry-run sections
 # ---------------------------------------------------------------------------
 
 
-class TestRunbookHasI4ZSections:
-    """The runbook must document the I4Z dry-run command and point at
+class TestRunbookHasDryRunSections:
+    """The runbook must document the article-RAG dry-run command and point at
     the canonical real-chain acceptance test as the SINGLE real-chain
     entry point.  The prior smoke-collection namespace design has
     been retired; the runbook must NOT reference it anymore.

@@ -1225,11 +1225,11 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
     assert "output validation" in msg or "retries" in msg or "validator" in msg
 
 
-# T9: FunctionModel integration — the first model request carries no legacy
+# FunctionModel integration — the first model request carries no legacy
 #     host policy surface (neither the structured Turn answer policy JSON
 #     nor the sample-specific correctness prose block).
 @pytest.mark.asyncio
-async def test_t9_first_model_request_has_no_host_policy_surface() -> None:
+async def test_first_model_request_has_no_host_policy_surface() -> None:
     import re
 
     captured_prompts: list[str] = []

@@ -1409,10 +1409,10 @@ async def test_run_respects_max_jobs(
 
 
 class _ReversedBatchTranslator:
-    """T1 acceptance fake: returns units in REVERSE order to verify the
+    """Reversed-order fake: returns units in REVERSE order to verify the
     publisher reorders outputs to match ``target_unit_ids`` (reading order).
 
-    Semantic-grouping contract (T1.1a): echoes the predefined group_ids
+    Semantic-grouping contract: echoes the predefined group_ids
     from :func:`build_deterministic_translation_groups` but returns the
     units in reverse order, so the publisher's reorder-to-reading-order
     path is still exercised.
@@ -1446,7 +1446,7 @@ class _ReversedBatchTranslator:
 
 
 class _ReversedBatchVocabularyExecutor:
-    """T1 acceptance fake: returns units in REVERSE order to verify the
+    """Reversed-order fake: returns units in REVERSE order to verify the
     publisher reorders outputs to match ``target_unit_ids`` (reading order).
     """
 
@@ -1494,11 +1494,11 @@ class _ReversedBatchVocabularyExecutor:
 
 
 @pytest.mark.anyio
-async def test_t1_batch_publish_reorders_outputs_to_reading_order(
+async def test_batch_publish_reorders_outputs_to_reading_order(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
-    """T1 acceptance: batch executor returns units in reverse order, but
-    published layers/events follow reading order (target_unit_ids order)."""
+    """Batch executor returns units in reverse order, but published
+    layers/events follow reading order (target_unit_ids order)."""
     user_id = await insert_user(pipeline_runner_env)
     plain_text = "\n\n".join(
         [
@@ -1642,7 +1642,7 @@ async def test_t1_batch_publish_reorders_outputs_to_reading_order(
     )
 
 
-def test_t1_reorder_outputs_by_target_unit_ids_helper() -> None:
+def test_reorder_outputs_by_target_unit_ids_helper() -> None:
     """Unit test for _reorder_outputs_by_target_unit_ids."""
     from app.services.reader_orchestration.layer_publisher import (
         _reorder_outputs_by_target_unit_ids,

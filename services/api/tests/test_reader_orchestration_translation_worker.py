@@ -1078,7 +1078,7 @@ def test_translation_agent_instructions_require_semantic_groups_and_drop_legacy_
             # If present, it must be inside the "don't output" list, not as
             # an instruction to round-trip the value.
             assert (
-                f"不要输出" in instructions
+                "不要输出" in instructions
                 or "do not output" in instructions.lower()
                 or "not output" in instructions.lower()
             ), (
@@ -1628,14 +1628,14 @@ def test_validate_strategy_metadata_returns_resolved_prompt_lines_on_success() -
 
 
 # ---------------------------------------------------------------------------#
-# T6: _load_job_context integration — reads T5 bootstrap strategy metadata
+# _load_job_context integration — reads job-bootstrap strategy metadata
 # ---------------------------------------------------------------------------#
 
 
-async def test_load_job_context_reads_t5_bootstrap_strategy_metadata(
+async def test_load_job_context_reads_bootstrap_strategy_metadata(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """_load_job_context must read strategy metadata written by T5 bootstrap
+    """_load_job_context must read strategy metadata written by the job bootstrap
     and resolve the concrete translation policy lines from the resolver."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
@@ -1679,7 +1679,6 @@ async def test_load_job_context_reads_exam_cet_strategy_metadata(
 ) -> None:
     """_load_job_context must also work for exam/cet variant."""
     from app.services.reader_orchestration.article_ready_service import (
-        ArticleReadyPersistenceService,
         PlainTextArticleReadySubmitRequest,
     )
 
@@ -2033,7 +2032,10 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 
 # The actual misaligned sentences from the bug report.
 _STAFF_LIVELIHOOD_SOURCE = "Without tips, staff may not earn enough money to live on."
-_AUTO_TIP_BILLS_SOURCE = "In many host cities, restaurants have automatically added tips to their bills."
+_AUTO_TIP_BILLS_SOURCE = (
+    "In many host cities, restaurants have "
+    "automatically added tips to their bills."
+)
 _STAFF_LIVELIHOOD_ZH = "如果没有小费，员工可能挣不到足够的钱维持生活。"
 _AUTO_TIP_BILLS_ZH = "在许多主办城市，餐厅已经自动将小费添加到账单中。"
 

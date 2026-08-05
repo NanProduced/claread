@@ -47,7 +47,12 @@ from app.services.reader_orchestration.article_rag_index_lifecycle_service impor
     ArticleRagIndexLifecycleStatus,
 )
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 AUTH_HEADERS = {"Authorization": "Bearer test_token"}
 
@@ -958,7 +963,7 @@ class TestNoRealBackendCalls:
 
 
 
-class TestRound1OpenApiAndExternalVersionGates:
+class TestOpenApiAndExternalVersionGates:
     async def test_public_schemas_have_no_version_fields(self) -> None:
         from app.schemas.reader_orchestration import (
             ReaderArticleRagIndexEnsureRequest,

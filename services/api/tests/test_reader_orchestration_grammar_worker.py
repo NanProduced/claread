@@ -2136,15 +2136,15 @@ def test_validate_grammar_strategy_metadata_returns_resolved_prompt_lines_on_suc
 
 
 # ---------------------------------------------------------------------------#
-# T8: _load_job_context integration — reads T5/T8 bootstrap strategy metadata
+# _load_job_context integration — reads job-bootstrap strategy metadata
 # ---------------------------------------------------------------------------#
 
 
 @pytest.mark.anyio
-async def test_load_job_context_reads_t5_bootstrap_strategy_metadata(
+async def test_load_job_context_reads_bootstrap_strategy_metadata(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """_load_job_context must read strategy metadata written by T5/T8 bootstrap
+    """_load_job_context must read strategy metadata written by the job bootstrap
     and resolve the concrete grammar_bundle policy lines from the resolver."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)

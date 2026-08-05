@@ -39,7 +39,6 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyBatchCandidateOutput,
     VocabularyBatchExecutionResult,
     VocabularyBatchJobContext,
-    VocabularyBatchUnitCandidateOutput,
     VocabularyBatchUnitContext,
     VocabularyCandidateOutput,
     VocabularyContextGlossCandidateItem,
@@ -1485,14 +1484,14 @@ def test_validate_strategy_metadata_returns_resolved_prompt_lines_on_success() -
 
 
 # ---------------------------------------------------------------------------#
-# T7: _load_job_context integration — reads T5 bootstrap strategy metadata
+# _load_job_context integration — reads job-bootstrap strategy metadata
 # ---------------------------------------------------------------------------#
 
 
-async def test_load_job_context_reads_t5_bootstrap_strategy_metadata(
+async def test_load_job_context_reads_bootstrap_strategy_metadata(
     vocabulary_worker_env: asyncpg.Pool,
 ) -> None:
-    """_load_job_context must read strategy metadata written by T5 bootstrap
+    """_load_job_context must read strategy metadata written by the job bootstrap
     and resolve the concrete vocabulary policy lines from the resolver."""
     user_id = await insert_user(vocabulary_worker_env)
     article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)

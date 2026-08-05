@@ -23,12 +23,12 @@ import pytest
 
 from app.database.connection import init_connection
 from app.services.reader_orchestration.artifact_extraction_worker import (
-    ArtifactExtractionResult,
-    ArtifactExtractionWorkerService,
     MATERIALIZATION_JOB_SOURCE,
     MATERIALIZATION_JOB_TYPE,
     MATERIALIZATION_OPERATION_FINGERPRINT,
     MATERIALIZATION_TARGET_TYPE,
+    ArtifactExtractionResult,
+    ArtifactExtractionWorkerService,
 )
 from app.services.reader_orchestration.artifact_input_application_service import (
     EXTRACTION_JOB_TYPE,
@@ -40,7 +40,12 @@ from app.services.reader_orchestration.artifact_materialization_worker import (
 )
 from app.services.reader_orchestration.job_runtime import ReaderJobRuntime
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_parse, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_parse,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
@@ -112,7 +117,7 @@ async def _connect_admin(schema_name: str | None = None) -> asyncpg.Connection:
 
 
 @pytest.fixture
-async def i3o_env() -> asyncpg.Pool:
+async def materialization_job_env() -> asyncpg.Pool:
     schema_name = f"test_i3o_{uuid4().hex}"
     admin_conn = await _connect_admin()
     try:
@@ -408,7 +413,7 @@ async def _seed_materialization_environment(
             "expected_generation": generation,
         }
         input_hash = hashlib.sha256(
-            f"{_ARTIFACT_ID}:{generation}".encode("utf-8")
+            f"{_ARTIFACT_ID}:{generation}".encode()
         ).hexdigest()
 
         job_id = await conn.fetchval(
@@ -593,11 +598,11 @@ async def _count_article_ready_events(pool: asyncpg.Pool) -> int:
 
 
 async def test_extraction_success_enqueues_materialization_job(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """After extraction succeeds, a materialization job must be enqueued in the
     same transaction with the correct payload and idempotency_key."""
-    await _seed_extraction_environment(i3o_env)
+    await _seed_extraction_environment(materialization_job_env)
     provider = _FakeExtractionProvider(
         result=ArtifactExtractionResult(
             extracted_text=_EXTRACTED_TEXT,
@@ -605,7 +610,7 @@ async def test_extraction_success_enqueues_materialization_job(
             quality={"confidence": 0.95},
         ),
     )
-    worker = _build_extraction_worker(i3o_env, provider=provider)
+    worker = _build_extraction_worker(materialization_job_env, provider=provider)
 
     result = await worker.process_next(
         lease_owner="extraction-worker",
@@ -616,8 +621,8 @@ async def test_extraction_success_enqueues_materialization_job(
     assert result.status == "succeeded"
 
     # A materialization job must exist
-    assert await _count_materialization_jobs(i3o_env) == 1
-    mat_job = await _fetch_materialization_job(i3o_env)
+    assert await _count_materialization_jobs(materialization_job_env) == 1
+    mat_job = await _fetch_materialization_job(materialization_job_env)
     assert mat_job["job_type"] == MATERIALIZATION_JOB_TYPE
     assert mat_job["target_type"] == MATERIALIZATION_TARGET_TYPE
     assert mat_job["target_key"] == str(_ARTIFACT_ID)
@@ -641,7 +646,7 @@ async def test_extraction_success_enqueues_materialization_job(
     assert input_json["expected_generation"] == 1
 
     # A reader_runs row must exist for the materialization job
-    async with i3o_env.acquire() as conn:
+    async with materialization_job_env.acquire() as conn:
         mat_run = await conn.fetchrow(
             """
             SELECT * FROM reader_runs
@@ -655,7 +660,7 @@ async def test_extraction_success_enqueues_materialization_job(
 
 
 async def test_extraction_success_does_not_enqueue_duplicate_materialization_job(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """Running the extraction worker a second time (no new extraction job)
     must not enqueue a second materialization job.
@@ -665,14 +670,14 @@ async def test_extraction_success_does_not_enqueue_duplicate_materialization_job
     Duplicate active-job prevention (if the same extraction job were retried)
     is covered by ``uq_reader_jobs_active_fingerprint``, not by this test.
     """
-    await _seed_extraction_environment(i3o_env)
+    await _seed_extraction_environment(materialization_job_env)
     provider = _FakeExtractionProvider(
         result=ArtifactExtractionResult(
             extracted_text=_EXTRACTED_TEXT,
             extractor_name="fake-ocr-provider",
         ),
     )
-    worker = _build_extraction_worker(i3o_env, provider=provider)
+    worker = _build_extraction_worker(materialization_job_env, provider=provider)
 
     # First run: should succeed and enqueue materialization job
     result1 = await worker.process_next(
@@ -681,7 +686,7 @@ async def test_extraction_success_does_not_enqueue_duplicate_materialization_job
     )
     assert result1 is not None
     assert result1.status == "succeeded"
-    assert await _count_materialization_jobs(i3o_env) == 1
+    assert await _count_materialization_jobs(materialization_job_env) == 1
 
     # Second run: no more extraction jobs to claim
     result2 = await worker.process_next(
@@ -690,7 +695,7 @@ async def test_extraction_success_does_not_enqueue_duplicate_materialization_job
     )
     assert result2 is None
     # Still only 1 materialization job
-    assert await _count_materialization_jobs(i3o_env) == 1
+    assert await _count_materialization_jobs(materialization_job_env) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -699,16 +704,16 @@ async def test_extraction_success_does_not_enqueue_duplicate_materialization_job
 
 
 async def test_materialization_worker_stable_path_succeeds(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """Materialization worker stable path → article_ready/base/stable doc/job succeeded."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
         content_type="text/plain",
         source_filename="notes.txt",
     )
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -721,7 +726,7 @@ async def test_materialization_worker_stable_path_succeeds(
     assert result.stable_document_id is not None
     assert result.base_id is not None
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "succeeded"
     output_ref = job["output_ref_json"]
     assert output_ref["outcome"] == "stable_document_ready"
@@ -729,14 +734,14 @@ async def test_materialization_worker_stable_path_succeeds(
     assert output_ref["base_id"] == str(result.base_id)
 
     # Verify DB state
-    record = await _fetch_record(i3o_env)
+    record = await _fetch_record(materialization_job_env)
     assert record["readiness_state"] == "article_ready"
     assert record["product_state"] == "readable_enhancing"
     assert record["active_base_id"] == result.base_id
 
-    assert await _count_stable_documents(i3o_env) == 1
-    assert await _count_reading_bases(i3o_env) == 1
-    assert await _count_article_ready_events(i3o_env) == 1
+    assert await _count_stable_documents(materialization_job_env) == 1
+    assert await _count_reading_bases(materialization_job_env) == 1
+    assert await _count_article_ready_events(materialization_job_env) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -745,16 +750,16 @@ async def test_materialization_worker_stable_path_succeeds(
 
 
 async def test_materialization_worker_candidate_path_succeeds(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """Materialization worker candidate path → candidate_base_ready/job succeeded."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_CANDIDATE_MD,
         content_type="text/markdown",
         source_filename="large.md",
     )
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -766,21 +771,21 @@ async def test_materialization_worker_candidate_path_succeeds(
     assert result.outcome == "candidate_document_required"
     assert result.candidate_document_id is not None
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "succeeded"
     output_ref = job["output_ref_json"]
     assert output_ref["outcome"] == "candidate_document_required"
     assert output_ref["candidate_document_id"] == str(result.candidate_document_id)
 
     # Verify DB state
-    record = await _fetch_record(i3o_env)
+    record = await _fetch_record(materialization_job_env)
     assert record["readiness_state"] == "candidate_base_ready"
     assert record["product_state"] == "needs_confirmation"
     assert record["active_base_id"] is None
 
-    assert await _count_candidates(i3o_env) == 1
-    assert await _count_stable_documents(i3o_env) == 0
-    assert await _count_reading_bases(i3o_env) == 0
+    assert await _count_candidates(materialization_job_env) == 1
+    assert await _count_stable_documents(materialization_job_env) == 0
+    assert await _count_reading_bases(materialization_job_env) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -789,16 +794,16 @@ async def test_materialization_worker_candidate_path_succeeds(
 
 
 async def test_materialization_worker_rejected_path_succeeds(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """Materialization worker rejected path → action_required/job succeeded."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_REJECTED_TEXT,
         content_type="text/plain",
         source_filename="short.txt",
     )
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -811,20 +816,20 @@ async def test_materialization_worker_rejected_path_succeeds(
     assert result.stable_document_id is None
     assert result.candidate_document_id is None
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "succeeded"
     output_ref = job["output_ref_json"]
     assert output_ref["outcome"] == "input_rejected_or_action_required"
 
     # Verify DB state
-    record = await _fetch_record(i3o_env)
+    record = await _fetch_record(materialization_job_env)
     assert record["product_state"] == "action_required"
     assert record["readiness_state"] == "submitted"
     assert record["active_base_id"] is None
 
-    assert await _count_candidates(i3o_env) == 0
-    assert await _count_stable_documents(i3o_env) == 0
-    assert await _count_reading_bases(i3o_env) == 0
+    assert await _count_candidates(materialization_job_env) == 0
+    assert await _count_stable_documents(materialization_job_env) == 0
+    assert await _count_reading_bases(materialization_job_env) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -833,28 +838,28 @@ async def test_materialization_worker_rejected_path_succeeds(
 
 
 async def test_materialization_worker_active_base_already_exists_superseded(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If active_base_id is already set when the worker claims the job, the
     fence at claim time marks the job superseded (active_base_already_exists)."""
     # Seed environment WITHOUT active_base_id first
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
     )
     # Create a reading_base row, then set active_base_id to point to it.
     # The FK constraint fk_reading_records_active_base requires the base
     # to exist with matching (id, reading_record_id, record_generation).
     base_text = "Existing base text."
-    base_id = await _insert_reading_base(i3o_env, base_text=base_text)
-    async with i3o_env.acquire() as conn:
+    base_id = await _insert_reading_base(materialization_job_env, base_text=base_text)
+    async with materialization_job_env.acquire() as conn:
         await conn.execute(
             "UPDATE reading_records SET active_base_id = $2 WHERE id = $1",
             _RECORD_ID,
             base_id,
         )
 
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -866,29 +871,29 @@ async def test_materialization_worker_active_base_already_exists_superseded(
     # process_next returns None (no claimable job).
     assert result is None
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "superseded"
     assert job["rationale_code"] == "active_base_already_exists"
 
     # No materialization writes should have happened
-    assert await _count_stable_documents(i3o_env) == 0
-    assert await _count_candidates(i3o_env) == 0
+    assert await _count_stable_documents(materialization_job_env) == 0
+    assert await _count_candidates(materialization_job_env) == 0
 
 
 async def test_materialization_worker_state_already_advanced_superseded(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If the record has already advanced past processing/submitted (e.g.,
     materialization already ran), the I3N service raises with
     reason_code=materialization_already_run and the worker transitions to
     superseded."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
         product_state="readable_enhancing",
         readiness_state="article_ready",
     )
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -898,7 +903,7 @@ async def test_materialization_worker_state_already_advanced_superseded(
     assert result is not None
     assert result.status == "superseded"
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "superseded"
     assert job["rationale_code"] == "materialization_already_run"
 
@@ -909,19 +914,19 @@ async def test_materialization_worker_state_already_advanced_superseded(
 
 
 async def test_materialization_worker_input_artifact_mismatch_failed_terminal(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If input_json.original_input_id does not match any real original_input
     for this record, the I3N service raises with reason_code=
     original_input_not_found and the worker transitions to failed_terminal."""
     # Seed environment, then corrupt the original_input_id in the job payload
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
     )
     wrong_input_id = UUID("00000000-0000-0000-0000-000000000eff")
 
-    async with i3o_env.acquire() as conn:
+    async with materialization_job_env.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT input_json FROM reader_jobs WHERE id = $1", job_id,
         )
@@ -933,7 +938,7 @@ async def test_materialization_worker_input_artifact_mismatch_failed_terminal(
             new_input_json,
         )
 
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -943,29 +948,29 @@ async def test_materialization_worker_input_artifact_mismatch_failed_terminal(
     assert result is not None
     assert result.status == "failed_terminal"
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "failed_terminal"
     assert job["failure_code"] == "original_input_not_found"
     assert job["rationale_code"] == "original_input_not_found"
 
     # No materialization writes should have happened
-    assert await _count_stable_documents(i3o_env) == 0
-    assert await _count_candidates(i3o_env) == 0
+    assert await _count_stable_documents(materialization_job_env) == 0
+    assert await _count_candidates(materialization_job_env) == 0
 
 
 async def test_materialization_worker_artifact_not_found_failed_terminal(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If input_json.source_artifact_id does not match any real source_artifact,
     the I3N service raises with reason_code=source_artifact_not_found and the
     worker transitions to failed_terminal."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
     )
     wrong_artifact_id = UUID("00000000-0000-0000-0000-000000000efe")
 
-    async with i3o_env.acquire() as conn:
+    async with materialization_job_env.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT input_json FROM reader_jobs WHERE id = $1", job_id,
         )
@@ -982,7 +987,7 @@ async def test_materialization_worker_artifact_not_found_failed_terminal(
             str(wrong_artifact_id),
         )
 
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -992,23 +997,23 @@ async def test_materialization_worker_artifact_not_found_failed_terminal(
     assert result is not None
     assert result.status == "failed_terminal"
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "failed_terminal"
     assert job["failure_code"] == "source_artifact_not_found"
 
 
 async def test_materialization_worker_input_json_reading_record_mismatch_failed_terminal(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If input_json.reading_record_id does not match claim.reading_record_id,
     the worker fails closed with input_json_invalid."""
     job_id = await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
     )
     wrong_record_id = UUID("00000000-0000-0000-0000-000000000efd")
 
-    async with i3o_env.acquire() as conn:
+    async with materialization_job_env.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT input_json FROM reader_jobs WHERE id = $1", job_id,
         )
@@ -1020,7 +1025,7 @@ async def test_materialization_worker_input_json_reading_record_mismatch_failed_
             new_input_json,
         )
 
-    worker = _build_materialization_worker(i3o_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
@@ -1030,7 +1035,7 @@ async def test_materialization_worker_input_json_reading_record_mismatch_failed_
     assert result is not None
     assert result.status == "failed_terminal"
 
-    job = await _fetch_job(i3o_env, job_id)
+    job = await _fetch_job(materialization_job_env, job_id)
     assert job["status"] == "failed_terminal"
     assert job["failure_code"] == "input_json_invalid"
 
@@ -1041,7 +1046,7 @@ async def test_materialization_worker_input_json_reading_record_mismatch_failed_
 
 
 async def test_no_duplicate_active_materialization_job_on_active_fingerprint(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """A second active materialization job with the same fingerprint must fail.
 
@@ -1055,13 +1060,13 @@ async def test_no_duplicate_active_materialization_job_on_active_fingerprint(
     target_key, expected_generation, operation_fingerprint)``.
     """
     await _seed_materialization_environment(
-        i3o_env,
+        materialization_job_env,
         source_text=_STABLE_TEXT,
     )
 
     # Attempt to insert a second materialization job with a NEW run but the
     # same active fingerprint — must raise a unique violation.
-    async with i3o_env.acquire() as conn:
+    async with materialization_job_env.acquire() as conn:
         run_id = await conn.fetchval(
             """
             INSERT INTO reader_runs (
@@ -1110,7 +1115,7 @@ async def test_no_duplicate_active_materialization_job_on_active_fingerprint(
             )
 
     # Only the original materialization job should exist
-    assert await _count_materialization_jobs(i3o_env) == 1
+    assert await _count_materialization_jobs(materialization_job_env) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1119,12 +1124,12 @@ async def test_no_duplicate_active_materialization_job_on_active_fingerprint(
 
 
 async def test_materialization_worker_no_job_returns_none(
-    i3o_env: asyncpg.Pool,
+    materialization_job_env: asyncpg.Pool,
 ) -> None:
     """If no materialization job is available, process_next returns None."""
     # Seed extraction environment (no materialization job enqueued)
-    await _seed_extraction_environment(i3o_env)
-    worker = _build_materialization_worker(i3o_env)
+    await _seed_extraction_environment(materialization_job_env)
+    worker = _build_materialization_worker(materialization_job_env)
 
     result = await worker.process_next(
         lease_owner="materialization-worker",
