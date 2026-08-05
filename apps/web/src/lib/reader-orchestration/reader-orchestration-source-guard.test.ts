@@ -300,6 +300,9 @@ const PHYSICAL_DELETED_PATHS = [
   "src/types/api/reader-scene.ts",
   "src/types/api/records.ts",
   "src/types/view/RecordListItemVm.ts",
+  // Retired web-hygiene barrels and modules
+  "src/lib/reader-plate/bridges/selection",
+  "src/components/reader/dictionary/index.ts",
   // Retired E2E harness roots, configs, setup, and fixtures
   "src/app/e2e-plate-spike",
   "src/app/e2e-plate-paste-spike",
