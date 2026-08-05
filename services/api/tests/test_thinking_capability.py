@@ -331,7 +331,7 @@ def test_direct_deepseek_modes_are_distinct_not_bool_collapse():
     assert wire_modes_seen == {"enabled", "disabled"}
 
 
-def test_p2_effective_wire_mode_none_for_dashscope_qwen():
+def test_effective_wire_mode_none_for_dashscope_qwen():
     """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
     for DashScope Qwen — the Direct DeepSeek thinking.type wire protocol
     does not apply. Qwen uses enable_thinking / thinking_budget instead.
@@ -354,7 +354,7 @@ def test_p2_effective_wire_mode_none_for_dashscope_qwen():
     assert cap.direct_thinking_enabled_on_wire is None
 
 
-def test_p2_effective_wire_mode_none_for_dashscope_deepseek():
+def test_effective_wire_mode_none_for_dashscope_deepseek():
     """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
     for DashScope-routed DeepSeek — the Direct wire protocol does not
     apply. DashScope DeepSeek uses enable_thinking instead.
@@ -372,7 +372,7 @@ def test_p2_effective_wire_mode_none_for_dashscope_deepseek():
     assert cap.direct_thinking_enabled_on_wire is None
 
 
-def test_p2_effective_wire_mode_none_for_dialect_none():
+def test_effective_wire_mode_none_for_dialect_none():
     """P2: effective_wire_mode / direct_thinking_enabled_on_wire are None
     for dialect=none — no thinking wire protocol applies at all.
     """
@@ -390,7 +390,7 @@ def test_p2_effective_wire_mode_none_for_dialect_none():
     assert cap.direct_thinking_enabled_on_wire is None
 
 
-def test_p2_effective_wire_mode_still_works_for_deepseek_direct():
+def test_effective_wire_mode_still_works_for_deepseek_direct():
     """P2 cross-check: deepseek_direct dialect still returns meaningful
     wire mode values (not None) after the None-for-other-dialects change.
     """

@@ -827,7 +827,7 @@ class TestAgentConditionalWebSearch:
 # These tests verify the fail-closed contract from the resolver itself.
 
 
-class TestCapabilityResolverR3Readiness:
+class TestCapabilityResolverReadiness:
     """ASK-WEB-G3-R3: ``resolve_web_search_capability`` derives
     capability from the current ``ResolvedModelConfig`` via the
     production ``WebSearchAdapterRegistry`` — not from a global
@@ -1026,7 +1026,7 @@ class TestCapabilityResolverR3Readiness:
 # A non-empty settings string alone does NOT constitute a capability.
 
 
-class TestSelectedModelPayloadR3Projection:
+class TestSelectedModelPayloadProjection:
     """ASK-WEB-G3-R3: ``_selected_model_payload`` must project
     ``web_search_capability`` based on the production adapter registry
     for the current model option's resolved model config.
@@ -1135,11 +1135,11 @@ class TestSelectedModelPayloadR3Projection:
         """
         from app.services.ai_usage.billing import WeightedTokensBillingConfig
         from app.services.reader_record_ask import thread_service as ask_service
+        from app.services.reader_record_ask import web_search_common
         from app.services.reader_record_ask.model_options import (
             ReaderAskRuntimeBudgetConfig,
             ResolvedReaderAskModelOption,
         )
-        from app.services.reader_record_ask import web_search_common
         from app.services.reader_record_ask.web_search_adapter_registry import (
             WebSearchAdapterRegistry,
         )

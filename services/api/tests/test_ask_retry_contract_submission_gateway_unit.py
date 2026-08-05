@@ -27,7 +27,7 @@ pytestmark = [
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_r6_claim_uses_on_conflict_not_unique_violation_recover() -> None:
+def test_claim_uses_on_conflict_not_unique_violation_recover() -> None:
     """Fresh claim must use INSERT ... ON CONFLICT DO NOTHING."""
     src = (
         REPO_ROOT
@@ -44,7 +44,7 @@ def test_r6_claim_uses_on_conflict_not_unique_violation_recover() -> None:
     assert "UniqueViolation" not in src or "never catch" in src.lower()
 
 
-def test_r6_prepare_runs_ensure_before_stream() -> None:
+def test_prepare_runs_ensure_before_stream() -> None:
     from app.services.reader_record_ask import service as svc
 
     src = inspect.getsource(svc.prepare_reading_record_ask_message)
@@ -55,7 +55,7 @@ def test_r6_prepare_runs_ensure_before_stream() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r6_preflight_missing_table_is_http_503_not_sse() -> None:
+async def test_preflight_missing_table_is_http_503_not_sse() -> None:
     """Missing submission-idempotency table → HTTPException 503 before StreamingResponse."""
     from app.services.reader_record_ask.repository import (
         SubmissionIdempotencyUnavailable,
@@ -85,7 +85,7 @@ async def test_r6_preflight_missing_table_is_http_503_not_sse() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r6_no_client_submission_id_returns_none() -> None:
+async def test_no_client_submission_id_returns_none() -> None:
     repo = MagicMock()
     result = await ensure_submission_for_send(
         repo=repo,
@@ -103,7 +103,7 @@ async def test_r6_no_client_submission_id_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r6_duplicate_stop_model_no_may_create() -> None:
+async def test_duplicate_stop_model_no_may_create() -> None:
     repo = MagicMock()
     sid = uuid4()
     tid = uuid4()
@@ -139,7 +139,7 @@ async def test_r6_duplicate_stop_model_no_may_create() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r6_submission_terminal_hook_completed_failed_cancelled() -> None:
+async def test_submission_terminal_hook_completed_failed_cancelled() -> None:
     statuses: list[str] = []
 
     async def fake_mark(**kwargs: Any) -> None:
@@ -190,7 +190,7 @@ async def test_r6_submission_terminal_hook_completed_failed_cancelled() -> None:
     assert statuses[-1] == "cancelled"
 
 
-def test_r6_agentic_finally_syncs_submission() -> None:
+def test_agentic_finally_syncs_submission() -> None:
     src = (
         REPO_ROOT
         / "services"
@@ -205,7 +205,7 @@ def test_r6_agentic_finally_syncs_submission() -> None:
     assert "ensure_synced" in src
 
 
-def test_r6_route_prepare_before_streaming_response() -> None:
+def test_route_prepare_before_streaming_response() -> None:
     src = (
         REPO_ROOT
         / "services"
@@ -225,7 +225,7 @@ def test_r6_route_prepare_before_streaming_response() -> None:
     )
 
 
-def test_r6_snapshot_fail_closed_no_regression() -> None:
+def test_snapshot_fail_closed_no_regression() -> None:
     from app.services.reader_record_ask.service import _extract_snapshot_model_option_key
 
     key = _extract_snapshot_model_option_key(
@@ -239,7 +239,7 @@ def test_r6_snapshot_fail_closed_no_regression() -> None:
     assert key == "ask-clarity"
 
 
-def test_r6_send_prepared_result_dataclass() -> None:
+def test_send_prepared_result_dataclass() -> None:
     from app.services.reader_record_ask.service import SendPreparedResult
 
     assert "submission" in SendPreparedResult.__dataclass_fields__

@@ -775,7 +775,7 @@ def test_request_frame_with_projection_charges_request_frame_only() -> None:
     assert "turn_fixed" in rendered.text
 
 
-def test_old_envelope_projection_still_has_preview_unchanged_by_a5_1() -> None:
+def test_old_envelope_projection_keeps_runtime_selection_preview() -> None:
     """A5-1 must not switch runtime selection preview; old path intact."""
     envelope = build_context_envelope(
         VerifiedEnvelopeInput(

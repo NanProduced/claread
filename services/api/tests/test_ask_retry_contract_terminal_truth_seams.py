@@ -28,27 +28,27 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 
-def test_r81_merge_failed_then_cancelled_stays_failed() -> None:
+def test_merge_failed_then_cancelled_stays_failed() -> None:
     assert merge_known_submission_status("failed", "cancelled") == "failed"
 
 
-def test_r81_merge_cancelled_then_failed_promotes_failed() -> None:
+def test_merge_cancelled_then_failed_promotes_failed() -> None:
     assert merge_known_submission_status("cancelled", "failed") == "failed"
 
 
-def test_r81_merge_failed_then_completed_promotes_completed() -> None:
+def test_merge_failed_then_completed_promotes_completed() -> None:
     assert merge_known_submission_status("failed", "completed") == "completed"
 
 
-def test_r81_merge_completed_then_cancelled_stays_completed() -> None:
+def test_merge_completed_then_cancelled_stays_completed() -> None:
     assert merge_known_submission_status("completed", "cancelled") == "completed"
 
 
-def test_r81_merge_completed_then_failed_stays_completed() -> None:
+def test_merge_completed_then_failed_stays_completed() -> None:
     assert merge_known_submission_status("completed", "failed") == "completed"
 
 
-def test_r81_merge_none_with_incoming() -> None:
+def test_merge_none_with_incoming() -> None:
     assert merge_known_submission_status(None, "cancelled") == "cancelled"
     assert merge_known_submission_status("failed", None) == "failed"
     assert merge_known_submission_status(None, None) is None
@@ -59,7 +59,7 @@ def test_r81_merge_none_with_incoming() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r81_resolve_known_wins_over_message() -> None:
+def test_resolve_known_wins_over_message() -> None:
     assert (
         resolve_agentic_submission_write_status(
             known="completed",
@@ -70,7 +70,7 @@ def test_r81_resolve_known_wins_over_message() -> None:
     )
 
 
-def test_r81_resolve_unknown_message_none_zero_write() -> None:
+def test_resolve_unknown_message_none_zero_write() -> None:
     assert (
         resolve_agentic_submission_write_status(
             known=None,
@@ -81,7 +81,7 @@ def test_r81_resolve_unknown_message_none_zero_write() -> None:
     )
 
 
-def test_r81_resolve_lookup_error_zero_write() -> None:
+def test_resolve_lookup_error_zero_write() -> None:
     assert (
         resolve_agentic_submission_write_status(
             known=None,
@@ -98,7 +98,7 @@ def test_r81_resolve_lookup_error_zero_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r81_seam_known_completed_get_message_none() -> None:
+async def test_seam_known_completed_get_message_none() -> None:
     statuses: list[str] = []
 
     async def capture(**kwargs: Any) -> None:
@@ -127,7 +127,7 @@ async def test_r81_seam_known_completed_get_message_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r81_seam_known_completed_get_message_raises() -> None:
+async def test_seam_known_completed_get_message_raises() -> None:
     statuses: list[str] = []
 
     async def capture(**kwargs: Any) -> None:
@@ -158,7 +158,7 @@ async def test_r81_seam_known_completed_get_message_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r81_seam_unknown_get_message_none_zero_writes() -> None:
+async def test_seam_unknown_get_message_none_zero_writes() -> None:
     called = {"n": 0}
 
     async def capture(**_kwargs: Any) -> None:
@@ -186,7 +186,7 @@ async def test_r81_seam_unknown_get_message_none_zero_writes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r81_seam_known_failed_late_cancelled_keeps_failed() -> None:
+async def test_seam_known_failed_late_cancelled_keeps_failed() -> None:
     statuses: list[str] = []
 
     async def capture(**kwargs: Any) -> None:
@@ -223,7 +223,7 @@ async def test_r81_seam_known_failed_late_cancelled_keeps_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r81_transient_write_retry_keeps_completed() -> None:
+async def test_transient_write_retry_keeps_completed() -> None:
     attempts: list[str] = []
 
     async def flaky(**kwargs: Any) -> None:
@@ -248,7 +248,7 @@ async def test_r81_transient_write_retry_keeps_completed() -> None:
     assert attempts == ["completed", "completed"]
 
 
-def test_r8_terminal_chunk_helpers_still_work() -> None:
+def test_terminal_chunk_helpers_still_work() -> None:
     assert (
         _submission_status_from_terminal_chunk(
             'event: message.completed\ndata: {"final_status":"ok"}\n\n'

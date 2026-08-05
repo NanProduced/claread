@@ -1,4 +1,5 @@
-# task-history: ASK-SUBMISSION-RETRY-R1 (renamed from test_ask_submission_retry_r1_db_integration.py)
+# task-history: ASK-SUBMISSION-RETRY-R1
+# (renamed from test_ask_submission_retry_r1_db_integration.py)
 """Ask submission retry predecessor real PostgreSQL integration — OPT-IN only.
 
 Fixes the retry predecessor lookup for client_submission_id turns: the R5
@@ -40,7 +41,11 @@ pytestmark = [pytest.mark.skipif(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
         "infra/migrations/0001_initial.sql to local DB"
     ),
-), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+    ),
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 async def _seed_thread(conn) -> tuple[object, object, object]:
@@ -84,7 +89,7 @@ async def _make_pool():
 
 
 @pytest.mark.asyncio
-async def test_r1_submission_bound_pair_resolves_predecessor_via_binding() -> None:
+async def test_submission_bound_pair_resolves_predecessor_via_binding() -> None:
     """The R5 path is the defect repro: pair + bind share one created_at.
 
     ``ensure_submission_for_send`` creates both messages in one
@@ -164,7 +169,7 @@ async def test_r1_submission_bound_pair_resolves_predecessor_via_binding() -> No
 
 
 @pytest.mark.asyncio
-async def test_r1_non_submission_turns_keep_strict_predecessor_fallback() -> None:
+async def test_non_submission_turns_keep_strict_predecessor_fallback() -> None:
     """Sequential (non-submission) pairs keep the strict ordering path."""
     from app.services.reader_record_ask.repository import ReaderRecordAskRepository
 
@@ -226,7 +231,7 @@ async def test_r1_non_submission_turns_keep_strict_predecessor_fallback() -> Non
 
 
 @pytest.mark.asyncio
-async def test_r1_same_timestamp_unbound_pair_keeps_strict_semantics() -> None:
+async def test_same_timestamp_unbound_pair_keeps_strict_semantics() -> None:
     """Without a binding, equal timestamps still resolve nothing (strict).
 
     Guards against a lax fix: the fallback must remain strict ``<`` for
@@ -289,7 +294,7 @@ async def test_r1_same_timestamp_unbound_pair_keeps_strict_semantics() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r1_anomalous_binding_fails_closed_without_guessing() -> None:
+async def test_anomalous_binding_fails_closed_without_guessing() -> None:
     """A binding pointing outside the thread fails closed (no fallback)."""
     from app.services.reader_record_ask.repository import ReaderRecordAskRepository
 

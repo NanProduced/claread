@@ -1079,7 +1079,7 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
 # retained for backward-compat with thinking_transport boundary calls.
 
 
-def test_r4_4_no_round0_subcap_allows_full_total_budget_in_round0() -> None:
+def test_no_round0_subcap_allows_full_total_budget_in_round0() -> None:
     # R4-4: there is NO round-0 sub-cap. A round-0 feed under the total
     # content cap is accepted in full — no silent drop, no marker.
     cap = 100
@@ -1098,7 +1098,7 @@ def test_r4_4_no_round0_subcap_allows_full_total_budget_in_round0() -> None:
     assert out_round0 == "字" * content_cap
 
 
-def test_r4_4_advance_round_is_noop_does_not_affect_quota() -> None:
+def test_advance_round_is_noop_does_not_affect_quota() -> None:
     # R4-4: advance_round() is a no-op. Calling it does not change the
     # buffer state or the available budget — the total cap is the only
     # quota and it is shared across all rounds.
@@ -1122,7 +1122,7 @@ def test_r4_4_advance_round_is_noop_does_not_affect_quota() -> None:
     assert not buffer.truncated
 
 
-def test_r4_4_total_cap_truncates_with_marker_without_advance_round() -> None:
+def test_total_cap_truncates_with_marker_without_advance_round() -> None:
     # R4-4: total cap truncation works the same with or without
     # advance_round. The marker is appended exactly once at the end.
     cap = 100
@@ -1154,7 +1154,7 @@ def test_advance_round_idempotent_after_total_truncation() -> None:
     assert buffer.flush() == ""
 
 
-def test_r4_4_multiple_advance_round_calls_are_all_noops() -> None:
+def test_multiple_advance_round_calls_are_all_noops() -> None:
     # R4-4: multiple advance_round calls (multiple tool boundaries) are
     # all no-ops. The total cap is the only quota — no per-round reserve.
     cap = 200
@@ -1186,7 +1186,7 @@ def test_r4_4_multiple_advance_round_calls_are_all_noops() -> None:
     assert buffer.text.endswith(TRUNCATION_MARKER)
 
 
-def test_r4_4_observer_advance_round_is_noop() -> None:
+def test_observer_advance_round_is_noop() -> None:
     # R4-4: observer.advance_round() is a no-op — it does not affect
     # which reasoning is accepted or dropped. All reasoning under the
     # total cap is accepted regardless of round boundaries.
@@ -1230,7 +1230,7 @@ def test_observer_advance_round_is_noop_when_sealed() -> None:
     assert observer.projection_text == "一些推理内容。"
 
 
-def test_r4_4_default_band_keeps_long_turns_untruncated() -> None:
+def test_default_band_keeps_long_turns_untruncated() -> None:
     # R4-4 regression: with the round-0 sub-cap removed, a representative
     # 6K round-0 reasoning + 4K round-1 reasoning (10K total) must NOT be
     # truncated under the 14K default cap.

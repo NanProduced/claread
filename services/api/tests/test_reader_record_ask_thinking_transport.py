@@ -46,7 +46,7 @@ _BASE = UUID("33333333-3333-3333-3333-333333333333")
 _DOC = UUID("44444444-4444-4444-4444-444444444444")
 _SHA = "b" * 64
 _SENTINEL = "SENTINEL_REASONING_PRIVATE_8a1_NEVER_USER_SURFACE"
-_ROUND2 = "ROUND2_THINKING_PART_END_ONLY"
+_SECOND_ROUND_END_MARKER = "ROUND2_THINKING_PART_END_ONLY"
 
 
 def _answer_payload(
@@ -178,7 +178,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
             # Yield no delta — FunctionModel will PartStart with full content
             # if we put thinking in the function response... Use stream that
             # yields a single thinking dict as complete content once.
-            yield {0: DeltaThinkingPart(content=_ROUND2)}
+            yield {0: DeltaThinkingPart(content=_SECOND_ROUND_END_MARKER)}
             yield json.dumps(_answer_payload("Which aspect?"))
             return
         yield json.dumps(_answer_payload("Which aspect?"))
@@ -202,7 +202,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
             )
         return ModelResponse(
             parts=[
-                ThinkingPart(content=_ROUND2),
+                ThinkingPart(content=_SECOND_ROUND_END_MARKER),
                 TextPart(
                     content=json.dumps(_answer_payload("Which aspect?"))
                 ),
@@ -235,7 +235,7 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
         # part via single delta that FunctionModel turns into start+end.
         # To force PartEnd-only path we unit-test lifecycle; here ensure
         # second round content is observed at least once without dup of r1.
-        yield {0: DeltaThinkingPart(content=_ROUND2)}
+        yield {0: DeltaThinkingPart(content=_SECOND_ROUND_END_MARKER)}
         yield json.dumps(_answer_payload("Which aspect?"))
 
     model = FunctionModel(
@@ -258,9 +258,9 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
     text = observer.text
     # Both rounds present, r1 not duplicated as full blob twice incorrectly.
     assert _SENTINEL in text
-    assert _ROUND2 in text
+    assert _SECOND_ROUND_END_MARKER in text
     assert text.count(_SENTINEL) == 1
-    assert text.count(_ROUND2) == 1
+    assert text.count(_SECOND_ROUND_END_MARKER) == 1
     # Phase events once each, no body/payload.
     started = [e for e in result.events if isinstance(e, AnalysisStartedEvent)]
     finished = [e for e in result.events if isinstance(e, AnalysisFinishedEvent)]
@@ -269,11 +269,11 @@ async def test_two_round_stream_observer_order_and_no_dup(caplog):
     for e in started + finished:
         dumped = e.model_dump(mode="json")
         assert _SENTINEL not in json.dumps(dumped)
-        assert _ROUND2 not in json.dumps(dumped)
+        assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
         assert "length" not in dumped
         assert "hash" not in dumped
     assert _SENTINEL not in caplog.text
-    assert _ROUND2 not in caplog.text
+    assert _SECOND_ROUND_END_MARKER not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -288,8 +288,8 @@ async def test_part_end_only_second_round_via_lifecycle_and_transport_unit():
     assert life.on_delta(0, "r1b") == "r1b"
     assert life.on_end(0, "r1ar1b") is None
     life.reset_stream()  # after tool
-    assert life.on_end(0, _ROUND2) == _ROUND2
-    assert life.on_end(0, _ROUND2) is None
+    assert life.on_end(0, _SECOND_ROUND_END_MARKER) == _SECOND_ROUND_END_MARKER
+    assert life.on_end(0, _SECOND_ROUND_END_MARKER) is None
 
 
 @pytest.mark.asyncio
@@ -440,7 +440,7 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
             yield {0: DeltaThinkingPart(content=_SENTINEL)}
             yield json.dumps(_answer_payload("round1 draft"))
             return
-        yield {0: DeltaThinkingPart(content=_ROUND2)}
+        yield {0: DeltaThinkingPart(content=_SECOND_ROUND_END_MARKER)}
         yield json.dumps(_answer_payload("round2 final"))
 
     model = FunctionModel(
@@ -477,9 +477,9 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
     # Observer received both rounds' reasoning, each exactly once.
     text = observer.text
     assert _SENTINEL in text
-    assert _ROUND2 in text
+    assert _SECOND_ROUND_END_MARKER in text
     assert text.count(_SENTINEL) == 1
-    assert text.count(_ROUND2) == 1
+    assert text.count(_SECOND_ROUND_END_MARKER) == 1
 
     # Observer started/finished exactly once each.
     assert observer.started is True
@@ -497,16 +497,16 @@ async def test_model_retry_lifecycle_two_rounds_thinking_observer_order(caplog):
             event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         )
         assert _SENTINEL not in json.dumps(dumped)
-        assert _ROUND2 not in json.dumps(dumped)
+        assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
     # Sentinel never leaks into logs.
     assert _SENTINEL not in caplog.text
-    assert _ROUND2 not in caplog.text
+    assert _SECOND_ROUND_END_MARKER not in caplog.text
 
     # Sentinel never leaks into the final answer.
     assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
-    assert _ROUND2 not in (outcome.output.answer_text or "")
+    assert _SECOND_ROUND_END_MARKER not in (outcome.output.answer_text or "")
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +577,7 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
             return
         # Round 2 after tool-arg ModelRetry: thinking + final answer.
         # Index 0 is reused — lifecycle.reset_stream() cleared the set.
-        yield {0: DeltaThinkingPart(content=_ROUND2)}
+        yield {0: DeltaThinkingPart(content=_SECOND_ROUND_END_MARKER)}
         yield json.dumps(_answer_payload("recovered after tool retry"))
 
     model = FunctionModel(
@@ -631,9 +631,9 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
     # Observer received both rounds' reasoning, each exactly once.
     text = observer.text
     assert _SENTINEL in text
-    assert _ROUND2 in text
+    assert _SECOND_ROUND_END_MARKER in text
     assert text.count(_SENTINEL) == 1
-    assert text.count(_ROUND2) == 1
+    assert text.count(_SECOND_ROUND_END_MARKER) == 1
 
     # Observer started/finished exactly once each.
     assert observer.started is True
@@ -651,16 +651,16 @@ async def test_tool_arg_model_retry_lifecycle_reset_boundary(caplog):
             event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         )
         assert _SENTINEL not in json.dumps(dumped)
-        assert _ROUND2 not in json.dumps(dumped)
+        assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
     # Sentinel never leaks into logs.
     assert _SENTINEL not in caplog.text
-    assert _ROUND2 not in caplog.text
+    assert _SECOND_ROUND_END_MARKER not in caplog.text
 
     # Sentinel never leaks into the final answer.
     assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
-    assert _ROUND2 not in (outcome.output.answer_text or "")
+    assert _SECOND_ROUND_END_MARKER not in (outcome.output.answer_text or "")
 
 
 # ---------------------------------------------------------------------------
@@ -730,11 +730,11 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
                     vendor_part_id=0,
                     part=ThinkingPart(content=""),
                 )
-                # Silently update _parts[0] to ThinkingPart(_ROUND2).
+                # Silently update _parts[0] to ThinkingPart(_SECOND_ROUND_END_MARKER).
                 # Discard the PartDeltaEvent so the stream never sees it.
                 for _ in pm.handle_thinking_delta(
                     vendor_part_id=0,
-                    content=_ROUND2,
+                    content=_SECOND_ROUND_END_MARKER,
                 ):
                     pass
                 yield pm.handle_part(
@@ -844,9 +844,9 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
     # Both sentinels present exactly once.
     text = observer.text
     assert _SENTINEL in text
-    assert _ROUND2 in text
+    assert _SECOND_ROUND_END_MARKER in text
     assert text.count(_SENTINEL) == 1
-    assert text.count(_ROUND2) == 1
+    assert text.count(_SECOND_ROUND_END_MARKER) == 1
 
     # Observer started/finished exactly once each.
     assert observer.started is True
@@ -864,16 +864,16 @@ async def test_part_end_only_delivery_after_tool_return_boundary(caplog):
             event.model_dump(mode="json") if hasattr(event, "model_dump") else {}
         )
         assert _SENTINEL not in json.dumps(dumped)
-        assert _ROUND2 not in json.dumps(dumped)
+        assert _SECOND_ROUND_END_MARKER not in json.dumps(dumped)
 
     # Sentinel never leaks into logs.
     assert _SENTINEL not in caplog.text
-    assert _ROUND2 not in caplog.text
+    assert _SECOND_ROUND_END_MARKER not in caplog.text
 
     # Sentinel never leaks into the final answer.
     assert isinstance(outcome.output, AgentAnswerDraftOutput)
     assert _SENTINEL not in (outcome.output.answer_text or "")
-    assert _ROUND2 not in (outcome.output.answer_text or "")
+    assert _SECOND_ROUND_END_MARKER not in (outcome.output.answer_text or "")
 
 
 # ---------------------------------------------------------------------------

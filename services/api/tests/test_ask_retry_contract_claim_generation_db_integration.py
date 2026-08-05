@@ -30,7 +30,11 @@ pytestmark = [pytest.mark.skipif(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
         "infra/migrations/0001_initial.sql to local DB"
     ),
-), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+    ),
+    pytest.mark.chain_reader_ask,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 async def _seed_thread(conn) -> tuple[object, object, object]:
@@ -66,7 +70,7 @@ async def _seed_thread(conn) -> tuple[object, object, object]:
 
 
 @pytest.mark.asyncio
-async def test_r6_concurrent_ensure_one_pair_one_model_claim() -> None:
+async def test_concurrent_ensure_one_pair_one_model_claim() -> None:
     """asyncio.gather two identical client_submission_id ensures.
 
     Exactly one may_create_model=True, one pair, winner readable by
@@ -147,7 +151,7 @@ async def test_r6_concurrent_ensure_one_pair_one_model_claim() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r6_stale_generation_terminal_rejected() -> None:
+async def test_stale_generation_terminal_rejected() -> None:
     """Old claim_generation must not overwrite a newer generation's status."""
     from app.services.reader_record_ask.repository import (
         ReaderRecordAskRepository,

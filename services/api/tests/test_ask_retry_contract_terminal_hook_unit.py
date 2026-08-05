@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.asyncio
-async def test_r7_mark_does_not_fire_on_exception() -> None:
+async def test_mark_does_not_fire_on_exception() -> None:
     """False-success fix: exception must leave synced=False for compensate."""
     calls = {"n": 0}
 
@@ -50,7 +50,7 @@ async def test_r7_mark_does_not_fire_on_exception() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r7_ensure_synced_retries_intended_not_cancelled() -> None:
+async def test_ensure_synced_retries_intended_not_cancelled() -> None:
     """First write fails, second succeeds with same completed status."""
     attempts: list[str] = []
 
@@ -77,7 +77,7 @@ async def test_r7_ensure_synced_retries_intended_not_cancelled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r7_failed_and_cancelled_preserve_real_status() -> None:
+async def test_failed_and_cancelled_preserve_real_status() -> None:
     attempts: list[str] = []
 
     async def flaky(**kwargs: Any) -> None:
@@ -116,7 +116,7 @@ async def test_r7_failed_and_cancelled_preserve_real_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r7_remember_never_demotes_completed() -> None:
+async def test_remember_never_demotes_completed() -> None:
     hook = SubmissionTerminalHook(
         thread_id=uuid4(),
         client_submission_id=uuid4(),
@@ -128,7 +128,7 @@ async def test_r7_remember_never_demotes_completed() -> None:
     assert hook.intended_status == "completed"
 
 
-def test_r7_agentic_retries_ensure_synced() -> None:
+def test_agentic_retries_ensure_synced() -> None:
     src = (
         REPO_ROOT
         / "services"
@@ -143,14 +143,14 @@ def test_r7_agentic_retries_ensure_synced() -> None:
     assert "SubmissionTerminalHook" in src
 
 
-def test_r7_hook_mark_returns_bool() -> None:
+def test_hook_mark_returns_bool() -> None:
     sig = inspect.signature(SubmissionTerminalHook.mark)
     # Return annotation is bool
     assert sig.return_annotation is bool or "bool" in str(sig.return_annotation)
 
 
 @pytest.mark.asyncio
-async def test_r7_stale_generation_still_cas_guarded() -> None:
+async def test_stale_generation_still_cas_guarded() -> None:
     """Hook always passes claim_generation through to mark_submission_terminal."""
     seen: dict[str, Any] = {}
 
@@ -173,7 +173,7 @@ async def test_r7_stale_generation_still_cas_guarded() -> None:
     assert seen["status"] == "completed"
 
 
-def test_r7_fe_eof_triggers_reconcile_source() -> None:
+def test_fe_eof_triggers_reconcile_source() -> None:
     panel = (
         REPO_ROOT
         / "apps"

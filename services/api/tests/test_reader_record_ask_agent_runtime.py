@@ -1300,7 +1300,7 @@ async def test_t9_first_model_request_has_no_host_policy_surface() -> None:
 # T10: the host-assembled user prompt is byte-stable across model calls
 #      and carries no legacy host policy / correctness content.
 @pytest.mark.asyncio
-async def test_t10_user_prompt_byte_stable_across_retries() -> None:
+async def test_user_prompt_byte_stable_across_retries() -> None:
     import re
 
     initial_request_texts: list[str] = []

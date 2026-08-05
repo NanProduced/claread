@@ -227,7 +227,7 @@ def _resolve_dataset_dir() -> Path:
     Priority: ``CLAREAD_R4_A3_DATASET_DIR`` env only.
     No silent fallback — real runs MUST explicitly declare the dataset
     they are using. When the env is missing, the caller MUST fail-closed
-    before any provider call (see :func:`_r4_a3_env_gate` and
+    before any provider call (see :func:`_real_llm_eval_env_gate` and
     :func:`_preflight_check`).
 
     Returns the resolved :class:`Path`. Raises ``pytest.skip`` when the
@@ -251,7 +251,7 @@ def _resolve_dataset_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _r4_a3_env_gate() -> tuple[str, str]:
+def _real_llm_eval_env_gate() -> tuple[str, str]:
     """Return (authorized_short_name, runs_dir_str) or pytest.skip.
 
     Triple gate:
@@ -2532,7 +2532,7 @@ async def _prepare_phase(*, phase: int) -> PreparedPhaseContext:
     Fail-closed paths (raise ``pytest.skip``) — at zero model-builder
     calls and zero provider calls:
 
-    - env gate not open (``_r4_a3_env_gate``)
+    - env gate not open (``_real_llm_eval_env_gate``)
     - dataset dir missing or invalid (``_resolve_dataset_dir``)
     - dataset snapshot load failure (``load_r4_a3_dataset_with_snapshot``)
     - session/run_id missing (``_build_session_layout``)
@@ -2551,7 +2551,7 @@ async def _prepare_phase(*, phase: int) -> PreparedPhaseContext:
     :func:`_execute_phase` AFTER the model is built.
     """
     # 1. env authorization gate — triple gate (allow + R4_A3_RUN + model).
-    authorized_short_name, runs_dir_str = _r4_a3_env_gate()
+    authorized_short_name, runs_dir_str = _real_llm_eval_env_gate()
 
     # 2. explicit dataset-dir resolution — no silent fallback.
     dataset_dir = _resolve_dataset_dir()
@@ -3087,7 +3087,7 @@ async def _run_real_phase_entry(*, phase: int) -> PhaseRunResult:
 
 @pytest.mark.real_llm
 @pytest.mark.asyncio
-async def test_r4_a3_phase1_flash_non_thinking() -> None:
+async def test_phase1_flash_non_thinking() -> None:
     """Phase 1: Flash + thinking disabled, 3 reps per case (no early break).
 
     P0 seam: drives through the single ``_run_real_phase_entry(phase=1)``
@@ -3117,7 +3117,7 @@ async def test_r4_a3_phase1_flash_non_thinking() -> None:
 
 @pytest.mark.real_llm
 @pytest.mark.asyncio
-async def test_r4_a3_phase2_flash_thinking() -> None:
+async def test_phase2_flash_thinking() -> None:
     """Phase 2: Flash + thinking enabled, 1 rep per Phase 1 *evaluator* failure.
 
     P0 seam: drives through the single ``_run_real_phase_entry(phase=2)``
@@ -3147,7 +3147,7 @@ async def test_r4_a3_phase2_flash_thinking() -> None:
 
 @pytest.mark.real_llm
 @pytest.mark.asyncio
-async def test_r4_a3_phase3_pro_thinking() -> None:
+async def test_phase3_pro_thinking() -> None:
     """Phase 3: Pro + thinking, 1 rep per Phase 2 still-failure.
 
     P0 seam: drives through the single ``_run_real_phase_entry(phase=3)``
@@ -3267,7 +3267,7 @@ def _write_prior_artifact(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase1_dataset_env_missing_model_builder_zero(
+async def test_phase1_dataset_env_missing_model_builder_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """P0: Phase 1 missing dataset env → base_builder=0, thinking_builder=0.
@@ -3301,7 +3301,7 @@ async def test_p0_phase1_dataset_env_missing_model_builder_zero(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase2_prior_identity_mismatch_model_builder_zero(
+async def test_phase2_prior_identity_mismatch_model_builder_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3358,7 +3358,7 @@ async def test_p0_phase2_prior_identity_mismatch_model_builder_zero(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase3_prior_artifact_missing_identity_model_builder_zero(
+async def test_phase3_prior_artifact_missing_identity_model_builder_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3415,7 +3415,7 @@ async def test_p0_phase3_prior_artifact_missing_identity_model_builder_zero(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase1_bbc_env_missing_model_builder_zero(
+async def test_phase1_bbc_env_missing_model_builder_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3463,7 +3463,7 @@ async def test_p0_phase1_bbc_env_missing_model_builder_zero(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase1_runtime_input_preflight_failure_model_builder_zero(
+async def test_phase1_runtime_input_preflight_failure_model_builder_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3526,7 +3526,7 @@ async def test_p0_phase1_runtime_input_preflight_failure_model_builder_zero(
 
 
 @pytest.mark.asyncio
-async def test_p0_phase1_all_preflight_success_model_builder_called_once(
+async def test_phase1_all_preflight_success_model_builder_called_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3614,7 +3614,7 @@ def test_real_llm_gate_default_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(R4_A3_RUN_ENV, raising=False)
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
-        _r4_a3_env_gate()
+        _real_llm_eval_env_gate()
 
 
 def test_model_route_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3665,7 +3665,7 @@ def test_real_llm_gate_partial_env_skips(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv(R4_A3_RUN_ENV, raising=False)
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
-        _r4_a3_env_gate()
+        _real_llm_eval_env_gate()
 
 
 def test_real_llm_gate_missing_model_skips(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3674,7 +3674,7 @@ def test_real_llm_gate_missing_model_skips(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv(R4_A3_RUN_ENV, "1")
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
-        _r4_a3_env_gate()
+        _real_llm_eval_env_gate()
 
 
 # ---------------------------------------------------------------------------
@@ -3682,13 +3682,13 @@ def test_real_llm_gate_missing_model_skips(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_p0_1_resolve_dataset_dir_skips_when_env_missing(
+def test_resolve_dataset_dir_skips_when_env_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """P0-1: ``_resolve_dataset_dir`` raises ``pytest.skip`` when env is
     missing — no silent fallback to ``evals/tmp/...``.
 
-    Default pytest runs (gate closed) already skip at ``_r4_a3_env_gate``,
+    Default pytest runs (gate closed) already skip at ``_real_llm_eval_env_gate``,
     so this test simulates the case where the gate is open but the
     operator forgot to set ``CLAREAD_R4_A3_DATASET_DIR``. The harness
     must fail-closed before any provider call.
@@ -3698,7 +3698,7 @@ def test_p0_1_resolve_dataset_dir_skips_when_env_missing(
         _resolve_dataset_dir()
 
 
-def test_p0_1_resolve_dataset_dir_uses_env_when_set(
+def test_resolve_dataset_dir_uses_env_when_set(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3710,7 +3710,7 @@ def test_p0_1_resolve_dataset_dir_uses_env_when_set(
     assert resolved == Path(str(env_dir))
 
 
-def test_p0_1_dataset_env_missing_provider_calls_zero(
+def test_dataset_env_missing_provider_calls_zero(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3828,7 +3828,7 @@ def _make_minimal_model_config(
     )
 
 
-def test_p0_3_preflight_bbc_env_missing_fails_closed(
+def test_preflight_bbc_env_missing_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3866,7 +3866,7 @@ def test_p0_3_preflight_bbc_env_missing_fails_closed(
     )
 
 
-def test_p0_3_preflight_bbc_record_id_mismatch_fails_closed(
+def test_preflight_bbc_record_id_mismatch_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3895,7 +3895,7 @@ def test_p0_3_preflight_bbc_record_id_mismatch_fails_closed(
     assert result == "bbc_record_id_mismatch"
 
 
-def test_p0_3_preflight_bbc_case_missing_record_id_fails_closed(
+def test_preflight_bbc_case_missing_record_id_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3924,7 +3924,7 @@ def test_p0_3_preflight_bbc_case_missing_record_id_fails_closed(
     assert result == "bbc_case_missing_record_id"
 
 
-def test_p0_3_preflight_synthetic_only_passes_env_check(
+def test_preflight_synthetic_only_passes_env_check(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3952,7 +3952,7 @@ def test_p0_3_preflight_synthetic_only_passes_env_check(
 
 
 @pytest.mark.asyncio
-async def test_p0_3_preflight_runtime_inputs_synthetic_missing_article_skips(
+async def test_preflight_runtime_inputs_synthetic_missing_article_skips(
     tmp_path: Path,
 ) -> None:
     """P0-3: ``_preflight_runtime_inputs`` must skip the WHOLE phase when
@@ -3972,7 +3972,7 @@ async def test_p0_3_preflight_runtime_inputs_synthetic_missing_article_skips(
 
 
 @pytest.mark.asyncio
-async def test_p0_3_preflight_runtime_inputs_bbc_failure_skips_all(
+async def test_preflight_runtime_inputs_bbc_failure_skips_all(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4030,7 +4030,7 @@ async def test_p0_3_preflight_runtime_inputs_bbc_failure_skips_all(
 
 
 @pytest.mark.asyncio
-async def test_p0_3_preflight_runtime_inputs_all_ready_succeeds(
+async def test_preflight_runtime_inputs_all_ready_succeeds(
     tmp_path: Path,
 ) -> None:
     """P0-3: when ALL selected cases' runtime inputs are successfully
@@ -4104,7 +4104,7 @@ _VALID_FP_A = "a" * 64  # 64-char lowercase hex SHA-256 (test constant)
 _VALID_FP_B = "b" * 64  # different valid fingerprint
 
 
-def test_r4_a4_2r_verify_runtime_identity_no_expected_returns_normally() -> None:
+def test_verify_runtime_identity_no_expected_returns_normally() -> None:
     """Backwards-compat: case does not declare
     ``expected_envelope_fingerprint`` → no check is performed (returns
     normally even when the runtime fingerprint is missing).
@@ -4119,7 +4119,7 @@ def test_r4_a4_2r_verify_runtime_identity_no_expected_returns_normally() -> None
     _verify_runtime_identity(case, envelope)
 
 
-def test_r4_a4_2r_verify_runtime_identity_match_returns_normally() -> None:
+def test_verify_runtime_identity_match_returns_normally() -> None:
     """Scenario 1: expected == runtime → returns normally (preflight
     continues, model will be built)."""
     case = _make_minimal_case(
@@ -4130,7 +4130,7 @@ def test_r4_a4_2r_verify_runtime_identity_match_returns_normally() -> None:
     _verify_runtime_identity(case, envelope)
 
 
-def test_r4_a4_2r_verify_runtime_identity_mismatch_skips() -> None:
+def test_verify_runtime_identity_mismatch_skips() -> None:
     """Scenario 2: expected != runtime → pytest.skip (fail-closed BEFORE
     model builder is invoked, calls=0, builder=0).
 
@@ -4147,7 +4147,7 @@ def test_r4_a4_2r_verify_runtime_identity_mismatch_skips() -> None:
         _verify_runtime_identity(case, envelope)
 
 
-def test_r4_a4_2r_verify_runtime_identity_missing_runtime_skips() -> None:
+def test_verify_runtime_identity_missing_runtime_skips() -> None:
     """Scenario 2 (missing runtime): expected declared but runtime
     ``envelope_fingerprint`` is None → pytest.skip (fail-closed)."""
     case = _make_minimal_case(
@@ -4159,7 +4159,7 @@ def test_r4_a4_2r_verify_runtime_identity_missing_runtime_skips() -> None:
         _verify_runtime_identity(case, envelope)
 
 
-def test_r4_a4_2r_verify_runtime_identity_empty_runtime_skips() -> None:
+def test_verify_runtime_identity_empty_runtime_skips() -> None:
     """Scenario 2 (empty runtime): expected declared but runtime
     ``envelope_fingerprint`` is empty string → pytest.skip (fail-closed).
 
@@ -4175,7 +4175,7 @@ def test_r4_a4_2r_verify_runtime_identity_empty_runtime_skips() -> None:
         _verify_runtime_identity(case, envelope)
 
 
-def test_r4_a4_2r_verify_runtime_identity_empty_expected_skips() -> None:
+def test_verify_runtime_identity_empty_expected_skips() -> None:
     """Edge case: empty-string expected fingerprint can never match a
     valid 64-char runtime → pytest.skip.
 
@@ -4194,7 +4194,7 @@ def test_r4_a4_2r_verify_runtime_identity_empty_expected_skips() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r_preflight_runtime_inputs_skips_on_identity_mismatch(
+async def test_preflight_runtime_inputs_skips_on_identity_mismatch(
     tmp_path: Path,
 ) -> None:
     """Scenario 2 (integration): ``_preflight_runtime_inputs`` skips
@@ -4202,7 +4202,7 @@ async def test_r4_a4_2r_preflight_runtime_inputs_skips_on_identity_mismatch(
     any provider call.
 
     This is the integration counterpart to
-    :func:`test_r4_a4_2r_verify_runtime_identity_mismatch_skips`. The
+    :func:`test_verify_runtime_identity_mismatch_skips`. The
     skip fires at zero paid calls because
     ``_preflight_runtime_inputs`` is called BEFORE
     ``BudgetedUsageModel`` wraps the provider model.
@@ -4222,7 +4222,7 @@ async def test_r4_a4_2r_preflight_runtime_inputs_skips_on_identity_mismatch(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r_preflight_runtime_inputs_passes_when_no_expected_declared(
+async def test_preflight_runtime_inputs_passes_when_no_expected_declared(
     tmp_path: Path,
 ) -> None:
     """Scenario 1 (integration): when a case does not declare
@@ -4281,7 +4281,7 @@ class _FakeBudget:
         return self._output_tokens
 
 
-def test_p1_1_two_single_request_cases_artifact_delta_1_1_aggregate_2() -> None:
+def test_two_single_request_cases_artifact_delta_1_1_aggregate_2() -> None:
     """P1-1: two cases, each making 1 provider request, must produce
     ``artifact.executed_requests = [1, 1]`` and aggregate = 2.
 
@@ -4324,7 +4324,7 @@ def test_p1_1_two_single_request_cases_artifact_delta_1_1_aggregate_2() -> None:
     assert aggregate_tokens == 160
 
 
-def test_p1_1_second_case_with_two_requests_artifact_delta_1_2_aggregate_3() -> None:
+def test_second_case_with_two_requests_artifact_delta_1_2_aggregate_3() -> None:
     """P1-1: case A makes 1 request, case B makes 2 requests (e.g. tool
     loop). Artifacts must be ``[1, 2]`` and aggregate = 3.
 
@@ -4358,7 +4358,7 @@ def test_p1_1_second_case_with_two_requests_artifact_delta_1_2_aggregate_3() -> 
     )
 
 
-def test_p1_1_budget_stop_preserves_real_global_cumulative() -> None:
+def test_budget_stop_preserves_real_global_cumulative() -> None:
     """P1-1: when a budget stop fires, the :class:`BudgetStopResult`
     must carry the REAL global cumulative counts (not a delta).
 
@@ -4385,7 +4385,7 @@ def test_p1_1_budget_stop_preserves_real_global_cumulative() -> None:
     assert cumulative_tokens == 240
 
 
-def test_p1_1_delta_does_not_affect_usage_observability_evaluator() -> None:
+def test_delta_does_not_affect_usage_observability_evaluator() -> None:
     """P1-1: the per-artifact delta must not break the
     ``usage_observability`` evaluator. The evaluator checks that
     ``artifact.agent_usage`` is non-None and has plausible counts —
@@ -4423,7 +4423,7 @@ class _FakeCase:
         self.id = case_id
 
 
-def test_p1_budget_stop_spec_example_a_done_b_mid_c_pending() -> None:
+def test_budget_stop_spec_example_a_done_b_mid_c_pending() -> None:
     """P1 spec example: cases=[A,B,C], reps=3, A fully done, B stops at
     run_index=1.
 
@@ -4445,7 +4445,7 @@ def test_p1_budget_stop_spec_example_a_done_b_mid_c_pending() -> None:
     assert remaining_run_indices == {"B": [1, 2], "C": [0, 1, 2]}
 
 
-def test_p1_budget_stop_prior_completed_case_not_in_remaining_map() -> None:
+def test_budget_stop_prior_completed_case_not_in_remaining_map() -> None:
     """P1: a prior case that fully completed (3 reps) MUST NOT appear in
     ``remaining_cases`` OR ``remaining_run_indices`` — otherwise the
     report would re-mark completed reps as missing.
@@ -4467,7 +4467,7 @@ def test_p1_budget_stop_prior_completed_case_not_in_remaining_map() -> None:
     assert remaining_run_indices == {"C": [0, 1, 2]}
 
 
-def test_p1_budget_stop_current_case_mid_rep() -> None:
+def test_budget_stop_current_case_mid_rep() -> None:
     """P1: current case stops mid-rep — ``range(run_index, reps)``
     includes the failed rep AND subsequent reps, but excludes already-
     completed reps of the current case.
@@ -4485,7 +4485,7 @@ def test_p1_budget_stop_current_case_mid_rep() -> None:
     assert remaining_run_indices == {"B": [1, 2]}
 
 
-def test_p1_budget_stop_current_case_first_rep() -> None:
+def test_budget_stop_current_case_first_rep() -> None:
     """P1: budget stops on the current case's FIRST repetition (run_index=0)
     — the entire case is pending (range(0, reps) == all reps)."""
     cases = [_FakeCase("A"), _FakeCase("B"), _FakeCase("C")]
@@ -4503,7 +4503,7 @@ def test_p1_budget_stop_current_case_first_rep() -> None:
     }
 
 
-def test_p1_budget_stop_last_case_last_rep() -> None:
+def test_budget_stop_last_case_last_rep() -> None:
     """P1: budget stops on the LAST case's LAST repetition — only that
     single rep is remaining (range(last_index, reps) == [last_index]).
     """
@@ -4519,7 +4519,7 @@ def test_p1_budget_stop_last_case_last_rep() -> None:
     assert remaining_run_indices == {"C": [2]}
 
 
-def test_p1_budget_stop_remaining_cases_equals_map_keys() -> None:
+def test_budget_stop_remaining_cases_equals_map_keys() -> None:
     """P1 invariant: ``list(remaining_run_indices.keys()) == remaining_cases``.
 
     This must hold for every stop position. We sweep several
@@ -4568,7 +4568,7 @@ def test_p1_budget_stop_remaining_cases_equals_map_keys() -> None:
         )
 
 
-def test_p1_budget_stop_report_does_not_count_completed_as_missing() -> None:
+def test_budget_stop_report_does_not_count_completed_as_missing() -> None:
     """P1: the report MUST NOT count completed case artifacts as missing.
 
     This is the user-facing consequence of the remaining-structure
@@ -5165,7 +5165,7 @@ def _make_dataset_identity() -> DatasetIdentity:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r3_scenario1_preflight_equals_actual_pass(
+async def test_preflight_equals_actual_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 1: success path — the artifact's recomputed
@@ -5244,7 +5244,7 @@ async def test_r4_a4_2r3_scenario1_preflight_equals_actual_pass(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r3_scenario2_actual_differs_from_preflight(
+async def test_actual_differs_from_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 2: when the baseline assembler produces different chunks
@@ -5344,7 +5344,7 @@ async def test_r4_a4_2r3_scenario2_actual_differs_from_preflight(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r3_scenario2_baseline_unavailable_actual_null(
+async def test_baseline_unavailable_actual_null(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 2 (variant): when the baseline assembler yields 0 chunks
@@ -5418,7 +5418,7 @@ async def test_r4_a4_2r3_scenario2_baseline_unavailable_actual_null(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r3_scenario3_runtime_exception_actual_null(
+async def test_runtime_exception_actual_null(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 3: runtime exception → ``runtime_fixture_fingerprint=None``
@@ -5489,7 +5489,7 @@ async def test_r4_a4_2r3_scenario3_runtime_exception_actual_null(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r3_scenario3_budget_exhausted_propagates(
+async def test_budget_exhausted_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 3 (variant): ``BudgetExhaustedError`` is re-raised by
@@ -5579,7 +5579,7 @@ async def test_r4_a4_2r3_scenario3_budget_exhausted_propagates(
 # then raise) without any class-level mutation.
 
 
-def _make_r4_a4_2r5_baseline(
+def _make_exception_path_baseline(
     *,
     chunks: tuple[ModelContextChunk, ...],
     baseline_status: str = "injected",
@@ -5649,7 +5649,7 @@ def _install_fake_runtime_that_captures_then_raises(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5_preflight_differs_from_actual_on_exception_path(
+async def test_preflight_differs_from_actual_on_exception_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 1: preflight fingerprint differs from the actual
@@ -5690,7 +5690,7 @@ async def test_r4_a4_2r5_preflight_differs_from_actual_on_exception_path(
             handle_id="evh_r5_actual_b",
         ),
     )
-    actual_baseline = _make_r4_a4_2r5_baseline(chunks=actual_chunks)
+    actual_baseline = _make_exception_path_baseline(chunks=actual_chunks)
 
     # R4-A4-2R5R Task 1: use the typed observation seam instead of the
     # class-level ``patch.object(BaselineContextAssembler, ...)``. The
@@ -5742,7 +5742,7 @@ async def test_r4_a4_2r5_preflight_differs_from_actual_on_exception_path(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5_unexpected_model_behavior_after_baseline_capture(
+async def test_unexpected_model_behavior_after_baseline_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 2: ``UnexpectedModelBehavior`` raised AFTER baseline
@@ -5767,7 +5767,7 @@ async def test_r4_a4_2r5_unexpected_model_behavior_after_baseline_capture(
             handle_id="evh_r5_retry",
         ),
     )
-    actual_baseline = _make_r4_a4_2r5_baseline(chunks=actual_chunks)
+    actual_baseline = _make_exception_path_baseline(chunks=actual_chunks)
 
     case = _make_minimal_case(
         case_id="case-r5-scenario2",
@@ -5835,7 +5835,7 @@ async def test_r4_a4_2r5_unexpected_model_behavior_after_baseline_capture(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5_exception_before_baseline_capture(
+async def test_exception_before_baseline_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 3: exception raised BEFORE baseline capture →
@@ -5907,7 +5907,7 @@ async def test_r4_a4_2r5_exception_before_baseline_capture(
     assert artifact.runtime_fixture_fingerprint != preflight_fp
 
 
-def test_r4_a4_2r5_output_retry_exhausted_classification() -> None:
+def test_output_retry_exhausted_classification() -> None:
     """Scenario 4: ``_classify_exception_safe_code`` maps exception
     types to the R4-A4-2R5R2 + R4-A4-2R5R3 failure taxonomy using
     PRECISE typed retry evidence AND typed execution-stage evidence.
@@ -6116,7 +6116,7 @@ def test_r4_a4_2r5_output_retry_exhausted_classification() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5_exception_path_does_not_copy_preflight(
+async def test_exception_path_does_not_copy_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 5: even when ``case.expected_runtime_fixture_fingerprint``
@@ -6159,7 +6159,7 @@ async def test_r4_a4_2r5_exception_path_does_not_copy_preflight(
             handle_id="evh_r5_scenario5",
         ),
     )
-    actual_baseline = _make_r4_a4_2r5_baseline(chunks=actual_chunks)
+    actual_baseline = _make_exception_path_baseline(chunks=actual_chunks)
 
     # R4-A4-2R5R2 Task 1: typed observation seam — no class-level patch.
     # Both ``output_validation_final_attempts`` and
@@ -6203,7 +6203,7 @@ async def test_r4_a4_2r5_exception_path_does_not_copy_preflight(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5_safe_error_code_no_sensitive_info(
+async def test_safe_error_code_no_sensitive_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scenario 6: ``safe_error_code`` is allowlisted and ``error``
@@ -6234,7 +6234,7 @@ async def test_r4_a4_2r5_safe_error_code_no_sensitive_info(
             handle_id="evh_r5_sensitive",
         ),
     )
-    actual_baseline = _make_r4_a4_2r5_baseline(chunks=actual_chunks)
+    actual_baseline = _make_exception_path_baseline(chunks=actual_chunks)
 
     case = _make_minimal_case(
         case_id="case-r5-scenario6",
@@ -6303,7 +6303,7 @@ async def test_r4_a4_2r5_safe_error_code_no_sensitive_info(
     assert "UnexpectedModelBehavior" in artifact.error or "output_retry_exhausted" in artifact.error
 
 
-def test_r4_a4_2r5_preflight_guard_blocks_migrated_atomic_facts() -> None:
+def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
     """R4-A4-2R5R2 Task 4: preflight guard blocks real_phase1 cases
     that rely on legacy auto-migration from ``required_article_facts``.
 
@@ -6454,7 +6454,7 @@ def test_r4_a4_2r5_preflight_guard_blocks_migrated_atomic_facts() -> None:
     _preflight_guard_real_phase1_atomic_facts_explicit(case_offline)
 
 
-def test_r4_a4_2r5_preflight_guard_partial_migration_blocks() -> None:
+def test_preflight_guard_partial_migration_blocks() -> None:
     """R4-A4-2R5R2 Task 4: a case that declares explicit atomic_facts
     AND legacy required_article_facts is treated as ``"explicit"`` —
     the explicit facts win and the legacy field is dead weight.
@@ -6518,7 +6518,7 @@ def test_r4_a4_2r5_preflight_guard_partial_migration_blocks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r4_a4_2r5r_scenario7_observer_default_is_none_in_production() -> None:
+def test_observer_default_is_none_in_production() -> None:
     """Scenario 7: observer defaults to ``None`` on the production path.
 
     R4-A4-2R5R Task 1: the observation seam is internal-only and
@@ -6571,7 +6571,7 @@ def test_r4_a4_2r5r_scenario7_observer_default_is_none_in_production() -> None:
     assert obs.output_validation_retry_requests == 0
 
 
-def test_r4_a4_2r5r_scenario8_observer_concurrency_isolation() -> None:
+def test_observer_concurrency_isolation() -> None:
     """Scenario 8: observer is concurrency-safe by construction.
 
     R4-A4-2R5R Task 1: the observation seam uses a per-call mutable
@@ -6726,7 +6726,7 @@ def test_r4_a4_2r5r_scenario8_observer_concurrency_isolation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> None:
+async def test_function_model_three_output_retries() -> None:
     """Scenario 9: real FunctionModel integration — 3 output-validator
     calls then ``UnexpectedModelBehavior``.
 
@@ -6955,7 +6955,7 @@ async def test_r4_a4_2r5r_scenario9_function_model_three_output_retries() -> Non
     )
 
 
-def test_r4_a4_2r5r_scenario12_safe_error_code_strict_load() -> None:
+def test_safe_error_code_strict_load() -> None:
     """Scenario 12: ``RawArtifact.safe_error_code`` is a strict
     :data:`SafeErrorCode` Literal — single source of truth.
 
@@ -7072,7 +7072,7 @@ _UNSET = object()
 # ---------------------------------------------------------------------------
 
 
-def _build_validator_ctx_for_r5r2(
+def _build_validator_retry_ctx(
     *,
     observation: RuntimeObservation,
     partial_output: bool = False,
@@ -7144,7 +7144,7 @@ def _build_validator_ctx_for_r5r2(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
+async def test_partial_validator_call_not_counted() -> None:
     """R4-A4-2R5R2 Task 5: partial-mode validator calls do NOT
     increment ``output_validation_final_attempts`` or
     ``output_validation_retry_requests``.
@@ -7171,7 +7171,7 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
 
     # --- Case 1: partial-mode pass → no counter increment ---
     observation_1 = RuntimeObservation()
-    ctx_pass = _build_validator_ctx_for_r5r2(
+    ctx_pass = _build_validator_retry_ctx(
         observation=observation_1,
         partial_output=True,
     )
@@ -7204,7 +7204,7 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
     # ``if not getattr(draft, "response_kind", None)`` handles this by
     # raising ModelRetry (nudge the model to include response_kind).
     observation_2 = RuntimeObservation()
-    ctx_retry = _build_validator_ctx_for_r5r2(
+    ctx_retry = _build_validator_retry_ctx(
         observation=observation_2,
         partial_output=True,
     )
@@ -7229,7 +7229,7 @@ async def test_r4_a4_2r5r2_partial_validator_call_not_counted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
+async def test_final_success_attempts_one_retry_zero() -> None:
     """R4-A4-2R5R2 Task 5: final-mode validator success —
     ``output_validation_final_attempts == 1`` and
     ``output_validation_retry_requests == 0``.
@@ -7247,7 +7247,7 @@ async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
     )
 
     observation = RuntimeObservation()
-    ctx = _build_validator_ctx_for_r5r2(
+    ctx = _build_validator_retry_ctx(
         observation=observation,
         partial_output=False,
     )
@@ -7284,7 +7284,7 @@ async def test_r4_a4_2r5r2_final_success_attempts_one_retry_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
+async def test_one_retry_then_success() -> None:
     """R4-A4-2R5R2 Task 5: FunctionModel returns an invalid draft
     once, then a valid draft — ``final_attempts == 2`` and
     ``retry_requests == 1``.
@@ -7507,7 +7507,7 @@ async def test_r4_a4_2r5r2_one_retry_then_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r2_validator_passes_three_times_then_other_umb_conservative(
+async def test_validator_passes_three_times_then_other_umb_conservative(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R4-A4-2R5R2 Task 5: validator called 3 times, ALL passed
@@ -7535,7 +7535,7 @@ async def test_r4_a4_2r5r2_validator_passes_three_times_then_other_umb_conservat
     )
 
     # Baseline with chunks (so capture_status will be "captured").
-    baseline = _make_r4_a4_2r5_baseline(
+    baseline = _make_exception_path_baseline(
         chunks=(
             _make_baseline_chunk(chunk_ordinal=0, text="chunk-A."),
         ),
@@ -7600,7 +7600,7 @@ async def test_r4_a4_2r5r2_validator_passes_three_times_then_other_umb_conservat
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r2_raw_artifact_full_chain_output_retry_exhausted(
+async def test_raw_artifact_full_chain_output_retry_exhausted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R4-A4-2R5R2 Task 5: full RawArtifact chain through
@@ -7659,7 +7659,7 @@ async def test_r4_a4_2r5r2_raw_artifact_full_chain_output_retry_exhausted(
         "test setup invariant: runtime chunks MUST differ from preflight"
     )
 
-    baseline = _make_r4_a4_2r5_baseline(
+    baseline = _make_exception_path_baseline(
         chunks=runtime_chunks,
         baseline_status="injected",
         is_complete=True,
@@ -7732,7 +7732,7 @@ async def test_r4_a4_2r5r2_raw_artifact_full_chain_output_retry_exhausted(
     assert len(artifact.model_context_fingerprint) == 64
 
 
-def test_r4_a4_2r5r2_typed_provenance_unforgeable_by_dataset_json() -> None:
+def test_typed_provenance_unforgeable_by_dataset_json() -> None:
     """R4-A4-2R5R2 Task 5: dataset JSON CANNOT forge ``"explicit"``
     provenance on individual :class:`AtomicExpectedFact` entries.
 
@@ -7914,7 +7914,7 @@ def test_r4_a4_2r5r2_typed_provenance_unforgeable_by_dataset_json() -> None:
     )
 
 
-def test_r4_a4_2r5r3_loader_provenance_through_formal_dataset_loader(
+def test_loader_provenance_through_formal_dataset_loader(
     tmp_path: Path,
 ) -> None:
     """R4-A4-2R5R3 Issue #2: loader-owned provenance is set correctly
@@ -8137,7 +8137,7 @@ def test_r4_a4_2r5r3_loader_provenance_through_formal_dataset_loader(
         _preflight_guard_real_phase1_atomic_facts_explicit(case_b)
 
 
-def test_r4_a4_2r5r3_loader_provenance_explicit_with_legacy_field_is_explicit(
+def test_loader_provenance_explicit_with_legacy_field_is_explicit(
     tmp_path: Path,
 ) -> None:
     """R4-A4-2R5R3 Issue #2 supplementary: when a case JSON declares
@@ -8152,7 +8152,7 @@ def test_r4_a4_2r5r3_loader_provenance_explicit_with_legacy_field_is_explicit(
     ``raw_required_article_facts``.
 
     R4-A4-2R5R2 Task 5's
-    ``test_r4_a4_2r5_preflight_guard_partial_migration_blocks`` tested
+    ``test_preflight_guard_partial_migration_blocks`` tested
     this branch by directly constructing a Pydantic case and directly
     setting ``_atomic_facts_origin = "explicit"``. This R5R3 test
     closes the same boundary through the FORMAL loader, proving the
@@ -8246,7 +8246,7 @@ def test_r4_a4_2r5r3_loader_provenance_explicit_with_legacy_field_is_explicit(
     _preflight_guard_real_phase1_atomic_facts_explicit(case)
 
 
-def test_r4_a4_2r5r3_loader_provenance_empty_both_fields_is_explicit(
+def test_loader_provenance_empty_both_fields_is_explicit(
     tmp_path: Path,
 ) -> None:
     """R4-A4-2R5R3 Issue #2 boundary: when a case JSON declares NEITHER
@@ -8332,11 +8332,11 @@ def test_r4_a4_2r5r3_loader_provenance_empty_both_fields_is_explicit(
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() -> None:
+async def test_function_model_full_chain_output_retry_exhausted() -> None:
     """R4-A4-2R5R3 Issue #3: REAL FunctionModel → ``_run_one_case`` →
     RawArtifact with ``output_retry_exhausted``.
 
-    Unlike ``test_r4_a4_2r5r2_raw_artifact_full_chain_output_retry_exhausted``
+    Unlike ``test_raw_artifact_full_chain_output_retry_exhausted``
     (which uses ``_install_fake_runtime_that_captures_then_raises`` +
     ``_FakeBudgetedModelForManifest``), this test drives the FULL real
     path through ``_run_one_case``:
@@ -8615,7 +8615,7 @@ async def test_r4_a4_2r5r3_function_model_full_chain_output_retry_exhausted() ->
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exception(
+async def test_function_model_finalizer_validation_error_runtime_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R4-A4-2R5R3 Issue #3: REAL FunctionModel → validator passes →
@@ -8944,7 +8944,7 @@ async def test_r4_a4_2r5r3_function_model_finalizer_validation_error_runtime_exc
 
 
 @pytest.mark.asyncio
-async def test_r4_a4_2r5r4_output_validation_stage_is_validator_owned(
+async def test_output_validation_stage_is_validator_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only the validator-owned nested stage may classify ValidationError as output."""
@@ -8996,7 +8996,7 @@ async def test_r4_a4_2r5r4_output_validation_stage_is_validator_owned(
     )
 
 
-def test_r4_a4_2r5r4_unknown_atomic_facts_origin_fails_closed() -> None:
+def test_unknown_atomic_facts_origin_fails_closed() -> None:
     """Paid-run provenance is an allowlist: only explicit may continue."""
     from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
         AtomicExpectedFact,
