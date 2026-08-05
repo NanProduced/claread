@@ -117,7 +117,7 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 # sizes must match exactly — an equality ratchet, so a shrunk allowlist
 # can never grow back.
 TEST_FILE_ALLOWLIST_CEILING = 0
-PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
+PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 0
 TEST_IDENTIFIER_ALLOWLIST_CEILING = 0
 
 
@@ -177,37 +177,11 @@ def _name_has_task_number(name: str) -> bool:
 # forbidden and must be renamed to business names instead.
 TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset()
 
-# Existing production symbols embedding task numbers (file:symbol,
-# relative to services/api). Same ratchet rules as above. Renaming a
-# listed symbol requires removing its entry in the same change.
-TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "app/services/reader_orchestration/job_bootstrap.py:ZPlusBootstrapService",
-        "app/services/reader_orchestration/job_bootstrap.py:_bootstrap_grammar_jobs_or_zplus",
-        "app/services/reader_orchestration/job_bootstrap.py:use_zplus_grammar_path",
-        "app/services/reader_orchestration/job_bootstrap.py:zplus_service",
-        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_COLUMNS",
-        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_CONSTRAINTS",
-        "app/services/reader_orchestration/schema_health.py:READER_D5_REQUIRED_INDEXES",
-        "app/services/reader_orchestration/schema_health.py:READER_D6_ANCHOR_COLUMNS",
-        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS",
-        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_COLUMNS",
-        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_INDEXES",
-        "app/services/reader_orchestration/schema_health.py:READER_D6_REQUIRED_NULLABLE_COLUMNS",
-        "app/services/reader_orchestration/schema_health.py:ReaderD5SchemaHealthReport",
-        "app/services/reader_orchestration/schema_health.py:_has_reader_d5_schema_drift",
-        "app/services/reader_orchestration/schema_health.py:_has_reader_d6_schema_drift",
-        "app/services/reader_orchestration/schema_health.py:check_reader_d5_schema_health",
-        "app/services/reader_orchestration/schema_health.py:d5_constraint_names",
-        "app/services/reader_orchestration/schema_health.py:d5_table_prefixes",
-        "app/services/reader_orchestration/schema_health.py:d6_constraint_names",
-        "app/services/reader_orchestration/schema_health.py:d6_table_prefixes",
-        "app/services/reader_orchestration/schema_health.py:format_reader_d5_schema_health_failure",
-        "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapResult",
-        "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapService",
-        "app/services/reader_record_ask/production_stream.py:_sync_submission_terminal_r6",
-    }
-)
+# Production-symbol allowlist is empty after TEST-GOVERNANCE production-symbol
+# governance: D5/D6/ZPlus/R6 Python identifiers renamed to business names.
+# Wire strings (failure_code values, ZPLUS_* policy/job_type constants, env
+# values CLAREAD_R4_A3_*) remain durable contracts and are not scanned.
+TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset()
 
 # P3 closeout: identifier allowlist is empty. Former entries (R4_A3_*_ENV
 # Python names, schema-health d5/d6 test names, round0 test name) were
@@ -381,7 +355,7 @@ def test_task_code_pattern_passes_business_names() -> None:
         "_make_write_chunk",
         "TestFreezePersistenceSqlOrder",
         "advance_round",
-        "zplus_service",
+        "grammar_window_service",
         "layer1_fnv1a32",
         "test_utf8_encode_roundtrip",
         "test_utf8_roundtrip",

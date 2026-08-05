@@ -9,7 +9,7 @@ USER_CREDIT_LEDGER_TABLE = "user_credit_ledger"
 USER_ANNOTATIONS_TABLE = "user_annotations"
 READER_NOTES_TABLE = "reader_notes"
 
-READER_D5_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+READER_ATTRIBUTION_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     AI_USAGE_EVENTS_TABLE: (
         "reading_record_id",
         "reader_run_id",
@@ -26,7 +26,7 @@ READER_D5_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-READER_D5_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
+READER_ATTRIBUTION_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     AI_USAGE_EVENTS_TABLE: (
         "idx_ai_usage_events_reading_record",
         "idx_ai_usage_events_reader_run",
@@ -42,7 +42,7 @@ READER_D5_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-READER_D5_REQUIRED_CONSTRAINTS: dict[str, tuple[str, ...]] = {
+READER_ATTRIBUTION_REQUIRED_CONSTRAINTS: dict[str, tuple[str, ...]] = {
     AI_USAGE_EVENTS_TABLE: (
         "fk_ai_usage_events_reading_record",
         "fk_ai_usage_events_reader_run",
@@ -56,7 +56,7 @@ READER_D5_REQUIRED_CONSTRAINTS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-READER_D6_ANCHOR_COLUMNS = (
+READER_ANCHOR_COLUMNS = (
     "reading_record_id",
     "base_id",
     "generation",
@@ -66,16 +66,16 @@ READER_D6_ANCHOR_COLUMNS = (
     "unit_end_utf16",
 )
 
-READER_D6_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
-    USER_ANNOTATIONS_TABLE: READER_D6_ANCHOR_COLUMNS,
-    READER_NOTES_TABLE: READER_D6_ANCHOR_COLUMNS,
+READER_ANCHOR_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    USER_ANNOTATIONS_TABLE: READER_ANCHOR_COLUMNS,
+    READER_NOTES_TABLE: READER_ANCHOR_COLUMNS,
 }
 
 # DATA-SCHEMA-BASELINE D2: legacy dual-contract columns are dropped from the
 # baseline, so there are no legacy columns left to require-nullable.
-READER_D6_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {}
+READER_ANCHOR_REQUIRED_NULLABLE_COLUMNS: dict[str, tuple[str, ...]] = {}
 
-READER_D6_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
+READER_ANCHOR_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     USER_ANNOTATIONS_TABLE: (
         "idx_user_annotations_reading_record",
         "uq_user_annotations_reading_record_anchor",
@@ -86,7 +86,7 @@ READER_D6_REQUIRED_INDEXES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
+READER_ANCHOR_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
     str, dict[str, tuple[str, ...]]
 ] = {
     USER_ANNOTATIONS_TABLE: {
@@ -109,7 +109,7 @@ READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS: dict[
 
 
 @dataclass(frozen=True, slots=True)
-class ReaderD5SchemaHealthReport:
+class ReaderSchemaHealthReport:
     schema_name: str
     missing_columns: tuple[str, ...]
     missing_indexes: tuple[str, ...]
@@ -140,18 +140,18 @@ class ReaderD5SchemaHealthReport:
         }
 
 
-def _has_reader_d6_schema_drift(report: ReaderD5SchemaHealthReport) -> bool:
-    d6_table_prefixes = (
+def _has_anchor_schema_drift(report: ReaderSchemaHealthReport) -> bool:
+    anchor_table_prefixes = (
         f"{USER_ANNOTATIONS_TABLE}.",
         f"{READER_NOTES_TABLE}.",
     )
-    d6_constraint_names = {
+    anchor_constraint_names = {
         constraint_name
-        for constraint_by_table in READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.values()
+        for constraint_by_table in READER_ANCHOR_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.values()
         for constraint_name in constraint_by_table
     }
     return any(
-        name.startswith(d6_table_prefixes)
+        name.startswith(anchor_table_prefixes)
         for name in (
             *report.missing_columns,
             *report.invalid_constraints,
@@ -159,43 +159,43 @@ def _has_reader_d6_schema_drift(report: ReaderD5SchemaHealthReport) -> bool:
         )
     ) or any(
         index_name in index_names
-        for index_names in READER_D6_REQUIRED_INDEXES.values()
+        for index_names in READER_ANCHOR_REQUIRED_INDEXES.values()
         for index_name in report.missing_indexes
     ) or any(
-        constraint_name in d6_constraint_names
+        constraint_name in anchor_constraint_names
         for constraint_name in report.missing_constraints
     )
 
 
-def _has_reader_d5_schema_drift(report: ReaderD5SchemaHealthReport) -> bool:
-    d5_table_prefixes = (
+def _has_attribution_schema_drift(report: ReaderSchemaHealthReport) -> bool:
+    attribution_table_prefixes = (
         f"{AI_USAGE_EVENTS_TABLE}.",
         f"{USER_CREDIT_LEDGER_TABLE}.",
     )
-    d5_constraint_names = {
+    attribution_constraint_names = {
         constraint_name
-        for constraint_names in READER_D5_REQUIRED_CONSTRAINTS.values()
+        for constraint_names in READER_ATTRIBUTION_REQUIRED_CONSTRAINTS.values()
         for constraint_name in constraint_names
     }
     return any(
-        constraint_name in d5_constraint_names
+        constraint_name in attribution_constraint_names
         for constraint_name in report.missing_constraints
     ) or any(
-        name.startswith(d5_table_prefixes) for name in report.missing_columns
+        name.startswith(attribution_table_prefixes) for name in report.missing_columns
     ) or any(
         index_name in index_names
-        for index_names in READER_D5_REQUIRED_INDEXES.values()
+        for index_names in READER_ATTRIBUTION_REQUIRED_INDEXES.values()
         for index_name in report.missing_indexes
     )
 
 
 def reader_schema_health_failure_codes(
-    report: ReaderD5SchemaHealthReport,
+    report: ReaderSchemaHealthReport,
 ) -> tuple[str, ...]:
     codes: list[str] = []
-    if _has_reader_d5_schema_drift(report):
+    if _has_attribution_schema_drift(report):
         codes.append("reader_d5_attribution_schema_drift")
-    if _has_reader_d6_schema_drift(report):
+    if _has_anchor_schema_drift(report):
         codes.append("reader_d6_anchor_migration_missing")
     return tuple(codes)
 
@@ -204,8 +204,8 @@ def _normalize_constraint_definition(value: str) -> str:
     return " ".join(value.upper().split())
 
 
-def format_reader_d5_schema_health_failure(
-    report: ReaderD5SchemaHealthReport,
+def format_reader_schema_health_failure(
+    report: ReaderSchemaHealthReport,
 ) -> str:
     lines = [
         f"Reader schema health check failed for schema '{report.schema_name}'.",
@@ -221,7 +221,7 @@ def format_reader_d5_schema_health_failure(
     lines.extend(
         f"- column must allow NULL: {name}" for name in report.non_nullable_columns
     )
-    if _has_reader_d6_schema_drift(report):
+    if _has_anchor_schema_drift(report):
         lines.extend(
             (
                 "",
@@ -239,7 +239,7 @@ def format_reader_d5_schema_health_failure(
                 "-f /tmp/0001_initial.sql",
             )
         )
-    if _has_reader_d5_schema_drift(report):
+    if _has_attribution_schema_drift(report):
         lines.extend(
             (
                 "",
@@ -263,27 +263,27 @@ def format_reader_d5_schema_health_failure(
     return "\n".join(lines)
 
 
-async def check_reader_d5_schema_health(
+async def check_reader_schema_health(
     conn: asyncpg.Connection,
     *,
     schema_name: str = "public",
-) -> ReaderD5SchemaHealthReport:
+) -> ReaderSchemaHealthReport:
     required_columns = {
-        **READER_D5_REQUIRED_COLUMNS,
-        **READER_D6_REQUIRED_COLUMNS,
+        **READER_ATTRIBUTION_REQUIRED_COLUMNS,
+        **READER_ANCHOR_REQUIRED_COLUMNS,
     }
     required_indexes = {
-        **READER_D5_REQUIRED_INDEXES,
-        **READER_D6_REQUIRED_INDEXES,
+        **READER_ATTRIBUTION_REQUIRED_INDEXES,
+        **READER_ANCHOR_REQUIRED_INDEXES,
     }
     required_check_constraints = {
         table_name: tuple(constraint_snippets.keys())
         for table_name, constraint_snippets in (
-            READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.items()
+            READER_ANCHOR_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.items()
         )
     }
     required_constraints = {
-        **READER_D5_REQUIRED_CONSTRAINTS,
+        **READER_ATTRIBUTION_REQUIRED_CONSTRAINTS,
         **required_check_constraints,
     }
     required_tables = tuple(required_columns.keys())
@@ -375,7 +375,7 @@ async def check_reader_d5_schema_health(
     invalid_constraints = tuple(
         f"{table_name}.{constraint_name}"
         for table_name, constraint_snippets in (
-            READER_D6_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.items()
+            READER_ANCHOR_REQUIRED_CHECK_CONSTRAINT_SNIPPETS.items()
         )
         for constraint_name, required_snippets in constraint_snippets.items()
         if (table_name, constraint_name) in existing_constraints
@@ -389,13 +389,13 @@ async def check_reader_d5_schema_health(
     )
     non_nullable_columns = tuple(
         f"{table_name}.{column_name}"
-        for table_name, column_names in READER_D6_REQUIRED_NULLABLE_COLUMNS.items()
+        for table_name, column_names in READER_ANCHOR_REQUIRED_NULLABLE_COLUMNS.items()
         for column_name in column_names
         if (table_name, column_name) in existing_columns
         and (table_name, column_name) not in nullable_columns
     )
 
-    return ReaderD5SchemaHealthReport(
+    return ReaderSchemaHealthReport(
         schema_name=schema_name,
         missing_columns=missing_columns,
         missing_indexes=missing_indexes,

@@ -2405,7 +2405,7 @@ async def stream_agentic_thread_message(
     # R8/R8.1: known model terminal; monotonic via merge_known_submission_status.
     known_submission_status: SubmissionTerminalStatus | None = None
 
-    async def _sync_submission_terminal_r6(
+    async def _sync_submission_terminal(
         *,
         known: SubmissionTerminalStatus | None = None,
     ) -> None:
@@ -2481,7 +2481,7 @@ async def stream_agentic_thread_message(
             },
         )
         # Conflict is a known failure, not cancel.
-        await _sync_submission_terminal_r6(known="failed")
+        await _sync_submission_terminal(known="failed")
         return
 
     # ASK-TURN-LIFECYCLE R1: register the active turn identity with the
@@ -2621,7 +2621,7 @@ async def stream_agentic_thread_message(
                     exc_info=True,
                 )
         # R8: sync with known outcome; never invent cancelled if unknown.
-        await _sync_submission_terminal_r6(known=known_submission_status)
+        await _sync_submission_terminal(known=known_submission_status)
 
 
 async def retry_agentic_thread_message(

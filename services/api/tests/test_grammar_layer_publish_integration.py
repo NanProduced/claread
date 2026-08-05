@@ -40,7 +40,7 @@ from app.services.reader_orchestration.grammar_window_publisher import (
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.zplus_bootstrap import ZPlusBootstrapService
+from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -109,7 +109,7 @@ async def _setup_test_env() -> _TestEnv:
         plain_text=ARTICLE_TEXT,
         title="Grammar Layer Pub Integration",
     )
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=article.record_id, base_id=article.base_id,
     )

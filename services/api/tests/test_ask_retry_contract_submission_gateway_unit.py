@@ -201,7 +201,7 @@ def test_agentic_finally_syncs_submission() -> None:
         / "production_stream.py"
     ).read_text(encoding="utf-8")
     assert "SubmissionTerminalHook" in src
-    assert "_sync_submission_terminal_r6" in src
+    assert "_sync_submission_terminal" in src
     assert "ensure_synced" in src
 
 

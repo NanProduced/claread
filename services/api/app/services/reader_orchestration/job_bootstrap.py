@@ -1683,7 +1683,7 @@ class EnhancementJobBootstrapService:
         trace_id: UUID | None = None,
         force_legacy_grammar: bool = False,
     ) -> EnhancementBootstrapSummary:
-        use_zplus_grammar_path = False
+        use_grammar_window_path = False
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 state = await _load_locked_active_base_state(
@@ -1708,8 +1708,8 @@ class EnhancementJobBootstrapService:
                     state=state,
                     trace_id=trace_id,
                 )
-                grammar_results, use_zplus_grammar_path = (
-                    await self._bootstrap_grammar_jobs_or_zplus(
+                grammar_results, use_grammar_window_path = (
+                    await self._bootstrap_grammar_jobs_or_windowed(
                         conn,
                         state=state,
                         trace_id=trace_id,
@@ -1722,8 +1722,8 @@ class EnhancementJobBootstrapService:
                     trace_id=trace_id,
                 )
 
-        # Z+ path: dispatch to ZPlusBootstrapService AFTER the outer
-        # transaction commits. ZPlusBootstrapService.bootstrap_grammar_window_plan
+        # Z+ path: dispatch to GrammarWindowBootstrapService AFTER the outer
+        # transaction commits. GrammarWindowBootstrapService.bootstrap_grammar_window_plan
         # opens its own transaction and acquires its own FOR UPDATE lock on
         # reading_records, so calling it inside the outer transaction would
         # deadlock against the lock we already hold. Idempotent: if the plan
@@ -1732,11 +1732,11 @@ class EnhancementJobBootstrapService:
         # Pass the same trace_id used by display/translation/vocab runs so
         # window reader_runs.envelope_json carries the shared trace root
         # (requirement 5: same-record runs share one trace_id).
-        if use_zplus_grammar_path:
-            from .zplus_bootstrap import ZPlusBootstrapService
+        if use_grammar_window_path:
+            from .zplus_bootstrap import GrammarWindowBootstrapService
 
-            zplus_service = ZPlusBootstrapService(pool=self._pool)
-            await zplus_service.bootstrap_grammar_window_plan(
+            grammar_window_service = GrammarWindowBootstrapService(pool=self._pool)
+            await grammar_window_service.bootstrap_grammar_window_plan(
                 record_id=state.record_id,
                 base_id=state.base_id,
                 trace_id=trace_id,
@@ -2136,7 +2136,7 @@ class EnhancementJobBootstrapService:
             )
         return results
 
-    async def _bootstrap_grammar_jobs_or_zplus(
+    async def _bootstrap_grammar_jobs_or_windowed(
         self,
         conn: asyncpg.Connection,
         *,
@@ -2152,7 +2152,7 @@ class EnhancementJobBootstrapService:
           ``_bootstrap_grammar_jobs`` (fallback, returns ``([], False)``).
         - ``GROUPED_WINDOWED`` → Z+ analysis-window path (returns
           ``([], True)``; caller dispatches to
-          ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` after
+          ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` after
           the outer transaction commits). Long-article grammar contract
           is unchanged.
         - ``SHORT_BATCH`` / ``STRUCTURED_BATCH`` → compact grammar batch
@@ -2175,7 +2175,7 @@ class EnhancementJobBootstrapService:
         # SHORT_BATCH / STRUCTURED_BATCH use the compact batch path.
         route = await _load_article_route(conn, state=state)
         if route is ArticleRoute.GROUPED_WINDOWED:
-            # Z+ path. ZPlusBootstrapService 在外层事务提交后被调用，
+            # Z+ path. GrammarWindowBootstrapService 在外层事务提交后被调用，
             # 其内部幂等：plan 已存在时直接复用。
             return [], True
         # Compact grammar batch path for SHORT_BATCH / STRUCTURED_BATCH.

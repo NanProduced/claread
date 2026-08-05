@@ -37,7 +37,7 @@ from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
 )
 from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -100,7 +100,7 @@ async def test_db_pool_with_window_job_only() -> AsyncIterator[
                 language="en",
             )
             # Bootstrap Z+ plan + windows + window reader_jobs.
-            zplus = ZPlusBootstrapService(pool=pool)
+            zplus = GrammarWindowBootstrapService(pool=pool)
             await zplus.bootstrap_grammar_window_plan(
                 record_id=article.record_id,
                 base_id=article.base_id,
@@ -313,7 +313,7 @@ async def test_pipeline_runner_worker_order_grammar_window_before_legacy(
     )
 
     # Window worker must have been called at least once (Round 1 claim
-    # succeeds for the single window job bootstrapped by ZPlusBootstrapService).
+    # succeeds for the single window job bootstrapped by GrammarWindowBootstrapService).
     mock_window_worker.process_window_job.assert_called()
     # Legacy grammar worker is also called each round (returns no_job since
     # no legacy grammar_bundle jobs exist). Verify window was called before

@@ -2004,7 +2004,7 @@ class ReaderEnhancementPipelineRunner:
 
         The publisher needs both UUIDs to lock the plan + window rows. They are
         stored as strings in ``reader_jobs.input_json`` by
-        ``ZPlusBootstrapService._create_window_job``.
+        ``GrammarWindowBootstrapService._create_window_job``.
         """
         async with self.get_pool().acquire() as conn:
             row = await conn.fetchrow(
@@ -2327,7 +2327,7 @@ class ReaderEnhancementPipelineRunner:
         """Load window_index / target_unit_ids / target_anchor_ids for ai_usage_event.
 
         ``window_index`` and ``target_unit_ids`` are read from the job's
-        ``input_json`` (written by ``ZPlusBootstrapService._create_window_job``).
+        ``input_json`` (written by ``GrammarWindowBootstrapService._create_window_job``).
         ``target_anchor_ids`` is read from the ``analysis_windows`` row so
         it reflects any post-bootstrap corrections.
         """
@@ -2790,7 +2790,7 @@ class ReaderEnhancementPipelineRunner:
         """T4.2a-R2: Count non-terminal jobs per budget layer.
 
         Used by the budget initialization to account for ALL non-terminal
-        jobs, including those created by ``ZPlusBootstrapService`` (window
+        jobs, including those created by ``GrammarWindowBootstrapService`` (window
         jobs) that are not tracked in ``bootstrap.job_counts``.
         """
         async with self.get_pool().acquire() as conn:

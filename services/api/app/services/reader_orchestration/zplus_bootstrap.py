@@ -1,4 +1,4 @@
-"""ZPlusBootstrapService: bootstrap layer_analysis_plans + analysis_windows + reader_jobs.
+"""GrammarWindowBootstrapService: bootstrap layer_analysis_plans + analysis_windows + reader_jobs.
 
 Design source:
   docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
@@ -61,7 +61,7 @@ _WINDOW_SENTENCE_ANALYSIS_COUNT = 1
 
 
 @dataclass(frozen=True, slots=True)
-class ZPlusBootstrapResult:
+class GrammarWindowBootstrapResult:
     plan_id: UUID
     windows: tuple[PlannedWindow, ...]
     job_ids: tuple[UUID, ...]
@@ -97,7 +97,7 @@ def _compute_window_budget() -> dict[str, dict[str, int]]:
     }
 
 
-class ZPlusBootstrapService:
+class GrammarWindowBootstrapService:
     def __init__(self, *, pool: asyncpg.Pool | None = None) -> None:
         self._pool = pool
 
@@ -113,7 +113,7 @@ class ZPlusBootstrapService:
         record_id: UUID,
         base_id: UUID,
         trace_id: UUID | None = None,
-    ) -> ZPlusBootstrapResult:
+    ) -> GrammarWindowBootstrapResult:
         """Create plan + windows + reader_jobs (idempotent).
 
         If an active plan already exists for the same record/base/layer, the
@@ -125,7 +125,7 @@ class ZPlusBootstrapService:
         so downstream workers can propagate it into ``reader_runtime_spans``
         (requirement 5). When ``None``, a fresh UUID is generated so the
         window runs always carry a trace_id even when the caller did not
-        supply one (e.g. direct ZPlusBootstrapService callers).
+        supply one (e.g. direct GrammarWindowBootstrapService callers).
         """
         pool = self.get_pool()
 
@@ -301,7 +301,7 @@ class ZPlusBootstrapService:
                     )
                     job_ids.append(job_id)
 
-                return ZPlusBootstrapResult(
+                return GrammarWindowBootstrapResult(
                     plan_id=plan_id,
                     windows=tuple(windows),
                     job_ids=tuple(job_ids),
@@ -479,7 +479,7 @@ class ZPlusBootstrapService:
         self,
         conn: asyncpg.Connection,
         plan_id: UUID,
-    ) -> ZPlusBootstrapResult:
+    ) -> GrammarWindowBootstrapResult:
         """Load existing plan + windows + job_ids (idempotent path)."""
         window_rows = await conn.fetch(
             """
@@ -506,7 +506,7 @@ class ZPlusBootstrapService:
                     anchor_count=row["anchor_count"],
                 )
             )
-        return ZPlusBootstrapResult(
+        return GrammarWindowBootstrapResult(
             plan_id=plan_id,
             windows=tuple(windows),
             job_ids=tuple(job_ids),

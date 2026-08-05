@@ -12,8 +12,8 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.config.settings import get_settings
 from app.services.reader_orchestration.schema_health import (
-    check_reader_d5_schema_health,
-    format_reader_d5_schema_health_failure,
+    check_reader_schema_health,
+    format_reader_schema_health_failure,
 )
 
 
@@ -39,7 +39,7 @@ async def _run() -> int:
     settings = get_settings()
     conn = await asyncpg.connect(settings.database_url)
     try:
-        report = await check_reader_d5_schema_health(
+        report = await check_reader_schema_health(
             conn,
             schema_name=args.schema_name,
         )
@@ -49,7 +49,7 @@ async def _run() -> int:
     if args.json:
         payload = report.to_dict()
         if not report.ok:
-            payload["guidance"] = format_reader_d5_schema_health_failure(report)
+            payload["guidance"] = format_reader_schema_health_failure(report)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0 if report.ok else 1
 
@@ -60,7 +60,7 @@ async def _run() -> int:
         )
         return 0
 
-    print(format_reader_d5_schema_health_failure(report), file=sys.stderr)
+    print(format_reader_schema_health_failure(report), file=sys.stderr)
     return 1
 
 

@@ -7,8 +7,8 @@ import asyncpg
 import pytest
 
 from app.services.reader_orchestration.schema_health import (
-    check_reader_d5_schema_health,
-    format_reader_d5_schema_health_failure,
+    check_reader_schema_health,
+    format_reader_schema_health_failure,
 )
 from tests.reader_orchestration_test_support import BASELINE_SQL, connect_admin
 
@@ -40,7 +40,7 @@ async def test_reader_schema_health_passes_on_fresh_baseline(
 ) -> None:
     admin, schema_name = schema_health_schema
 
-    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
+    report = await check_reader_schema_health(admin, schema_name=schema_name)
 
     assert report.ok is True
     assert report.missing_columns == ()
@@ -60,8 +60,8 @@ async def test_reader_schema_health_reports_drift_with_reset_guidance(
         "DROP COLUMN reader_job_id CASCADE"
     )
 
-    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
-    message = format_reader_d5_schema_health_failure(report)
+    report = await check_reader_schema_health(admin, schema_name=schema_name)
+    message = format_reader_schema_health_failure(report)
 
     assert report.ok is False
     assert "ai_usage_events.reader_job_id" in report.missing_columns
@@ -80,8 +80,8 @@ async def test_reader_schema_health_reports_missing_anchor_column_with_baseline_
         "DROP COLUMN reading_record_id CASCADE"
     )
 
-    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
-    message = format_reader_d5_schema_health_failure(report)
+    report = await check_reader_schema_health(admin, schema_name=schema_name)
+    message = format_reader_schema_health_failure(report)
 
     assert report.ok is False
     assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
@@ -102,8 +102,8 @@ async def test_reader_schema_health_reports_missing_anchor_index(
         f'DROP INDEX "{schema_name}".uq_reader_notes_reading_record_anchor'
     )
 
-    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
-    message = format_reader_d5_schema_health_failure(report)
+    report = await check_reader_schema_health(admin, schema_name=schema_name)
+    message = format_reader_schema_health_failure(report)
 
     assert report.ok is False
     assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]
@@ -136,8 +136,8 @@ async def test_reader_schema_health_reports_old_user_annotation_check_constraint
         """
     )
 
-    report = await check_reader_d5_schema_health(admin, schema_name=schema_name)
-    message = format_reader_d5_schema_health_failure(report)
+    report = await check_reader_schema_health(admin, schema_name=schema_name)
+    message = format_reader_schema_health_failure(report)
 
     assert report.ok is False
     assert "reader_d6_anchor_migration_missing" in report.to_dict()["failure_codes"]

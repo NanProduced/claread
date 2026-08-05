@@ -1,4 +1,4 @@
-"""Tests for ZPlusBootstrapService: bootstrap plan + windows + reader_jobs.
+"""Tests for GrammarWindowBootstrapService: bootstrap plan + windows + reader_jobs.
 
 Design source:
   docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
@@ -18,8 +18,8 @@ from app.database import connection as db_connection
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_JOB_TYPE,
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPlusBootstrapResult,
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapResult,
+    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -85,7 +85,7 @@ async def test_bootstrap_creates_plan_windows_and_jobs(
 ) -> None:
     """Z+ bootstrap creates 1 plan + N windows + N reader_jobs."""
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
@@ -144,7 +144,7 @@ async def test_bootstrap_idempotent_skips_existing_active_plan(
 ) -> None:
     """Same record/base with existing active plan does not re-create."""
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result1 = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
@@ -163,7 +163,7 @@ async def test_bootstrap_budget_total_uses_section_7_3_formula(
     sentence = min(max(round(chars/2000), 1), 5).
     """
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
@@ -187,13 +187,13 @@ async def test_bootstrap_budget_total_uses_section_7_3_formula(
 async def test_bootstrap_result_type_is_zplus_bootstrap_result(
     test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
 ) -> None:
-    """Bootstrap returns ZPlusBootstrapResult with correct field types."""
+    """Bootstrap returns GrammarWindowBootstrapResult with correct field types."""
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
-    assert isinstance(result, ZPlusBootstrapResult)
+    assert isinstance(result, GrammarWindowBootstrapResult)
     assert isinstance(result.plan_id, UUID)
     assert isinstance(result.windows, tuple)
     assert isinstance(result.job_ids, tuple)
@@ -208,7 +208,7 @@ async def test_bootstrap_window_input_json_contains_window_contract_fields(
     target_unit_ids, target_anchor_ids.
     """
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
@@ -240,7 +240,7 @@ async def test_bootstrap_propagates_trace_id_into_window_run_envelope(
     runs).
     """
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     shared_trace_id = uuid4()
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id, trace_id=shared_trace_id
@@ -275,7 +275,7 @@ async def test_bootstrap_without_trace_id_still_writes_envelope_trace_id(
     fresh UUID so window runs always carry a trace_id (defensive).
     """
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id, trace_id=None
     )

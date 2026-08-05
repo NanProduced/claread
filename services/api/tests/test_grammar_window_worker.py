@@ -47,7 +47,7 @@ from app.services.reader_orchestration.reading_strategy import (
 from app.services.reader_orchestration.window_selector import CandidateItem
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapService,
     _compute_window_budget,
 )
 from tests.reader_orchestration_test_support import (
@@ -125,7 +125,7 @@ async def _bootstrap_first_window(
     base_id: UUID,
 ) -> tuple[UUID, UUID]:
     """Run Z+ bootstrap and return (job_id, window_id) for the first window."""
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )
@@ -509,7 +509,7 @@ async def test_load_window_context_includes_context_anchors(
     """_load_window_context populates context_anchor_prev / context_anchor_next
     with anchor metadata when the window has context anchors."""
     pool, record_id, base_id = test_db_pool_with_record_and_base
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
     )

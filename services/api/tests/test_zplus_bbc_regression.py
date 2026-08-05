@@ -53,7 +53,7 @@ from app.services.reader_orchestration.pipeline_runner import (
 from app.services.reader_orchestration.translation_worker import TranslationWorkerService
 from app.services.reader_orchestration.vocabulary_worker import VocabularyWorkerService
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.zplus_bootstrap import ZPlusBootstrapService
+from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
 from tests.fixtures.bbc_cd6684a0_expected_windows import (
     assert_expected_grammar_note_total,
     assert_expected_sentence_analysis_total,
@@ -225,7 +225,7 @@ async def bbc_regression_env() -> AsyncIterator[
     """Set up a DB with the BBC article and Z+ plan bootstrapped.
 
     Returns ``(pool, record_id, base_id, user_id)``. The Z+ plan, windows,
-    and window reader_jobs are created by ``ZPlusBootstrapService``. When
+    and window reader_jobs are created by ``GrammarWindowBootstrapService``. When
     the pipeline runner calls ``bootstrap_missing_jobs``, it finds the
     existing plan and routes grammar to the Z+ path (no legacy
     ``build_grammar_bundle`` jobs are created).
@@ -261,7 +261,7 @@ async def bbc_regression_env() -> AsyncIterator[
         base_id = article.base_id
 
         # Bootstrap Z+ plan + windows + window reader_jobs.
-        bootstrap = ZPlusBootstrapService(pool=pool)
+        bootstrap = GrammarWindowBootstrapService(pool=pool)
         await bootstrap.bootstrap_grammar_window_plan(
             record_id=record_id,
             base_id=base_id,

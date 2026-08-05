@@ -5,8 +5,8 @@ Design source:
   §9 worker migration (bootstrap routing)
 
 Routing contract (P1-1 修正后):
-    - 默认走 Z+ 路径 (调用 ``ZPlusBootstrapService.bootstrap_grammar_window_plan``)，
-      无论 record 是否已有 Z+ plan。``ZPlusBootstrapService`` 内部幂等。
+    - 默认走 Z+ 路径 (调用 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan``)，
+      无论 record 是否已有 Z+ plan。``GrammarWindowBootstrapService`` 内部幂等。
     - ``force_legacy_grammar=True`` 时回退到 legacy per-unit 路径
       (现有 ``_bootstrap_grammar_jobs``)。
 """
@@ -24,7 +24,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     EnhancementJobBootstrapService,
 )
 from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -96,8 +96,8 @@ async def test_db_pool_with_zplus_plan() -> AsyncIterator[
             language="en",
         )
         # Pre-create the Z+ plan + windows + jobs.
-        zplus_service = ZPlusBootstrapService(pool=pool)
-        await zplus_service.bootstrap_grammar_window_plan(
+        grammar_window_service = GrammarWindowBootstrapService(pool=pool)
+        await grammar_window_service.bootstrap_grammar_window_plan(
             record_id=article.record_id,
             base_id=article.base_id,
         )
@@ -161,7 +161,7 @@ async def test_bootstrap_uses_zplus_path_by_default(
     """P1-1: 默认走 Z+ 路径，无需 pre-create plan。
 
     ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 Z+，
-    由 ``ZPlusBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +
+    由 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +
     windows + window jobs。
     """
     pool, record_id, base_id, user_id = test_db_pool_without_plan

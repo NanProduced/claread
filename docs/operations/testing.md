@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-IDENTIFIERS-P3-CLOSEOUT：测试文件名与测试标识符任务码清零；guard 改为通用「单字母+数字 token」检测；allowlist 0 / 0 / 24）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-IDENTIFIERS-P3-CLOSEOUT：测试文件名与测试标识符任务码清零；guard 改为通用「单字母+数字 token」检测；allowlist 0 / 0 / 0；production-symbol 业务改名收口）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -55,19 +55,19 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
 
-- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查三层目标中的任务编号：新测试文件名、`app/` 生产符号（AST 标识符）、`tests/**` 测试标识符（FunctionDef / AsyncFunctionDef / ClassDef 与 module-level 赋值名）。**检测规则**为通用「单字母 + 1–3 位数字」token（可选 trailing letter，如 `t58a`/`i4x`）+ 整 token `round<N>` + CamelCase `R16`/`Round2` 形态；不再依赖按家族堆叠的窄正则。业务/技术 KEEP 词（`v2`、`g1`–`g5`、`h1`–`h6`、`e2e`、`i18n`、`utf8`/`utf16`、`fnv1a32`、`tecd3`、`sha256` 等）显式排除。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file **0**、test-identifier **0**、production-symbol **24**）。测试标识符 allowlist 已清零——原 14 项（`R4_A3_*_ENV` 常量名、schema-health d5/d6 测试名、round0 测试名）并非外部合同；真正持久的是 env **字符串值** `CLAREAD_R4_A3_*`（字面量豁免）与 production D5/D6/ZPlus 符号（走 production allowlist）。收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量与注释豁免——协议值、fixture 载荷、migration 版本、`execution_version`、artifact version、workflow version、dataset/env 身份等持久化协议值不属于命名漂移，不在 guard 扫描范围。
+- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查三层目标中的任务编号：新测试文件名、`app/` 生产符号（AST 标识符）、`tests/**` 测试标识符（FunctionDef / AsyncFunctionDef / ClassDef 与 module-level 赋值名）。**检测规则**为通用「单字母 + 1–3 位数字」token（可选 trailing letter，如 `t58a`/`i4x`）+ 整 token `round<N>` + CamelCase `R16`/`Round2` 形态；不再依赖按家族堆叠的窄正则。业务/技术 KEEP 词（`v2`、`g1`–`g5`、`h1`–`h6`、`e2e`、`i18n`、`utf8`/`utf16`、`fnv1a32`、`tecd3`、`sha256` 等）显式排除。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file **0**、test-identifier **0**、production-symbol **0**）。测试标识符 allowlist 已清零。production-symbol 24 项已业务改名收口：D5→attribution、D6→anchor、ZPlus→GrammarWindow、`_sync_submission_terminal_r6`→`_sync_submission_terminal`。真正持久的是 env **字符串值** `CLAREAD_R4_A3_*`、failure_code 字符串 `reader_d5_attribution_schema_drift` / `reader_d6_anchor_migration_missing`，以及 `ZPLUS_*` policy/job_type 常量值（字面量/协议豁免）。收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量与注释豁免——协议值、fixture 载荷、migration 版本、`execution_version`、artifact version、workflow version、dataset/env 身份等持久化协议值不属于命名漂移，不在 guard 扫描范围。
 - **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，test-file allowlist 已清空、**相等 ratchet 上限 0**；同时对测试源码逐行 fail-closed 扫描大写任务码形态（`B/R/P/S/T+数字`、`D5`/`D6`、`A3`–`A5`、`ROUND+数字`、`LP-R+数字`、`ASK-` epic 前缀），`task-history:` 行豁免，code-identity allowlist 采用 strip-then-scan 且相等 ratchet（上限 9），豁免身份不会掩护同行真实任务码。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）、表示事件合同名（`G1`/`G2`/`G3`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
 
-**标识符层治理（TEST-GOVERNANCE-API-IDENTIFIERS-P3-CLOSEOUT）已收口**：tests/** 内任务码文件名与标识符改为业务名；guard 改为通用 token 检测并关闭 a2/a6/a7/d7/g11/R16/l1/l2/sort-prefix 等家族盲区；最终 allowlist：**test-file 0、test-identifier 0、production-symbol 24**。collection 对账按「改名/路径变更 1:1 映射」执行，**不以冻结总数 6142 为合同**（总数随环境/基线变化）。env 字符串值 `CLAREAD_R4_A3_*` 与 production D5/D6/ZPlus 符号保持不变。当前可用 guard 命令：
+**标识符层治理（TEST-GOVERNANCE-API-IDENTIFIERS-P3-CLOSEOUT）已收口**：tests/** 内任务码文件名与标识符改为业务名；guard 改为通用 token 检测并关闭 a2/a6/a7/d7/g11/R16/l1/l2/sort-prefix 等家族盲区；最终 allowlist：**test-file 0、test-identifier 0、production-symbol 0**。collection 对账按「改名/路径变更 1:1 映射」执行，**不以冻结总数 6142 为合同**（总数随环境/基线变化）。env 字符串值 `CLAREAD_R4_A3_*` 与 failure_code / `ZPLUS_*` 协议字符串值保持不变。当前可用 guard 命令：
 
 ```powershell
 cd services/api
 uv run pytest tests/test_task_number_naming_guard.py -q
 ```
 
-至此“任务历史仅存顶部 `# task-history:` 注释与持久化协议值”对 API **文件名与测试标识符**均成立。
+至此“任务历史仅存顶部 `# task-history:` 注释与持久化协议值”对 API **文件名、测试标识符与生产符号**均成立。
 
 ## 后续 API/Web 并行治理边界
 

@@ -1,7 +1,7 @@
 # task-history: P2B-R1.1 (renamed from test_p2b_r1_1_zplus_strict_fence_rollback.py)
 """Z+ strict fence rollback closure.
 
-Proves ``ZPlusBootstrapService.bootstrap_grammar_window_plan()`` delegates
+Proves ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan()`` delegates
 semantic fence construction to the single shared strict builder
 (``generation_semantic_fence_from_targets``). When target units inside the
 same Z+ window carry mixed contract or resolver versions, the shared
@@ -36,7 +36,7 @@ from app.services.reader_orchestration.automatic_layer_policy import (
     SemanticFenceConstructionError,
 )
 from app.services.reader_orchestration.semantic_classifier import SEMANTIC_CONTRACT_V1
-from app.services.reader_orchestration.zplus_bootstrap import ZPlusBootstrapService
+from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -315,7 +315,7 @@ async def test_zplus_bootstrap_mixed_contract_rolls_back_all_four_tables(
         pool, record_id=article.record_id
     )
 
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     with _policy_mode("enforce"):
         with pytest.raises(SemanticFenceConstructionError) as exc_info:
             await service.bootstrap_grammar_window_plan(
@@ -376,7 +376,7 @@ async def test_zplus_bootstrap_mixed_resolver_rolls_back_all_four_tables(
         pool, record_id=article.record_id
     )
 
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     with _policy_mode("enforce"):
         with pytest.raises(SemanticFenceConstructionError) as exc_info:
             await service.bootstrap_grammar_window_plan(
@@ -435,7 +435,7 @@ async def test_zplus_bootstrap_uniform_semantic_succeeds_non_regression(
         pool, record_id=article.record_id
     )
 
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     with _policy_mode("enforce"):
         result = await service.bootstrap_grammar_window_plan(
             record_id=article.record_id, base_id=article.base_id

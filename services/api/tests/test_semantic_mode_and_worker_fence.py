@@ -87,7 +87,7 @@ from app.services.reader_orchestration.vocabulary_worker import (
 )
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -1583,7 +1583,7 @@ async def test_grammar_window_enforce_disallowed_zero_executor(
         GrammarWindowWorkerService,
     )
     from app.services.reader_orchestration.zplus_bootstrap import (
-        ZPlusBootstrapService,
+        GrammarWindowBootstrapService,
     )
 
     pool = fence_env
@@ -1610,7 +1610,7 @@ async def test_grammar_window_enforce_disallowed_zero_executor(
             policy=AutomaticLayerPolicy.all_on().as_dict(),
         )
 
-    zplus = ZPlusBootstrapService(pool=pool)
+    zplus = GrammarWindowBootstrapService(pool=pool)
     result = await zplus.bootstrap_grammar_window_plan(
         record_id=article.record_id, base_id=article.base_id
     )
@@ -1904,7 +1904,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
     fence_env: asyncpg.Pool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """ZPlusBootstrapService.bootstrap_grammar_window_plan freezes mode per create."""
+    """GrammarWindowBootstrapService.bootstrap_grammar_window_plan freezes mode per create."""
     pool = fence_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
@@ -1934,7 +1934,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
             pool, record_id=article.record_id, unit_id=uid, policy=policy
         )
 
-    zplus = ZPlusBootstrapService(pool=pool)
+    zplus = GrammarWindowBootstrapService(pool=pool)
     disallowed = unit_ids[0]
 
     async def _read_jobs() -> list[dict[str, Any]]:
@@ -2186,7 +2186,7 @@ async def test_section_claim_cannot_bypass_grammar_window_worker(
             policy=AutomaticLayerPolicy.all_on().as_dict(),
         )
     with _policy_mode("enforce"):
-        zplus = ZPlusBootstrapService(pool=pool)
+        zplus = GrammarWindowBootstrapService(pool=pool)
         result = await zplus.bootstrap_grammar_window_plan(
             record_id=article.record_id, base_id=article.base_id
         )

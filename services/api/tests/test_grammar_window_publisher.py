@@ -41,7 +41,7 @@ from app.services.reader_orchestration.window_selector import (
 )
 from app.services.reader_orchestration.zplus_bootstrap import (
     ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPlusBootstrapService,
+    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -122,7 +122,7 @@ async def _setup_test_env(
         title=title,
         language="en",
     )
-    service = ZPlusBootstrapService(pool=pool)
+    service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=article.record_id, base_id=article.base_id,
     )
