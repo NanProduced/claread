@@ -29,7 +29,6 @@ from app.contracts.annotation import (
 )
 from app.database import connection as db_connection
 from app.llm.agent_runner import extract_run_usage
-from app.services.prompting.prompt_loader import load_agent_instructions
 from app.schemas.reader_orchestration import (
     TranslationBatchGenerationOutput,
     TranslationBatchGroupOutput,
@@ -38,6 +37,7 @@ from app.schemas.reader_orchestration import (
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
 )
+from app.services.prompting.prompt_loader import load_agent_instructions
 from app.services.reader_orchestration import translation_worker as translation_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
@@ -840,7 +840,8 @@ def test_build_translation_prompt_contains_concrete_policy_lines() -> None:
         assert line in prompt
 
 
-def test_build_translation_prompt_includes_target_segments_and_group_native_output_contract() -> None:
+def test_build_translation_prompt_includes_target_segments_and_group_native_output_contract(
+) -> None:
     context = _build_context_with_segments(
         source_text="Alpha Beta",
         segment_specs=[
@@ -986,7 +987,9 @@ def test_build_translation_prompt_reframes_target_segments_as_registry_not_templ
     # past the grouping_close marker to find the real registry block.
     target_segments_block_idx = prompt.index("<target_segments>", grouping_close_idx)
     target_segments_close_idx = prompt.index("</target_segments>", grouping_close_idx)
-    assert grouping_block_idx < grouping_close_idx < target_segments_block_idx < target_segments_close_idx
+    assert grouping_block_idx < grouping_close_idx
+    assert grouping_close_idx < target_segments_block_idx
+    assert target_segments_block_idx < target_segments_close_idx
 
     # The grouping guidance must include a registry_note subsection that
     # reframes target_segments as anchor handles.
@@ -1000,7 +1003,8 @@ def test_build_translation_prompt_reframes_target_segments_as_registry_not_templ
     assert "one row per listed id" in registry_note
 
 
-def test_build_translation_prompt_grouping_guidance_sits_between_strategy_and_output_contract() -> None:
+def test_build_translation_prompt_grouping_guidance_sits_between_strategy_and_output_contract(
+) -> None:
     """The grouping_guidance block must sit between the strategy section and
     the structured-output contract so it shapes model behavior before the
     schema is named."""
@@ -1108,7 +1112,7 @@ def test_translation_agent_instructions_require_semantic_groups_and_drop_legacy_
 # historically drifted (per-unit Chinese, batch English) which let the
 # batch path emit traditional Chinese characters. They now share one
 # stable Chinese contract.
-_R5_SHARED_QUALITY_MARKERS = (
+_SHARED_QUALITY_MARKERS = (
     "简体中文",
     "禁止输出繁体字",
     "准确完整",
@@ -1130,10 +1134,10 @@ _R5_SHARED_QUALITY_MARKERS = (
 _TRADITIONAL_CHAR_SAMPLES_IN_BAN = ("英國", "將", "與", "們", "個", "來", "說", "這", "對", "關")
 
 
-def test_per_unit_translation_instructions_contain_r5_quality_contract() -> None:
+def test_per_unit_translation_instructions_contain_quality_contract() -> None:
     """Per-unit agent YAML carries the shared translation quality contract."""
     instructions = load_agent_instructions("reader_layer_translation")
-    for marker in _R5_SHARED_QUALITY_MARKERS:
+    for marker in _SHARED_QUALITY_MARKERS:
         assert marker in instructions, f"per-unit missing quality marker: {marker!r}"
     # Traditional-character ban must be explicit and enumerate samples
     assert "禁止输出繁体字" in instructions
@@ -1147,7 +1151,7 @@ def test_per_unit_translation_instructions_contain_r5_quality_contract() -> None
     assert "first-mention" not in instructions.lower()
 
 
-def test_batch_translation_instructions_contain_r5_quality_contract() -> None:
+def test_batch_translation_instructions_contain_quality_contract() -> None:
     """Batch path instructions share the same Chinese quality contract.
 
     The batch path previously used an English-phrased quality contract that
@@ -1161,7 +1165,7 @@ def test_batch_translation_instructions_contain_r5_quality_contract() -> None:
     )
 
     batch = _TRANSLATION_BATCH_AGENT_INSTRUCTIONS
-    for marker in _R5_SHARED_QUALITY_MARKERS:
+    for marker in _SHARED_QUALITY_MARKERS:
         assert marker in batch, f"batch missing quality marker: {marker!r}"
     # Traditional-character ban must be explicit and enumerate samples
     assert "禁止输出繁体字" in batch
@@ -1254,7 +1258,7 @@ def test_translation_schema_documented_simplified_chinese_contract() -> None:
 
 
 # Soft-lens boundary: these belong only in agent quality contracts, not variants.
-_R5_VARIANT_LAYER_FORBIDDEN = (
+_VARIANT_LAYER_FORBIDDEN = (
     # Quality-contract bans / mechanics
     "教学点评",
     "词汇注释",
@@ -1310,7 +1314,7 @@ def test_translation_variant_soft_lenses_omit_quality_contract_rules(
     (including teaching bans and hard sentence-handling rules)."""
     strategy = resolve_reader_variant_strategy(goal, variant)
     text = "\n".join(strategy.layers["translation"].prompt_lines)
-    for fragment in _R5_VARIANT_LAYER_FORBIDDEN:
+    for fragment in _VARIANT_LAYER_FORBIDDEN:
         assert fragment not in text, (
             f"{variant} translation soft lens still contains {fragment!r}"
         )
@@ -1464,7 +1468,8 @@ def test_hydrate_translation_layer_output_uses_separator_inclusive_hash_for_spac
     assert hydrated.groups[0].source_text_hash != compute_text_range_hash("AlphaBeta")
 
 
-def test_hydrate_translation_layer_output_uses_separator_inclusive_hash_for_paragraph_break() -> None:
+def test_hydrate_translation_layer_output_uses_separator_inclusive_hash_for_paragraph_break(
+) -> None:
     context = _build_context_with_segments(
         source_text="Alpha\n\nBeta",
         segment_specs=[
@@ -2027,10 +2032,10 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 
 
 # The actual misaligned sentences from the bug report.
-_S15_SOURCE = "Without tips, staff may not earn enough money to live on."
-_S17_SOURCE = "In many host cities, restaurants have automatically added tips to their bills."
-_S15_ZH = "如果没有小费，员工可能挣不到足够的钱维持生活。"
-_S17_ZH = "在许多主办城市，餐厅已经自动将小费添加到账单中。"
+_STAFF_LIVELIHOOD_SOURCE = "Without tips, staff may not earn enough money to live on."
+_AUTO_TIP_BILLS_SOURCE = "In many host cities, restaurants have automatically added tips to their bills."
+_STAFF_LIVELIHOOD_ZH = "如果没有小费，员工可能挣不到足够的钱维持生活。"
+_AUTO_TIP_BILLS_ZH = "在许多主办城市，餐厅已经自动将小费添加到账单中。"
 
 
 def _build_batch_context_with_segments(
@@ -2063,8 +2068,8 @@ def _build_batch_context_with_segments(
     layer = strategy.layers["translation"]
     if segment_specs is None:
         segment_specs = [
-            ("s15", _S15_SOURCE, 15),
-            ("s17", _S17_SOURCE, 17),
+            ("s15", _STAFF_LIVELIHOOD_SOURCE, 15),
+            ("s17", _AUTO_TIP_BILLS_SOURCE, 17),
         ]
     texts = [spec[1] for spec in segment_specs]
     unit_source_text = joiner.join(texts)
@@ -2122,13 +2127,13 @@ def _build_batch_context_with_segments(
 # The first sentence carries the `$2.13 per hour` decimal boundary, which
 # must NOT be split by the planner (the planner only groups whole anchor
 # segments; it never re-segments sentence text).
-_S10_SOURCE = "Workers at restaurants in the US can earn as little as $2.13 per hour."
-_S11_SOURCE = "They rely on diners to tip for their service."
-_S12_SOURCE = "Without tips, staff may not earn enough money to live on."
+_MIN_WAGE_SOURCE = "Workers at restaurants in the US can earn as little as $2.13 per hour."
+_RELY_ON_TIPS_SOURCE = "They rely on diners to tip for their service."
+_BATCH_STAFF_LIVELIHOOD_SOURCE = "Without tips, staff may not earn enough money to live on."
 
 
 def _build_contiguous_unit_source_text() -> str:
-    return " ".join([_S10_SOURCE, _S11_SOURCE, _S12_SOURCE])
+    return " ".join([_MIN_WAGE_SOURCE, _RELY_ON_TIPS_SOURCE, _BATCH_STAFF_LIVELIHOOD_SOURCE])
 
 
 def _build_batch_context_with_contiguous_segments(
@@ -2147,9 +2152,9 @@ def _build_batch_context_with_contiguous_segments(
     multiple sentences must NOT be split into one-sentence-per-group.
     """
     segment_specs = [
-        ("s10", _S10_SOURCE, 10),
-        ("s11", _S11_SOURCE, 11),
-        ("s12", _S12_SOURCE, 12),
+        ("s10", _MIN_WAGE_SOURCE, 10),
+        ("s11", _RELY_ON_TIPS_SOURCE, 11),
+        ("s12", _BATCH_STAFF_LIVELIHOOD_SOURCE, 12),
     ]
     return _build_batch_context_with_segments(
         unit_id=unit_id,
@@ -2186,10 +2191,10 @@ def test_build_deterministic_translation_groups_splits_non_contiguous_anchors() 
     assert [g.anchor_segment_ids for g in groups] == [("s15",), ("s17",)]
     assert [g.order_index for g in groups] == [15, 17]
     # source_text_hash must come from the segment, not the LLM.
-    assert groups[0].source_text_hash == compute_text_range_hash(_S15_SOURCE)
-    assert groups[1].source_text_hash == compute_text_range_hash(_S17_SOURCE)
-    assert groups[0].source_text == _S15_SOURCE
-    assert groups[1].source_text == _S17_SOURCE
+    assert groups[0].source_text_hash == compute_text_range_hash(_STAFF_LIVELIHOOD_SOURCE)
+    assert groups[1].source_text_hash == compute_text_range_hash(_AUTO_TIP_BILLS_SOURCE)
+    assert groups[0].source_text == _STAFF_LIVELIHOOD_SOURCE
+    assert groups[1].source_text == _AUTO_TIP_BILLS_SOURCE
 
 
 def test_build_deterministic_translation_groups_one_semantic_group_for_short_paragraph() -> None:
@@ -2266,7 +2271,7 @@ def test_batch_group_output_schema_rejects_anchor_segment_ids() -> None:
     with pytest.raises(ValidationError):
         TranslationBatchGroupOutput(  # type: ignore[call-arg]
             group_id="u2_g15_15",
-            translated_text=_S15_ZH,
+            translated_text=_STAFF_LIVELIHOOD_ZH,
             anchor_segment_ids=["s17"],  # must be rejected (extra="forbid")
         )
 
@@ -2290,8 +2295,8 @@ def test_hydrate_batch_output_binds_anchors_from_backend_mapping_not_llm() -> No
             _batch_unit_output(
                 "u2",
                 [
-                    ("u2_g15_15", _S17_ZH),  # wrong text for this anchor
-                    ("u2_g17_17", _S15_ZH),  # wrong text for this anchor
+                    ("u2_g15_15", _AUTO_TIP_BILLS_ZH),  # wrong text for this anchor
+                    ("u2_g17_17", _STAFF_LIVELIHOOD_ZH),  # wrong text for this anchor
                 ],
             )
         ]
@@ -2309,11 +2314,13 @@ def test_hydrate_batch_output_binds_anchors_from_backend_mapping_not_llm() -> No
     # The anchor binding is deterministic: g15 -> s15, g17 -> s17,
     # regardless of which translated_text the LLM attached.
     assert by_group["u2_g15_15"].anchor_segment_ids == ["s15"]
-    assert by_group["u2_g15_15"].source_text_hash == compute_text_range_hash(_S15_SOURCE)
-    assert by_group["u2_g15_15"].translated_text == _S17_ZH
+    assert by_group["u2_g15_15"].source_text_hash == compute_text_range_hash(
+        _STAFF_LIVELIHOOD_SOURCE
+    )
+    assert by_group["u2_g15_15"].translated_text == _AUTO_TIP_BILLS_ZH
     assert by_group["u2_g17_17"].anchor_segment_ids == ["s17"]
-    assert by_group["u2_g17_17"].source_text_hash == compute_text_range_hash(_S17_SOURCE)
-    assert by_group["u2_g17_17"].translated_text == _S15_ZH
+    assert by_group["u2_g17_17"].source_text_hash == compute_text_range_hash(_AUTO_TIP_BILLS_SOURCE)
+    assert by_group["u2_g17_17"].translated_text == _STAFF_LIVELIHOOD_ZH
 
 
 def test_hydrate_batch_output_correct_alignment_preserves_translations() -> None:
@@ -2325,8 +2332,8 @@ def test_hydrate_batch_output_correct_alignment_preserves_translations() -> None
             _batch_unit_output(
                 "u2",
                 [
-                    ("u2_g15_15", _S15_ZH),
-                    ("u2_g17_17", _S17_ZH),
+                    ("u2_g15_15", _STAFF_LIVELIHOOD_ZH),
+                    ("u2_g17_17", _AUTO_TIP_BILLS_ZH),
                 ],
             )
         ]
@@ -2339,15 +2346,15 @@ def test_hydrate_batch_output_correct_alignment_preserves_translations() -> None
 
     by_group = {g.group_id: g for g in outputs[0][1].groups}
     assert by_group["u2_g15_15"].anchor_segment_ids == ["s15"]
-    assert by_group["u2_g15_15"].translated_text == _S15_ZH
+    assert by_group["u2_g15_15"].translated_text == _STAFF_LIVELIHOOD_ZH
     assert by_group["u2_g17_17"].anchor_segment_ids == ["s17"]
-    assert by_group["u2_g17_17"].translated_text == _S17_ZH
+    assert by_group["u2_g17_17"].translated_text == _AUTO_TIP_BILLS_ZH
 
 
 def test_hydrate_batch_output_fail_closed_on_missing_group() -> None:
     context = _build_batch_context_with_segments()
     generation = TranslationBatchGenerationOutput(
-        units=[_batch_unit_output("u2", [("u2_g15_15", _S15_ZH)])]  # missing g17
+        units=[_batch_unit_output("u2", [("u2_g15_15", _STAFF_LIVELIHOOD_ZH)])]  # missing g17
     )
 
     with pytest.raises(TranslationExecutionError) as exc_info:
@@ -2364,8 +2371,8 @@ def test_hydrate_batch_output_fail_closed_on_extra_group() -> None:
             _batch_unit_output(
                 "u2",
                 [
-                    ("u2_g15_15", _S15_ZH),
-                    ("u2_g17_17", _S17_ZH),
+                    ("u2_g15_15", _STAFF_LIVELIHOOD_ZH),
+                    ("u2_g17_17", _AUTO_TIP_BILLS_ZH),
                     ("u2_g16_16", "bogus"),  # not a predefined group
                 ],
             )
@@ -2387,13 +2394,13 @@ def test_hydrate_batch_output_fail_closed_on_duplicate_group_id() -> None:
                 unit_id="u2",
                 groups=[
                     TranslationBatchGroupOutput(
-                        group_id="u2_g15_15", translated_text=_S15_ZH
+                        group_id="u2_g15_15", translated_text=_STAFF_LIVELIHOOD_ZH
                     ),
                     TranslationBatchGroupOutput(
                         group_id="u2_g15_15", translated_text="duplicate"
                     ),
                     TranslationBatchGroupOutput(
-                        group_id="u2_g17_17", translated_text=_S17_ZH
+                        group_id="u2_g17_17", translated_text=_AUTO_TIP_BILLS_ZH
                     ),
                 ],
             )
@@ -2409,7 +2416,7 @@ def test_hydrate_batch_output_fail_closed_on_duplicate_group_id() -> None:
 def test_hydrate_batch_output_fail_closed_on_unknown_unit() -> None:
     context = _build_batch_context_with_segments()
     generation = TranslationBatchGenerationOutput(
-        units=[_batch_unit_output("u99", [("u2_g15_15", _S15_ZH)])]
+        units=[_batch_unit_output("u99", [("u2_g15_15", _STAFF_LIVELIHOOD_ZH)])]
     )
 
     with pytest.raises(TranslationExecutionError) as exc_info:
@@ -2424,7 +2431,7 @@ def test_hydrate_batch_output_fail_closed_on_blank_translated_text() -> None:
         units=[
             _batch_unit_output(
                 "u2",
-                [("u2_g15_15", "   "), ("u2_g17_17", _S17_ZH)],
+                [("u2_g15_15", "   "), ("u2_g17_17", _AUTO_TIP_BILLS_ZH)],
             )
         ]
     )
@@ -2444,7 +2451,7 @@ def test_hydrate_batch_output_preserves_reading_order_regardless_of_llm_order() 
         units=[
             _batch_unit_output(
                 "u2",
-                [("u2_g17_17", _S17_ZH), ("u2_g15_15", _S15_ZH)],
+                [("u2_g17_17", _AUTO_TIP_BILLS_ZH), ("u2_g15_15", _STAFF_LIVELIHOOD_ZH)],
             )
         ]
     )
@@ -2518,7 +2525,8 @@ def test_hydrate_batch_output_covers_multiple_units_in_reading_order() -> None:
     assert outputs[1][1].groups[0].anchor_segment_ids == ["u1_s1"]
 
 
-def test_build_translation_batch_prompt_emits_predefined_groups_and_forbids_llm_anchor_choice() -> None:
+def test_build_translation_batch_prompt_emits_predefined_groups_and_forbids_llm_anchor_choice(
+) -> None:
     """The batch prompt must hand the LLM pre-defined groups (group_id +
     source_text) and forbid it from choosing anchor_segment_ids."""
     context = _build_batch_context_with_segments()
@@ -2533,8 +2541,8 @@ def test_build_translation_batch_prompt_emits_predefined_groups_and_forbids_llm_
     assert "anchor_segment_ids=\"s17\"" in prompt
     # Each group carries its source_text inline so the LLM translates the
     # right span per group_id.
-    assert _S15_SOURCE in prompt
-    assert _S17_SOURCE in prompt
+    assert _STAFF_LIVELIHOOD_SOURCE in prompt
+    assert _AUTO_TIP_BILLS_SOURCE in prompt
     # The grouping contract forbids adding/merging/splitting/reordering.
     assert "<grouping_contract>" in prompt
     assert "PRE-DEFINED" in prompt
@@ -2634,9 +2642,9 @@ def test_build_translation_batch_prompt_emits_multi_anchor_group() -> None:
     assert 'group_id="u2_g10_12"' in prompt
     assert 'anchor_segment_ids="s10,s11,s12"' in prompt
     # The full span source_text is included.
-    assert _S10_SOURCE in prompt
-    assert _S11_SOURCE in prompt
-    assert _S12_SOURCE in prompt
+    assert _MIN_WAGE_SOURCE in prompt
+    assert _RELY_ON_TIPS_SOURCE in prompt
+    assert _BATCH_STAFF_LIVELIHOOD_SOURCE in prompt
     # The prompt does not emit per-segment groups for this paragraph.
     assert 'group_id="u2_g10_10"' not in prompt
     assert 'group_id="u2_g11_11"' not in prompt
@@ -2686,9 +2694,9 @@ def test_plan_translation_groups_merges_short_single_sentence_paragraphs() -> No
     translation."""
     context = _build_batch_context_with_segments(
         segment_specs=[
-            ("s10", _S10_SOURCE, 10),
-            ("s11", _S11_SOURCE, 11),
-            ("s12", _S12_SOURCE, 12),
+            ("s10", _MIN_WAGE_SOURCE, 10),
+            ("s11", _RELY_ON_TIPS_SOURCE, 11),
+            ("s12", _BATCH_STAFF_LIVELIHOOD_SOURCE, 12),
         ],
         joiner="\n\n",  # 3 single-sentence paragraphs
     )
@@ -3124,7 +3132,7 @@ async def test_batch_path_with_fake_planner_translator_produces_semantic_groups(
 
 
 @pytest.mark.anyio
-async def test_t31_batch_window_output_preserves_translation_group_contract() -> None:
+async def test_batch_window_output_preserves_translation_group_contract() -> None:
     """T3.1 Translation Group contract regression: a multi-unit batch window
     (the shape a non-short ``translate_article`` window job produces) must
     NOT degrade to one-unit-one-group, one-anchor-one-group, or
@@ -3180,9 +3188,9 @@ async def test_t31_batch_window_output_preserves_translation_group_contract() ->
     # The first carries ``$2.13 per hour``. Planner clusters into 1 group
     # with all 3 anchors; the decimal stays inside one anchor segment.
     w2_segments = [
-        ("w2_s10", _S10_SOURCE, 10),
-        ("w2_s11", _S11_SOURCE, 11),
-        ("w2_s12", _S12_SOURCE, 12),
+        ("w2_s10", _MIN_WAGE_SOURCE, 10),
+        ("w2_s11", _RELY_ON_TIPS_SOURCE, 11),
+        ("w2_s12", _BATCH_STAFF_LIVELIHOOD_SOURCE, 12),
     ]
     w2_texts = [spec[1] for spec in w2_segments]
     w2_joiner = " "

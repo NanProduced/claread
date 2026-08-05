@@ -43,7 +43,12 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 
@@ -73,7 +78,7 @@ async def outline_env() -> asyncpg.Pool:
         await admin_conn.close()
 
 
-def test_t57_default_eligibility_false() -> None:
+def test_default_eligibility_false() -> None:
     class _S:
         readiness_state = "article_ready"
 
@@ -81,7 +86,7 @@ def test_t57_default_eligibility_false() -> None:
     assert allow_semantic_outline_request_eligibility(_S()) is True  # type: ignore[arg-type]
 
 
-def test_t57_bounded_input_no_unbounded_fulltext() -> None:
+def test_bounded_input_no_unbounded_fulltext() -> None:
     rows = [
         {
             "unit_id": f"u{i}",
@@ -103,7 +108,7 @@ def test_t57_bounded_input_no_unbounded_fulltext() -> None:
     assert all(len(u.preview) <= 40 for u in built.units)
 
 
-def test_t57_clamp_candidates() -> None:
+def test_clamp_candidates() -> None:
     nodes = tuple(
         SemanticOutlineCandidateNode(
             candidate_ref=f"c{i}",
@@ -118,7 +123,7 @@ def test_t57_clamp_candidates() -> None:
     assert len(clamp_candidates(nodes)) == OUTLINE_MAX_ATTEMPTED_NODES
 
 
-async def test_t57_default_generator_unconfigured_permanent_fail(
+async def test_default_generator_unconfigured_permanent_fail(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -190,7 +195,7 @@ async def test_t57_default_generator_unconfigured_permanent_fail(
     assert int(events) == 0
 
 
-async def test_t57_permanent_error_no_retry(outline_env: asyncpg.Pool) -> None:
+async def test_permanent_error_no_retry(outline_env: asyncpg.Pool) -> None:
     user_id = await insert_user(outline_env)
     article = await submit_article_ready(
         outline_env, user_id=user_id, plain_text="Permanent."
@@ -266,7 +271,7 @@ async def test_t57_permanent_error_no_retry(outline_env: asyncpg.Pool) -> None:
     assert int(events) == 0
 
 
-async def test_t57_transient_error_retry_later(outline_env: asyncpg.Pool) -> None:
+async def test_transient_error_retry_later(outline_env: asyncpg.Pool) -> None:
     user_id = await insert_user(outline_env)
     article = await submit_article_ready(
         outline_env, user_id=user_id, plain_text="Transient."
@@ -323,7 +328,7 @@ async def test_t57_transient_error_retry_later(outline_env: asyncpg.Pool) -> Non
     assert run["finished_at"] is None
 
 
-async def test_t57_explicit_eligibility_fake_chain_publishes(
+async def test_explicit_eligibility_fake_chain_publishes(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -379,7 +384,7 @@ async def test_t57_explicit_eligibility_fake_chain_publishes(
     assert snapshot.navigation.units
 
 
-async def test_t57_default_eligibility_creates_no_outline_job(
+async def test_default_eligibility_creates_no_outline_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)

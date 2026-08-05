@@ -240,7 +240,7 @@ def test_daily_grammar_bundle_lines_differ_across_three_variants() -> None:
 
 
 # Mechanical templates + stable-contract leakage must not appear in soft lenses.
-_R4_FORBIDDEN_POLICY_FRAGMENTS = (
+_FORBIDDEN_POLICY_FRAGMENTS = (
     # Old mechanical exam scripts
     "最高优先级",
     "释义要包含同义表达",
@@ -281,7 +281,7 @@ def test_vocabulary_and_grammar_policies_drop_mechanical_templates(
     vocab_text = "\n".join(strategy.layers["vocabulary"].prompt_lines)
     grammar_text = "\n".join(strategy.layers["grammar_bundle"].prompt_lines)
     combined = f"{vocab_text}\n{grammar_text}"
-    for fragment in _R4_FORBIDDEN_POLICY_FRAGMENTS:
+    for fragment in _FORBIDDEN_POLICY_FRAGMENTS:
         assert fragment not in combined, (
             f"{variant}/{goal} still contains forbidden fragment: {fragment!r}"
         )

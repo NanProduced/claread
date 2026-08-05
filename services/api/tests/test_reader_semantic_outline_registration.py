@@ -7,6 +7,7 @@ Default-off registration only. No real adapter, no provider calls.
 from __future__ import annotations
 
 import pytest
+
 from app.config.settings import Settings
 from app.llm.registry import build_model_registry
 from app.llm.router import build_model_for_route
@@ -23,8 +24,8 @@ from app.services.reader_orchestration.job_bootstrap import (
     default_semantic_outline_request_eligibility,
 )
 from app.services.reader_orchestration.semantic_outline_worker import (
-    UnconfiguredSemanticOutlineGenerator,
     SemanticOutlineWorkerService,
+    UnconfiguredSemanticOutlineGenerator,
 )
 
 pytestmark = [
@@ -36,18 +37,18 @@ pytestmark = [
 SEMANTIC_OUTLINE_PROMPT_AGENT = "reader_semantic_outline"
 
 
-def test_t58a_route_in_all_model_routes() -> None:
+def test_route_in_all_model_routes() -> None:
     assert MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE == "reader_layer_semantic_outline"
     assert MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE in ALL_MODEL_ROUTES
 
 
-def test_t58a_settings_defaults_are_closed() -> None:
+def test_settings_defaults_are_closed() -> None:
     settings = Settings()
     assert settings.reader_semantic_outline_model_profile == ""
     assert settings.semantic_outline_generation_enabled is False
 
 
-def test_t58a_route_defaults_only_when_profile_set() -> None:
+def test_route_defaults_only_when_profile_set() -> None:
     closed = build_model_registry(
         Settings(
             annotation_model_profile="annotation",
@@ -67,7 +68,7 @@ def test_t58a_route_defaults_only_when_profile_set() -> None:
     )
 
 
-def test_t58a_build_model_fail_closed_without_profile() -> None:
+def test_build_model_fail_closed_without_profile() -> None:
     """Empty outline profile must not register a route default; isolated
     Settings (no default_profile / no profiles JSON) yields no model.
     """
@@ -87,11 +88,11 @@ def test_t58a_build_model_fail_closed_without_profile() -> None:
     assert config is None
 
 
-def test_t58a_capability_constant() -> None:
+def test_capability_constant() -> None:
     assert CAPABILITY_READER_SEMANTIC_OUTLINE == "reader_semantic_outline"
 
 
-def test_t58a_prompt_loads_versioned_full_contract() -> None:
+def test_prompt_loads_versioned_full_contract() -> None:
     """Load via prompt-loader seam; assert contract markers, not version string order."""
     version = get_prompt_version()
     assert version and version != "unknown"
@@ -121,19 +122,19 @@ def test_t58a_prompt_loads_versioned_full_contract() -> None:
     assert "禁止 Markdown code fence" in text
     assert "禁止解释、前后缀文字及任何额外散文" in text
 
-def test_t58a_default_worker_still_unconfigured() -> None:
+def test_default_worker_still_unconfigured() -> None:
     worker = SemanticOutlineWorkerService(pool=None)
     assert isinstance(worker._generator, UnconfiguredSemanticOutlineGenerator)
 
 
-def test_t58a_default_eligibility_still_false() -> None:
+def test_default_eligibility_still_false() -> None:
     class _S:
         readiness_state = "article_ready"
 
     assert default_semantic_outline_request_eligibility(_S()) is False  # type: ignore[arg-type]
 
 
-def test_t58a_generation_enabled_field_is_not_live_kill_switch() -> None:
+def test_generation_enabled_field_is_not_live_kill_switch() -> None:
     """Document contract: settings field exists but T5.8a does not wire it.
 
     Presence of semantic_outline_generation_enabled=False must not be confused

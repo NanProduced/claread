@@ -39,6 +39,10 @@ from app.schemas.reader_orchestration import (
 from app.services.reader_orchestration.job_bootstrap import (
     TRANSLATION_BATCH_JOB_TYPE,
 )
+from app.services.reader_orchestration.section_identity import (
+    SectionIdentity,
+    encode_section_target_key,
+)
 from app.services.reader_orchestration.section_lane import (
     SECTION_REQUEST_ORIGIN,
     TRANSLATION_SECTION_OPERATION_FINGERPRINT,
@@ -62,10 +66,6 @@ from app.services.reader_orchestration.section_translation_drain import (
     SectionDrainOutcome,
     SectionDrainResult,
     SectionTranslationDrainService,
-)
-from app.services.reader_orchestration.section_identity import (
-    SectionIdentity,
-    encode_section_target_key,
 )
 
 pytestmark = [
@@ -1178,8 +1178,9 @@ def test_f01_route_does_not_import_worker_loop() -> None:
     Section execution is bounded to bootstrap + drain; the ordinary
     worker_loop is intentionally NOT pulled into this command path.
     """
-    import app.api.routes.reader_orchestration as route_mod
     import inspect
+
+    import app.api.routes.reader_orchestration as route_mod
 
     source = inspect.getsource(route_mod)
     # Forbidden symbols must not appear anywhere in the route module.
@@ -1199,8 +1200,9 @@ def test_f02_route_uses_existing_translation_job_type_only() -> None:
     """The route must NOT register a new job_type. Section execution reuses
     ``TRANSLATION_BATCH_JOB_TYPE`` (translate_article / unit_range_v1) via
     the existing bootstrap + drain services."""
-    import app.api.routes.reader_orchestration as route_mod
     import inspect
+
+    import app.api.routes.reader_orchestration as route_mod
 
     source = inspect.getsource(route_mod)
     # No new job_type literal introduced by the route.
@@ -1216,8 +1218,9 @@ def test_f02_route_uses_existing_translation_job_type_only() -> None:
 def test_f03_route_calls_only_bootstrap_and_drain_public_methods() -> None:
     """The route must call only the public service entry points; no internal
     ``_prepare_section_job`` / ``_force_fail_budget_exhausted`` etc."""
-    import app.api.routes.reader_orchestration as route_mod
     import inspect
+
+    import app.api.routes.reader_orchestration as route_mod
 
     source = inspect.getsource(route_mod)
     for forbidden in (
@@ -1240,7 +1243,7 @@ def test_f03_route_calls_only_bootstrap_and_drain_public_methods() -> None:
 # ===========================================================================
 
 
-def test_g01_response_model_is_registered_on_route() -> None:
+def test_response_model_is_registered_on_route() -> None:
     """The route must declare ``ReaderSectionTranslationResponse`` as its
     response_model so OpenAPI / contract tests stay stable."""
     app = _build_app()
@@ -1253,7 +1256,7 @@ def test_g01_response_model_is_registered_on_route() -> None:
     assert response_model is ReaderSectionTranslationResponse
 
 
-def test_g02_response_outcome_enum_is_stable() -> None:
+def test_response_outcome_enum_is_stable() -> None:
     """The response outcome literal set must be exactly the six documented
     values, in stable order."""
     from typing import get_args
@@ -1268,13 +1271,13 @@ def test_g02_response_outcome_enum_is_stable() -> None:
     }
 
 
-def test_g03_request_model_forbids_extra_fields() -> None:
+def test_request_model_forbids_extra_fields() -> None:
     """Pydantic config must reject unknown body fields (no silent acceptance)."""
     cfg = ReaderSectionTranslationRequest.model_config
     assert cfg.get("extra") == "forbid"
 
 
-def test_g04_request_model_required_fields() -> None:
+def test_request_model_required_fields() -> None:
     """The only required body fields are start_unit_id and end_unit_id.
 
     node_id / outline_revision / start_anchor_segment_id /

@@ -209,7 +209,7 @@ def test_a12_failed_job_no_published_is_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a3_published_ready_projects_with_real_ids() -> None:
+def test_published_ready_projects_with_real_ids() -> None:
     build_result = _build_result()
     layer = _outline_layer(build_result)
     snapshot = _snapshot(build_result, layers=[layer])
@@ -231,7 +231,7 @@ def test_a3_published_ready_projects_with_real_ids() -> None:
     assert any(l.layer_type == "semantic_outline" for l in snapshot.enhancement_layers)
 
 
-def test_a4_published_partial_keeps_valid_nodes_only() -> None:
+def test_published_partial_keeps_valid_nodes_only() -> None:
     build_result = _build_result()
     layer = _outline_layer(build_result, output=_partial_envelope(build_result))
     snapshot = _snapshot(build_result, layers=[layer])
@@ -249,7 +249,7 @@ def test_a4_published_partial_keeps_valid_nodes_only() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a5_old_published_still_projected_when_only_published_present() -> None:
+def test_old_published_still_projected_when_only_published_present() -> None:
     """New job failure is not consulted; sole published layer remains projected."""
     build_result = _build_result()
     env = _ready_envelope(build_result, revision="olrev_old_kept", layer_id="layer_old")
@@ -461,7 +461,7 @@ def test_default_field_on_model_is_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p1_envelope_status_failed_with_valid_nodes_is_none() -> None:
+def test_envelope_status_failed_with_valid_nodes_is_none() -> None:
     """Published row cannot upgrade a failed envelope via node revalidation."""
     build_result = _build_result()
     env = _ready_envelope(build_result)
@@ -479,7 +479,7 @@ def test_p1_envelope_status_failed_with_valid_nodes_is_none() -> None:
 
 
 @pytest.mark.parametrize("bad_status", ["pending", "stale", "unavailable"])
-def test_p1_envelope_status_non_trusted_not_upgraded(bad_status: str) -> None:
+def test_envelope_status_non_trusted_not_upgraded(bad_status: str) -> None:
     build_result = _build_result()
     env = _ready_envelope(build_result)
     env["status"] = bad_status
@@ -495,7 +495,7 @@ def test_p1_envelope_status_non_trusted_not_upgraded(bad_status: str) -> None:
     assert _json(snapshot)["semantic_outline"] is None
 
 
-def test_p1_publication_published_at_from_layer_row_not_envelope() -> None:
+def test_publication_published_at_from_layer_row_not_envelope() -> None:
     build_result = _build_result()
     layer_ts = datetime(2026, 7, 17, 15, 30, 0, tzinfo=UTC)
     envelope_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)

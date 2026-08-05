@@ -32,18 +32,18 @@ from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleJobContext,
     DisplayTitleWorkerService,
 )
-from app.services.reader_orchestration.job_bootstrap import (
-    GRAMMAR_BATCH_JOB_TYPE,
-    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
-    GRAMMAR_BATCH_TARGET_SCOPE,
-    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
-)
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBatchExecutionResult,
     GrammarBatchJobContext,
     GrammarBundleWorkerService,
     GrammarExecutionResult,
     GrammarJobContext,
+)
+from app.services.reader_orchestration.job_bootstrap import (
+    GRAMMAR_BATCH_JOB_TYPE,
+    GRAMMAR_BATCH_OPERATION_FINGERPRINT,
+    GRAMMAR_BATCH_TARGET_SCOPE,
+    GRAMMAR_STRUCTURED_BATCH_OPERATION_FINGERPRINT,
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.pipeline_runner import (
@@ -1663,7 +1663,7 @@ def test_t1_reorder_outputs_by_target_unit_ids_helper() -> None:
 # the grouped path: bootstrap creates multiple build_vocabulary_layer_article
 # window jobs; the pipeline runner processes each window via the batch
 # vocabulary worker; the publisher still publishes per-unit vocabulary layers.
-_T32B_LONG_TEXT = "\n\n".join(
+_LONG_VOCABULARY_TEXT = "\n\n".join(
     [
         " ".join(
             f"Word{i} placeholder sentence for grouped vocabulary window test."
@@ -1672,11 +1672,11 @@ _T32B_LONG_TEXT = "\n\n".join(
         for _ in range(8)
     ]
 )
-assert len(_T32B_LONG_TEXT) > 6000
+assert len(_LONG_VOCABULARY_TEXT) > 6000
 
 
 @pytest.mark.anyio
-async def test_t32b_pipeline_runner_processes_multiple_vocabulary_windows_and_publishes_per_unit_layers(
+async def test_pipeline_runner_processes_multiple_vocabulary_windows_and_publishes_per_unit_layers(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
     """T3.2b: pipeline runner processes multiple vocabulary batch window jobs
@@ -1687,10 +1687,10 @@ async def test_t32b_pipeline_runner_processes_multiple_vocabulary_windows_and_pu
     article = await submit_article_ready(
         pipeline_runner_env,
         user_id=user_id,
-        plain_text=_T32B_LONG_TEXT,
+        plain_text=_LONG_VOCABULARY_TEXT,
         title="T3.2b Grouped Vocabulary",
     )
-    assert len(_T32B_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+    assert len(_LONG_VOCABULARY_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
 
     runner = _make_runner(
         pipeline_runner_env,
@@ -1751,7 +1751,7 @@ async def test_t32b_pipeline_runner_processes_multiple_vocabulary_windows_and_pu
 # the grouped path: bootstrap creates multiple translate_article window
 # jobs; the pipeline runner processes each window via the batch translator;
 # the publisher still publishes per-unit translation layers.
-_T31_LONG_TEXT = "\n\n".join(
+_LONG_TRANSLATION_TEXT = "\n\n".join(
     [
         " ".join(
             f"Word{i} placeholder sentence for grouped translation window test."
@@ -1760,11 +1760,11 @@ _T31_LONG_TEXT = "\n\n".join(
         for _ in range(8)
     ]
 )
-assert len(_T31_LONG_TEXT) > 6000
+assert len(_LONG_TRANSLATION_TEXT) > 6000
 
 
 @pytest.mark.anyio
-async def test_t31_pipeline_runner_processes_multiple_translation_windows_and_publishes_per_unit_layers(
+async def test_pipeline_runner_processes_multiple_translation_windows_and_publishes_per_unit_layers(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
     """T3.1: pipeline runner processes multiple translation batch window jobs
@@ -1775,10 +1775,10 @@ async def test_t31_pipeline_runner_processes_multiple_translation_windows_and_pu
     article = await submit_article_ready(
         pipeline_runner_env,
         user_id=user_id,
-        plain_text=_T31_LONG_TEXT,
+        plain_text=_LONG_TRANSLATION_TEXT,
         title="T3.1 Grouped Translation",
     )
-    assert len(_T31_LONG_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+    assert len(_LONG_TRANSLATION_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
 
     runner = _make_runner(
         pipeline_runner_env,
@@ -2004,7 +2004,7 @@ async def _insert_superseded_grammar_batch_job(
 
 
 @pytest.mark.anyio
-async def test_t41c_short_article_uses_compact_grammar_batch_path(
+async def test_short_article_uses_compact_grammar_batch_path(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: SHORT_BATCH article → 1 compact grammar batch job, no
@@ -2064,7 +2064,7 @@ async def test_t41c_short_article_uses_compact_grammar_batch_path(
 
 
 @pytest.mark.anyio
-async def test_t41c_compact_grammar_batch_no_per_unit_fan_out_regression(
+async def test_compact_grammar_batch_no_per_unit_fan_out_regression(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: compact grammar batch path must not create per-unit
@@ -2186,7 +2186,7 @@ async def test_count_grammar_batch_superseded_jobs_covers_short_and_structured_b
 
 
 @pytest.mark.anyio
-async def test_t41c_compact_grammar_batch_worker_loop_completes_cleanly(
+async def test_compact_grammar_batch_worker_loop_completes_cleanly(
     pipeline_runner_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: worker loop / pipeline runner must not stall or loop
@@ -2221,4 +2221,5 @@ async def test_t41c_compact_grammar_batch_worker_loop_completes_cleanly(
     assert summary.outcome_counts.failed_terminal == 0
     assert summary.outcome_counts.retry_later == 0
     # Grammar batch succeeded
-    assert summary.outcome_counts.succeeded >= 4  # display_title + translation_batch + vocabulary_batch + grammar_bundle
+    # display_title + translation_batch + vocabulary_batch + grammar_bundle
+    assert summary.outcome_counts.succeeded >= 4

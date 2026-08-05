@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
+from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
@@ -58,7 +59,6 @@ from app.services.reader_orchestration.vocabulary_worker import (
     _phrase_gloss_guard_reason_code,
     _validate_vocabulary_strategy_metadata,
 )
-from pydantic import ValidationError
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -2484,8 +2484,16 @@ def test_batch_outputs_follow_llm_unit_order() -> None:
     seg2_text = "Second unit sentence."
     batch_context = _build_batch_context(
         units=[
-            ("u1", 1, seg1_text, [_make_segment_with_offset(anchor_segment_id="s1", text=seg1_text, unit_start_utf16=0)]),
-            ("u2", 2, seg2_text, [_make_segment_with_offset(anchor_segment_id="s2", text=seg2_text, unit_start_utf16=0)]),
+            ("u1", 1, seg1_text, [
+                _make_segment_with_offset(
+                    anchor_segment_id="s1", text=seg1_text, unit_start_utf16=0
+                )
+            ]),
+            ("u2", 2, seg2_text, [
+                _make_segment_with_offset(
+                    anchor_segment_id="s2", text=seg2_text, unit_start_utf16=0
+                )
+            ]),
         ],
     )
     # LLM returns units in reversed order; the batch builder preserves
@@ -2915,7 +2923,7 @@ def test_build_vocabulary_batch_prompt_exposes_item_caps() -> None:
 # claimed.
 
 
-def test_t32b_cross_window_duplicate_headword_v1_both_windows_keep_highlight() -> None:
+def test_cross_window_duplicate_headword_v1_both_windows_keep_highlight() -> None:
     """T3.2b v1 lock: the same headword in two separate windows is kept
     by BOTH windows. Cross-unit dedup only applies within a single batch
     job (window), not across windows.
@@ -3185,7 +3193,9 @@ def test_phrase_gloss_guard_reason_code_unit_cases() -> None:
     """Deterministic guard returns reason_code for sentence-shaped inputs
     and None for accepted inputs. Length alone is not a rejection rule."""
 
-    def _make_phrase_candidate(selected_text: str, phrase: str) -> VocabularyPhraseGlossCandidateItem:
+    def _make_phrase_candidate(
+        selected_text: str, phrase: str
+    ) -> VocabularyPhraseGlossCandidateItem:
         return VocabularyPhraseGlossCandidateItem.model_validate(
             {
                 "item_type": "phrase_gloss",

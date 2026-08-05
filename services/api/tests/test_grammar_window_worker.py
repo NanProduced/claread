@@ -665,7 +665,7 @@ def _make_valid_strategy_input(
     }
 
 
-async def test_t12_resolve_window_strategy_returns_strategy_fields() -> None:
+async def test_resolve_window_strategy_returns_strategy_fields() -> None:
     """T1.2: _resolve_window_strategy returns reading_goal/reading_variant/
     strategy_hash/layer_policy_hash/grammar_prompt_lines from input_json."""
     input_data = _make_valid_strategy_input()
@@ -681,7 +681,7 @@ async def test_t12_resolve_window_strategy_returns_strategy_fields() -> None:
     assert len(result["grammar_prompt_lines"]) >= 1
 
 
-async def test_t12_resolve_window_strategy_rejects_missing_metadata() -> None:
+async def test_resolve_window_strategy_rejects_missing_metadata() -> None:
     """T1.2: Missing strategy metadata raises GrammarWindowExecutionError
     (fail-closed, no default fallback)."""
     input_data: dict[str, Any] = {
@@ -694,7 +694,7 @@ async def test_t12_resolve_window_strategy_rejects_missing_metadata() -> None:
     assert "strategy_metadata_missing" in str(exc_info.value.failure_code)
 
 
-async def test_t12_resolve_window_strategy_rejects_hash_mismatch() -> None:
+async def test_resolve_window_strategy_rejects_hash_mismatch() -> None:
     """T1.2: strategy_hash mismatch raises GrammarWindowExecutionError."""
     input_data = _make_valid_strategy_input()
     input_data["strategy_hash"] = "stale_hash_value"
@@ -703,7 +703,7 @@ async def test_t12_resolve_window_strategy_rejects_hash_mismatch() -> None:
     assert "strategy_hash_mismatch" in str(exc_info.value.failure_code)
 
 
-async def test_t12_build_window_prompt_injects_reader_strategy_section() -> None:
+async def test_build_window_prompt_injects_reader_strategy_section() -> None:
     """T1.2: _build_window_prompt injects <reader_strategy> section with
     reading_goal/reading_variant/strategy_hash/layer_policy_hash/policy_lines."""
     strategy = resolve_reader_variant_strategy("daily_reading", "intermediate_reading")
@@ -743,7 +743,7 @@ async def test_t12_build_window_prompt_injects_reader_strategy_section() -> None
         assert f"- {line}" in prompt
 
 
-async def test_t12_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None:
+async def test_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None:
     """T1.2: When grammar_prompt_lines is empty, no <reader_strategy> section."""
     executor = PydanticAIGrammarWindowExecutor()
     context: dict[str, Any] = {
@@ -764,7 +764,7 @@ async def test_t12_build_window_prompt_omits_strategy_when_no_prompt_lines() -> 
 # ---------------------------------------------------------------------------
 
 
-async def test_t13_build_window_prompt_reads_nested_budget_keys() -> None:
+async def test_build_window_prompt_reads_nested_budget_keys() -> None:
     """T1.3: _build_window_prompt reads grammar_note.count / sentence_analysis.count
     from window_budget (the format zplus_bootstrap writes), NOT the old
     max_grammar_notes / max_sentence_analyses flat keys."""
@@ -787,7 +787,7 @@ async def test_t13_build_window_prompt_reads_nested_budget_keys() -> None:
     assert "- max_sentence_analyses: 4" in prompt
 
 
-async def test_t13_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
+async def test_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
     """T1.3: The budget keys read by the worker match the format written by
     zplus_bootstrap._compute_window_budget. This is the regression test for
     the silent budget mismatch bug (old worker read max_grammar_notes /
@@ -818,7 +818,7 @@ async def test_t13_build_window_prompt_budget_keys_match_bootstrap_format() -> N
     assert "- max_sentence_analyses: 3" not in prompt
 
 
-async def test_t13_build_window_prompt_falls_back_when_budget_missing() -> None:
+async def test_build_window_prompt_falls_back_when_budget_missing() -> None:
     """T1.3: When window_budget is missing or empty, worker falls back to
     safe defaults (4/3). This is defensive, not the happy path."""
     executor = PydanticAIGrammarWindowExecutor()
@@ -1143,12 +1143,12 @@ def test_window_candidate_rejects_overlong_dedup_hint() -> None:
     MAX_GRAMMAR_DEDUP_HINT_LENGTH, mirroring per-unit / batch."""
     from pydantic import ValidationError
 
-    from app.services.reader_orchestration.grammar_worker import (
-        MAX_GRAMMAR_DEDUP_HINT_LENGTH,
-    )
     from app.services.reader_orchestration.grammar_window_worker import (
         _WindowGrammarNoteCandidate,
         _WindowSentenceAnalysisCandidate,
+    )
+    from app.services.reader_orchestration.grammar_worker import (
+        MAX_GRAMMAR_DEDUP_HINT_LENGTH,
     )
 
     note_base = _minimal_window_grammar_note_kwargs()

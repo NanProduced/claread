@@ -82,7 +82,6 @@ from app.services.reader_orchestration.semantic_outline_worker import (
     OUTLINE_MAX_UNITS_FOR_PREVIEW,
     SemanticOutlineWorkerService,
 )
-
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -91,7 +90,12 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_real_llm, pytest.mark.life_external_smoke]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_real_llm,
+    pytest.mark.life_external_smoke,
+]
 
 
 _REAL_LLM_MODEL_ENV = "CLAREAD_REAL_LLM_MODEL"
@@ -338,7 +342,7 @@ def _emit_smoke_report(
 
 
 @pytest.mark.real_llm
-async def test_t58c_semantic_outline_real_llm_smoke(
+async def test_semantic_outline_real_llm_smoke(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Single real-LLM smoke against the explicitly authorized model.

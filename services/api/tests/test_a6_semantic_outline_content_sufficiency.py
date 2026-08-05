@@ -122,7 +122,7 @@ def test_a6_unit_a2_empty_profile_returns_false() -> None:
     assert predicate(_StubState(unit_types=("heading",) * 5)) is False
 
 
-def test_a6_unit_a3_unit_types_none_fail_closed_returns_true() -> None:
+def test_a6_unit_types_none_fail_closed_returns_true() -> None:
     """activation_ready=True + unit_types=None → fail-closed to True (no skip).
 
     When unit_types is not loaded (e.g., a code path that did not pre-load
@@ -134,7 +134,7 @@ def test_a6_unit_a3_unit_types_none_fail_closed_returns_true() -> None:
     assert predicate(_StubState(unit_types=None)) is True
 
 
-def test_a6_unit_a4_empty_unit_types_returns_true() -> None:
+def test_a6_empty_unit_types_returns_true() -> None:
     """activation_ready=True + zero units → True (no skip; no headings)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -142,7 +142,7 @@ def test_a6_unit_a4_empty_unit_types_returns_true() -> None:
     assert predicate(_StubState(unit_types=())) is True
 
 
-def test_a6_unit_a5_fewer_than_threshold_headings_returns_true() -> None:
+def test_a6_fewer_than_threshold_headings_returns_true() -> None:
     """activation_ready=True + 1 heading (< threshold 2) → True (no skip)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -256,7 +256,7 @@ async def test_a6_int_b1_article_with_sufficient_headings_skips_job(
     )
 
 
-async def test_a6_int_b2_article_without_sufficient_headings_creates_job(
+async def test_a6_integration_article_without_sufficient_headings_creates_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Article with <2 heading units → outline job created (regression).

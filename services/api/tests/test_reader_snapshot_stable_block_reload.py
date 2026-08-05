@@ -43,7 +43,7 @@ from tests.test_reader_orchestration_schema_baseline import (
     DATABASE_URL,
 )
 
-R1_MARKDOWN = """## 6. Implementation Plan
+IMPLEMENTATION_PLAN_MARKDOWN = """## 6. Implementation Plan
 
 *How we will roll this out safely, step by step.*
 
@@ -122,12 +122,12 @@ async def _insert_user(pool: asyncpg.Pool) -> UUID:
     return user_id
 
 
-async def _freeze_r1_markdown(pool: asyncpg.Pool, user_id: UUID):
+async def _freeze_implementation_plan_markdown(pool: asyncpg.Pool, user_id: UUID):
     service = StableReadyInputApplicationService(pool=pool)
     return await service.freeze_stable_ready_input_and_load_snapshot(
         user_id=user_id,
         source_type="pasted_text",
-        text=R1_MARKDOWN,
+        text=IMPLEMENTATION_PLAN_MARKDOWN,
         language="en",
     )
 
@@ -293,7 +293,7 @@ async def test_fresh_and_reloaded_snapshots_are_structurally_equivalent(
     Snapshot stable 结构必须等价。"""
     pool = reload_env
     user_id = await _insert_user(pool)
-    result = await _freeze_r1_markdown(pool, user_id)
+    result = await _freeze_implementation_plan_markdown(pool, user_id)
     record_id = result.reading_record_id
 
     fresh = _source_blocks_by_unit(result.snapshot)
@@ -338,7 +338,7 @@ async def test_reloaded_facts_units_carry_stable_block_metadata(
 ) -> None:
     """repository 层：重载后的 BuiltReadingUnit 必须携带 stable 元数据。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
 
     facts = await _load_facts(reload_env, result.reading_record_id, user_id)
     units = facts.build_result.units
@@ -367,7 +367,7 @@ async def test_reloaded_navigation_units_carry_stable_fields(
 ) -> None:
     """NavigationUnitFact 公开合同：stable_block_type / heading_level。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
 
     reloaded = await _load_snapshot(reload_env, result.reading_record_id, user_id)
     nav_by_unit = {u.unit_id: u for u in reloaded.navigation.units}
@@ -391,7 +391,7 @@ async def test_record_without_stable_document_keeps_legacy_fallback(
     """fail-soft：删除 Stable Document 后重载不得抛错，单元退回 legacy
     （无 stable 字段），Reader 仍渲染普通段落。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
     record_id = result.reading_record_id
 
     async with reload_env.acquire() as conn:
@@ -418,7 +418,7 @@ async def test_generation_fence_ignores_mismatched_stable_document(
     """generation fence：stable document 的 record_generation 与记录不一致
     时必须 fail-soft 忽略，不得投影过期结构。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
     record_id = result.reading_record_id
 
     async with reload_env.acquire() as conn:
@@ -441,7 +441,7 @@ async def test_mismatched_block_range_does_not_pollute_unit(
     """精确范围匹配：canonical 偏移失配的 block 不得投影到任何 unit，
     其他精确匹配的 unit 不受影响。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
     record_id = result.reading_record_id
 
     async with reload_env.acquire() as conn:
@@ -478,7 +478,7 @@ async def test_duplicate_exact_match_is_deterministic_first_wins(
     """重复精确匹配：同一范围出现多个 block 时按 order_index 最小者
     取胜（与 builder annotations_by_range.setdefault 语义一致），结果确定。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_r1_markdown(reload_env, user_id)
+    result = await _freeze_implementation_plan_markdown(reload_env, user_id)
     record_id = result.reading_record_id
 
     async with reload_env.acquire() as conn:
@@ -598,7 +598,7 @@ async def _load_stable_document_blocks(
 # review (covered by test_input_suitability_gate.py +
 # test_a7_candidate_routing_distribution.py, not by reload tests).
 
-R2_CODE_BLOCK_MARKDOWN = """# Code Example
+CODE_BLOCK_MARKDOWN = """# Code Example
 
 This section demonstrates how a fenced code block is preserved across
 the stable document freeze and reload pipeline. The prose around the
@@ -617,7 +617,7 @@ the surrounding paragraph units and that its canonical range is
 independent of its neighbours.
 """
 
-R2_THEMATIC_BREAK_MARKDOWN = """# Section One
+THEMATIC_BREAK_MARKDOWN = """# Section One
 
 This first section introduces the document and provides enough English
 prose to satisfy the input suitability gate. The thematic break below
@@ -635,7 +635,7 @@ must not project it onto any reading unit. Both headings and both
 paragraphs should survive reload with their stable block metadata.
 """
 
-R2_NESTED_LIST_MARKDOWN = """# Nested List Document
+NESTED_LIST_MARKDOWN = """# Nested List Document
 
 This document exercises a three-level nested list structure to verify
 that parent_block_id chains survive the stable document freeze and
@@ -666,7 +666,7 @@ async def test_code_block_survives_reload(reload_env: asyncpg.Pool) -> None:
     """
     pool = reload_env
     user_id = await _insert_user(pool)
-    result = await _freeze_markdown(pool, user_id, R2_CODE_BLOCK_MARKDOWN)
+    result = await _freeze_markdown(pool, user_id, CODE_BLOCK_MARKDOWN)
     record_id = result.reading_record_id
 
     blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
@@ -734,7 +734,7 @@ async def test_thematic_break_routes_to_metadata_only_no_unit(
     """
     pool = reload_env
     user_id = await _insert_user(pool)
-    result = await _freeze_markdown(pool, user_id, R2_THEMATIC_BREAK_MARKDOWN)
+    result = await _freeze_markdown(pool, user_id, THEMATIC_BREAK_MARKDOWN)
     record_id = result.reading_record_id
 
     blocks = await _load_stable_document_blocks(pool, result.stable_document_id)
@@ -800,7 +800,7 @@ async def test_nested_list_parent_chain_survives_reload(
     """
     pool = reload_env
     user_id = await _insert_user(pool)
-    result = await _freeze_markdown(pool, user_id, R2_NESTED_LIST_MARKDOWN)
+    result = await _freeze_markdown(pool, user_id, NESTED_LIST_MARKDOWN)
     record_id = result.reading_record_id
 
     blocks = await _load_stable_document_blocks(pool, result.stable_document_id)

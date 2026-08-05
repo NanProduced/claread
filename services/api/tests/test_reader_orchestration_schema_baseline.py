@@ -274,7 +274,7 @@ async def test_reading_records_generation_must_be_positive(reader_schema: str) -
         await conn.close()
 
 
-async def test_user_annotations_color_contract_matches_r1_palette(
+async def test_user_annotations_color_contract_matches_baseline_palette(
     reader_schema: str,
 ) -> None:
     conn = await _connect(reader_schema)

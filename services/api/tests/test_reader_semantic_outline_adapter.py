@@ -45,7 +45,12 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_orchestration,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 _USAGE = {
@@ -134,12 +139,12 @@ async def _fetch_usage_row(pool, *, job_id):
         )
 
 
-def test_t58b_default_worker_still_unconfigured() -> None:
+def test_default_worker_still_unconfigured() -> None:
     worker = SemanticOutlineWorkerService(pool=None)
     assert isinstance(worker._generator, UnconfiguredSemanticOutlineGenerator)
 
 
-def test_t58b_policy_disabled_raises_without_call() -> None:
+def test_policy_disabled_raises_without_call() -> None:
     policy = SemanticOutlineExecutionPolicy.for_tests(generation_enabled=False)
     from app.services.reader_orchestration.semantic_outline_worker import (
         SemanticOutlineWorkerInput,
@@ -156,7 +161,7 @@ def test_t58b_policy_disabled_raises_without_call() -> None:
     assert exc.value.provider_call_made is False
 
 
-def test_t58b_policy_missing_profile_raises() -> None:
+def test_policy_missing_profile_raises() -> None:
     policy = SemanticOutlineExecutionPolicy.for_tests(generation_enabled=True)
     from app.services.reader_orchestration.semantic_outline_worker import (
         SemanticOutlineWorkerInput,
@@ -173,7 +178,7 @@ def test_t58b_policy_missing_profile_raises() -> None:
     assert exc.value.provider_call_made is False
 
 
-def test_t58b_policy_rejects_nonempty_preview_over_cap() -> None:
+def test_policy_rejects_nonempty_preview_over_cap() -> None:
     from app.services.reader_orchestration.semantic_outline_worker import (
         SemanticOutlineUnitPreview,
         SemanticOutlineWorkerInput,
@@ -201,7 +206,7 @@ def test_t58b_policy_rejects_nonempty_preview_over_cap() -> None:
     assert exc.value.provider_call_made is False
 
 
-def test_t58b_policy_allows_identity_only_units_beyond_preview_count() -> None:
+def test_policy_allows_identity_only_units_beyond_preview_count() -> None:
     """Many units with empty preview must not be rejected (identity-only)."""
     from app.services.reader_orchestration.semantic_outline_worker import (
         SemanticOutlineUnitPreview,
@@ -236,7 +241,7 @@ def test_t58b_policy_allows_identity_only_units_beyond_preview_count() -> None:
     )
 
 
-def test_t58b_policy_rejects_too_many_nonempty_preview_units() -> None:
+def test_policy_rejects_too_many_nonempty_preview_units() -> None:
     """max_units_for_preview=2 and 3 non-empty previews → envelope exceeded."""
     from app.services.reader_orchestration.semantic_outline_worker import (
         SemanticOutlineUnitPreview,
@@ -273,7 +278,7 @@ def test_t58b_policy_rejects_too_many_nonempty_preview_units() -> None:
     assert exc.value.provider_call_made is False
 
 
-def test_t58b_apply_output_token_cap_merges_into_model_settings() -> None:
+def test_apply_output_token_cap_merges_into_model_settings() -> None:
     from app.llm.types import RunModelSettings
     from app.services.reader_orchestration.semantic_outline_executor import (
         apply_output_token_cap,
@@ -294,7 +299,7 @@ def test_t58b_apply_output_token_cap_merges_into_model_settings() -> None:
     assert capped3.max_tokens == 100  # existing tighter cap wins
 
 
-async def test_t58b_disabled_claimed_job_permanent_zero_usage(
+async def test_disabled_claimed_job_permanent_zero_usage(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -342,7 +347,7 @@ async def test_t58b_disabled_claimed_job_permanent_zero_usage(
     assert await _count_usage(outline_env, job_id=boot.job_id) == 0
 
 
-async def test_t58b_injected_success_publish_one_usage(
+async def test_injected_success_publish_one_usage(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -400,7 +405,7 @@ async def test_t58b_injected_success_publish_one_usage(
     assert row["status"] == "succeeded"
 
 
-async def test_t58b_invalid_structured_output_permanent_one_usage(
+async def test_invalid_structured_output_permanent_one_usage(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -453,7 +458,7 @@ async def test_t58b_invalid_structured_output_permanent_one_usage(
     assert await _count_usage(outline_env, job_id=boot.job_id) == 1
 
 
-async def test_t58b_timeout_without_usage_zero_events(
+async def test_timeout_without_usage_zero_events(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)
@@ -499,7 +504,7 @@ async def test_t58b_timeout_without_usage_zero_events(
     assert await _count_usage(outline_env, job_id=boot.job_id) == 0
 
 
-async def test_t58b_fake_default_no_provider_call_flag_no_usage(
+async def test_fake_default_no_provider_call_flag_no_usage(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Fake generator does not set provider_call_made → zero usage events."""
@@ -535,7 +540,7 @@ async def test_t58b_fake_default_no_provider_call_flag_no_usage(
     assert await _count_usage(outline_env, job_id=boot.job_id) == 0
 
 
-async def test_t58b_adapter_invalid_output_via_mock_run_terminal_one_usage(
+async def test_adapter_invalid_output_via_mock_run_terminal_one_usage(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Structured-output failure after real adapter call → terminal + 1 failed usage."""
@@ -629,7 +634,7 @@ async def test_t58b_adapter_invalid_output_via_mock_run_terminal_one_usage(
     assert row["status"] == "failed"
 
 
-async def test_t58b_adapter_unexpected_model_behavior_maps_to_model_output_invalid(
+async def test_adapter_unexpected_model_behavior_maps_to_model_output_invalid(
     outline_env: asyncpg.Pool,
 ) -> None:
     """PydanticAI raises UnexpectedModelBehavior inside agent.run for bad output.
@@ -717,7 +722,7 @@ async def test_t58b_adapter_unexpected_model_behavior_maps_to_model_output_inval
     assert row["status"] == "failed"
 
 
-async def test_t58b_real_adapter_policy_blocks_before_model() -> None:
+async def test_real_adapter_policy_blocks_before_model() -> None:
     settings = Settings(
         semantic_outline_generation_enabled=False,
         reader_semantic_outline_model_profile="x",
@@ -764,7 +769,7 @@ async def test_t58b_real_adapter_policy_blocks_before_model() -> None:
         build.assert_not_called()
 
 
-async def test_t58b_outline_candidates_output_forbids_node_id() -> None:
+async def test_outline_candidates_output_forbids_node_id() -> None:
     with pytest.raises(ValidationError):
         OutlineCandidatesOutput.model_validate(
             {

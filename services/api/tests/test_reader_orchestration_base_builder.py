@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -541,7 +541,7 @@ def test_builder_marks_fallback_window_segments_low_quality() -> None:
     assert all(segment.boundary_quality == "low" for segment in result.anchor_segments)
 
 
-def test_builder_keeps_r6_long_single_block_fixture_as_one_low_quality_unit() -> None:
+def test_builder_keeps_long_single_block_fixture_as_one_low_quality_unit() -> None:
     result = _build_result(long_plain_text_fixture())
 
     assert len(result.units) == 1
@@ -900,7 +900,8 @@ def test_reader_plate_snapshot_drops_overlapping_translation_group_and_keeps_pri
     assert translation_nodes[0]["children"] == [{"text": "前半组"}]
 
 
-def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_space_separator() -> None:
+def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_space_separator(
+) -> None:
     result = _build_result("First sentence. Second sentence.")
     layer = _build_translation_layer(
         result,
@@ -926,7 +927,8 @@ def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_spa
     assert _translation_nodes(snapshot) == []
 
 
-def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_blank_line_separator() -> None:
+def test_reader_plate_snapshot_drops_translation_group_with_hash_mismatch_on_blank_line_separator(
+) -> None:
     result = _build_result_with_unit_separator("\n\n")
     layer = _build_translation_layer(
         result,

@@ -185,7 +185,7 @@ async def test_dev_b1_activation_ready_article_ready_creates_one_job(
     assert job_count == 1
 
 
-async def test_dev_b2_already_active_no_op(outline_env: asyncpg.Pool) -> None:
+async def test_dev_already_active_no_op(outline_env: asyncpg.Pool) -> None:
     """Same base/generation already has active outline job → no-op (no duplicate)."""
     user_id = await insert_user(outline_env)
     article = await submit_article_ready(outline_env, user_id=user_id)
@@ -304,8 +304,9 @@ def test_dev_c1_composition_selects_pydantic_generator() -> None:
     assert isinstance(worker._generator, PydanticAISemanticOutlineGenerator)
 
 
-def test_dev_c2_composition_unconfigured_when_disabled() -> None:
-    """generation_enabled=False → UnconfiguredSemanticOutlineGenerator + default always-false predicate."""
+def test_dev_composition_unconfigured_when_disabled() -> None:
+    """generation_enabled=False → UnconfiguredSemanticOutlineGenerator +
+    default always-false predicate."""
     settings = Settings(
         semantic_outline_generation_enabled=False,
         reader_semantic_outline_model_profile="outline_profile",

@@ -36,11 +36,11 @@ from app.services.reader_orchestration.article_ready_service import (
     PlainTextArticleReadySubmitRequest,
 )
 from app.services.reader_orchestration.job_bootstrap import (
-    EnhancementJobBootstrapService,
     ArticleRoute,
-    _LockedActiveBaseState,
+    EnhancementJobBootstrapService,
     _fingerprint_matches_base,
     _load_article_route,
+    _LockedActiveBaseState,
 )
 from app.services.reader_orchestration.reading_strategy import (
     READER_VARIANT_POLICY_VERSION,
@@ -930,7 +930,7 @@ def test_fingerprint_matches_base_accepts_exact_and_composed() -> None:
 # ---------------------------------------------------------------------------#
 
 
-async def test_t11_short_article_routes_to_batch_path(
+async def test_short_article_routes_to_batch_path(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T1.1: Article ≤ SHORT_ARTICLE_MAX_CHAR_COUNT (6000) creates batch jobs
@@ -959,7 +959,7 @@ async def test_t11_short_article_routes_to_batch_path(
     assert "build_vocabulary_layer" not in job_types
 
 
-async def test_t11_long_article_routes_to_per_unit_path(
+async def test_long_article_routes_to_per_unit_path(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T1.1: Article > SHORT_ARTICLE_MAX_CHAR_COUNT (6000) creates grouped
@@ -1083,8 +1083,8 @@ def test_plan_vocabulary_windows_single_unit() -> None:
 def test_vocabulary_window_plan_window_id_is_stable() -> None:
     """T3.2b: window_id is a stable hash of sorted unit_ids."""
     from app.services.reader_orchestration.job_bootstrap import (
-        VocabularyWindowUnit,
         VocabularyWindowPlan,
+        VocabularyWindowUnit,
     )
 
     w1 = VocabularyWindowPlan(
@@ -1110,7 +1110,7 @@ def test_vocabulary_window_plan_window_id_is_stable() -> None:
     assert w1.window_id != w3.window_id
 
 
-async def test_t32b_non_short_article_creates_multiple_vocabulary_window_jobs(
+async def test_non_short_article_creates_multiple_vocabulary_window_jobs(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.2b: non-short article creates multiple build_vocabulary_layer_article
@@ -1161,7 +1161,7 @@ async def test_t32b_non_short_article_creates_multiple_vocabulary_window_jobs(
     )
 
 
-async def test_t32b_vocabulary_window_jobs_idempotent_rebootstrap(
+async def test_vocabulary_window_jobs_idempotent_rebootstrap(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.2b: re-running bootstrap does not duplicate window jobs."""
@@ -1193,7 +1193,7 @@ async def test_t32b_vocabulary_window_jobs_idempotent_rebootstrap(
     assert first_ids == second_ids
 
 
-async def test_t32b_vocabulary_window_jobs_partial_publish_only_fills_missing(
+async def test_vocabulary_window_jobs_partial_publish_only_fills_missing(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.2b: when some units already have published vocabulary layers,
@@ -1281,11 +1281,13 @@ async def test_t32b_vocabulary_window_jobs_partial_publish_only_fills_missing(
     for j in new_window_jobs:
         ids = set(j["input_json"]["target_unit_ids"])
         assert not ids.intersection(first_window_unit_ids), (
-            f"window {j['job_id']} includes already-published units {ids & set(first_window_unit_ids)}"
+            "window "
+            f"{j['job_id']} includes already-published units "
+            f"{ids & set(first_window_unit_ids)}"
         )
 
 
-async def test_t32b_vocabulary_window_jobs_target_key_distinct(
+async def test_vocabulary_window_jobs_target_key_distinct(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.2b: each window job has a distinct target_key containing the
@@ -1437,7 +1439,7 @@ def test_translation_window_plan_window_id_is_stable() -> None:
     assert w1.window_id != w3.window_id
 
 
-async def test_t31_non_short_article_creates_multiple_translation_window_jobs(
+async def test_non_short_article_creates_multiple_translation_window_jobs(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1: non-short article creates multiple translate_article window jobs
@@ -1507,7 +1509,7 @@ async def test_t31_non_short_article_creates_multiple_translation_window_jobs(
         assert ":window:" in tk
 
 
-async def test_t31_translation_window_jobs_idempotent_rebootstrap(
+async def test_translation_window_jobs_idempotent_rebootstrap(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1: re-running bootstrap does not duplicate translation window jobs."""
@@ -1539,7 +1541,7 @@ async def test_t31_translation_window_jobs_idempotent_rebootstrap(
     assert first_ids == second_ids
 
 
-async def test_t31_translation_window_jobs_partial_publish_only_fills_missing(
+async def test_translation_window_jobs_partial_publish_only_fills_missing(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1: when some units already have published translation layers,
@@ -1626,11 +1628,13 @@ async def test_t31_translation_window_jobs_partial_publish_only_fills_missing(
     for j in new_window_jobs:
         ids = set(j["input_json"]["target_unit_ids"])
         assert not ids.intersection(first_window_unit_ids), (
-            f"window {j['job_id']} includes already-published units {ids & set(first_window_unit_ids)}"
+            "window "
+            f"{j['job_id']} includes already-published units "
+            f"{ids & set(first_window_unit_ids)}"
         )
 
 
-async def test_t31_translation_window_jobs_target_key_distinct(
+async def test_translation_window_jobs_target_key_distinct(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1: each translation window job has a distinct target_key containing
@@ -1675,7 +1679,7 @@ async def test_t31_translation_window_jobs_target_key_distinct(
         assert ":window:" in tk
 
 
-async def test_t31_short_article_still_single_translation_batch(
+async def test_short_article_still_single_translation_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1: short article still creates exactly 1 translate_article batch
@@ -1722,7 +1726,7 @@ async def test_t31_short_article_still_single_translation_batch(
 # ---------------------------------------------------------------------------#
 
 
-async def test_t31_very_long_article_creates_at_least_two_non_overlapping_windows(
+async def test_very_long_article_creates_at_least_two_non_overlapping_windows(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1 P2: a fixture explicitly exceeding safety_max * 2 must produce
@@ -1795,7 +1799,7 @@ async def test_t31_very_long_article_creates_at_least_two_non_overlapping_window
 # ---------------------------------------------------------------------------#
 
 
-async def test_t31_cutover_supersedes_legacy_translate_unit_jobs(
+async def test_cutover_supersedes_legacy_translate_unit_jobs(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1 P1: when legacy ``translate_unit`` per-unit jobs exist in
@@ -1966,7 +1970,7 @@ async def test_t31_cutover_supersedes_legacy_translate_unit_jobs(
     assert active_count == 0
 
 
-async def test_t31_claimed_legacy_translate_unit_is_excluded_from_new_windows(
+async def test_claimed_legacy_translate_unit_is_excluded_from_new_windows(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1 P1: a claimed legacy ``translate_unit`` job is not superseded,
@@ -2076,7 +2080,7 @@ async def test_t31_claimed_legacy_translate_unit_is_excluded_from_new_windows(
 # ---------------------------------------------------------------------------#
 
 
-async def test_t31_active_window_job_prevents_overlapping_new_window(
+async def test_active_window_job_prevents_overlapping_new_window(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T3.1 P1: when an active ``translate_article`` window job already
@@ -2164,7 +2168,7 @@ async def test_t31_active_window_job_prevents_overlapping_new_window(
 # All three fixtures exceed the legacy 6000-char threshold, so under the
 # old raw-``content_utf16_length`` router all three would have entered the
 # heavy grouped/windowed path. The new word-based router splits them.
-_T41A_BBC_SENTENCES = (
+_BBC_SENTENCES = (
     "The findings were published in a peer-reviewed journal on Tuesday morning.",
     "Researchers said the experimental battery can hold more energy per unit of volume than common lithium-ion cells.",
     "The design uses abundant materials rather than rare metals that have constrained supply chains.",
@@ -2175,25 +2179,25 @@ _T41A_BBC_SENTENCES = (
     "Officials in several countries have indicated that storage technology will receive a growing share of public research funding.",
     "The next phase will involve building a larger prototype and partnering with industry manufacturers to test mass production.",
 )
-_T41A_BBC_PARAGRAPH = " ".join(_T41A_BBC_SENTENCES)
+_BBC_PARAGRAPH = " ".join(_BBC_SENTENCES)
 
 
-def _t41a_bbc_article(paragraph_count: int) -> str:
+def _bbc_article(paragraph_count: int) -> str:
     return "\n\n".join(
-        f"Section {idx}. {_T41A_BBC_PARAGRAPH}"
+        f"Section {idx}. {_BBC_PARAGRAPH}"
         for idx in range(1, paragraph_count + 1)
     )
 
 
 # ~1029 words / ~6300 chars: crosses legacy 6000-char threshold but stays
 # under the 1100-word short cap.
-_T41A_BBC_NEAR_THRESHOLD_TEXT = _t41a_bbc_article(7)
-assert len(_T41A_BBC_NEAR_THRESHOLD_TEXT) > 6000
+_BBC_NEAR_THRESHOLD_TEXT = _bbc_article(7)
+assert len(_BBC_NEAR_THRESHOLD_TEXT) > 6000
 
 # ~1450 words / ~8900 chars: beyond the short word cap, under the structured
 # word cap (2000) and the char guardrail (12000).
-_T41A_MEDIUM_TEXT = _t41a_bbc_article(10)
-assert len(_T41A_MEDIUM_TEXT) > 6000
+_MEDIUM_ARTICLE_TEXT = _bbc_article(10)
+assert len(_MEDIUM_ARTICLE_TEXT) > 6000
 
 
 async def _load_translation_target_keys(
@@ -2214,7 +2218,7 @@ async def _load_translation_target_keys(
     return [r["target_key"] for r in rows]
 
 
-async def test_t41a_bbc_near_threshold_routes_to_short_batch(
+async def test_bbc_near_threshold_routes_to_short_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1a regression fix: a BBC-style ~1000-word article whose raw char
@@ -2226,11 +2230,11 @@ async def test_t41a_bbc_near_threshold_routes_to_short_batch(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+        plain_text=_BBC_NEAR_THRESHOLD_TEXT,
     )
     # Sanity: the fixture crosses the legacy raw-char threshold, which is
     # exactly the condition under which the old router mis-routed it.
-    assert len(_T41A_BBC_NEAR_THRESHOLD_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+    assert len(_BBC_NEAR_THRESHOLD_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
@@ -2248,7 +2252,7 @@ async def test_t41a_bbc_near_threshold_routes_to_short_batch(
     assert not any(j["job_type"] == "translate_unit" for j in jobs)
 
 
-async def test_t41a_medium_article_routes_to_structured_batch(
+async def test_medium_article_routes_to_structured_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1a: a medium article (~1450 words / ~8900 chars) routes to
@@ -2261,9 +2265,9 @@ async def test_t41a_medium_article_routes_to_structured_batch(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_MEDIUM_TEXT,
+        plain_text=_MEDIUM_ARTICLE_TEXT,
     )
-    assert len(_T41A_MEDIUM_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
+    assert len(_MEDIUM_ARTICLE_TEXT) > job_bootstrap.SHORT_ARTICLE_MAX_CHAR_COUNT
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
@@ -2295,7 +2299,7 @@ async def test_t41a_medium_article_routes_to_structured_batch(
     assert not any(j["job_type"] == "build_vocabulary_layer" for j in jobs)
 
 
-async def test_t41a_long_article_still_routes_to_grouped_windowed(
+async def test_long_article_still_routes_to_grouped_windowed(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1a: a clearly long article (existing _LONG_TEXT, ~2240 words)
@@ -2349,7 +2353,7 @@ class _FakeMissingBaseConn:
         return []
 
 
-async def test_t41a_missing_base_route_is_stable_across_two_calls() -> None:
+async def test_missing_base_route_is_stable_across_two_calls() -> None:
     """P2 regression: ``_load_article_route`` is called twice on the same
     state (translation, then vocabulary). When the base row is missing,
     the first call caches ``base_text=""`` / ``unit_types=()`` and returns
@@ -2404,8 +2408,8 @@ async def test_t41a_missing_base_route_is_stable_across_two_calls() -> None:
 # bases (shared) so their idempotency contracts are preserved; the three-way
 # distinction is completed by ``article_route`` in ``input_json``.
 #
-# These tests extend the T4.1a fixtures (same _T41A_BBC_NEAR_THRESHOLD_TEXT,
-# _T41A_MEDIUM_TEXT, _LONG_TEXT) so the route classification is identical to
+# These tests extend the T4.1a fixtures (same _BBC_NEAR_THRESHOLD_TEXT,
+# _MEDIUM_ARTICLE_TEXT, _LONG_TEXT) so the route classification is identical to
 # the T4.1a tests -- only the metadata assertions are new.
 
 
@@ -2457,7 +2461,7 @@ def _expected_fingerprint_with_profile(
     )
 
 
-async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
+async def test_short_batch_route_identity_in_job_and_run_metadata(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1b: a SHORT_BATCH article records ``article_route="short_batch"``
@@ -2470,7 +2474,7 @@ async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+        plain_text=_BBC_NEAR_THRESHOLD_TEXT,
     )
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
@@ -2508,7 +2512,7 @@ async def test_t41b_short_batch_route_identity_in_job_and_run_metadata(
     )
 
 
-async def test_t41b_structured_batch_route_identity_distinct_from_short(
+async def test_structured_batch_route_identity_distinct_from_short(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1b: a STRUCTURED_BATCH article records
@@ -2524,7 +2528,7 @@ async def test_t41b_structured_batch_route_identity_distinct_from_short(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_MEDIUM_TEXT,
+        plain_text=_MEDIUM_ARTICLE_TEXT,
     )
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
@@ -2595,7 +2599,7 @@ async def test_t41b_structured_batch_route_identity_distinct_from_short(
     )
 
 
-async def test_t41b_grouped_windowed_route_identity_in_job_and_run_metadata(
+async def test_grouped_windowed_route_identity_in_job_and_run_metadata(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1b: a GROUPED_WINDOWED article records
@@ -2644,7 +2648,7 @@ async def test_t41b_grouped_windowed_route_identity_in_job_and_run_metadata(
         )
 
 
-async def test_t41b_no_per_unit_fanout_regression_across_three_routes(
+async def test_no_per_unit_fanout_regression_across_three_routes(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1b no-regression guard: none of the three routes (short /
@@ -2652,8 +2656,8 @@ async def test_t41b_no_per_unit_fanout_regression_across_three_routes(
     ``build_vocabulary_layer`` jobs. T4.1b must not reintroduce the
     legacy per-unit fan-out that T1.1 / T3.1 / T3.2b eliminated."""
     fixtures = [
-        (_T41A_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
-        (_T41A_MEDIUM_TEXT, "structured_batch"),
+        (_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
+        (_MEDIUM_ARTICLE_TEXT, "structured_batch"),
         (_LONG_TEXT, "grouped_windowed"),
     ]
     for plain_text, expected_route in fixtures:
@@ -2788,7 +2792,7 @@ async def _count_analysis_windows(
         )
 
 
-async def test_t41c_short_article_routes_to_compact_grammar_batch(
+async def test_short_article_routes_to_compact_grammar_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: a SHORT_BATCH article creates a single
@@ -2801,7 +2805,7 @@ async def test_t41c_short_article_routes_to_compact_grammar_batch(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_BBC_NEAR_THRESHOLD_TEXT,
+        plain_text=_BBC_NEAR_THRESHOLD_TEXT,
     )
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
@@ -2867,7 +2871,7 @@ async def test_t41c_short_article_routes_to_compact_grammar_batch(
     )
 
 
-async def test_t41c_structured_article_routes_to_compact_grammar_batch(
+async def test_structured_article_routes_to_compact_grammar_batch(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: a STRUCTURED_BATCH article creates a single
@@ -2881,7 +2885,7 @@ async def test_t41c_structured_article_routes_to_compact_grammar_batch(
         user_id=user_id,
         reading_goal="daily_reading",
         reading_variant="intermediate_reading",
-        plain_text=_T41A_MEDIUM_TEXT,
+        plain_text=_MEDIUM_ARTICLE_TEXT,
     )
 
     service = EnhancementJobBootstrapService(pool=strategy_env)
@@ -2944,7 +2948,7 @@ async def test_t41c_structured_article_routes_to_compact_grammar_batch(
     )
 
 
-async def test_t41c_long_article_keeps_zplus_grammar_window_path(
+async def test_long_article_keeps_zplus_grammar_window_path(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: a GROUPED_WINDOWED article keeps the Z+ analysis-window path.
@@ -2988,7 +2992,7 @@ async def test_t41c_long_article_keeps_zplus_grammar_window_path(
     )
 
 
-async def test_t41c_no_per_unit_grammar_fanout_across_three_routes(
+async def test_no_per_unit_grammar_fanout_across_three_routes(
     strategy_env: asyncpg.Pool,
 ) -> None:
     """T4.1c no-regression guard: none of the three routes (short /
@@ -2996,8 +3000,8 @@ async def test_t41c_no_per_unit_grammar_fanout_across_three_routes(
     / ``unit`` jobs. T4.1c must not reintroduce the legacy per-unit
     grammar fan-out."""
     fixtures = [
-        (_T41A_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
-        (_T41A_MEDIUM_TEXT, "structured_batch"),
+        (_BBC_NEAR_THRESHOLD_TEXT, "short_batch"),
+        (_MEDIUM_ARTICLE_TEXT, "structured_batch"),
         (_LONG_TEXT, "grouped_windowed"),
     ]
     for plain_text, expected_route in fixtures:

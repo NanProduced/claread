@@ -308,9 +308,12 @@ def test_p0_multi_item_across_multiple_terminal_anchors() -> None:
     )
 
     # 确认各 item 的 terminal anchor 互不相同。
-    assert item_0.spans[get_grammar_item_terminal_span_index(item_0.spans)].anchor_segment_id == seg_1.anchor_segment_id
-    assert item_1.spans[get_grammar_item_terminal_span_index(item_1.spans)].anchor_segment_id == seg_2.anchor_segment_id
-    assert item_2.spans[get_grammar_item_terminal_span_index(item_2.spans)].anchor_segment_id == seg_0.anchor_segment_id
+    item_0_anchor_index = get_grammar_item_terminal_span_index(item_0.spans)
+    assert item_0.spans[item_0_anchor_index].anchor_segment_id == seg_1.anchor_segment_id
+    item_1_anchor_index = get_grammar_item_terminal_span_index(item_1.spans)
+    assert item_1.spans[item_1_anchor_index].anchor_segment_id == seg_2.anchor_segment_id
+    item_2_anchor_index = get_grammar_item_terminal_span_index(item_2.spans)
+    assert item_2.spans[item_2_anchor_index].anchor_segment_id == seg_0.anchor_segment_id
 
     items = [item_0, item_1, item_2]
     layer_id = "layer_p0_multi_terminal"
@@ -362,7 +365,7 @@ def test_p0_multi_item_across_multiple_terminal_anchors() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_p1_non_empty_corrupt_output_raises_not_silent_fallback() -> None:
+def test_non_empty_corrupt_output_raises_not_silent_fallback() -> None:
     """非空但无法解析的 grammar output 必须抛出 GrammarLayerPayloadError。
 
     构造 items 非空但 span 缺少必填字段的 corrupt output（ValidationError），

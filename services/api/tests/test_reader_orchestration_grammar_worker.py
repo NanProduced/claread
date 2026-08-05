@@ -29,10 +29,10 @@ from app.services.reader_orchestration.article_ready_service import (
 from app.services.reader_orchestration.grammar_worker import (
     FakeGrammarBundleExecutor,
     GrammarAnchorSegmentContext,
+    GrammarBatchCandidateOutput,
     GrammarBatchExecutionResult,
     GrammarBatchJobContext,
     GrammarBatchUnitContext,
-    GrammarBatchCandidateOutput,
     GrammarBundleCandidateOutput,
     GrammarBundleWorkerService,
     GrammarCandidateSpan,
@@ -1592,7 +1592,7 @@ def test_legacy_prompt_injects_gaokao_policy_without_stale_field_names() -> None
 # ---------------------------------------------------------------------------#
 
 
-_R3_TEACHING_MARKERS = (
+_TEACHING_MARKERS = (
     # Selection: broad sense, not checklist
     "必须覆盖的 checklist",
     # grammar_note responsibilities
@@ -1611,7 +1611,7 @@ _R3_TEACHING_MARKERS = (
 )
 
 
-def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
+def test_shared_agent_instructions_contain_teaching_semantics() -> None:
     """Shared YAML instructions own the R3 teaching contract used by all paths."""
     from app.services.prompting.prompt_loader import (
         load_agent_instructions,
@@ -1620,7 +1620,7 @@ def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
     instructions = load_agent_instructions(
         grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
     )
-    for marker in _R3_TEACHING_MARKERS:
+    for marker in _TEACHING_MARKERS:
         assert marker in instructions, f"missing teaching marker: {marker!r}"
     # Fixed-length pressure removed
     assert "2-4 句" not in instructions
@@ -1628,7 +1628,7 @@ def test_shared_agent_instructions_contain_r3_teaching_semantics() -> None:
     assert "偏好短段落（2-4 句）" not in instructions
 
 
-def test_window_system_prompt_shares_r3_teaching_semantics_with_agent_yaml() -> None:
+def test_window_system_prompt_shares_teaching_semantics_with_agent_yaml() -> None:
     """Window composed system prompt must embed the same teaching contract."""
     from app.services.prompting.prompt_loader import (
         load_agent_instructions,
@@ -1641,7 +1641,7 @@ def test_window_system_prompt_shares_r3_teaching_semantics_with_agent_yaml() -> 
         grammar_worker_module.GRAMMAR_PROMPT_AGENT_NAME
     )
     window = get_window_grammar_system_prompt()
-    for marker in _R3_TEACHING_MARKERS:
+    for marker in _TEACHING_MARKERS:
         assert marker in window, f"window missing teaching marker: {marker!r}"
         assert marker in shared
     # Window operational constraints still present
@@ -1659,7 +1659,7 @@ def test_per_unit_and_batch_agents_load_same_shared_instructions() -> None:
     from app.services.reader_orchestration import grammar_worker as gw
 
     shared = load_agent_instructions(gw.GRAMMAR_PROMPT_AGENT_NAME)
-    for marker in _R3_TEACHING_MARKERS:
+    for marker in _TEACHING_MARKERS:
         assert marker in shared
 
     assert gw.GRAMMAR_PROMPT_AGENT_NAME == "reader_layer_grammar_bundle"
@@ -2490,7 +2490,7 @@ async def test_worker_fail_closed_on_missing_strategy_metadata_moves_job_to_fail
 # short articles to the grammar batch path.
 
 
-_T41C_BATCH_ARTICLE_TEXT = (
+_BATCH_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline.\n\n"
     "The committee approved the revised schedule after a thorough review."
 )
@@ -2604,7 +2604,7 @@ async def grammar_batch_env() -> asyncpg.Pool:
 
 
 @pytest.mark.anyio
-async def test_t41c_batch_worker_publishes_grammar_and_sentence_layers(
+async def test_batch_worker_publishes_grammar_and_sentence_layers(
     grammar_batch_env: asyncpg.Pool,
 ) -> None:
     """T4.1c publish contract: the compact grammar batch worker publishes
@@ -2616,7 +2616,7 @@ async def test_t41c_batch_worker_publishes_grammar_and_sentence_layers(
     submit_result = await submit_service.submit_plain_text(
         PlainTextArticleReadySubmitRequest(
             user_id=user_id,
-            plain_text=_T41C_BATCH_ARTICLE_TEXT,
+            plain_text=_BATCH_ARTICLE_TEXT,
             title="T4.1c Grammar Batch",
             language="en",
             reading_goal="daily_reading",
@@ -2714,7 +2714,7 @@ async def test_t41c_batch_worker_publishes_grammar_and_sentence_layers(
 
 
 @pytest.mark.anyio
-async def test_t41c_batch_worker_no_job_for_long_article(
+async def test_batch_worker_no_job_for_long_article(
     grammar_batch_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: the batch worker returns ``None`` when no grammar batch job
