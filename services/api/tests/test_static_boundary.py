@@ -10,7 +10,7 @@ pytestmark = [
     pytest.mark.life_permanent_regression,
 ]
 
-# This test lives at services/api/tests/test_d6_a0_static_boundary.py.
+# This test lives at services/api/tests/test_static_boundary.py.
 # The Python package we want to audit lives at services/api/app/, so we
 # walk one parent up to reach services/api/, then descend into `app/`.
 # Walking two parents would land on services/ and miss every audit target.
@@ -329,6 +329,8 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
         "app.services.reader_orchestration.article_rag_ask_prompt_assembly",
         "app.services.reader_orchestration.article_rag_ask_prompt_section",
         "app.services.reader_orchestration.article_rag_ask_context_provider",
+        "app.services.reader_orchestration.article_rag_ask_context_composer",
+        "app.services.reader_orchestration.article_rag_ask_context_resolver",
     )
     forbidden_substrings = (
         "reader_ask_planner",
@@ -359,4 +361,112 @@ def test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams() -> No
     assert offenders == [], (
         "independent Reading Record Ask runtime must not depend on legacy "
         "agent/planner/hint/ask_runtime seams; offenders: " + ", ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# ARCH-OPT-C1 Phase L — Article RAG Ask exit guard
+#
+# The 9 ``article_rag_ask_*`` modules under ``reader_orchestration`` are
+# the retired Ask prompt-integration chain.  Production Ask flows through
+# ``reader_record_ask`` (production_stream -> article_rag_adapter ->
+# ArticleRagSearchPort).  Phase P physically deleted the legacy
+# files; the guards below keep the cluster dead — production code,
+# the canonical acceptance test, and the operational runbook must
+# never import or recommend them again.
+# ---------------------------------------------------------------------------
+
+ARTICLE_RAG_ASK_EXIT_MODULES: tuple[str, ...] = (
+    "app.services.reader_orchestration.article_rag_ask_context_composer",
+    "app.services.reader_orchestration.article_rag_ask_context_provider",
+    "app.services.reader_orchestration.article_rag_ask_context_resolver",
+    "app.services.reader_orchestration.article_rag_ask_integration_adapter",
+    "app.services.reader_orchestration.article_rag_ask_prompt_assembly",
+    "app.services.reader_orchestration.article_rag_ask_prompt_attachment",
+    "app.services.reader_orchestration.article_rag_ask_prompt_bridge",
+    "app.services.reader_orchestration.article_rag_ask_prompt_section",
+    "app.services.reader_orchestration.article_rag_ask_runtime_adapter",
+)
+
+_ARTICLE_RAG_ASK_EXIT_LEGACY_FILES = frozenset(
+    (APP_DIR / "services" / "reader_orchestration" / f"{name.split('.')[-1]}.py")
+    for name in ARTICLE_RAG_ASK_EXIT_MODULES
+)
+
+
+def test_production_app_does_not_import_legacy_article_rag_ask_chain() -> None:
+    """ARCH-OPT-C1 Phase L/P: legacy cluster stays dead, physically.
+
+    First asserts all 9 retired ``article_rag_ask_*`` files are
+    physically absent (Phase P deletion) — restoring any of them
+    fails here immediately.  Then scans every ``app/`` module for
+    imports of the 9 retired modules with NO exemption for the
+    legacy paths, so a revived cluster is caught twice: any
+    ``app/`` module (services, agents, routes, schemas) importing
+    them is flagged, including a revived legacy file itself.
+    """
+    revived = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in _ARTICLE_RAG_ASK_EXIT_LEGACY_FILES
+        if path.exists()
+    )
+    assert revived == [], (
+        "retired article_rag_ask_* files must stay physically deleted; "
+        "revived: " + ", ".join(revived)
+    )
+
+    offenders: list[str] = []
+    for path in sorted(APP_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        source = _read_text(path)
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for module in ARTICLE_RAG_ASK_EXIT_MODULES:
+            if _has_module_import(source, module):
+                offenders.append(f"{rel} -> {module}")
+
+    assert offenders == [], (
+        "production code must not import the retired article_rag_ask_* "
+        "chain; offenders: " + ", ".join(offenders)
+    )
+
+
+def test_canonical_acceptance_and_runbook_avoid_legacy_article_rag_ask_chain() -> None:
+    """ARCH-OPT-C1 Phase L: canonical docs/tests must not recommend the
+    retired Ask chain.
+
+    The canonical Article RAG acceptance test and the operational
+    runbook are the two authoritative surfaces developers copy from;
+    neither may mention the 9 retired ``article_rag_ask_*`` module
+    names or their ``ArticleRagAsk*`` classes.  The production chain
+    (production_stream -> article_rag_adapter -> ArticleRagSearchPort)
+    is the only documented path.
+    """
+    repo_root = REPO_ROOT.parents[1]
+    targets = (
+        REPO_ROOT / "tests" / "test_article_rag_single_path_real_acceptance.py",
+        repo_root
+        / "docs"
+        / "initiatives"
+        / "reader-agentic-orchestration"
+        / "modules"
+        / "local-article-rag-runbook.md",
+    )
+    forbidden_tokens = tuple(
+        name.split(".")[-1] for name in ARTICLE_RAG_ASK_EXIT_MODULES
+    ) + ("ArticleRagAsk",)
+
+    offenders: list[str] = []
+    for path in targets:
+        assert path.is_file(), f"guard target missing: {path}"
+        source = _read_text(path)
+        rel = path.relative_to(repo_root).as_posix()
+        for token in forbidden_tokens:
+            if token in source:
+                offenders.append(f"{rel} -> {token}")
+
+    assert offenders == [], (
+        "canonical acceptance test / runbook must not import or "
+        "recommend the retired article_rag_ask_* chain; offenders: "
+        + ", ".join(offenders)
     )

@@ -16,7 +16,8 @@ R2 fixes (vs R1 commit 5c9ed4d04):
      are accessed via dict keys, NOT attribute access.
   2. Single retrieval call: a test-only ``_CapturingRetrievalService``
      wraps the real ``ArticleRagRetrievalService`` and is injected
-     into ``ArticleRagContextService`` so the Ask chain calls
+     into ``RetrievalBackedArticleRagPort`` (the production
+     ``ArticleRagSearchPort`` adapter) so the Ask port calls
      retrieval EXACTLY once.  No explicit retrieval call outside the
      Ask chain.
   3. D2: ``reader_runs`` is now queried via
@@ -58,7 +59,7 @@ Design contract (R2):
        - 1 query embedding service call (1 outbound provider call)
        - 1 vector write service call (1 Zilliz upsert)
        - 1 vector search service call (1 Zilliz search)
-       - 1 retrieval service call (the Ask chain calls retrieval once)
+       - 1 retrieval service call (the Ask port calls retrieval once)
        - 1 vector delete service call (precise chunk_id cleanup)
        - 0 rerank calls
        - 0 Ask model calls (this smoke stops at Ask context assembly;
@@ -318,13 +319,13 @@ class _CapturingRetrievalService:
 
     Wraps the real retrieval service, delegates ``retrieve_for_record``,
     records ``call_count`` and ``last_result``.  Injected into
-    ``ArticleRagContextService(retrieval_service=...)`` so the Ask
-    chain calls retrieval EXACTLY once through this wrapper.  After
-    ``build_for_ask`` returns, ``last_result`` is used for D5-D7
-    assertions.
+    ``RetrievalBackedArticleRagPort(retrieval=...)`` so the production
+    Ask port calls retrieval EXACTLY once through this wrapper.  After
+    ``search_current_article`` returns, ``last_result`` is used for
+    D5-D7 assertions.
 
-    This matches the ``_RetrievalServiceLike`` Protocol defined in
-    ``article_rag_context_service.py`` (single async method
+    This matches the ``_RetrievalLike`` Protocol defined in
+    ``article_rag_adapter.py`` (single async method
     ``retrieve_for_record`` with keyword-only arguments).
     """
 
@@ -1410,10 +1411,11 @@ async def test_single_path_real_chain_acceptance(
          batch + 1 vector write).  Worker's embedding_provider +
          vector_writer are wrapped with counting delegates AFTER
          the construction sanity check, so call counts are MEASURED.
-      6. Ask context assembly (``ArticleRagAskContextProvider
-         .build_for_ask``) — calls retrieval EXACTLY once via a
-         ``_CapturingRetrievalService`` wrapper.  R2 stops here —
-         NO real Ask model call.
+      6. Production Ask port chain (``RetrievalBackedArticleRagPort
+         .search_current_article`` — the same adapter
+         ``build_production_article_rag_port`` returns) — calls
+         retrieval EXACTLY once via a ``_CapturingRetrievalService``
+         wrapper.  R2 stops here — NO real Ask model call.
       7. Precise Zilliz cleanup (delete by EXACT saved chunk_id
          set, verify each chunk_id gone, verify schema identity
          unchanged, verify protected collections unchanged).
@@ -1454,12 +1456,13 @@ async def test_single_path_real_chain_acceptance(
           record_generation, block_ids, unit_ids,
           anchor_segment_ids, canonical_text_start_utf16,
           canonical_text_end_utf16).
-      D8. Ask assembly: ``status == "available"``,
-          ``should_attach`` True, ``prompt_attachment_block``
-          non-empty, ``citations`` non-empty, ``context_ids``
-          non-empty, ``source_pack_hash`` non-empty + 64-char
-          lowercase-hex shape; citations align with captured
-          retrieval / plan truth.
+      D8. Ask port outcome: ``status == "ok"``, hits non-empty,
+          every ``hit.chunk_id`` belongs to the saved Zilliz set,
+          every hit's identity (record / base / generation /
+          stable_document) matches the fixture, ``source_scope``
+          within the allowed Ask scopes, ``plan_content_sha256``
+          non-empty 64-char lowercase-hex, ``rag_substrate_id``
+          equals the immutable indexed run id (D3 row).
       D9. (N/A — R2 does not make a real Ask model call.)
       D10. (N/A — R2 does not make a real Ask model call.)
       D11. Cleanup: fixture vectors deleted by precise chunk_id
@@ -1475,9 +1478,9 @@ async def test_single_path_real_chain_acceptance(
       - query_embedding_service_calls: 1 (retrieval query)
       - vector_write_calls: 1 (worker upsert)
       - vector_search_calls: 1 (retrieval search)
-      - retrieval_service_calls: 1 (Ask chain triggers it once)
+      - retrieval_service_calls: 1 (Ask port triggers it once)
       - vector_delete_calls: 1 (precise chunk_id cleanup)
-      - ask_model_calls: 0 (R2 stops at context assembly)
+      - ask_model_calls: 0 (R2 stops at the Ask port boundary)
 
     Stop on first failure.  No retries.  Cleanup runs in ``finally``
     regardless of success or failure.  If D4 was not reached, the
@@ -1917,12 +1920,13 @@ async def test_single_path_real_chain_acceptance(
         )
 
         # -----------------------------------------------------------------
-        # D5 + D6 + D7: Retrieval (called EXACTLY once via the Ask chain)
+        # D5 + D6 + D7: Retrieval (called EXACTLY once via the
+        # production Ask port chain)
         # -----------------------------------------------------------------
-        # Build the Ask chain with a _CapturingRetrievalService
-        # wrapping the real ArticleRagRetrievalService.  The Ask
-        # chain calls retrieval EXACTLY once via build_for_ask.  We
-        # do NOT call retrieval.retrieve_for_record explicitly —
+        # Build the production Ask port with a _CapturingRetrievalService
+        # wrapping the real ArticleRagRetrievalService.  The port
+        # calls retrieval EXACTLY once via search_current_article.
+        # We do NOT call retrieval.retrieve_for_record explicitly —
         # that would double the query_embedding / vector_search cost.
         from app.services.reader_orchestration.article_rag_retrieval_service import (  # noqa: E501
             ArticleRagRetrievalResult,
@@ -1958,56 +1962,29 @@ async def test_single_path_real_chain_acceptance(
         )
         capturing_retrieval = _CapturingRetrievalService(real_retrieval)
 
-        # Wire the Ask chain with the capturing retrieval wrapper.
-        from app.services.reader_orchestration.article_rag_ask_context_composer import (  # noqa: E501
-            ArticleRagAskContextComposer,
-        )
-        from app.services.reader_orchestration.article_rag_ask_context_provider import (  # noqa: E501
-            ArticleRagAskContextProvider,
-        )
-        from app.services.reader_orchestration.article_rag_ask_context_resolver import (  # noqa: E501
-            ArticleRagAskContextResolver,
-        )
-        from app.services.reader_orchestration.article_rag_ask_integration_adapter import (  # noqa: E501
-            ArticleRagAskIntegrationAdapter,
-        )
-        from app.services.reader_orchestration.article_rag_ask_prompt_assembly import (  # noqa: E501
-            ArticleRagAskPromptAssemblyService,
-        )
-        from app.services.reader_orchestration.article_rag_ask_prompt_attachment import (  # noqa: E501
-            ArticleRagAskPromptAttachmentService,
-        )
-        from app.services.reader_orchestration.article_rag_ask_prompt_section import (  # noqa: E501
-            ArticleRagAskPromptSectionBuilder,
-        )
-        from app.services.reader_orchestration.article_rag_ask_runtime_adapter import (  # noqa: E501
-            ArticleRagAskRuntimeAdapter,
-        )
-        from app.services.reader_orchestration.article_rag_context_service import (  # noqa: E501
-            ArticleRagContextService,
+        # Wire the production Ask seam with the capturing retrieval
+        # wrapper.  ``RetrievalBackedArticleRagPort`` is exactly the
+        # adapter ``build_production_article_rag_port`` returns when
+        # the feature flag + providers are ready; here the counting /
+        # capturing delegates stand in for the default provider build
+        # so call counts are MEASURED.
+        from app.services.reader_record_ask.article_rag_adapter import (  # noqa: E501
+            RetrievalBackedArticleRagPort,
         )
 
-        ask_provider = ArticleRagAskContextProvider(
-            integration_adapter=ArticleRagAskIntegrationAdapter(
-                attachment_service=ArticleRagAskPromptAttachmentService(
-                    resolver=ArticleRagAskContextResolver(
-                        context_service=ArticleRagContextService(
-                            retrieval_service=capturing_retrieval,
-                        ),
-                        composer=ArticleRagAskContextComposer(),
-                    ),
-                ),
-            ),
-            section_builder=ArticleRagAskPromptSectionBuilder(),
-            runtime_adapter=ArticleRagAskRuntimeAdapter(),
-            assembly_service=ArticleRagAskPromptAssemblyService(),
+        rag_port = RetrievalBackedArticleRagPort(
+            retrieval=capturing_retrieval,
         )
 
-        # Single retrieval call is triggered by build_for_ask.
-        assembly = await ask_provider.build_for_ask(
-            reading_record_id=ids.record_id,
+        # Single retrieval call is triggered by search_current_article.
+        outcome = await rag_port.search_current_article(
             user_id=ids.user_id,
-            query_text="acceptance probe sentence",
+            reading_record_id=ids.record_id,
+            base_id=ids.base_id,
+            record_generation=1,
+            stable_document_id=ids.stable_document_id,
+            query="acceptance probe sentence",
+            limit=10,
         )
 
         # Measure post-Ask counts (delegates were incremented).
@@ -2016,14 +1993,14 @@ async def test_single_path_real_chain_acceptance(
         )
         counts.vector_search_calls = counting_searcher.call_count
         counts.retrieval_service_calls = capturing_retrieval.call_count
-        # R2 stops at context assembly — no real Ask model call.
+        # R2 stops at the Ask port boundary — no real Ask model call.
         counts.ask_model_calls = 0
 
         # Assert EXACT measured counts (single-path budget).
         assert counts.query_embedding_service_calls == 1, (
             f"Expected exactly 1 query_embedding_service_call, "
             f"got {counts.query_embedding_service_calls}.  "
-            f"The Ask chain must call retrieval EXACTLY once."
+            f"The Ask port must call retrieval EXACTLY once."
         )
         assert counts.vector_search_calls == 1, (
             f"Expected exactly 1 vector_search_call, "
@@ -2035,8 +2012,8 @@ async def test_single_path_real_chain_acceptance(
             f"No explicit retrieval call outside the Ask chain."
         )
         assert counts.ask_model_calls == 0, (
-            f"Expected 0 ask_model_calls (R2 stops at context "
-            f"assembly), got {counts.ask_model_calls}."
+            f"Expected 0 ask_model_calls (R2 stops at the Ask port "
+            f"boundary), got {counts.ask_model_calls}."
         )
 
         # -----------------------------------------------------------------
@@ -2049,7 +2026,7 @@ async def test_single_path_real_chain_acceptance(
         retrieval_result = capturing_retrieval.last_result
         assert retrieval_result is not None, (
             "CapturingRetrievalService.last_result is None — "
-            "build_for_ask did not call retrieve_for_record."
+            "search_current_article did not call retrieve_for_record."
         )
         assert isinstance(retrieval_result, ArticleRagRetrievalResult)
         assert retrieval_result.reading_record_id == ids.record_id, (
@@ -2218,132 +2195,137 @@ async def test_single_path_real_chain_acceptance(
 
         # -----------------------------------------------------------------
         # D8: Ask evidence/context contains Article RAG retrieval
-        # result.  R2 stops at Ask context assembly — NO real Ask
-        # model call.
+        # result.  The production Ask seam returns a typed
+        # ``ArticleRagSearchOutcome`` with eligible hit views.  R2
+        # stops at the Ask port boundary — NO real Ask model call.
         # -----------------------------------------------------------------
-        assert assembly.kind == "article_rag_context", (
-            f"assembly.kind={assembly.kind!r} "
-            f"(expected 'article_rag_context')."
+        from app.services.reader_record_ask.article_rag_port import (  # noqa: E501
+            ALLOWED_ASK_RAG_SOURCE_SCOPES,
+            ArticleRagHitView,
+            ArticleRagSearchOutcome,
         )
-        assert assembly.status == "available", (
-            f"assembly.status={assembly.status!r} "
-            f"(expected 'available').  Retrieval returned "
-            f"{len(retrieval_result.hits)} hits — the Ask assembly "
-            f"must be 'available' and attach the evidence."
+
+        assert isinstance(outcome, ArticleRagSearchOutcome), (
+            f"rag_port.search_current_article returned "
+            f"{type(outcome).__name__} (expected ArticleRagSearchOutcome)."
         )
-        assert assembly.should_attach is True, (
-            f"assembly.should_attach={assembly.should_attach} "
-            f"(expected True).  The Ask prompt must attach the RAG "
-            f"block when retrieval returned hits."
+        assert outcome.status == "ok", (
+            f"outcome.status={outcome.status!r} "
+            f"(expected 'ok', detail_code={outcome.detail_code!r}).  "
+            f"Retrieval returned {len(retrieval_result.hits)} hits — "
+            f"the Ask port must map them to an 'ok' outcome.  "
+            f"Call counts: {counts.as_report()}"
         )
-        assert assembly.prompt_attachment_block != "", (
-            "assembly.prompt_attachment_block is empty — the Ask "
-            "prompt must include a non-empty attachment block when "
-            "should_attach is True."
+        assert len(outcome.hits) > 0, (
+            f"outcome.hits is empty — expected >0 eligible hits for "
+            f"our freshly indexed fixture.  Call counts: "
+            f"{counts.as_report()}"
         )
-        assert len(assembly.citations) > 0, (
-            f"assembly.citations is empty (len="
-            f"{len(assembly.citations)}).  Must be non-empty when "
-            f"should_attach is True."
+        # Identity fence at the outcome level: the port echoes the
+        # envelope identity it validated against.
+        assert outcome.stable_document_id == ids.stable_document_id, (
+            f"outcome.stable_document_id={outcome.stable_document_id} "
+            f"(expected {ids.stable_document_id})"
         )
-        assert len(assembly.context_ids) > 0, (
-            f"assembly.context_ids is empty (len="
-            f"{len(assembly.context_ids)}).  Must be non-empty when "
-            f"should_attach is True."
+        assert outcome.base_id == ids.base_id, (
+            f"outcome.base_id={outcome.base_id} "
+            f"(expected {ids.base_id})"
         )
-        assert assembly.source_pack_hash is not None, (
-            "assembly.source_pack_hash is None — must be a non-empty "
-            "SHA-256 hex string when should_attach is True."
+        assert outcome.record_generation == 1, (
+            f"outcome.record_generation={outcome.record_generation} "
+            f"(expected 1)"
         )
-        # source_pack_hash format: 64-char lowercase hex (SHA-256).
-        assert len(assembly.source_pack_hash) == 64, (
-            f"assembly.source_pack_hash length="
-            f"{len(assembly.source_pack_hash)} (expected 64)."
+        # rag_substrate_id is the immutable indexed run id (D3 row) —
+        # never a secondary "latest indexed run" loader.
+        assert outcome.rag_substrate_id is not None, (
+            "outcome.rag_substrate_id is None — the port must anchor "
+            "hits on the immutable reader_article_rag_index_runs.id."
+        )
+        assert outcome.rag_substrate_id == ensure_result.index_run_id, (
+            f"outcome.rag_substrate_id={outcome.rag_substrate_id} "
+            f"!= ensure_result.index_run_id="
+            f"{ensure_result.index_run_id}.  The port must serve the "
+            f"exact indexed run used by this retrieval call."
+        )
+        # plan_content_sha256: 64-char lowercase hex (SHA-256) — the
+        # plan-backed truth anchor, never derived from vector payload.
+        assert outcome.plan_content_sha256 is not None, (
+            "outcome.plan_content_sha256 is None — must be a "
+            "non-empty SHA-256 hex string when status is 'ok'."
+        )
+        assert len(outcome.plan_content_sha256) == 64, (
+            f"outcome.plan_content_sha256 length="
+            f"{len(outcome.plan_content_sha256)} (expected 64)."
         )
         assert all(
             c in "0123456789abcdef"
-            for c in assembly.source_pack_hash
+            for c in outcome.plan_content_sha256
         ), (
-            f"assembly.source_pack_hash={assembly.source_pack_hash!r} "
+            f"outcome.plan_content_sha256="
+            f"{outcome.plan_content_sha256!r} "
             f"must be 64-char lowercase hex."
         )
-        # assembly citations must align with captured retrieval /
-        # plan truth.  Each assembly citation must be a 9-key dict
-        # whose stable_document_id equals the fixture's.
-        assert len(assembly.citations) == len(assembly.context_ids), (
-            f"assembly.citations len={len(assembly.citations)} != "
-            f"assembly.context_ids len={len(assembly.context_ids)}."
-        )
-        # R2 fix: assembly citations are 3-key WRAPPERS
-        # ``{"citation", "chunk_id", "context_id"}`` produced by
-        # ``article_rag_ask_prompt_attachment.py:272-274``:
-        #
-        #     {
-        #       "context_id": c.context_id,
-        #       "chunk_id":   c.chunk_id,
-        #       "citation":   _scrub_citation(c.citation),  # nested
-        #     }
-        #
-        # The 9-key I4A shape lives INSIDE the nested ``citation``
-        # dict — NOT at the top level of the assembly citation.
-        # The previous assertion compared the wrapper keys against
-        # the 9-key shape directly, which always failed.
-        _expected_assembly_wrapper_keys = {
-            "citation",
-            "chunk_id",
-            "context_id",
-        }
+        # Every eligible hit must reference the fixture identity,
+        # belong to the exact chunk_id set written to Zilliz at D4,
+        # and carry plan-backed truth fields (content hash + canonical
+        # UTF-16 range) — the Ask attachment boundary.
         _saved_chunk_id_set = set(saved_chunk_ids)
-        for cit in assembly.citations:
-            assert isinstance(cit, dict), (
-                f"assembly citation must be a dict, got "
-                f"{type(cit).__name__}"
+        for hit in outcome.hits:
+            assert isinstance(hit, ArticleRagHitView), (
+                f"outcome hit must be ArticleRagHitView, got "
+                f"{type(hit).__name__}"
             )
-            assert (
-                set(cit.keys()) == _expected_assembly_wrapper_keys
-            ), (
-                f"assembly citation wrapper keys="
-                f"{set(cit.keys())} "
-                f"do not match expected 3-key wrapper shape "
-                f"{_expected_assembly_wrapper_keys} "
-                f"(context_id / chunk_id / nested citation)."
-            )
-            # Unwrap the nested 9-key I4A citation dict.
-            inner_citation = cit["citation"]
-            assert isinstance(inner_citation, dict), (
-                f"assembly citation['citation'] must be a dict, "
-                f"got {type(inner_citation).__name__}"
-            )
-            assert (
-                set(inner_citation.keys())
-                == expected_citation_keys
-            ), (
-                f"assembly nested citation keys="
-                f"{set(inner_citation.keys())} "
-                f"do not match expected 9-key I4A shape "
-                f"{expected_citation_keys}."
-            )
-            # Each assembly citation's nested stable_document_id
-            # must equal the fixture stable_document_id (plan truth).
-            assert str(
-                inner_citation["stable_document_id"]
-            ) == str(ids.stable_document_id), (
-                f"assembly nested citation stable_document_id="
-                f"{inner_citation['stable_document_id']!r} "
-                f"(expected {ids.stable_document_id})"
-            )
-            # Each assembly citation's chunk_id must be one of the
-            # chunk_ids actually written to Zilliz at D4 — proving
-            # the Ask attachment points at the same vector rows we
-            # just wrote and will soon clean up.
-            assert cit["chunk_id"] in _saved_chunk_id_set, (
-                f"assembly citation chunk_id={cit['chunk_id']!r} "
-                f"not in saved chunk_id set "
-                f"(written at D4, "
+            assert hit.chunk_id in _saved_chunk_id_set, (
+                f"hit.chunk_id={hit.chunk_id!r} not in saved "
+                f"chunk_id set (written at D4, "
                 f"saved_chunk_ids={sorted(_saved_chunk_id_set)})."
             )
+            assert hit.reading_record_id == ids.record_id, (
+                f"hit.reading_record_id={hit.reading_record_id} "
+                f"(expected {ids.record_id})"
+            )
+            assert hit.stable_document_id == ids.stable_document_id, (
+                f"hit.stable_document_id={hit.stable_document_id} "
+                f"(expected {ids.stable_document_id})"
+            )
+            assert hit.base_id == ids.base_id, (
+                f"hit.base_id={hit.base_id} (expected {ids.base_id})"
+            )
+            assert hit.record_generation == 1, (
+                f"hit.record_generation={hit.record_generation} "
+                f"(expected 1)"
+            )
+            assert hit.source_scope in ALLOWED_ASK_RAG_SOURCE_SCOPES, (
+                f"hit.source_scope={hit.source_scope!r} not in "
+                f"allowed Ask scopes {sorted(ALLOWED_ASK_RAG_SOURCE_SCOPES)}."
+            )
+            # Plan-backed content hash: 64-char lowercase hex.
+            assert len(hit.content_sha256) == 64, (
+                f"hit.content_sha256 length="
+                f"{len(hit.content_sha256)} (expected 64)."
+            )
+            assert all(
+                c in "0123456789abcdef" for c in hit.content_sha256
+            ), (
+                f"hit.content_sha256={hit.content_sha256!r} "
+                f"must be 64-char lowercase hex."
+            )
+            # Canonical UTF-16 range must be sane.
+            assert 0 <= hit.canonical_text_start_utf16, (
+                f"hit.canonical_text_start_utf16="
+                f"{hit.canonical_text_start_utf16} (expected >= 0)."
+            )
+            assert (
+                hit.canonical_text_start_utf16
+                < hit.canonical_text_end_utf16
+            ), (
+                f"hit canonical range inverted: start="
+                f"{hit.canonical_text_start_utf16} end="
+                f"{hit.canonical_text_end_utf16}."
+            )
 
-        # ask_model_calls must remain 0 (R2 stops at context assembly).
+        # ask_model_calls must remain 0 (R2 stops at the Ask port
+        # boundary).
         assert counts.ask_model_calls == 0
     finally:
         # -----------------------------------------------------------------
