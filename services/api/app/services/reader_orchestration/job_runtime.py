@@ -1444,3 +1444,60 @@ def _assert_caller_transaction_active(
             f"wrap the call in 'async with conn.transaction()' before "
             f"invoking this seam"
         )
+
+
+# ---------------------------------------------------------------------------
+# reader_runs lifecycle (isomorphic worker helpers)
+# ---------------------------------------------------------------------------
+# Shared by display/title, grammar, translation, vocabulary, artifact_*,
+# article_rag_index, and pipeline_runner window paths. Domain-specific
+# transitions (semantic_outline guarded WHERE, display_title job+run
+# co-updates, INSERT bootstrap) stay local. Does not touch claim/heartbeat.
+
+
+async def mark_reader_run_running(
+    conn: asyncpg.Connection,
+    run_id: UUID,
+) -> None:
+    """Mark ``reader_runs`` as running and clear prior failure fields."""
+    await conn.execute(
+        """
+        UPDATE reader_runs
+        SET status = 'running',
+            failure_class = NULL,
+            failure_code = NULL,
+            finished_at = NULL,
+            started_at = COALESCE(started_at, NOW()),
+            updated_at = NOW()
+        WHERE id = $1
+        """,
+        run_id,
+    )
+
+
+async def mark_reader_run_status(
+    conn: asyncpg.Connection,
+    run_id: UUID,
+    *,
+    status: str,
+    failure_class: str | None,
+    failure_code: str | None,
+    finished_at: datetime | None,
+) -> None:
+    """Set ``reader_runs`` status / failure fields / finished_at explicitly."""
+    await conn.execute(
+        """
+        UPDATE reader_runs
+        SET status = $2,
+            failure_class = $3,
+            failure_code = $4,
+            finished_at = $5,
+            updated_at = NOW()
+        WHERE id = $1
+        """,
+        run_id,
+        status,
+        failure_class,
+        failure_code,
+        finished_at,
+    )

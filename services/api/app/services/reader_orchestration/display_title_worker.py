@@ -46,6 +46,7 @@ from .job_runtime import (
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
+    mark_reader_run_running,
 )
 from .job_runtime import (
     STATUS_SUCCEEDED as JOB_STATUS_SUCCEEDED,
@@ -592,19 +593,7 @@ class DisplayTitleWorkerService:
 
     async def _mark_run_running(self, run_id: UUID) -> None:
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = 'running',
-                    failure_class = NULL,
-                    failure_code = NULL,
-                    finished_at = NULL,
-                    started_at = COALESCE(started_at, NOW()),
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
-                run_id,
-            )
+            await mark_reader_run_running(conn, run_id)
 
     async def _mark_record_title_pending(self, claim: ClaimResult) -> None:
         """Transition title_generation_status to ``pending``.

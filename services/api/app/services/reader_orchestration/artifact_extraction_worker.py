@@ -44,6 +44,8 @@ from .job_runtime import (
     FenceViolationError,
     ReaderJobRuntime,
     _assert_lease_valid,
+    mark_reader_run_running,
+    mark_reader_run_status,
 )
 
 DEFAULT_EXTRACTION_RETRY_DELAY = timedelta(minutes=5)
@@ -667,19 +669,7 @@ class ArtifactExtractionWorkerService:
 
     async def _mark_run_running(self, run_id: UUID) -> None:
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = 'running',
-                    failure_class = NULL,
-                    failure_code = NULL,
-                    finished_at = NULL,
-                    started_at = COALESCE(started_at, NOW()),
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
-                run_id,
-            )
+            await mark_reader_run_running(conn, run_id)
 
     async def _mark_run_status(
         self,
@@ -691,21 +681,13 @@ class ArtifactExtractionWorkerService:
         finished_at: datetime | None,
     ) -> None:
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = $2,
-                    failure_class = $3,
-                    failure_code = $4,
-                    finished_at = $5,
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
+            await mark_reader_run_status(
+                conn,
                 run_id,
-                status,
-                failure_class,
-                failure_code,
-                finished_at,
+                status=status,
+                failure_class=failure_class,
+                failure_code=failure_code,
+                finished_at=finished_at,
             )
 
 

@@ -88,6 +88,8 @@ from app.services.reader_orchestration.job_runtime import (
     FenceViolationError,
     IllegalTransitionError,
     ReaderJobRuntime,
+    mark_reader_run_running,
+    mark_reader_run_status,
 )
 from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import (
@@ -2022,25 +2024,9 @@ class ReaderEnhancementPipelineRunner:
         )
 
     async def _mark_window_run_running(self, run_id: UUID) -> None:
-        """Mark a reader_run as ``running`` (mirrors grammar_worker._mark_run_running).
-
-        Keeps reader_runs.status consistent with the existing per-unit worker
-        so progress / observability queries see grammar-window runs as in-flight.
-        """
+        """Mark a reader_run as ``running`` (shared ``mark_reader_run_running``)."""
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = 'running',
-                    failure_class = NULL,
-                    failure_code = NULL,
-                    finished_at = NULL,
-                    started_at = COALESCE(started_at, NOW()),
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
-                run_id,
-            )
+            await mark_reader_run_running(conn, run_id)
 
     async def _mark_window_run_failed(
         self,
@@ -2085,31 +2071,15 @@ class ReaderEnhancementPipelineRunner:
         failure_code: str | None,
         finished_at: datetime | None,
     ) -> None:
-        """Mark a grammar-window reader_run with an explicit status + finished_at.
-
-        Used by the FenceViolationError branch (requirement 1) to mark the
-        run ``superseded`` with ``finished_at=NOW()`` — mirroring
-        ``grammar_worker._mark_run_status``. Unlike ``_mark_window_run_failed``
-        which derives ``finished_at`` from ``is_terminal``, this method lets
-        the caller set ``finished_at`` explicitly because ``superseded`` is
-        not ``failed_terminal`` but still closes the run.
-        """
+        """Mark a grammar-window reader_run with explicit status + finished_at."""
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = $2,
-                    failure_class = $3,
-                    failure_code = $4,
-                    finished_at = $5,
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
+            await mark_reader_run_status(
+                conn,
                 run_id,
-                status,
-                failure_class,
-                failure_code,
-                finished_at,
+                status=status,
+                failure_class=failure_class,
+                failure_code=failure_code,
+                finished_at=finished_at,
             )
 
     async def _build_failure_diagnostics(

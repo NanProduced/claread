@@ -50,7 +50,13 @@ from .job_bootstrap import (
     TRANSLATION_OPERATION_FINGERPRINT,
     TRANSLATION_TARGET_SCOPE,
 )
-from .job_runtime import ClaimResult, FenceViolationError, ReaderJobRuntime
+from .job_runtime import (
+    ClaimResult,
+    FenceViolationError,
+    ReaderJobRuntime,
+    mark_reader_run_running,
+    mark_reader_run_status,
+)
 from .layer_publisher import (
     PublishedTranslationBatch,
     PublishedTranslationLayer,
@@ -2388,19 +2394,7 @@ class TranslationWorkerService:
 
     async def _mark_run_running(self, run_id: UUID) -> None:
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = 'running',
-                    failure_class = NULL,
-                    failure_code = NULL,
-                    finished_at = NULL,
-                    started_at = COALESCE(started_at, NOW()),
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
-                run_id,
-            )
+            await mark_reader_run_running(conn, run_id)
 
     async def _mark_run_status(
         self,
@@ -2412,21 +2406,13 @@ class TranslationWorkerService:
         finished_at: datetime | None,
     ) -> None:
         async with self.get_pool().acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE reader_runs
-                SET status = $2,
-                    failure_class = $3,
-                    failure_code = $4,
-                    finished_at = $5,
-                    updated_at = NOW()
-                WHERE id = $1
-                """,
+            await mark_reader_run_status(
+                conn,
                 run_id,
-                status,
-                failure_class,
-                failure_code,
-                finished_at,
+                status=status,
+                failure_class=failure_class,
+                failure_code=failure_code,
+                finished_at=finished_at,
             )
 
     async def _record_usage_event(
