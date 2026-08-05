@@ -43,7 +43,13 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     compute_plan_content_sha256,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression, pytest.mark.life_characterization]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+    pytest.mark.life_characterization,
+]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -271,7 +277,9 @@ async def _seed_unit(
     base_start_utf16: int = 0,
     base_end_utf16: int = 10,
 ) -> None:
-    text_hash = hashlib.sha256(f"{unit_id}:{base_start_utf16}:{base_end_utf16}".encode()).hexdigest()[:8]
+    text_hash = hashlib.sha256(
+        f"{unit_id}:{base_start_utf16}:{base_end_utf16}".encode()
+    ).hexdigest()[:8]
     async with pool.acquire() as conn:
         await conn.execute(
             """
@@ -1671,13 +1679,13 @@ async def test_offset_bmp_emoji_alignment(index_env: asyncpg.Pool) -> None:
 # does NOT re-implement the plan hash algorithm; it only asserts the
 # production ``compute_plan_content_sha256`` result equals the frozen
 # literal.
-_P1E_BASE_TEXT = "Hello article RAG world."
-_P1E_BASE_TEXT_UTF16_LEN = 24  # ASCII-only, 24 code units
-_P1E_CHUNK_ID = "9c0de682d80dc1f0"
-_P1E_CONTENT_SHA256 = (
+_MINIMAL_SEED_BASE_TEXT = "Hello article RAG world."
+_MINIMAL_SEED_BASE_TEXT_UTF16_LEN = 24  # ASCII-only, 24 code units
+_MINIMAL_SEED_CHUNK_ID = "9c0de682d80dc1f0"
+_MINIMAL_SEED_CONTENT_SHA256 = (
     "d3e0a2214433bbc3728f44d75ddb2e530f63fb6af67a8ae9ed4a208f27db3c62"
 )
-_P1E_EMBEDDING_TEXT_SHA256 = (
+_MINIMAL_SEED_EMBEDDING_TEXT_SHA256 = (
     "d3e0a2214433bbc3728f44d75ddb2e530f63fb6af67a8ae9ed4a208f27db3c62"
 )
 
@@ -1689,10 +1697,10 @@ _P1E_EMBEDDING_TEXT_SHA256 = (
 # call production helpers to generate expected values.  Multi-key or
 # missing-key metadata drift MUST fail here (complete dict == equality,
 # no issubset).
-_P1E_STABLE_DOCUMENT_CONTENT_SHA256 = "a" * 64  # _DEFAULT_STABLE_SHA256
-_P1E_CANONICAL_TEXT_SHA256 = _P1E_CONTENT_SHA256  # sha256 of base text
-_P1E_SOURCE_SCOPE = "main_reading_text"
-_P1E_EXPECTED_METADATA: dict = {
+_MINIMAL_SEED_STABLE_DOCUMENT_CONTENT_SHA256 = "a" * 64  # _DEFAULT_STABLE_SHA256
+_MINIMAL_SEED_CANONICAL_TEXT_SHA256 = _MINIMAL_SEED_CONTENT_SHA256  # sha256 of base text
+_MINIMAL_SEED_SOURCE_SCOPE = "main_reading_text"
+_MINIMAL_SEED_EXPECTED_METADATA: dict = {
     "block_type": "paragraph",
     "block_order_index": 0,
     "source_scope": "main_reading_text",
@@ -1702,10 +1710,10 @@ _P1E_EXPECTED_METADATA: dict = {
 }
 
 
-async def _p1e_seed_minimal_v1_env(
+async def _seed_minimal_v1_env(
     pool: asyncpg.Pool,
     *,
-    base_text: str = _P1E_BASE_TEXT,
+    base_text: str = _MINIMAL_SEED_BASE_TEXT,
 ) -> str:
     """Seed the minimal single-path block-plan environment.
 
@@ -1719,7 +1727,7 @@ async def _p1e_seed_minimal_v1_env(
         block_type="paragraph",
         text_content=base_text,
         canonical_text_start_utf16=0,
-        canonical_text_end_utf16=_P1E_BASE_TEXT_UTF16_LEN,
+        canonical_text_end_utf16=_MINIMAL_SEED_BASE_TEXT_UTF16_LEN,
         interpretation_policy=_main_reading_policy(),
     )
     return hashlib.sha256(base_text.encode("utf-8")).hexdigest()
@@ -1757,7 +1765,7 @@ async def test_single_path_block_plan_golden(
       * Deterministic plan hash (byte-stable across rebuilds)
       * V1 block behavior preserved (citation, UTF-16, metadata)
     """
-    await _p1e_seed_minimal_v1_env(index_env)
+    await _seed_minimal_v1_env(index_env)
 
     service = _build_service(index_env)
 
@@ -1786,10 +1794,10 @@ async def test_single_path_block_plan_golden(
     # 4. V1 block behavior preserved — chunk count, chunk_id, content_sha.
     assert len(plan.chunks) == 1
     chunk = plan.chunks[0]
-    assert chunk.chunk_id == _P1E_CHUNK_ID
-    assert chunk.content_sha256 == _P1E_CONTENT_SHA256
-    assert chunk.embedding_text_sha256 == _P1E_EMBEDDING_TEXT_SHA256
-    assert chunk.metadata_json == _P1E_EXPECTED_METADATA
+    assert chunk.chunk_id == _MINIMAL_SEED_CHUNK_ID
+    assert chunk.content_sha256 == _MINIMAL_SEED_CONTENT_SHA256
+    assert chunk.embedding_text_sha256 == _MINIMAL_SEED_EMBEDDING_TEXT_SHA256
+    assert chunk.metadata_json == _MINIMAL_SEED_EXPECTED_METADATA
 
     # 5. Citation fields preserved.
     citation = chunk.citation
@@ -1801,7 +1809,7 @@ async def test_single_path_block_plan_golden(
     assert citation.unit_ids == ()
     assert citation.anchor_segment_ids == ()
     assert citation.canonical_text_start_utf16 == 0
-    assert citation.canonical_text_end_utf16 == _P1E_BASE_TEXT_UTF16_LEN
+    assert citation.canonical_text_end_utf16 == _MINIMAL_SEED_BASE_TEXT_UTF16_LEN
 
     # 6. Plan content sha256 — new golden (without chunker_version in hash).
     actual_plan_sha = compute_plan_content_sha256(plan)
@@ -1819,7 +1827,7 @@ async def test_single_path_block_plan_golden(
         await admin_conn.execute(INDEX_PLAN_SCHEMA_SQL)
         pool_b = await _make_pool(schema_b)
         try:
-            await _p1e_seed_minimal_v1_env(pool_b)
+            await _seed_minimal_v1_env(pool_b)
             plan_b = await _build_service(pool_b).build_index_plan(
                 record_id=_RECORD_ID,
                 user_id=_USER_ID,

@@ -45,19 +45,17 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlan,
 )
 from app.services.reader_orchestration.article_rag_index_worker import (
-    ArticleRagIndexWorkerError,
     ArticleRagEmbedding,
-    ArticleRagIndexWorkerError as _WorkerErrAlias,
+    ArticleRagIndexWorkerError,
     FakeArticleRagEmbeddingProvider,
 )
+from app.services.reader_orchestration.article_rag_index_worker import (
+    ArticleRagIndexWorkerError as _WorkerErrAlias,
+)
 from app.services.reader_orchestration.article_rag_retrieval_service import (
-    ArticleRagRetrievalHit,
-    ArticleRagRetrievalResult,
-    ArticleRagRetrievalService,
-    ArticleRagRetrievalServiceError,
     FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH,
-    FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
     FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH,
+    FAILURE_CODE_RETRIEVAL_EMBEDDING_FAILED,
     FAILURE_CODE_RETRIEVAL_EMBEDDING_MODEL_MISMATCH,
     FAILURE_CODE_RETRIEVAL_EMPTY_QUERY,
     FAILURE_CODE_RETRIEVAL_INDEX_RUN_PLAN_MISMATCH,
@@ -67,11 +65,15 @@ from app.services.reader_orchestration.article_rag_retrieval_service import (
     FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH,
     FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
     MAX_RETRIEVAL_LIMIT,
+    ArticleRagRetrievalHit,
+    ArticleRagRetrievalResult,
+    ArticleRagRetrievalService,
+    ArticleRagRetrievalServiceError,
 )
 from app.services.reader_orchestration.article_rag_vector_search import (
+    ArticleRagVectorSearcherError,
     ArticleRagVectorSearchHit,
     ArticleRagVectorSearchResult,
-    ArticleRagVectorSearcherError,
     FakeArticleRagVectorSearcher,
 )
 
@@ -531,7 +533,7 @@ async def test_plan_hash_drift_fails_closed() -> None:
         pytest.param("chunk_count", 999, id="chunk_count"),
     ],
 )
-async def test_p1f_indexed_run_plan_identity_drift_fails_closed(
+async def test_indexed_run_plan_identity_drift_fails_closed(
     field_name: str,
     drifted_value: Any,
 ) -> None:
@@ -1642,7 +1644,7 @@ def searcher_call_counter():
 
 
 @pytest.mark.anyio
-async def test_p1f_indexed_run_embedding_model_null_fails_closed(
+async def test_indexed_run_embedding_model_null_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """NULL ``embedding_model`` on the indexed run →
@@ -1676,7 +1678,7 @@ async def test_p1f_indexed_run_embedding_model_null_fails_closed(
 
 
 @pytest.mark.anyio
-async def test_p1f_indexed_run_embedding_model_mismatch_fails_closed(
+async def test_indexed_run_embedding_model_mismatch_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """``indexed.embedding_model`` != ``contract.document_embedding_model``
@@ -1719,7 +1721,7 @@ async def test_p1f_indexed_run_embedding_model_mismatch_fails_closed(
 
 
 @pytest.mark.anyio
-async def test_p1f_indexed_run_vector_collection_null_fails_closed(
+async def test_indexed_run_vector_collection_null_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """NULL ``vector_collection`` on the indexed run →
@@ -1753,7 +1755,7 @@ async def test_p1f_indexed_run_vector_collection_null_fails_closed(
 
 
 @pytest.mark.anyio
-async def test_p1f_indexed_run_vector_collection_empty_fails_closed(
+async def test_indexed_run_vector_collection_empty_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """Empty / whitespace-only ``vector_collection`` →
@@ -1785,7 +1787,7 @@ async def test_p1f_indexed_run_vector_collection_empty_fails_closed(
 
 
 @pytest.mark.anyio
-async def test_p1f_indexed_run_vector_collection_mismatch_fails_closed(
+async def test_indexed_run_vector_collection_mismatch_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """``indexed.vector_collection`` != ``contract.vector_collection`` →
@@ -1826,7 +1828,7 @@ async def test_p1f_indexed_run_vector_collection_mismatch_fails_closed(
 
 
 @pytest.mark.anyio
-async def test_p1f_query_embedding_returns_model_mismatch_fails_closed(
+async def test_query_embedding_returns_model_mismatch_fails_closed(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """If the embedding provider returns a vector whose ``model`` !=
@@ -1887,7 +1889,7 @@ async def test_p1f_query_embedding_returns_model_mismatch_fails_closed(
         pytest.param(True, id="bool"),
     ],
 )
-async def test_p1f_query_embedding_model_requires_raw_exact_string_match(
+async def test_query_embedding_model_requires_raw_exact_string_match(
     returned_model: Any,
 ) -> None:
     """The provider-reported model must exactly equal the frozen profile."""
@@ -1945,7 +1947,7 @@ async def test_p1f_query_embedding_model_requires_raw_exact_string_match(
         pytest.param(True, 1024, id="bool_reported_dim"),
     ],
 )
-async def test_p1f_query_embedding_dimension_matches_frozen_profile(
+async def test_query_embedding_dimension_matches_frozen_profile(
     reported_dim: Any,
     vector_length: int,
 ) -> None:
@@ -2001,7 +2003,7 @@ async def test_p1f_query_embedding_dimension_matches_frozen_profile(
 
 
 @pytest.mark.anyio
-async def test_p1f_all_contract_mismatch_paths_zero_embedding_and_search_calls(
+async def test_all_contract_mismatch_paths_zero_embedding_and_search_calls(
     provider_call_counter, searcher_call_counter
 ) -> None:
     """For every contract-mismatch scenario, the embedding provider
@@ -2063,7 +2065,7 @@ async def test_p1f_all_contract_mismatch_paths_zero_embedding_and_search_calls(
 
 
 @pytest.mark.anyio
-async def test_p1f_normal_v1_retrieval_uses_profile_model_and_namespace() -> None:
+async def test_normal_v1_retrieval_uses_profile_model_and_namespace() -> None:
     """A successful V1 retrieval MUST:
       - request query embedding with ``model=profile.query_embedding_model``
       - route the vector search to ``profile.vector_namespace``
@@ -2114,7 +2116,7 @@ async def test_p1f_normal_v1_retrieval_uses_profile_model_and_namespace() -> Non
 
 
 @pytest.mark.anyio
-async def test_p1f_forged_vector_citation_metadata_is_not_truth() -> None:
+async def test_forged_vector_citation_metadata_is_not_truth() -> None:
     """A vector hit that carries a forged citation / fingerprint /
     chunk_text in its payload MUST NOT override the citation truth
     from the current Postgres plan.  The hit's ``chunk_id`` joins to
@@ -2161,7 +2163,7 @@ async def test_p1f_forged_vector_citation_metadata_is_not_truth() -> None:
 
 
 @pytest.mark.anyio
-async def test_round1_retrieve_without_version_param_returns_plan_backed_hits() -> None:
+async def test_retrieve_without_version_param_returns_plan_backed_hits() -> None:
     """No version argument: fixed internal DEFAULT yields plan-backed hits."""
     plan = _make_plan()
     row = _indexed_run_row(plan)
@@ -2186,7 +2188,7 @@ async def test_round1_retrieve_without_version_param_returns_plan_backed_hits() 
 
 
 @pytest.mark.anyio
-async def test_round1_retrieve_rejects_legacy_index_version_kwarg_before_io() -> None:
+async def test_retrieve_rejects_legacy_index_version_kwarg_before_io() -> None:
     """Legacy index_version= kwarg is not part of the public interface."""
     plan = _make_plan()
     provider = FakeArticleRagEmbeddingProvider(

@@ -47,7 +47,12 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     compute_plan_content_sha256,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 # Reuse seed helpers + UUIDs from the I4A test module.
 from tests.test_article_rag_index_plan import (  # noqa: E402
@@ -64,9 +69,9 @@ from tests.test_article_rag_index_plan import (  # noqa: E402
     _seed_block,
     _seed_full_environment,
     _seed_record,
+    _seed_segment,
     _seed_stable_document,
     _seed_unit,
-    _seed_segment,
     _seed_user,
 )
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
@@ -1179,7 +1184,7 @@ async def test_convenience_wrapper_opens_own_transaction(
 # ===================================================================
 
 
-async def test_p1c_bootstrap_has_no_embedding_or_vector_provider_attributes(
+async def test_bootstrap_has_no_embedding_or_vector_provider_attributes(
     index_env: asyncpg.Pool,
 ) -> None:
     """P1-C §14: bootstrap MUST NOT depend on embedding or vector

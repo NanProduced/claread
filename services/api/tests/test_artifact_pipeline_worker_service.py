@@ -41,7 +41,12 @@ from app.services.reader_orchestration.text_artifact_extraction_provider import 
     StorageObjectReadResult,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_parse, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_reader_parse,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+]
 
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
@@ -153,7 +158,7 @@ async def _connect_admin(schema_name: str | None = None) -> asyncpg.Connection:
 
 
 @pytest.fixture
-async def i3p_env() -> asyncpg.Pool:
+async def artifact_pipeline_db_env() -> asyncpg.Pool:
     schema_name = f"test_i3p_{uuid4().hex}"
     admin_conn = await _connect_admin()
     try:
@@ -407,7 +412,8 @@ async def _count_anchor_segments(pool: asyncpg.Pool) -> int:
 async def _count_article_ready_events(pool: asyncpg.Pool) -> int:
     async with pool.acquire() as conn:
         return await conn.fetchval(
-            "SELECT COUNT(*) FROM reader_events WHERE reading_record_id = $1 AND event_type = 'article_ready'",
+            "SELECT COUNT(*) FROM reader_events "
+            "WHERE reading_record_id = $1 AND event_type = 'article_ready'",
             _RECORD_ID,
         )
 
@@ -443,17 +449,17 @@ _LEASE_DURATION = timedelta(seconds=30)
 
 
 async def test_process_once_extraction_priority_then_materialization(
-    i3p_env: asyncpg.Pool,
+    artifact_pipeline_db_env: asyncpg.Pool,
 ) -> None:
     """process_once with an extraction job runs extraction first, then a
     second process_once processes the enqueued materialization job."""
     job_id = await _seed_extraction_job(
-        i3p_env, source_text=_STABLE_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_STABLE_TEXT, content_type="text/plain",
     )
 
     reader = FakeStorageObjectReader(data=_STABLE_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     # 1st call: extraction
@@ -465,8 +471,8 @@ async def test_process_once_extraction_priority_then_materialization(
     assert result1.status == "succeeded"
 
     # Materialization job was enqueued
-    assert await _count_materialization_jobs(i3p_env) == 1
-    assert await _fetch_extraction_job_status(i3p_env, job_id) == "succeeded"
+    assert await _count_materialization_jobs(artifact_pipeline_db_env) == 1
+    assert await _fetch_extraction_job_status(artifact_pipeline_db_env, job_id) == "succeeded"
 
     # 2nd call: materialization
     result2 = await service.process_once(
@@ -489,16 +495,16 @@ async def test_process_once_extraction_priority_then_materialization(
 # ===================================================================
 
 
-async def test_stable_text_artifact_end_to_end(i3p_env: asyncpg.Pool) -> None:
+async def test_stable_text_artifact_end_to_end(artifact_pipeline_db_env: asyncpg.Pool) -> None:
     """Stable text artifact: extraction → materialization → article_ready +
     stable_document + reading_base + units + segments + event."""
     await _seed_extraction_job(
-        i3p_env, source_text=_STABLE_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_STABLE_TEXT, content_type="text/plain",
     )
 
     reader = FakeStorageObjectReader(data=_STABLE_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     results = await service.drain(
@@ -511,16 +517,16 @@ async def test_stable_text_artifact_end_to_end(i3p_env: asyncpg.Pool) -> None:
     assert results[1].status == "succeeded"
     assert results[1].outcome == "stable_document_ready"
 
-    record = await _fetch_record(i3p_env)
+    record = await _fetch_record(artifact_pipeline_db_env)
     assert record["readiness_state"] == "article_ready"
     assert record["product_state"] == "readable_enhancing"
     assert record["active_base_id"] is not None
 
-    assert await _count_stable_documents(i3p_env) == 1
-    assert await _count_reading_bases(i3p_env) == 1
-    assert await _count_reading_units(i3p_env) > 0
-    assert await _count_anchor_segments(i3p_env) > 0
-    assert await _count_article_ready_events(i3p_env) == 1
+    assert await _count_stable_documents(artifact_pipeline_db_env) == 1
+    assert await _count_reading_bases(artifact_pipeline_db_env) == 1
+    assert await _count_reading_units(artifact_pipeline_db_env) > 0
+    assert await _count_anchor_segments(artifact_pipeline_db_env) > 0
+    assert await _count_article_ready_events(artifact_pipeline_db_env) == 1
 
 
 # ===================================================================
@@ -528,11 +534,11 @@ async def test_stable_text_artifact_end_to_end(i3p_env: asyncpg.Pool) -> None:
 # ===================================================================
 
 
-async def test_markdown_candidate_path_end_to_end(i3p_env: asyncpg.Pool) -> None:
+async def test_markdown_candidate_path_end_to_end(artifact_pipeline_db_env: asyncpg.Pool) -> None:
     """Markdown artifact exceeding word limit → candidate_reading_documents +
     candidate_base_ready, no stable doc / base."""
     await _seed_extraction_job(
-        i3p_env,
+        artifact_pipeline_db_env,
         source_text=_CANDIDATE_MD,
         content_type="text/markdown",
         source_filename="large.md",
@@ -541,7 +547,7 @@ async def test_markdown_candidate_path_end_to_end(i3p_env: asyncpg.Pool) -> None
 
     reader = FakeStorageObjectReader(data=_CANDIDATE_MD.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     results = await service.drain(
@@ -552,14 +558,14 @@ async def test_markdown_candidate_path_end_to_end(i3p_env: asyncpg.Pool) -> None
     assert results[1].status == "succeeded"
     assert results[1].outcome == "candidate_document_required"
 
-    record = await _fetch_record(i3p_env)
+    record = await _fetch_record(artifact_pipeline_db_env)
     assert record["readiness_state"] == "candidate_base_ready"
     assert record["product_state"] == "needs_confirmation"
     assert record["active_base_id"] is None
 
-    assert await _count_candidates(i3p_env) == 1
-    assert await _count_stable_documents(i3p_env) == 0
-    assert await _count_reading_bases(i3p_env) == 0
+    assert await _count_candidates(artifact_pipeline_db_env) == 1
+    assert await _count_stable_documents(artifact_pipeline_db_env) == 0
+    assert await _count_reading_bases(artifact_pipeline_db_env) == 0
 
 
 # ===================================================================
@@ -567,15 +573,15 @@ async def test_markdown_candidate_path_end_to_end(i3p_env: asyncpg.Pool) -> None
 # ===================================================================
 
 
-async def test_rejected_text_end_to_end(i3p_env: asyncpg.Pool) -> None:
+async def test_rejected_text_end_to_end(artifact_pipeline_db_env: asyncpg.Pool) -> None:
     """Rejected text (too short) → action_required, no stable/candidate/base."""
     await _seed_extraction_job(
-        i3p_env, source_text=_REJECTED_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_REJECTED_TEXT, content_type="text/plain",
     )
 
     reader = FakeStorageObjectReader(data=_REJECTED_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     results = await service.drain(
@@ -586,15 +592,15 @@ async def test_rejected_text_end_to_end(i3p_env: asyncpg.Pool) -> None:
     assert results[1].status == "succeeded"
     assert results[1].outcome == "input_rejected_or_action_required"
 
-    record = await _fetch_record(i3p_env)
+    record = await _fetch_record(artifact_pipeline_db_env)
     assert record["product_state"] == "action_required"
     assert record["readiness_state"] == "submitted"
     assert record["active_base_id"] is None
 
-    assert await _count_stable_documents(i3p_env) == 0
-    assert await _count_candidates(i3p_env) == 0
-    assert await _count_reading_bases(i3p_env) == 0
-    assert await _count_article_ready_events(i3p_env) == 0
+    assert await _count_stable_documents(artifact_pipeline_db_env) == 0
+    assert await _count_candidates(artifact_pipeline_db_env) == 0
+    assert await _count_reading_bases(artifact_pipeline_db_env) == 0
+    assert await _count_article_ready_events(artifact_pipeline_db_env) == 0
 
 
 # ===================================================================
@@ -603,17 +609,17 @@ async def test_rejected_text_end_to_end(i3p_env: asyncpg.Pool) -> None:
 
 
 async def test_unconfigured_provider_extraction_failed_terminal(
-    i3p_env: asyncpg.Pool,
+    artifact_pipeline_db_env: asyncpg.Pool,
 ) -> None:
     """When no storage_reader is injected, the default
     UnconfiguredArtifactExtractionProvider fails terminal, and no
     materialization job is enqueued."""
     job_id = await _seed_extraction_job(
-        i3p_env, source_text=_STABLE_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_STABLE_TEXT, content_type="text/plain",
     )
 
     # No storage_reader → UnconfiguredArtifactExtractionProvider
-    service = ArtifactInputPipelineWorkerService(pool=i3p_env)
+    service = ArtifactInputPipelineWorkerService(pool=artifact_pipeline_db_env)
 
     result = await service.process_once(
         lease_owner=_LEASE_OWNER, lease_duration=_LEASE_DURATION,
@@ -623,8 +629,8 @@ async def test_unconfigured_provider_extraction_failed_terminal(
     assert result.status == "failed_terminal"
 
     # No materialization job enqueued
-    assert await _count_materialization_jobs(i3p_env) == 0
-    assert await _fetch_extraction_job_status(i3p_env, job_id) == "failed_terminal"
+    assert await _count_materialization_jobs(artifact_pipeline_db_env) == 0
+    assert await _fetch_extraction_job_status(artifact_pipeline_db_env, job_id) == "failed_terminal"
 
 
 # ===================================================================
@@ -633,7 +639,7 @@ async def test_unconfigured_provider_extraction_failed_terminal(
 
 
 async def test_retryable_provider_error_schedules_retry(
-    i3p_env: asyncpg.Pool,
+    artifact_pipeline_db_env: asyncpg.Pool,
 ) -> None:
     """A retryable storage read error is caught by TextArtifactExtractionProvider
     (wrapped as ``ArtifactExtractionError(retryable=True)``) and then by the
@@ -646,12 +652,12 @@ async def test_retryable_provider_error_schedules_retry(
     for stale-lease recovery) — that is covered in the I3O test suite.
     """
     await _seed_extraction_job(
-        i3p_env, source_text=_STABLE_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_STABLE_TEXT, content_type="text/plain",
     )
 
     reader = RetryableErrorStorageObjectReader()
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     result = await service.process_once(
@@ -662,14 +668,14 @@ async def test_retryable_provider_error_schedules_retry(
     assert result.status == "retry_later"
 
     # Job is in retry_later (not failed_terminal, not claimed)
-    async with i3p_env.acquire() as conn:
+    async with artifact_pipeline_db_env.acquire() as conn:
         job_status = await conn.fetchval(
             "SELECT status FROM reader_jobs WHERE job_type = 'input_artifact_extraction'"
         )
     assert job_status == "retry_later"
 
     # No materialization job enqueued
-    assert await _count_materialization_jobs(i3p_env) == 0
+    assert await _count_materialization_jobs(artifact_pipeline_db_env) == 0
 
 
 # ===================================================================
@@ -678,19 +684,19 @@ async def test_retryable_provider_error_schedules_retry(
 
 
 async def test_active_base_exists_before_materialization_superseded(
-    i3p_env: asyncpg.Pool,
+    artifact_pipeline_db_env: asyncpg.Pool,
 ) -> None:
     """If active_base_id is set before the materialization worker claims the
     job, ``claim_next_job`` auto-supersedes the job (fence violation) and
     returns ``None``. ``process_once`` returns ``None``. The job's DB status
     is ``superseded`` with ``rationale_code = active_base_already_exists``."""
     await _seed_extraction_job(
-        i3p_env, source_text=_STABLE_TEXT, content_type="text/plain",
+        artifact_pipeline_db_env, source_text=_STABLE_TEXT, content_type="text/plain",
     )
 
     reader = FakeStorageObjectReader(data=_STABLE_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     # 1st call: extraction succeeds, enqueues materialization
@@ -701,8 +707,8 @@ async def test_active_base_exists_before_materialization_superseded(
     assert result1.status == "succeeded"
 
     # Simulate another flow setting active_base before materialization claims
-    base_id = await _insert_reading_base(i3p_env, base_text="Pre-existing base.")
-    async with i3p_env.acquire() as conn:
+    base_id = await _insert_reading_base(artifact_pipeline_db_env, base_text="Pre-existing base.")
+    async with artifact_pipeline_db_env.acquire() as conn:
         await conn.execute(
             "UPDATE reading_records SET active_base_id = $2 WHERE id = $1",
             _RECORD_ID,
@@ -716,14 +722,14 @@ async def test_active_base_exists_before_materialization_superseded(
     assert result2 is None
 
     # The materialization job was auto-superseded in the DB
-    mat_job = await _fetch_materialization_job(i3p_env)
+    mat_job = await _fetch_materialization_job(artifact_pipeline_db_env)
     assert mat_job is not None
     assert mat_job["status"] == "superseded"
     assert mat_job["rationale_code"] == "active_base_already_exists"
 
     # The pre-existing base is untouched; no new stable doc created
-    assert await _count_stable_documents(i3p_env) == 0
-    assert await _count_reading_bases(i3p_env) == 1  # only the pre-existing one
+    assert await _count_stable_documents(artifact_pipeline_db_env) == 0
+    assert await _count_reading_bases(artifact_pipeline_db_env) == 1  # only the pre-existing one
 
 
 # ===================================================================
@@ -731,12 +737,12 @@ async def test_active_base_exists_before_materialization_superseded(
 # ===================================================================
 
 
-async def test_no_job_returns_none(i3p_env: asyncpg.Pool) -> None:
+async def test_no_job_returns_none(artifact_pipeline_db_env: asyncpg.Pool) -> None:
     """process_once returns None when no extraction or materialization job
     is available."""
     reader = FakeStorageObjectReader(data=_STABLE_TEXT.encode("utf-8"))
     service = ArtifactInputPipelineWorkerService(
-        pool=i3p_env, storage_reader=reader,
+        pool=artifact_pipeline_db_env, storage_reader=reader,
     )
 
     result = await service.process_once(
@@ -751,7 +757,7 @@ async def test_no_job_returns_none(i3p_env: asyncpg.Pool) -> None:
 #
 # These tests exercise ``_run_drain_cycle`` from the artifact pipeline worker
 # script directly using a no-network fake service. They do NOT use the
-# ``i3p_env`` DB fixture — recovery and drain are stubbed at the script
+# ``artifact_pipeline_db_env`` DB fixture — recovery and drain are stubbed at the script
 # boundary so no real Postgres or network calls happen.
 
 

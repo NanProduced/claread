@@ -251,7 +251,7 @@ def test_a2_inline_marks_offsets_consistent_with_text_content() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a3_javascript_unsafe_link_stripped_with_warning() -> None:
+def test_javascript_unsafe_link_stripped_with_warning() -> None:
     """[x](javascript:alert(1)) → stripped, unsafe_link_protocol warning,
     L1: adaptation_notice, document continues as stable.
     """
@@ -281,7 +281,7 @@ def test_a3_javascript_unsafe_link_stripped_with_warning() -> None:
     )
 
 
-def test_a3_html_inline_link_overlap_fail_closed() -> None:
+def test_html_inline_link_overlap_fail_closed() -> None:
     """html_inline + link overlap (data:text/html,<script>...) →
     stripped with inline_html warning. No "rescue" merge; L1:
     adaptation_notice, document continues as stable.
@@ -305,7 +305,7 @@ def test_a3_html_inline_link_overlap_fail_closed() -> None:
     )
 
 
-def test_a3_vbscript_unsafe_link_stripped() -> None:
+def test_vbscript_unsafe_link_stripped() -> None:
     """[v](vbscript:msgbox(1)) → stripped, unsafe_link_protocol warning."""
     result = MarkdownSourceParser().parse("[v](vbscript:msgbox(1)) end")
     warning_codes = {w.code for w in result.warnings}
@@ -318,7 +318,7 @@ def test_a3_vbscript_unsafe_link_stripped() -> None:
     )
 
 
-def test_a3_mixed_safe_and_unsafe_links() -> None:
+def test_mixed_safe_and_unsafe_links() -> None:
     """[ok](https://ok.com) and [bad](javascript:bad) →
     safe link in inline_marks + links; unsafe in stripped_links.
     """
@@ -345,7 +345,7 @@ def test_a3_mixed_safe_and_unsafe_links() -> None:
     )
 
 
-def test_a3_nested_parentheses_in_link_destination() -> None:
+def test_nested_parentheses_in_link_destination() -> None:
     """[a([b](url1)](url2) → merge semantics: outer link wins (or
     fail-closed if ambiguous). Either way, no crash, candidate or stable.
     """
@@ -361,7 +361,7 @@ def test_a3_nested_parentheses_in_link_destination() -> None:
     assert len(result.blocks) >= 1
 
 
-def test_a3_link_with_title_preserved_in_links() -> None:
+def test_link_with_title_preserved_in_links() -> None:
     """[t](https://x.com "title") → safe link recorded (title may appear
     in links but inline_marks only carries href).
     """
@@ -382,7 +382,7 @@ def test_a3_link_with_title_preserved_in_links() -> None:
     )
 
 
-def test_a3_html_truncated_scheme_no_rescue() -> None:
+def test_html_truncated_scheme_no_rescue() -> None:
     """html_inline breaking a scheme (e.g. <a href="jav...) →
     stripped with inline_html warning; L1: adaptation_notice, stable.
     """
@@ -395,7 +395,7 @@ def test_a3_html_truncated_scheme_no_rescue() -> None:
     assert result.outcome == "stable_document_ready"
 
 
-def test_a3_safe_links_do_not_emit_unsafe_warning() -> None:
+def test_safe_links_do_not_emit_unsafe_warning() -> None:
     """[ok](https://ok.com) → no unsafe_link_protocol warning."""
     result = MarkdownSourceParser().parse("[ok](https://ok.com) and [m](mailto:x@y.com)")
     warning_codes = {w.code for w in result.warnings}
@@ -410,7 +410,7 @@ def test_a3_safe_links_do_not_emit_unsafe_warning() -> None:
     assert "mailto:x@y.com" in hrefs
 
 
-def test_a3_relative_link_treated_as_safe() -> None:
+def test_relative_link_treated_as_safe() -> None:
     """Relative link (no scheme) → safe (existing _is_safe_link behavior)."""
     result = MarkdownSourceParser().parse("[rel](/path/to/page) end")
     para = next(b for b in result.blocks if b.block_type == "paragraph")
@@ -429,7 +429,7 @@ def test_a3_relative_link_treated_as_safe() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a2_a3_unsafe_link_text_preserved_no_mark() -> None:
+def test_unsafe_link_text_preserved_no_mark() -> None:
     """Unsafe link label preserved in text_content, but no inline mark
     (mark would carry href we cannot safely expose).
     """
@@ -443,7 +443,7 @@ def test_a2_a3_unsafe_link_text_preserved_no_mark() -> None:
     )
 
 
-def test_a2_a3_link_mark_offsets_after_stripped_unsafe_link() -> None:
+def test_link_mark_offsets_after_stripped_unsafe_link() -> None:
     """When unsafe link is stripped to label, subsequent safe link mark
     offsets must be correct (based on cleaned text_content).
     """

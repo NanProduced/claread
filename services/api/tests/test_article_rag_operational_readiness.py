@@ -738,7 +738,7 @@ def test_real_provider_smoke_skeleton_is_documented() -> None:
          :class:`DashScopeArticleRagEmbeddingProvider` +
          :class:`ZillizArticleRagVectorWriter`.
       2. Seed the same minimal reading record / stable document /
-         paragraph block graph that ``test_d6_i4w`` uses.
+         paragraph block graph that ``test_article_rag_index_plan`` uses.
       3. Run ``ensure`` -> ``worker.process_next`` -> ``retrieval``
          and assert the real ``index_run.vector_collection`` /
          ``embedding_model`` plus a real ``ZillizArticleRagSearcher``

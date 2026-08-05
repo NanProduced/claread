@@ -89,7 +89,7 @@ _RETIRED_SMOKE_PREFIX = "article_rag_" + "index_" + "smoke_"
 no_network_default = pytest.mark.no_network_default
 
 # ---------------------------------------------------------------------------
-# Test schema + seed helpers (mirror test_d6_i4w_article_rag_service_e2e_smoke.py)
+# Test schema + seed helpers (shared with test_article_rag_index_plan.py)
 # ---------------------------------------------------------------------------
 
 from tests.test_article_rag_index_plan import (  # noqa: E402

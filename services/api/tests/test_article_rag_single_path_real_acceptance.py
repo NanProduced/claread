@@ -1446,7 +1446,7 @@ async def test_single_path_real_chain_acceptance(
       D6. Retrieval uses Postgres plan for citation (not vector
           payload) — proven OFFLINE by the existing P1-F
           forged-vector citation regression test
-          (``test_p1f_forged_vector_citation_metadata_is_not_truth``).
+          (``test_forged_vector_citation_metadata_is_not_truth``).
           The live smoke does NOT tamper with the vector payload;
           it only verifies the citation dict has the plan-backed
           9-key shape.
@@ -2064,7 +2064,7 @@ async def test_single_path_real_chain_acceptance(
         # D6: Retrieval uses Postgres plan for citation (not vector
         # payload).  This is proven OFFLINE by the existing P1-F
         # forged-vector citation regression test
-        # (``test_p1f_forged_vector_citation_metadata_is_not_truth``).
+        # (``test_forged_vector_citation_metadata_is_not_truth``).
         # The live smoke does NOT tamper with the vector payload;
         # it only verifies the citation dict has the plan-backed
         # 9-key I4A shape (the retrieval service's
@@ -2682,7 +2682,7 @@ class TestOfflineRetrievalHitShapeTracer:
         with pytest.raises(AttributeError):
             _ = hit.stable_document_id  # type: ignore[attr-defined]
 
-    def test_citation_dict_has_exact_9_key_i4a_shape(self) -> None:
+    def test_citation_dict_has_exact_9_key_contract_shape(self) -> None:
         """The citation dict must have exactly the 9-key I4A shape
         produced by ``_citation_dict_from_chunk``.  D6 asserts this
         in the real smoke; this tracer verifies the assertion logic
@@ -3237,7 +3237,7 @@ def _run_cleanup(
     )
 
 
-class TestR3FailurePathCleanup:
+class TestFailurePathCleanup:
     """R3 Phase 2 — offline failure injection for the cleanup helper.
 
     Each test constructs a ``_FakeZillizClient`` with seeded rows,
@@ -3735,7 +3735,7 @@ class TestR3FailurePathCleanup:
 # ======================================================================
 
 
-class TestR4FailurePathCleanupClosure:
+class TestFailurePathCleanupClosure:
     """R4 — close the two remaining fail-closed gaps.
 
     RED-A: writer attempted + discovery failure + saved empty

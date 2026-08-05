@@ -36,6 +36,9 @@ import pytest
 
 from app.contracts.annotation import utf16_code_unit_length
 from app.database.connection import init_connection
+from app.services.reader_orchestration.article_rag_embedding_provider import (
+    DashScopeArticleRagEmbeddingProvider,
+)
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ArticleRagIndexBootstrapService,
 )
@@ -45,11 +48,12 @@ from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagIndexPlanService,
     compute_plan_content_sha256,
 )
-from app.services.reader_orchestration.article_rag_embedding_provider import (
-    DashScopeArticleRagEmbeddingProvider,
-)
 from app.services.reader_orchestration.article_rag_index_worker import (
     ARTICLE_RAG_INDEX_JOB_SOURCE,
+    DEFAULT_FAKE_EMBEDDING_DIM,
+    DEFAULT_FAKE_EMBEDDING_MODEL,
+    DEFAULT_FAKE_VECTOR_COLLECTION,
+    DEFAULT_FAKE_VECTOR_STORE_PROVIDER,
     ArticleRagEmbedding,
     ArticleRagEmbeddingProvider,
     ArticleRagIndexWorkerError,
@@ -57,19 +61,21 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerService,
     ArticleRagVectorChunk,
     ArticleRagVectorWriteMetadata,
-    ArticleRagVectorWriteResult,
     ArticleRagVectorWriter,
-    DEFAULT_FAKE_EMBEDDING_DIM,
-    DEFAULT_FAKE_EMBEDDING_MODEL,
-    DEFAULT_FAKE_VECTOR_COLLECTION,
-    DEFAULT_FAKE_VECTOR_STORE_PROVIDER,
+    ArticleRagVectorWriteResult,
     FakeArticleRagEmbeddingProvider,
     FakeArticleRagVectorWriter,
     UnconfiguredArticleRagEmbeddingProvider,
     UnconfiguredArticleRagVectorWriter,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression, pytest.mark.life_characterization]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.chain_article_rag,
+    pytest.mark.seam_service_integration,
+    pytest.mark.life_permanent_regression,
+    pytest.mark.life_characterization,
+]
 
 # Reuse seed helpers + UUIDs from the I4A test module.
 from tests.test_article_rag_index_plan import (  # noqa: E402
@@ -86,9 +92,9 @@ from tests.test_article_rag_index_plan import (  # noqa: E402
     _seed_block,
     _seed_full_environment,
     _seed_record,
+    _seed_segment,
     _seed_stable_document,
     _seed_unit,
-    _seed_segment,
     _seed_user,
 )
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
@@ -2607,22 +2613,22 @@ def _p1d_assert_no_sentinel_in_surfaces(
 # V1 profile runtime-verified field values (sourced from the P1-B
 # resolver, not hardcoded by the test — these literals must match the
 # resolver output exactly).
-_P1G_DOC_EMBEDDING_MODEL = "text-embedding-v4"
-_P1G_DOC_EMBEDDING_DIM = 1024
-_P1G_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
-_P1G_VECTOR_NAMESPACE = "article_rag_chunks"
+_FROZEN_DOC_EMBEDDING_MODEL = "text-embedding-v4"
+_FROZEN_DOC_EMBEDDING_DIM = 1024
+_FROZEN_DOC_EMBEDDING_TEXT_TYPE = "provider_default"
+_FROZEN_VECTOR_NAMESPACE = "article_rag_chunks"
 
 # P1-G failure codes (must be unique per scenario; exact-match only).
-_P1G_FAILURE_CODE_TEXT_TYPE_UNSUPPORTED = "embedding_text_type_unsupported"
-_P1G_FAILURE_CODE_VECTOR_COLLECTION_MISMATCH = "vector_collection_mismatch"
-_P1G_FAILURE_CODE_EMBEDDING_MODEL_MISMATCH = "embedding_model_mismatch"
-_P1G_FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH = "embedding_dimension_mismatch"
-_P1G_FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
+_FAILURE_CODE_TEXT_TYPE_UNSUPPORTED = "embedding_text_type_unsupported"
+_FAILURE_CODE_VECTOR_COLLECTION_MISMATCH = "vector_collection_mismatch"
+_FAILURE_CODE_EMBEDDING_MODEL_MISMATCH = "embedding_model_mismatch"
+_FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH = "embedding_dimension_mismatch"
+_FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH = (
     "vector_write_result_collection_mismatch"
 )
 
 
-class _P1GCapturingEmbeddingProvider:
+class _CapturingEmbeddingProvider:
     """P1-G test fake: records the ``model`` parameter passed to embed_texts.
 
     Default behavior returns V1-profile-matching embeddings
@@ -2637,7 +2643,7 @@ class _P1GCapturingEmbeddingProvider:
     def __init__(
         self,
         *,
-        model_override: Any = _P1G_DOC_EMBEDDING_MODEL,
+        model_override: Any = _FROZEN_DOC_EMBEDDING_MODEL,
         dim_override: int | None = None,
         vector_len_override: int | None = None,
     ) -> None:
@@ -2646,7 +2652,7 @@ class _P1GCapturingEmbeddingProvider:
         self.last_texts: list[str] | None = None
         self._model_override = model_override
         self._dim_override = (
-            dim_override if dim_override is not None else _P1G_DOC_EMBEDDING_DIM
+            dim_override if dim_override is not None else _FROZEN_DOC_EMBEDDING_DIM
         )
         self._vector_len_override = (
             vector_len_override
@@ -2684,7 +2690,7 @@ class _P1GCapturingEmbeddingProvider:
         return results
 
 
-class _P1GPerItemEmbeddingProvider:
+class _PerItemEmbeddingProvider:
     """P1-G test fake: returns per-item configurable embeddings.
 
     Used for multi-chunk tests where the 2nd or last item must be invalid.
@@ -2714,8 +2720,8 @@ class _P1GPerItemEmbeddingProvider:
                 if i < len(self._per_item_configs)
                 else {}
             )
-            emb_model = cfg.get("model", model or _P1G_DOC_EMBEDDING_MODEL)
-            emb_dim = cfg.get("dim", _P1G_DOC_EMBEDDING_DIM)
+            emb_model = cfg.get("model", model or _FROZEN_DOC_EMBEDDING_MODEL)
+            emb_dim = cfg.get("dim", _FROZEN_DOC_EMBEDDING_DIM)
             vec_len = cfg.get("vector_len", emb_dim)
             vector = tuple(float(j) / max(vec_len, 1) for j in range(vec_len))
             results.append(
@@ -2729,7 +2735,7 @@ class _P1GPerItemEmbeddingProvider:
         return results
 
 
-class _P1GWrongCollectionVectorWriter:
+class _WrongCollectionVectorWriter:
     """P1-G test fake: vector writer that returns a wrong collection."""
 
     def __init__(self, *, result_collection: str = "wrong-collection") -> None:
@@ -2751,7 +2757,7 @@ class _P1GWrongCollectionVectorWriter:
         )
 
 
-class _P1GMetadataCapturingVectorWriter:
+class _MetadataCapturingVectorWriter:
     """P1-G test fake: captures metadata for field-by-field assertion."""
 
     def __init__(self) -> None:
@@ -2776,7 +2782,7 @@ class _P1GMetadataCapturingVectorWriter:
         )
 
 
-async def _p1g_seed_multi_paragraph_environment(
+async def _seed_multi_paragraph_environment(
     pool: asyncpg.Pool,
     *,
     paragraph_texts: list[str],
@@ -2804,7 +2810,7 @@ async def _p1g_seed_multi_paragraph_environment(
         offset = end
 
 
-def _p1g_build_worker_with_collection(
+def _build_worker_with_collection(
     pool: asyncpg.Pool,
     *,
     embedding_provider: ArticleRagEmbeddingProvider | None = None,
@@ -2826,7 +2832,7 @@ def _p1g_build_worker_with_collection(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_worker_passes_v1_doc_embedding_model_to_provider(
+async def test_worker_passes_v1_doc_embedding_model_to_provider(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: worker must call embed_texts(model=profile.document_embedding_model)."""
@@ -2836,8 +2842,8 @@ async def test_p1g_worker_passes_v1_doc_embedding_model_to_provider(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider()
-    writer = _P1GMetadataCapturingVectorWriter()
+    provider = _CapturingEmbeddingProvider()
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -2855,7 +2861,7 @@ async def test_p1g_worker_passes_v1_doc_embedding_model_to_provider(
     assert provider.call_count == 1
     # The worker must explicitly pass the V1 profile's document
     # embedding model — NOT None, NOT a settings override.
-    assert provider.last_model_param == _P1G_DOC_EMBEDDING_MODEL
+    assert provider.last_model_param == _FROZEN_DOC_EMBEDDING_MODEL
 
 
 # ---------------------------------------------------------------------
@@ -2864,7 +2870,7 @@ async def test_p1g_worker_passes_v1_doc_embedding_model_to_provider(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_collection_mismatch_fail_closed_before_provider_call(
+async def test_collection_mismatch_fail_closed_before_provider_call(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: runtime collection != profile.vector_namespace → fail-closed.
@@ -2878,10 +2884,10 @@ async def test_p1g_collection_mismatch_fail_closed_before_provider_call(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider()
-    writer = _P1GMetadataCapturingVectorWriter()
+    provider = _CapturingEmbeddingProvider()
+    writer = _MetadataCapturingVectorWriter()
     # Construct worker with a WRONG default_vector_collection.
-    service = _p1g_build_worker_with_collection(
+    service = _build_worker_with_collection(
         worker_env,
         embedding_provider=provider,
         vector_writer=writer,
@@ -2896,7 +2902,7 @@ async def test_p1g_collection_mismatch_fail_closed_before_provider_call(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == _P1G_FAILURE_CODE_VECTOR_COLLECTION_MISMATCH
+    assert result.failure_code == _FAILURE_CODE_VECTOR_COLLECTION_MISMATCH
     assert provider.call_count == 0
     assert writer.call_count == 0
 
@@ -2919,7 +2925,7 @@ async def test_p1g_collection_mismatch_fail_closed_before_provider_call(
     ],
     ids=lambda x: x if isinstance(x, str) and not x.startswith("text-") else "case",
 )
-async def test_p1g_embedding_model_matrix_fail_closed(
+async def test_embedding_model_matrix_fail_closed(
     worker_env: asyncpg.Pool,
     bad_model: Any,
     label: str,
@@ -2931,8 +2937,8 @@ async def test_p1g_embedding_model_matrix_fail_closed(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider(model_override=bad_model)
-    writer = _P1GMetadataCapturingVectorWriter()
+    provider = _CapturingEmbeddingProvider(model_override=bad_model)
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -2947,7 +2953,7 @@ async def test_p1g_embedding_model_matrix_fail_closed(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == _P1G_FAILURE_CODE_EMBEDDING_MODEL_MISMATCH
+    assert result.failure_code == _FAILURE_CODE_EMBEDDING_MODEL_MISMATCH
     # Provider was called (model mismatch is detected AFTER provider
     # returns), but writer must NOT be called.
     assert provider.call_count == 1
@@ -2981,7 +2987,7 @@ async def test_p1g_embedding_model_matrix_fail_closed(
         "dim_wrong_vector_len_correct",
     ],
 )
-async def test_p1g_embedding_dimension_matrix_fail_closed(
+async def test_embedding_dimension_matrix_fail_closed(
     worker_env: asyncpg.Pool,
     bad_dim: Any,
     bad_vec_len: int,
@@ -2994,11 +3000,11 @@ async def test_p1g_embedding_dimension_matrix_fail_closed(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider(
+    provider = _CapturingEmbeddingProvider(
         dim_override=bad_dim,
         vector_len_override=bad_vec_len,
     )
-    writer = _P1GMetadataCapturingVectorWriter()
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -3013,7 +3019,7 @@ async def test_p1g_embedding_dimension_matrix_fail_closed(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == _P1G_FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH
+    assert result.failure_code == _FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH
     assert provider.call_count == 1
     assert writer.call_count == 0
 
@@ -3023,26 +3029,26 @@ async def test_p1g_embedding_dimension_matrix_fail_closed(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_multi_chunk_second_embedding_invalid_writer_zero(
+async def test_multi_chunk_second_embedding_invalid_writer_zero(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: 2nd chunk bad model → writer 0, no partial upsert."""
     texts = ["first paragraph text.", "second paragraph text.", "third text."]
-    await _p1g_seed_multi_paragraph_environment(worker_env, paragraph_texts=texts)
+    await _seed_multi_paragraph_environment(worker_env, paragraph_texts=texts)
     await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
     )
 
     # 2nd item has wrong model; 1st and 3rd are valid.
-    provider = _P1GPerItemEmbeddingProvider(
+    provider = _PerItemEmbeddingProvider(
         per_item_configs=[
             {},
             {"model": "wrong-model-for-second"},
             {},
         ]
     )
-    writer = _P1GMetadataCapturingVectorWriter()
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -3057,30 +3063,30 @@ async def test_p1g_multi_chunk_second_embedding_invalid_writer_zero(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == _P1G_FAILURE_CODE_EMBEDDING_MODEL_MISMATCH
+    assert result.failure_code == _FAILURE_CODE_EMBEDDING_MODEL_MISMATCH
     assert provider.call_count == 1
     assert writer.call_count == 0
 
 
-async def test_p1g_multi_chunk_last_embedding_invalid_writer_zero(
+async def test_multi_chunk_last_embedding_invalid_writer_zero(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: last chunk bad dim → writer 0, no partial upsert."""
     texts = ["first paragraph text.", "second paragraph text."]
-    await _p1g_seed_multi_paragraph_environment(worker_env, paragraph_texts=texts)
+    await _seed_multi_paragraph_environment(worker_env, paragraph_texts=texts)
     await _build_bootstrap_service(worker_env).bootstrap_article_rag_index(
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
     )
 
     # Last item has wrong dim; 1st is valid.
-    provider = _P1GPerItemEmbeddingProvider(
+    provider = _PerItemEmbeddingProvider(
         per_item_configs=[
             {},
             {"dim": 512, "vector_len": 512},
         ]
     )
-    writer = _P1GMetadataCapturingVectorWriter()
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -3095,7 +3101,7 @@ async def test_p1g_multi_chunk_last_embedding_invalid_writer_zero(
 
     assert result is not None
     assert result.status == "failed_terminal"
-    assert result.failure_code == _P1G_FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH
+    assert result.failure_code == _FAILURE_CODE_EMBEDDING_DIMENSION_MISMATCH
     assert provider.call_count == 1
     assert writer.call_count == 0
 
@@ -3106,7 +3112,7 @@ async def test_p1g_multi_chunk_last_embedding_invalid_writer_zero(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_write_result_collection_mismatch_not_indexed(
+async def test_write_result_collection_mismatch_not_indexed(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: write_result.collection != profile.vector_namespace → terminal."""
@@ -3116,8 +3122,8 @@ async def test_p1g_write_result_collection_mismatch_not_indexed(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider()
-    writer = _P1GWrongCollectionVectorWriter(
+    provider = _CapturingEmbeddingProvider()
+    writer = _WrongCollectionVectorWriter(
         result_collection="wrong-result-collection"
     )
     service = _build_worker_service(
@@ -3136,7 +3142,7 @@ async def test_p1g_write_result_collection_mismatch_not_indexed(
     assert result.status == "failed_terminal"
     assert (
         result.failure_code
-        == _P1G_FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
+        == _FAILURE_CODE_VECTOR_WRITE_RESULT_COLLECTION_MISMATCH
     )
     assert provider.call_count == 1
     assert writer.call_count == 1
@@ -3148,7 +3154,7 @@ async def test_p1g_write_result_collection_mismatch_not_indexed(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_happy_path_profile_fields_propagated(
+async def test_happy_path_profile_fields_propagated(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: happy path must propagate profile model/dim/text_type/namespace."""
@@ -3160,8 +3166,8 @@ async def test_p1g_happy_path_profile_fields_propagated(
         user_id=_USER_ID,
     )
 
-    provider = _P1GCapturingEmbeddingProvider()
-    writer = _P1GMetadataCapturingVectorWriter()
+    provider = _CapturingEmbeddingProvider()
+    writer = _MetadataCapturingVectorWriter()
     service = _build_worker_service(
         worker_env,
         embedding_provider=provider,
@@ -3178,18 +3184,18 @@ async def test_p1g_happy_path_profile_fields_propagated(
     assert result.status == "succeeded"
 
     # Provider received the V1 profile model.
-    assert provider.last_model_param == _P1G_DOC_EMBEDDING_MODEL
+    assert provider.last_model_param == _FROZEN_DOC_EMBEDDING_MODEL
 
     # Metadata carries all profile-derived fields.
     assert writer.captured_metadata is not None
     captured = writer.captured_metadata
-    assert captured.embedding_model == _P1G_DOC_EMBEDDING_MODEL
-    assert captured.embedding_dimension == _P1G_DOC_EMBEDDING_DIM
-    assert captured.embedding_text_type == _P1G_DOC_EMBEDDING_TEXT_TYPE
-    assert captured.collection == _P1G_VECTOR_NAMESPACE
+    assert captured.embedding_model == _FROZEN_DOC_EMBEDDING_MODEL
+    assert captured.embedding_dimension == _FROZEN_DOC_EMBEDDING_DIM
+    assert captured.embedding_text_type == _FROZEN_DOC_EMBEDDING_TEXT_TYPE
+    assert captured.collection == _FROZEN_VECTOR_NAMESPACE
 
     # Writer received the profile namespace as the collection argument.
-    assert writer.captured_collection == _P1G_VECTOR_NAMESPACE
+    assert writer.captured_collection == _FROZEN_VECTOR_NAMESPACE
 
     # Index-run persisted profile model and namespace.
     async with worker_env.acquire() as conn:
@@ -3198,12 +3204,12 @@ async def test_p1g_happy_path_profile_fields_propagated(
             "FROM reader_article_rag_index_runs WHERE id = $1",
             bootstrap_result.index_run_id,
         )
-    assert row["embedding_model"] == _P1G_DOC_EMBEDDING_MODEL
-    assert row["vector_collection"] == _P1G_VECTOR_NAMESPACE
+    assert row["embedding_model"] == _FROZEN_DOC_EMBEDDING_MODEL
+    assert row["vector_collection"] == _FROZEN_VECTOR_NAMESPACE
 
     # Worker result carries profile model and namespace.
-    assert result.embedding_model == _P1G_DOC_EMBEDDING_MODEL
-    assert result.vector_collection == _P1G_VECTOR_NAMESPACE
+    assert result.embedding_model == _FROZEN_DOC_EMBEDDING_MODEL
+    assert result.vector_collection == _FROZEN_VECTOR_NAMESPACE
 
 
 # ---------------------------------------------------------------------
@@ -3211,7 +3217,7 @@ async def test_p1g_happy_path_profile_fields_propagated(
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_metadata_omitting_embedding_model_raises_typeerror() -> None:
+async def test_metadata_omitting_embedding_model_raises_typeerror() -> None:
     """RED: ArticleRagVectorWriteMetadata.embedding_model must exist and
     be a required field (no default).  Pre-fix: field does not exist
     (assertion fails RED).  Post-fix: field exists, no default, and
@@ -3243,7 +3249,7 @@ async def test_p1g_metadata_omitting_embedding_model_raises_typeerror() -> None:
         )
 
 
-async def test_p1g_metadata_omitting_embedding_dimension_raises_typeerror() -> None:
+async def test_metadata_omitting_embedding_dimension_raises_typeerror() -> None:
     """RED: ArticleRagVectorWriteMetadata.embedding_dimension must exist
     and be a required field (no default).
     """
@@ -3270,7 +3276,7 @@ async def test_p1g_metadata_omitting_embedding_dimension_raises_typeerror() -> N
         )
 
 
-async def test_p1g_metadata_omitting_embedding_text_type_raises_typeerror() -> None:
+async def test_metadata_omitting_embedding_text_type_raises_typeerror() -> None:
     """RED: ArticleRagVectorWriteMetadata.embedding_text_type must exist
     and be a required field (no default).
     """
@@ -3303,7 +3309,7 @@ async def test_p1g_metadata_omitting_embedding_text_type_raises_typeerror() -> N
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_metadata_no_empty_defaults_mask_omission() -> None:
+async def test_metadata_no_empty_defaults_mask_omission() -> None:
     """RED: constructing with all fields but empty-string model must NOT
     be masked by a default — the field is required and must be non-empty.
 
@@ -3341,7 +3347,7 @@ async def test_p1g_metadata_no_empty_defaults_mask_omission() -> None:
 # ---------------------------------------------------------------------
 
 
-async def test_p1g_terminal_failure_does_not_mutate_truth_layer(
+async def test_terminal_failure_does_not_mutate_truth_layer(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: a P1-G terminal failure must not mutate the reader truth layer.
@@ -3384,9 +3390,9 @@ async def test_p1g_terminal_failure_does_not_mutate_truth_layer(
         )
 
     # Run worker with wrong collection → terminal failure.
-    provider = _P1GCapturingEmbeddingProvider()
-    writer = _P1GMetadataCapturingVectorWriter()
-    service = _p1g_build_worker_with_collection(
+    provider = _CapturingEmbeddingProvider()
+    writer = _MetadataCapturingVectorWriter()
+    service = _build_worker_with_collection(
         worker_env,
         embedding_provider=provider,
         vector_writer=writer,
@@ -3446,14 +3452,14 @@ async def test_p1g_terminal_failure_does_not_mutate_truth_layer(
 # ===================================================================
 
 
-_P1G_R1_FAILURE_CODE_INDEXED_IDENTITY_MISMATCH = (
+_FAILURE_CODE_INDEXED_IDENTITY_MISMATCH = (
     "index_run_indexed_identity_mismatch"
 )
-_P1G_R1_SENTINEL_DRIFTED_MODEL = "P1G-R1-SENTINEL-DRIFTED-MODEL-DO-NOT-LEAK"
-_P1G_R1_SENTINEL_DRIFTED_COLLECTION = "P1G-R1-SENTINEL-DRIFTED-COLLECTION"
+_SENTINEL_DRIFTED_EMBEDDING_MODEL = "P1G-R1-SENTINEL-DRIFTED-MODEL-DO-NOT-LEAK"
+_SENTINEL_DRIFTED_VECTOR_COLLECTION = "P1G-R1-SENTINEL-DRIFTED-COLLECTION"
 
 
-async def _p1g_r1_set_index_run_embedding_model(
+async def _set_index_run_embedding_model(
     pool: asyncpg.Pool,
     *,
     index_run_id: UUID,
@@ -3468,7 +3474,7 @@ async def _p1g_r1_set_index_run_embedding_model(
         )
 
 
-async def _p1g_r1_set_index_run_vector_collection(
+async def _set_index_run_vector_collection(
     pool: asyncpg.Pool,
     *,
     index_run_id: UUID,
@@ -3483,7 +3489,7 @@ async def _p1g_r1_set_index_run_vector_collection(
         )
 
 
-async def _p1g_r1_count_retry_events(
+async def _count_retry_events(
     conn: asyncpg.Connection,
     *,
     job_id: UUID,
@@ -3495,7 +3501,7 @@ async def _p1g_r1_count_retry_events(
     )
 
 
-async def test_p1g_r1_indexed_embedding_model_drift_failed_terminal(
+async def test_indexed_embedding_model_drift_failed_terminal(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: indexed row embedding_model drift → failed_terminal."""
@@ -3522,10 +3528,10 @@ async def test_p1g_r1_indexed_embedding_model_drift_failed_terminal(
     assert first_result.status == "succeeded"
 
     # Mutate embedding_model to a different valid string.
-    await _p1g_r1_set_index_run_embedding_model(
+    await _set_index_run_embedding_model(
         worker_env,
         index_run_id=bootstrap_result.index_run_id,
-        embedding_model=_P1G_R1_SENTINEL_DRIFTED_MODEL,
+        embedding_model=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
     )
 
     # Re-queue the original job.
@@ -3551,7 +3557,7 @@ async def test_p1g_r1_indexed_embedding_model_drift_failed_terminal(
     assert result.status == "failed_terminal"
     assert (
         result.failure_code
-        == _P1G_R1_FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
+        == _FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
     )
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
@@ -3564,7 +3570,7 @@ async def test_p1g_r1_indexed_embedding_model_drift_failed_terminal(
         terminal_events = await _p1d_count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
-        retry_events = await _p1g_r1_count_retry_events(
+        retry_events = await _count_retry_events(
             conn, job_id=bootstrap_result.job_id,
         )
 
@@ -3575,13 +3581,13 @@ async def test_p1g_r1_indexed_embedding_model_drift_failed_terminal(
 
     # Sentinel must NOT leak into error surfaces.
     _p1d_assert_no_sentinel_in_surfaces(
-        sentinel=_P1G_R1_SENTINEL_DRIFTED_MODEL,
+        sentinel=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
         job=job,
         index_run=index_run,
     )
 
 
-async def test_p1g_r1_indexed_vector_collection_drift_failed_terminal(
+async def test_indexed_vector_collection_drift_failed_terminal(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: indexed row vector_collection drift → failed_terminal."""
@@ -3607,10 +3613,10 @@ async def test_p1g_r1_indexed_vector_collection_drift_failed_terminal(
     assert first_result.status == "succeeded"
 
     # Mutate vector_collection to a different valid string.
-    await _p1g_r1_set_index_run_vector_collection(
+    await _set_index_run_vector_collection(
         worker_env,
         index_run_id=bootstrap_result.index_run_id,
-        vector_collection=_P1G_R1_SENTINEL_DRIFTED_COLLECTION,
+        vector_collection=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
     )
 
     await _reset_job_to_queued(
@@ -3635,7 +3641,7 @@ async def test_p1g_r1_indexed_vector_collection_drift_failed_terminal(
     assert result.status == "failed_terminal"
     assert (
         result.failure_code
-        == _P1G_R1_FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
+        == _FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
     )
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
@@ -3648,7 +3654,7 @@ async def test_p1g_r1_indexed_vector_collection_drift_failed_terminal(
         terminal_events = await _p1d_count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
-        retry_events = await _p1g_r1_count_retry_events(
+        retry_events = await _count_retry_events(
             conn, job_id=bootstrap_result.job_id,
         )
 
@@ -3658,13 +3664,13 @@ async def test_p1g_r1_indexed_vector_collection_drift_failed_terminal(
     assert retry_events == 0
 
     _p1d_assert_no_sentinel_in_surfaces(
-        sentinel=_P1G_R1_SENTINEL_DRIFTED_COLLECTION,
+        sentinel=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
         job=job,
         index_run=index_run,
     )
 
 
-async def test_p1g_r1_indexed_both_drift_failed_terminal(
+async def test_indexed_both_drift_failed_terminal(
     worker_env: asyncpg.Pool,
 ) -> None:
     """RED: indexed row both embedding_model + vector_collection drift."""
@@ -3690,15 +3696,15 @@ async def test_p1g_r1_indexed_both_drift_failed_terminal(
     assert first_result.status == "succeeded"
 
     # Mutate both fields.
-    await _p1g_r1_set_index_run_embedding_model(
+    await _set_index_run_embedding_model(
         worker_env,
         index_run_id=bootstrap_result.index_run_id,
-        embedding_model=_P1G_R1_SENTINEL_DRIFTED_MODEL,
+        embedding_model=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
     )
-    await _p1g_r1_set_index_run_vector_collection(
+    await _set_index_run_vector_collection(
         worker_env,
         index_run_id=bootstrap_result.index_run_id,
-        vector_collection=_P1G_R1_SENTINEL_DRIFTED_COLLECTION,
+        vector_collection=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
     )
 
     await _reset_job_to_queued(
@@ -3723,7 +3729,7 @@ async def test_p1g_r1_indexed_both_drift_failed_terminal(
     assert result.status == "failed_terminal"
     assert (
         result.failure_code
-        == _P1G_R1_FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
+        == _FAILURE_CODE_INDEXED_IDENTITY_MISMATCH
     )
     assert embedding_provider.call_count == 0
     assert vector_writer.call_count == 0
@@ -3736,7 +3742,7 @@ async def test_p1g_r1_indexed_both_drift_failed_terminal(
         terminal_events = await _p1d_count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
-        retry_events = await _p1g_r1_count_retry_events(
+        retry_events = await _count_retry_events(
             conn, job_id=bootstrap_result.job_id,
         )
 
@@ -3746,18 +3752,18 @@ async def test_p1g_r1_indexed_both_drift_failed_terminal(
     assert retry_events == 0
 
     _p1d_assert_no_sentinel_in_surfaces(
-        sentinel=_P1G_R1_SENTINEL_DRIFTED_MODEL,
+        sentinel=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
         job=job,
         index_run=index_run,
     )
     _p1d_assert_no_sentinel_in_surfaces(
-        sentinel=_P1G_R1_SENTINEL_DRIFTED_COLLECTION,
+        sentinel=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
         job=job,
         index_run=index_run,
     )
 
 
-async def test_p1g_r1_indexed_normal_match_returns_idempotent_noop(
+async def test_indexed_normal_match_returns_idempotent_noop(
     worker_env: asyncpg.Pool,
 ) -> None:
     """Positive characterization: normal indexed row → idempotent_noop=True.

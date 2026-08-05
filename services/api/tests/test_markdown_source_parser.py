@@ -463,7 +463,7 @@ def test_clause2_missing_source_range_emits_warning_and_routes_to_candidate(
 # ---------------------------------------------------------------------------
 
 
-def test_all_g0_fixtures_exist_on_disk() -> None:
+def test_all_baseline_parser_fixtures_exist_on_disk() -> None:
     """All G0 fixtures must be present with all four files."""
     expected_names = {
         "code_mermaid",

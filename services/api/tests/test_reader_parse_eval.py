@@ -202,7 +202,7 @@ def _find_unguarded_app_imports(source: str) -> list[tuple[int, str]]:
     return findings
 
 
-def test_r1_parse_eval_package_does_not_import_app_runtime() -> None:
+def test_parse_eval_package_does_not_import_app_runtime() -> None:
     """No module in the parse_eval package imports ``app`` at runtime."""
     import importlib
 
@@ -227,7 +227,7 @@ def test_r1_parse_eval_package_does_not_import_app_runtime() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r1_reader_adapter_builds_artifact_with_non_empty_layers() -> None:
+def test_reader_adapter_builds_artifact_with_non_empty_layers() -> None:
     """The official adapter maps a snapshot with 3 non-empty published
     layers into a valid artifact carrying reviewable evidence."""
     from verification.reader_baseline.parse_eval.reader_snapshot_fixture import (
@@ -285,7 +285,7 @@ def test_r1_reader_adapter_builds_artifact_with_non_empty_layers() -> None:
     assert len(grammar.sidecar_sha256) == 64
 
 
-def test_r1_adapter_artifact_passes_gate_with_evidence() -> None:
+def test_adapter_artifact_passes_gate_with_evidence() -> None:
     """The adapter-produced artifact passes the gate when the
     canonical-text evidence matches and sidecar payloads are resolved."""
     from verification.reader_baseline.parse_eval.gate import run_gate
@@ -299,7 +299,7 @@ def test_r1_adapter_artifact_passes_gate_with_evidence() -> None:
     assert report.findings == ()
 
 
-def test_r1_adapter_artifact_provenance_fake_executor() -> None:
+def test_adapter_artifact_provenance_fake_executor() -> None:
     """The fake-executor fixture carries explicit fake markers and
     empty model fields (R2 / P1-3: hand-constructed content must
     never be labelled ``executor_mode='real'``)."""
@@ -316,7 +316,7 @@ def test_r1_adapter_artifact_provenance_fake_executor() -> None:
     assert artifact.prompt_revision_provenance.prompt_revision is None
 
 
-def test_r3_schema_only_real_artifact_from_fixture_rejected_by_gate() -> None:
+def test_schema_only_real_artifact_from_fixture_rejected_by_gate() -> None:
     """R3: A fixture-produced artifact that claims real execution
     (``executor_mode='real'`` + ``is_fake=False``) MUST be rejected
     by the gate with ``fixture_claims_real_execution``.
@@ -384,7 +384,7 @@ def test_r3_schema_only_real_artifact_from_fixture_rejected_by_gate() -> None:
     )
 
 
-def test_r3_real_artifact_from_non_adapter_producer_rejected_by_gate() -> None:
+def test_real_artifact_from_non_adapter_producer_rejected_by_gate() -> None:
     """R3: An artifact claiming real execution whose producer_module
     is neither a known fixture nor the official adapter MUST be
     rejected by the gate with ``real_artifact_from_non_adapter_producer``.
@@ -439,7 +439,7 @@ def test_r3_real_artifact_from_non_adapter_producer_rejected_by_gate() -> None:
     )
 
 
-def test_r3_adapter_real_mode_without_pipeline_summary_raises() -> None:
+def test_adapter_real_mode_without_pipeline_summary_raises() -> None:
     """R3 (P3): ``build_artifact_from_snapshot`` with
     ``executor_mode='real'`` and ``pipeline_summary=None`` MUST raise
     ``ValueError`` — a real-execution artifact must carry actual
@@ -469,7 +469,7 @@ def test_r3_adapter_real_mode_without_pipeline_summary_raises() -> None:
         )
 
 
-def test_r3_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
+def test_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
     """R3 regression: a fake non-empty-layer artifact with correct
     sidecar evidence MUST still pass the gate. The new provenance
     policy only fires for artifacts claiming real execution — fake
@@ -497,7 +497,7 @@ def test_r3_fake_artifact_with_sidecar_evidence_still_passes_gate() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r2_adapter_rejects_snapshot_with_zero_content_sha256() -> None:
+def test_adapter_rejects_snapshot_with_zero_content_sha256() -> None:
     """A snapshot whose ``base.content_sha256`` is all-zeros MUST be
     rejected by the adapter (P1-2 negative test)."""
     import dataclasses
@@ -532,7 +532,7 @@ def test_r2_adapter_rejects_snapshot_with_zero_content_sha256() -> None:
     assert exc_info.value.field == "content_sha256"
 
 
-def test_r2_adapter_rejects_snapshot_with_mismatched_text_length_utf16() -> None:
+def test_adapter_rejects_snapshot_with_mismatched_text_length_utf16() -> None:
     """A snapshot whose ``base.text_length_utf16`` is off by one MUST
     be rejected by the adapter (P1-2 negative test)."""
     import dataclasses
@@ -567,7 +567,7 @@ def test_r2_adapter_rejects_snapshot_with_mismatched_text_length_utf16() -> None
     assert exc_info.value.field == "text_length_utf16"
 
 
-def test_r2_adapter_rejects_snapshot_with_missing_base() -> None:
+def test_adapter_rejects_snapshot_with_missing_base() -> None:
     """A snapshot without a ``base`` attribute MUST be rejected by
     the adapter with a plain ``ValueError`` (caller bug, not drift)."""
 
@@ -618,7 +618,7 @@ def test_r2_adapter_rejects_snapshot_with_missing_base() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r2_adapter_builds_artifact_from_real_reader_plate_snapshot() -> None:
+def test_adapter_builds_artifact_from_real_reader_plate_snapshot() -> None:
     """The adapter accepts a real ``ReaderPlateSnapshot`` Pydantic
     instance whose ``base.content_sha256`` / ``text_length_utf16``
     match the passed canonical text, and produces a valid artifact
@@ -733,7 +733,7 @@ def test_r2_adapter_builds_artifact_from_real_reader_plate_snapshot() -> None:
 
 
 @pytest.mark.parametrize("sample_id", FIXED_SAMPLE_IDS)
-def test_r1_gate_passes_with_evidence_for_fixed_sample(
+def test_gate_passes_with_evidence_for_fixed_sample(
     sample_id: str,
 ) -> None:
     """The R1 gate passes with 0 findings for each fixed sample when
@@ -756,7 +756,7 @@ def test_r1_gate_passes_with_evidence_for_fixed_sample(
 # ---------------------------------------------------------------------------
 
 
-def test_r1_gate_rejects_zero_canonical_text_sha256() -> None:
+def test_gate_rejects_zero_canonical_text_sha256() -> None:
     """An artifact whose canonical_text_sha256 is all-zeros MUST fail."""
     from verification.reader_baseline.parse_eval.gate import (
         ZeroHashRegressionNegatives,
@@ -775,7 +775,7 @@ def test_r1_gate_rejects_zero_canonical_text_sha256() -> None:
     ), f"expected a canonical_text.* finding; got {sorted(check_ids)}"
 
 
-def test_r1_gate_rejects_zero_unit_text_hash() -> None:
+def test_gate_rejects_zero_unit_text_hash() -> None:
     """An artifact whose navigation unit text_hash is all-zeros MUST fail."""
     from verification.reader_baseline.parse_eval.gate import (
         ZeroHashRegressionNegatives,
@@ -794,7 +794,7 @@ def test_r1_gate_rejects_zero_unit_text_hash() -> None:
     ), f"expected an anchor_map.* finding; got {sorted(check_ids)}"
 
 
-def test_r1_gate_rejects_zero_segment_text_hash() -> None:
+def test_gate_rejects_zero_segment_text_hash() -> None:
     """An artifact whose anchor segment text_hash is all-zeros MUST fail."""
     from verification.reader_baseline.parse_eval.gate import (
         ZeroHashRegressionNegatives,
@@ -818,7 +818,7 @@ def test_r1_gate_rejects_zero_segment_text_hash() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r2_gate_rejects_zero_artifact_id() -> None:
+def test_gate_rejects_zero_artifact_id() -> None:
     """An artifact whose ``artifact_id`` is all-zeros MUST fail.
 
     R2 (P1-1) regression negative: the gate MUST recompute
@@ -846,7 +846,7 @@ def test_r2_gate_rejects_zero_artifact_id() -> None:
     )
 
 
-def test_r2_gate_rejects_wrong_artifact_id() -> None:
+def test_gate_rejects_wrong_artifact_id() -> None:
     """An artifact whose ``artifact_id`` is a valid but wrong hex
     string MUST fail the recompute check.
 
@@ -882,7 +882,7 @@ def test_r2_gate_rejects_wrong_artifact_id() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r2_gate_rejects_sidecar_payload_unresolved() -> None:
+def test_gate_rejects_sidecar_payload_unresolved() -> None:
     """An artifact with a ``sidecar_ref`` layer MUST fail the gate
     when the evidence does not carry the corresponding sidecar payload.
 
@@ -918,7 +918,7 @@ def test_r2_gate_rejects_sidecar_payload_unresolved() -> None:
     )
 
 
-def test_r2_gate_rejects_sidecar_sha_mismatch() -> None:
+def test_gate_rejects_sidecar_sha_mismatch() -> None:
     """An artifact with a ``sidecar_ref`` layer MUST fail the gate
     when the resolved sidecar payload's SHA-256 does not match the
     embedded ``sidecar_sha256``.
@@ -967,7 +967,7 @@ def test_r2_gate_rejects_sidecar_sha_mismatch() -> None:
     )
 
 
-def test_r2_sidecar_payloads_resolved_and_verified() -> None:
+def test_sidecar_payloads_resolved_and_verified() -> None:
     """Positive test: when sidecar_payloads are correctly collected,
     the gate resolves each ``sidecar_ref`` and verifies its hash."""
     from verification.reader_baseline.parse_eval.gate import run_gate
@@ -986,7 +986,7 @@ def test_r2_sidecar_payloads_resolved_and_verified() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r1_forbidden_scan_is_key_only_not_value_scan() -> None:
+def test_forbidden_scan_is_key_only_not_value_scan() -> None:
     """A legitimate ``notes`` string containing ``render_scene`` MUST
     NOT trigger a forbidden-marker finding (key-only scan)."""
     from verification.reader_baseline.parse_eval.fixture_builder import (
@@ -1031,7 +1031,7 @@ def test_r1_forbidden_scan_is_key_only_not_value_scan() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r1_frozen_artifacts_verify_byte_identical() -> None:
+def test_frozen_artifacts_verify_byte_identical() -> None:
     """Regenerating the frozen artifacts from the same fixed samples
     produces byte-identical JSON to the on-disk files."""
     from verification.reader_baseline.parse_eval.frozen_artifacts import (
@@ -1045,7 +1045,7 @@ def test_r1_frozen_artifacts_verify_byte_identical() -> None:
 
 
 @pytest.mark.parametrize("sample_id", FIXED_SAMPLE_IDS)
-def test_r1_frozen_artifact_matches_regeneration(sample_id: str) -> None:
+def test_frozen_artifact_matches_regeneration(sample_id: str) -> None:
     """The on-disk frozen artifact for a sample matches a fresh
     regeneration byte-for-byte."""
     from verification.reader_baseline.parse_eval.frozen_artifacts import (
@@ -1060,7 +1060,7 @@ def test_r1_frozen_artifact_matches_regeneration(sample_id: str) -> None:
     )
 
 
-def test_r1_frozen_manifest_has_three_entries() -> None:
+def test_frozen_manifest_has_three_entries() -> None:
     """The frozen manifest has exactly 3 entries, one per fixed sample."""
     from verification.reader_baseline.parse_eval.frozen_artifacts import (
         FROZEN_SAMPLE_IDS,
@@ -1073,7 +1073,7 @@ def test_r1_frozen_manifest_has_three_entries() -> None:
     assert sample_ids == set(FROZEN_SAMPLE_IDS)
 
 
-def test_r1_frozen_manifest_records_hashes_and_versions() -> None:
+def test_frozen_manifest_records_hashes_and_versions() -> None:
     """Each manifest entry records input_hash, artifact_hash, schema
     version, and generation path."""
     from verification.reader_baseline.parse_eval.constants import (
@@ -1112,7 +1112,7 @@ def test_r1_frozen_manifest_records_hashes_and_versions() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_r1_artifact_id_includes_canonical_text_sha256() -> None:
+def test_artifact_id_includes_canonical_text_sha256() -> None:
     """The artifact_id semantic inputs include canonical_text_sha256,
     schema_version, and producer_semantic_version."""
     artifact, _ = _build_fixture_artifact_with_evidence("short_news")
@@ -1125,7 +1125,7 @@ def test_r1_artifact_id_includes_canonical_text_sha256() -> None:
     assert sem_inputs.source_id == artifact.source_provenance.source_id
 
 
-def test_r1_fixture_provenance_marks_fake_executor() -> None:
+def test_fixture_provenance_marks_fake_executor() -> None:
     """The fixture-grade artifact explicitly marks the executor as fake."""
     artifact, _ = _build_fixture_artifact_with_evidence("short_news")
     assert artifact.runner_provenance.executor_mode == "fake"
@@ -1139,7 +1139,7 @@ def test_r1_fixture_provenance_marks_fake_executor() -> None:
 
 
 @pytest.mark.parametrize("sample_id", FIXED_SAMPLE_IDS)
-def test_r1_determinism_two_runs_byte_identical(sample_id: str) -> None:
+def test_determinism_two_runs_byte_identical(sample_id: str) -> None:
     """Two consecutive productions of the same fixed input produce
     byte-identical canonical JSON."""
     from verification.reader_baseline.parse_eval.gate import (
