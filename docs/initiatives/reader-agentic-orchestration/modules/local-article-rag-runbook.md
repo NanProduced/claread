@@ -25,7 +25,7 @@ article_ready
   -> production_stream.stream_agentic_thread_message      (agentic Ask)
 ```
 
-Ask 侧生产链说明：`reader_record_ask` 是唯一生产 Ask 路径。`build_production_article_rag_port`（`production_wiring.py`）在 `reader_article_rag_enabled` 开启且 embedding / vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`（实现 `ArticleRagSearchPort`），否则返回 `None` —— 此时 Ask 的 `search_current_article` 工具返回 typed `unavailable`，零 RAG I/O。旧的 Ask prompt-integration 簇（reader_orchestration 下 9 个已退役模块）生产代码 / 验收 / 本 runbook 均不再引用；物理删除留待后续阶段。
+Ask 侧生产链说明：`reader_record_ask` 是唯一生产 Ask 路径。`build_production_article_rag_port`（`production_wiring.py`）在 `reader_article_rag_enabled` 开启且 embedding / vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`（实现 `ArticleRagSearchPort`），否则返回 `None` —— 此时 Ask 的 `search_current_article` 工具返回 typed `unavailable`，零 RAG I/O。旧的 Ask prompt-integration 簇（reader_orchestration 下 9 个已退役模块）生产代码 / 验收 / 本 runbook 均不再引用；9 个文件已在 ARCH-OPT-C1 Phase P 物理删除，`test_d6_a0_static_boundary.py` 以物理缺席断言 + 无豁免生产扫描锁死。
 
 不覆盖：
 
@@ -321,22 +321,24 @@ uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/te
 
 ### 7.2 验收：默认 deterministic gate + 显式 opt-in real-provider smoke
 
-验收入口集中在 `tests/test_article_rag_single_path_real_acceptance.py`，分两层：
+验收入口分两层：默认离线验收由 `tests/test_reader_record_ask_rag_integration_gate.py` 承担；唯一真实链路 smoke 收敛在 `tests/test_article_rag_single_path_real_acceptance.py` 的 `test_single_path_real_chain_acceptance`。
 
 #### 7.2.1 默认 deterministic gate（CI / 日常验收，零外部调用）
 
-- 测试：`test_single_path_production_chain_default_path_is_deterministic`（无 marker、无 env gate，普通 `pytest` collect 就会实际执行）。
-- 驱动生产链 seam：`build_production_article_rag_port`（flag off → `None`；flag on 但 provider Unconfigured → `None` 且不构造 retrieval service，零 I/O）+ `execute_search_current_article`（`FakeArticleRagSearchPort` scripted 结果 → `ok`；port 缺失 → typed `unavailable`，绝不伪造答案）。
-- 全程处于 `tests/deterministic_ask_e2e/guard.py` 传输层拦截（httpx / DashScope SDK / pymilvus）之下，断言 `blocked_call_count == 0` —— 默认路径绝不触发真实 LLM / embedding / rerank / Zilliz / 网络。
+- 套件：`tests/test_reader_record_ask_rag_integration_gate.py`（无 marker、无 env gate，普通 `pytest` collect 就会实际执行）。
+- 覆盖：`article_rag_query_ready` 与 `build_production_article_rag_port` 工厂语义（flag off → 零 provider 构造；flag on 但 provider Unconfigured → 零 retrieval service 构造、返回 `None`；ready → 单次 retrieval 构造并返回 `RetrievalBackedArticleRagPort`）+ `execute_search_current_article` executor 语义（port 缺失 → typed `unavailable`、零 RAG I/O；scripted `FakeArticleRagSearchPort` → `ok`、单次 port 调用；budget 耗尽；non-ok status 透传）+ `RetrievalBackedArticleRagPort` identity mismatch 丢弃 hits。
+- 该套件是唯一默认离线验收入口。`deterministic_ask_e2e` 传输层拦截 guard 及其 `blocked_call_count` 报告属于该 e2e 套件自身的文档职责，本 runbook 不重复描述。
 
 ```powershell
 cd services/api
-uv run pytest -q tests/test_article_rag_single_path_real_acceptance.py::test_single_path_production_chain_default_path_is_deterministic
+uv run pytest -q tests/test_reader_record_ask_rag_integration_gate.py
 ```
+
+预期结果：全部 `passed`，零外部调用。
 
 #### 7.2.2 显式 opt-in real-provider smoke（唯一真实验收入口，生产禁止）
 
-`test_single_path_real_chain_acceptance`（`article_rag_smoke` + `real_llm` marker + env gate，默认 skip；未 opt-in 时只 collect 不执行、零外部调用）。它是 Article RAG 单路径收敛后的 canonical 真实链路 smoke，替代了之前在本文件里基于 smoke-collection 命名空间的旧设计（旧设计与 worker frozen-contract collection enforcement 互斥，已退役）。真实 provider 索引 + 检索完成后，Ask 侧走生产链 `RetrievalBackedArticleRagPort.search_current_article`（即 `build_production_article_rag_port` 在 ready 时返回的同一个 adapter），停在 Ask port 边界 —— 不调用真实 Ask 模型。
+`test_single_path_real_chain_acceptance`（`article_rag_smoke` + `real_llm` marker + 文件级 env gate，默认 skip；未 opt-in 时只 collect 不执行、零外部调用）。它是 Article RAG 单路径收敛后的 canonical 真实链路 smoke，替代了之前在本文件里基于 smoke-collection 命名空间的旧设计（旧设计与 worker frozen-contract collection enforcement 互斥，已退役）。真实 provider 索引 + 检索完成后，Ask 侧走生产链 `RetrievalBackedArticleRagPort.search_current_article`（即 `build_production_article_rag_port` 在 ready 时返回的同一个 adapter），停在 Ask port 边界 —— 不调用真实 Ask 模型。
 
 设计合同：
 
@@ -352,7 +354,15 @@ uv run pytest -q tests/test_article_rag_single_path_real_acceptance.py::test_sin
 - **失败不重试**：单次执行；任何 D1-D8 assertion 失败都直接 fail，`finally` 仍按精确 chunk_id 完成清理，不第二次发起真实调用。
 - **默认 skip**：未 opt-in 时测试 `skipped`，provider attempts=0，无任何 socket 调用。
 
-opt-in gate（必须同时满足）：
+opt-in gate（必须**同时**满足，共两层）：
+
+第一层 —— conftest `real_llm` triple gate（`services/api/tests/conftest.py::skip_real_llm_tests`，任一缺失即 skip）：
+
+1. `CLAREAD_ALLOW_REAL_LLM_TESTS=1`
+2. `CLAREAD_REAL_LLM_MODEL=<authorized-model>`（显式指定授权的模型名，例如 `qwen-plus`）
+3. pytest mark expression 必须恰好是 `-m real_llm`（其它 mark 表达式仍 skip）
+
+第二层 —— 文件级 env gate（`_real_smoke_env_present()` skipif，任一缺失即 skip）：
 
 ```text
 READER_ARTICLE_RAG_SMOKE=1
@@ -375,6 +385,11 @@ opt-in 命令（**精确 test node + -vv + -rs，单次执行，禁止 retry**�
 ```powershell
 cd services/api
 
+# 第一层：conftest real_llm triple gate
+$env:CLAREAD_ALLOW_REAL_LLM_TESTS = "1"
+$env:CLAREAD_REAL_LLM_MODEL = "<authorized-model>"
+
+# 第二层：文件级 env gate
 $env:READER_ARTICLE_RAG_SMOKE = "1"
 $env:READER_ARTICLE_RAG_EMBEDDING_PROVIDER = "dashscope"
 # 二选一（凭据 env，team 走哪条路径都行）：
@@ -387,10 +402,13 @@ $env:READER_ARTICLE_RAG_ZILLIZ_TOKEN = "<real token>"
 $env:READER_ARTICLE_RAG_ZILLIZ_COLLECTION = "article_rag_chunks"
 $env:READER_ARTICLE_RAG_VECTOR_DIM = "1024"
 
-uv run pytest -vv -rs tests/test_article_rag_single_path_real_acceptance.py::test_single_path_real_chain_acceptance
+uv run pytest -vv -rs -m real_llm tests/test_article_rag_single_path_real_acceptance.py::test_single_path_real_chain_acceptance
 ```
 
-预期结果：`1 passed`，**不得**是 `skipped` / `xfailed` / `deselected`。失败时 `finally` 仍按精确 chunk_id 完成清理，不得第二次真实调用。
+预期结果：
+
+- 两层全部条件满足 → `1 passed`，**不得**是 `xfailed` / `deselected`。失败时 `finally` 仍按精确 chunk_id 完成清理，不得第二次真实调用。
+- 任一条件缺失 → 对应测试 `skipped`（第一层 triple gate skip 或第二层 env gate skip），provider attempts=0。这是 fail-closed 默认行为，**不是** `1 passed`。
 
 ### 7.3 真实 smoke gate 严禁进入生产
 

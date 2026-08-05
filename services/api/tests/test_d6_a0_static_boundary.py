@@ -387,19 +387,29 @@ _ARTICLE_RAG_ASK_EXIT_LEGACY_FILES = frozenset(
 
 
 def test_production_app_does_not_import_legacy_article_rag_ask_chain() -> None:
-    """ARCH-OPT-C1 Phase L: zero production consumers of the old Ask chain.
+    """ARCH-OPT-C1 Phase L/P: legacy cluster stays dead, physically.
 
-    Every ``app/`` module must stay off the 9 retired
-    ``article_rag_ask_*`` modules.  The legacy files were physically
-    deleted in Phase P, so the exemption below is now a no-op; any
-    other ``app/`` module — services, agents, routes, schemas —
-    importing them is caught.
+    First asserts all 9 retired ``article_rag_ask_*`` files are
+    physically absent (Phase P deletion) — restoring any of them
+    fails here immediately.  Then scans every ``app/`` module for
+    imports of the 9 retired modules with NO exemption for the
+    legacy paths, so a revived cluster is caught twice: any
+    ``app/`` module (services, agents, routes, schemas) importing
+    them is flagged, including a revived legacy file itself.
     """
+    revived = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in _ARTICLE_RAG_ASK_EXIT_LEGACY_FILES
+        if path.exists()
+    )
+    assert revived == [], (
+        "retired article_rag_ask_* files must stay physically deleted; "
+        "revived: " + ", ".join(revived)
+    )
+
     offenders: list[str] = []
     for path in sorted(APP_DIR.rglob("*.py")):
         if "__pycache__" in path.parts:
-            continue
-        if path in _ARTICLE_RAG_ASK_EXIT_LEGACY_FILES:
             continue
         source = _read_text(path)
         rel = path.relative_to(REPO_ROOT).as_posix()
