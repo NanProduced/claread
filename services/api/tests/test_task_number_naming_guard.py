@@ -64,18 +64,27 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
 
 # Task-code signatures for test identifiers (P3 identifier governance).
 # Family set aligned with the P3 Phase-1 audit: ``p<N>``/``r<N>``/
-# ``t<NN>[x]``/``d5``/``d6``/``a3``-``a5``/``i3``/``i4``/``s<N>``/
-# ``round<N>``/``lp_r<N>``/``g0[x]`` in snake names, plus CamelCase
-# ``T<NN>``/``A<3-5>``/``D<5-6>``/``R<N>`` tokens. ``zplus``/``ZPlus``
-# are production domain words (see the production allowlist above) and
-# are intentionally NOT part of this set.
+# ``t<N>``/``t<NN>[x]``/``d5``/``d6``/``a3``-``a5``/``i3``/``i4``/
+# ``s<N>``/``round<N>``/``lp_r<N>``/``g0[x]`` in snake names, plus
+# CamelCase ``T<NN>``/``A<3-5>``/``D<5-6>``/``R<N>``/``Round<N>``/
+# ``I<3-4><X>`` tokens. Token-boundary lookarounds keep business
+# words out: single-digit ``t<N>`` needs the underscore separator
+# (``utf8``/``split1`` never match), identifier-initial ``i<3-4>``
+# is caught only at a real identifier boundary (``i18n`` never
+# matches), and ``Round<N>`` requires a digit so ``RoundRobin``
+# passes. ``zplus``/``ZPlus`` are production domain words (see the
+# production allowlist above) and are intentionally NOT part of
+# this set.
 _TEST_IDENTIFIER_TASK_CODE_RE = re.compile(
-    r"_(?:d[56]|a[345]|t[0-9][0-9][a-z0-9]?|r[0-9]|p[0-9]|i[34]"
+    r"_(?:d[56]|a[345]|t[0-9][0-9]?[a-z0-9]?|r[0-9]|p[0-9]|i[34]"
     r"|s[0-9]|round[0-9]|lp_r[0-9]|g0[0-9]?)"
     r"|(?<![A-Z0-9_])D[56](?![0-9])"
     r"|(?<![A-Z0-9_])A[345](?![0-9])"
     r"|(?<![A-Z0-9_])T[0-9][0-9][a-z0-9]?(?![0-9])"
     r"|(?<![A-Z0-9_])R[0-9](?![0-9])"
+    r"|(?<![A-Za-z0-9_])i[34](?![0-9])"
+    r"|(?<![A-Z0-9_])Round[0-9]"
+    r"|(?<![A-Z0-9_])I[34][A-Z0-9]"
 )
 
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
@@ -299,6 +308,16 @@ def test_task_code_pattern_flags_synthetic_task_code() -> None:
     tree = ast.parse("async def test_r6_stale_stream_reconcile():\n    pass\n")
     name = tree.body[0].name
     assert _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
+    # Blind-spot forms closed by the P3 follow-up: single-digit
+    # ``t<N>`` token, identifier-initial ``i<3-4>`` fixture names,
+    # CamelCase ``Round<N>`` and ``I<3-4><X>`` class tokens.
+    for name in (
+        "test_t5_synthetic_single_digit_token",
+        "i4x_env",
+        "TestRound2SyntheticGates",
+        "TestSyntheticI3ZSections",
+    ):
+        assert _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
 
 
 def test_task_code_pattern_passes_business_names() -> None:
@@ -310,5 +329,8 @@ def test_task_code_pattern_passes_business_names() -> None:
         "TestFreezePersistenceSqlOrder",
         "advance_round",
         "zplus_service",
+        "layer1_fnv1a32",
+        "test_utf8_encode_roundtrip",
+        "i18n_labels",
     ):
         assert not _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
