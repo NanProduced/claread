@@ -58,7 +58,7 @@ def anyio_backend() -> str:
 
 @pytest.fixture
 async def outline_env() -> asyncpg.Pool:
-    schema_name = f"test_a6_outline_{uuid4().hex}"
+    schema_name = f"test_outline_{uuid4().hex}"
     admin_conn = await connect_admin()
     original_pool = db_connection.DB_POOL
     try:
@@ -101,7 +101,7 @@ class _StubState:
 # ---------------------------------------------------------------------------
 
 
-def test_a6_unit_a1_activation_disabled_returns_false() -> None:
+def test_unit_activation_disabled_returns_false() -> None:
     """generation_enabled=False → predicate returns False regardless of headings."""
     settings = Settings(
         semantic_outline_generation_enabled=False,
@@ -112,7 +112,7 @@ def test_a6_unit_a1_activation_disabled_returns_false() -> None:
     assert predicate(_StubState(unit_types=("heading",) * 5)) is False
 
 
-def test_a6_unit_a2_empty_profile_returns_false() -> None:
+def test_unit_empty_profile_returns_false() -> None:
     """profile="" → predicate returns False regardless of headings."""
     settings = Settings(
         semantic_outline_generation_enabled=True,
@@ -122,7 +122,7 @@ def test_a6_unit_a2_empty_profile_returns_false() -> None:
     assert predicate(_StubState(unit_types=("heading",) * 5)) is False
 
 
-def test_a6_unit_types_none_fail_closed_returns_true() -> None:
+def test_unit_types_none_fail_closed_returns_true() -> None:
     """activation_ready=True + unit_types=None → fail-closed to True (no skip).
 
     When unit_types is not loaded (e.g., a code path that did not pre-load
@@ -134,7 +134,7 @@ def test_a6_unit_types_none_fail_closed_returns_true() -> None:
     assert predicate(_StubState(unit_types=None)) is True
 
 
-def test_a6_empty_unit_types_returns_true() -> None:
+def test_empty_unit_types_returns_true() -> None:
     """activation_ready=True + zero units → True (no skip; no headings)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -142,7 +142,7 @@ def test_a6_empty_unit_types_returns_true() -> None:
     assert predicate(_StubState(unit_types=())) is True
 
 
-def test_a6_fewer_than_threshold_headings_returns_true() -> None:
+def test_fewer_than_threshold_headings_returns_true() -> None:
     """activation_ready=True + 1 heading (< threshold 2) → True (no skip)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -150,7 +150,7 @@ def test_a6_fewer_than_threshold_headings_returns_true() -> None:
     assert predicate(_StubState(unit_types=("heading", "body", "body"))) is True
 
 
-def test_a6_unit_a6_threshold_headings_returns_false() -> None:
+def test_unit_threshold_headings_returns_false() -> None:
     """activation_ready=True + exactly 2 headings (≥ threshold) → False (skip)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -160,7 +160,7 @@ def test_a6_unit_a6_threshold_headings_returns_false() -> None:
     )
 
 
-def test_a6_unit_a7_more_than_threshold_headings_returns_false() -> None:
+def test_unit_more_than_threshold_headings_returns_false() -> None:
     """activation_ready=True + >2 headings → False (skip)."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -175,7 +175,7 @@ def test_a6_unit_a7_more_than_threshold_headings_returns_false() -> None:
     )
 
 
-def test_a6_unit_a8_non_heading_units_do_not_trigger_skip() -> None:
+def test_unit_non_heading_units_do_not_trigger_skip() -> None:
     """activation_ready=True + many body/list/quote units + 1 heading → True."""
     predicate = settings_aware_semantic_outline_request_eligibility(
         _DEV_ACTIVATION_SETTINGS
@@ -195,7 +195,7 @@ def test_a6_unit_a8_non_heading_units_do_not_trigger_skip() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_a6_int_b1_article_with_sufficient_headings_skips_job(
+async def test_int_article_with_sufficient_headings_skips_job(
     outline_env: asyncpg.Pool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -256,7 +256,7 @@ async def test_a6_int_b1_article_with_sufficient_headings_skips_job(
     )
 
 
-async def test_a6_integration_article_without_sufficient_headings_creates_job(
+async def test_integration_article_without_sufficient_headings_creates_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Article with <2 heading units → outline job created (regression).
@@ -299,7 +299,7 @@ async def test_a6_integration_article_without_sufficient_headings_creates_job(
     assert job_count == 1
 
 
-async def test_a6_int_b3_skip_does_not_create_diagnostic_when_activation_off(
+async def test_int_skip_does_not_create_diagnostic_when_activation_off(
     outline_env: asyncpg.Pool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:

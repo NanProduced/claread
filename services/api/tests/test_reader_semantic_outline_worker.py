@@ -655,7 +655,7 @@ async def test_partial_publish_keeps_valid_nodes_only(outline_env: asyncpg.Pool)
     assert layer["output_json"]["status"] == "partial"
 
 
-async def test_v0_and_worker_failure_preserve_old_published(
+async def test_version_zero_and_worker_failure_preserve_old_published(
     outline_env: asyncpg.Pool,
 ) -> None:
     user_id = await insert_user(outline_env)

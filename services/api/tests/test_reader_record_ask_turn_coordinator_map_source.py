@@ -1,9 +1,10 @@
-"""M3 stage C — C2 coordinator map-source ingress tests.
+"""Turn-coordinator map-source ingress tests.
 
+# task-history: M3 stage C / C2
 Contract: docs/initiatives/reader-agentic-orchestration/modules/
 ask-claread-agentic-product-runtime-contract.md (accepted, 2026-07-25).
 
-Covers the Ask-owner side of the C2 task — consumption of
+Covers the Ask-owner side of map-source material consumption —
 ``MapSourceMaterial`` inside ``TurnCoordinator``:
 
   * §3.4 preflight — ``_load_map_source_material`` is called before the
@@ -236,7 +237,7 @@ def _material(
 
 
 class TestNoProviderUnitWindowFallback:
-    """§5.1 6(b) — ``provider is None`` preserves pre-C2 unit-window map."""
+    """§5.1 6(b) — ``provider is None`` preserves pre-map-source unit-window map."""
 
     def test_static_no_material_returns_body_sources_only(self):
         """``_map_sources_from_scope`` with ``material=None`` returns
@@ -548,7 +549,7 @@ class TestHardCaps:
 
 class TestPreflightIncludeRagAskOnlyFalse:
     """§3.5.1.1 + M3 stage C — ``include_rag_ask_only`` is fixed to
-    ``False`` in the C2 skeleton (B3 heading baseline only)."""
+    ``False`` in the map-source skeleton (B3 heading baseline only)."""
 
     @pytest.mark.asyncio
     async def test_preflight_calls_load_with_include_rag_ask_only_false(self):

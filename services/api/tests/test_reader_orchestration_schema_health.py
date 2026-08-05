@@ -35,7 +35,7 @@ async def schema_health_schema() -> asyncpg.Connection:
         await admin.close()
 
 
-async def test_reader_d5_schema_health_passes_on_fresh_baseline(
+async def test_reader_schema_health_passes_on_fresh_baseline(
     schema_health_schema: tuple[asyncpg.Connection, str],
 ) -> None:
     admin, schema_name = schema_health_schema
@@ -51,7 +51,7 @@ async def test_reader_d5_schema_health_passes_on_fresh_baseline(
     assert report.to_dict()["failure_codes"] == []
 
 
-async def test_reader_d5_schema_health_reports_drift_with_reset_guidance(
+async def test_reader_schema_health_reports_drift_with_reset_guidance(
     schema_health_schema: tuple[asyncpg.Connection, str],
 ) -> None:
     admin, schema_name = schema_health_schema
@@ -71,7 +71,7 @@ async def test_reader_d5_schema_health_reports_drift_with_reset_guidance(
     assert "infra/migrations/0001_initial.sql" in message
 
 
-async def test_reader_schema_health_reports_missing_d6_anchor_column_with_0002_guidance(
+async def test_reader_schema_health_reports_missing_anchor_column_with_baseline_guidance(
     schema_health_schema: tuple[asyncpg.Connection, str],
 ) -> None:
     admin, schema_name = schema_health_schema
@@ -94,7 +94,7 @@ async def test_reader_schema_health_reports_missing_d6_anchor_column_with_0002_g
     assert "docker exec" in message
 
 
-async def test_reader_schema_health_reports_missing_d6_anchor_index(
+async def test_reader_schema_health_reports_missing_anchor_index(
     schema_health_schema: tuple[asyncpg.Connection, str],
 ) -> None:
     admin, schema_name = schema_health_schema
@@ -152,7 +152,7 @@ async def test_reader_schema_health_reports_old_user_annotation_check_constraint
     assert "infra/migrations/0001_initial.sql" in message
 
 
-def test_check_schema_baseline_sql_covers_reader_d5_attribution_objects() -> None:
+def test_check_schema_baseline_sql_covers_reader_attribution_objects() -> None:
     required_markers = (
         "ai_usage_events.reader_run_id",
         "ai_usage_events.reader_job_id",

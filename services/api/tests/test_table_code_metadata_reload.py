@@ -36,7 +36,7 @@ from tests.test_reader_orchestration_schema_baseline import (
     DATABASE_URL,
 )
 
-L1_MARKDOWN = """# Quarterly Field Notes
+TABLE_CODE_MARKDOWN = """# Quarterly Field Notes
 
 The research group compared three regional pilots and recorded every
 measured outcome before drafting the summary for the public review
@@ -116,13 +116,13 @@ async def _insert_user(pool: asyncpg.Pool) -> UUID:
     return user_id
 
 
-async def _freeze_l1_markdown(pool: asyncpg.Pool, user_id: UUID):
+async def _freeze_table_code_markdown(pool: asyncpg.Pool, user_id: UUID):
     service = StableReadyInputApplicationService(pool=pool)
     return await service.freeze_stable_ready_input_and_load_snapshot(
         user_id=user_id,
         source_type="markdown_file",
         filename="quarterly-field-notes.md",
-        text=L1_MARKDOWN,
+        text=TABLE_CODE_MARKDOWN,
         language="en",
     )
 
@@ -161,7 +161,7 @@ async def test_deterministic_table_and_code_freeze_via_stable_ready_route(
 ) -> None:
     """Gate 层证据：确定性 table + 带语言 code 走 stable-ready（非 candidate）。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_l1_markdown(reload_env, user_id)
+    result = await _freeze_table_code_markdown(reload_env, user_id)
 
     assert result.suitability.outcome == "stable_document_ready"
     assert "table_structure_uncertain" not in result.suitability.flags
@@ -173,7 +173,7 @@ async def test_table_and_code_payloads_persisted_in_stable_document_blocks(
 ) -> None:
     """DB 层证据：freeze 后 payload_json 原样保留 language/alignment/header。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_l1_markdown(reload_env, user_id)
+    result = await _freeze_table_code_markdown(reload_env, user_id)
 
     async with reload_env.acquire() as conn:
         rows = await conn.fetch(
@@ -230,7 +230,7 @@ async def test_snapshot_projects_code_language_and_table_metadata_after_reload(
 ) -> None:
     """Snapshot DTO 层证据：刚构建与 DB 重载路径都投影 L1 metadata 且等价。"""
     user_id = await _insert_user(reload_env)
-    result = await _freeze_l1_markdown(reload_env, user_id)
+    result = await _freeze_table_code_markdown(reload_env, user_id)
     record_id = result.reading_record_id
 
     fresh = _source_blocks_by_unit(result.snapshot)

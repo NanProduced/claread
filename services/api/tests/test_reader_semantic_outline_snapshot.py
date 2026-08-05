@@ -180,7 +180,7 @@ def _json(snapshot: ReaderPlateSnapshot) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_a1_no_layer_python_none_and_json_null() -> None:
+def test_no_layer_python_none_and_json_null() -> None:
     build_result = _build_result()
     snapshot = _snapshot(build_result, layers=[])
     assert snapshot.semantic_outline is None
@@ -189,7 +189,7 @@ def test_a1_no_layer_python_none_and_json_null() -> None:
     assert dumped["semantic_outline"] is None
 
 
-def test_a2_pending_job_no_published_is_none() -> None:
+def test_pending_job_no_published_is_none() -> None:
     """T5.4a does not read jobs; pending with no published layer ≡ no projection."""
     build_result = _build_result()
     snapshot = _snapshot(build_result, layers=[])
@@ -197,7 +197,7 @@ def test_a2_pending_job_no_published_is_none() -> None:
     assert _json(snapshot)["semantic_outline"] is None
 
 
-def test_a12_failed_job_no_published_is_none() -> None:
+def test_failed_job_no_published_is_none() -> None:
     build_result = _build_result()
     snapshot = _snapshot(build_result, layers=[])
     assert snapshot.semantic_outline is None
@@ -266,7 +266,7 @@ def test_old_published_still_projected_when_only_published_present() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a6_invalid_json_output_is_none_snapshot_still_builds() -> None:
+def test_invalid_json_output_is_none_snapshot_still_builds() -> None:
     build_result = _build_result()
     layer = ReaderSnapshotLayer(
         layer_id=LAYER_ID,
@@ -288,7 +288,7 @@ def test_a6_invalid_json_output_is_none_snapshot_still_builds() -> None:
     assert len(snapshot.enhancement_layers) == 1
 
 
-def test_a6b_non_mapping_output_is_none() -> None:
+def test_non_mapping_output_is_none() -> None:
     build_result = _build_result()
     layer = ReaderSnapshotLayer(
         layer_id=LAYER_ID,
@@ -307,7 +307,7 @@ def test_a6b_non_mapping_output_is_none() -> None:
     assert _json(snapshot)["semantic_outline"] is None
 
 
-def test_a7_source_identity_mismatch_is_none() -> None:
+def test_source_identity_mismatch_is_none() -> None:
     build_result = _build_result()
     env = _ready_envelope(build_result, generation=99)
     layer = _outline_layer(build_result, output=env)
@@ -321,7 +321,7 @@ def test_a7_source_identity_mismatch_is_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a8_prefers_newest_published_among_candidates() -> None:
+def test_prefers_newest_published_among_candidates() -> None:
     build_result = _build_result()
     older = _outline_layer(
         build_result,
@@ -341,7 +341,7 @@ def test_a8_prefers_newest_published_among_candidates() -> None:
     assert snapshot.semantic_outline.publication.outline_revision == "olrev_new"
 
 
-def test_a9_idempotent_reuse_stable_revision() -> None:
+def test_idempotent_reuse_stable_revision() -> None:
     build_result = _build_result()
     layer = _outline_layer(build_result)
     s1 = _snapshot(build_result, layers=[layer])
@@ -360,7 +360,7 @@ def test_a9_idempotent_reuse_stable_revision() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a10_value_and_navigation_unchanged_by_outline() -> None:
+def test_value_and_navigation_unchanged_by_outline() -> None:
     build_result = _build_result()
     baseline = _snapshot(build_result, layers=[])
     with_outline = _snapshot(build_result, layers=[_outline_layer(build_result)])
@@ -375,7 +375,7 @@ def test_a10_value_and_navigation_unchanged_by_outline() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a11_enhancement_layers_still_lists_outline_for_audit() -> None:
+def test_enhancement_layers_still_lists_outline_for_audit() -> None:
     build_result = _build_result()
     layer = _outline_layer(build_result)
     snapshot = _snapshot(build_result, layers=[layer])

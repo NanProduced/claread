@@ -97,7 +97,7 @@ async def outline_env() -> asyncpg.Pool:
 # ---------------------------------------------------------------------------
 
 
-async def test_dev_a1_disabled_generation_creates_no_job(
+async def test_dev_disabled_generation_creates_no_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """generation_enabled=False + profile set → no job, no provider call."""
@@ -126,7 +126,7 @@ async def test_dev_a1_disabled_generation_creates_no_job(
     assert job_count == 0
 
 
-async def test_dev_a2_empty_profile_creates_no_job(
+async def test_dev_empty_profile_creates_no_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """generation_enabled=True + profile empty → no job, no provider call."""
@@ -160,7 +160,7 @@ async def test_dev_a2_empty_profile_creates_no_job(
 # ---------------------------------------------------------------------------
 
 
-async def test_dev_b1_activation_ready_article_ready_creates_one_job(
+async def test_dev_activation_ready_article_ready_creates_one_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """activation_ready=True + article_ready → exactly one job."""
@@ -215,7 +215,7 @@ async def test_dev_already_active_no_op(outline_env: asyncpg.Pool) -> None:
     assert job_count == 1
 
 
-async def test_dev_b3_non_article_ready_no_op(outline_env: asyncpg.Pool) -> None:
+async def test_dev_non_article_ready_no_op(outline_env: asyncpg.Pool) -> None:
     """Non-article_ready state → no-op even when activation_ready=True."""
     user_id = await insert_user(outline_env)
     article = await submit_article_ready(outline_env, user_id=user_id)
@@ -293,7 +293,7 @@ def _build_runner_with_stubs(
     return ReaderEnhancementPipelineRunner(**kwargs)
 
 
-def test_dev_c1_composition_selects_pydantic_generator() -> None:
+def test_dev_composition_selects_pydantic_generator() -> None:
     """activation_ready=True → runner wires PydanticAISemanticOutlineGenerator."""
     settings = Settings(
         semantic_outline_generation_enabled=True,
@@ -323,7 +323,7 @@ def test_dev_composition_unconfigured_when_disabled() -> None:
     )
 
 
-def test_dev_c3_composition_unconfigured_when_profile_empty() -> None:
+def test_dev_composition_unconfigured_when_profile_empty() -> None:
     """profile="" → UnconfiguredSemanticOutlineGenerator + default always-false predicate."""
     settings = Settings(
         semantic_outline_generation_enabled=True,
@@ -354,7 +354,7 @@ class _StubState:
     unit_types: tuple[str, ...] | None = None
 
 
-def test_dev_c4_composition_bootstrap_uses_settings_aware_eligibility() -> None:
+def test_dev_composition_bootstrap_uses_settings_aware_eligibility() -> None:
     """activation_ready=True + no explicit bootstrap → runner auto-constructs
     a real ``EnhancementJobBootstrapService`` whose eligibility predicate:
 
@@ -379,7 +379,7 @@ def test_dev_c4_composition_bootstrap_uses_settings_aware_eligibility() -> None:
     assert predicate(_StubState()) is True
 
 
-def test_dev_c5_composition_default_settings_keeps_unconfigured() -> None:
+def test_dev_composition_default_settings_keeps_unconfigured() -> None:
     """Committed outline defaults keep the generator unconfigured."""
     assert Settings.model_fields["semantic_outline_generation_enabled"].default is False
     assert Settings.model_fields["reader_semantic_outline_model_profile"].default == ""
@@ -398,7 +398,7 @@ def test_dev_c5_composition_default_settings_keeps_unconfigured() -> None:
     )
 
 
-def test_dev_c6_composition_explicit_worker_override_respected() -> None:
+def test_dev_composition_explicit_worker_override_respected() -> None:
     """Explicit semantic_outline_worker_service injection is never replaced."""
     settings = Settings(
         semantic_outline_generation_enabled=True,
@@ -413,7 +413,7 @@ def test_dev_c6_composition_explicit_worker_override_respected() -> None:
     assert runner._semantic_outline_worker_service is fake_worker
 
 
-def test_dev_c7_explicit_bootstrap_override_respected() -> None:
+def test_dev_explicit_bootstrap_override_respected() -> None:
     """Explicit bootstrap_service injection is never replaced, even when
     activation_ready=True would otherwise auto-construct a different one.
 
@@ -444,7 +444,7 @@ def test_dev_c7_explicit_bootstrap_override_respected() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_dev_d1_fake_generator_publishes_trusted_projection(
+async def test_dev_fake_generator_publishes_trusted_projection(
     outline_env: asyncpg.Pool,
 ) -> None:
     """DI fake generator success → snapshot projects trusted semantic_outline."""
@@ -499,7 +499,7 @@ async def test_dev_d1_fake_generator_publishes_trusted_projection(
     assert default_semantic_outline_request_eligibility is not None
 
 
-async def test_dev_d2_snapshot_navigation_units_unchanged(
+async def test_dev_snapshot_navigation_units_unchanged(
     outline_env: asyncpg.Pool,
 ) -> None:
     """L0/L1 navigation.units must be identical before/after outline generation."""
@@ -569,7 +569,7 @@ async def test_dev_d2_snapshot_navigation_units_unchanged(
     assert after.semantic_outline is not None
 
 
-async def test_dev_d3_usage_provenance_auditable(
+async def test_dev_usage_provenance_auditable(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Provider call with usage_data → exactly one auditable ai_usage_events row."""
@@ -665,7 +665,7 @@ async def test_dev_d3_usage_provenance_auditable(
     assert usage_row["reading_record_id"] == article.record_id
 
 
-async def test_dev_d4_coverage_budget_readiness_unchanged(
+async def test_dev_coverage_budget_readiness_unchanged(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Successful outline generation must not enter coverage/budget/readiness.
@@ -760,7 +760,7 @@ def _build_runner_with_real_pool(
     )
 
 
-async def test_dev_e1_runner_bootstrap_creates_one_outline_job(
+async def test_dev_runner_bootstrap_creates_one_outline_job(
     outline_env: asyncpg.Pool,
 ) -> None:
     """activation_ready=True + article_ready → runner.bootstrap_missing_jobs
@@ -785,7 +785,7 @@ async def test_dev_e1_runner_bootstrap_creates_one_outline_job(
     assert job_count == 1
 
 
-async def test_dev_e2_runner_bootstrap_idempotent_on_same_base_generation(
+async def test_dev_runner_bootstrap_idempotent_on_same_base_generation(
     outline_env: asyncpg.Pool,
 ) -> None:
     """Re-calling ``runner.bootstrap_missing_jobs`` on the same base/generation
@@ -815,7 +815,7 @@ async def test_dev_e2_runner_bootstrap_idempotent_on_same_base_generation(
     assert job_count == 1
 
 
-async def test_dev_e3_runner_bootstrap_no_outline_when_disabled(
+async def test_dev_runner_bootstrap_no_outline_when_disabled(
     outline_env: asyncpg.Pool,
 ) -> None:
     """activation_ready=False → same public seam creates 0 semantic_outline jobs.
@@ -847,7 +847,7 @@ async def test_dev_e3_runner_bootstrap_no_outline_when_disabled(
     assert job_count == 0
 
 
-async def test_dev_e4_runner_bootstrap_no_outline_when_profile_empty(
+async def test_dev_runner_bootstrap_no_outline_when_profile_empty(
     outline_env: asyncpg.Pool,
 ) -> None:
     """profile="" → same public seam creates 0 semantic_outline jobs.

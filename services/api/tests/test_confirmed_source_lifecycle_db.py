@@ -17,7 +17,7 @@ schema-and-domain-contract.md — Confirmed Source 生命周期）：
    行/引用）走旧逻辑向后兼容。
 4. artifact 路径：pipeline-status 增 has_confirmed_source（Q5）。
 
-测试模式复用 ``test_l1_table_code_metadata_reload.py``：隔离
+测试模式复用 ``test_table_code_metadata_reload.py``：隔离
 PostgreSQL schema + 生产服务全链路，不做 fake connection。
 """
 
@@ -128,7 +128,7 @@ async def _make_pool(schema_name: str) -> asyncpg.Pool:
 
 @pytest.fixture
 async def db_env() -> AsyncIterator[asyncpg.Pool]:
-    schema_name = f"test_l2_conf_src_{uuid4().hex}"
+    schema_name = f"test_conf_src_{uuid4().hex}"
     admin_conn = await asyncpg.connect(DATABASE_URL)
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')

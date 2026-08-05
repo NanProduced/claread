@@ -69,7 +69,7 @@ async def _insert_user(pool: asyncpg.Pool) -> UUID:
 
 @pytest.fixture
 async def reader_service_env() -> asyncpg.Pool:
-    schema_name = f"test_b2_ask_supplements_{uuid4().hex}"
+    schema_name = f"test_ask_supplements_{uuid4().hex}"
     admin_conn = await _connect_admin()
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
@@ -130,7 +130,7 @@ async def _insert_reading_record_supplement(
         "hash_algorithm": "fnv1a32-utf16",
     }
     metadata_payload = {
-        "id": f"ask-supplement:pending",
+        "id": "ask-supplement:pending",
         "entry_type": supplement_type,
         "label": "AI 补充语法旁注",
         "title": title,

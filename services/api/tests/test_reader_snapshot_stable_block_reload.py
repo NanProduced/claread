@@ -1,4 +1,9 @@
 # ruff: noqa: E501
+# File-level E501 retained: IMPLEMENTATION_PLAN_MARKDOWN (and sibling
+# Markdown fixtures below) are byte-exact Stable Document inputs whose
+# paragraph line lengths are part of the freeze/reload contract. Wrapping
+# them would change fixture bytes and invalidate structural assertions.
+# Ordinary Python source in this file is kept under the 100-char budget.
 """R1 Phase 3 — Reader 持久化重载 Stable Block 结构等价红灯测试。
 
 封住的失效点：``repository.load_snapshot_facts`` 只读 ``reading_units``
@@ -597,7 +602,7 @@ async def _load_stable_document_blocks(
 # footnote/raw_html/math/unclosed_fence). Tables are intentionally
 # absent — they trigger `table_structure_uncertain` and require candidate
 # review (covered by test_input_suitability_gate.py +
-# test_a7_candidate_routing_distribution.py, not by reload tests).
+# test_candidate_routing_distribution.py, not by reload tests).
 
 CODE_BLOCK_MARKDOWN = """# Code Example
 

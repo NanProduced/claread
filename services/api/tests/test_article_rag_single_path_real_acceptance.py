@@ -2704,7 +2704,7 @@ class TestOfflineRetrievalHitShapeTracer:
         }
         assert set(citation.keys()) == expected_keys
 
-    def test_d7_field_by_field_comparison_works(self) -> None:
+    def test_field_by_field_comparison_works(self) -> None:
         """D7 compares all 9 citation fields per chunk_id against the
         rebuilt plan's ArticleRagCitationRef.  This tracer builds a
         matching ArticleRagCitationRef and verifies the comparison
@@ -2752,7 +2752,7 @@ class TestOfflineRetrievalHitShapeTracer:
             == citation["canonical_text_end_utf16"]
         )
 
-    def test_d7_field_by_field_comparison_detects_mismatch(self) -> None:
+    def test_field_by_field_comparison_detects_mismatch(self) -> None:
         """D7 comparison must FAIL when any of the 9 fields mismatch.
         This tracer builds a non-matching ArticleRagCitationRef and
         verifies the comparison raises AssertionError.
@@ -3264,7 +3264,7 @@ class TestFailurePathCleanup:
     #   * post_delete_query_count == 0.
     # ------------------------------------------------------------------
 
-    def test_A_worker_write_d2_fail_cleanup_deletes_all(self) -> None:
+    def test_worker_write_fail_cleanup_deletes_all(self) -> None:
         stable_doc_id = uuid4()
         a1, a2, a3 = "A1-aaaa", "A2-aaaa", "A3-aaaa"
         client = _FakeZillizClient(
@@ -3339,7 +3339,7 @@ class TestFailurePathCleanup:
     #   * All 3 deleted.
     # ------------------------------------------------------------------
 
-    def test_B_d4_timeout_leftover_caught_by_discovery(self) -> None:
+    def test_timeout_leftover_caught_by_discovery(self) -> None:
         stable_doc_id = uuid4()
         b1, b2, b3 = "B1-bbbb", "B2-bbbb", "B3-leftover"
         client = _FakeZillizClient(
@@ -3399,7 +3399,7 @@ class TestFailurePathCleanup:
     #   * All 3 deleted.
     # ------------------------------------------------------------------
 
-    def test_C_d4_partial_capture_union_deletes_all(self) -> None:
+    def test_partial_capture_union_deletes_all(self) -> None:
         stable_doc_id = uuid4()
         c1, c2, c3 = "C1-cccc", "C2-cccc", "C3-cccc"
         client = _FakeZillizClient(
@@ -3574,7 +3574,7 @@ class TestFailurePathCleanup:
     #     message does NOT appear in str(err).
     # ------------------------------------------------------------------
 
-    def test_F1_delete_failure_propagates_fail_closed(self) -> None:
+    def test_delete_failure_propagates_fail_closed(self) -> None:
         stable_doc_id = uuid4()
         f1, f2, f3 = "F1-ffff", "F2-ffff", "F3-ffff"
         client = _FakeZillizClient(
@@ -3639,7 +3639,7 @@ class TestFailurePathCleanup:
     #     (chunk_ids, counts, schema fields) — NO URI/token/key.
     # ------------------------------------------------------------------
 
-    def test_F2_verification_failure_detected_fail_closed(self) -> None:
+    def test_verification_failure_detected_fail_closed(self) -> None:
         stable_doc_id = uuid4()
         f1, f2, f3 = "F2-1-fff", "F2-2-fff", "F2-3-fff"
         client = _FakeZillizClient(

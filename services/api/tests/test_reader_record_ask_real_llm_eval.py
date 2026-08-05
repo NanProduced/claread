@@ -161,7 +161,7 @@ from claread_eval.reader_record_ask.evaluators.artifact import (  # noqa: E402
 )
 from claread_eval.reader_record_ask.loader import (  # noqa: E402
     LoadedReaderRecordAskDatasetSnapshot,
-    load_r4_a3_dataset_with_snapshot,
+    load_r4_a3_dataset_with_snapshot as load_eval_dataset_with_snapshot,
 )
 from claread_eval.reader_record_ask.phase_planner import (  # noqa: E402
     BudgetStopResult,
@@ -178,8 +178,9 @@ from claread_eval.reader_record_ask.runtime_fixture import (  # noqa: E402
     precheck_required_facts_support,
 )
 from claread_eval.reader_record_ask.schema import (  # noqa: E402
-    ReaderRecordAskR4A3Case,
-    ReaderRecordAskR4A3Dataset,
+    ReaderRecordAskR4A3Case as ReaderRecordAskEvalCase,
+    ReaderRecordAskR4A3Dataset as ReaderRecordAskEvalDataset,
+    ReaderRecordAskR4A3Expected as ReaderRecordAskEvalExpected,
 )
 from claread_eval.reader_record_ask.session import (  # noqa: E402
     ENV_PRIOR_RUN_ID,
@@ -195,21 +196,21 @@ from claread_eval.reader_record_ask.utf16 import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # Env var names
 # ---------------------------------------------------------------------------
-R4_A3_RUN_ENV = "CLAREAD_R4_A3_RUN"
+RUN_EVAL_ENV = "CLAREAD_R4_A3_RUN"
 REAL_LLM_MODEL_ENV = "CLAREAD_REAL_LLM_MODEL"
-R4_A3_BBC_RECORD_ID_ENV = "CLAREAD_R4_A3_BBC_RECORD_ID"
-R4_A3_PRO_PROFILE_ENV = "CLAREAD_R4_A3_PRO_PROFILE"
-R4_A3_MAX_REQUESTS_ENV = "CLAREAD_R4_A3_MAX_REQUESTS"
-R4_A3_MAX_TOKENS_ENV = "CLAREAD_R4_A3_MAX_TOKENS"
-R4_A3_RUNS_DIR_ENV = "CLAREAD_R4_A3_RUNS_DIR"
-R4_A3_THINKING_VIA_PROFILE_ENV = "CLAREAD_R4_A3_THINKING_VIA_PROFILE"
+BBC_RECORD_ID_ENV = "CLAREAD_R4_A3_BBC_RECORD_ID"
+PRO_PROFILE_ENV = "CLAREAD_R4_A3_PRO_PROFILE"
+MAX_REQUESTS_ENV = "CLAREAD_R4_A3_MAX_REQUESTS"
+MAX_TOKENS_ENV = "CLAREAD_R4_A3_MAX_TOKENS"
+RUNS_DIR_ENV = "CLAREAD_R4_A3_RUNS_DIR"
+THINKING_VIA_PROFILE_ENV = "CLAREAD_R4_A3_THINKING_VIA_PROFILE"
 # P0 explicit dataset-dir binding: real runs MUST set
 # ``CLAREAD_R4_A3_DATASET_DIR`` — there is NO silent fallback to
 # ``evals/tmp/reader-record-ask-r4-a3/``. The previous default-fallback
 # allowed real runs to accidentally reuse a stale local working dataset.
 # The harness now fail-closes before any provider call when the env is
 # missing (see :func:`_resolve_dataset_dir_or_skip`).
-R4_A3_DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
+DATASET_DIR_ENV = "CLAREAD_R4_A3_DATASET_DIR"
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _DEFAULT_MAX_REQUESTS = 30
@@ -235,11 +236,11 @@ def _resolve_dataset_dir() -> Path:
     gate) as safe skips rather than failures, while still fail-closing
     real runs before any paid call.
     """
-    env_val = os.environ.get(R4_A3_DATASET_DIR_ENV, "").strip()
+    env_val = os.environ.get(DATASET_DIR_ENV, "").strip()
     if not env_val:
         pytest.skip(
             f"R4-A3 requires explicit dataset dir: set "
-            f"{R4_A3_DATASET_DIR_ENV}=<path>. Suggested local working "
+            f"{DATASET_DIR_ENV}=<path>. Suggested local working "
             f"dir: {_SUGGESTED_DATASET_DIR} (gitignored; not used "
             f"automatically)."
         )
@@ -261,15 +262,15 @@ def _real_llm_eval_env_gate() -> tuple[str, str]:
     """
     if not real_llm_tests_allowed():
         pytest.skip("R4-A3 real LLM eval requires CLAREAD_ALLOW_REAL_LLM_TESTS=1")
-    if os.environ.get(R4_A3_RUN_ENV, "").strip().lower() not in _TRUTHY:
-        pytest.skip(f"R4-A3 real LLM eval requires {R4_A3_RUN_ENV}=1")
+    if os.environ.get(RUN_EVAL_ENV, "").strip().lower() not in _TRUTHY:
+        pytest.skip(f"R4-A3 real LLM eval requires {RUN_EVAL_ENV}=1")
     authorized = os.environ.get(REAL_LLM_MODEL_ENV, "").strip()
     if not authorized:
         pytest.skip(
             f"R4-A3 real LLM eval requires {REAL_LLM_MODEL_ENV}=<short_name>"
         )
     runs_dir = os.environ.get(
-        R4_A3_RUNS_DIR_ENV, str(_DEFAULT_RUNS_DIR)
+        RUNS_DIR_ENV, str(_DEFAULT_RUNS_DIR)
     ).strip() or str(_DEFAULT_RUNS_DIR)
     return authorized, runs_dir
 
@@ -345,7 +346,7 @@ def _build_thinking_model(
     variant and returns the base config unchanged (no programmatic override).
     The harness still verifies the model_name via ``_resolve_authorized_model``.
     """
-    if os.environ.get(R4_A3_THINKING_VIA_PROFILE_ENV, "").strip().lower() in _TRUTHY:
+    if os.environ.get(THINKING_VIA_PROFILE_ENV, "").strip().lower() in _TRUTHY:
         # Profile-switch mode: caller pre-configured thinking via env profile.
         return build_model_instance(base_config), base_config
 
@@ -367,7 +368,7 @@ def _build_thinking_model(
     if thinking_model is None:
         pytest.skip(
             "failed to rebuild reader_ask model with thinking enabled; "
-            f"set {R4_A3_THINKING_VIA_PROFILE_ENV}=1 and pre-switch profile"
+            f"set {THINKING_VIA_PROFILE_ENV}=1 and pre-switch profile"
         )
     return thinking_model, thinking_config
 
@@ -395,7 +396,7 @@ def _split_article_into_units(article_text: str) -> list[str]:
 
 
 def _build_synthetic_runtime_inputs(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
 ) -> tuple[ReadingRecordAskContextEnvelope, InMemoryDocumentAccess]:
     """Construct envelope + document_access from a synthetic case.
 
@@ -468,15 +469,15 @@ async def _build_bbc_runtime_inputs(
     Does not copy BBC article text into the test code — only references the
     record id and structured fields fetched live from the DB.
     """
-    record_id_env = os.environ.get(R4_A3_BBC_RECORD_ID_ENV, "").strip()
+    record_id_env = os.environ.get(BBC_RECORD_ID_ENV, "").strip()
     if not record_id_env:
         pytest.skip(
-            f"BBC record path requires {R4_A3_BBC_RECORD_ID_ENV} and DB"
+            f"BBC record path requires {BBC_RECORD_ID_ENV} and DB"
         )
     if record_id_env != record_id:
         pytest.skip(
             f"BBC case record_id {record_id!r} does not match env "
-            f"{R4_A3_BBC_RECORD_ID_ENV}={record_id_env!r}"
+            f"{BBC_RECORD_ID_ENV}={record_id_env!r}"
         )
 
     try:
@@ -766,7 +767,7 @@ def _collect_model_context_handle_ids(
 
 
 def _compute_model_context_support(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
     model_context_chunks: tuple[ModelContextChunk, ...] | Sequence[ModelContextChunk],
 ) -> tuple[list[ModelContextSupportObservation], str | None, list[str]]:
     """R4-A4-0 final closure (P0-1..P0-4): typed per-fact model-context support.
@@ -1093,7 +1094,7 @@ def _classify_exception_safe_code(
 
 
 async def _run_one_case(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
     budget_model: BudgetedUsageModel,
     model_config: ResolvedModelConfig,
     run_id: str,
@@ -1649,7 +1650,7 @@ def _load_prior_phase_artifacts(
 
 
 def _build_prior_eval_results(
-    dataset_cases: list[ReaderRecordAskR4A3Case],
+    dataset_cases: list[ReaderRecordAskEvalCase],
     prior_artifacts: list[RawArtifact],
 ) -> dict[str, list[list[Any]]]:
     """Run :func:`evaluate_artifact` on each prior artifact, grouped by
@@ -1701,7 +1702,7 @@ def _deterministic_preflight(
     *,
     session: RunSessionLayout,
     phase: int,
-    cases_to_run: list[ReaderRecordAskR4A3Case],
+    cases_to_run: list[ReaderRecordAskEvalCase],
     max_requests: int,
 ) -> str | None:
     """Deterministic preflight checks that do NOT require model_config (P0).
@@ -1745,7 +1746,7 @@ def _deterministic_preflight(
         # ``_model_config_preflight``. The actual profile_name match
         # against the resolved config is checked in
         # ``_model_config_preflight`` after the model is built.
-        pro_profile = os.environ.get(R4_A3_PRO_PROFILE_ENV, "").strip()
+        pro_profile = os.environ.get(PRO_PROFILE_ENV, "").strip()
         if not pro_profile:
             return "pro_profile_missing"
 
@@ -1760,7 +1761,7 @@ def _deterministic_preflight(
         case for case in cases_to_run if case.source_kind == "bbc_record"
     ]
     if bbc_cases:
-        bbc_env_id = os.environ.get(R4_A3_BBC_RECORD_ID_ENV, "").strip()
+        bbc_env_id = os.environ.get(BBC_RECORD_ID_ENV, "").strip()
         if not bbc_env_id:
             return "bbc_record_id_env_missing"
         for case in bbc_cases:
@@ -1820,7 +1821,7 @@ def _preflight_check(
     session: RunSessionLayout,
     phase: int,
     model_config: ResolvedModelConfig,
-    cases_to_run: list[ReaderRecordAskR4A3Case],
+    cases_to_run: list[ReaderRecordAskEvalCase],
     max_requests: int,
     max_tokens: int,
 ) -> str | None:
@@ -1849,10 +1850,10 @@ def _preflight_check(
 
 
 async def _preflight_runtime_inputs(
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskEvalCase],
 ) -> list[
     tuple[
-        ReaderRecordAskR4A3Case,
+        ReaderRecordAskEvalCase,
         ReadingRecordAskContextEnvelope,
         InMemoryDocumentAccess,
         str,
@@ -1899,7 +1900,7 @@ async def _preflight_runtime_inputs(
 
     prepared: list[
         tuple[
-            ReaderRecordAskR4A3Case,
+            ReaderRecordAskEvalCase,
             ReadingRecordAskContextEnvelope,
             InMemoryDocumentAccess,
             str,
@@ -1989,7 +1990,7 @@ def _clear_preflight_chunk_stash() -> None:
 
 async def _compute_preflight_runtime_fixture_fingerprint(
     *,
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
     envelope: ReadingRecordAskContextEnvelope,
     document_access: InMemoryDocumentAccess,
 ) -> str:
@@ -2123,18 +2124,18 @@ async def _compute_preflight_runtime_fixture_fingerprint(
 # authors CANNOT forge ``"explicit"`` provenance — the field is not
 # in the JSON schema, not parsed, and not settable via
 # ``model_validate``. The preflight guard reads
-# :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin`.
+# :attr:`ReaderRecordAskEvalCase.atomic_facts_origin`.
 
 
 def _preflight_guard_real_phase1_atomic_facts_explicit(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
 ) -> None:
     """R4-A4-2R5R2 Task 4: block real_phase1 cases that rely on legacy
     auto-migration from ``required_article_facts``.
 
     A ``real_phase1`` case MUST declare explicit ``atomic_facts`` in
     its JSON file (loader-owned
-    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` ==
+    :attr:`ReaderRecordAskEvalCase.atomic_facts_origin` ==
     ``"explicit"``). Cases that rely on the loader's auto-migration
     (which produces :class:`AtomicExpectedFact` entries with
     ``fact_id="legacy-{idx}"``, ``source_aliases=[]``, and the legacy
@@ -2154,7 +2155,7 @@ def _preflight_guard_real_phase1_atomic_facts_explicit(
     (for negative facts like "article does not provide year").
 
     R4-A4-2R5R2 Task 4: provenance is read from the LOADER-OWNED
-    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` property (a
+    :attr:`ReaderRecordAskEvalCase.atomic_facts_origin` property (a
     Pydantic ``PrivateAttr``, NOT a JSON-parseable field). Dataset
     JSON authors CANNOT forge ``"explicit"`` provenance. The loader
     is the sole writer, based on raw JSON inspection.
@@ -2200,7 +2201,7 @@ def _preflight_guard_real_phase1_atomic_facts_explicit(
 
 
 def _precheck_required_facts_support_preflight(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
     runtime_fixture_fp: str,
 ) -> None:
     """R4-A4-2R2 P0-3: semantic precheck — required facts must be
@@ -2262,7 +2263,7 @@ def _precheck_required_facts_support_preflight(
 
 
 def _verify_runtime_identity(
-    case: ReaderRecordAskR4A3Case,
+    case: ReaderRecordAskEvalCase,
     envelope: ReadingRecordAskContextEnvelope,
 ) -> None:
     """R4-A4-2R P0-Identity: verify runtime envelope_fingerprint matches
@@ -2494,10 +2495,10 @@ class PreparedPhaseContext:
     prior_artifacts: tuple[RawArtifact, ...] | None
     prior_eval_results: dict[str, list[Any]] | None
     planner: PhasePlanner
-    cases_to_run: tuple[ReaderRecordAskR4A3Case, ...]
+    cases_to_run: tuple[ReaderRecordAskEvalCase, ...]
     prepared_inputs: tuple[
         tuple[
-            ReaderRecordAskR4A3Case,
+            ReaderRecordAskEvalCase,
             ReadingRecordAskContextEnvelope,
             InMemoryDocumentAccess,
             str,
@@ -2534,7 +2535,7 @@ async def _prepare_phase(*, phase: int) -> PreparedPhaseContext:
 
     - env gate not open (``_real_llm_eval_env_gate``)
     - dataset dir missing or invalid (``_resolve_dataset_dir``)
-    - dataset snapshot load failure (``load_r4_a3_dataset_with_snapshot``)
+    - dataset snapshot load failure (``load_eval_dataset_with_snapshot``)
     - session/run_id missing (``_build_session_layout``)
     - Phase 2/3 prior_run_id missing
     - Phase 2/3 prior artifacts missing (no prior run)
@@ -2560,7 +2561,7 @@ async def _prepare_phase(*, phase: int) -> PreparedPhaseContext:
     #    snapshot). The snapshot's ``dataset`` and ``identity`` are
     #    derived from the SAME byte capture — a disk mutation after
     #    this point cannot desync the fingerprint.
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_eval_dataset_with_snapshot(dataset_dir)
     dataset = snapshot.dataset
     dataset_identity = snapshot.identity
 
@@ -2616,8 +2617,8 @@ async def _prepare_phase(*, phase: int) -> PreparedPhaseContext:
     cases_to_run = planner.cases_to_run
 
     # 10. budget config (env-only, deterministic).
-    max_requests = int(os.environ.get(R4_A3_MAX_REQUESTS_ENV, _DEFAULT_MAX_REQUESTS))
-    max_tokens = int(os.environ.get(R4_A3_MAX_TOKENS_ENV, _DEFAULT_MAX_TOKENS))
+    max_requests = int(os.environ.get(MAX_REQUESTS_ENV, _DEFAULT_MAX_REQUESTS))
+    max_tokens = int(os.environ.get(MAX_TOKENS_ENV, _DEFAULT_MAX_TOKENS))
 
     # 11. deterministic preflight (no model needed). BBC env binding,
     #     pro_profile env, run_dir writable, cases non-empty, budget
@@ -3223,7 +3224,7 @@ def _install_model_builder_sentinels(monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 def _make_fake_snapshot(
-    cases: list[ReaderRecordAskR4A3Case],
+    cases: list[ReaderRecordAskEvalCase],
     *,
     content_sha256: str = "a" * 64,
 ) -> LoadedReaderRecordAskDatasetSnapshot:
@@ -3235,7 +3236,7 @@ def _make_fake_snapshot(
     each test can use a distinct hash (avoids accidental cross-test
     coupling via shared hash strings).
     """
-    dataset = ReaderRecordAskR4A3Dataset(
+    dataset = ReaderRecordAskEvalDataset(
         id="test-dataset",
         schema_version="test-schema-v1",
         case_globs=["cases/*.json"],
@@ -3284,9 +3285,9 @@ async def test_phase1_dataset_env_missing_model_builder_zero(
     is built, NO provider request is made.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.delenv(R4_A3_DATASET_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATASET_DIR_ENV, raising=False)
 
     builder_calls = _install_model_builder_sentinels(monkeypatch)
 
@@ -3314,18 +3315,18 @@ async def test_phase2_prior_identity_mismatch_model_builder_zero(
     ``_build_thinking_model`` is invoked.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, "phase2-test")
     monkeypatch.setenv(ENV_PRIOR_RUN_ID, "phase1-test")
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
 
     case = _make_minimal_case(phase_tags=["real_phase1"])
     snapshot = _make_fake_snapshot([case], content_sha256="a" * 64)
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
 
@@ -3371,19 +3372,19 @@ async def test_phase3_prior_artifact_missing_identity_model_builder_zero(
     any model is built.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, "phase3-test")
     monkeypatch.setenv(ENV_PRIOR_RUN_ID, "phase2-test")
-    monkeypatch.setenv(R4_A3_PRO_PROFILE_ENV, "test-pro")
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.setenv(PRO_PROFILE_ENV, "test-pro")
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
 
     case = _make_minimal_case(phase_tags=["real_phase1"])
     snapshot = _make_fake_snapshot([case], content_sha256="c" * 64)
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
 
@@ -3429,12 +3430,12 @@ async def test_phase1_bbc_env_missing_model_builder_zero(
     preflight is covered by the next test.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, "phase1-test")
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
-    monkeypatch.delenv(R4_A3_BBC_RECORD_ID_ENV, raising=False)
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.delenv(BBC_RECORD_ID_ENV, raising=False)
 
     bbc_case = _make_minimal_case(
         case_id="bbc-test",
@@ -3446,7 +3447,7 @@ async def test_phase1_bbc_env_missing_model_builder_zero(
     snapshot = _make_fake_snapshot([bbc_case], content_sha256="d" * 64)
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
 
@@ -3480,14 +3481,14 @@ async def test_phase1_runtime_input_preflight_failure_model_builder_zero(
     access. Both layers must skip before any model builder is invoked.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, "phase1-test")
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
     # BBC env matches the case record_id — deterministic preflight passes.
     monkeypatch.setenv(
-        R4_A3_BBC_RECORD_ID_ENV, "00000000-0000-4000-8000-000000000000"
+        BBC_RECORD_ID_ENV, "00000000-0000-4000-8000-000000000000"
     )
 
     bbc_case = _make_minimal_case(
@@ -3500,7 +3501,7 @@ async def test_phase1_runtime_input_preflight_failure_model_builder_zero(
     snapshot = _make_fake_snapshot([bbc_case], content_sha256="e" * 64)
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
 
@@ -3547,12 +3548,12 @@ async def test_phase1_all_preflight_success_model_builder_called_once(
     path.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, "phase1-test")
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
-    monkeypatch.delenv(R4_A3_BBC_RECORD_ID_ENV, raising=False)
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.delenv(BBC_RECORD_ID_ENV, raising=False)
 
     synthetic_case = _make_minimal_case(
         case_id="synthetic-1",
@@ -3562,7 +3563,7 @@ async def test_phase1_all_preflight_success_model_builder_called_once(
     snapshot = _make_fake_snapshot([synthetic_case], content_sha256="f" * 64)
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
 
@@ -3611,7 +3612,7 @@ async def test_phase1_all_preflight_success_model_builder_called_once(
 def test_real_llm_gate_default_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default run (no env gate): env gate skips when any env var is missing."""
     monkeypatch.delenv("CLAREAD_ALLOW_REAL_LLM_TESTS", raising=False)
-    monkeypatch.delenv(R4_A3_RUN_ENV, raising=False)
+    monkeypatch.delenv(RUN_EVAL_ENV, raising=False)
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
         _real_llm_eval_env_gate()
@@ -3662,7 +3663,7 @@ def test_model_route_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_real_llm_gate_partial_env_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default run (no env gate): partial env (allow=1 but no R4_A3_RUN) skips."""
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.delenv(R4_A3_RUN_ENV, raising=False)
+    monkeypatch.delenv(RUN_EVAL_ENV, raising=False)
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
         _real_llm_eval_env_gate()
@@ -3671,7 +3672,7 @@ def test_real_llm_gate_partial_env_skips(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_real_llm_gate_missing_model_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default run (no env gate): allow=1 + R4_A3_RUN=1 but no model skips."""
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.delenv(REAL_LLM_MODEL_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
         _real_llm_eval_env_gate()
@@ -3693,7 +3694,7 @@ def test_resolve_dataset_dir_skips_when_env_missing(
     operator forgot to set ``CLAREAD_R4_A3_DATASET_DIR``. The harness
     must fail-closed before any provider call.
     """
-    monkeypatch.delenv(R4_A3_DATASET_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATASET_DIR_ENV, raising=False)
     with pytest.raises(pytest.skip.Exception):
         _resolve_dataset_dir()
 
@@ -3705,7 +3706,7 @@ def test_resolve_dataset_dir_uses_env_when_set(
     """P0-1: ``_resolve_dataset_dir`` returns the env-provided path."""
     env_dir = tmp_path / "from-env"
     env_dir.mkdir()
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(env_dir))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(env_dir))
     resolved = _resolve_dataset_dir()
     assert resolved == Path(str(env_dir))
 
@@ -3729,10 +3730,10 @@ def test_dataset_env_missing_provider_calls_zero(
     """
     # Open the gate.
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
     # Remove dataset env — the harness must skip before any provider call.
-    monkeypatch.delenv(R4_A3_DATASET_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATASET_DIR_ENV, raising=False)
 
     # Sentinel: track any provider call.
     call_count = {"n": 0}
@@ -3776,18 +3777,17 @@ def _make_minimal_case(
     article_text: str | None = "Hello world.",
     phase_tags: list[str] | None = None,
     expected_envelope_fingerprint: str | None = None,
-) -> ReaderRecordAskR4A3Case:
-    """Build a minimal :class:`ReaderRecordAskR4A3Case` for preflight tests.
+) -> ReaderRecordAskEvalCase:
+    """Build a minimal :class:`ReaderRecordAskEvalCase` for preflight tests.
 
     R4-A4-2R P0-Identity: ``expected_envelope_fingerprint`` is an
     optional kwarg for the new runtime fixture identity field. When
     ``None`` (default), no preflight identity check is performed
     (backwards-compat with pre-R4-A4-2R cases).
     """
-    from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
-        ReaderRecordAskR4A3Expected,
-    )
-    return ReaderRecordAskR4A3Case(
+    # ReaderRecordAskEvalExpected is aliased at module level from
+    # ReaderRecordAskR4A3Expected (evals ownership keeps R4A3 names).
+    return ReaderRecordAskEvalCase(
         id=case_id,
         source_kind=source_kind,  # type: ignore[arg-type]
         record_id=record_id,
@@ -3800,7 +3800,7 @@ def _make_minimal_case(
         baseline_mode="complete",
         question="测试问题。",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(),
+        expected=ReaderRecordAskEvalExpected(),
         phase_tags=phase_tags or [],
         expected_envelope_fingerprint=expected_envelope_fingerprint,
     )
@@ -3843,7 +3843,7 @@ def test_preflight_bbc_env_missing_fails_closed(
     fix moves the env binding check to ``_preflight_check`` which runs
     BEFORE any provider call.
     """
-    monkeypatch.delenv(R4_A3_BBC_RECORD_ID_ENV, raising=False)
+    monkeypatch.delenv(BBC_RECORD_ID_ENV, raising=False)
     session = _make_minimal_session(tmp_path)
     case = _make_minimal_case(
         case_id="bbc-test",
@@ -3874,7 +3874,7 @@ def test_preflight_bbc_record_id_mismatch_fails_closed(
     ``record_id``, preflight must return ``bbc_record_id_mismatch``.
     """
     monkeypatch.setenv(
-        R4_A3_BBC_RECORD_ID_ENV, "aaaaaaaa-0000-0000-0000-000000000000"
+        BBC_RECORD_ID_ENV, "aaaaaaaa-0000-0000-0000-000000000000"
     )
     session = _make_minimal_session(tmp_path)
     case = _make_minimal_case(
@@ -3903,7 +3903,7 @@ def test_preflight_bbc_case_missing_record_id_fails_closed(
     preflight (``bbc_case_missing_record_id``), not crash mid-loop.
     """
     monkeypatch.setenv(
-        R4_A3_BBC_RECORD_ID_ENV, "00000000-0000-4000-8000-000000000000"
+        BBC_RECORD_ID_ENV, "00000000-0000-4000-8000-000000000000"
     )
     session = _make_minimal_session(tmp_path)
     case = _make_minimal_case(
@@ -3931,7 +3931,7 @@ def test_preflight_synthetic_only_passes_env_check(
     """P0-3: synthetic-only case set must pass preflight even when BBC
     env is missing (no BBC case → no env binding requirement).
     """
-    monkeypatch.delenv(R4_A3_BBC_RECORD_ID_ENV, raising=False)
+    monkeypatch.delenv(BBC_RECORD_ID_ENV, raising=False)
     session = _make_minimal_session(tmp_path)
     case = _make_minimal_case(
         case_id="synthetic-1",
@@ -4412,7 +4412,7 @@ def test_delta_does_not_affect_usage_observability_evaluator() -> None:
 
 
 class _FakeCase:
-    """Minimal duck-typed stand-in for :class:`ReaderRecordAskR4A3Case`.
+    """Minimal duck-typed stand-in for :class:`ReaderRecordAskEvalCase`.
 
     ``_build_budget_stop_remaining`` only reads ``case.id``, so a tiny
     stub is sufficient for unit-testing the remaining-structure
@@ -4783,17 +4783,17 @@ def _install_env_for_phase_entry(
     deterministic preflight (env gate + dataset dir + session layout).
 
     This is the shared env setup for the manifest-writing tests. Each
-    test additionally monkeypatches ``load_r4_a3_dataset_with_snapshot``
+    test additionally monkeypatches ``load_eval_dataset_with_snapshot``
     and ``_run_one_case`` to control the execution path without making
     real LLM calls.
     """
     monkeypatch.setenv("CLAREAD_ALLOW_REAL_LLM_TESTS", "1")
-    monkeypatch.setenv(R4_A3_RUN_ENV, "1")
+    monkeypatch.setenv(RUN_EVAL_ENV, "1")
     monkeypatch.setenv(REAL_LLM_MODEL_ENV, "test-model")
-    monkeypatch.setenv(R4_A3_DATASET_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(DATASET_DIR_ENV, str(tmp_path))
     monkeypatch.setenv(ENV_RUN_ID, run_id)
-    monkeypatch.setenv(R4_A3_RUNS_DIR_ENV, str(tmp_path / "runs"))
-    monkeypatch.delenv(R4_A3_BBC_RECORD_ID_ENV, raising=False)
+    monkeypatch.setenv(RUNS_DIR_ENV, str(tmp_path / "runs"))
+    monkeypatch.delenv(BBC_RECORD_ID_ENV, raising=False)
 
 
 class _FakeBudgetedModelForManifest:
@@ -4850,7 +4850,7 @@ def _install_manifest_test_overrides(
     """Install the shared monkeypatches for the manifest-writing tests.
 
     Replaces:
-    - ``load_r4_a3_dataset_with_snapshot`` — returns ``snapshot``.
+    - ``load_eval_dataset_with_snapshot`` — returns ``snapshot``.
     - ``_resolve_authorized_model`` / ``_build_thinking_model`` —
       sentinel builders that return ``object()`` + minimal config (no
       real provider call).
@@ -4864,7 +4864,7 @@ def _install_manifest_test_overrides(
     """
     monkeypatch.setattr(
         sys.modules[__name__],
-        "load_r4_a3_dataset_with_snapshot",
+        "load_eval_dataset_with_snapshot",
         lambda _dir: snapshot,
     )
     _install_model_builder_sentinels(monkeypatch)
@@ -6332,9 +6332,8 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
     """
     from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
         AtomicExpectedFact,
-        ReaderRecordAskR4A3Case,
-        ReaderRecordAskR4A3Expected,
     )
+    # Case/Expected aliases live at module level (evals keeps R4A3 names).
 
     # --- Case 1: real_phase1 with explicit atomic_facts → no skip ---
     # R4-A4-2R5R2 Task 4: ``fact_id`` looks like a legacy id but the
@@ -6342,7 +6341,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
     # of truth — guard passes. This verifies the guard no longer
     # pattern-matches ``fact_id`` and no longer reads a per-fact
     # ``origin`` field.
-    case_explicit = ReaderRecordAskR4A3Case(
+    case_explicit = ReaderRecordAskEvalCase(
         id="case-explicit-atomic",
         source_kind="synthetic_short",
         article_text="Some article text.",
@@ -6351,7 +6350,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskEvalExpected(
             atomic_facts=[
                 AtomicExpectedFact(
                     fact_id="legacy-0",
@@ -6372,7 +6371,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
     _preflight_guard_real_phase1_atomic_facts_explicit(case_explicit)
 
     # --- Case 2: real_phase1 with auto-migrated facts → skip ---
-    case_migrated = ReaderRecordAskR4A3Case(
+    case_migrated = ReaderRecordAskEvalCase(
         id="case-migrated",
         source_kind="synthetic_short",
         article_text="Some article text.",
@@ -6381,7 +6380,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskEvalExpected(
             atomic_facts=[
                 AtomicExpectedFact(
                     fact_id="legacy-0",
@@ -6408,7 +6407,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         _preflight_guard_real_phase1_atomic_facts_explicit(case_migrated)
 
     # --- Case 3: real_phase1 with NO atomic_facts → skip ---
-    case_empty = ReaderRecordAskR4A3Case(
+    case_empty = ReaderRecordAskEvalCase(
         id="case-empty",
         source_kind="synthetic_short",
         article_text="Some article text.",
@@ -6417,7 +6416,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskEvalExpected(
             atomic_facts=[],
             required_article_facts=[],
         ),
@@ -6427,7 +6426,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         _preflight_guard_real_phase1_atomic_facts_explicit(case_empty)
 
     # --- Case 4: non-real_phase1 with migrated facts → no skip ---
-    case_offline = ReaderRecordAskR4A3Case(
+    case_offline = ReaderRecordAskEvalCase(
         id="case-offline",
         source_kind="synthetic_short",
         article_text="Some article text.",
@@ -6436,7 +6435,7 @@ def test_preflight_guard_blocks_migrated_atomic_facts() -> None:
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskEvalExpected(
             atomic_facts=[
                 AtomicExpectedFact(
                     fact_id="legacy-0",
@@ -6476,11 +6475,10 @@ def test_preflight_guard_partial_migration_blocks() -> None:
     """
     from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
         AtomicExpectedFact,
-        ReaderRecordAskR4A3Case,
-        ReaderRecordAskR4A3Expected,
     )
+    # Case/Expected aliases live at module level (evals keeps R4A3 names).
 
-    case_mixed = ReaderRecordAskR4A3Case(
+    case_mixed = ReaderRecordAskEvalCase(
         id="case-mixed",
         source_kind="synthetic_short",
         article_text="Some article text.",
@@ -6489,7 +6487,7 @@ def test_preflight_guard_partial_migration_blocks() -> None:
         baseline_mode="complete",
         question="What is this about?",
         question_category="main_idea",
-        expected=ReaderRecordAskR4A3Expected(
+        expected=ReaderRecordAskEvalExpected(
             atomic_facts=[
                 AtomicExpectedFact(
                     fact_id="explicit-fact-1",
@@ -6791,7 +6789,7 @@ async def test_function_model_three_output_retries() -> None:
     _SHA = "b" * 64
 
     _UNIT_A_TEXT = "Alpha sentence one. Alpha sentence two."
-    _SEG_A1_TEXT = "Alpha sentence one. "
+    _SEG_PRIMARY_TEXT = "Alpha sentence one. "
 
     units = (
         ReadingUnitView(
@@ -6809,12 +6807,12 @@ async def test_function_model_three_output_retries() -> None:
             anchor_segment_id="s1",
             order_index=0,
             unit_order_index=0,
-            text=_SEG_A1_TEXT,
+            text=_SEG_PRIMARY_TEXT,
             text_hash="aaaaaaaa",
             unit_start_utf16=0,
-            unit_end_utf16=len(_SEG_A1_TEXT),
+            unit_end_utf16=len(_SEG_PRIMARY_TEXT),
             base_start_utf16=0,
-            base_end_utf16=len(_SEG_A1_TEXT),
+            base_end_utf16=len(_SEG_PRIMARY_TEXT),
         ),
     )
     scope = build_document_scope(
@@ -6841,8 +6839,8 @@ async def test_function_model_three_output_retries() -> None:
                 unit_id="u1",
                 anchor_segment_id="s1",
                 start_offset=0,
-                end_offset=len(_SEG_A1_TEXT),
-                selected_text=_SEG_A1_TEXT,
+                end_offset=len(_SEG_PRIMARY_TEXT),
+                selected_text=_SEG_PRIMARY_TEXT,
                 text_hash="aaaaaaaa",
             ),
             visible_range=None,
@@ -7337,7 +7335,7 @@ async def test_one_retry_then_success() -> None:
     _SHA = "b" * 64
 
     _UNIT_A_TEXT = "Alpha sentence one. Alpha sentence two."
-    _SEG_A1_TEXT = "Alpha sentence one. "
+    _SEG_PRIMARY_TEXT = "Alpha sentence one. "
 
     units = (
         ReadingUnitView(
@@ -7355,12 +7353,12 @@ async def test_one_retry_then_success() -> None:
             anchor_segment_id="s1",
             order_index=0,
             unit_order_index=0,
-            text=_SEG_A1_TEXT,
+            text=_SEG_PRIMARY_TEXT,
             text_hash="aaaaaaaa",
             unit_start_utf16=0,
-            unit_end_utf16=len(_SEG_A1_TEXT),
+            unit_end_utf16=len(_SEG_PRIMARY_TEXT),
             base_start_utf16=0,
-            base_end_utf16=len(_SEG_A1_TEXT),
+            base_end_utf16=len(_SEG_PRIMARY_TEXT),
         ),
     )
     scope = build_document_scope(
@@ -7387,8 +7385,8 @@ async def test_one_retry_then_success() -> None:
                 unit_id="u1",
                 anchor_segment_id="s1",
                 start_offset=0,
-                end_offset=len(_SEG_A1_TEXT),
-                selected_text=_SEG_A1_TEXT,
+                end_offset=len(_SEG_PRIMARY_TEXT),
+                selected_text=_SEG_PRIMARY_TEXT,
                 text_hash="aaaaaaaa",
             ),
             visible_range=None,
@@ -7743,7 +7741,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
         :class:`AtomicExpectedFact` (``model_config = {"extra":
         "forbid"}`` rejects unknown keys).
       - Added ``_atomic_facts_origin: str = PrivateAttr(default=
-        "explicit")`` on :class:`ReaderRecordAskR4A3Case` — a Pydantic
+        "explicit")`` on :class:`ReaderRecordAskEvalCase` — a Pydantic
         ``PrivateAttr`` is NOT parsed from JSON, NOT included in
         ``model_dump()``, and NOT settable via ``model_validate``.
       - The loader inspects the raw JSON dict (before Pydantic parsing)
@@ -7761,9 +7759,8 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
     """
     from pydantic import ValidationError as PydanticValidationError  # noqa: PLC0415
 
-    from claread_eval.reader_record_ask.schema import (  # noqa: PLC0415
-        ReaderRecordAskR4A3Case,
-    )
+    # ReaderRecordAskEvalCase is aliased at module level from
+    # ReaderRecordAskR4A3Case (evals ownership keeps R4A3 names).
 
     # --- Case 1: JSON with ``origin`` on AtomicExpectedFact → REJECTED ---
     json_with_per_fact_origin = {
@@ -7793,7 +7790,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
         "phase_tags": ["real_phase1"],
     }
     with pytest.raises(PydanticValidationError) as exc_info_1:
-        ReaderRecordAskR4A3Case.model_validate(json_with_per_fact_origin)
+        ReaderRecordAskEvalCase.model_validate(json_with_per_fact_origin)
     # Verify the rejection is specifically about the ``origin`` field
     # (not some other validation error).
     error_str_1 = str(exc_info_1.value)
@@ -7803,7 +7800,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
     )
 
     # --- Case 2: JSON with ``atomic_facts_origin`` on case → IGNORED ---
-    # ``ReaderRecordAskR4A3Case`` uses Pydantic's default ``extra="ignore"``
+    # ``ReaderRecordAskEvalCase`` uses Pydantic's default ``extra="ignore"``
     # (no ``model_config = {"extra": "forbid"}`` on the case model).
     # The JSON value is silently DROPPED — it does NOT set the
     # PrivateAttr. The case's ``atomic_facts_origin`` property returns
@@ -7837,7 +7834,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
         # returns the default "explicit", NOT the JSON value.
         "atomic_facts_origin": "legacy_migrated",
     }
-    case_forge_2 = ReaderRecordAskR4A3Case.model_validate(
+    case_forge_2 = ReaderRecordAskEvalCase.model_validate(
         json_with_case_level_provenance
     )
     assert case_forge_2.atomic_facts_origin == "explicit", (
@@ -7875,7 +7872,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
         },
         "phase_tags": ["real_phase1"],
     }
-    case_valid = ReaderRecordAskR4A3Case.model_validate(valid_json)
+    case_valid = ReaderRecordAskEvalCase.model_validate(valid_json)
     assert case_valid.atomic_facts_origin == "explicit", (
         "R4-A4-2R5R2: valid case (atomic_facts present in JSON) → "
         "loader-owned ``atomic_facts_origin`` defaults to 'explicit'. "
@@ -7892,7 +7889,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
     json_with_mangled_private = dict(valid_json)
     json_with_mangled_private["_atomic_facts_origin"] = "legacy_migrated"
     json_with_mangled_private["id"] = "case-forge-4"
-    case_forge_4 = ReaderRecordAskR4A3Case.model_validate(
+    case_forge_4 = ReaderRecordAskEvalCase.model_validate(
         json_with_mangled_private
     )
     assert case_forge_4.atomic_facts_origin == "explicit", (
@@ -7903,7 +7900,7 @@ def test_typed_provenance_unforgeable_by_dataset_json() -> None:
     )
 
     # --- Case 5: loader sets provenance via Python (the only valid path) ---
-    case_loader_set = ReaderRecordAskR4A3Case.model_validate(valid_json)
+    case_loader_set = ReaderRecordAskEvalCase.model_validate(valid_json)
     case_loader_set.id = "case-loader-set-5"
     # Simulate the loader: raw JSON had no atomic_facts but had
     # required_article_facts → legacy_migrated.
@@ -7919,14 +7916,14 @@ def test_loader_provenance_through_formal_dataset_loader(
 ) -> None:
     """R4-A4-2R5R3 Issue #2: loader-owned provenance is set correctly
     when the case files are loaded through the FORMAL dataset loader
-    :func:`load_r4_a3_dataset_with_snapshot`.
+    :func:`load_eval_dataset_with_snapshot`.
 
     R4-A4-2R5R2 Task 5 (``test_r4_a4_2r5r2_typed_provenance_unforgeable
     _by_dataset_json``) closed the JSON-forgery vector but only
-    exercised :meth:`ReaderRecordAskR4A3Case.model_validate` and
+    exercised :meth:`ReaderRecordAskEvalCase.model_validate` and
     direct ``case._atomic_facts_origin = ...`` assignment. The
     R4-A4-2R5R3 audit found that this left the loader's RAW-JSON
-    inspection logic in :func:`load_r4_a3_dataset_with_snapshot`
+    inspection logic in :func:`load_eval_dataset_with_snapshot`
     completely uncovered: a regression where the loader sets
     ``"legacy_migrated"`` for cases that DO declare ``atomic_facts``,
     or sets ``"explicit"`` for cases that rely on auto-migration,
@@ -7935,7 +7932,7 @@ def test_loader_provenance_through_formal_dataset_loader(
     This test closes that gap. It writes a real on-disk dataset
     (``dataset.yaml`` + per-case JSON files) to ``tmp_path``, invokes
     the formal loader, and asserts that each loaded case's
-    :attr:`ReaderRecordAskR4A3Case.atomic_facts_origin` matches the
+    :attr:`ReaderRecordAskEvalCase.atomic_facts_origin` matches the
     value the loader MUST set based on raw JSON inspection — NOT
     based on Pydantic model state after migration.
 
@@ -8046,7 +8043,7 @@ def test_loader_provenance_through_formal_dataset_loader(
     # case file from disk, inspects the raw JSON dict for each case,
     # sets ``case._atomic_facts_origin`` based on that inspection,
     # and then runs the legacy-facts migration. ---
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_eval_dataset_with_snapshot(dataset_dir)
 
     # Sanity: both cases loaded, identity computed.
     assert len(snapshot.dataset.cases) == 2, (
@@ -8211,7 +8208,7 @@ def test_loader_provenance_explicit_with_legacy_field_is_explicit(
         encoding="utf-8",
     )
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_eval_dataset_with_snapshot(dataset_dir)
     assert len(snapshot.dataset.cases) == 1
 
     case = snapshot.dataset.cases[0]
@@ -8305,7 +8302,7 @@ def test_loader_provenance_empty_both_fields_is_explicit(
         encoding="utf-8",
     )
 
-    snapshot = load_r4_a3_dataset_with_snapshot(dataset_dir)
+    snapshot = load_eval_dataset_with_snapshot(dataset_dir)
     assert len(snapshot.dataset.cases) == 1
 
     case = snapshot.dataset.cases[0]
@@ -8409,7 +8406,7 @@ async def test_function_model_full_chain_output_retry_exhausted() -> None:
     _SHA = "b" * 64
 
     _UNIT_A_TEXT = "Alpha sentence one. Alpha sentence two."
-    _SEG_A1_TEXT = "Alpha sentence one. "
+    _SEG_PRIMARY_TEXT = "Alpha sentence one. "
 
     units = (
         ReadingUnitView(
@@ -8427,12 +8424,12 @@ async def test_function_model_full_chain_output_retry_exhausted() -> None:
             anchor_segment_id="s1",
             order_index=0,
             unit_order_index=0,
-            text=_SEG_A1_TEXT,
+            text=_SEG_PRIMARY_TEXT,
             text_hash="aaaaaaaa",
             unit_start_utf16=0,
-            unit_end_utf16=len(_SEG_A1_TEXT),
+            unit_end_utf16=len(_SEG_PRIMARY_TEXT),
             base_start_utf16=0,
-            base_end_utf16=len(_SEG_A1_TEXT),
+            base_end_utf16=len(_SEG_PRIMARY_TEXT),
         ),
     )
     scope = build_document_scope(
@@ -8459,8 +8456,8 @@ async def test_function_model_full_chain_output_retry_exhausted() -> None:
                 unit_id="u1",
                 anchor_segment_id="s1",
                 start_offset=0,
-                end_offset=len(_SEG_A1_TEXT),
-                selected_text=_SEG_A1_TEXT,
+                end_offset=len(_SEG_PRIMARY_TEXT),
+                selected_text=_SEG_PRIMARY_TEXT,
                 text_hash="aaaaaaaa",
             ),
             visible_range=None,
@@ -8690,7 +8687,7 @@ async def test_function_model_finalizer_validation_error_runtime_exception(
     _SHA = "b" * 64
 
     _UNIT_A_TEXT = "Alpha sentence one. Alpha sentence two."
-    _SEG_A1_TEXT = "Alpha sentence one. "
+    _SEG_PRIMARY_TEXT = "Alpha sentence one. "
 
     units = (
         ReadingUnitView(
@@ -8708,12 +8705,12 @@ async def test_function_model_finalizer_validation_error_runtime_exception(
             anchor_segment_id="s1",
             order_index=0,
             unit_order_index=0,
-            text=_SEG_A1_TEXT,
+            text=_SEG_PRIMARY_TEXT,
             text_hash="aaaaaaaa",
             unit_start_utf16=0,
-            unit_end_utf16=len(_SEG_A1_TEXT),
+            unit_end_utf16=len(_SEG_PRIMARY_TEXT),
             base_start_utf16=0,
-            base_end_utf16=len(_SEG_A1_TEXT),
+            base_end_utf16=len(_SEG_PRIMARY_TEXT),
         ),
     )
     scope = build_document_scope(
@@ -8740,8 +8737,8 @@ async def test_function_model_finalizer_validation_error_runtime_exception(
                 unit_id="u1",
                 anchor_segment_id="s1",
                 start_offset=0,
-                end_offset=len(_SEG_A1_TEXT),
-                selected_text=_SEG_A1_TEXT,
+                end_offset=len(_SEG_PRIMARY_TEXT),
+                selected_text=_SEG_PRIMARY_TEXT,
                 text_hash="aaaaaaaa",
             ),
             visible_range=None,

@@ -1,9 +1,9 @@
-# task-history: TEST-GOVERNANCE-FOUNDATION-LONG-R1
+# task-history: TEST-GOVERNANCE-FOUNDATION-LONG-R1 / TEST-GOVERNANCE-API-IDENTIFIERS-P3
 """Naming governance guard for services/api.
 
-Task numbers (``d6_i4b``, ``t58a``, ``round20``, ``r0``, ``lp_r4``, ...)
-are historical tracking metadata, not business identity. This guard
-prevents their *backflow* into:
+Task numbers (``d6_i4b``, ``t58a``, ``round20``, ``r0``, ``lp_r4``,
+``a6``, ``l2``, ``R16``, ...) are historical tracking metadata, not
+business identity. This guard prevents their *backflow* into:
 
 1. **New test file names** under ``tests/`` — existing stock is captured
    in ``TASK_NUMBER_TEST_FILE_ALLOWLIST`` below. The allowlist is a
@@ -19,6 +19,11 @@ prevents their *backflow* into:
    literals and comments stay exempt: fixture payloads, protocol
    values, persisted/artifact/migration versions and dataset/env
    identities are durable contracts and are never scanned here.
+
+Detection is token-based (stdlib AST + underscore/CamelCase token
+split), not a growing pile of per-family regexes. A single letter +
+1–3 digits forming a whole token is a task code unless it is on the
+explicit business-term exclusion list.
 
 This test is pure filesystem/AST — no DB, no network, no LLM.
 """
@@ -41,73 +46,132 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = SERVICE_ROOT / "tests"
 APP_DIR = SERVICE_ROOT / "app"
 
-# Task-number signature in underscore-separated names (audit 2026-07-23 §1.1-10).
-# Business words are excluded: ``round`` must carry a digit task suffix
-# (``round20``) so domain terms like ``advance_round`` do not match, and
-# ``lp`` is only matched as the ``_lp_r<N>`` task form (plain ``_lp_``
-# is the length-prefixed encoding in section_identity, a business term).
+# Whole-token business / technical identities that look like letter+digit
+# task codes but are durable product, protocol or encoding terms. KEEP
+# only what has standing evidence; do not grow this to paper over stock.
+_BUSINESS_TOKEN_EXCLUSIONS: frozenset[str] = frozenset(
+    {
+        # product / protocol versions
+        "v1",
+        "v2",
+        "v3",
+        "v4",
+        # representation-event formal classes + reading level
+        "g1",
+        "g2",
+        "g3",
+        "g5",
+        # markdown / HTML heading levels used as domain terms
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        # common technical words
+        "e2e",
+        "i18n",
+        "utf8",
+        "utf16",
+        "fnv1a32",
+        "tecd3",
+        "md5",
+        "sha1",
+        "sha256",
+        "sha512",
+    }
+)
+
+# Single letter + 1–3 digits as a whole underscore token (optional
+# trailing letter for forms like ``t58a`` / ``i4x``). ``round<N>`` is
+# always a task-stage index when it is a whole token (domain
+# ``advance_round`` has no trailing digits and is therefore safe).
+_SNAKE_TASK_TOKEN_RE = re.compile(r"^[A-Za-z]\d{1,3}[A-Za-z]?$")
+_SNAKE_ROUND_TOKEN_RE = re.compile(r"^round\d+$", re.IGNORECASE)
+# CamelCase letter+digit run: ``TestR16Feature`` → R16;
+# ``TestG1RepresentationEvents`` → G1 (then excluded via KEEP).
+# Applied only to mixed-case names so pure UPPER_SNAKE (``E2E``,
+# ``SHA256``) is handled exclusively by snake tokens + KEEP.
+_CAMEL_TASK_TOKEN_RE = re.compile(r"(?<![A-Z0-9])([A-Z]\d{1,3})(?=[A-Z]|$)")
+# ``TestRound2SyntheticGates`` — Round<N> after a lower-case letter or
+# at a CamelCase word boundary.
+_CAMEL_ROUND_TOKEN_RE = re.compile(r"(?:(?<=[a-z])|(?<=_)|^)Round(\d+)")
+
+# Legacy production-side patterns retained for the app/ symbol scan so
+# existing D5/D6/ZPlus stock continues to be measured against the
+# production allowlist without adopting the broader test detector there.
 _TASK_NUMBER_NAME_RE = re.compile(
     r"_(?:d[56]_[a-z0-9]|a[345]_[a-z0-9]|t5[0-9][a-z0-9]?|t6[0-9][a-z0-9]?|"
     r"r[0-9][a-z0-9._]*|p[0-9][a-z0-9]*|s[0-9][a-z0-9]*|"
     r"round[0-9]+|lp_r[0-9])"
 )
-
-# CamelCase / UPPER_SNAKE task codes (R1 closeout): ``ReaderD5SchemaHealthReport``,
-# ``READER_D5_*`` / ``READER_D6_*``, ``ZPlus*``. Digit-token boundary rules keep
-# business words out (``D5``/``D6`` must not sit inside a longer digit run).
-# Persisted identities stay exempt because only AST identifiers are scanned;
-# string literals (protocol values, migration versions, ``execution_version``,
-# workflow versions) never reach these matchers.
 _TASK_CODE_IDENTIFIER_RE = re.compile(
     r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])ZPlus|(?<![A-Za-z0-9])zplus"
 )
 
-# Task-code signatures for test identifiers (P3 identifier governance).
-# Family set aligned with the P3 Phase-1 audit: ``p<N>``/``r<N>``/
-# ``t<N>``/``t<NN>[x]``/``d5``/``d6``/``a3``-``a5``/``i3``/``i4``/
-# ``s<N>``/``round<N>``/``lp_r<N>``/``g0[x]`` in snake names, plus
-# CamelCase ``T<NN>``/``A<3-5>``/``D<5-6>``/``R<N>``/``Round<N>``/
-# ``I<3-4><X>`` tokens. Token-boundary lookarounds keep business
-# words out: single-digit ``t<N>`` needs the underscore separator
-# (``utf8``/``split1`` never match), identifier-initial ``i<3-4>``
-# is caught only at a real identifier boundary (``i18n`` never
-# matches), and ``Round<N>`` requires a digit so ``RoundRobin``
-# passes. ``zplus``/``ZPlus`` are production domain words (see the
-# production allowlist above) and are intentionally NOT part of
-# this set.
-_TEST_IDENTIFIER_TASK_CODE_RE = re.compile(
-    r"_(?:d[56]|a[345]|t[0-9][0-9]?[a-z0-9]?|r[0-9]|p[0-9]|i[34]"
-    r"|s[0-9]|round[0-9]|lp_r[0-9]|g0[0-9]?)"
-    r"|(?<![A-Z0-9_])D[56](?![0-9])"
-    r"|(?<![A-Z0-9_])A[345](?![0-9])"
-    r"|(?<![A-Z0-9_])T[0-9][0-9][a-z0-9]?(?![0-9])"
-    r"|(?<![A-Z0-9_])R[0-9](?![0-9])"
-    r"|(?<![A-Za-z0-9_])i[34](?![0-9])"
-    r"|(?<![A-Z0-9_])Round[0-9]"
-    r"|(?<![A-Z0-9_])I[34][A-Z0-9]"
-)
-
-# Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
-# exactly — an equality ratchet, so a shrunk allowlist can never grow
-# back. Every governance rename lowers the ceiling in the same change.
+# Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1 / P3 closeout): allowlist
+# sizes must match exactly — an equality ratchet, so a shrunk allowlist
+# can never grow back.
 TEST_FILE_ALLOWLIST_CEILING = 0
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
-TEST_IDENTIFIER_ALLOWLIST_CEILING = 14
+TEST_IDENTIFIER_ALLOWLIST_CEILING = 0
+
+
+def _snake_tokens(name: str) -> list[str]:
+    return [part for part in name.split("_") if part]
+
+
+def _token_is_task_code(token: str) -> bool:
+    lowered = token.lower()
+    if lowered in _BUSINESS_TOKEN_EXCLUSIONS:
+        return False
+    if _SNAKE_TASK_TOKEN_RE.fullmatch(token):
+        return True
+    if _SNAKE_ROUND_TOKEN_RE.fullmatch(token):
+        return True
+    return False
+
+
+def _camel_task_tokens(name: str) -> list[str]:
+    hits: list[str] = []
+    for match in _CAMEL_TASK_TOKEN_RE.finditer(name):
+        token = match.group(1)
+        if token.lower() not in _BUSINESS_TOKEN_EXCLUSIONS:
+            hits.append(token)
+    for match in _CAMEL_ROUND_TOKEN_RE.finditer(name):
+        hits.append(f"Round{match.group(1)}")
+    return hits
+
+
+def identifier_has_task_code(name: str) -> bool:
+    """True when ``name`` embeds a task-code token.
+
+    Used for both test file stems and test AST identifiers. Production
+    symbols keep the narrower legacy matcher via ``_name_has_task_number``.
+    """
+    if any(_token_is_task_code(token) for token in _snake_tokens(name)):
+        return True
+    # CamelCase scan only for mixed-case names. Pure UPPER_SNAKE
+    # (``ZPLUS_E2E_ARTICLE_TEXT``, ``CONTENT_SHA256``) is handled by
+    # snake tokens + KEEP so ``E2E`` is not misread as ``E2``.
+    if name != name.upper() and name != name.lower():
+        if _camel_task_tokens(name):
+            return True
+    return False
 
 
 def _name_has_task_number(name: str) -> bool:
+    """Production-symbol matcher (legacy, allowlist-backed)."""
     return bool(_TASK_NUMBER_NAME_RE.search("_" + name)) or bool(
         _TASK_CODE_IDENTIFIER_RE.search(name)
     )
+
 
 # Existing stock of task-numbered test files (relative to services/api).
 # RATCHET: only shrink this list. Renamed/deleted files must have their
 # entry removed in the same change; new task-numbered file names are
 # forbidden and must be renamed to business names instead.
-TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset(
-    {
-    }
-)
+TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset()
 
 # Existing production symbols embedding task numbers (file:symbol,
 # relative to services/api). Same ratchet rules as above. Renaming a
@@ -141,36 +205,12 @@ TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset(
     }
 )
 
-# Existing test identifiers with external contracts (P3 identifier
-# governance; file:symbol, relative to services/api). Same ratchet
-# rules as above. KEEP evidence per group:
-# - ``R4_A3_*_ENV``: the env var names ``CLAREAD_R4_A3_*`` are the
-#   real-LLM eval dataset/run identity consumed by evals/** harness
-#   code (dataset id + run contract), not task history.
-# - schema-health test names: they exercise the READER_D5/D6
-#   production symbols allowlisted above, which are permanent schema
-#   identity (migration/schema contract).
-# - ``..._in_round0``: ``round0`` is the reasoning-projection round
-#   index (domain term; cf. production ``advance_round``), not a task
-#   code.
-TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_BBC_RECORD_ID_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_DATASET_DIR_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_MAX_REQUESTS_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_MAX_TOKENS_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_PRO_PROFILE_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_RUNS_DIR_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_RUN_ENV",
-        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_THINKING_VIA_PROFILE_ENV",
-        "tests/test_reader_orchestration_schema_health.py:test_check_schema_baseline_sql_covers_reader_d5_attribution_objects",
-        "tests/test_reader_orchestration_schema_health.py:test_reader_d5_schema_health_passes_on_fresh_baseline",
-        "tests/test_reader_orchestration_schema_health.py:test_reader_d5_schema_health_reports_drift_with_reset_guidance",
-        "tests/test_reader_orchestration_schema_health.py:test_reader_schema_health_reports_missing_d6_anchor_column_with_0002_guidance",
-        "tests/test_reader_orchestration_schema_health.py:test_reader_schema_health_reports_missing_d6_anchor_index",
-        "tests/test_reader_record_ask_reasoning_projection.py:test_no_round0_subcap_allows_full_total_budget_in_round0",
-    }
-)
+# P3 closeout: identifier allowlist is empty. Former entries (R4_A3_*_ENV
+# Python names, schema-health d5/d6 test names, round0 test name) were
+# not external contracts — only the env *string values* ``CLAREAD_R4_A3_*``
+# and production D5/D6 symbols are durable, and those live outside this
+# scan (strings exempt; production allowlist separate).
+TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST: frozenset[str] = frozenset()
 
 
 def _test_file_relpaths() -> list[str]:
@@ -184,7 +224,9 @@ def _test_file_relpaths() -> list[str]:
 def test_new_test_file_names_carry_no_task_numbers() -> None:
     """Task-numbered test file names are legacy stock only (ratchet)."""
     actual = {
-        rel for rel in _test_file_relpaths() if _TASK_NUMBER_NAME_RE.search(Path(rel).name)
+        rel
+        for rel in _test_file_relpaths()
+        if identifier_has_task_code(Path(rel).stem)
     }
     unlisted = actual - TASK_NUMBER_TEST_FILE_ALLOWLIST
     assert not unlisted, (
@@ -268,9 +310,7 @@ def _test_identifier_hits() -> set[str]:
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                 names.append(node.target.id)
         hits.update(
-            f"{rel}:{name}"
-            for name in names
-            if _TEST_IDENTIFIER_TASK_CODE_RE.search(name)
+            f"{rel}:{name}" for name in names if identifier_has_task_code(name)
         )
     return hits
 
@@ -304,24 +344,29 @@ def test_test_identifiers_carry_no_task_codes() -> None:
 
 
 def test_task_code_pattern_flags_synthetic_task_code() -> None:
-    """A synthetic task-coded identifier must be caught (backflow proof)."""
-    tree = ast.parse("async def test_r6_stale_stream_reconcile():\n    pass\n")
-    name = tree.body[0].name
-    assert _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
-    # Blind-spot forms closed by the P3 follow-up: single-digit
-    # ``t<N>`` token, identifier-initial ``i<3-4>`` fixture names,
-    # CamelCase ``Round<N>`` and ``I<3-4><X>`` class tokens.
+    """Positive samples: task-coded forms the detector must catch.
+
+    These names are synthetic proof cases only — they must never be
+    allowlisted. If a sample stops matching, the detector has regressed.
+    """
     for name in (
+        "test_a6_feature",
+        "test_a01_feature",
+        "test_l2_feature",
+        "TestR16Feature",
+        "d2_schema_pool",
+        "test_round20_feature",
+        "test_r6_stale_stream_reconcile",
         "test_t5_synthetic_single_digit_token",
         "i4x_env",
         "TestRound2SyntheticGates",
         "TestSyntheticI3ZSections",
     ):
-        assert _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
+        assert identifier_has_task_code(name), name
 
 
 def test_task_code_pattern_passes_business_names() -> None:
-    """Business identifiers and domain terms must not be flagged."""
+    """Negative samples: business / technical identities must pass."""
     for name in (
         "test_budget_stop_report_counts",
         "test_spans_order_consistent_with_reading_order",
@@ -331,6 +376,14 @@ def test_task_code_pattern_passes_business_names() -> None:
         "zplus_service",
         "layer1_fnv1a32",
         "test_utf8_encode_roundtrip",
+        "test_utf8_roundtrip",
         "i18n_labels",
+        "e2e_env",
+        "test_v2_contract",
+        "TestG1RepresentationEvents",
+        "TestTecd3ProviderFallback",
+        "_DEFAULT_CONTENT_SHA256",
+        "_MINIMAL_SEED_BASE_TEXT_UTF16_LEN",
+        "CONTENT_SHA256",
     ):
-        assert not _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
+        assert not identifier_has_task_code(name), name

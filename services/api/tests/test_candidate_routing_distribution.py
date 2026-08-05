@@ -395,7 +395,7 @@ def _build_full_report() -> _RoutingReport:
 # ---------------------------------------------------------------------------
 
 
-def test_a7_report_contains_all_fixtures_and_real_style_samples() -> None:
+def test_report_contains_all_fixtures_and_real_style_samples() -> None:
     """Report MUST cover all 11 fixtures + 5 real-style samples."""
     report = _build_full_report()
     assert report.total_samples == len(_ALL_FIXTURES) + len(_REAL_STYLE_SAMPLES)
@@ -405,7 +405,7 @@ def test_a7_report_contains_all_fixtures_and_real_style_samples() -> None:
     assert real_names == {s.name for s in _REAL_STYLE_SAMPLES}
 
 
-def test_a7_report_has_expected_structure() -> None:
+def test_report_has_expected_structure() -> None:
     """Report MUST expose totals, per-outcome, per-flag, per-source-type."""
     report = _build_full_report()
     assert report.total_samples > 0
@@ -419,7 +419,7 @@ def test_a7_report_has_expected_structure() -> None:
     assert len(report.samples) == report.total_samples
 
 
-def test_a7_fixture_raw_html_no_longer_triggers_markdown_complexity() -> None:
+def test_fixture_raw_html_no_longer_triggers_markdown_complexity() -> None:
     """L1: ``raw_html`` fixture is a deterministic adaptation — the gate
     MUST NOT surface ``markdown_complex_structure`` anymore."""
     report = _build_full_report()
@@ -428,7 +428,7 @@ def test_a7_fixture_raw_html_no_longer_triggers_markdown_complexity() -> None:
     assert "markdown_complex_structure" not in raw_html_sample.flags
 
 
-def test_a7_fixture_footnote_triggers_markdown_complexity() -> None:
+def test_fixture_footnote_triggers_markdown_complexity() -> None:
     """``footnote`` fixture MUST surface ``markdown_complex_structure``."""
     report = _build_full_report()
     footnote_sample = next(s for s in report.samples if s.name == "footnote")
@@ -436,7 +436,7 @@ def test_a7_fixture_footnote_triggers_markdown_complexity() -> None:
     assert "markdown_complex_structure" in footnote_sample.flags
 
 
-def test_a7_fixture_unclosed_fence_triggers_markdown_complexity() -> None:
+def test_fixture_unclosed_fence_triggers_markdown_complexity() -> None:
     """``unclosed_fence`` fixture MUST surface ``markdown_complex_structure``."""
     report = _build_full_report()
     unclosed_sample = next(s for s in report.samples if s.name == "unclosed_fence")
@@ -444,7 +444,7 @@ def test_a7_fixture_unclosed_fence_triggers_markdown_complexity() -> None:
     assert "markdown_complex_structure" in unclosed_sample.flags
 
 
-def test_a7_fixture_unsafe_link_no_longer_triggers_markdown_complexity() -> None:
+def test_fixture_unsafe_link_no_longer_triggers_markdown_complexity() -> None:
     """L1: ``unsafe_link`` fixture is a deterministic adaptation — the gate
     MUST NOT surface ``markdown_complex_structure`` anymore."""
     report = _build_full_report()
@@ -453,7 +453,7 @@ def test_a7_fixture_unsafe_link_no_longer_triggers_markdown_complexity() -> None
     assert "markdown_complex_structure" not in unsafe_sample.flags
 
 
-def test_a7_all_complexity_fixtures_surface_markdown_complex_structure() -> None:
+def test_all_complexity_fixtures_surface_markdown_complex_structure() -> None:
     """Every fixture in ``_FIXTURES_WITH_MARKDOWN_COMPLEXITY`` MUST surface
     the ``markdown_complex_structure`` flag — this is the gate's signal that
     raw HTML / footnote / unclosed fence / unsafe link content was detected."""
@@ -466,7 +466,7 @@ def test_a7_all_complexity_fixtures_surface_markdown_complex_structure() -> None
         )
 
 
-def test_a7_real_style_notion_clean_routes_to_stable() -> None:
+def test_real_style_notion_clean_routes_to_stable() -> None:
     """Notion-style export without complex markdown → stable_document_ready.
 
     The sample carries enough English natural-language content (≥50 words)
@@ -481,7 +481,7 @@ def test_a7_real_style_notion_clean_routes_to_stable() -> None:
     assert sample.has_markdown_complexity is False
 
 
-def test_a7_real_style_feishu_clean_routes_to_stable() -> None:
+def test_real_style_feishu_clean_routes_to_stable() -> None:
     """Feishu-style export without complex markdown → stable_document_ready."""
     report = _build_full_report()
     sample = next(s for s in report.samples if s.name == "feishu_export_clean")
@@ -491,7 +491,7 @@ def test_a7_real_style_feishu_clean_routes_to_stable() -> None:
     assert sample.has_markdown_complexity is False
 
 
-def test_a7_real_style_notion_with_table_routes_to_stable() -> None:
+def test_real_style_notion_with_table_routes_to_stable() -> None:
     """L1: Notion-style export with a deterministic GFM table → stable.
 
     A table with a complete header separator row and consistent raw cell
@@ -506,7 +506,7 @@ def test_a7_real_style_notion_with_table_routes_to_stable() -> None:
     assert "table_structure_uncertain" not in sample.flags
 
 
-def test_a7_real_style_feishu_with_math_routes_to_candidate() -> None:
+def test_real_style_feishu_with_math_routes_to_candidate() -> None:
     """Feishu-style export with math syntax → candidate_document_required.
 
     Math triggers ``markdown_complex_structure`` + ``document_block_degraded``
@@ -520,7 +520,7 @@ def test_a7_real_style_feishu_with_math_routes_to_candidate() -> None:
     assert sample.has_markdown_complexity is True
 
 
-def test_a7_real_style_notion_with_html_routes_to_stable() -> None:
+def test_real_style_notion_with_html_routes_to_stable() -> None:
     """L1: Notion-style export with cleaned raw HTML → stable.
 
     Raw HTML is stripped to text with an ``adaptation_notice``; it no
@@ -534,7 +534,7 @@ def test_a7_real_style_notion_with_html_routes_to_stable() -> None:
     assert sample.has_markdown_complexity is False
 
 
-def test_a7_markdown_complexity_correlates_with_non_stable_outcome() -> None:
+def test_markdown_complexity_correlates_with_non_stable_outcome() -> None:
     """Every sample with ``markdown_complex_structure`` MUST NOT route to
     ``stable_document_ready`` — complex markdown always forces candidate
     review or rejection, never direct stable freeze."""
@@ -548,7 +548,7 @@ def test_a7_markdown_complexity_correlates_with_non_stable_outcome() -> None:
             )
 
 
-def test_a7_report_text_includes_candidate_rate_summary() -> None:
+def test_report_text_includes_candidate_rate_summary() -> None:
     """The human-readable report MUST include the candidate rate line."""
     report = _build_full_report()
     text = _format_report_text(report)
@@ -559,7 +559,7 @@ def test_a7_report_text_includes_candidate_rate_summary() -> None:
     assert "Candidate rate among complex:" in text
 
 
-def test_a7_report_text_includes_flag_distribution() -> None:
+def test_report_text_includes_flag_distribution() -> None:
     """The report text MUST include the flag distribution section so
     reviewers can see which flags drive the candidate rate."""
     report = _build_full_report()
@@ -568,7 +568,7 @@ def test_a7_report_text_includes_flag_distribution() -> None:
     assert "markdown_complex_structure:" in text
 
 
-def test_a7_report_text_includes_per_sample_lines() -> None:
+def test_report_text_includes_per_sample_lines() -> None:
     """The report text MUST include per-sample lines so reviewers can
     trace which fixture/sample produced which outcome."""
     report = _build_full_report()
@@ -580,7 +580,7 @@ def test_a7_report_text_includes_per_sample_lines() -> None:
     assert "raw_html:" in text
 
 
-def test_a7_report_flag_distribution_counts_are_consistent() -> None:
+def test_report_flag_distribution_counts_are_consistent() -> None:
     """``by_flag`` counts MUST sum to the total flag occurrences across
     all samples (a sample can contribute multiple flags)."""
     report = _build_full_report()
@@ -589,7 +589,7 @@ def test_a7_report_flag_distribution_counts_are_consistent() -> None:
     assert total_flags_from_report == total_flags_from_samples
 
 
-def test_a7_report_candidate_rate_among_complex_is_consistent() -> None:
+def test_report_candidate_rate_among_complex_is_consistent() -> None:
     """``candidate_rate_among_complex`` MUST equal
     (complex AND candidate) / complex."""
     report = _build_full_report()
@@ -603,7 +603,7 @@ def test_a7_report_candidate_rate_among_complex_is_consistent() -> None:
     assert report.candidate_rate_among_complex == pytest.approx(expected)
 
 
-def test_a7_real_style_samples_have_enough_english_to_clear_short_gate() -> None:
+def test_real_style_samples_have_enough_english_to_clear_short_gate() -> None:
     """Real-style samples MUST carry ≥50 English words so the gate's
     ``too_short_for_learning`` rejection does not mask the actual
     routing signal. This is the prerequisite for the report to be a

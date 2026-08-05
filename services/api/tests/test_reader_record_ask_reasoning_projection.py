@@ -1079,7 +1079,7 @@ def test_snapshot_reprojection_is_byte_invariant() -> None:
 # retained for backward-compat with thinking_transport boundary calls.
 
 
-def test_no_round0_subcap_allows_full_total_budget_in_round0() -> None:
+def test_no_initial_round_subcap_allows_full_total_budget_in_initial_round() -> None:
     # R4-4: there is NO round-0 sub-cap. A round-0 feed under the total
     # content cap is accepted in full — no silent drop, no marker.
     cap = 100

@@ -51,7 +51,7 @@ def _utf16_len(s: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def test_a2_strong_mark_in_paragraph_payload() -> None:
+def test_strong_mark_in_paragraph_payload() -> None:
     """**bold** → inline_marks=[{type:strong, start:0, end:4}]."""
     block = _first_block("**bold** rest")
     marks = block.payload_json.get("inline_marks")
@@ -64,7 +64,7 @@ def test_a2_strong_mark_in_paragraph_payload() -> None:
     assert _utf16_len("bold") == 4
 
 
-def test_a2_em_mark_in_paragraph_payload() -> None:
+def test_em_mark_in_paragraph_payload() -> None:
     """*em* → inline_marks=[{type:em, start:0, end:2}]."""
     block = _first_block("*em* tail")
     marks = block.payload_json.get("inline_marks")
@@ -74,7 +74,7 @@ def test_a2_em_mark_in_paragraph_payload() -> None:
     assert block.text_content == "em tail"
 
 
-def test_a2_strikethrough_mark_in_paragraph_payload() -> None:
+def test_strikethrough_mark_in_paragraph_payload() -> None:
     """~~strike~~ → inline_marks=[{type:strikethrough, start:0, end:6}]."""
     block = _first_block("~~strike~~ tail")
     marks = block.payload_json.get("inline_marks")
@@ -84,7 +84,7 @@ def test_a2_strikethrough_mark_in_paragraph_payload() -> None:
     assert block.text_content == "strike tail"
 
 
-def test_a2_inline_code_mark_in_paragraph_payload() -> None:
+def test_inline_code_mark_in_paragraph_payload() -> None:
     """`code` → inline_marks=[{type:inline_code, start:0, end:4}]."""
     block = _first_block("`code` tail")
     marks = block.payload_json.get("inline_marks")
@@ -94,7 +94,7 @@ def test_a2_inline_code_mark_in_paragraph_payload() -> None:
     assert block.text_content == "code tail"
 
 
-def test_a2_safe_link_mark_in_paragraph_payload() -> None:
+def test_safe_link_mark_in_paragraph_payload() -> None:
     """[label](https://example.com) → link mark with href."""
     block = _first_block("[label](https://example.com) tail")
     marks = block.payload_json.get("inline_marks")
@@ -108,7 +108,7 @@ def test_a2_safe_link_mark_in_paragraph_payload() -> None:
     ]
 
 
-def test_a2_nested_marks_strong_em_overlay() -> None:
+def test_nested_marks_strong_em_overlay() -> None:
     """**a *b* c** → strong [0,5] + em [2,3] (overlay, not tree)."""
     block = _first_block("**a *b* c**")
     marks = block.payload_json.get("inline_marks")
@@ -122,7 +122,7 @@ def test_a2_nested_marks_strong_em_overlay() -> None:
     )
 
 
-def test_a2_inline_code_inside_strong_overlay() -> None:
+def test_inline_code_inside_strong_overlay() -> None:
     """**strong `code` end** → strong [0,10] + inline_code [7,11]."""
     block = _first_block("**strong `code` end**")
     # text_content = "strong code end" → len=15
@@ -138,7 +138,7 @@ def test_a2_inline_code_inside_strong_overlay() -> None:
     )
 
 
-def test_a2_utf16_offsets_with_emoji() -> None:
+def test_utf16_offsets_with_emoji() -> None:
     """Offsets must be UTF-16 code units (emoji = 2 UTF-16 units)."""
     # "x 😀 " is x(1) + space(1) + emoji(2) + space(1) = 5 UTF-16 units
     # then "bold" at [5,9]
@@ -152,7 +152,7 @@ def test_a2_utf16_offsets_with_emoji() -> None:
     )
 
 
-def test_a2_heading_carries_inline_marks() -> None:
+def test_heading_carries_inline_marks() -> None:
     """heading block payload_json.inline_marks (in addition to level)."""
     block = _first_block("# Head **bold**")
     assert block.block_type == "heading"
@@ -164,7 +164,7 @@ def test_a2_heading_carries_inline_marks() -> None:
     )
 
 
-def test_a2_list_item_carries_inline_marks() -> None:
+def test_list_item_carries_inline_marks() -> None:
     """list_item payload_json.inline_marks."""
     blocks = _parse("- item with **bold**")
     list_item = next(b for b in blocks if b.block_type == "list_item")
@@ -176,7 +176,7 @@ def test_a2_list_item_carries_inline_marks() -> None:
     )
 
 
-def test_a2_blockquote_carries_inline_marks() -> None:
+def test_blockquote_carries_inline_marks() -> None:
     """blockquote payload_json.inline_marks."""
     block = _first_block("> quote with **bold**")
     assert block.block_type == "blockquote"
@@ -187,7 +187,7 @@ def test_a2_blockquote_carries_inline_marks() -> None:
     )
 
 
-def test_a2_table_cell_carries_inline_marks() -> None:
+def test_table_cell_carries_inline_marks() -> None:
     """table_cell payload_json.inline_marks."""
     blocks = _parse("| H1 |\n|----|\n| **b** |")
     cell = next(
@@ -202,7 +202,7 @@ def test_a2_table_cell_carries_inline_marks() -> None:
     )
 
 
-def test_a2_code_block_has_no_inline_marks() -> None:
+def test_code_block_has_no_inline_marks() -> None:
     """code_block does not carry inline_marks (whole block is code)."""
     block = _first_block("```\ncode with **stars**\n```")
     assert block.block_type == "code_block"
@@ -211,7 +211,7 @@ def test_a2_code_block_has_no_inline_marks() -> None:
     )
 
 
-def test_a2_paragraph_no_inline_marks_when_plain_text() -> None:
+def test_paragraph_no_inline_marks_when_plain_text() -> None:
     """Plain paragraph (no marks) → payload_json has no inline_marks key
     OR inline_marks=[]. Either is acceptable; we assert the key is absent
     to keep payloads minimal.
@@ -222,7 +222,7 @@ def test_a2_paragraph_no_inline_marks_when_plain_text() -> None:
     )
 
 
-def test_a2_link_with_title_mark_uses_href_only() -> None:
+def test_link_with_title_mark_uses_href_only() -> None:
     """[t](https://x.com "title") → link mark with href (title ignored)."""
     block = _first_block('[t](https://x.com "some title") tail')
     marks = block.payload_json.get("inline_marks")
@@ -232,7 +232,7 @@ def test_a2_link_with_title_mark_uses_href_only() -> None:
     assert block.text_content == "t tail"
 
 
-def test_a2_inline_marks_offsets_consistent_with_text_content() -> None:
+def test_inline_marks_offsets_consistent_with_text_content() -> None:
     """All inline_marks start/end must be valid UTF-16 offsets within
     text_content (0 <= start <= end <= utf16_len(text_content)).
     """

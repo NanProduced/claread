@@ -133,14 +133,14 @@ def test_recent_history_account_is_chargeable() -> None:
     assert budget.spent("recent_history") == ok.cost
 
 
-def test_g11_docstring_says_nine_not_six() -> None:
+def test_budget_docstring_says_nine_not_six() -> None:
     """G11 fix: class docstring must say 'Nine-account', not 'Six-account'."""
     doc = ModelVisibleTurnBudget.__doc__ or ""
     assert "Nine-account" in doc
     assert "Six-account" not in doc
 
 
-def test_g11_no_stale_six_account_in_module() -> None:
+def test_budget_no_stale_six_account_in_module() -> None:
     """No stale 'Six-account' reference in model_view_budget.py source."""
     source = inspect.getsource(
         __import__(

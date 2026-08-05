@@ -306,7 +306,7 @@ NUMBERED_NAV_POS_HTML = """
 </body></html>
 """
 
-A1_MULTI_HEADWORD_HTML = """
+MULTI_HEADWORD_HTML = """
 <html><body>
   <div class="eDiv" id="a1-entry">
     <div class="hg nopos">
@@ -734,7 +734,7 @@ def test_parse_entry_html_preserves_multi_example_blocks() -> None:
 
 
 def test_parse_entry_html_keeps_headword_variants_and_pairs_examples_per_li() -> None:
-    parsed = parse_entry_html("A1, A-1", A1_MULTI_HEADWORD_HTML)
+    parsed = parse_entry_html("A1, A-1", MULTI_HEADWORD_HTML)
 
     assert parsed is not None
     assert parsed.display_headword == "A1"

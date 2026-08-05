@@ -13,7 +13,7 @@ in an isolated schema:
 
 Snapshot assets/supplements on the same baseline are covered by
 ``test_reader_orchestration_article_ready_service.py`` and
-``test_b2_ask_supplements_snapshot.py``.
+``test_ask_supplements_snapshot.py``.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ DROPPED_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 @pytest.fixture
-async def d2_schema_pool() -> AsyncIterator[asyncpg.Pool]:
+async def schema_pool() -> AsyncIterator[asyncpg.Pool]:
     schema_name = f"test_d2_closeout_{uuid4().hex}"
     admin_conn = await asyncpg.connect(DATABASE_URL)
     pool: asyncpg.Pool | None = None
@@ -76,9 +76,9 @@ async def d2_schema_pool() -> AsyncIterator[asyncpg.Pool]:
 
 
 async def test_dropped_identity_columns_are_absent_from_baseline(
-    d2_schema_pool: asyncpg.Pool,
+    schema_pool: asyncpg.Pool,
 ) -> None:
-    async with d2_schema_pool.acquire() as conn:
+    async with schema_pool.acquire() as conn:
         survivors = await conn.fetch(
             """
             SELECT table_name, column_name
@@ -98,11 +98,11 @@ async def test_dropped_identity_columns_are_absent_from_baseline(
 
 
 async def test_usage_persist_works_without_task_record_columns(
-    d2_schema_pool: asyncpg.Pool,
+    schema_pool: asyncpg.Pool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(db_connection, "DB_POOL", d2_schema_pool)
-    async with d2_schema_pool.acquire() as conn:
+    monkeypatch.setattr(db_connection, "DB_POOL", schema_pool)
+    async with schema_pool.acquire() as conn:
         user_id = await conn.fetchval("INSERT INTO users DEFAULT VALUES RETURNING id")
 
     event_id = await record_ai_usage_event(
@@ -119,7 +119,7 @@ async def test_usage_persist_works_without_task_record_columns(
     )
     assert isinstance(event_id, UUID)
 
-    async with d2_schema_pool.acquire() as conn:
+    async with schema_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             SELECT user_id, capability_code, status, input_tokens,
@@ -138,11 +138,11 @@ async def test_usage_persist_works_without_task_record_columns(
 
 
 async def test_credit_ledger_list_projects_title_snapshot_as_article_title(
-    d2_schema_pool: asyncpg.Pool,
+    schema_pool: asyncpg.Pool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(db_connection, "DB_POOL", d2_schema_pool)
-    async with d2_schema_pool.acquire() as conn:
+    monkeypatch.setattr(db_connection, "DB_POOL", schema_pool)
+    async with schema_pool.acquire() as conn:
         user_id = await conn.fetchval("INSERT INTO users DEFAULT VALUES RETURNING id")
         await conn.execute(
             """
@@ -170,9 +170,9 @@ async def test_credit_ledger_list_projects_title_snapshot_as_article_title(
 
 
 async def test_feedback_rejects_legacy_scopes_at_db_level(
-    d2_schema_pool: asyncpg.Pool,
+    schema_pool: asyncpg.Pool,
 ) -> None:
-    async with d2_schema_pool.acquire() as conn:
+    async with schema_pool.acquire() as conn:
         user_id = await conn.fetchval("INSERT INTO users DEFAULT VALUES RETURNING id")
         for legacy_scope in ("analysis_result", "annotation", "sentence"):
             with pytest.raises(asyncpg.CheckViolationError):

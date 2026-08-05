@@ -1,6 +1,6 @@
 """L2 — Confirmed Source GET/PUT 端点路由接线与错误映射测试。
 
-服务层行为由 ``test_l2_confirmed_source_lifecycle_db.py``（真实 DB）
+服务层行为由 ``test_confirmed_source_lifecycle_db.py``（真实 DB）
 封锁；本文件只验证路由层：200 DTO 形状、404 collapse、409
 root-level 错误合同（code / resolution / current_revision）、以及
 confirm 端点新增的 stale_candidate_revision 映射（旧 409 映射不变）。

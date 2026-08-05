@@ -1169,7 +1169,7 @@ class TestRenderBudgetRecency:
 # ===========================================================================
 
 
-class TestR16Counterexamples:
+class TestCounterexamples:
     """R1.6 必须新增的反例测试 (9 类).
 
     Each test corresponds to one counterexample in the R1.6 task brief.
@@ -1536,7 +1536,7 @@ class TestR16Counterexamples:
 # ===========================================================================
 
 
-class TestR161CanonicalWatermark:
+class TestCanonicalWatermark:
     """R1.6.1 P0-1: canonical watermark uses canonical_turn_run_id."""
 
     def test_same_answer_different_canonical_run_changes_watermark(self) -> None:
@@ -1706,7 +1706,7 @@ class TestR161CanonicalWatermark:
         )
 
 
-class TestR161HostMaterialization:
+class TestHostMaterialization:
     """R1.6.1 P0-2: Host materializes bindings from facts' source_ids
     before fence. The model/snapshot's source_bindings is NEVER the
     authority."""
@@ -2050,7 +2050,7 @@ class TestR161HostMaterialization:
         assert len(ep.source_bindings) == 0
 
 
-class TestR161AtomicLineBoxing:
+class TestAtomicLineBoxing:
     """R1.6.1 P1: budget boxing is line-atomic. No half-line truncation."""
 
     def test_no_half_line_truncation_under_tight_budget(self):

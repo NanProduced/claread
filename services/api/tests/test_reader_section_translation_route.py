@@ -225,7 +225,7 @@ def _drain_result(
 # ===========================================================================
 
 
-def test_a01_section_translation_requires_authentication() -> None:
+def test_section_translation_requires_authentication() -> None:
     app = _build_app()
     with TestClient(app) as client:
         response = client.post(_route_path(), json=_VALID_BODY)
@@ -233,7 +233,7 @@ def test_a01_section_translation_requires_authentication() -> None:
     assert response.json() == {"detail": "Missing authorization header"}
 
 
-def test_a02_section_translation_rejects_missing_start_unit_id() -> None:
+def test_section_translation_rejects_missing_start_unit_id() -> None:
     app = _build_app()
     body = {"end_unit_id": "u4"}
     with (
@@ -244,7 +244,7 @@ def test_a02_section_translation_rejects_missing_start_unit_id() -> None:
     assert response.status_code == 422
 
 
-def test_a03_section_translation_rejects_missing_end_unit_id() -> None:
+def test_section_translation_rejects_missing_end_unit_id() -> None:
     app = _build_app()
     body = {"start_unit_id": "u3"}
     with (
@@ -255,7 +255,7 @@ def test_a03_section_translation_rejects_missing_end_unit_id() -> None:
     assert response.status_code == 422
 
 
-def test_a04_section_translation_rejects_layer_family_in_body() -> None:
+def test_section_translation_rejects_layer_family_in_body() -> None:
     """layer_family is server-forced; body must not carry it."""
     app = _build_app()
     body = {**_VALID_BODY, "layer_family": "translation"}
@@ -271,7 +271,7 @@ def test_a04_section_translation_rejects_layer_family_in_body() -> None:
     )
 
 
-def test_a05_section_translation_rejects_record_id_in_body() -> None:
+def test_section_translation_rejects_record_id_in_body() -> None:
     """record_id comes from the path + authenticated fence; body must not carry it."""
     app = _build_app()
     body = {**_VALID_BODY, "record_id": str(RECORD_ID)}
@@ -287,7 +287,7 @@ def test_a05_section_translation_rejects_record_id_in_body() -> None:
     )
 
 
-def test_a06_section_translation_rejects_base_id_in_body() -> None:
+def test_section_translation_rejects_base_id_in_body() -> None:
     """base_id is server-authoritative; body must not carry it."""
     app = _build_app()
     body = {**_VALID_BODY, "base_id": str(BASE_ID)}
@@ -303,7 +303,7 @@ def test_a06_section_translation_rejects_base_id_in_body() -> None:
     )
 
 
-def test_a07_section_translation_rejects_generation_in_body() -> None:
+def test_section_translation_rejects_generation_in_body() -> None:
     """generation is server-authoritative; body must not carry it."""
     app = _build_app()
     body = {**_VALID_BODY, "generation": 1}
@@ -319,7 +319,7 @@ def test_a07_section_translation_rejects_generation_in_body() -> None:
     )
 
 
-def test_a08_section_translation_accepts_full_witness_with_anchors() -> None:
+def test_section_translation_accepts_full_witness_with_anchors() -> None:
     """Anchors + node_id + outline_revision are accepted (audit-only)."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -362,7 +362,7 @@ def test_a08_section_translation_accepts_full_witness_with_anchors() -> None:
 # ===========================================================================
 
 
-def test_b01_admitted_then_drain_succeeded_returns_succeeded() -> None:
+def test_admitted_then_drain_succeeded_returns_succeeded() -> None:
     """Exact valid range → bootstrap ADMITTED + drain SUCCEEDED → 200 succeeded."""
     app = _build_app()
     bootstrap_call = AsyncMock(return_value=_bootstrap_result_admitted())
@@ -406,7 +406,7 @@ def test_b01_admitted_then_drain_succeeded_returns_succeeded() -> None:
     assert drain_kwargs["expected_generation"] == 1
 
 
-def test_b02_admitted_then_drain_retry_later_returns_retry_later() -> None:
+def test_admitted_then_drain_retry_later_returns_retry_later() -> None:
     app = _build_app()
     drain_call = AsyncMock(
         return_value=_drain_result(outcome=SectionDrainOutcome.RETRY_LATER)
@@ -434,7 +434,7 @@ def test_b02_admitted_then_drain_retry_later_returns_retry_later() -> None:
     assert response.json()["outcome"] == "retry_later"
 
 
-def test_b03_admitted_then_drain_failed_maps_to_retry_later() -> None:
+def test_admitted_then_drain_failed_maps_to_retry_later() -> None:
     """Drain terminal failure → user-facing retry_later (not rejected)."""
     app = _build_app()
     drain_call = AsyncMock(
@@ -463,7 +463,7 @@ def test_b03_admitted_then_drain_failed_maps_to_retry_later() -> None:
     assert response.json()["outcome"] == "retry_later"
 
 
-def test_b04_admitted_then_drain_already_claimed_maps_to_already_covered() -> None:
+def test_admitted_then_drain_already_claimed_maps_to_already_covered() -> None:
     """Drain returns ALREADY_CLAIMED → response already_covered_or_inflight."""
     app = _build_app()
     drain_call = AsyncMock(
@@ -492,7 +492,7 @@ def test_b04_admitted_then_drain_already_claimed_maps_to_already_covered() -> No
     assert response.json()["outcome"] == "already_covered_or_inflight"
 
 
-def test_b05_admitted_then_drain_budget_denied_returns_budget_exhausted() -> None:
+def test_admitted_then_drain_budget_denied_returns_budget_exhausted() -> None:
     app = _build_app()
     drain_call = AsyncMock(
         return_value=_drain_result(outcome=SectionDrainOutcome.BUDGET_DENIED)
@@ -520,7 +520,7 @@ def test_b05_admitted_then_drain_budget_denied_returns_budget_exhausted() -> Non
     assert response.json()["outcome"] == "budget_exhausted"
 
 
-def test_b06_admitted_then_drain_superseded_returns_superseded() -> None:
+def test_admitted_then_drain_superseded_returns_superseded() -> None:
     app = _build_app()
     drain_call = AsyncMock(
         return_value=_drain_result(outcome=SectionDrainOutcome.SUPERSEDED)
@@ -548,7 +548,7 @@ def test_b06_admitted_then_drain_superseded_returns_superseded() -> None:
     assert response.json()["outcome"] == "superseded"
 
 
-def test_b07_admitted_then_drain_rejected_returns_rejected() -> None:
+def test_admitted_then_drain_rejected_returns_rejected() -> None:
     app = _build_app()
     drain_call = AsyncMock(
         return_value=_drain_result(outcome=SectionDrainOutcome.REJECTED)
@@ -576,7 +576,7 @@ def test_b07_admitted_then_drain_rejected_returns_rejected() -> None:
     assert response.json()["outcome"] == "rejected"
 
 
-def test_b08_admitted_then_drain_not_found_maps_to_rejected() -> None:
+def test_admitted_then_drain_not_found_maps_to_rejected() -> None:
     """Drain NOT_FOUND (job disappeared between bootstrap and drain)."""
     app = _build_app()
     drain_call = AsyncMock(
@@ -610,7 +610,7 @@ def test_b08_admitted_then_drain_not_found_maps_to_rejected() -> None:
 # ===========================================================================
 
 
-def test_c01_bootstrap_reject_node_only_returns_rejected() -> None:
+def test_bootstrap_reject_node_only_returns_rejected() -> None:
     """node_id-only payloads are rejected by the planner; route maps to rejected."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -643,7 +643,7 @@ def test_c01_bootstrap_reject_node_only_returns_rejected() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_c02_bootstrap_reject_source_mismatch_returns_rejected() -> None:
+def test_bootstrap_reject_source_mismatch_returns_rejected() -> None:
     """Forged record_id / base_id / generation → planner REJECT source_mismatch."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -674,7 +674,7 @@ def test_c02_bootstrap_reject_source_mismatch_returns_rejected() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_c03_bootstrap_reject_no_trusted_outline_returns_rejected() -> None:
+def test_bootstrap_reject_no_trusted_outline_returns_rejected() -> None:
     """Non-trusted outline (missing / failed / stale) → planner REJECT."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -705,7 +705,7 @@ def test_c03_bootstrap_reject_no_trusted_outline_returns_rejected() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_c04_bootstrap_reject_forged_range_returns_rejected() -> None:
+def test_bootstrap_reject_forged_range_returns_rejected() -> None:
     """Range not in trusted candidates → planner REJECT invalid_range."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -734,7 +734,7 @@ def test_c04_bootstrap_reject_forged_range_returns_rejected() -> None:
     assert response.json()["outcome"] == "rejected"
 
 
-def test_c05_bootstrap_no_op_budget_exhausted_returns_budget_exhausted() -> None:
+def test_bootstrap_no_op_budget_exhausted_returns_budget_exhausted() -> None:
     """Bootstrap reports budget exhausted → no drain attempted."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -768,7 +768,7 @@ def test_c05_bootstrap_no_op_budget_exhausted_returns_budget_exhausted() -> None
     drain_call.assert_not_awaited()
 
 
-def test_c06_bootstrap_no_op_already_covered_returns_already_covered() -> None:
+def test_bootstrap_no_op_already_covered_returns_already_covered() -> None:
     """Section already published / active → already_covered_or_inflight, no drain."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -802,7 +802,7 @@ def test_c06_bootstrap_no_op_already_covered_returns_already_covered() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_c07_bootstrap_no_op_range_overlap_returns_already_covered() -> None:
+def test_bootstrap_no_op_range_overlap_returns_already_covered() -> None:
     """Range overlaps an existing section job → already_covered_or_inflight."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -835,7 +835,7 @@ def test_c07_bootstrap_no_op_range_overlap_returns_already_covered() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_c08_bootstrap_reject_family_forge_returns_rejected() -> None:
+def test_bootstrap_reject_family_forge_returns_rejected() -> None:
     """Server-side family gate rejects vocabulary / grammar forgery."""
     app = _build_app()
     bootstrap_call = AsyncMock(
@@ -873,7 +873,7 @@ def test_c08_bootstrap_reject_family_forge_returns_rejected() -> None:
 # ===========================================================================
 
 
-def test_d01_queued_recovery_drains_existing_job_id() -> None:
+def test_queued_recovery_drains_existing_job_id() -> None:
     """Re-request of an exact section with an existing queued/retryable job
     must drain that job_id (queued-recovery closure — no dead queue)."""
     app = _build_app()
@@ -919,7 +919,7 @@ def test_d01_queued_recovery_drains_existing_job_id() -> None:
     assert drain_kwargs["expected_base_id"] == BASE_ID
 
 
-def test_d02_queued_recovery_already_succeeded_maps_to_already_covered() -> None:
+def test_queued_recovery_already_succeeded_maps_to_already_covered() -> None:
     """If the existing job is already terminal-succeeded, drain returns
     ALREADY_CLAIMED and the route maps to already_covered_or_inflight.
 
@@ -963,7 +963,7 @@ def test_d02_queued_recovery_already_succeeded_maps_to_already_covered() -> None
     drain_call.assert_awaited_once()
 
 
-def test_d03_queued_recovery_drain_budget_denied_returns_budget_exhausted() -> None:
+def test_queued_recovery_drain_budget_denied_returns_budget_exhausted() -> None:
     """If the recovered job hits budget_exhausted during drain, the user sees
     budget_exhausted (not a dead queue)."""
     app = _build_app()
@@ -1002,7 +1002,7 @@ def test_d03_queued_recovery_drain_budget_denied_returns_budget_exhausted() -> N
     drain_call.assert_awaited_once()
 
 
-def test_d04_queued_recovery_drain_superseded_returns_superseded() -> None:
+def test_queued_recovery_drain_superseded_returns_superseded() -> None:
     """Stale fence during recovery drain → superseded (no dead queue)."""
     app = _build_app()
     existing_job_id = uuid4()
@@ -1045,7 +1045,7 @@ def test_d04_queued_recovery_drain_superseded_returns_superseded() -> None:
 # ===========================================================================
 
 
-def test_e01_bootstrap_lookup_error_returns_404_no_leak() -> None:
+def test_bootstrap_lookup_error_returns_404_no_leak() -> None:
     """Non-owner / missing record → bootstrap LookupError → 404, no leak."""
     app = _build_app()
     # Use a distinctive internal exception message that the route must
@@ -1079,7 +1079,7 @@ def test_e01_bootstrap_lookup_error_returns_404_no_leak() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_e02_bootstrap_value_error_returns_409_no_leak() -> None:
+def test_bootstrap_value_error_returns_409_no_leak() -> None:
     """Server-side fence conflict (e.g. stale generation) → ValueError → 409."""
     app = _build_app()
     # Use a distinctive internal exception message that the route must
@@ -1113,7 +1113,7 @@ def test_e02_bootstrap_value_error_returns_409_no_leak() -> None:
     drain_call.assert_not_awaited()
 
 
-def test_e03_response_does_not_leak_internal_state() -> None:
+def test_response_does_not_leak_internal_state() -> None:
     """Response must never echo prompt / provider payload / envelope / secret."""
     app = _build_app()
     bootstrap_call = AsyncMock(return_value=_bootstrap_result_admitted())
@@ -1165,7 +1165,7 @@ def test_e03_response_does_not_leak_internal_state() -> None:
 # ===========================================================================
 
 
-def test_f01_route_does_not_import_worker_loop() -> None:
+def test_route_does_not_import_worker_loop() -> None:
     """The route module must not import worker_loop / process_next_* helpers.
 
     Section execution is bounded to bootstrap + drain; the ordinary
@@ -1189,7 +1189,7 @@ def test_f01_route_does_not_import_worker_loop() -> None:
         )
 
 
-def test_f02_route_uses_existing_translation_job_type_only() -> None:
+def test_route_uses_existing_translation_job_type_only() -> None:
     """The route must NOT register a new job_type. Section execution reuses
     ``TRANSLATION_BATCH_JOB_TYPE`` (translate_article / unit_range_v1) via
     the existing bootstrap + drain services."""
@@ -1208,7 +1208,7 @@ def test_f02_route_uses_existing_translation_job_type_only() -> None:
     )
 
 
-def test_f03_route_calls_only_bootstrap_and_drain_public_methods() -> None:
+def test_route_calls_only_bootstrap_and_drain_public_methods() -> None:
     """The route must call only the public service entry points; no internal
     ``_prepare_section_job`` / ``_force_fail_budget_exhausted`` etc."""
     import inspect
@@ -1300,7 +1300,7 @@ def test_request_model_required_fields() -> None:
 # ===========================================================================
 
 
-def test_h01_route_passes_user_explicit_trigger_and_translation_family() -> None:
+def test_route_passes_user_explicit_trigger_and_translation_family() -> None:
     """The route constructs ``ExplicitSectionIntent`` with trigger=USER_EXPLICIT
     and layer_family='translation', regardless of body content."""
     app = _build_app()
@@ -1336,7 +1336,7 @@ def test_h01_route_passes_user_explicit_trigger_and_translation_family() -> None
     assert intent.end_unit_id == "u4"
 
 
-def test_h02_route_authorizes_with_authenticated_user_id() -> None:
+def test_route_authorizes_with_authenticated_user_id() -> None:
     """``authorized=True`` and ``user_id`` come from the auth dependency,
     not from the body or query string."""
     app = _build_app()

@@ -14,7 +14,7 @@
    canonical 文本内；snapshot reload 仍带 headingLevel /
    stableBlockType / inlineMarks。
 
-测试模式复用 ``test_l1_table_code_metadata_reload.py``：隔离
+测试模式复用 ``test_table_code_metadata_reload.py``：隔离
 PostgreSQL schema + 生产服务全链路，不做 fake connection。
 """
 
@@ -124,7 +124,7 @@ async def _make_pool(schema_name: str) -> asyncpg.Pool:
 
 @pytest.fixture
 async def db_env() -> AsyncIterator[asyncpg.Pool]:
-    schema_name = f"test_l2_struct_truth_{uuid4().hex}"
+    schema_name = f"test_struct_truth_{uuid4().hex}"
     admin_conn = await asyncpg.connect(DATABASE_URL)
     try:
         await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
