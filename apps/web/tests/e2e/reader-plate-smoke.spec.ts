@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Smoke test for the D5 Web Reader Plate read-only slice.
+ * Smoke test for the Web Reader Plate read-only surface.
  *
  * The page requires a real authenticated session to call the BFF, but the
  * BFF rejects `mock_phone` sessions. To keep this a self-contained browser

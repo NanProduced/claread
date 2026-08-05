@@ -75,12 +75,9 @@ const CODE_IDENTITY_ALLOWLIST = [
   // Fixture record titles.
   '"R1 submit"',
   '"R1 Inline Marks Fixture"',
-  // Schema-reference spans in comments of non-guard test files.
-  "A5 annotation",
-  "D5 Web Reader Plate",
 ] as const;
 
-const CODE_IDENTITY_ALLOWLIST_CEILING = 11;
+const CODE_IDENTITY_ALLOWLIST_CEILING = 9;
 
 const SCAN_ROOTS = ["src", "tests"] as const;
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$/;

@@ -603,7 +603,7 @@ describe("projectMarkdownOutlineView", () => {
   });
 
   it("defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
-    // Defensive case: A5 annotation marked the block as heading but the
+    // Defensive case: an annotation marked the block as heading but the
     // payload did not carry a level. Should still project at level 1
     // instead of being skipped.
     const units: UnitIn[] = [
