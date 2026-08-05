@@ -57,7 +57,7 @@ from tests.reader_orchestration_test_support import (
 
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
-# based on Z+ plan existence in ``layer_analysis_plans`` (Task C3).
+# based on grammar-window plan existence in ``layer_analysis_plans`` (Task C3).
 
 # T1.1 short-article batch path: migration 0017 adds the new batch job types
 # and worker types to the CHECK constraints (see pipeline runner fixture).
@@ -278,7 +278,7 @@ async def test_grammar_job_input_contains_strategy_metadata(
     strategy_env: asyncpg.Pool,
 ) -> None:
     # 该测试校验 legacy ``build_grammar_bundle`` job 的策略元数据契约。
-    # P1-1 之后 Z+ 成为默认路径，这里显式走 legacy 路径以保留原始测试意图。
+    # P1-1 之后 grammar-window 成为默认路径，这里显式走 legacy 路径以保留原始测试意图。
     user_id = await insert_user(strategy_env)
     record_id = await _submit_with_strategy(
         strategy_env,
@@ -389,7 +389,7 @@ async def test_different_variants_produce_different_fingerprints(
     strategy_env: asyncpg.Pool,
 ) -> None:
     # 该测试校验 legacy per-unit grammar job 指纹随 variant 变化。
-    # P1-1 之后 Z+ window job 指纹为 ``grammar_bundle_window_v1``（record-scoped，
+    # P1-1 之后 grammar-window window job 指纹为 ``grammar_bundle_window_v1``（record-scoped，
     # 不含 variant hash），无法体现 variant 差异；这里显式走 legacy 路径以保留
     # 原始 fingerprint differentiation 契约。
     user_id = await insert_user(strategy_env)
@@ -2701,9 +2701,9 @@ async def test_no_per_unit_fanout_regression_across_three_routes(
 # ---------------------------------------------------------------------------#
 #
 # Requirement: SHORT_BATCH and STRUCTURED_BATCH grammar no longer defaults to
-# the heavy Z+ analysis-window path. Instead, a single
+# the heavy grammar-window analysis-window path. Instead, a single
 # ``build_grammar_bundle`` / ``unit_range`` batch job covers all unpublished
-# units in one LLM call. GROUPED_WINDOWED keeps the Z+ path
+# units in one LLM call. GROUPED_WINDOWED keeps the grammar-window path
 # (``build_grammar_bundle_window`` jobs + ``analysis_windows`` rows).
 # No route produces per-unit ``build_grammar_bundle`` / ``unit`` jobs.
 #
@@ -2793,7 +2793,7 @@ async def test_short_article_routes_to_compact_grammar_batch(
 ) -> None:
     """T4.1c: a SHORT_BATCH article creates a single
     ``build_grammar_bundle`` / ``unit_range`` batch job and does NOT
-    create Z+ ``analysis_windows`` or per-unit ``build_grammar_bundle``
+    create grammar-window ``analysis_windows`` or per-unit ``build_grammar_bundle``
     / ``unit`` jobs."""
     user_id = await insert_user(strategy_env)
     record_id = await _submit_with_strategy(
@@ -2823,7 +2823,7 @@ async def test_short_article_routes_to_compact_grammar_batch(
         f"SHORT_BATCH: expected 1 build_grammar_bundle:unit_range job, "
         f"got {grammar_by_target}"
     )
-    # No Z+ analysis windows
+    # No grammar-window analysis windows
     assert analysis_window_count == 0, (
         f"SHORT_BATCH: expected 0 analysis_windows, got {analysis_window_count}"
     )
@@ -2831,7 +2831,7 @@ async def test_short_article_routes_to_compact_grammar_batch(
     assert grammar_by_target.get("build_grammar_bundle:unit", 0) == 0, (
         "SHORT_BATCH: per-unit build_grammar_bundle:unit jobs must not exist"
     )
-    # No Z+ window jobs
+    # No grammar-window window jobs
     assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) == 0, (
         "SHORT_BATCH: build_grammar_bundle_window jobs must not exist"
     )
@@ -2872,7 +2872,7 @@ async def test_structured_article_routes_to_compact_grammar_batch(
 ) -> None:
     """T4.1c: a STRUCTURED_BATCH article creates a single
     ``build_grammar_bundle`` / ``unit_range`` batch job with the
-    STRUCTURED_BATCH fingerprint base and does NOT create Z+
+    STRUCTURED_BATCH fingerprint base and does NOT create grammar-window
     ``analysis_windows`` or per-unit ``build_grammar_bundle`` / ``unit``
     jobs."""
     user_id = await insert_user(strategy_env)
@@ -2944,10 +2944,10 @@ async def test_structured_article_routes_to_compact_grammar_batch(
     )
 
 
-async def test_long_article_keeps_zplus_grammar_window_path(
+async def test_long_article_keeps_grammar_window_path(
     strategy_env: asyncpg.Pool,
 ) -> None:
-    """T4.1c: a GROUPED_WINDOWED article keeps the Z+ analysis-window path.
+    """T4.1c: a GROUPED_WINDOWED article keeps the grammar-window analysis-window path.
     ``build_grammar_bundle_window`` jobs + ``analysis_windows`` rows are
     created. No ``build_grammar_bundle`` / ``unit_range`` batch job or
     per-unit ``build_grammar_bundle`` / ``unit`` job is created."""
@@ -2970,11 +2970,11 @@ async def test_long_article_keeps_zplus_grammar_window_path(
         strategy_env, record_id
     )
 
-    # Z+ window jobs created
+    # grammar-window window jobs created
     assert grammar_by_target.get("build_grammar_bundle_window:unit_range", 0) > 0, (
         "GROUPED_WINDOWED: expected build_grammar_bundle_window jobs"
     )
-    # Z+ analysis windows created
+    # grammar-window analysis windows created
     assert analysis_window_count > 0, (
         "GROUPED_WINDOWED: expected analysis_windows rows"
     )

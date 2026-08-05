@@ -266,7 +266,7 @@ def _build_runner_with_stubs(
 
     The C tests verify composition logic only (which generator / eligibility
     predicate the runner selects). They do not call any worker methods, so
-    stubs are safe. ``enable_zplus_grammar=False`` skips the grammar window
+    stubs are safe. ``enable_grammar_window=False`` skips the grammar window
     executor import path; ``MagicMock`` stubs prevent eager pool resolution
     in services that are not under test.
 
@@ -285,7 +285,7 @@ def _build_runner_with_stubs(
         translation_batch_worker_service=MagicMock(),
         vocabulary_worker_service=MagicMock(),
         grammar_worker_service=MagicMock(),
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
         job_runtime=MagicMock(),
     )
     if bootstrap_service is not _UNSET:
@@ -756,7 +756,7 @@ def _build_runner_with_real_pool(
         pool=pool,
         settings=settings,
         semantic_outline_worker_service=fake_outline_worker,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
     )
 
 

@@ -1,7 +1,7 @@
 """GrammarWindowBootstrapService: bootstrap layer_analysis_plans + analysis_windows + reader_jobs.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   - §3.2 Window Job contract (job_type / target_type / target_key / input_json)
   - §4.1 layer_analysis_plans table (status='active' at creation, no planning phase)
   - §7.3 budget caps (grammar_note / sentence_analysis formulas)
@@ -42,15 +42,15 @@ from .job_bootstrap import (
 )
 from .window_planner import PlannedWindow, WindowFormationConfig, plan_windows
 
-ZPLUS_GRAMMAR_JOB_TYPE = "build_grammar_bundle_window"
-ZPLUS_GRAMMAR_OPERATION_FINGERPRINT = "grammar_bundle_window_v1"
-ZPLUS_TARGET_TYPE = "unit_range"
-ZPLUS_POLICY_VERSION = "zplus_grammar_bundle_v1"
-ZPLUS_LAYER_TYPE = "grammar_bundle"
-ZPLUS_GRAMMAR_RUN_TYPE = "grammar_bundle_window"
-ZPLUS_TRIGGER_KIND = "system"
-ZPLUS_DEFAULT_MAX_ATTEMPTS = 3
-ZPLUS_STRATEGY_LAYER_NAME = "grammar_bundle"
+GRAMMAR_WINDOW_JOB_TYPE = "build_grammar_bundle_window"
+GRAMMAR_WINDOW_OPERATION_FINGERPRINT = "grammar_bundle_window_v1"
+GRAMMAR_WINDOW_TARGET_TYPE = "unit_range"
+GRAMMAR_WINDOW_POLICY_VERSION = "zplus_grammar_bundle_v1"
+GRAMMAR_WINDOW_LAYER_TYPE = "grammar_bundle"
+GRAMMAR_WINDOW_RUN_TYPE = "grammar_bundle_window"
+GRAMMAR_WINDOW_TRIGGER_KIND = "system"
+GRAMMAR_WINDOW_DEFAULT_MAX_ATTEMPTS = 3
+GRAMMAR_WINDOW_STRATEGY_LAYER_NAME = "grammar_bundle"
 
 # §7.3 per-record budget caps
 _GRAMMAR_NOTE_BUDGET_CAP = 18
@@ -222,12 +222,12 @@ class GrammarWindowBootstrapService:
                     """,
                     record_id,
                     base_id,
-                    ZPLUS_LAYER_TYPE,
+                    GRAMMAR_WINDOW_LAYER_TYPE,
                 )
                 if existing_plan_id is not None:
                     return await self._load_existing_plan(conn, existing_plan_id)
 
-                # 6. INSERT plan (status='active' — Z+ skips planning phase).
+                # 6. INSERT plan (status='active' — grammar-window skips planning phase).
                 plan_id = uuid4()
                 await conn.execute(
                     """
@@ -240,8 +240,8 @@ class GrammarWindowBootstrapService:
                     plan_id,
                     record_id,
                     base_id,
-                    ZPLUS_LAYER_TYPE,
-                    ZPLUS_POLICY_VERSION,
+                    GRAMMAR_WINDOW_LAYER_TYPE,
+                    GRAMMAR_WINDOW_POLICY_VERSION,
                     state.expected_generation,
                     jsonb_param(budget_total),
                 )
@@ -327,7 +327,7 @@ class GrammarWindowBootstrapService:
         shared by display / translation / vocabulary runs (requirement 5).
         """
         strategy_metadata = _build_strategy_metadata(
-            state.strategy, ZPLUS_STRATEGY_LAYER_NAME
+            state.strategy, GRAMMAR_WINDOW_STRATEGY_LAYER_NAME
         )
         window_budget = _compute_window_budget()
 
@@ -370,7 +370,7 @@ class GrammarWindowBootstrapService:
             semantic_fence, mode=frozen_mode
         )
         operation_fingerprint = _compose_operation_fingerprint(
-            ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+            GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
             state.strategy,
             semantic_token=semantic_token,
         )
@@ -390,13 +390,13 @@ class GrammarWindowBootstrapService:
             """,
             state.record_id,
             state.user_id,
-            ZPLUS_GRAMMAR_RUN_TYPE,
+            GRAMMAR_WINDOW_RUN_TYPE,
             state.expected_generation,
             jsonb_param(
                 {
                     "record_id": str(state.record_id),
                     "base_id": str(state.base_id),
-                    "target_scope": ZPLUS_TARGET_TYPE,
+                    "target_scope": GRAMMAR_WINDOW_TARGET_TYPE,
                     "window_id": str(window_id),
                     "plan_id": str(plan_id),
                     "layer_types": ["grammar_note", "sentence_analysis"],
@@ -405,8 +405,8 @@ class GrammarWindowBootstrapService:
                     **fence_fields,
                 }
             ),
-            ZPLUS_POLICY_VERSION,
-            ZPLUS_TRIGGER_KIND,
+            GRAMMAR_WINDOW_POLICY_VERSION,
+            GRAMMAR_WINDOW_TRIGGER_KIND,
         )
         if run_row is None:
             raise RuntimeError("reader_runs insert did not return a row")
@@ -460,15 +460,15 @@ class GrammarWindowBootstrapService:
             state.base_id,
             run_id,
             state.user_id,
-            ZPLUS_GRAMMAR_JOB_TYPE,
-            ZPLUS_TARGET_TYPE,
+            GRAMMAR_WINDOW_JOB_TYPE,
+            GRAMMAR_WINDOW_TARGET_TYPE,
             str(window_id),
             state.expected_generation,
             operation_fingerprint,
             f"{operation_fingerprint}:{window_id}",
             input_hash,
             jsonb_param(input_json),
-            ZPLUS_DEFAULT_MAX_ATTEMPTS,
+            GRAMMAR_WINDOW_DEFAULT_MAX_ATTEMPTS,
         )
         if job_row is None:
             raise RuntimeError("reader_jobs insert did not return a row")

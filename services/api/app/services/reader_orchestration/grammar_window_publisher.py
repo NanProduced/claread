@@ -1,7 +1,7 @@
-"""GrammarWindowPublisher: multi-unit publish transaction for Z+ windows.
+"""GrammarWindowPublisher: multi-unit publish transaction for grammar-window windows.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   - §3.3 unit-scoped publish (target_scope='unit', target_key=unit_id)
   - §8.4 publish transaction (manual transition validation + _apply_transition)
   - §8.5 lock coverage (plan → window → reader_jobs, all FOR UPDATE)
@@ -47,6 +47,11 @@ from app.services.reader_orchestration.grammar_layer_payload import (
 from app.services.reader_orchestration.grammar_layer_payload_validator import (
     validate_grammar_layer_published_payload,
 )
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_JOB_TYPE,
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
+    GRAMMAR_WINDOW_TARGET_TYPE,
+)
 from app.services.reader_orchestration.job_bootstrap import (
     _fingerprint_matches_base,
 )
@@ -62,11 +67,6 @@ from app.services.reader_orchestration.window_selector import (
     SelectionResult,
     SelectorLedger,
     select_candidates,
-)
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_JOB_TYPE,
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPLUS_TARGET_TYPE,
 )
 
 # T3.4a: window diagnostics no_op_cause values (success path).
@@ -133,7 +133,7 @@ class WindowCandidateContent:
 
 
 class GrammarWindowPublisher:
-    """Publish multi-unit grammar/sentence layers for a Z+ analysis window.
+    """Publish multi-unit grammar/sentence layers for a grammar-window analysis window.
 
     Follows the existing ``GrammarBundleLayerPublisher._publish_unit_grammar_bundle_inner``
     pattern but operates on a window scope: multiple unit-targeted layers in a
@@ -310,17 +310,17 @@ class GrammarWindowPublisher:
                     raise IllegalTransitionError(
                         f"expected status='claimed', got {job_row['status']!r}"
                     )
-                if job_row["job_type"] != ZPLUS_GRAMMAR_JOB_TYPE:
+                if job_row["job_type"] != GRAMMAR_WINDOW_JOB_TYPE:
                     raise IllegalTransitionError("job_type mismatch")
-                if job_row["target_type"] != ZPLUS_TARGET_TYPE:
+                if job_row["target_type"] != GRAMMAR_WINDOW_TARGET_TYPE:
                     raise IllegalTransitionError("target_type mismatch")
-                # zplus_bootstrap writes composed fingerprints
+                # grammar_window_bootstrap writes composed fingerprints
                 # (base:{strategy_hash}[:{semantic_token}]); accept the exact
                 # base or a base + ":" composition, boundary-aware (v1 must
                 # not match v10 / v1abc).
                 if not _fingerprint_matches_base(
                     str(job_row["operation_fingerprint"] or ""),
-                    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+                    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
                 ):
                     raise IllegalTransitionError("operation_fingerprint mismatch")
 

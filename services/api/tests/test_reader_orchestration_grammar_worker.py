@@ -2718,11 +2718,11 @@ async def test_batch_worker_no_job_for_long_article(
     grammar_batch_env: asyncpg.Pool,
 ) -> None:
     """T4.1c: the batch worker returns ``None`` when no grammar batch job
-    exists (GROUPED_WINDOWED route creates Z+ window jobs, not batch jobs).
+    exists (GROUPED_WINDOWED route creates grammar-window window jobs, not batch jobs).
     The per-unit fallback then finds no per-unit jobs either, so the
     pipeline runner's grammar dispatch returns ``no_job``."""
     user_id = await insert_user(grammar_batch_env)
-    # Long text → GROUPED_WINDOWED → Z+ path, no grammar batch job
+    # Long text → GROUPED_WINDOWED → grammar-window path, no grammar batch job
     long_text = "\n\n".join(
         " ".join(f"Word{i} placeholder sentence for long grammar batch test." for i in range(40))
         for _ in range(8)

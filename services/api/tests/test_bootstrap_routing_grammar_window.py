@@ -1,12 +1,12 @@
-"""Tests for Z+ vs legacy bootstrap routing in ``bootstrap_missing_jobs``.
+"""Tests for grammar-window vs legacy bootstrap routing in ``bootstrap_missing_jobs``.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §9 worker migration (bootstrap routing)
 
 Routing contract (P1-1 修正后):
-    - 默认走 Z+ 路径 (调用 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan``)，
-      无论 record 是否已有 Z+ plan。``GrammarWindowBootstrapService`` 内部幂等。
+    - 默认走 grammar-window 路径 (调用 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan``)，
+      无论 record 是否已有 grammar-window plan。``GrammarWindowBootstrapService`` 内部幂等。
     - ``force_legacy_grammar=True`` 时回退到 legacy per-unit 路径
       (现有 ``_bootstrap_grammar_jobs``)。
 """
@@ -20,11 +20,11 @@ import asyncpg
 import pytest
 
 from app.database import connection as db_connection
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GrammarWindowBootstrapService,
+)
 from app.services.reader_orchestration.job_bootstrap import (
     EnhancementJobBootstrapService,
-)
-from app.services.reader_orchestration.zplus_bootstrap import (
-    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -37,7 +37,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 
-ZPLUS_ARTICLE_TEXT = (
+GRAMMAR_WINDOW_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
     "Everyone understood the tradeoff.\n\n"
     "The committee, which had spent six months reviewing export data, "
@@ -76,10 +76,10 @@ async def _drop_schema(schema_name: str) -> None:
 
 
 @pytest.fixture
-async def test_db_pool_with_zplus_plan() -> AsyncIterator[
+async def test_db_pool_with_grammar_window_plan() -> AsyncIterator[
     tuple[asyncpg.Pool, UUID, UUID, UUID]
 ]:
-    """Create schema, submit article, AND pre-create a Z+ plan + windows + jobs.
+    """Create schema, submit article, AND pre-create a grammar-window plan + windows + jobs.
 
     Returns (pool, record_id, base_id, user_id).
     """
@@ -91,11 +91,11 @@ async def test_db_pool_with_zplus_plan() -> AsyncIterator[
         article = await submit_article_ready(
             pool,
             user_id=user_id,
-            plain_text=ZPLUS_ARTICLE_TEXT,
-            title="Bootstrap Routing ZPlus",
+            plain_text=GRAMMAR_WINDOW_ARTICLE_TEXT,
+            title="Bootstrap Routing Grammar Window",
             language="en",
         )
-        # Pre-create the Z+ plan + windows + jobs.
+        # Pre-create the grammar-window plan + windows + jobs.
         grammar_window_service = GrammarWindowBootstrapService(pool=pool)
         await grammar_window_service.bootstrap_grammar_window_plan(
             record_id=article.record_id,
@@ -112,7 +112,7 @@ async def test_db_pool_with_zplus_plan() -> AsyncIterator[
 async def test_db_pool_without_plan() -> AsyncIterator[
     tuple[asyncpg.Pool, UUID, UUID, UUID]
 ]:
-    """Create schema + submit article, but do NOT create a Z+ plan.
+    """Create schema + submit article, but do NOT create a grammar-window plan.
 
     Returns (pool, record_id, base_id, user_id).
     """
@@ -124,7 +124,7 @@ async def test_db_pool_without_plan() -> AsyncIterator[
         article = await submit_article_ready(
             pool,
             user_id=user_id,
-            plain_text=ZPLUS_ARTICLE_TEXT,
+            plain_text=GRAMMAR_WINDOW_ARTICLE_TEXT,
             title="Bootstrap Routing Legacy",
             language="en",
         )
@@ -135,11 +135,11 @@ async def test_db_pool_without_plan() -> AsyncIterator[
         await _drop_schema(schema_name)
 
 
-async def test_bootstrap_uses_zplus_path_when_plan_exists(
-    test_db_pool_with_zplus_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
+async def test_bootstrap_uses_grammar_window_path_when_plan_exists(
+    test_db_pool_with_grammar_window_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """record 已有 Z+ plan 时，grammar bootstrap 走 Z+ 路径（幂等复用）。"""
-    pool, record_id, base_id, user_id = test_db_pool_with_zplus_plan
+    """record 已有 grammar-window plan 时，grammar bootstrap 走 grammar-window 路径（幂等复用）。"""
+    pool, record_id, base_id, user_id = test_db_pool_with_grammar_window_plan
     service = EnhancementJobBootstrapService(pool=pool)
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)
 
@@ -155,12 +155,12 @@ async def test_bootstrap_uses_zplus_path_when_plan_exists(
         assert len(legacy_jobs) == 0
 
 
-async def test_bootstrap_uses_zplus_path_by_default(
+async def test_bootstrap_uses_grammar_window_path_by_default(
     test_db_pool_without_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """P1-1: 默认走 Z+ 路径，无需 pre-create plan。
+    """P1-1: 默认走 grammar-window 路径，无需 pre-create plan。
 
-    ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 Z+，
+    ``bootstrap_missing_jobs`` 不传 ``force_legacy_grammar`` 时默认走 grammar-window，
     由 ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` 创建 plan +
     windows + window jobs。
     """
@@ -204,11 +204,11 @@ async def test_bootstrap_uses_legacy_path_when_forced(
         assert len(legacy_jobs) > 0
 
 
-async def test_bootstrap_zplus_idempotent(
-    test_db_pool_with_zplus_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
+async def test_bootstrap_grammar_window_idempotent(
+    test_db_pool_with_grammar_window_plan: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """Z+ 路径重复调用不重复创建 plan/windows/jobs。"""
-    pool, record_id, base_id, user_id = test_db_pool_with_zplus_plan
+    """grammar-window 路径重复调用不重复创建 plan/windows/jobs。"""
+    pool, record_id, base_id, user_id = test_db_pool_with_grammar_window_plan
     service = EnhancementJobBootstrapService(pool=pool)
 
     await service.bootstrap_missing_jobs(record_id=record_id, user_id=user_id)

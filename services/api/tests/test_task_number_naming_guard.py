@@ -102,16 +102,18 @@ _CAMEL_TASK_TOKEN_RE = re.compile(
 _CAMEL_ROUND_TOKEN_RE = re.compile(r"(?:(?<=[a-z])|(?<=_)|^)Round(\d+)")
 
 # Legacy production-side patterns retained for the app/ symbol scan so
-# existing D5/D6/ZPlus stock continues to be measured against the
-# production allowlist without adopting the broader test detector there.
+# historical D5/D6/ZPlus forms continue to be measured so they cannot
+# re-enter production identifiers (allowlist empty / ceiling 0).
 _TASK_NUMBER_NAME_RE = re.compile(
     r"_(?:d[56]_[a-z0-9]|a[345]_[a-z0-9]|t5[0-9][a-z0-9]?|t6[0-9][a-z0-9]?|"
     r"r[0-9][a-z0-9._]*|p[0-9][a-z0-9]*|s[0-9][a-z0-9]*|"
     r"round[0-9]+|lp_r[0-9])"
 )
 _TASK_CODE_IDENTIFIER_RE = re.compile(
-    r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])ZPlus|(?<![A-Za-z0-9])zplus"
+    r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])(?:ZPLUS|ZPlus|zplus)"
 )
+# Production module basenames must not embed Z+/zplus task history either.
+_PRODUCTION_MODULE_ZPLUS_RE = re.compile(r"zplus", re.IGNORECASE)
 
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1 / P3 closeout): allowlist
 # sizes must match exactly — an equality ratchet, so a shrunk allowlist
@@ -156,7 +158,7 @@ def identifier_has_task_code(name: str) -> bool:
     if any(_token_is_task_code(token) for token in _snake_tokens(name)):
         return True
     # CamelCase scan only for mixed-case names. Pure UPPER_SNAKE
-    # (``ZPLUS_E2E_ARTICLE_TEXT``, ``CONTENT_SHA256``) is handled by
+    # (``GRAMMAR_WINDOW_E2E_ARTICLE_TEXT``, ``CONTENT_SHA256``) is handled by
     # snake tokens + KEEP so ``E2E`` is not misread as ``E2``.
     if name != name.upper() and name != name.lower():
         if _camel_task_tokens(name):
@@ -178,9 +180,11 @@ def _name_has_task_number(name: str) -> bool:
 TASK_NUMBER_TEST_FILE_ALLOWLIST: frozenset[str] = frozenset()
 
 # Production-symbol allowlist is empty after TEST-GOVERNANCE production-symbol
-# governance: D5/D6/ZPlus/R6 Python identifiers renamed to business names.
-# Wire strings (failure_code values, ZPLUS_* policy/job_type constants, env
-# values CLAREAD_R4_A3_*) remain durable contracts and are not scanned.
+# governance: D5/D6/ZPlus/R6 Python identifiers and module basenames renamed
+# to business names (attribution/anchor/GrammarWindow). Wire *values*
+# (failure_code strings, policy version ``zplus_grammar_bundle_v1``,
+# job_type/fingerprint strings, env ``CLAREAD_R4_A3_*``) remain durable
+# contracts and are not scanned (string literals exempt).
 TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset()
 
 # P3 closeout: identifier allowlist is empty. Former entries (R4_A3_*_ENV
@@ -225,8 +229,14 @@ def test_new_test_file_names_carry_no_task_numbers() -> None:
 def _production_symbol_hits() -> set[str]:
     hits: set[str] = set()
     for path in sorted(APP_DIR.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         rel = path.relative_to(SERVICE_ROOT).as_posix()
+        # Module basename scan (e.g. zplus_bootstrap.py) — identifiers alone
+        # would miss a task-coded file that only re-exports business names.
+        if _PRODUCTION_MODULE_ZPLUS_RE.search(path.stem) or _name_has_task_number(
+            path.stem
+        ):
+            hits.add(f"{rel}:<module>")
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         names: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
@@ -345,6 +355,15 @@ def test_task_code_pattern_flags_synthetic_task_code() -> None:
         "TestSyntheticI3ZSections",
     ):
         assert identifier_has_task_code(name), name
+    # Production matcher must catch retired Z+/zplus forms (module + AST).
+    for name in (
+        "ZPlusBootstrapService",
+        "zplus_service",
+        "ZPLUS_GRAMMAR_JOB_TYPE",
+        "enable_zplus_grammar",
+        "zplus_bootstrap",
+    ):
+        assert _name_has_task_number(name), name
 
 
 def test_task_code_pattern_passes_business_names() -> None:
@@ -356,6 +375,10 @@ def test_task_code_pattern_passes_business_names() -> None:
         "TestFreezePersistenceSqlOrder",
         "advance_round",
         "grammar_window_service",
+        "GrammarWindowBootstrapService",
+        "GRAMMAR_WINDOW_JOB_TYPE",
+        "enable_grammar_window",
+        "grammar_window_bootstrap",
         "layer1_fnv1a32",
         "test_utf8_encode_roundtrip",
         "test_utf8_roundtrip",
@@ -369,3 +392,30 @@ def test_task_code_pattern_passes_business_names() -> None:
         "CONTENT_SHA256",
     ):
         assert not identifier_has_task_code(name), name
+
+
+def test_production_matcher_passes_grammar_window_business_names() -> None:
+    """Production matcher must not flag Grammar Window business names."""
+    for name in (
+        "GrammarWindowBootstrapService",
+        "GrammarWindowBootstrapResult",
+        "GRAMMAR_WINDOW_JOB_TYPE",
+        "GRAMMAR_WINDOW_POLICY_VERSION",
+        "enable_grammar_window",
+        "grammar_window_bootstrap",
+        "grammar_window_service",
+        "check_reader_schema_health",
+        "ReaderSchemaHealthReport",
+    ):
+        assert not _name_has_task_number(name), name
+
+
+def test_production_module_basenames_carry_no_zplus() -> None:
+    """Production *.py basenames must not embed zplus (hard ban, no allowlist)."""
+    bad = sorted(
+        path.relative_to(SERVICE_ROOT).as_posix()
+        for path in APP_DIR.rglob("*.py")
+        if _PRODUCTION_MODULE_ZPLUS_RE.search(path.stem)
+    )
+    assert not bad, f"production modules must not embed zplus: {bad}"
+

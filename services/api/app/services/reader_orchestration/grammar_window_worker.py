@@ -1,7 +1,7 @@
-"""GrammarWindowWorkerService: Z+ grammar window worker.
+"""GrammarWindowWorkerService: grammar-window grammar window worker.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   - §8.2 Window claim / preflight (pending → running state transition)
   - §8.3 LLM call (skeleton; full prompt + PydanticAI wiring deferred to C5)
   - §8.6 Heartbeat (asyncio task renewing the lease every ~30s)
@@ -73,7 +73,7 @@ from app.services.reader_orchestration.reading_strategy import (
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
 
-# Strategy metadata keys written by zplus_bootstrap into reader_jobs.input_json
+# Strategy metadata keys written by grammar_window_bootstrap into reader_jobs.input_json
 # (via _build_strategy_metadata). _load_window_context reads them back and
 # cross-validates against the live resolver output. Fail-closed contract:
 # missing metadata or hash mismatch never falls back to a default strategy.
@@ -260,7 +260,7 @@ class GrammarWindowExecutionResult:
 
 
 class GrammarWindowExecutorProtocol(Protocol):
-    """Protocol for Z+ grammar window LLM executors."""
+    """Protocol for grammar-window grammar window LLM executors."""
 
     async def generate(
         self, context: dict[str, Any]
@@ -676,7 +676,7 @@ class PydanticAIGrammarWindowExecutor:
 
         T1.3: budget key 从 ``max_grammar_notes`` / ``max_sentence_analyses``
         修正为 ``grammar_note.count`` / ``sentence_analysis.count``，与
-        zplus_bootstrap 写入格式和 grammar_window_publisher 读取格式对齐。
+        grammar_window_bootstrap 写入格式和 grammar_window_publisher 读取格式对齐。
         """
         target_anchors: list[dict[str, Any]] = list(
             context.get("target_anchors", [])
@@ -690,7 +690,7 @@ class PydanticAIGrammarWindowExecutor:
         window_budget: dict[str, Any] = dict(
             context.get("window_budget", {})
         )
-        # T1.3: zplus_bootstrap writes {"grammar_note": {"count": N},
+        # T1.3: grammar_window_bootstrap writes {"grammar_note": {"count": N},
         # "sentence_analysis": {"count": M}}. The old keys
         # "max_grammar_notes" / "max_sentence_analyses" never matched, so
         # the worker always fell back to 4/3 while the selector/publisher
@@ -952,7 +952,7 @@ class PydanticAIGrammarWindowExecutor:
 
 
 class GrammarWindowWorkerService:
-    """Z+ grammar window worker.
+    """grammar-window grammar window worker.
 
     Responsibilities:
       1. ``preflight_window_job`` — §8.2 pending → running transition.

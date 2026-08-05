@@ -163,8 +163,8 @@ def test_base_builder_materializes_policy_for_matched_annotation() -> None:
     assert unit.automatic_layer_policy["translation"] is True
 
 
-def test_compact_grouped_zplus_filter_semantics() -> None:
-    """Simulate compact / grouped / Z+ pre-planning filter on mixed units."""
+def test_compact_grouped_grammar_window_filter_semantics() -> None:
+    """Simulate compact / grouped / grammar-window pre-planning filter on mixed units."""
     units = [
         {
             "unit_id": "prose",

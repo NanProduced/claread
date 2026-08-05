@@ -1,4 +1,4 @@
-"""Real end-to-end integration test for Z+ Analysis Window.
+"""Real end-to-end integration test for grammar-window Analysis Window.
 
 Per review agent1: "建议先让实现 agent 修 P1，再重新跑一轮真实端到端：新建一个
 普通 reader record，不手动预置 plan，确认自动生成 windows、真实 LLM 输出
@@ -10,7 +10,7 @@ enhancement_layers.output_json。"
 
 Test flow:
   1. Submit article (NO plan pre-created!)
-  2. ``bootstrap_missing_jobs`` → creates Z+ plan + windows + jobs
+  2. ``bootstrap_missing_jobs`` → creates grammar-window plan + windows + jobs
   3. Run pipeline → executor produces candidates, selector publishes layers
   4. Verify ``output_json`` conforms to §8.3 contract (schema_version,
      grammar_point/note/spans for grammar_note; anchor/label/analysis/chunks
@@ -94,7 +94,7 @@ pytestmark = pytest.mark.anyio
 LEASE_DURATION = timedelta(seconds=30)
 
 # 3-4 paragraphs of ~200-400 chars each → 3-4 units, 1-2 windows.
-ZPLUS_E2E_ARTICLE_TEXT = (
+GRAMMAR_WINDOW_E2E_ARTICLE_TEXT = (
     "The committee, which had spent six months reviewing export data, "
     "labor surveys, and municipal tax receipts that rarely lined up neatly, "
     "claimed that the recovery was broad enough to justify ending the emergency "
@@ -383,8 +383,8 @@ class _ContractPublisher:
 
 
 @pytest.fixture
-async def zplus_e2e_env() -> AsyncIterator[asyncpg.Pool]:
-    schema_name = f"test_zplus_e2e_integration_{uuid4().hex}"
+async def grammar_window_e2e_env() -> AsyncIterator[asyncpg.Pool]:
+    schema_name = f"test_grammar_window_e2e_integration_{uuid4().hex}"
     admin = await connect_admin()
     original_pool = db_connection.DB_POOL
     await admin.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
@@ -412,13 +412,13 @@ async def zplus_e2e_env() -> AsyncIterator[asyncpg.Pool]:
 # ---------------------------------------------------------------------------
 
 
-def _make_zplus_runner(
+def _make_grammar_window_runner(
     pool: asyncpg.Pool,
     *,
     executor: _RealisticMockExecutor,
     use_contract_publisher: bool = True,
 ) -> ReaderEnhancementPipelineRunner:
-    """Build a pipeline runner wired for the Z+ path.
+    """Build a pipeline runner wired for the grammar-window path.
 
     ``use_contract_publisher=True`` (default) wires the
     ``_ContractPublisher`` wrapper so the publisher receives
@@ -477,14 +477,14 @@ def _make_zplus_runner(
 
 
 # ---------------------------------------------------------------------------
-# Test 1: real Z+ path with §8.3 contract (bridge demonstrated)
+# Test 1: real grammar-window path with §8.3 contract (bridge demonstrated)
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_end_to_end_no_precreated_plan(
-    zplus_e2e_env: asyncpg.Pool,
+async def test_grammar_window_end_to_end_no_precreated_plan(
+    grammar_window_e2e_env: asyncpg.Pool,
 ) -> None:
-    """Real Z+ path: bootstrap creates plan/windows/jobs, executor produces
+    """Real grammar-window path: bootstrap creates plan/windows/jobs, executor produces
     candidates, selector publishes valid layers with proper §8.3 contract.
 
     Per agent1 review: "从 bootstrap_missing_jobs 开始，不能预创建 plan"
@@ -501,21 +501,21 @@ async def test_zplus_end_to_end_no_precreated_plan(
       6. ``reader_events`` has ``layer_published`` events (progressive
          refresh)
     """
-    pool = zplus_e2e_env
+    pool = grammar_window_e2e_env
     user_id = await insert_user(pool)
 
     # 1. Submit article (NO plan pre-created!)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_E2E_ARTICLE_TEXT,
-        title="Z+ E2E Integration Test",
+        plain_text=GRAMMAR_WINDOW_E2E_ARTICLE_TEXT,
+        title="grammar-window E2E Integration Test",
     )
 
     executor = _RealisticMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
 
-    # 2. Bootstrap missing jobs (should create Z+ plan + windows + jobs)
+    # 2. Bootstrap missing jobs (should create grammar-window plan + windows + jobs)
     bootstrap_summary = await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
         user_id=user_id,
@@ -529,7 +529,7 @@ async def test_zplus_end_to_end_no_precreated_plan(
             article.record_id,
         )
         assert plan_count == 1, (
-            "Z+ plan should be auto-created by bootstrap (no pre-creation)"
+            "grammar-window plan should be auto-created by bootstrap (no pre-creation)"
         )
 
         # 4. Verify: analysis_windows rows created
@@ -557,16 +557,16 @@ async def test_zplus_end_to_end_no_precreated_plan(
         )
 
     # Sanity: bootstrap reported no grammar_bundle jobs (legacy path) because
-    # the Z+ path is enabled (job_counts.grammar_bundle == 0).
+    # the grammar-window path is enabled (job_counts.grammar_bundle == 0).
     assert bootstrap_summary.job_counts.grammar_bundle == 0, (
-        "legacy grammar_bundle jobs should not be created when Z+ is enabled"
+        "legacy grammar_bundle jobs should not be created when grammar-window is enabled"
     )
 
     # 6. Run the pipeline (process all window jobs)
     run_summary = await runner.run(
         record_id=article.record_id,
         user_id=user_id,
-        lease_owner="e2e-zplus-test",
+        lease_owner="e2e-grammar-window-test",
         lease_duration=LEASE_DURATION,
         max_ticks=30,
         max_jobs=20,
@@ -581,7 +581,7 @@ async def test_zplus_end_to_end_no_precreated_plan(
     assert run_summary.outcome_counts.failed_terminal == 0, (
         f"Pipeline had terminal failures: {run_summary.outcome_counts}"
     )
-    # Z+ window worker should have processed at least one job.
+    # grammar-window window worker should have processed at least one job.
     assert run_summary.worker_tick_counts.grammar_bundle_window >= 1, (
         "grammar_bundle_window worker should have ticked at least once"
     )
@@ -606,7 +606,7 @@ async def test_zplus_end_to_end_no_precreated_plan(
             article.record_id,
         )
         assert len(layers) > 0, (
-            "At least one Z+ enhancement_layer (grammar_note / "
+            "At least one grammar-window enhancement_layer (grammar_note / "
             "sentence_analysis) should be published"
         )
 
@@ -720,10 +720,10 @@ async def test_zplus_end_to_end_no_precreated_plan(
                 "(belongs in quality_json)"
             )
 
-        # 8. Verify: reader_events has layer_published events for the Z+
+        # 8. Verify: reader_events has layer_published events for the grammar-window
         #    layers (progressive refresh). layer_published is also emitted
         #    by translation / vocabulary / display_title publishers, so we
-        #    filter to only Z+ events (those carrying plan_id / window_id).
+        #    filter to only grammar-window events (those carrying plan_id / window_id).
         events = await conn.fetch(
             """
             SELECT event_type, payload_json
@@ -738,23 +738,23 @@ async def test_zplus_end_to_end_no_precreated_plan(
             "layer_published events should be emitted for progressive refresh"
         )
 
-        # Filter to Z+ layer_published events (those with plan_id in payload).
-        # Non-Z+ events (translation/vocabulary) don't carry plan_id/window_id.
-        zplus_events = []
+        # Filter to grammar-window layer_published events (those with plan_id in payload).
+        # Non-grammar-window events (translation/vocabulary) don't carry plan_id/window_id.
+        grammar_window_events = []
         for ev in events:
             payload = ev["payload_json"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
             if "plan_id" in payload and "window_id" in payload:
-                zplus_events.append((ev, payload))
+                grammar_window_events.append((ev, payload))
 
-        assert len(zplus_events) > 0, (
-            "At least one Z+ layer_published event (with plan_id / "
+        assert len(grammar_window_events) > 0, (
+            "At least one grammar-window layer_published event (with plan_id / "
             "window_id) should be emitted for progressive refresh"
         )
 
-        # Every Z+ layer_published event should carry the contract fields.
-        for ev, payload in zplus_events:
+        # Every grammar-window layer_published event should carry the contract fields.
+        for ev, payload in grammar_window_events:
             assert "layer_id" in payload, (
                 "layer_published event payload missing layer_id"
             )
@@ -777,8 +777,8 @@ async def test_zplus_end_to_end_no_precreated_plan(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_end_to_end_production_path_publishes_contract(
-    zplus_e2e_env: asyncpg.Pool,
+async def test_grammar_window_end_to_end_production_path_publishes_contract(
+    grammar_window_e2e_env: asyncpg.Pool,
 ) -> None:
     """Production path: pipeline_runner derives candidate_contents internally.
 
@@ -797,20 +797,20 @@ async def test_zplus_end_to_end_production_path_publishes_contract(
       - Provenance (``semantic_dedup_key`` / ``pattern_key`` /
         ``quality_score``) lives in ``quality_json``, not ``output_json``
     """
-    pool = zplus_e2e_env
+    pool = grammar_window_e2e_env
     user_id = await insert_user(pool)
 
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_E2E_ARTICLE_TEXT,
-        title="Z+ E2E Production Path",
+        plain_text=GRAMMAR_WINDOW_E2E_ARTICLE_TEXT,
+        title="grammar-window E2E Production Path",
     )
 
     executor = _RealisticMockExecutor(pool=pool)
     # use_contract_publisher=False → production publisher as-is, but
     # pipeline_runner._derive_candidate_contents bridges content_* fields.
-    runner = _make_zplus_runner(
+    runner = _make_grammar_window_runner(
         pool,
         executor=executor,
         use_contract_publisher=False,

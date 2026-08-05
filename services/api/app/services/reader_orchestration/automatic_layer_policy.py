@@ -8,7 +8,7 @@ This module is the **single source** for:
    ``allows=false`` for the translation layer only (see fence below);
    vocabulary / grammar never inherit that exemption.
 3. ``load_automatic_layer_targets`` / ``filter_units_for_automatic_layer`` —
-   the only bootstrap filter used by per-unit, compact, grouped, and Z+.
+   the only bootstrap filter used by per-unit, compact, grouped, and grammar-window.
 4. Unit ``metadata_json`` materialisation helpers and job version fence.
 5. Shadow would-skip structured logging (no new DB event types).
 
@@ -1142,7 +1142,7 @@ def filter_units_for_any_grammar(
     record_id: str | None = None,
     generation: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Mode-aware filter for grammar_bundle / Z+ (note OR sentence_analysis).
+    """Mode-aware filter for grammar_bundle / grammar-window (note OR sentence_analysis).
 
     Same off/shadow/enforce semantics as :func:`filter_units_for_automatic_layer`
     but a unit is kept when **either** grammar layer is allowed under enforce.

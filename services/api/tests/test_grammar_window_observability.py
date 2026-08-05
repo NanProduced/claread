@@ -1,7 +1,7 @@
-"""Z+ Analysis Window observability tests.
+"""grammar-window Analysis Window observability tests.
 
 Requirements covered:
-  - Requirement 6: Z+ success path records an ``ai_usage_events`` row with
+  - Requirement 6: grammar-window success path records an ``ai_usage_events`` row with
     ``capability_code='reader_grammar_bundle'`` /
     ``operation_fingerprint='grammar_bundle_window_v1'`` and metadata
     including ``plan_id`` / ``window_id`` / ``window_index`` /
@@ -91,11 +91,11 @@ _OBS_BASE_PARAGRAPH = (
 )
 
 # T4.2a-R1: the article must route to GROUPED_WINDOWED (>2000 words) so the
-# Z+ window path is exercised. Before T4.1c, all Z+ enabled articles went
+# grammar-window window path is exercised. Before T4.1c, all grammar-window enabled articles went
 # through the window path; after T4.1c, only GROUPED_WINDOWED articles do.
 # Repeating the base paragraph 26 times yields ~2230 words, safely above the
 # 2000-word STRUCTURED_ARTICLE_MAX_WORD_COUNT threshold.
-ZPLUS_OBSERVABILITY_ARTICLE = "\n\n".join([_OBS_BASE_PARAGRAPH] * 26)
+GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE = "\n\n".join([_OBS_BASE_PARAGRAPH] * 26)
 
 
 LEASE_DURATION = timedelta(seconds=30)
@@ -276,8 +276,8 @@ class _ContractPublisher:
 
 
 @pytest.fixture
-async def zplus_obs_env() -> AsyncIterator[asyncpg.Pool]:
-    schema_name = f"test_zplus_obs_{uuid4().hex}"
+async def grammar_window_obs_env() -> AsyncIterator[asyncpg.Pool]:
+    schema_name = f"test_grammar_window_obs_{uuid4().hex}"
     admin = await connect_admin()
     original_pool = db_connection.DB_POOL
     await admin.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
@@ -300,7 +300,7 @@ async def zplus_obs_env() -> AsyncIterator[asyncpg.Pool]:
             await cleanup.close()
 
 
-def _make_zplus_runner(
+def _make_grammar_window_runner(
     pool: asyncpg.Pool,
     *,
     executor: _ObservabilityMockExecutor,
@@ -325,7 +325,7 @@ def _make_zplus_runner(
         executor=_StaticGrammarExecutor(),
         # T4.2a-R1: inject a fake batch executor so the compact grammar
         # batch path (SHORT_BATCH / STRUCTURED_BATCH) never falls back to
-        # the real PydanticAIGrammarBatchExecutor when enable_zplus_grammar=True.
+        # the real PydanticAIGrammarBatchExecutor when enable_grammar_window=True.
         batch_executor=_StaticGrammarBatchExecutor(),
     )
     display_title_worker = DisplayTitleWorkerService(
@@ -362,23 +362,23 @@ def _make_zplus_runner(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
-    zplus_obs_env: asyncpg.Pool,
+async def test_grammar_window_success_writes_ai_usage_event_and_worker_tick_span(
+    grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
-    """Requirement 6: Z+ success path writes an ``ai_usage_events`` row and
+    """Requirement 6: grammar-window success path writes an ``ai_usage_events`` row and
     ends the ``worker_tick`` span with token / model / ai_usage_event_id fields.
     """
-    pool = zplus_obs_env
+    pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_OBSERVABILITY_ARTICLE,
-        title="Z+ Observability Success",
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Observability Success",
     )
 
     executor = _ObservabilityMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
 
     await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
@@ -388,7 +388,7 @@ async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
     run_summary = await runner.run(
         record_id=article.record_id,
         user_id=user_id,
-        lease_owner="zplus-obs-success",
+        lease_owner="grammar-window-obs-success",
         lease_duration=LEASE_DURATION,
         # T4.2a-R1: GROUPED_WINDOWED article (~2230 words) creates more
         # jobs/windows than the original short fixture. Raise limits so the
@@ -401,10 +401,10 @@ async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
         f"Pipeline had terminal failures: {run_summary.outcome_counts}"
     )
     assert run_summary.worker_tick_counts.grammar_bundle_window >= 1, (
-        "Z+ window worker must have ticked at least once"
+        "grammar-window window worker must have ticked at least once"
     )
 
-    # Verify ai_usage_events row exists for the Z+ window run.
+    # Verify ai_usage_events row exists for the grammar-window window run.
     # Note: ai_usage_events.id is the PK; ai_usage_event_id lives on
     # reader_runtime_spans (FK back-ref), not on ai_usage_events itself.
     async with pool.acquire() as conn:
@@ -425,10 +425,10 @@ async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
         )
 
     assert usage_row is not None, (
-        "ai_usage_events row must exist for Z+ window publish"
+        "ai_usage_events row must exist for grammar-window window publish"
     )
     assert usage_row["user_id"] == user_id, (
-        "Z+ window ai_usage_event must preserve the owning user_id; "
+        "grammar-window window ai_usage_event must preserve the owning user_id; "
         f"got {usage_row['user_id']!r}"
     )
     assert usage_row["capability_code"] == "reader_grammar_bundle", (
@@ -523,24 +523,24 @@ async def test_zplus_success_writes_ai_usage_event_and_worker_tick_span(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_publish_fence_span_success(
-    zplus_obs_env: asyncpg.Pool,
+async def test_grammar_window_publish_fence_span_success(
+    grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
     """Requirement 7: successful window publish writes a ``publish_fence``
     span with ``status='succeeded'`` and metadata containing ``layer_type``,
     ``plan_id``, ``window_id``, ``accepted_count``, ``no_op``, ``layer_ids``.
     """
-    pool = zplus_obs_env
+    pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_OBSERVABILITY_ARTICLE,
-        title="Z+ Publish Fence Success",
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Publish Fence Success",
     )
 
     executor = _ObservabilityMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
 
     await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
@@ -549,7 +549,7 @@ async def test_zplus_publish_fence_span_success(
     await runner.run(
         record_id=article.record_id,
         user_id=user_id,
-        lease_owner="zplus-fence-success",
+        lease_owner="grammar-window-fence-success",
         lease_duration=LEASE_DURATION,
         # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
         max_ticks=100,
@@ -572,7 +572,7 @@ async def test_zplus_publish_fence_span_success(
         )
 
     assert fence_span is not None, (
-        "publish_fence span must exist for Z+ window publish"
+        "publish_fence span must exist for grammar-window window publish"
     )
     assert fence_span["status"] == "succeeded", (
         f"publish_fence span status must be succeeded; "
@@ -594,24 +594,24 @@ async def test_zplus_publish_fence_span_success(
     )
 
 
-async def test_zplus_publish_fence_span_failure(
-    zplus_obs_env: asyncpg.Pool,
+async def test_grammar_window_publish_fence_span_failure(
+    grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
     """Requirement 7: failed window publish (FenceViolationError) writes a
     ``publish_fence`` span with ``status='failed'`` and
     ``failure_class='fence_violation'``.
     """
-    pool = zplus_obs_env
+    pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_OBSERVABILITY_ARTICLE,
-        title="Z+ Publish Fence Failure",
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Publish Fence Failure",
     )
 
     executor = _ObservabilityMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
 
     await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
@@ -630,7 +630,7 @@ async def test_zplus_publish_fence_span_failure(
     await runner.run(
         record_id=article.record_id,
         user_id=user_id,
-        lease_owner="zplus-fence-failure",
+        lease_owner="grammar-window-fence-failure",
         lease_duration=LEASE_DURATION,
         # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
         max_ticks=100,
@@ -671,8 +671,8 @@ async def test_zplus_publish_fence_span_failure(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_publish_fence_span_value_error_records_publish_exception(
-    zplus_obs_env: asyncpg.Pool,
+async def test_grammar_window_publish_fence_span_value_error_records_publish_exception(
+    grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
     """Requirement 7: publisher exception writes a ``publish_fence`` span
     with ``status='failed'`` and ``failure_class='publish_exception'``.
@@ -699,22 +699,22 @@ async def test_zplus_publish_fence_span_value_error_records_publish_exception(
     )
     from app.services.reader_orchestration.window_selector import CandidateItem
 
-    pool = zplus_obs_env
+    pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_OBSERVABILITY_ARTICLE,
-        title="Z+ Publish Fence Exception",
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Publish Fence Exception",
     )
 
-    # Bootstrap creates a real Z+ job so we have a valid job_id for span
+    # Bootstrap creates a real grammar-window job so we have a valid job_id for span
     # metadata. We then call the publisher with a FAKE plan_id to trigger
     # LookupError inside _publish_window_grammar_bundle_inner. The plan
     # check is the FIRST step in the inner method, so it fails before
     # checking job status (which would be "queued", not "claimed").
     executor = _ObservabilityMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
     await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
         user_id=user_id,
@@ -731,7 +731,7 @@ async def test_zplus_publish_fence_span_value_error_records_publish_exception(
             """,
             article.record_id,
         )
-    assert job_row is not None, "Z+ window job must exist after bootstrap"
+    assert job_row is not None, "grammar-window window job must exist after bootstrap"
     job_id = job_row["id"]
 
     real_publisher = GrammarWindowPublisher(
@@ -801,8 +801,8 @@ async def test_zplus_publish_fence_span_value_error_records_publish_exception(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
-    zplus_obs_env: asyncpg.Pool,
+async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
+    grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
     """Requirement 8: ``end_span`` auto-populates ``langsmith_run_id`` on the
     ``worker_tick`` span from the ``LangSmithIdBridgeProcessor`` ContextVar.
@@ -825,17 +825,17 @@ async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
         clear_langsmith_ids,
     )
 
-    pool = zplus_obs_env
+    pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=ZPLUS_OBSERVABILITY_ARTICLE,
-        title="Z+ LangSmith Bridge",
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window LangSmith Bridge",
     )
 
     executor = _ObservabilityMockExecutor(pool=pool)
-    runner = _make_zplus_runner(pool, executor=executor)
+    runner = _make_grammar_window_runner(pool, executor=executor)
 
     await runner.bootstrap_missing_jobs(
         record_id=article.record_id,
@@ -846,15 +846,15 @@ async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
     # after a PydanticAI LLM span ends. The worker_tick span's end_span
     # will read this ContextVar and backfill langsmith_run_id.
     mock_ids = LangSmithIds(
-        trace_id="langsmith-trace-zplus-bridge",
-        span_id="langsmith-span-zplus-bridge",
+        trace_id="langsmith-trace-grammar-window-bridge",
+        span_id="langsmith-span-grammar-window-bridge",
     )
     token = _CURRENT_LANGSMITH_IDS.set(mock_ids)
     try:
         run_summary = await runner.run(
             record_id=article.record_id,
             user_id=user_id,
-            lease_owner="zplus-langsmith-bridge",
+            lease_owner="grammar-window-langsmith-bridge",
             lease_duration=LEASE_DURATION,
             # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
             max_ticks=100,
@@ -868,7 +868,7 @@ async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
         f"Pipeline had terminal failures: {run_summary.outcome_counts}"
     )
     assert run_summary.worker_tick_counts.grammar_bundle_window >= 1, (
-        "Z+ window worker must have ticked at least once"
+        "grammar-window window worker must have ticked at least once"
     )
 
     # Verify the worker_tick span carries langsmith_run_id backfilled from
@@ -888,7 +888,7 @@ async def test_zplus_window_worker_end_span_backfills_langsmith_run_id(
         )
 
     assert span_row is not None, (
-        "succeeded worker_tick span must exist for Z+ window run"
+        "succeeded worker_tick span must exist for grammar-window window run"
     )
     assert span_row["langsmith_run_id"] == mock_ids.run_id, (
         f"worker_tick span langsmith_run_id must match ContextVar; "

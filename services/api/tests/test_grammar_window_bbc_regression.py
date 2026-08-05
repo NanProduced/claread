@@ -1,9 +1,9 @@
-"""Synthetic expanded long-form regression test for Z+ window architecture.
+"""Synthetic expanded long-form regression test for grammar-window window architecture.
 
 Originally a BBC 858-word regression test (Task C5b) that verified grammar
 LLM call reduction from 37 (per-unit) to 3-5 (per-window). After T4.1c,
 the original BBC article (858 words) routes to SHORT_BATCH and uses the
-grammar batch path, not the Z+ window path. To keep exercising the Z+
+grammar batch path, not the grammar-window window path. To keep exercising the grammar-window
 window path, the fixture now repeats the BBC article 3x (~2574 words) so
 the route is GROUPED_WINDOWED.
 
@@ -38,6 +38,7 @@ from app.database import connection as db_connection
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
 )
+from app.services.reader_orchestration.grammar_window_bootstrap import GrammarWindowBootstrapService
 from app.services.reader_orchestration.grammar_window_publisher import (
     GrammarWindowPublisher,
 )
@@ -53,7 +54,6 @@ from app.services.reader_orchestration.pipeline_runner import (
 from app.services.reader_orchestration.translation_worker import TranslationWorkerService
 from app.services.reader_orchestration.vocabulary_worker import VocabularyWorkerService
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
 from tests.fixtures.bbc_cd6684a0_expected_windows import (
     assert_expected_grammar_note_total,
     assert_expected_sentence_analysis_total,
@@ -214,7 +214,7 @@ class _StaticGrammarWindowExecutor:
 
 
 # ---------------------------------------------------------------------------
-# Fixture: BBC article + Z+ plan bootstrapped
+# Fixture: BBC article + grammar-window plan bootstrapped
 # ---------------------------------------------------------------------------
 
 
@@ -222,15 +222,15 @@ class _StaticGrammarWindowExecutor:
 async def bbc_regression_env() -> AsyncIterator[
     tuple[asyncpg.Pool, UUID, UUID, UUID]
 ]:
-    """Set up a DB with the BBC article and Z+ plan bootstrapped.
+    """Set up a DB with the BBC article and grammar-window plan bootstrapped.
 
-    Returns ``(pool, record_id, base_id, user_id)``. The Z+ plan, windows,
+    Returns ``(pool, record_id, base_id, user_id)``. The grammar-window plan, windows,
     and window reader_jobs are created by ``GrammarWindowBootstrapService``. When
     the pipeline runner calls ``bootstrap_missing_jobs``, it finds the
-    existing plan and routes grammar to the Z+ path (no legacy
+    existing plan and routes grammar to the grammar-window path (no legacy
     ``build_grammar_bundle`` jobs are created).
     """
-    schema_name = f"test_zplus_bbc_regression_{uuid4().hex}"
+    schema_name = f"test_grammar_window_bbc_regression_{uuid4().hex}"
     admin = await connect_admin()
     await admin.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
     await admin.execute(f'CREATE SCHEMA "{schema_name}"')
@@ -245,10 +245,10 @@ async def bbc_regression_env() -> AsyncIterator[
         user_id = await insert_user(pool)
         # T4.2a-R1: repeat the BBC article 3x to exceed 2000 words so the
         # grammar route is GROUPED_WINDOWED (not SHORT_BATCH). Before T4.1c,
-        # all Z+ enabled articles used the Z+ window path; after T4.1c, only
+        # all grammar-window enabled articles used the grammar-window window path; after T4.1c, only
         # GROUPED_WINDOWED articles do. The original BBC article (858 words)
         # would route to SHORT_BATCH and use the grammar batch path instead,
-        # defeating the test's purpose of verifying Z+ window call reduction.
+        # defeating the test's purpose of verifying grammar-window window call reduction.
         expanded_text = "\n\n".join([BBC_ARTICLE_TEXT] * 3)
         article = await submit_article_ready(
             pool,
@@ -260,7 +260,7 @@ async def bbc_regression_env() -> AsyncIterator[
         record_id = article.record_id
         base_id = article.base_id
 
-        # Bootstrap Z+ plan + windows + window reader_jobs.
+        # Bootstrap grammar-window plan + windows + window reader_jobs.
         bootstrap = GrammarWindowBootstrapService(pool=pool)
         await bootstrap.bootstrap_grammar_window_plan(
             record_id=record_id,
@@ -277,7 +277,7 @@ async def bbc_regression_env() -> AsyncIterator[
 
 
 # ---------------------------------------------------------------------------
-# Runner builder: static legacy executors + Z+ window worker/publisher
+# Runner builder: static legacy executors + grammar-window window worker/publisher
 # ---------------------------------------------------------------------------
 
 
@@ -286,15 +286,15 @@ def _make_runner(
     *,
     window_executor: _StaticGrammarWindowExecutor,
 ) -> ReaderEnhancementPipelineRunner:
-    """Build a pipeline runner with static legacy executors + Z+ window stack.
+    """Build a pipeline runner with static legacy executors + grammar-window window stack.
 
     Mirrors ``_make_runner`` in ``test_reader_orchestration_pipeline_runner.py``
     but adds ``grammar_window_worker_service`` and ``grammar_window_publisher``
-    so the Z+ path is exercised end-to-end.
+    so the grammar-window path is exercised end-to-end.
 
     T4.2a-R1: inject fake batch executors for translation / vocabulary /
     grammar batch paths so the runner never falls back to real LLM executors
-    when ``enable_zplus_grammar=True`` (default). The BBC article exceeds
+    when ``enable_grammar_window=True`` (default). The BBC article exceeds
     6000 chars, so the T3.1 grouped path creates ``translate_article`` and
     ``build_vocabulary_layer_article`` batch jobs; without fake batch
     executors the batch workers would call real LLM.
@@ -373,10 +373,10 @@ def _extract_dedup_keys(rows: list[asyncpg.Record]) -> list[str]:
 async def test_synthetic_expanded_long_form_grammar_window_regression(
     bbc_regression_env: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """Synthetic expanded long-form: Z+ window path grammar regression.
+    """Synthetic expanded long-form: grammar-window window path grammar regression.
 
     Uses BBC article text repeated 3x (~2574 words, ~111 units) to route to
-    GROUPED_WINDOWED. Verifies the Z+ window architecture produces correct
+    GROUPED_WINDOWED. Verifies the grammar-window window architecture produces correct
     grammar_note / sentence_analysis layers with no cross-window duplicates.
 
     This is NOT the original BBC 858-word 3-5 window regression. The original
@@ -398,7 +398,7 @@ async def test_synthetic_expanded_long_form_grammar_window_regression(
     summary = await runner.run(
         record_id=record_id,
         user_id=user_id,
-        lease_owner="bbc-regression-zplus",
+        lease_owner="bbc-regression-grammar-window",
         lease_duration=LEASE_DURATION,
         # T4.2a-R1: expanded article (3x) creates more units/windows/jobs.
         max_ticks=600,

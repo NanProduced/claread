@@ -29,7 +29,7 @@ from tests.reader_orchestration_test_support import (
 
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
-# based on Z+ plan existence in ``layer_analysis_plans`` (Task C3).
+# based on grammar-window plan existence in ``layer_analysis_plans`` (Task C3).
 
 # T1.1 short-article batch path: migration 0017 adds the new batch job types
 # and worker types to the CHECK constraints (see pipeline runner fixture).
@@ -210,7 +210,7 @@ async def test_prepare_record_keeps_other_record_jobs_queued(
     )
     await ReaderEnhancementPipelineRunner(
         pool=smoke_harness_env,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
     ).bootstrap_missing_jobs(
         record_id=older_record.record_id,
         user_id=user_id,
@@ -359,7 +359,7 @@ async def test_real_mode_forces_production_grammar_topology_in_metadata(
 def test_build_pipeline_runner_real_mode_uses_production_topology(
     smoke_harness_env: asyncpg.Pool,
 ) -> None:
-    """``_build_pipeline_runner(real)`` must use ``enable_zplus_grammar=True``.
+    """``_build_pipeline_runner(real)`` must use ``enable_grammar_window=True``.
 
     T4.2a-R1: Verifies that the real-mode runner is constructed with the
     production route-aware split, not the legacy per-unit-only path. This
@@ -370,7 +370,7 @@ def test_build_pipeline_runner_real_mode_uses_production_topology(
         executor_mode="real",
         grammar_topology="legacy",  # should be ignored in real mode
     )
-    assert runner._enable_zplus_grammar is True, (
-        "real-mode runner must have enable_zplus_grammar=True "
-        f"(got {runner._enable_zplus_grammar!r})"
+    assert runner._enable_grammar_window is True, (
+        "real-mode runner must have enable_grammar_window=True "
+        f"(got {runner._enable_grammar_window!r})"
     )

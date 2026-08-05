@@ -25,15 +25,15 @@ from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
 )
 from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
-from app.services.reader_orchestration.semantic_outline_worker import (
-    DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
-    SemanticOutlineJobProcessResult,
-    SemanticOutlineWorkerService,
-)
 from app.services.reader_orchestration.execution_budget import (
     BUDGET_CONSUMING_OUTCOMES,
     WORKER_TYPE_TO_BUDGET_LAYER,
     ExecutionBudget,
+)
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_JOB_TYPE,
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
+    GRAMMAR_WINDOW_TARGET_TYPE,
 )
 from app.services.reader_orchestration.grammar_window_publisher import (
     NO_OP_CAUSE_EXECUTION_FAILED,
@@ -93,6 +93,11 @@ from app.services.reader_orchestration.orchestrator import ReaderOrchestrator
 from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
 )
+from app.services.reader_orchestration.semantic_outline_worker import (
+    DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
+    SemanticOutlineJobProcessResult,
+    SemanticOutlineWorkerService,
+)
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
@@ -116,11 +121,6 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyJobProcessResult,
     VocabularyWorkerService,
 )
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_JOB_TYPE,
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
-    ZPLUS_TARGET_TYPE,
-)
 
 # T3.4a: truncate failure messages stored in diagnostics so output_ref_json
 # doesn't grow unbounded. Mirrors the publisher's _DIAGNOSTICS_REASON_MAX_LEN.
@@ -133,7 +133,7 @@ WorkerType = Literal[
     "vocabulary",
     "vocabulary_batch",  # T1.1 short-article batch
     "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
-    "grammar_bundle_window",  # Z+ window
+    "grammar_bundle_window",  # grammar-window window
     "semantic_outline",  # T5.3a: optional, low priority, non-budget
 ]
 PipelineAttemptOutcome = Literal[
@@ -154,18 +154,18 @@ PipelineStoppedReason = Literal[
 ]
 
 # T1 acceptance: the fake executor baseline showed reuters_bbc_970 needs
-# 60 ticks (6 workers × 10 rounds) in fake mode and ~70 in 7-worker Z+ mode.
+# 60 ticks (6 workers × 10 rounds) in fake mode and ~70 in 7-worker grammar-window mode.
 # 96 / 48 covers medium samples (≤12 units) in both 6- and 7-worker modes
 # with ~30% margin. Every worker attempt (including ``no_job``) consumes a
 # tick, so the budget must scale with ``workers × (units + 1)``.
 DEFAULT_PIPELINE_MAX_TICKS = 96
 DEFAULT_PIPELINE_MAX_JOBS = 48
 
-# Z+ window worker observability constants (requirement 6).
+# grammar-window window worker observability constants (requirement 6).
 # operation_fingerprint mirrors the reader_jobs.operation_fingerprint so
 # Console can group window worker spans with their parent job rows.
-ZPLUS_WINDOW_WORKFLOW_VERSION = GRAMMAR_WORKFLOW_VERSION
-ZPLUS_WINDOW_OPERATION_FINGERPRINT = ZPLUS_GRAMMAR_OPERATION_FINGERPRINT
+GRAMMAR_WINDOW_WORKFLOW_VERSION = GRAMMAR_WORKFLOW_VERSION
+GRAMMAR_WINDOW_OPERATION_FINGERPRINT = GRAMMAR_WINDOW_OPERATION_FINGERPRINT
 
 
 def _derive_candidate_contents(
@@ -369,7 +369,7 @@ class ReaderEnhancementPipelineRunner:
         grammar_window_worker_service: GrammarWindowWorkerService | None = None,
         grammar_window_publisher: GrammarWindowPublisher | None = None,
         job_runtime: ReaderJobRuntime | None = None,
-        enable_zplus_grammar: bool = True,
+        enable_grammar_window: bool = True,
         settings: Settings | None = None,
     ) -> None:
         self._pool = pool
@@ -429,15 +429,15 @@ class ReaderEnhancementPipelineRunner:
         self._grammar_worker_service = grammar_worker_service or GrammarBundleWorkerService(
             pool=pool
         )
-        # Z+ window worker + publisher。默认启用 Z+ 路径（design §9）：
-        # 当 enable_zplus_grammar=True 且调用方未显式注入时，自动构造
+        # grammar-window window worker + publisher。默认启用 grammar-window 路径（design §9）：
+        # 当 enable_grammar_window=True 且调用方未显式注入时，自动构造
         # GrammarWindowWorkerService + GrammarWindowPublisher +
-        # PydanticAIGrammarWindowExecutor，使生产路径默认走 Z+ window
-        # 调度。legacy 测试可传 enable_zplus_grammar=False 回退到 4-worker
+        # PydanticAIGrammarWindowExecutor，使生产路径默认走 grammar-window window
+        # 调度。legacy 测试可传 enable_grammar_window=False 回退到 4-worker
         # 模式（_grammar_window_worker / _grammar_window_publisher 保持
         # None，worker_order 不包含 grammar_bundle_window）。
-        self._enable_zplus_grammar = enable_zplus_grammar
-        if enable_zplus_grammar:
+        self._enable_grammar_window = enable_grammar_window
+        if enable_grammar_window:
             # 延迟导入避免循环依赖（grammar_window_worker → grammar_worker
             # → job_bootstrap 已在模块顶部导入，此处仅导入 executor）。
             from app.services.reader_orchestration.grammar_window_worker import (
@@ -474,12 +474,12 @@ class ReaderEnhancementPipelineRunner:
         record_id: UUID,
         user_id: UUID,
     ) -> EnhancementBootstrapSummary:
-        # enable_zplus_grammar=False 时强制走 legacy per-unit 路径，
+        # enable_grammar_window=False 时强制走 legacy per-unit 路径，
         # 保持 4-worker 模式下的 bootstrap 行为不变。
         return await self._bootstrap_service.bootstrap_missing_jobs(
             record_id=record_id,
             user_id=user_id,
-            force_legacy_grammar=not self._enable_zplus_grammar,
+            force_legacy_grammar=not self._enable_grammar_window,
         )
 
     async def run(
@@ -567,8 +567,8 @@ class ReaderEnhancementPipelineRunner:
         stopped_outcome: PipelineAttemptOutcome | None = None
         attention_code: str | None = None
 
-        # Z+ window worker is dispatched ahead of legacy grammar_bundle to
-        # avoid legacy / Z+ contention. When ``grammar_window_worker`` is not
+        # grammar-window window worker is dispatched ahead of legacy grammar_bundle to
+        # avoid legacy / grammar-window contention. When ``grammar_window_worker`` is not
         # registered (legacy deployments / existing tests), the pipeline keeps
         # the legacy 4-worker order so baseline tick / job counts are
         # preserved. T1.1 batch workers are dispatched ahead of their per-unit
@@ -581,7 +581,7 @@ class ReaderEnhancementPipelineRunner:
                 "translation",
                 "vocabulary_batch",  # T1.1 short-article batch
                 "vocabulary",
-                "grammar_bundle_window",  # Z+ 优先
+                "grammar_bundle_window",  # grammar-window 优先
                 "grammar_bundle",  # T4.1c: batch first, then legacy per-unit
                 "semantic_outline",  # T5.3a: lowest priority; non-budget
             )
@@ -1462,10 +1462,10 @@ class ReaderEnhancementPipelineRunner:
         lease_duration: timedelta,
         retry_delay: timedelta,
     ) -> ReaderPipelineWorkerAttempt:
-        """Dispatch a Z+ ``build_grammar_bundle_window`` reader_job.
+        """Dispatch a grammar-window ``build_grammar_bundle_window`` reader_job.
 
         Flow (§9 worker migration):
-          1. ``claim_next_job`` filtered to the Z+ job_type / target_type /
+          1. ``claim_next_job`` filtered to the grammar-window job_type / target_type /
              operation_fingerprint.
           2. Resolve ``plan_id`` / ``window_id`` from the job's input_json
              immediately after claim (requirement 3) so failure handlers can
@@ -1512,9 +1512,9 @@ class ReaderEnhancementPipelineRunner:
         claim = await self._job_runtime.claim_next_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
-            job_type=ZPLUS_GRAMMAR_JOB_TYPE,
-            target_type=ZPLUS_TARGET_TYPE,
-            operation_fingerprint=ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+            job_type=GRAMMAR_WINDOW_JOB_TYPE,
+            target_type=GRAMMAR_WINDOW_TARGET_TYPE,
+            operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
             reading_record_id=record_id,
             base_id=base_id,
             expected_generation=expected_generation,
@@ -1813,7 +1813,7 @@ class ReaderEnhancementPipelineRunner:
         # span with token / model fields. The event carries plan_id /
         # window_id / window_index / target_unit_ids / target_anchor_ids /
         # accepted_count / no_op / layer_ids in metadata so Console can
-        # correlate Z+ window runs with their LLM cost.
+        # correlate grammar-window window runs with their LLM cost.
         window_meta = await self._load_window_publish_metadata(
             claim.job_id, window_id
         )
@@ -1864,7 +1864,7 @@ class ReaderEnhancementPipelineRunner:
         usage_data: dict[str, Any] | None = None,
         end_span: Literal["execution_error", "generic_exception"] = "execution_error",
     ) -> ReaderPipelineWorkerAttempt:
-        """Transition a failed Z+ window job to retry_later / failed_terminal.
+        """Transition a failed grammar-window window job to retry_later / failed_terminal.
 
         Mirrors ``grammar_worker._process_grammar_job``'s exception handlers:
           - ``retryable=True``  → ``reader_jobs.retry_later`` +
@@ -2000,7 +2000,7 @@ class ReaderEnhancementPipelineRunner:
         self,
         job_id: UUID,
     ) -> tuple[UUID, UUID]:
-        """Extract (plan_id, window_id) from a Z+ window reader_job's input_json.
+        """Extract (plan_id, window_id) from a grammar-window window reader_job's input_json.
 
         The publisher needs both UUIDs to lock the plan + window rows. They are
         stored as strings in ``reader_jobs.input_json`` by
@@ -2025,7 +2025,7 @@ class ReaderEnhancementPipelineRunner:
         """Mark a reader_run as ``running`` (mirrors grammar_worker._mark_run_running).
 
         Keeps reader_runs.status consistent with the existing per-unit worker
-        so progress / observability queries see Z+ runs as in-flight.
+        so progress / observability queries see grammar-window runs as in-flight.
         """
         async with self.get_pool().acquire() as conn:
             await conn.execute(
@@ -2050,7 +2050,7 @@ class ReaderEnhancementPipelineRunner:
         failure_class: str,
         failure_code: str,
     ) -> None:
-        """Mark a Z+ reader_run as failed (mirrors grammar_worker failure path).
+        """Mark a grammar-window reader_run as failed (mirrors grammar_worker failure path).
 
         ``status`` should be ``failed_retryable`` or ``failed_terminal`` to
         match ``reader_runs.status`` CHECK constraint. ``finished_at`` is set
@@ -2085,7 +2085,7 @@ class ReaderEnhancementPipelineRunner:
         failure_code: str | None,
         finished_at: datetime | None,
     ) -> None:
-        """Mark a Z+ reader_run with an explicit status + finished_at.
+        """Mark a grammar-window reader_run with an explicit status + finished_at.
 
         Used by the FenceViolationError branch (requirement 1) to mark the
         run ``superseded`` with ``finished_at=NOW()`` — mirroring
@@ -2123,7 +2123,7 @@ class ReaderEnhancementPipelineRunner:
         failure_message: str,
         raw_candidates: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """T3.4a: Build failure diagnostics for a Z+ window job failure.
+        """T3.4a: Build failure diagnostics for a grammar-window window job failure.
 
         Loads window_meta (window_id / window_index / plan_id /
         target_unit_ids / target_anchor_count), strategy metadata
@@ -2145,7 +2145,7 @@ class ReaderEnhancementPipelineRunner:
         """
         if window_id is None:
             # Defensive: claim resolved no window_id (should not happen
-            # for Z+ jobs but keep diagnostics queryable regardless).
+            # for grammar-window jobs but keep diagnostics queryable regardless).
             return {
                 "window_meta": None,
                 "strategy": None,
@@ -2373,13 +2373,13 @@ class ReaderEnhancementPipelineRunner:
         window_meta: dict[str, Any],
         published: PublishedWindowResult,
     ) -> UUID | None:
-        """Record a succeeded ``ai_usage_event`` for a Z+ window publish.
+        """Record a succeeded ``ai_usage_event`` for a grammar-window window publish.
 
         Requirement 6: ``capability_code`` uses ``reader_grammar_bundle``,
         ``operation_fingerprint`` uses ``grammar_bundle_window_v1``, and
         ``metadata`` includes ``plan_id`` / ``window_id`` / ``window_index`` /
         ``target_unit_ids`` / ``target_anchor_ids`` / ``accepted_count`` /
-        ``no_op`` / ``layer_ids`` so Console can correlate Z+ window runs
+        ``no_op`` / ``layer_ids`` so Console can correlate grammar-window window runs
         with their LLM cost.
         """
         layer_ids = list(published.grammar_note_layer_ids) + list(
@@ -2396,7 +2396,7 @@ class ReaderEnhancementPipelineRunner:
                 reader_run_id=claim.run_id,
                 reader_job_id=claim.job_id,
                 workflow_name="reader_orchestration",
-                workflow_version=ZPLUS_WINDOW_WORKFLOW_VERSION,
+                workflow_version=GRAMMAR_WINDOW_WORKFLOW_VERSION,
                 prompt_version=result.get("prompt_version"),
                 model_route=result.get("model_route"),
                 model_profile_id=result.get("model_profile"),
@@ -2405,7 +2405,7 @@ class ReaderEnhancementPipelineRunner:
                 model_name=result.get("model_name"),
                 planner_kind="llm_worker",
                 usage_data=result.get("usage_data"),
-                operation_fingerprint=ZPLUS_WINDOW_OPERATION_FINGERPRINT,
+                operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
                 metadata_json={
                     "plan_id": str(plan_id),
                     "window_id": str(window_id),
@@ -2438,7 +2438,7 @@ class ReaderEnhancementPipelineRunner:
         model_name: str | None = None,
         usage_data: dict[str, Any] | None = None,
     ) -> UUID | None:
-        """Record a failed ``ai_usage_event`` for a Z+ window LLM call.
+        """Record a failed ``ai_usage_event`` for a grammar-window window LLM call.
 
         Mirrors ``grammar_worker._record_failed_usage_event``: captures the
         LLM cost even when the window publish failed, so Console's
@@ -2455,7 +2455,7 @@ class ReaderEnhancementPipelineRunner:
                 reader_run_id=claim.run_id,
                 reader_job_id=claim.job_id,
                 workflow_name="reader_orchestration",
-                workflow_version=ZPLUS_WINDOW_WORKFLOW_VERSION,
+                workflow_version=GRAMMAR_WINDOW_WORKFLOW_VERSION,
                 prompt_version=prompt_version,
                 model_route=model_route,
                 model_profile_id=model_profile,
@@ -2464,7 +2464,7 @@ class ReaderEnhancementPipelineRunner:
                 model_name=model_name,
                 planner_kind="llm_worker",
                 usage_data=usage_data,
-                operation_fingerprint=ZPLUS_WINDOW_OPERATION_FINGERPRINT,
+                operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
                 error_code=failure_code,
                 error_message=message,
             )

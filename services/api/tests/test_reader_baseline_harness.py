@@ -415,7 +415,7 @@ def test_schema_setup_dependencies_have_a_baseline_sql() -> None:
     declared = set(schema_setup.REQUIRED_MIGRATION_NAMES)
     # The list must include the baseline + every reader orchestration
     # migration the smoke harness loads up to 0014 inclusive, plus
-    # 0015 (Z+ plans) and 0016 (Z+ window spans).
+    # 0015 (grammar-window plans) and 0016 (grammar-window window spans).
     assert "0001_initial_schema.sql" in declared
     assert "0014_reader_runtime_spans.sql" in declared
     assert "0015_layer_analysis_plans.sql" in declared

@@ -85,8 +85,8 @@ from app.services.reader_orchestration.vocabulary_worker import (
     VocabularyExecutionResult,
     VocabularyWorkerService,
 )
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
     GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
@@ -350,7 +350,7 @@ def test_trusted_section_identity_requires_fingerprint_and_identity() -> None:
     )
 
 
-def test_zplus_filter_any_grammar_respects_mode() -> None:
+def test_grammar_window_filter_any_grammar_respects_mode() -> None:
     units = [
         {
             "unit_id": "code",
@@ -1578,11 +1578,11 @@ async def test_shadow_bootstrap_would_skip_observation(
 async def test_grammar_window_enforce_disallowed_zero_executor(
     fence_env: asyncpg.Pool,
 ) -> None:
-    """Z+ window worker: real GrammarWindowWorkerService, fence supersede, 0 executor."""
+    """grammar-window window worker: real GrammarWindowWorkerService, fence supersede, 0 executor."""
     from app.services.reader_orchestration.grammar_window_worker import (
         GrammarWindowWorkerService,
     )
-    from app.services.reader_orchestration.zplus_bootstrap import (
+    from app.services.reader_orchestration.grammar_window_bootstrap import (
         GrammarWindowBootstrapService,
     )
 
@@ -1610,8 +1610,8 @@ async def test_grammar_window_enforce_disallowed_zero_executor(
             policy=AutomaticLayerPolicy.all_on().as_dict(),
         )
 
-    zplus = GrammarWindowBootstrapService(pool=pool)
-    result = await zplus.bootstrap_grammar_window_plan(
+    grammar_window = GrammarWindowBootstrapService(pool=pool)
+    result = await grammar_window.bootstrap_grammar_window_plan(
         record_id=article.record_id, base_id=article.base_id
     )
     assert result.job_ids
@@ -1643,7 +1643,7 @@ async def test_grammar_window_enforce_disallowed_zero_executor(
         lease_owner="fence-r2-window",
         lease_duration=timedelta(seconds=30),
         job_type="build_grammar_bundle_window",
-        operation_fingerprint=ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+        operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
     )
     assert claim is not None
     assert claim.job_id == job_id
@@ -1896,11 +1896,11 @@ def test_bootstrap_shared_filter_seam_used_by_batch_grouped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Z+ three-mode real bootstrap
+# grammar-window three-mode real bootstrap
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_bootstrap_three_modes_persist_mode(
+async def test_grammar_window_bootstrap_three_modes_persist_mode(
     fence_env: asyncpg.Pool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1934,7 +1934,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
             pool, record_id=article.record_id, unit_id=uid, policy=policy
         )
 
-    zplus = GrammarWindowBootstrapService(pool=pool)
+    grammar_window = GrammarWindowBootstrapService(pool=pool)
     disallowed = unit_ids[0]
 
     async def _read_jobs() -> list[dict[str, Any]]:
@@ -1984,7 +1984,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
 
     # off
     with _policy_mode("off"):
-        off_res = await zplus.bootstrap_grammar_window_plan(
+        off_res = await grammar_window.bootstrap_grammar_window_plan(
             record_id=article.record_id, base_id=article.base_id
         )
     assert off_res.job_ids
@@ -2000,7 +2000,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
             logging.INFO,
             logger="app.services.reader_orchestration.automatic_layer_policy",
         ):
-            shadow_res = await zplus.bootstrap_grammar_window_plan(
+            shadow_res = await grammar_window.bootstrap_grammar_window_plan(
                 record_id=article.record_id, base_id=article.base_id
             )
     assert shadow_res.job_ids
@@ -2017,7 +2017,7 @@ async def test_zplus_bootstrap_three_modes_persist_mode(
 
     # enforce: disallowed unit excluded
     with _policy_mode("enforce"):
-        enforce_res = await zplus.bootstrap_grammar_window_plan(
+        enforce_res = await grammar_window.bootstrap_grammar_window_plan(
             record_id=article.record_id, base_id=article.base_id
         )
     enforce_jobs = await _read_jobs()
@@ -2186,8 +2186,8 @@ async def test_section_claim_cannot_bypass_grammar_window_worker(
             policy=AutomaticLayerPolicy.all_on().as_dict(),
         )
     with _policy_mode("enforce"):
-        zplus = GrammarWindowBootstrapService(pool=pool)
-        result = await zplus.bootstrap_grammar_window_plan(
+        grammar_window = GrammarWindowBootstrapService(pool=pool)
+        result = await grammar_window.bootstrap_grammar_window_plan(
             record_id=article.record_id, base_id=article.base_id
         )
     assert result.job_ids

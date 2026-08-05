@@ -1,4 +1,4 @@
-"""Expected Z+ window formation for BBC article cd6684a0.
+"""Expected grammar-window window formation for BBC article cd6684a0.
 
 T4.2a-R1: the BBC article is repeated 3x to exceed 2000 words so the grammar
 route is GROUPED_WINDOWED (not SHORT_BATCH). The expanded article has

@@ -15,7 +15,7 @@ alone cannot disambiguate:
 2. **Idle but not finished** — the pipeline returned ``all_workers_no_job``
    because every job in the queue is currently ``claimed`` by another
    worker, or because some analysis window is still in ``pending`` /
-   ``running`` (e.g. the Z+ grammar bundle window worker has not been
+   ``running`` (e.g. the grammar-window grammar bundle window worker has not been
    registered in this deployment). The record must NOT be finalized.
 
 The finalizer is a pure decision + single-row write helper. It is invoked

@@ -1,6 +1,6 @@
 """AnalysisAnchorView: window planner 输入的派生视图。
 
-设计来源：docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md §3.1
+设计来源：docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md §3.1
 
 通过 join 三张现有表构造：
   - ``anchor_segments`` (anchor_segment_id TEXT, base_*_utf16, unit_id)

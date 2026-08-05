@@ -67,9 +67,9 @@ DEFAULT_GRAMMAR_MAX_ATTEMPTS = 3
 
 # T4.1c compact grammar batch path: SHORT_BATCH and STRUCTURED_BATCH
 # articles use a single whole-article grammar batch job instead of the
-# heavy Z+ analysis-window path. One LLM call covers all unpublished
+# heavy grammar-window analysis-window path. One LLM call covers all unpublished
 # units; the publisher splits the output back into per-unit grammar_note
-# / sentence_analysis layers. GROUPED_WINDOWED keeps the Z+ path.
+# / sentence_analysis layers. GROUPED_WINDOWED keeps the grammar-window path.
 #
 # Route-specific fingerprints (T4.1b pattern): STRUCTURED_BATCH gets a
 # distinct fingerprint base + policy_version so a route change (short ->
@@ -1722,18 +1722,18 @@ class EnhancementJobBootstrapService:
                     trace_id=trace_id,
                 )
 
-        # Z+ path: dispatch to GrammarWindowBootstrapService AFTER the outer
+        # grammar-window path: dispatch to GrammarWindowBootstrapService AFTER the outer
         # transaction commits. GrammarWindowBootstrapService.bootstrap_grammar_window_plan
         # opens its own transaction and acquires its own FOR UPDATE lock on
         # reading_records, so calling it inside the outer transaction would
         # deadlock against the lock we already hold. Idempotent: if the plan
         # already exists with its windows/jobs, it is reused as-is.
-        # Design: analysis-window-zplus-design.md §9 worker migration.
+        # Design: enhancement-layers-and-parsed.md worker migration.
         # Pass the same trace_id used by display/translation/vocab runs so
         # window reader_runs.envelope_json carries the shared trace root
         # (requirement 5: same-record runs share one trace_id).
         if use_grammar_window_path:
-            from .zplus_bootstrap import GrammarWindowBootstrapService
+            from .grammar_window_bootstrap import GrammarWindowBootstrapService
 
             grammar_window_service = GrammarWindowBootstrapService(pool=self._pool)
             await grammar_window_service.bootstrap_grammar_window_plan(
@@ -2150,7 +2150,7 @@ class EnhancementJobBootstrapService:
 
         - ``force_legacy_grammar=True`` → legacy per-unit
           ``_bootstrap_grammar_jobs`` (fallback, returns ``([], False)``).
-        - ``GROUPED_WINDOWED`` → Z+ analysis-window path (returns
+        - ``GROUPED_WINDOWED`` → grammar-window analysis-window path (returns
           ``([], True)``; caller dispatches to
           ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan`` after
           the outer transaction commits). Long-article grammar contract
@@ -2171,11 +2171,11 @@ class EnhancementJobBootstrapService:
                 trace_id=trace_id,
             )
             return results, False
-        # T4.1c: route-aware split. GROUPED_WINDOWED keeps the Z+ path;
+        # T4.1c: route-aware split. GROUPED_WINDOWED keeps the grammar-window path;
         # SHORT_BATCH / STRUCTURED_BATCH use the compact batch path.
         route = await _load_article_route(conn, state=state)
         if route is ArticleRoute.GROUPED_WINDOWED:
-            # Z+ path. GrammarWindowBootstrapService 在外层事务提交后被调用，
+            # grammar-window path. GrammarWindowBootstrapService 在外层事务提交后被调用，
             # 其内部幂等：plan 已存在时直接复用。
             return [], True
         # Compact grammar batch path for SHORT_BATCH / STRUCTURED_BATCH.
@@ -2213,7 +2213,7 @@ class EnhancementJobBootstrapService:
         profile read it from the run envelope).
 
         No ``analysis_windows`` / ``layer_analysis_plans`` are created —
-        this is the key cost/latency win over the Z+ path for short and
+        this is the key cost/latency win over the grammar-window path for short and
         medium articles.
         """
         if trace_id is None:

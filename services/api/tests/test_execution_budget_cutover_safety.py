@@ -97,7 +97,7 @@ from tests.test_reader_orchestration_pipeline_runner import (
     _StaticTranslator,
     _StaticVocabularyExecutor,
 )
-from tests.test_zplus_bbc_regression import _StaticGrammarWindowExecutor
+from tests.test_grammar_window_bbc_regression import _StaticGrammarWindowExecutor
 
 pytestmark = pytest.mark.anyio
 
@@ -298,7 +298,7 @@ def _make_runner(
     batch_vocabulary_executor: object | None = None,
     grammar_batch_executor: object | None = None,
     display_title_generator: object | None = None,
-    enable_zplus_grammar: bool = True,
+    enable_grammar_window: bool = True,
 ) -> ReaderEnhancementPipelineRunner:
     translation_worker = TranslationWorkerService(
         pool=pool,
@@ -340,7 +340,7 @@ def _make_runner(
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
         grammar_window_publisher=window_publisher,
-        enable_zplus_grammar=enable_zplus_grammar,
+        enable_grammar_window=enable_grammar_window,
     )
 
 

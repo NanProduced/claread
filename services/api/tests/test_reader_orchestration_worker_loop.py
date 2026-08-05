@@ -529,7 +529,7 @@ def _make_runner(
         translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
         # _env_file=None: offline tests must not pick up real LLM /
         # embedding / vector credentials from the local .env file.
         # This keeps semantic_outline_generation_enabled=False (default)
@@ -925,7 +925,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
     )
     await ReaderEnhancementPipelineRunner(
         pool=worker_loop_env,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
         # _env_file=None: prevent .env leakage into the offline test
         # (see _make_runner for the full rationale).
         settings=Settings(_env_file=None),
@@ -1044,7 +1044,7 @@ async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload
 # completed_with_failures.
 #
 # When all enhancement jobs are terminal but analysis windows remain
-# pending/running (e.g. the Z+ grammar window worker is not registered in
+# pending/running (e.g. the grammar-window grammar window worker is not registered in
 # this deployment, or a window lease is stuck), the candidate scan would
 # never re-pick the record (it only re-picks records with runnable jobs).
 # The finalizer force-fails the stuck windows and finalizes as
@@ -1154,7 +1154,7 @@ async def test_worker_loop_force_fails_stuck_windows_and_finalizes_with_failures
 ) -> None:
     """Worker-loop closed-loop: pipeline drains the last enhancement jobs to
     success while analysis windows remain stuck ``pending`` / ``running``
-    (e.g. the Z+ grammar window worker is not registered in this
+    (e.g. the grammar-window grammar window worker is not registered in this
     deployment, or a window lease is stuck) -> finalizer force-fails the
     windows -> record transitions to ``coverage_complete`` with
     ``completed_with_failures``.
@@ -1179,7 +1179,7 @@ async def test_worker_loop_force_fails_stuck_windows_and_finalizes_with_failures
     )
     # Insert a grammar analysis plan with two stuck windows: one pending
     # (worker not registered) and one running (stuck lease). The
-    # enable_zplus_grammar=False runner never touches these windows; the
+    # enable_grammar_window=False runner never touches these windows; the
     # per-unit ``build_grammar_bundle`` worker is separate from the
     # analysis-window path.
     plan_id = await _insert_grammar_analysis_plan(

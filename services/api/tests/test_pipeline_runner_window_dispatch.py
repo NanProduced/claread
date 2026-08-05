@@ -1,7 +1,7 @@
-"""Tests for ReaderEnhancementPipelineRunner Z+ window dispatch (Task C4).
+"""Tests for ReaderEnhancementPipelineRunner grammar-window window dispatch (Task C4).
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §9 (worker migration): ``grammar_bundle_window`` WorkerType registered in
   ``pipeline_runner._dispatch_worker_attempt`` ahead of legacy
   ``grammar_bundle``.
@@ -36,7 +36,7 @@ from app.services.reader_orchestration.job_bootstrap import (
 from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
 )
-from app.services.reader_orchestration.zplus_bootstrap import (
+from app.services.reader_orchestration.grammar_window_bootstrap import (
     GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
@@ -50,7 +50,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 
-ZPLUS_ARTICLE_TEXT = (
+GRAMMAR_WINDOW_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
     "Everyone understood the tradeoff.\n\n"
     "The committee, which had spent six months reviewing export data, "
@@ -67,7 +67,7 @@ LEASE_DURATION = timedelta(seconds=30)
 
 
 # ---------------------------------------------------------------------------
-# Fixture: schema + record + base + Z+ window jobs (no legacy grammar jobs)
+# Fixture: schema + record + base + grammar-window window jobs (no legacy grammar jobs)
 # ---------------------------------------------------------------------------
 
 
@@ -75,7 +75,7 @@ LEASE_DURATION = timedelta(seconds=30)
 async def test_db_pool_with_window_job_only() -> AsyncIterator[
     tuple[asyncpg.Pool, UUID, UUID, UUID]
 ]:
-    """Submit article + run Z+ bootstrap (creates window jobs only).
+    """Submit article + run grammar-window bootstrap (creates window jobs only).
 
     Returns ``(pool, record_id, user_id, base_id)``. Legacy grammar_bundle
     jobs are NOT created — the mock bootstrap in each test returns a 0-count
@@ -95,13 +95,13 @@ async def test_db_pool_with_window_job_only() -> AsyncIterator[
             article = await submit_article_ready(
                 pool,
                 user_id=user_id,
-                plain_text=ZPLUS_ARTICLE_TEXT,
+                plain_text=GRAMMAR_WINDOW_ARTICLE_TEXT,
                 title="Pipeline Window Dispatch Slice",
                 language="en",
             )
-            # Bootstrap Z+ plan + windows + window reader_jobs.
-            zplus = GrammarWindowBootstrapService(pool=pool)
-            await zplus.bootstrap_grammar_window_plan(
+            # Bootstrap grammar-window plan + windows + window reader_jobs.
+            grammar_window = GrammarWindowBootstrapService(pool=pool)
+            await grammar_window.bootstrap_grammar_window_plan(
                 record_id=article.record_id,
                 base_id=article.base_id,
             )
@@ -148,7 +148,7 @@ def _make_runner(
 
     ``_grammar_window_worker`` / ``_grammar_window_publisher`` are NOT set
     here — each test overrides them with mocks after construction.
-    ``enable_zplus_grammar=False`` 保证构造时不创建 real Z+ worker /
+    ``enable_grammar_window=False`` 保证构造时不创建 real grammar-window worker /
     publisher（避免触达 real LLM）；测试通过 override ``_grammar_window_worker``
     / ``_grammar_window_publisher`` 属性来注入 mock，``run()`` 在运行时
     根据 ``self._grammar_window_worker is not None`` 决定 worker_order。
@@ -156,7 +156,7 @@ def _make_runner(
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         bootstrap_service=_make_mock_bootstrap(record_id, base_id),
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
     )
 
 
@@ -339,7 +339,7 @@ async def test_pipeline_runner_without_window_worker_excludes_window_dispatch(
     """When ``_grammar_window_worker`` is None, ``worker_order`` keeps the
     legacy 4-worker tuple so existing deployments / tests are unaffected.
 
-    This preserves backward compatibility: the Z+ path only activates when
+    This preserves backward compatibility: the grammar-window path only activates when
     the caller explicitly opts in by registering the window worker.
     """
     pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
@@ -358,7 +358,7 @@ async def test_pipeline_runner_without_window_worker_excludes_window_dispatch(
     # grammar_bundle_window tick count stays at 0 (worker_order excluded it).
     assert summary.worker_tick_counts.grammar_bundle_window == 0
     # Pipeline ran without dispatching the window worker, even though window
-    # jobs exist in the DB — the Z+ path is opt-in only.
+    # jobs exist in the DB — the grammar-window path is opt-in only.
 
 
 # ---------------------------------------------------------------------------

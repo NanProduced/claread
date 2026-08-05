@@ -80,7 +80,7 @@ from tests.reader_orchestration_test_support import (
 
 # Migration 0015 adds ``layer_analysis_plans`` + ``analysis_windows`` tables.
 # Required because ``bootstrap_missing_jobs`` now routes grammar bootstrap
-# based on Z+ plan existence in ``layer_analysis_plans`` (Task C3), and the
+# based on grammar-window plan existence in ``layer_analysis_plans`` (Task C3), and the
 # pipeline runner's worker_order dispatch depends on whether a window worker
 # is registered (Task C4).
 
@@ -616,7 +616,7 @@ def _make_runner(
     batch_translator: object | None = None,
     batch_vocabulary_executor: object | None = None,
     grammar_batch_executor: object | None = None,
-    enable_zplus_grammar: bool = False,
+    enable_grammar_window: bool = False,
 ) -> ReaderEnhancementPipelineRunner:
     # T1.1 short-article batch path: 短文现在走 batch worker 而非 per-unit。
     # 即使测试传入 per-unit translator / vocabulary_executor，我们也必须
@@ -660,11 +660,11 @@ def _make_runner(
         pool=pool,
         generator=title_generator or _StaticTitleGenerator(),
     )
-    # enable_zplus_grammar 默认 False: legacy 4-worker 路径测试期望
+    # enable_grammar_window 默认 False: legacy 4-worker 路径测试期望
     # bootstrap 创建 per-unit grammar_bundle jobs 并由 4-worker 顺序处理。
-    # Z+ window 路由由 test_pipeline_runner_window_dispatch.py 和
+    # grammar-window window 路由由 test_pipeline_runner_window_dispatch.py 和
     # test_grammar_window_worker.py 单独覆盖。T4.1c 测试传
-    # enable_zplus_grammar=True 激活 route-aware grammar split。
+    # enable_grammar_window=True 激活 route-aware grammar split。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
         display_title_worker_service=display_title_worker,
@@ -672,7 +672,7 @@ def _make_runner(
         translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
-        enable_zplus_grammar=enable_zplus_grammar,
+        enable_grammar_window=enable_grammar_window,
     )
 
 
@@ -2022,7 +2022,7 @@ async def test_short_article_uses_compact_grammar_batch_path(
         translator=_StaticTranslator(),
         vocabulary_executor=_StaticVocabularyExecutor(),
         grammar_batch_executor=_StaticGrammarBatchExecutor(),
-        enable_zplus_grammar=True,
+        enable_grammar_window=True,
     )
 
     summary = await runner.run(
@@ -2042,7 +2042,7 @@ async def test_short_article_uses_compact_grammar_batch_path(
     assert summary.outcome_counts.failed_terminal == 0
     assert summary.outcome_counts.superseded == 0
 
-    # No analysis_windows created (compact path, not Z+)
+    # No analysis_windows created (compact path, not grammar-window)
     assert await _count_analysis_windows_for_record(
         pipeline_runner_env, article.record_id
     ) == 0
@@ -2082,7 +2082,7 @@ async def test_compact_grammar_batch_no_per_unit_fan_out_regression(
         translator=_StaticTranslator(),
         vocabulary_executor=_StaticVocabularyExecutor(),
         grammar_batch_executor=_StaticGrammarBatchExecutor(),
-        enable_zplus_grammar=True,
+        enable_grammar_window=True,
     )
 
     summary = await runner.run(
@@ -2155,7 +2155,7 @@ async def test_count_grammar_batch_superseded_jobs_covers_short_and_structured_b
 
     runner = ReaderEnhancementPipelineRunner(
         pool=pipeline_runner_env,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
     )
 
     short_count = await runner._count_superseded_jobs(
@@ -2204,7 +2204,7 @@ async def test_compact_grammar_batch_worker_loop_completes_cleanly(
         translator=_StaticTranslator(),
         vocabulary_executor=_StaticVocabularyExecutor(),
         grammar_batch_executor=_StaticGrammarBatchExecutor(),
-        enable_zplus_grammar=True,
+        enable_grammar_window=True,
     )
 
     summary = await runner.run(

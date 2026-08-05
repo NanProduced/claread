@@ -1846,7 +1846,7 @@ async def _run_window_attempt(
     """Drive ``_run_grammar_window_attempt`` with mocked claim/process/publish."""
     runner = ReaderEnhancementPipelineRunner(
         pool=MagicMock(),
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
         grammar_window_worker_service=MagicMock(),
         grammar_window_publisher=MagicMock(),
         job_runtime=MagicMock(),

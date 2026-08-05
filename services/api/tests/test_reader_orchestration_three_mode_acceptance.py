@@ -93,7 +93,7 @@ from tests.test_reader_orchestration_pipeline_runner import (
     _StaticTranslator,
     _StaticVocabularyExecutor,
 )
-from tests.test_zplus_bbc_regression import _StaticGrammarWindowExecutor
+from tests.test_grammar_window_bbc_regression import _StaticGrammarWindowExecutor
 
 pytestmark = pytest.mark.anyio
 
@@ -285,7 +285,7 @@ def _make_production_runner(pool: asyncpg.Pool) -> ReaderEnhancementPipelineRunn
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
         grammar_window_publisher=window_publisher,
-        enable_zplus_grammar=True,
+        enable_grammar_window=True,
     )
 
 
@@ -699,7 +699,7 @@ async def test_grouped_windowed_acceptance_through_worker_loop(
         f"expected at least one build_vocabulary_layer_article job, got {job_types}"
     )
 
-    # Grammar goes through Z+ window jobs, NOT batch grammar_bundle.
+    # Grammar goes through grammar-window window jobs, NOT batch grammar_bundle.
     grammar_window_jobs = [
         j for j in jobs if j["job_type"] == "build_grammar_bundle_window"
     ]

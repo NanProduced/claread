@@ -1,7 +1,7 @@
 """Integration tests for PydanticAIGrammarWindowExecutor (window-scoped single call).
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §8.3 LLM call (window-scoped single-call design)
 
 Verifies:

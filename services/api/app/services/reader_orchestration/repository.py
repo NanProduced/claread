@@ -603,7 +603,7 @@ class ReaderOrchestrationRepository:
         analysis-window status key (pending, running, completed, no_op,
         failed) initialized to 0. Records without a plan return all-zero
         counts; the finalizer treats "no windows" as terminal (clean
-        completion path for non-Z+ records).
+        completion path for non-grammar-window records).
         """
         rows = await conn.fetch(
             """
@@ -710,7 +710,7 @@ class ReaderOrchestrationRepository:
         record's active base / generation.
 
         Used by the T3.5 finalizer when all enhancement jobs are terminal
-        but analysis windows remain non-terminal (e.g. the Z+ grammar
+        but analysis windows remain non-terminal (e.g. the grammar-window grammar
         window worker is not registered in this deployment, or a window
         lease is stuck in ``running``). The candidate scan only re-picks
         records with runnable jobs, so leaving such windows pending would

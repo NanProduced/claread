@@ -1306,12 +1306,12 @@ async def test_parsed_decisions_unique_constraint(reader_schema: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Migration 0016: reader_runtime_spans.worker_type CHECK includes
-# 'grammar_bundle_window' (Z+ Analysis Window observability).
+# 'grammar_bundle_window' (grammar-window Analysis Window observability).
 # ---------------------------------------------------------------------------
 
 
 async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
-    """0016 extends ``reader_runtime_spans.worker_type`` CHECK so the Z+
+    """0016 extends ``reader_runtime_spans.worker_type`` CHECK so the grammar-window
     window worker can write ``worker_tick`` spans.
 
     Verifies:

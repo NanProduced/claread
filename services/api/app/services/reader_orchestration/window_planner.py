@@ -1,6 +1,6 @@
-"""Window planner: Z+ analysis window 切分算法。
+"""Window planner: grammar-window analysis window 切分算法。
 
-设计来源：docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+设计来源：docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   - §5.1 边界类型
   - §5.2 切分算法（unit 不可拆）
   - §5.3 target/context 分离

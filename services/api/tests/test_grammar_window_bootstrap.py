@@ -1,7 +1,7 @@
 """Tests for GrammarWindowBootstrapService: bootstrap plan + windows + reader_jobs.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §3.2 (Window Job contract) + §4.1 (layer_analysis_plans) + §7.3 (budget caps)
 """
 
@@ -15,9 +15,9 @@ import asyncpg
 import pytest
 
 from app.database import connection as db_connection
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_JOB_TYPE,
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_JOB_TYPE,
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
     GrammarWindowBootstrapResult,
     GrammarWindowBootstrapService,
 )
@@ -32,7 +32,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 
-ZPLUS_ARTICLE_TEXT = (
+GRAMMAR_WINDOW_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
     "Everyone understood the tradeoff.\n\n"
     "The committee, which had spent six months reviewing export data, "
@@ -53,7 +53,7 @@ async def test_db_pool_with_record_and_base() -> AsyncIterator[
     """Create a test schema with baseline + migration 0015, submit an article,
     and return (pool, record_id, base_id).
     """
-    schema_name = f"test_zplus_bootstrap_{uuid4().hex}"
+    schema_name = f"test_grammar_window_bootstrap_{uuid4().hex}"
     admin_conn = await connect_admin()
     original_pool = db_connection.DB_POOL
     try:
@@ -67,8 +67,8 @@ async def test_db_pool_with_record_and_base() -> AsyncIterator[
             article = await submit_article_ready(
                 pool,
                 user_id=user_id,
-                plain_text=ZPLUS_ARTICLE_TEXT,
-                title="Z+ Bootstrap Slice",
+                plain_text=GRAMMAR_WINDOW_ARTICLE_TEXT,
+                title="grammar-window Bootstrap Slice",
                 language="en",
             )
             yield pool, article.record_id, article.base_id
@@ -83,7 +83,7 @@ async def test_db_pool_with_record_and_base() -> AsyncIterator[
 async def test_bootstrap_creates_plan_windows_and_jobs(
     test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
 ) -> None:
-    """Z+ bootstrap creates 1 plan + N windows + N reader_jobs."""
+    """grammar-window bootstrap creates 1 plan + N windows + N reader_jobs."""
     pool, record_id, base_id = test_db_pool_with_record_and_base
     service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
@@ -121,7 +121,7 @@ async def test_bootstrap_creates_plan_windows_and_jobs(
                 job_id,
             )
             assert job is not None
-            assert job["job_type"] == ZPLUS_GRAMMAR_JOB_TYPE
+            assert job["job_type"] == GRAMMAR_WINDOW_JOB_TYPE
             assert job["target_type"] == "unit_range"
             job_input = job["input_json"]
             assert job_input["semantic_contract_version"] is None
@@ -131,7 +131,7 @@ async def test_bootstrap_creates_plan_windows_and_jobs(
             assert job_input["automatic_layer_name"] == "grammar_note"
             assert job_input["semantic_policy_mode"] == "enforce"
             assert job["operation_fingerprint"] == (
-                f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:"
+                f"{GRAMMAR_WINDOW_OPERATION_FINGERPRINT}:"
                 f"{job_input['strategy_hash']}:"
                 "sem:legacy:legacy_open:mode:enforce"
             )
@@ -184,7 +184,7 @@ async def test_bootstrap_budget_total_uses_section_7_3_formula(
         assert budget["sentence_analysis"]["count"] >= 1
 
 
-async def test_bootstrap_result_type_is_zplus_bootstrap_result(
+async def test_bootstrap_result_type_is_grammar_window_bootstrap_result(
     test_db_pool_with_record_and_base: tuple[asyncpg.Pool, UUID, UUID],
 ) -> None:
     """Bootstrap returns GrammarWindowBootstrapResult with correct field types."""
@@ -236,7 +236,7 @@ async def test_bootstrap_propagates_trace_id_into_window_run_envelope(
     downstream workers can propagate it into ``reader_runtime_spans``.
 
     When called without ``trace_id``, the service generates a fresh UUID so
-    window runs always carry a trace_id (no NULL envelope trace_id for Z+
+    window runs always carry a trace_id (no NULL envelope trace_id for grammar-window
     runs).
     """
     pool, record_id, base_id = test_db_pool_with_record_and_base

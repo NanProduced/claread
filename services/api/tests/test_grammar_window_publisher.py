@@ -1,7 +1,7 @@
 """Tests for GrammarWindowPublisher: multi-unit publish transaction.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §3.3 (unit-scoped publish) + §8.4 (publish transaction) + §8.5 (lock coverage)
 """
 
@@ -39,8 +39,8 @@ from app.services.reader_orchestration.window_selector import (
     SelectionGate,
     SelectorLedger,
 )
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
     GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
@@ -527,12 +527,12 @@ async def test_publish_window_rejects_when_job_status_not_claimed(
     "fingerprint",
     [
         # Exact legacy base fingerprint.
-        ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+        GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
         # Composed strategy fingerprint (base:{strategy_hash}).
-        f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}:strategy_hash_abc123",
+        f"{GRAMMAR_WINDOW_OPERATION_FINGERPRINT}:strategy_hash_abc123",
         # Composed strategy + semantic token (base:{strategy_hash}:{semantic}),
-        # shape written by zplus_bootstrap; semantic token itself may contain ':'.
-        f"{ZPLUS_GRAMMAR_OPERATION_FINGERPRINT}"
+        # shape written by grammar_window_bootstrap; semantic token itself may contain ':'.
+        f"{GRAMMAR_WINDOW_OPERATION_FINGERPRINT}"
         ":strategy_hash_abc123:sem:legacy:legacy_open:mode:enforce",
     ],
 )

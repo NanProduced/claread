@@ -1,10 +1,10 @@
-# task-history: P2B-R1.1 (renamed from test_p2b_r1_1_zplus_strict_fence_rollback.py)
-"""Z+ strict fence rollback closure.
+# task-history: P2B-R1.1 (renamed from test_grammar_window_fence_strict_fence_rollback.py)
+"""grammar-window strict fence rollback closure.
 
 Proves ``GrammarWindowBootstrapService.bootstrap_grammar_window_plan()`` delegates
 semantic fence construction to the single shared strict builder
 (``generation_semantic_fence_from_targets``). When target units inside the
-same Z+ window carry mixed contract or resolver versions, the shared
+same grammar-window window carry mixed contract or resolver versions, the shared
 builder raises ``SemanticFenceConstructionError`` and the outer PostgreSQL
 transaction rolls back completely — no ``layer_analysis_plans``,
 ``analysis_windows``, ``reader_runs``, or ``reader_jobs`` half-row
@@ -35,8 +35,8 @@ from app.services.reader_orchestration.automatic_layer_policy import (
     AutomaticLayerPolicy,
     SemanticFenceConstructionError,
 )
+from app.services.reader_orchestration.grammar_window_bootstrap import GrammarWindowBootstrapService
 from app.services.reader_orchestration.semantic_classifier import SEMANTIC_CONTRACT_V1
-from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -49,11 +49,11 @@ pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_orchestration, pytest.
 
 
 # Two-paragraph prose so the article produces at least one grammar-eligible
-# unit that the Z+ window planner can pack into a window. Both paragraphs
+# unit that the grammar-window window planner can pack into a window. Both paragraphs
 # stay grammar-on under enforce so the unit survives the
 # ``filter_units_for_any_grammar`` pre-filter and reaches the shared fence
 # builder inside ``_create_window_reader_job``.
-_ZPLUS_ARTICLE_TEXT = (
+_GRAMMAR_WINDOW_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the "
     "timeline so that everyone understood the tradeoff before the next "
     "quarterly review began.\n\n"
@@ -68,7 +68,7 @@ _ZPLUS_ARTICLE_TEXT = (
 def _policy_mode(mode: str) -> Iterator[None]:
     """Temporarily set ``reader_automatic_layer_policy_mode``.
 
-    Z+ bootstrap reads mode via ``get_automatic_layer_policy_mode()`` which
+    grammar-window bootstrap reads mode via ``get_automatic_layer_policy_mode()`` which
     consults the live settings object; tests must freeze the mode for the
     duration of the bootstrap call so the grammar-allowed units are not
     dropped by the pre-filter under ``enforce``.
@@ -89,9 +89,9 @@ def _policy_mode(mode: str) -> Iterator[None]:
 
 
 @pytest.fixture
-async def zplus_fence_env() -> AsyncIterator[asyncpg.Pool]:
-    """Schema with baseline + 0015/0017/0020 migrations for Z+ bootstrap."""
-    schema_name = f"test_p2b_r1_1_zplus_{uuid4().hex}"
+async def grammar_window_fence_env() -> AsyncIterator[asyncpg.Pool]:
+    """Schema with baseline + 0015/0017/0020 migrations for grammar-window bootstrap."""
+    schema_name = f"test_grammar_window_fence_{uuid4().hex}"
     admin_conn = await connect_admin()
     original_pool = db_connection.DB_POOL
     try:
@@ -118,7 +118,7 @@ async def _table_count(
     *,
     record_id: UUID,
 ) -> int:
-    """Count rows for a record across the four Z+ persistence tables."""
+    """Count rows for a record across the four grammar-window persistence tables."""
     if table == "layer_analysis_plans":
         row = await conn.fetchval(
             "SELECT count(*)::int FROM layer_analysis_plans "
@@ -163,7 +163,7 @@ async def _assert_zero_delta_on_all_four_tables(
     for table in before:
         delta = after[table] - before[table]
         assert delta == 0, (
-            f"expected zero new {table} rows after Z+ mixed-fence rollback, "
+            f"expected zero new {table} rows after grammar-window mixed-fence rollback, "
             f"before={before[table]} after={after[table]} delta={delta}"
         )
 
@@ -173,7 +173,7 @@ async def _record_four_table_counts(
     *,
     record_id: UUID,
 ) -> dict[str, int]:
-    """Snapshot the four Z+ persistence tables before a bootstrap call."""
+    """Snapshot the four grammar-window persistence tables before a bootstrap call."""
     counts: dict[str, int] = {}
     async with pool.acquire() as conn:
         for table in ("layer_analysis_plans", "analysis_windows",
@@ -260,8 +260,8 @@ async def _tamper_unit_semantic(
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_bootstrap_mixed_contract_rolls_back_all_four_tables(
-    zplus_fence_env: asyncpg.Pool,
+async def test_grammar_window_bootstrap_mixed_contract_rolls_back_all_four_tables(
+    grammar_window_fence_env: asyncpg.Pool,
 ) -> None:
     """Mixed contract_version across window target units → typed error + rollback.
 
@@ -271,13 +271,13 @@ async def test_zplus_bootstrap_mixed_contract_rolls_back_all_four_tables(
     ``async with conn.transaction()`` block must roll back every row: plan,
     window, run, job.
     """
-    pool = zplus_fence_env
+    pool = grammar_window_fence_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=_ZPLUS_ARTICLE_TEXT,
-        title="Z+ Mixed Contract Rollback",
+        plain_text=_GRAMMAR_WINDOW_ARTICLE_TEXT,
+        title="grammar-window Mixed Contract Rollback",
         language="en",
     )
 
@@ -328,8 +328,8 @@ async def test_zplus_bootstrap_mixed_contract_rolls_back_all_four_tables(
     )
 
 
-async def test_zplus_bootstrap_mixed_resolver_rolls_back_all_four_tables(
-    zplus_fence_env: asyncpg.Pool,
+async def test_grammar_window_bootstrap_mixed_resolver_rolls_back_all_four_tables(
+    grammar_window_fence_env: asyncpg.Pool,
 ) -> None:
     """Mixed resolver_version across window target units → typed error + rollback.
 
@@ -338,13 +338,13 @@ async def test_zplus_bootstrap_mixed_resolver_rolls_back_all_four_tables(
     the already-INSERTed ``layer_analysis_plans`` row is rolled back by the
     outer transaction.
     """
-    pool = zplus_fence_env
+    pool = grammar_window_fence_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=_ZPLUS_ARTICLE_TEXT,
-        title="Z+ Mixed Resolver Rollback",
+        plain_text=_GRAMMAR_WINDOW_ARTICLE_TEXT,
+        title="grammar-window Mixed Resolver Rollback",
         language="en",
     )
 
@@ -390,12 +390,12 @@ async def test_zplus_bootstrap_mixed_resolver_rolls_back_all_four_tables(
 
 
 # ---------------------------------------------------------------------------
-# Positive non-regression: uniform semantic Z+ bootstrap still succeeds
+# Positive non-regression: uniform semantic grammar-window bootstrap still succeeds
 # ---------------------------------------------------------------------------
 
 
-async def test_zplus_bootstrap_uniform_semantic_succeeds_non_regression(
-    zplus_fence_env: asyncpg.Pool,
+async def test_grammar_window_bootstrap_uniform_semantic_succeeds_non_regression(
+    grammar_window_fence_env: asyncpg.Pool,
 ) -> None:
     """Uniform semantic contract/resolver on all units → bootstrap succeeds.
 
@@ -403,15 +403,15 @@ async def test_zplus_bootstrap_uniform_semantic_succeeds_non_regression(
     semantic data: the plan + windows + reader_jobs are committed and the
     fence fields are frozen on the persisted rows. This guards against a
     regression where the convergence accidentally rejects legitimate
-    uniform-semantic Z+ windows.
+    uniform-semantic grammar-window windows.
     """
-    pool = zplus_fence_env
+    pool = grammar_window_fence_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
-        plain_text=_ZPLUS_ARTICLE_TEXT,
-        title="Z+ Uniform Semantic Non-Regression",
+        plain_text=_GRAMMAR_WINDOW_ARTICLE_TEXT,
+        title="grammar-window Uniform Semantic Non-Regression",
         language="en",
     )
 

@@ -1,7 +1,7 @@
-"""Task A3: Z+ window job_type 进入 progress 聚合.
+"""Task A3: grammar-window window job_type 进入 progress 聚合.
 
 Verifies that ``build_grammar_bundle_window`` (introduced by migration 0015
-and the Z+ analysis-window design §3.2) is wired into the reader snapshot
+and the grammar-window analysis-window design §3.2) is wired into the reader snapshot
 enhancement-progress aggregation in ``repository.py``:
 
 1. ``_JOB_CAPABILITY_BY_TYPE`` maps the new job_type to the ``grammar``

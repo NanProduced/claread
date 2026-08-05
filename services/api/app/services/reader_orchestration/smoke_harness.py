@@ -90,21 +90,21 @@ from app.services.reader_orchestration.window_selector import CandidateItem
 
 SmokeExecutorMode = Literal["fake", "real"]
 # T4.2a-R1: smoke/acceptance harness grammar topology.
-# ``legacy`` keeps the pre-T4.2a 4-worker path (enable_zplus_grammar=False,
+# ``legacy`` keeps the legacy 4-worker path (enable_grammar_window=False,
 # per-unit grammar for all routes). ``production`` faithfully reproduces
 # the production route-aware split: SHORT_BATCH/STRUCTURED_BATCH → compact
-# grammar batch job, GROUPED_WINDOWED → Z+ window, with fake executors
+# grammar batch job, GROUPED_WINDOWED → grammar-window window, with fake executors
 # injected so no real LLM is ever called.
 SmokeGrammarTopology = Literal["legacy", "production"]
 
-DEFAULT_SMOKE_LEASE_OWNER = "reader-d5-smoke-harness"
+DEFAULT_SMOKE_LEASE_OWNER = "reader-smoke-harness"
 DEFAULT_SMOKE_LEASE_DURATION = timedelta(seconds=30)
 DEV_FAKE_EXECUTOR_NOTE = "dev/test-only deterministic fake executors"
 DEV_FAKE_JOB_NAMESPACE = FAKE_JOB_NAMESPACE
-DEV_FAKE_TRANSLATION_PROMPT_VERSION = "reader-d5-smoke-fake-translation"
-DEV_FAKE_VOCABULARY_PROMPT_VERSION = "reader-d5-smoke-fake-vocabulary"
-DEV_FAKE_GRAMMAR_PROMPT_VERSION = "reader-d5-smoke-fake-grammar"
-DEV_FAKE_MODEL_PROFILE_PREFIX = "reader_d5_smoke_fake"
+DEV_FAKE_TRANSLATION_PROMPT_VERSION = "reader-smoke-fake-translation"
+DEV_FAKE_VOCABULARY_PROMPT_VERSION = "reader-smoke-fake-vocabulary"
+DEV_FAKE_GRAMMAR_PROMPT_VERSION = "reader-smoke-fake-grammar"
+DEV_FAKE_MODEL_PROFILE_PREFIX = "reader_smoke_fake"
 _WORD_RE = re.compile(r"[A-Za-z]+")
 
 
@@ -148,7 +148,7 @@ class DevFakeTranslationExecutor:
             prompt_version=DEV_FAKE_TRANSLATION_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_translation",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-translation",
+            model_name="reader-smoke-fake-translation",
         )
 
 
@@ -183,7 +183,7 @@ class DevFakeVocabularyExecutor:
                         anchor=anchor,
                         headword=selected_text.lower(),
                         brief_explanation="Dev smoke keyword",
-                        reason="reader_d5_smoke_fake",
+                        reason="reader_smoke_fake",
                     )
                 ]
             ),
@@ -191,7 +191,7 @@ class DevFakeVocabularyExecutor:
             prompt_version=DEV_FAKE_VOCABULARY_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_vocabulary",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-vocabulary",
+            model_name="reader-smoke-fake-vocabulary",
         )
 
 
@@ -237,14 +237,14 @@ class DevFakeGrammarBundleExecutor:
                         spans=[word_anchor],
                         grammar_point="dev smoke grammar point",
                         pattern="SVO",
-                        note="Deterministic grammar note for D5 local smoke.",
+                        note="Deterministic grammar note for local smoke.",
                     )
                 ],
                 sentence_analyses=[
                     SentenceAnalysisItem(
                         anchor=sentence_anchor,
                         label="main clause",
-                        analysis="Deterministic sentence analysis for D5 local smoke.",
+                        analysis="Deterministic sentence analysis for local smoke.",
                         chunks=[
                             SentenceAnalysisChunk(
                                 order=1,
@@ -259,7 +259,7 @@ class DevFakeGrammarBundleExecutor:
             prompt_version=DEV_FAKE_GRAMMAR_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_grammar",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-grammar",
+            model_name="reader-smoke-fake-grammar",
         )
 
 
@@ -321,7 +321,7 @@ class DevFakeGrammarBatchExecutor:
                                 spans=[word_anchor],
                                 grammar_point="dev smoke batch grammar point",
                                 pattern="SVO",
-                                note="Deterministic batch grammar note for D5 local smoke.",
+                                note="Deterministic batch grammar note for local smoke.",
                             )
                         ],
                         sentence_analyses=[
@@ -330,7 +330,7 @@ class DevFakeGrammarBatchExecutor:
                                 label="main clause",
                                 analysis=(
                                     "Deterministic batch sentence analysis"
-                                    " for D5 local smoke."
+                                    " for local smoke."
                                 ),
                                 chunks=[
                                     SentenceAnalysisChunk(
@@ -350,17 +350,17 @@ class DevFakeGrammarBatchExecutor:
             prompt_version=DEV_FAKE_GRAMMAR_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_grammar_batch",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-grammar-batch",
+            model_name="reader-smoke-fake-grammar-batch",
         )
 
 
 class DevFakeGrammarWindowExecutor:
-    """T4.2a-R1 fake Z+ grammar window executor for the smoke harness.
+    """T4.2a-R1 fake grammar-window grammar window executor for the smoke harness.
 
     Produces one ``grammar_note`` candidate per target anchor (capped to the
     window budget) so the GROUPED_WINDOWED route can complete without calling
     the real ``PydanticAIGrammarWindowExecutor``. Injected into
-    :class:`GrammarWindowWorkerService` when ``enable_zplus_grammar=True``.
+    :class:`GrammarWindowWorkerService` when ``enable_grammar_window=True``.
     """
 
     async def generate(
@@ -414,7 +414,7 @@ class DevFakeGrammarWindowExecutor:
             prompt_version=DEV_FAKE_GRAMMAR_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_grammar_window",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-grammar-window",
+            model_name="reader-smoke-fake-grammar-window",
         )
 
 
@@ -426,10 +426,10 @@ class DevFakeDisplayTitleGenerator:
         return DisplayTitleExecutionResult(
             title_zh="本地冒烟标题",
             usage_data={"input_tokens": 1, "output_tokens": 1},
-            prompt_version="reader-d5-smoke-fake-display-title",
+            prompt_version="reader-smoke-fake-display-title",
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_display_title",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-display-title",
+            model_name="reader-smoke-fake-display-title",
         )
 
 
@@ -467,7 +467,7 @@ class DevFakeTranslationBatchExecutor:
             prompt_version=DEV_FAKE_TRANSLATION_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_translation_batch",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-translation-batch",
+            model_name="reader-smoke-fake-translation-batch",
         )
 
 
@@ -503,7 +503,7 @@ class DevFakeVocabularyBatchExecutor:
                             selected_text=selected_text,
                             headword=selected_text.lower(),
                             brief_explanation="Dev smoke batch keyword",
-                            reason="reader_d5_smoke_fake_batch",
+                            reason="reader_smoke_fake_batch",
                         )
                     ],
                 )
@@ -514,7 +514,7 @@ class DevFakeVocabularyBatchExecutor:
             prompt_version=DEV_FAKE_VOCABULARY_PROMPT_VERSION,
             model_profile=f"{DEV_FAKE_MODEL_PROFILE_PREFIX}_vocabulary_batch",
             model_provider="fake",
-            model_name="reader-d5-smoke-fake-vocabulary-batch",
+            model_name="reader-smoke-fake-vocabulary-batch",
         )
 
 
@@ -562,7 +562,7 @@ class ReaderEnhancementSmokeHarness:
             self._assert_fake_mode_allowed(allow_fake_executors=allow_fake_executors)
 
         # T4.2a-R1: In real mode the production runner always uses the
-        # route-aware split (``enable_zplus_grammar=True``), so the
+        # route-aware split (``enable_grammar_window=True``), so the
         # effective topology is ``production`` regardless of the caller's
         # ``grammar_topology`` argument. Recording ``legacy`` here would
         # make real smoke records' ``source_metadata`` misreport the
@@ -572,7 +572,7 @@ class ReaderEnhancementSmokeHarness:
         )
 
         source_metadata: dict[str, Any] = {
-            "origin": "reader_d5_smoke_harness",
+            "origin": "reader_smoke_harness",
             "executor_mode": executor_mode,
             "grammar_topology": effective_topology,
         }
@@ -691,9 +691,9 @@ class ReaderEnhancementSmokeHarness:
         )
         if grammar_topology == "production":
             # T4.2a-R1: faithfully reproduce the production route-aware split.
-            # ``enable_zplus_grammar=True`` activates the route-aware bootstrap
+            # ``enable_grammar_window=True`` activates the route-aware bootstrap
             # (SHORT_BATCH/STRUCTURED_BATCH → compact batch, GROUPED_WINDOWED
-            # → Z+ window). A fake window executor + real publisher are
+            # → grammar-window window). A fake window executor + real publisher are
             # injected so the GROUPED_WINDOWED path completes without calling
             # the real ``PydanticAIGrammarWindowExecutor``.
             window_worker = GrammarWindowWorkerService(
@@ -724,7 +724,7 @@ class ReaderEnhancementSmokeHarness:
                 grammar_window_worker_service=window_worker,
                 grammar_window_publisher=window_publisher,
                 job_runtime=fake_job_runtime,
-                enable_zplus_grammar=True,
+                enable_grammar_window=True,
             )
 
         # legacy topology: 4-worker path, per-unit grammar for all routes.
@@ -745,7 +745,7 @@ class ReaderEnhancementSmokeHarness:
             vocabulary_worker_service=vocabulary_worker,
             grammar_worker_service=grammar_worker,
             job_runtime=fake_job_runtime,
-            enable_zplus_grammar=False,
+            enable_grammar_window=False,
         )
 
     @staticmethod

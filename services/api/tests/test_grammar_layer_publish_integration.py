@@ -40,7 +40,7 @@ from app.services.reader_orchestration.grammar_window_publisher import (
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.zplus_bootstrap import GrammarWindowBootstrapService
+from app.services.reader_orchestration.grammar_window_bootstrap import GrammarWindowBootstrapService
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,

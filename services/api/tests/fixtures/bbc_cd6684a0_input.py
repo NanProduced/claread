@@ -1,11 +1,11 @@
-"""BBC article cd6684a0 regression fixture for Z+ window verification.
+"""BBC article cd6684a0 regression fixture for grammar-window window verification.
 
 Source: BBC News article that originally produced 37 reading units + 46 anchor_segments
 with 34 grammar_note + 26 sentence_analysis = 60 AI annotations.
 
 Note: 实际 BBC 文章内容受版权保护。本 fixture 构造同等长度（6064 chars）
 和同等结构特征（heading + 多 paragraph + blockquote + 多 short unit）的英文新闻样本，
-用于验证 Z+ window 切分逻辑（unit 不可拆、heading 触发 hard boundary、
+用于验证 grammar-window window 切分逻辑（unit 不可拆、heading 触发 hard boundary、
 isolation block 独立成 window），而非验证与 cd6684a0 的逐字一致性。
 
 如需运行真实 BBC 端到端 regression，需要从 stable_reading_documents 表导出

@@ -55,7 +55,7 @@ _RUNNABLE_RECORD_PRODUCT_STATES = ("processing", "readable_enhancing")
 # leaving display_title / translation / vocabulary / grammar unbootstrapped.
 #
 # Keep this list in sync with the job_type constants in job_bootstrap.py and
-# zplus_bootstrap.py. The CHECK constraint on reader_jobs.job_type is the
+# grammar_window_bootstrap.py. The CHECK constraint on reader_jobs.job_type is the
 # authoritative source of allowed values; this tuple is the subset that the
 # enhancement worker loop owns.
 ENHANCEMENT_PIPELINE_JOB_TYPES: tuple[str, ...] = (

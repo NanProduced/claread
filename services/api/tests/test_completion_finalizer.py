@@ -180,7 +180,7 @@ async def _bootstrap_enhancement_jobs(
     run the workers — we only need the job rows to exist so the finalizer
     has something to count.
     """
-    runner = ReaderEnhancementPipelineRunner(pool=pool, enable_zplus_grammar=False)
+    runner = ReaderEnhancementPipelineRunner(pool=pool, enable_grammar_window=False)
     await runner.bootstrap_missing_jobs(
         record_id=record_id,
         user_id=user_id,
@@ -1264,7 +1264,7 @@ def _make_real_chain_runner(pool: asyncpg.Pool) -> ReaderEnhancementPipelineRunn
         translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
-        enable_zplus_grammar=False,
+        enable_grammar_window=False,
     )
 
 

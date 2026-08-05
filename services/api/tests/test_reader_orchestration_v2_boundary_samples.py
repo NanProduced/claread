@@ -77,7 +77,7 @@ from tests.test_reader_orchestration_pipeline_runner import (
     _StaticTranslator,
     _StaticVocabularyExecutor,
 )
-from tests.test_zplus_bbc_regression import _StaticGrammarWindowExecutor
+from tests.test_grammar_window_bbc_regression import _StaticGrammarWindowExecutor
 
 pytestmark = pytest.mark.anyio
 
@@ -161,7 +161,7 @@ def _very_long_article() -> str:
 def _noop_window_article() -> str:
     """Minimal GROUPED_WINDOWED article for no-op grammar window path.
 
-    ~2100 words so grammar uses Z+ windows without the cost of the
+    ~2100 words so grammar uses grammar-window windows without the cost of the
     very-long sample.
     """
     base = (
@@ -355,7 +355,7 @@ def _make_runner(
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
         grammar_window_publisher=window_publisher,
-        enable_zplus_grammar=True,
+        enable_grammar_window=True,
     )
 
 
@@ -658,7 +658,7 @@ async def test_v2_fragmented_short_news_short_batch_preserves_groups_and_anchors
     assert batch_v.call_count == 1
     assert batch_g.call_count == 1
     assert title.call_count == 1
-    assert window_g.call_count == 0  # no Z+ grammar path
+    assert window_g.call_count == 0  # no grammar-window grammar path
 
     # Translation Group / anchor integrity.
     unit_count = await _fetch_unit_count(pool, article.record_id)
@@ -768,7 +768,7 @@ async def test_v2_structured_boundary_independent_route_fingerprint_policy(
     assert ("translate_article", "unit_range") in job_types
     assert ("build_vocabulary_layer_article", "unit_range") in job_types
     assert ("build_grammar_bundle", "unit_range") in job_types
-    # No Z+ grammar windows for structured tier.
+    # No grammar-window grammar windows for structured tier.
     assert not any(j["job_type"] == "build_grammar_bundle_window" for j in jobs)
 
     by_type = {j["job_type"]: j for j in jobs}
@@ -927,7 +927,7 @@ async def test_v2_very_long_grouped_windowed_topology_and_reading_order(
             assert j["policy_version"] == _POL_VOCAB_SHORT
 
     for j in grammar_window_jobs:
-        # Legacy Z+ grammar identity uses the window UUID itself as target_key;
+        # Legacy grammar-window grammar identity uses the window UUID itself as target_key;
         # unlike translation/vocabulary it does not use a ":window:" suffix.
         input_json = _parse_json(j["input_json"])
         assert str(input_json.get("window_id")) == str(j["target_key"])
@@ -1026,7 +1026,7 @@ async def test_v2_noop_grammar_window_terminal_budget_and_no_retry(
 
     # Jobs themselves succeed (publish path marks window no_op, job succeeded).
     for j in grammar_window_jobs:
-        # Keep the same legacy Z+ window identity contract in the no-op path.
+        # Keep the same legacy grammar-window window identity contract in the no-op path.
         input_json = _parse_json(j["input_json"])
         assert str(input_json.get("window_id")) == str(j["target_key"])
         assert j["status"] == "succeeded", (

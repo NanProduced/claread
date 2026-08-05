@@ -1,7 +1,7 @@
 """Tests for GrammarWindowWorkerService: preflight (§8.2) + heartbeat (§8.6).
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/analysis-window-zplus-design.md
+  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
   §8.2 (window claim / preflight pending→running) + §8.6 (heartbeat)
 
 The preflight tests cover all four §8.2 status branches:
@@ -45,8 +45,8 @@ from app.services.reader_orchestration.reading_strategy import (
     resolve_reader_variant_strategy,
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.zplus_bootstrap import (
-    ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
     GrammarWindowBootstrapService,
     _compute_window_budget,
 )
@@ -61,7 +61,7 @@ from tests.reader_orchestration_test_support import (
 pytestmark = pytest.mark.anyio
 
 
-ZPLUS_ARTICLE_TEXT = (
+GRAMMAR_WINDOW_ARTICLE_TEXT = (
     "Not only did the team revise the plan, but they also clarified the timeline. "
     "Everyone understood the tradeoff.\n\n"
     "The committee, which had spent six months reviewing export data, "
@@ -101,7 +101,7 @@ async def test_db_pool_with_record_and_base() -> AsyncIterator[
             article = await submit_article_ready(
                 pool,
                 user_id=user_id,
-                plain_text=ZPLUS_ARTICLE_TEXT,
+                plain_text=GRAMMAR_WINDOW_ARTICLE_TEXT,
                 title="Grammar Window Worker Slice",
                 language="en",
             )
@@ -124,7 +124,7 @@ async def _bootstrap_first_window(
     record_id: UUID,
     base_id: UUID,
 ) -> tuple[UUID, UUID]:
-    """Run Z+ bootstrap and return (job_id, window_id) for the first window."""
+    """Run grammar-window bootstrap and return (job_id, window_id) for the first window."""
     service = GrammarWindowBootstrapService(pool=pool)
     result = await service.bootstrap_grammar_window_plan(
         record_id=record_id, base_id=base_id
@@ -388,7 +388,7 @@ def _make_claim() -> ClaimResult:
         target_type="unit_range",
         target_key=str(uuid4()),
         expected_generation=1,
-        operation_fingerprint=ZPLUS_GRAMMAR_OPERATION_FINGERPRINT,
+        operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
         attempt_count=1,
         lease_owner="test_window_worker",
         lease_token=uuid4(),
@@ -416,7 +416,7 @@ async def test_ground_span_returns_unit_relative_offsets_for_later_unit() -> Non
     """Grounding must emit offsets relative to the target unit, not base text.
 
     Snapshot validation checks spans against ``anchor_segments.unit_*``. This
-    regression covers non-zero ``unit_base_start_utf16`` so Z+ windows cannot
+    regression covers non-zero ``unit_base_start_utf16`` so grammar-window windows cannot
     accidentally publish base-relative offsets for unit 2+.
     """
     executor = PydanticAIGrammarWindowExecutor()
@@ -766,7 +766,7 @@ async def test_build_window_prompt_omits_strategy_when_no_prompt_lines() -> None
 
 async def test_build_window_prompt_reads_nested_budget_keys() -> None:
     """T1.3: _build_window_prompt reads grammar_note.count / sentence_analysis.count
-    from window_budget (the format zplus_bootstrap writes), NOT the old
+    from window_budget (the format grammar_window_bootstrap writes), NOT the old
     max_grammar_notes / max_sentence_analyses flat keys."""
     executor = PydanticAIGrammarWindowExecutor()
     context: dict[str, Any] = {
@@ -789,10 +789,10 @@ async def test_build_window_prompt_reads_nested_budget_keys() -> None:
 
 async def test_build_window_prompt_budget_keys_match_bootstrap_format() -> None:
     """T1.3: The budget keys read by the worker match the format written by
-    zplus_bootstrap._compute_window_budget. This is the regression test for
+    grammar_window_bootstrap._compute_window_budget. This is the regression test for
     the silent budget mismatch bug (old worker read max_grammar_notes /
     max_sentence_analyses which never matched the nested format)."""
-    # zplus_bootstrap writes this exact shape
+    # grammar_window_bootstrap writes this exact shape
     bootstrap_budget = _compute_window_budget()
     assert bootstrap_budget == {
         "grammar_note": {"count": 2},
