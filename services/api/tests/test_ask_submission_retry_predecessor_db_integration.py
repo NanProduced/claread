@@ -1,5 +1,5 @@
 # task-history: ASK-SUBMISSION-RETRY-R1 (renamed from test_ask_submission_retry_r1_db_integration.py)
-"""ASK-SUBMISSION-RETRY-R1 real PostgreSQL integration — OPT-IN only.
+"""Ask submission retry predecessor real PostgreSQL integration — OPT-IN only.
 
 Fixes the retry predecessor lookup for client_submission_id turns: the R5
 submission gateway creates the user + assistant pair and binds them in ONE
@@ -18,8 +18,8 @@ R1 contract:
 3. Thread / role / identity fences stay enforced; anomalous bindings fail
    closed instead of guessing a predecessor.
 
-Prerequisites (same as R6 DB gate): migrations 0026 + 0027 applied to the
-local DB, then set ``CLAREAD_RUN_SUBMISSION_DB_TESTS=1``.
+Prerequisites (same as R6 DB gate): infra/migrations/0001_initial.sql applied
+to the local DB, then set ``CLAREAD_RUN_SUBMISSION_DB_TESTS=1``.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.skipif(
     os.environ.get("CLAREAD_RUN_SUBMISSION_DB_TESTS") != "1",
     reason=(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
-        "migrations 0026+0027 to local DB"
+        "infra/migrations/0001_initial.sql to local DB"
     ),
 ), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
@@ -120,7 +120,7 @@ async def test_r1_submission_bound_pair_resolves_predecessor_via_binding() -> No
                 retry_snapshot=snap,
             )
         except SubmissionIdempotencyUnavailable as exc:
-            pytest.fail(f"migration 0026/0027 not applied: {exc}")
+            pytest.fail(f"baseline schema (0001_initial.sql) not applied: {exc}")
 
         assert ensured is not None and ensured.may_create_model
         assert ensured.user_message is not None

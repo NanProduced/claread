@@ -1,5 +1,5 @@
 # task-history: D6-I4K (renamed from test_d6_i4k_article_rag_ask_prompt_section.py)
-"""D6-I4K: tests for Article RAG ask prompt section builder.
+"""Tests for the Article RAG ask prompt section builder.
 
 Covers:
   * happy path: include_in_prompt=True → section_text wrapped in

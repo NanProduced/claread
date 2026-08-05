@@ -1,5 +1,5 @@
 # task-history: D6-I4F (renamed from test_d6_i4f_article_rag_context_service.py)
-"""D6-I4F: tests for Article RAG context pack service.
+"""Tests for the Article RAG context pack service.
 
 Covers:
   * happy path — hits → context items, fields complete, order stable.

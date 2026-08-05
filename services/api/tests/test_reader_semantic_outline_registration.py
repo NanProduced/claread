@@ -1,5 +1,5 @@
 # task-history: T5.8a (renamed from test_reader_semantic_outline_t58a_registration.py)
-"""T5.8a — semantic outline route / settings / prompt / capability registration.
+"""Semantic outline route / settings / prompt / capability registration.
 
 Default-off registration only. No real adapter, no provider calls.
 """

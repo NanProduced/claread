@@ -1,5 +1,5 @@
 # task-history: D6-I3N (renamed from test_d6_i3n_extracted_artifact_materialization_service.py)
-"""Tests for D6-I3N ExtractedArtifactMaterializationService.
+"""Tests for the ExtractedArtifactMaterializationService.
 
 Covers:
 - stable txt extraction → stable document/base/units/segments + article_ready
@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.chain_reader_parse, pytest.mark.sea
 
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL  # noqa: E402
 
-# 0004 (document_blocks) is now in BASELINE_SQL, so the materialization
+# document_blocks is in the canonical baseline (0001_initial.sql), so the materialization
 # The single baseline includes the source-artifact schema.
 
 # Fixed UUIDs for deterministic seeding

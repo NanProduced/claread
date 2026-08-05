@@ -1,5 +1,5 @@
 # task-history: D6-I4T (renamed from test_d6_i4t_article_rag_index_lifecycle_route.py)
-"""Route tests for D6-I4T Article RAG Index Lifecycle API.
+"""Route tests for the Article RAG index lifecycle API.
 
 Covers:
  1. GET status happy path: indexed returns full DTO

@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-EVALS-P2-LONG：API 存量 77 个任务编号测试文件全部改为业务名并补 chain/seam/life marker，test-file allowlist 收缩至 0；evals 非持久化任务码测试函数改业务名；清理 4 条 B905 Ruff 债）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-EVALS-P2-CLOSEOUT，验收名 `API/Evals test file-name + marker governance`：77 个 API 测试文件改业务名并补 chain/seam/life marker，test-file allowlist 收缩至 0；清除 2 个陈旧 migration 测试、source-artifact schema 合同改读 `0001_initial.sql`；docstring / 旧 migration 引用与 real-LLM 文件收口；evals 非持久化任务码测试函数改业务名；清理 4 条 B905。测试函数/class/helper 标识符内任务码登记为下一波 TEST-GOVERNANCE-API-IDENTIFIERS-P3）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -59,6 +59,8 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 - **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的相等 ratchet 规则（上限 1）。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
+
+**本轮（P2）验收范围限定为 `API/Evals test file-name + marker governance`**：只覆盖测试**文件名**改业务名与 chain/seam/life marker 补标。API 测试**函数 / class / helper 标识符**内仍存在任务码（如 `test_p1g_*` / `test_r6_*` / `test_t58b_*` / `_p1e*`，约 135 处、16 个文件），明确登记为下一波 **TEST-GOVERNANCE-API-IDENTIFIERS-P3**；P3 完成前不得宣称“任务历史仅存顶部 `# task-history:`”——该说法目前只对**文件名**成立，标识符层任务码尚未清理。Web 侧 ceiling / title guard 由并行 Web/integration owner 更新，本 API/Evals 分支不跨 ownership 修改。
 
 ## 后续 API/Web 并行治理边界
 

@@ -1,5 +1,5 @@
 # task-history: A4 (renamed from test_a4_parser_result_sharing_diagnostics.py)
-"""A4 — 解析结果共享 + 诊断透传 (TDD).
+"""解析结果共享 + 诊断透传（TDD）。
 
 Tests that gate / normalizer / candidate creation accept an optional
 ``preparsed: MarkdownParseResult`` parameter so callers parse once and

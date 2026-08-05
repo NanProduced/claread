@@ -1,5 +1,5 @@
 # task-history: R4-A5-7 (renamed from test_reader_record_ask_a5_7_production_wiring.py)
-"""R4-A5-7 commit-2: production Ask model-view wiring.
+"""Production Ask model-view wiring.
 
 FunctionModel only — no real LLM / RAG / embedding / vector I/O.
 """

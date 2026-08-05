@@ -1,8 +1,8 @@
 # task-history: ASK-RETRY-CONTRACT-R5 (renamed from test_ask_retry_contract_r5_db_integration.py)
-"""ASK-RETRY-CONTRACT-R5 DB integration — OPT-IN only.
+"""Ask retry contract concurrency DB integration — OPT-IN only.
 
 These tests require:
-1. Local Postgres with migration 0026 **applied by Owner** (not by this agent).
+1. Local Postgres with infra/migrations/0001_initial.sql **applied by Owner** (not by this agent).
 2. Env ``CLAREAD_RUN_SUBMISSION_DB_TESTS=1``.
 3. Working ``DB_POOL`` (same as other integration tests).
 
@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.skipif(
     os.environ.get("CLAREAD_RUN_SUBMISSION_DB_TESTS") != "1",
     reason=(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
-        "migration 0026 to local DB"
+        "infra/migrations/0001_initial.sql to local DB"
     ),
 ), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 

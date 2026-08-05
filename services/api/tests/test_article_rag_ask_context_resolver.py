@@ -1,5 +1,5 @@
 # task-history: D6-I4H (renamed from test_d6_i4h_article_rag_ask_context_resolver.py)
-"""D6-I4H: tests for Article RAG ask context resolver.
+"""Tests for the Article RAG ask context resolver.
 
 Covers:
   * disabled short-circuit — no service call, no composer call.

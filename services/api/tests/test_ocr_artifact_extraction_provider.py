@@ -1,5 +1,5 @@
 # task-history: D6-I3T (renamed from test_d6_i3t_ocr_artifact_extraction_provider.py)
-"""Tests for D6-I3T OCR Provider Foundation + Image Artifact Extraction Path.
+"""Tests for the OCR provider foundation + image artifact extraction path.
 
 Covers:
 

@@ -1,5 +1,5 @@
 # task-history: A5 (renamed from test_a5_stable_block_unit_classification.py)
-"""A5 — unit 分类与 snapshot 结构透传 (TDD).
+"""unit 分类与 snapshot 结构透传（TDD）。
 
 Tests that ``build_reading_base_from_canonical_text`` accepts an
 optional ``stable_block_annotations`` parameter and, when a unit's

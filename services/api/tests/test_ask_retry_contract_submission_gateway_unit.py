@@ -1,5 +1,5 @@
 # task-history: ASK-RETRY-CONTRACT-R6 (renamed from test_ask_retry_contract_r6.py)
-"""ASK-RETRY-CONTRACT-R6 unit gates (no real DB / no migration execution)."""
+"""Ask retry contract submission-gateway unit gates (no real DB / no migration execution)."""
 
 from __future__ import annotations
 
@@ -25,29 +25,6 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def test_r6_0027_additive_migration_authored() -> None:
-    sql_path = (
-        REPO_ROOT
-        / "infra"
-        / "migrations"
-        / "0027_reader_ask_client_submission_claim_generation.sql"
-    )
-    assert sql_path.is_file()
-    sql = sql_path.read_text(encoding="utf-8")
-    assert "ADD COLUMN IF NOT EXISTS claim_generation" in sql
-    assert "ADD COLUMN IF NOT EXISTS lease_expires_at" in sql
-    assert "CREATE INDEX IF NOT EXISTS" in sql
-    assert "NOT EXECUTED" in sql or "AUTHORED" in sql
-
-
-def test_r6_0027_compose_mount() -> None:
-    compose = (
-        REPO_ROOT / "infra" / "docker" / "docker-compose.local.yml"
-    ).read_text(encoding="utf-8")
-    assert "0027_reader_ask_client_submission_claim_generation.sql" in compose
-    assert "0026_reader_ask_client_submission_idempotency.sql" in compose
 
 
 def test_r6_claim_uses_on_conflict_not_unique_violation_recover() -> None:
@@ -79,7 +56,7 @@ def test_r6_prepare_runs_ensure_before_stream() -> None:
 
 @pytest.mark.asyncio
 async def test_r6_preflight_missing_table_is_http_503_not_sse() -> None:
-    """Missing 0026 table → HTTPException 503 before StreamingResponse."""
+    """Missing submission-idempotency table → HTTPException 503 before StreamingResponse."""
     from app.services.reader_record_ask.repository import (
         SubmissionIdempotencyUnavailable,
     )

@@ -1,5 +1,5 @@
 # task-history: P2B-R1.1 (renamed from test_p2b_r1_1_zplus_strict_fence_rollback.py)
-"""P2B-R1.1 — Z+ Strict Fence Rollback Closure.
+"""Z+ strict fence rollback closure.
 
 Proves ``ZPlusBootstrapService.bootstrap_grammar_window_plan()`` delegates
 semantic fence construction to the single shared strict builder

@@ -1,8 +1,8 @@
 # task-history: ASK-RETRY-CONTRACT-R6 (renamed from test_ask_retry_contract_r6_db_integration.py)
-"""ASK-RETRY-CONTRACT-R6 real PostgreSQL integration — OPT-IN only.
+"""Ask retry contract claim-generation real PostgreSQL integration — OPT-IN only.
 
 Prerequisites (Owner, not this agent):
-1. Apply migrations 0026 + 0027 to local Postgres.
+1. Apply infra/migrations/0001_initial.sql to local Postgres.
 2. Set ``CLAREAD_RUN_SUBMISSION_DB_TESTS=1``.
 3. Working ``DB_POOL`` (same as other integration tests).
 
@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.skipif(
     os.environ.get("CLAREAD_RUN_SUBMISSION_DB_TESTS") != "1",
     reason=(
         "opt-in: set CLAREAD_RUN_SUBMISSION_DB_TESTS=1 after Owner applies "
-        "migrations 0026+0027 to local DB"
+        "infra/migrations/0001_initial.sql to local DB"
     ),
 ), pytest.mark.chain_reader_ask, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression]
 
@@ -111,7 +111,7 @@ async def test_r6_concurrent_ensure_one_pair_one_model_claim() -> None:
         try:
             a, b = await asyncio.gather(_one(), _one())
         except SubmissionIdempotencyUnavailable as exc:
-            pytest.fail(f"migration 0026/0027 not applied (Owner must apply): {exc}")
+            pytest.fail(f"baseline schema (0001_initial.sql) not applied (Owner must apply): {exc}")
 
         assert a is not None and b is not None
         winners = [x for x in (a, b) if x.may_create_model]

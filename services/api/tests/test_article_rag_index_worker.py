@@ -1,5 +1,5 @@
 # task-history: D6-I4C (renamed from test_d6_i4c_article_rag_index_worker.py)
-"""Tests for D6-I4C Article RAG Index Worker Foundation.
+"""Tests for the Article RAG index worker foundation.
 
 Covers the 12+ test requirements from the task spec:
  1. no job -> returns None
@@ -18,8 +18,8 @@ Covers the 12+ test requirements from the task spec:
 14. vector chunk payload excludes chunk text
 15. git diff --check clean (verified separately)
 
-Uses real PostgreSQL with a temporary schema (BASELINE_SQL, which now
-includes 0004_reader_document_blocks.sql and 0010_reader_article_rag_index_state.sql).
+Uses real PostgreSQL with a temporary schema (BASELINE_SQL from
+infra/migrations/0001_initial.sql).
 All embedding/vector providers are fake/in-memory — no real DashScope/Bailian/Zilliz calls.
 """
 

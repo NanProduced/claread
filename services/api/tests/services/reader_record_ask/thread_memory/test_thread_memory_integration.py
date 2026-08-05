@@ -1,5 +1,5 @@
 # task-history: R1A (renamed from test_r1a_integration.py)
-"""R1B: 端到端集成测试 — 验证 R1A 三 agent 产出的协同工作。
+"""端到端集成测试 — 验证三 agent 产出的协同工作。
 
 这些测试使用**真实模块**（非 mock），覆盖跨模块数据流：
 
@@ -11,7 +11,7 @@
 6. budget 退款：request_frame 拒绝时 memory 账户退款
 7. 九账户总和 == 96,000
 
-R1B 仅隔离测试，不触碰任何生产代码。
+仅隔离测试，不触碰任何生产代码。
 """
 
 from __future__ import annotations

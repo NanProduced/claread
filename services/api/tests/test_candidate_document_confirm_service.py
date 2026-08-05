@@ -1,5 +1,5 @@
 # task-history: D6-I2D (renamed from test_d6_i2d_candidate_document_confirm_service.py)
-"""Focused tests for D6-I2D-A Candidate Document Confirm Service.
+"""Focused tests for the candidate document confirm service.
 
 These tests use a fake asyncpg connection recorder to assert SQL order
 and parameters without requiring a real database. This keeps the tests

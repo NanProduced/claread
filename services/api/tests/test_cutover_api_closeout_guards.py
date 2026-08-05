@@ -1,5 +1,5 @@
 # task-history: CUTOVER-API-P-CLOSEOUT-R2 (renamed from test_cutover_api_p_closeout_r2.py)
-"""Static closeout guards for CUTOVER-API-P-CLOSEOUT-R2."""
+"""Static closeout guards for the API cutover."""
 
 from __future__ import annotations
 

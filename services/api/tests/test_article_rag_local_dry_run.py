@@ -1,5 +1,5 @@
 # task-history: D6-I4Z (renamed from test_d6_i4z_article_rag_local_dry_run.py)
-"""D6-I4Z Article RAG local dry-run (no-network offline tests).
+"""Article RAG local dry-run (no-network offline tests).
 
 Single surface:
 
@@ -112,8 +112,8 @@ pytestmark = [
     pytest.mark.life_permanent_regression,
 ]
 
-# The Article RAG index is a single path.  BASELINE_SQL (which includes
-# migration 0010) is sufficient.
+# The Article RAG index is a single path.  BASELINE_SQL (from
+# infra/migrations/0001_initial.sql) is sufficient.
 ARTICLE_RAG_DRY_RUN_SCHEMA_SQL = BASELINE_SQL
 
 

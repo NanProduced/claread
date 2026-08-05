@@ -1,5 +1,5 @@
 # task-history: D6-I4O (renamed from test_d6_i4o_article_rag_ask_prompt_bridge.py)
-"""D6-I4O: tests for Article RAG ask prompt bridge.
+"""Tests for the Article RAG ask prompt bridge.
 
 Covers:
   * attach path: assembly.prompt_attachment_block is

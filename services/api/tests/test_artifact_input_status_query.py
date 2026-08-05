@@ -1,5 +1,5 @@
 # task-history: D6-I3V (renamed from test_d6_i3v_artifact_input_status_query.py)
-"""Tests for D6-I3V ArtifactPipelineStatusQueryService.
+"""Tests for the ArtifactPipelineStatusQueryService.
 
 Covers every outcome path:
 - upload_pending / upload_available_not_submitted
@@ -43,7 +43,7 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# 0004 (document_blocks) is now in BASELINE_SQL, so the pipeline status
+# document_blocks is in the canonical baseline (0001_initial.sql), so the pipeline status
 # The single baseline includes the source-artifact schema.
 
 # Fixed UUIDs for deterministic seeding

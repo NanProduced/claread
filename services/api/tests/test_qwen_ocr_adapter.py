@@ -1,5 +1,5 @@
 # task-history: D6-I3U (renamed from test_d6_i3u_qwen_ocr_adapter.py)
-"""Tests for D6-I3U: Real Qwen / DashScope OCR Adapter (env-gated).
+"""Tests for the real Qwen / DashScope OCR adapter (env-gated).
 
 Covers the real :class:`QwenOcrTextExtractor` adapter that delegates to an
 injectable :class:`QwenOcrClient`. All tests use a fake client — no real

@@ -1,5 +1,5 @@
 # task-history: D6-I4A (renamed from test_d6_i4a_article_rag_index_plan.py)
-"""Tests for D6-I4A Reader Article RAG Index Plan Foundation.
+"""Tests for the Reader Article RAG index plan foundation.
 
 Covers the 14 test requirements from the task spec:
  1. paragraph/heading/list_item/blockquote/caption default indexable
@@ -18,8 +18,8 @@ Covers the 14 test requirements from the task spec:
 13. focused pytest pass
 14. git diff --check pass
 
-Uses real PostgreSQL with a temporary schema (BASELINE_SQL, which now
-includes 0004_reader_document_blocks.sql).
+Uses real PostgreSQL with a temporary schema (BASELINE_SQL from
+infra/migrations/0001_initial.sql).
 """
 
 from __future__ import annotations
@@ -52,8 +52,9 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# 0004 (document_blocks) and 0010 (article_rag_index_state) are now in
-# BASELINE_SQL, so the full plan schema is just BASELINE_SQL.
+# The document_blocks and article_rag_index_state schema live in the
+# canonical baseline (infra/migrations/0001_initial.sql), so the full plan
+# schema is just BASELINE_SQL.
 INDEX_PLAN_SCHEMA_SQL = BASELINE_SQL
 
 # Fixed UUIDs for deterministic seeding.

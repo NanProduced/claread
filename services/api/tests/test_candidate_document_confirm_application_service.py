@@ -1,5 +1,5 @@
 # task-history: D6-I2D (renamed from test_d6_i2d_candidate_document_confirm_application_service.py)
-"""Focused tests for D6-I2D-B Candidate Document Confirm Application
+"""Focused tests for the candidate document confirm application
 Service.
 
 These tests use fake pool / fake conn / fake repository / fake event

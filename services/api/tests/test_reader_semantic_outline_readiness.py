@@ -1,5 +1,5 @@
 # task-history: T5.7 (renamed from test_reader_semantic_outline_t57.py)
-"""T5.7 — semantic outline production readiness (controlled real path).
+"""Semantic outline production readiness (controlled real path).
 
 Covers: unconfigured default generator, permanent vs transient errors,
 explicit eligibility + fake real-chain, bounded input.

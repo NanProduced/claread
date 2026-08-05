@@ -1,5 +1,5 @@
 # task-history: D6-I4M (renamed from test_d6_i4m_article_rag_ask_prompt_assembly.py)
-"""D6-I4M: tests for Article RAG ask prompt assembly boundary.
+"""Tests for the Article RAG ask prompt assembly boundary.
 
 Covers:
   * happy path: should_attach=True with verbatim

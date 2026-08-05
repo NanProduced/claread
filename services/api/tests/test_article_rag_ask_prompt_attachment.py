@@ -1,5 +1,5 @@
 # task-history: D6-I4I (renamed from test_d6_i4i_article_rag_ask_prompt_attachment.py)
-"""D6-I4I: tests for Article RAG ask prompt attachment service.
+"""Tests for the Article RAG ask prompt attachment service.
 
 Covers:
   * available path includes context + citations + context_ids +

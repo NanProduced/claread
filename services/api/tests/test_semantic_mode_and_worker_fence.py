@@ -1,5 +1,5 @@
 # task-history: R2 (renamed from test_semantic_mode_and_worker_fence_r2.py)
-"""R2: frozen mode, mode-aware worker fence, real worker services.
+"""Frozen mode, mode-aware worker fence, real worker services.
 
 Proves off/shadow/enforce do not collapse to enforce at worker time, and
 that real Translation/Vocabulary/Grammar workers supersede with 0 executor

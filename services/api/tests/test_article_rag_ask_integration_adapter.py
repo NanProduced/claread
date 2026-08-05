@@ -1,5 +1,5 @@
 # task-history: D6-I4J (renamed from test_d6_i4j_article_rag_ask_integration_adapter.py)
-"""D6-I4J: tests for Reader Ask RAG integration adapter.
+"""Tests for the Reader Ask RAG integration adapter.
 
 Covers:
   * available attachment → include_in_prompt=True with verbatim

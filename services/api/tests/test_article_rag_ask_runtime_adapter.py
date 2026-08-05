@@ -1,5 +1,5 @@
 # task-history: D6-I4L (renamed from test_d6_i4l_article_rag_ask_runtime_adapter.py)
-"""D6-I4L: tests for Article RAG ask runtime boundary adapter.
+"""Tests for the Article RAG ask runtime boundary adapter.
 
 Covers:
   * happy path: include_in_prompt=True → should_attach=True

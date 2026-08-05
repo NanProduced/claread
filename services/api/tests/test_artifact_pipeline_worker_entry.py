@@ -1,5 +1,5 @@
 # task-history: D6-I3R (renamed from test_d6_i3r_artifact_pipeline_worker_entry.py)
-"""Tests for D6-I3R Artifact Pipeline Operational Worker Entry.
+"""Tests for the artifact pipeline operational worker entry.
 
 Covers the standalone ``scripts/run_reader_artifact_pipeline_worker.py``:
 

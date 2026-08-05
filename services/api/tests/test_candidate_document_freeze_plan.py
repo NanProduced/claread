@@ -1,5 +1,5 @@
 # task-history: D6-I2 (renamed from test_d6_i2_candidate_document_freeze_plan.py)
-"""Focused tests for D6-I2A Candidate Document -> Stable Document Freeze Plan.
+"""Focused tests for the candidate document -> stable document freeze plan.
 
 These tests pin the canonical text derivation rules, UTF-16 offset
 accounting (including emoji / surrogate pairs), fail-closed behavior,

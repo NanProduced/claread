@@ -1,5 +1,5 @@
 # task-history: D6-I3O (renamed from test_d6_i3o_materialization_job_runtime.py)
-"""Tests for D6-I3O Materialization Job Runtime Integration.
+"""Tests for the materialization job runtime integration.
 
 Covers:
 - extraction worker success → durable enqueue of materialization job

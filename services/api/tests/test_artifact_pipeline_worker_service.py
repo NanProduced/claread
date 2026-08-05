@@ -1,5 +1,5 @@
 # task-history: D6-I3P (renamed from test_d6_i3p_artifact_pipeline_worker_service.py)
-"""Tests for D6-I3P Artifact Pipeline Worker Service.
+"""Tests for the artifact pipeline worker service.
 
 Covers the full artifact-backed text/markdown pipeline driven through
 ``ArtifactInputPipelineWorkerService``:

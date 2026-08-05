@@ -1,5 +1,5 @@
 # task-history: D6-I3S (renamed from test_d6_i3s_pdf_artifact_extraction_provider.py)
-"""Tests for D6-I3S PDF Text Extraction Provider + Provider Router.
+"""Tests for the PDF text extraction provider + provider router.
 
 Covers:
 

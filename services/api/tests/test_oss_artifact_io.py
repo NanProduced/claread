@@ -1,5 +1,5 @@
 # task-history: D6-I3Q (renamed from test_d6_i3q_oss_artifact_io.py)
-"""Tests for D6-I3Q OSS-backed Text/Markdown Artifact IO.
+"""Tests for OSS-backed text/markdown artifact IO.
 
 Covers:
 

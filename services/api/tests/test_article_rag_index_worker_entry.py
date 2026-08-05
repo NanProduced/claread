@@ -1,5 +1,5 @@
 # task-history: D6-I4U (renamed from test_d6_i4u_article_rag_index_worker_entry.py)
-"""Tests for D6-I4U Article RAG Index Operational Worker Entry.
+"""Tests for the Article RAG index operational worker entry.
 
 Covers the standalone ``scripts/run_reader_article_rag_index_worker.py``:
 

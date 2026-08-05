@@ -1,5 +1,5 @@
 # task-history: D6-I2 (renamed from test_d6_i2_stable_document_freeze_persistence.py)
-"""Focused tests for D6-I2B Stable Document Freeze Persistence.
+"""Focused tests for stable document freeze persistence.
 
 These tests use a fake asyncpg connection recorder to assert SQL order
 and parameters without requiring a real database. This keeps the tests

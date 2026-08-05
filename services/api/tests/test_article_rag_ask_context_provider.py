@@ -1,5 +1,5 @@
 # task-history: D6-I4N (renamed from test_d6_i4n_article_rag_ask_context_provider.py)
-"""D6-I4N: tests for Article RAG ask context provider facade.
+"""Tests for the Article RAG ask context provider facade.
 
 Covers:
   * happy path: chain I4J (async) -> I4K -> I4L -> I4M.

@@ -1,5 +1,5 @@
 # task-history: P2B (renamed from test_p2b_section_translation_semantic_fence.py)
-"""P2B — Production Section Translation Semantic Fence Closure.
+"""Production section translation semantic fence closure.
 
 Proves ``SectionTranslationBootstrapService.request_section_translation()``
 freezes the four semantic fence fields in ``input_json`` / ``envelope_json``

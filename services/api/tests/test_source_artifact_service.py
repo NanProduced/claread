@@ -857,21 +857,22 @@ def test_db_error_rolls_back_and_wraps() -> None:
     assert conn._last_transaction.rolled_back is True
 
 
-def test_migration_declares_json_object_checks_and_active_unique_object_index() -> None:
+def test_baseline_source_artifact_json_checks_and_active_unique_object_index() -> None:
     migration_path = (
         Path(__file__).resolve().parents[3]
         / "infra"
         / "migrations"
-        / "0007_reader_source_artifacts.sql"
+        / "0001_initial.sql"
     )
     migration_sql = migration_path.read_text(encoding="utf-8")
 
     assert "CREATE TABLE source_artifacts" in migration_sql
-    assert "CHECK (jsonb_typeof(source_refs_json) = 'object')" in migration_sql
-    assert "CHECK (jsonb_typeof(metadata_json) = 'object')" in migration_sql
-    assert "CHECK (jsonb_typeof(quality_json) = 'object')" in migration_sql
+    assert "jsonb_typeof(source_refs_json) = 'object'" in migration_sql
+    assert "jsonb_typeof(metadata_json) = 'object'" in migration_sql
+    assert "jsonb_typeof(quality_json) = 'object'" in migration_sql
+    assert "uq_source_artifacts_active_object" in migration_sql
     assert (
-        "ON source_artifacts (storage_provider, COALESCE(bucket, ''), object_key)"
+        "(storage_provider, COALESCE(bucket, ''::text), object_key)"
         in migration_sql
     )
-    assert "WHERE deleted_at IS NULL" in migration_sql
+    assert "WHERE (deleted_at IS NULL)" in migration_sql

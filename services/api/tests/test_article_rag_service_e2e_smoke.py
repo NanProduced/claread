@@ -1,5 +1,5 @@
 # task-history: D6-I4W (renamed from test_d6_i4w_article_rag_service_e2e_smoke.py)
-"""D6-I4W Article RAG service-level E2E smoke.
+"""Article RAG service-level E2E smoke.
 
 Wires the full RAG lifecycle end-to-end at the service layer — no FastAPI
 route, no frontend, no LLM/embedding/vector network calls:
@@ -130,8 +130,8 @@ from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     DATABASE_URL,
 )
 
-# The Article RAG index is a single path.  BASELINE_SQL (which includes
-# migration 0010) is sufficient.
+# The Article RAG index is a single path.  BASELINE_SQL (from
+# infra/migrations/0001_initial.sql) is sufficient.
 INDEX_SMOKE_SCHEMA_SQL = BASELINE_SQL
 
 

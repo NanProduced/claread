@@ -1,5 +1,5 @@
 # task-history: T5.6b (renamed from test_reader_section_translation_t56b.py)
-"""T5.6b — focused unit tests for bootstrap/drain/publisher contracts (fake executor)."""
+"""Focused unit tests for section translation bootstrap/drain/publisher contracts (fake executor)."""
 
 from __future__ import annotations
 

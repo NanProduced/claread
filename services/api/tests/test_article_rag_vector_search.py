@@ -1,5 +1,5 @@
 # task-history: D6-I4E (renamed from test_d6_i4e_article_rag_vector_search.py)
-"""D6-I4E: tests for Article RAG vector search adapter foundation.
+"""Tests for the Article RAG vector search adapter foundation.
 
 Covers:
   * ``FakeArticleRagVectorSearcher`` — top-k, score ordering,

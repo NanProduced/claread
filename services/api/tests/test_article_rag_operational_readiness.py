@@ -1,5 +1,5 @@
 # task-history: D6-I4Y (renamed from test_d6_i4y_article_rag_operational_readiness.py)
-"""D6-I4Y Article RAG Operational Readiness tests.
+"""Article RAG operational readiness tests.
 
 Proves the Article RAG pipeline is **locally operable, debuggable, and
 hand-offable** without touching the network by default.

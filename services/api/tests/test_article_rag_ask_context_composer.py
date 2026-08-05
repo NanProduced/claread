@@ -1,5 +1,5 @@
 # task-history: D6-I4G (renamed from test_d6_i4g_article_rag_ask_context_composer.py)
-"""D6-I4G: tests for Article RAG ask context composer.
+"""Tests for the Article RAG ask context composer.
 
 Covers:
   * happy path: pack with multiple items → deterministic

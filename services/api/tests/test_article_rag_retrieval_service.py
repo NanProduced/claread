@@ -1,5 +1,5 @@
 # task-history: D6-I4E (renamed from test_d6_i4e_article_rag_retrieval_service.py)
-"""D6-I4E: tests for Article RAG retrieval service.
+"""Tests for the Article RAG retrieval service.
 
 Covers:
   * ownership fail closed (via the I4A plan service's ``LookupError``);

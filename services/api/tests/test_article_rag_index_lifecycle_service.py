@@ -1,5 +1,5 @@
 # task-history: D6-I4S (renamed from test_d6_i4s_article_rag_index_lifecycle_service.py)
-"""D6-I4S: Article RAG Index Lifecycle Coordinator tests.
+"""Tests for the Article RAG index lifecycle coordinator.
 
 All tests are no-network: no real DB, DashScope, Zilliz, or LLM.
 Uses ``_FakeConn`` (a dict-backed fake asyncpg.Connection) and a

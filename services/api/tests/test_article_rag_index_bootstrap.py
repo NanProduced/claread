@@ -1,5 +1,5 @@
 # task-history: D6-I4B (renamed from test_d6_i4b_article_rag_index_bootstrap.py)
-"""Tests for D6-I4B Article RAG Index Job Bootstrap + Index State Foundation.
+"""Tests for Article RAG index job bootstrap + index state foundation.
 
 Covers the 12+ test requirements from the task spec:
  1. happy path creates index state + reader_run + reader_job
@@ -22,8 +22,8 @@ Covers the 12+ test requirements from the task spec:
 15. focused pytest pass
 16. git diff --check pass
 
-Uses real PostgreSQL with a temporary schema (BASELINE_SQL, which now
-includes 0004_reader_document_blocks.sql and 0010_reader_article_rag_index_state.sql).
+Uses real PostgreSQL with a temporary schema (BASELINE_SQL from
+infra/migrations/0001_initial.sql).
 """
 
 from __future__ import annotations

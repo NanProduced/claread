@@ -1,5 +1,5 @@
 # task-history: D6-I4D (renamed from test_d6_i4d_article_rag_provider_adapters.py)
-"""Tests for D6-I4D: Article RAG Provider Adapter Foundation.
+"""Tests for the Article RAG provider adapter foundation.
 
 Covers:
 

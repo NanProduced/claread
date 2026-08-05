@@ -1,5 +1,5 @@
 # task-history: ASK-RETRY-CONTRACT-R8 (renamed from test_ask_retry_contract_r8.py)
-"""ASK-RETRY-CONTRACT-R8/R8.1 — executable terminal-truth seams (no source-text)."""
+"""Ask retry contract executable terminal-truth seams (no source-text)."""
 
 from __future__ import annotations
 

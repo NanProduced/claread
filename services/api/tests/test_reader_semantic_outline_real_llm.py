@@ -1,14 +1,13 @@
 # task-history: T5.8c (renamed from test_reader_semantic_outline_t58c_real_llm.py)
-"""T5.8c — opt-in real-LLM smoke harness for semantic outline.
+"""Opt-in real-LLM smoke harness for semantic outline.
 
 Skipped by default. Runs only when ALL three gates are open:
 
     CLAREAD_ALLOW_REAL_LLM_TESTS=1 CLAREAD_REAL_LLM_MODEL=<model> \
-        uv run pytest tests/test_reader_semantic_outline_t58c_real_llm.py \
+        uv run pytest tests/test_reader_semantic_outline_real_llm.py \
             -m real_llm -v
 
-Contract (see ``C:/tmp/TMP-t5.8c-r0-semantic-outline-opt-in-eval-gate-2026-07-18.md``
-§2.1–§2.4):
+Contract (see ``docs/operations/testing.md`` — Ask Claread real-LLM triple gate):
 
 1. Test carries ONLY ``@pytest.mark.real_llm``.
 2. Default pytest / CI / non-``-m real_llm`` runs skip without constructing
@@ -37,7 +36,7 @@ Contract (see ``C:/tmp/TMP-t5.8c-r0-semantic-outline-opt-in-eval-gate-2026-07-18
    has one auditable usage event.
 8. Invalid-output / timeout / usage-writer-failure paths are NOT executed
    in this round. They are covered by the existing T5.8b DB/unit seam
-   (``test_reader_semantic_outline_t58b_adapter.py``) and referenced here
+   (``test_reader_semantic_outline_adapter.py``) and referenced here
    only as documentation.
 9. Never logs API key, endpoint, full prompt, or full provider payload.
    Smoke report fields: job_id, run_id, model_name, status, node_count,
@@ -267,7 +266,7 @@ async def _fetch_usage_rows(
 
 
 def _classify_functional(result_status: str, error_code: str | None) -> str:
-    """Functional/quality verdict per TMP §2.4.1."""
+    """Functional/quality verdict."""
     if result_status == "succeeded":
         return "pass"
     if error_code == "model_output_invalid":
@@ -280,7 +279,7 @@ def _classify_usage_audit(
     functional_verdict: str,
     usage_rows: list[asyncpg.Record],
 ) -> str:
-    """Usage-audit verdict per TMP §2.4.2.
+    """Usage-audit verdict.
 
     Queries the DB actual persisted count, NOT the seam return value —
     ``record_ai_usage_event`` is failure-tolerant and returns ``None`` on
@@ -288,7 +287,7 @@ def _classify_usage_audit(
     ``ai_usage_events``.
     """
     if functional_verdict in {"fail_functional"}:
-        # Timeout / zero-call paths expect zero usage events (TMP §1.1.3).
+        # Timeout / zero-call paths expect zero usage events.
         # Usage audit is not applicable here.
         return "not_applicable"
     count = len(usage_rows)
@@ -493,7 +492,7 @@ async def test_t58c_semantic_outline_real_llm_smoke(
     )
 
     # ------------------------------------------------------------------
-    # Functional / quality verdict (TMP §2.4.1).
+    # Functional / quality verdict.
     # ------------------------------------------------------------------
     assert result is not None, "worker returned None for a bootstrapped job"
     functional_verdict = _classify_functional(
@@ -501,7 +500,7 @@ async def test_t58c_semantic_outline_real_llm_smoke(
     )
 
     # ------------------------------------------------------------------
-    # Usage-audit verdict (TMP §2.4.2) — query DB actual persisted rows.
+    # Usage-audit verdict — query DB actual persisted rows.
     # ------------------------------------------------------------------
     usage_rows = await _fetch_usage_rows(outline_env, job_id=boot.job_id)
     usage_audit_verdict = _classify_usage_audit(

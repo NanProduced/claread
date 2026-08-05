@@ -1,5 +1,5 @@
 # task-history: ASK-RETRY-CONTRACT-R7 (renamed from test_ask_retry_contract_r7.py)
-"""ASK-RETRY-CONTRACT-R7 unit gates (no real DB / no migration execution)."""
+"""Ask retry contract terminal-hook unit gates (no real DB / no migration execution)."""
 
 from __future__ import annotations
 
