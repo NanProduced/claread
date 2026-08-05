@@ -25,7 +25,7 @@ article_ready
   -> production_stream.stream_agentic_thread_message      (agentic Ask)
 ```
 
-Ask 侧生产链说明：`reader_record_ask` 是唯一生产 Ask 路径。`build_production_article_rag_port`（`production_wiring.py`）在 `reader_article_rag_enabled` 开启且 embedding / vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`（实现 `ArticleRagSearchPort`），否则返回 `None` —— 此时 Ask 的 `search_current_article` 工具返回 typed `unavailable`，零 RAG I/O。旧的 Ask prompt-integration 簇（reader_orchestration 下 9 个已退役模块）生产代码 / 验收 / 本 runbook 均不再引用；9 个文件已在 ARCH-OPT-C1 Phase P 物理删除，`test_d6_a0_static_boundary.py` 以物理缺席断言 + 无豁免生产扫描锁死。
+Ask 侧生产链说明：`reader_record_ask` 是唯一生产 Ask 路径。`build_production_article_rag_port`（`production_wiring.py`）在 `reader_article_rag_enabled` 开启且 embedding / vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`（实现 `ArticleRagSearchPort`），否则返回 `None` —— 此时 Ask 的 `search_current_article` 工具返回 typed `unavailable`，零 RAG I/O。旧的 Ask prompt-integration 簇（reader_orchestration 下 9 个已退役模块）生产代码 / 验收 / 本 runbook 均不再引用；9 个文件已在 ARCH-OPT-C1 Phase P 物理删除，`test_static_boundary.py` 以物理缺席断言 + 无豁免生产扫描锁死。
 
 不覆盖：
 
@@ -290,7 +290,7 @@ LIMIT 5;
 
 ### 7.1 默认 no-network dry-run（CI 必跑）
 
-`tests/test_d6_i4z_article_rag_local_dry_run.py` 默认会跑、且不触网。它覆盖：
+`tests/test_article_rag_local_dry_run.py` 默认会跑、且不触网。它覆盖：
 
 - 启动/构造 worker 不需要 provider 配置（注入 `Unconfigured*` 兜底）
 - 用真实 test-Postgres schema（per-test 临时 schema，自动清理）seed 一个最小 article_ready record
@@ -310,14 +310,14 @@ LIMIT 5;
 ```powershell
 cd services/api
 
-# 只跑 I4Z dry-run
-uv run pytest -q tests/test_d6_i4z_article_rag_local_dry_run.py
+# 只跑 dry-run
+uv run pytest -q tests/test_article_rag_local_dry_run.py
 
-# 跑 I4Y + I4Z（readiness + dry-run），都不触网
-uv run pytest -q tests/test_d6_i4y_article_rag_operational_readiness.py tests/test_d6_i4z_article_rag_local_dry_run.py
+# 跑 readiness + dry-run，都不触网
+uv run pytest -q tests/test_article_rag_operational_readiness.py tests/test_article_rag_local_dry_run.py
 ```
 
-预期结果：所有 default-passes 测试 `passed`，**无** `failed`。`test_d6_i4z_article_rag_local_dry_run.py` 已经不再注册任何 `article_rag_smoke` 标记的真实 smoke 测试 —— 真实链路 smoke 已收敛到唯一入口（见 7.2）。
+预期结果：所有 default-passes 测试 `passed`，**无** `failed`。`test_article_rag_local_dry_run.py` 已经不再注册任何 `article_rag_smoke` 标记的真实 smoke 测试 —— 真实链路 smoke 已收敛到唯一入口（见 7.2）。
 
 ### 7.2 验收：默认 deterministic gate + 显式 opt-in real-provider smoke
 

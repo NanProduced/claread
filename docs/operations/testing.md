@@ -56,11 +56,11 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
 
 - **API**：`services/api/tests/test_task_number_naming_guard.py`。检查新测试文件名与 `app/` 生产符号（AST 标识符）中的任务编号，同时覆盖 snake_case（`d5_`/`d6_i4b` / `t58a` / `round20`）与 CamelCase / UPPER_SNAKE 任务代号（`ReaderD5SchemaHealthReport` / `READER_D5_*` / `READER_D6_*` / `ZPlus*`）。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file 0、production-symbol 24；API 测试文件存量已在 P2 全部改名为业务名，allowlist 清空），收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量豁免——协议值、migration 版本、`execution_version`、workflow version 等持久化身份不属于命名漂移。
-- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，同样的相等 ratchet 规则（上限 1）。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）属持久化/业务身份，不视为任务编号。
+- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，test-file allowlist 已清空、**相等 ratchet 上限 0**；同时对测试源码逐行 fail-closed 扫描大写任务码形态（`B/R/P/S/T+数字`、`D5`/`D6`、`A3`–`A5`、`ROUND+数字`、`LP-R+数字`、`ASK-` epic 前缀），`task-history:` 行豁免，code-identity allowlist 采用 strip-then-scan 且相等 ratchet（上限 9），豁免身份不会掩护同行真实任务码。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）、表示事件合同名（`G1`/`G2`/`G3`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
 
-**本轮（P2）验收范围限定为 `API/Evals test file-name + marker governance`**：只覆盖测试**文件名**改业务名与 chain/seam/life marker 补标。API 测试**函数 / class / helper 标识符**内仍存在任务码（如 `test_p1g_*` / `test_r6_*` / `test_t58b_*` / `_p1e*`，约 135 处、16 个文件），明确登记为下一波 **TEST-GOVERNANCE-API-IDENTIFIERS-P3**；P3 完成前不得宣称“任务历史仅存顶部 `# task-history:`”——该说法目前只对**文件名**成立，标识符层任务码尚未清理。Web 侧 ceiling / title guard 由并行 Web/integration owner 更新，本 API/Evals 分支不跨 ownership 修改。
+**本轮（P2）验收范围限定为 `API/Evals test file-name + marker governance`**：只覆盖测试**文件名**改业务名与 chain/seam/life marker 补标。API 测试**函数 / class / helper 标识符**内仍存在任务码（如 `test_p1g_*` / `test_r6_*` / `test_t58b_*` / `_p1e*`），明确登记为下一波 **TEST-GOVERNANCE-API-IDENTIFIERS-P3**；ARCH-OPT-C1 的 article_rag_ask 簇删除已在本集成落地，P3 须在 C1 删除落地后重新 AST 盘点标识符任务码数量（不沿用合并前的静态数字）。P3 完成前不得宣称“任务历史仅存顶部 `# task-history:`”——该说法目前只对**文件名**成立，标识符层任务码尚未清理。
 
 ## 后续 API/Web 并行治理边界
 

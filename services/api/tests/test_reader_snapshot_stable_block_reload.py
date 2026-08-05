@@ -595,7 +595,7 @@ async def _load_stable_document_blocks(
 # (>= 50 English words, >= 0.70 english_word_ratio, no table/image/
 # footnote/raw_html/math/unclosed_fence). Tables are intentionally
 # absent — they trigger `table_structure_uncertain` and require candidate
-# review (covered by test_d6_i3a_input_suitability_gate.py +
+# review (covered by test_input_suitability_gate.py +
 # test_a7_candidate_routing_distribution.py, not by reload tests).
 
 R2_CODE_BLOCK_MARKDOWN = """# Code Example

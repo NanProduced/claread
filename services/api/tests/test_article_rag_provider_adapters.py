@@ -20,7 +20,7 @@ monkeypatched at the module-attribute level; ``pymilvus`` is stubbed via
 ``sys.modules`` so the lazy import path is exercised without installing
 the real SDK on the test machine.  Opt-in smoke skeletons at the end
 are skipped unless ``READER_ARTICLE_RAG_SMOKE=1`` AND real keys are
-configured (mirrors ``test_d6_i3q_oss_artifact_io.py``).
+configured (mirrors ``test_oss_artifact_io.py``).
 """
 
 from __future__ import annotations

@@ -127,8 +127,9 @@ _SAFE_PROVIDER_CODES: frozenset[str] = frozenset(
         "InvalidParameter",
         # ``Throttling.User`` is retained as a LEGACY COMPATIBILITY
         # code: existing Article RAG provider/worker tests
-        # (test_d6_i4c, test_d6_i4d) rely on it as the canonical 429
-        # retryable code.  It is NOT confirmed as a current official
+        # (test_article_rag_index_worker,
+        # test_article_rag_provider_adapters) rely on it as the
+        # canonical 429 retryable code.  It is NOT confirmed as a current official
         # Model Studio code — do not cite it as such.  Replace with
         # the official code once a first-party reference is supplied.
         "Throttling.User",

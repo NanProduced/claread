@@ -72,7 +72,7 @@ from app.services.reader_orchestration.article_rag_index_worker import (
 pytestmark = [pytest.mark.anyio, pytest.mark.chain_article_rag, pytest.mark.seam_service_integration, pytest.mark.life_permanent_regression, pytest.mark.life_characterization]
 
 # Reuse seed helpers + UUIDs from the I4A test module.
-from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402
+from tests.test_article_rag_index_plan import (  # noqa: E402
     _BASE_ID,
     _OTHER_USER_ID,
     _RECORD_ID,

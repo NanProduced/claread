@@ -743,7 +743,7 @@ def test_terminal_path_does_not_carry_seed_evidence() -> None:
 
 
 def test_static_boundary_does_not_introduce_legacy_imports() -> None:
-    from tests.test_d6_a0_static_boundary import (
+    from tests.test_static_boundary import (
         test_reader_record_ask_independent_runtime_avoids_legacy_agent_seams,
     )
 

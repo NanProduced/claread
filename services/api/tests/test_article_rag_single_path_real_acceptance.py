@@ -441,7 +441,7 @@ _REAL_SMOKE_SKIP_REASON = (
 # Test schema + seed helpers (mirror i4z/i4a, but with UNIQUE UUIDs)
 # ---------------------------------------------------------------------------
 
-from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402
+from tests.test_article_rag_index_plan import (  # noqa: E402
     _main_reading_policy,
     _seed_block,
     _seed_segment,
@@ -551,7 +551,7 @@ async def _seed_acceptance_environment(
     on a fresh schema there is nothing to delete anyway.
     """
     from app.contracts.annotation import utf16_code_unit_length
-    from tests.test_d6_i4a_article_rag_index_plan import (
+    from tests.test_article_rag_index_plan import (
         _seed_base,
         _seed_record,
         _seed_stable_document,

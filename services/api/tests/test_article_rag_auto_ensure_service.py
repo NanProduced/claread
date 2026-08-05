@@ -113,7 +113,7 @@ class _FakeConn:
 
 
 # ---------------------------------------------------------------------------
-# Fakes for wiring test (reusing patterns from test_d6_i3c)
+# Fakes for wiring test (reusing patterns from test_stable_ready_input_application_service)
 # ---------------------------------------------------------------------------
 
 

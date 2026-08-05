@@ -10,7 +10,7 @@ contract. These tests lock the exited surface:
 - responses never expose legacy analysis identity.
 
 Anchor-branch persistence and merge semantics are locked by
-`test_d6_a5_dual_contract_spike.py`.
+`test_dual_contract_spike.py`.
 """
 
 from __future__ import annotations

@@ -30,7 +30,7 @@ Covers:
     ArticleMapEntrySource after conversion.
 
 No DB, no asyncpg, no embedding, no Zilliz. In-memory plan / chunk
-helpers mirror test_d6_i4e_article_rag_retrieval_service.py.
+helpers mirror test_article_rag_retrieval_service.py.
 """
 
 from __future__ import annotations

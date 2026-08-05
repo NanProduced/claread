@@ -92,7 +92,7 @@ no_network_default = pytest.mark.no_network_default
 # Test schema + seed helpers (mirror test_d6_i4w_article_rag_service_e2e_smoke.py)
 # ---------------------------------------------------------------------------
 
-from tests.test_d6_i4a_article_rag_index_plan import (  # noqa: E402
+from tests.test_article_rag_index_plan import (  # noqa: E402
     _RECORD_ID,
     _USER_ID,
     _main_reading_policy,

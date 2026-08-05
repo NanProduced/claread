@@ -5,7 +5,7 @@ route and the ``last_opened_at`` field on the ``GET /reader/records``
 list response. They use ``AsyncMock`` to patch the
 ``ReaderOrchestrationRepository`` so no real DB connection is required
 (mirroring the pattern from
-``tests/test_d6_i3d_stable_ready_input_route.py``).
+``tests/test_stable_ready_input_route.py``).
 """
 
 from __future__ import annotations
