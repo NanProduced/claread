@@ -89,10 +89,14 @@ _BUSINESS_TOKEN_EXCLUSIONS: frozenset[str] = frozenset(
 _SNAKE_TASK_TOKEN_RE = re.compile(r"^[A-Za-z]\d{1,3}[A-Za-z]?$")
 _SNAKE_ROUND_TOKEN_RE = re.compile(r"^round\d+$", re.IGNORECASE)
 # CamelCase letter+digit run: ``TestR16Feature`` → R16;
+# ``TestT58aFeature`` → T58a; ``TestP2cFeature`` → P2c;
 # ``TestG1RepresentationEvents`` → G1 (then excluded via KEEP).
-# Applied only to mixed-case names so pure UPPER_SNAKE (``E2E``,
+# Optional trailing lowercase letter matches snake forms like ``t58a`` /
+# ``i4x``. Applied only to mixed-case names so pure UPPER_SNAKE (``E2E``,
 # ``SHA256``) is handled exclusively by snake tokens + KEEP.
-_CAMEL_TASK_TOKEN_RE = re.compile(r"(?<![A-Z0-9])([A-Z]\d{1,3})(?=[A-Z]|$)")
+_CAMEL_TASK_TOKEN_RE = re.compile(
+    r"(?<![A-Z0-9])([A-Z]\d{1,3}[a-z]?)(?=[A-Z]|$)"
+)
 # ``TestRound2SyntheticGates`` — Round<N> after a lower-case letter or
 # at a CamelCase word boundary.
 _CAMEL_ROUND_TOKEN_RE = re.compile(r"(?:(?<=[a-z])|(?<=_)|^)Round(\d+)")
@@ -354,6 +358,10 @@ def test_task_code_pattern_flags_synthetic_task_code() -> None:
         "test_a01_feature",
         "test_l2_feature",
         "TestR16Feature",
+        "TestT58aFeature",
+        "TestP2cFeature",
+        "TestR1aIntegration",
+        "TestI4xSections",
         "d2_schema_pool",
         "test_round20_feature",
         "test_r6_stale_stream_reconcile",
