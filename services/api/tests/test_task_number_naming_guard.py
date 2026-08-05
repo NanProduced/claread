@@ -14,6 +14,11 @@ prevents their *backflow* into:
    String literals are intentionally exempt: persisted identities such
    as protocol values, migration versions, ``execution_version`` and
    workflow versions are durable contracts, not naming drift.
+3. **Test identifiers** under ``tests/`` — function, class and
+   module-level assignment names must not embed task codes. String
+   literals and comments stay exempt: fixture payloads, protocol
+   values, persisted/artifact/migration versions and dataset/env
+   identities are durable contracts and are never scanned here.
 
 This test is pure filesystem/AST — no DB, no network, no LLM.
 """
@@ -57,11 +62,28 @@ _TASK_CODE_IDENTIFIER_RE = re.compile(
     r"(?<![A-Z0-9])D[56](?![0-9])|(?<![A-Za-z0-9])ZPlus|(?<![A-Za-z0-9])zplus"
 )
 
+# Task-code signatures for test identifiers (P3 identifier governance).
+# Family set aligned with the P3 Phase-1 audit: ``p<N>``/``r<N>``/
+# ``t<NN>[x]``/``d5``/``d6``/``a3``-``a5``/``i3``/``i4``/``s<N>``/
+# ``round<N>``/``lp_r<N>``/``g0[x]`` in snake names, plus CamelCase
+# ``T<NN>``/``A<3-5>``/``D<5-6>``/``R<N>`` tokens. ``zplus``/``ZPlus``
+# are production domain words (see the production allowlist above) and
+# are intentionally NOT part of this set.
+_TEST_IDENTIFIER_TASK_CODE_RE = re.compile(
+    r"_(?:d[56]|a[345]|t[0-9][0-9][a-z0-9]?|r[0-9]|p[0-9]|i[34]"
+    r"|s[0-9]|round[0-9]|lp_r[0-9]|g0[0-9]?)"
+    r"|(?<![A-Z0-9_])D[56](?![0-9])"
+    r"|(?<![A-Z0-9_])A[345](?![0-9])"
+    r"|(?<![A-Z0-9_])T[0-9][0-9][a-z0-9]?(?![0-9])"
+    r"|(?<![A-Z0-9_])R[0-9](?![0-9])"
+)
+
 # Ratchet ceilings (GOVERNANCE-CLOSEOUT-R1): allowlist sizes must match
 # exactly — an equality ratchet, so a shrunk allowlist can never grow
 # back. Every governance rename lowers the ceiling in the same change.
 TEST_FILE_ALLOWLIST_CEILING = 0
 PRODUCTION_SYMBOL_ALLOWLIST_CEILING = 24
+TEST_IDENTIFIER_ALLOWLIST_CEILING = 14
 
 
 def _name_has_task_number(name: str) -> bool:
@@ -107,6 +129,37 @@ TASK_NUMBER_PRODUCTION_SYMBOL_ALLOWLIST: frozenset[str] = frozenset(
         "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapResult",
         "app/services/reader_orchestration/zplus_bootstrap.py:ZPlusBootstrapService",
         "app/services/reader_record_ask/production_stream.py:_sync_submission_terminal_r6",
+    }
+)
+
+# Existing test identifiers with external contracts (P3 identifier
+# governance; file:symbol, relative to services/api). Same ratchet
+# rules as above. KEEP evidence per group:
+# - ``R4_A3_*_ENV``: the env var names ``CLAREAD_R4_A3_*`` are the
+#   real-LLM eval dataset/run identity consumed by evals/** harness
+#   code (dataset id + run contract), not task history.
+# - schema-health test names: they exercise the READER_D5/D6
+#   production symbols allowlisted above, which are permanent schema
+#   identity (migration/schema contract).
+# - ``..._in_round0``: ``round0`` is the reasoning-projection round
+#   index (domain term; cf. production ``advance_round``), not a task
+#   code.
+TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_BBC_RECORD_ID_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_DATASET_DIR_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_MAX_REQUESTS_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_MAX_TOKENS_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_PRO_PROFILE_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_RUNS_DIR_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_RUN_ENV",
+        "tests/test_reader_record_ask_real_llm_eval.py:R4_A3_THINKING_VIA_PROFILE_ENV",
+        "tests/test_reader_orchestration_schema_health.py:test_check_schema_baseline_sql_covers_reader_d5_attribution_objects",
+        "tests/test_reader_orchestration_schema_health.py:test_reader_d5_schema_health_passes_on_fresh_baseline",
+        "tests/test_reader_orchestration_schema_health.py:test_reader_d5_schema_health_reports_drift_with_reset_guidance",
+        "tests/test_reader_orchestration_schema_health.py:test_reader_schema_health_reports_missing_d6_anchor_column_with_0002_guidance",
+        "tests/test_reader_orchestration_schema_health.py:test_reader_schema_health_reports_missing_d6_anchor_index",
+        "tests/test_reader_record_ask_reasoning_projection.py:test_no_round0_subcap_allows_full_total_budget_in_round0",
     }
 )
 
@@ -189,3 +242,73 @@ def test_production_symbols_carry_no_task_numbers() -> None:
         "production-symbol allowlist size must equal its ratchet ceiling; "
         "when renaming stock, remove the entry AND lower the ceiling together"
     )
+
+
+def _test_identifier_hits() -> set[str]:
+    hits: set[str] = set()
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        rel = path.relative_to(SERVICE_ROOT).as_posix()
+        names: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                names.append(node.name)
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.append(node.target.id)
+        hits.update(
+            f"{rel}:{name}"
+            for name in names
+            if _TEST_IDENTIFIER_TASK_CODE_RE.search(name)
+        )
+    return hits
+
+
+def test_test_identifiers_carry_no_task_codes() -> None:
+    """Test identifiers must not embed task codes (ratchet).
+
+    Only AST identifier names are scanned (functions, classes,
+    module-level assignments). String literals and comments — fixture
+    payloads, protocol values, persisted/artifact/migration versions,
+    dataset/env identities — are exempt by design and out of scope.
+    """
+    actual = _test_identifier_hits()
+    unlisted = actual - TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST
+    assert not unlisted, (
+        "test identifiers must not embed task codes; rename to a "
+        f"business name instead of allowlisting: {sorted(unlisted)}"
+    )
+    stale = TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST - actual
+    assert not stale, (
+        "allowlist is a ratchet and only shrinks; remove stale entries: "
+        f"{sorted(stale)}"
+    )
+    assert (
+        len(TASK_NUMBER_TEST_IDENTIFIER_ALLOWLIST)
+        == TEST_IDENTIFIER_ALLOWLIST_CEILING
+    ), (
+        "test-identifier allowlist size must equal its ratchet ceiling; "
+        "when renaming stock, remove the entry AND lower the ceiling together"
+    )
+
+
+def test_task_code_pattern_flags_synthetic_task_code() -> None:
+    """A synthetic task-coded identifier must be caught (backflow proof)."""
+    tree = ast.parse("async def test_r6_stale_stream_reconcile():\n    pass\n")
+    name = tree.body[0].name
+    assert _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
+
+
+def test_task_code_pattern_passes_business_names() -> None:
+    """Business identifiers and domain terms must not be flagged."""
+    for name in (
+        "test_budget_stop_report_counts",
+        "test_spans_order_consistent_with_reading_order",
+        "_make_write_chunk",
+        "TestFreezePersistenceSqlOrder",
+        "advance_round",
+        "zplus_service",
+    ):
+        assert not _TEST_IDENTIFIER_TASK_CODE_RE.search(name), name
