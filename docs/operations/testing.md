@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-EVALS-P2-CLOSEOUT，验收名 `API/Evals test file-name + marker governance`：77 个 API 测试文件改业务名并补 chain/seam/life marker，test-file allowlist 收缩至 0；清除 2 个陈旧 migration 测试、source-artifact schema 合同改读 `0001_initial.sql`；docstring / 旧 migration 引用与 real-LLM 文件收口；evals 非持久化任务码测试函数改业务名；清理 4 条 B905。后续 TEST-GOVERNANCE-API-IDENTIFIERS-P3 已完成测试标识符层任务码改名：377 项任务码标识符改为业务名，guard 新增 tests/** 标识符 AST 扫描，identifier allowlist 收口至 14（全部附外部合同证据），test-file allowlist 维持 0、production-symbol allowlist 维持 24）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-05（TEST-GOVERNANCE-API-EVALS-P2-CLOSEOUT，验收名 `API/Evals test file-name + marker governance`：77 个 API 测试文件改业务名并补 chain/seam/life marker，test-file allowlist 收缩至 0；清除 2 个陈旧 migration 测试、source-artifact schema 合同改读 `0001_initial.sql`；docstring / 旧 migration 引用与 real-LLM 文件收口；evals 非持久化任务码测试函数改业务名；清理 4 条 B905。后续 TEST-GOVERNANCE-API-IDENTIFIERS-P3 已完成测试标识符层任务码改名：385 项任务码标识符改为业务名（含 chain follow-up 补改的 8 项 guard 正则盲区残留），guard 新增 tests/** 标识符 AST 扫描并收口模式族盲区（单位数 t 码、标识符开头 i3/i4、CamelCase Round<N>/I<3-4><X>），identifier allowlist 收口至 14（全部附外部合同证据），test-file allowlist 维持 0、production-symbol allowlist 维持 24）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -60,7 +60,7 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
 
-**标识符层治理（TEST-GOVERNANCE-API-IDENTIFIERS-P3）已收口**：C1 删除落地后重新 stdlib AST 盘点（不沿用合并前静态数字），tests/** 内任务码标识符按业务链分四批改名（Reader Parse / Artifact pipeline、Reader Orchestration / Semantic outline、Reader Ask retry / lifecycle / real-LLM harness、Infra / closeout），新名直接表达业务行为；断言、marker、fixture 值、协议字符串零变化，collection 总数保持 6139。最终 allowlist：test-file 0、production-symbol 24、test-identifier 14（8 个 `R4_A3_*_ENV` evals dataset/run 合同常量 + 5 个 READER_D5/D6 schema-health 测试 + 1 个 reasoning round0 领域语义测试，均附外部合同证据）。guard 模式族不含 `zplus`/`ZPlus`（生产域词）；字符串字面量与注释不在扫描范围。当前可用 guard 命令（已验证可跑通）：
+**标识符层治理（TEST-GOVERNANCE-API-IDENTIFIERS-P3）已收口**：C1 删除落地后重新 stdlib AST 盘点（不沿用合并前静态数字），tests/** 内任务码标识符按业务链分四批改名（Reader Parse / Artifact pipeline、Reader Orchestration / Semantic outline、Reader Ask retry / lifecycle / real-LLM harness、Infra / closeout），新名直接表达业务行为；断言、marker、fixture 值、协议字符串零变化，collection 总数保持 6142（当前环境基线；改名前后逐 nodeid 对账一致）。四批改名后 chain follow-up 又补改 8 项正则盲区残留（单位数 t 码、标识符开头 i3/i4 fixture、CamelCase Round1/I4Z），并同步收口 guard 模式族。最终 allowlist：test-file 0、production-symbol 24、test-identifier 14（8 个 `R4_A3_*_ENV` evals dataset/run 合同常量 + 5 个 READER_D5/D6 schema-health 测试 + 1 个 reasoning round0 领域语义测试，均附外部合同证据）。guard 模式族不含 `zplus`/`ZPlus`（生产域词）；字符串字面量与注释不在扫描范围。当前可用 guard 命令（已验证可跑通）：
 
 ```powershell
 cd services/api
