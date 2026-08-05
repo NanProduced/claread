@@ -2532,7 +2532,7 @@ async def test_dashscope_400_terminalizes_article_rag_job_once_with_safe_diagnos
 # ---------------------------------------------------------------------------
 
 
-async def _p1d_count_terminal_events(
+async def _count_terminal_events(
     conn: asyncpg.Connection,
     *,
     job_id: UUID,
@@ -2544,7 +2544,7 @@ async def _p1d_count_terminal_events(
     )
 
 
-def _p1d_assert_no_sentinel_in_surfaces(
+def _assert_no_sentinel_in_surfaces(
     *,
     sentinel: str,
     job: asyncpg.Record | None = None,
@@ -3567,7 +3567,7 @@ async def test_indexed_embedding_model_drift_failed_terminal(
         index_run = await _fetch_index_run(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        terminal_events = await _p1d_count_terminal_events(
+        terminal_events = await _count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
         retry_events = await _count_retry_events(
@@ -3580,7 +3580,7 @@ async def test_indexed_embedding_model_drift_failed_terminal(
     assert retry_events == 0
 
     # Sentinel must NOT leak into error surfaces.
-    _p1d_assert_no_sentinel_in_surfaces(
+    _assert_no_sentinel_in_surfaces(
         sentinel=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
         job=job,
         index_run=index_run,
@@ -3651,7 +3651,7 @@ async def test_indexed_vector_collection_drift_failed_terminal(
         index_run = await _fetch_index_run(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        terminal_events = await _p1d_count_terminal_events(
+        terminal_events = await _count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
         retry_events = await _count_retry_events(
@@ -3663,7 +3663,7 @@ async def test_indexed_vector_collection_drift_failed_terminal(
     assert terminal_events == 1
     assert retry_events == 0
 
-    _p1d_assert_no_sentinel_in_surfaces(
+    _assert_no_sentinel_in_surfaces(
         sentinel=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
         job=job,
         index_run=index_run,
@@ -3739,7 +3739,7 @@ async def test_indexed_both_drift_failed_terminal(
         index_run = await _fetch_index_run(
             conn, index_run_id=bootstrap_result.index_run_id,
         )
-        terminal_events = await _p1d_count_terminal_events(
+        terminal_events = await _count_terminal_events(
             conn, job_id=bootstrap_result.job_id,
         )
         retry_events = await _count_retry_events(
@@ -3751,12 +3751,12 @@ async def test_indexed_both_drift_failed_terminal(
     assert terminal_events == 1
     assert retry_events == 0
 
-    _p1d_assert_no_sentinel_in_surfaces(
+    _assert_no_sentinel_in_surfaces(
         sentinel=_SENTINEL_DRIFTED_EMBEDDING_MODEL,
         job=job,
         index_run=index_run,
     )
-    _p1d_assert_no_sentinel_in_surfaces(
+    _assert_no_sentinel_in_surfaces(
         sentinel=_SENTINEL_DRIFTED_VECTOR_COLLECTION,
         job=job,
         index_run=index_run,

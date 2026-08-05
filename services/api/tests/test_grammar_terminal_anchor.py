@@ -154,7 +154,7 @@ def _snapshot_chip_anchor_for_item(
 # ---------------------------------------------------------------------------
 
 
-def test_p0_spans_order_consistent_with_reading_order() -> None:
+def test_spans_order_consistent_with_reading_order() -> None:
     """span[0] 在前（低 offset）、span[1] 在后（高 offset）→ terminal = span[1]。
 
     验证 builder 将 item 归到 span[1]（terminal）所在 anchor 下，
@@ -213,7 +213,7 @@ def test_p0_spans_order_consistent_with_reading_order() -> None:
     )
 
 
-def test_p0_spans_order_inconsistent_terminal_is_first_listed() -> None:
+def test_spans_order_inconsistent_terminal_is_first_listed() -> None:
     """span[0] 在后（高 offset）、span[1] 在前（低 offset）→ terminal = span[0]。
 
     span 列表顺序与阅读顺序相反。terminal 仍由 ``(start_offset, end_offset,
@@ -271,7 +271,7 @@ def test_p0_spans_order_inconsistent_terminal_is_first_listed() -> None:
     )
 
 
-def test_p0_multi_item_across_multiple_terminal_anchors() -> None:
+def test_multi_item_across_multiple_terminal_anchors() -> None:
     """3 个 item，各自 terminal anchor 不同 → payload 3 个 descriptor，anchor 各异。
 
     - item 0：2 spans (seg_0, seg_1)，terminal = seg_1

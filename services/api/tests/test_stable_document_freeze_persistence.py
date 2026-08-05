@@ -46,16 +46,16 @@ from app.services.reader_orchestration.base_builder import (
     EXACT_CANONICAL_TEXT_VERSION,
     build_reading_base_from_canonical_text,
 )
-from app.services.reader_orchestration.document_freeze_plan import (
-    CANONICAL_TEXT_BLOCK_SEPARATOR,
-    build_stable_document_freeze_plan,
-)
 from app.services.reader_orchestration.document_freeze_persistence import (
     StableDocumentFreezePersistenceError,
     StableDocumentFreezePersistenceResult,
     compute_canonical_text_sha256,
     compute_canonical_text_utf16_length,
     persist_stable_document_freeze_plan,
+)
+from app.services.reader_orchestration.document_freeze_plan import (
+    CANONICAL_TEXT_BLOCK_SEPARATOR,
+    build_stable_document_freeze_plan,
 )
 
 pytestmark = [
@@ -2049,7 +2049,7 @@ class TestNavigationJsonFromBuildResult:
         assert "My Title" in heading_unit["label"]
 
 
-class TestD6I2CSqlOrder:
+class TestFreezePersistenceSqlOrder:
     """D6-I2C: Full SQL order including reading_units and
     anchor_segments inserts.
 
