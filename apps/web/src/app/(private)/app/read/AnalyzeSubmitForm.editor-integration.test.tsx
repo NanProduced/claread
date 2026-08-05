@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 /**
- * R1 Phase 1 — AnalyzeSubmitForm × 真实 MarkdownTextInput 集成红灯测试。
+ * AnalyzeSubmitForm × 真实 MarkdownTextInput 集成红灯测试。
  *
  * AnalyzeSubmitForm.test.tsx 把编辑器 mock 成 textarea，无法覆盖真实
  * contenteditable 的状态一致性。本套件**不做该 mock**：渲染真实 Plate
@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnalyzeSubmitForm } from "./AnalyzeSubmitForm";
 import { PENDING_CANDIDATE_STORAGE_KEY } from "./pending-candidate";
-import { R1_TEST_MARKDOWN } from "./r1-test-fixtures";
+import { SUBMIT_TEST_MARKDOWN } from "./__tests__/submit-test-markdown";
 
 const navigationMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -159,7 +159,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   });
 
   it("structured Markdown in the real editor drives placeholder, CTA, chars, hint, clear and DOM semantics", async () => {
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN);
 
     // placeholder 状态关闭（内容已渲染）。
     await waitFor(() => {
@@ -189,7 +189,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
   });
 
   it("clearing after content resets placeholder, CTA and badges", async () => {
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN);
     await waitFor(() => {
       expect(getSubmitButton().getAttribute("data-ready")).toBe("true");
     });
@@ -228,7 +228,7 @@ describe("AnalyzeSubmitForm × real MarkdownTextInput integration", () => {
       );
     });
 
-    await enterMarkdownViaRecoveryFlow(R1_TEST_MARKDOWN, submitMock);
+    await enterMarkdownViaRecoveryFlow(SUBMIT_TEST_MARKDOWN, submitMock);
     await waitFor(() => {
       expect(getSubmitButton().getAttribute("data-ready")).toBe("true");
     });

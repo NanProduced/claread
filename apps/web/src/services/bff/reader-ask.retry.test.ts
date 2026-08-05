@@ -22,7 +22,7 @@ const mockSession = {
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
-describe("retryReaderAskMessageForWeb (ASK-RETRY-CONTRACT-R0)", () => {
+describe("retryReaderAskMessageForWeb", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getWebSession).mockResolvedValue(mockSession);

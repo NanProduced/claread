@@ -213,7 +213,7 @@ describe("needs_confirmation 恢复入口", () => {
   });
 });
 
-describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
+describe("去重 — 主列表排除已置顶的前 3 条", () => {
   it("4 priority + 1 non-priority → 顶部 3 + 主列表 2 (1 priority + 1 non-priority)", () => {
     render(
       <ReadingRecordSection
@@ -251,30 +251,30 @@ describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
     const region = screen.getByTestId("library-needs-attention");
     const regionItems = region.querySelectorAll("li");
     expect(regionItems.length).toBe(3);
-    // 顶部 3 条：p1, p2, p3
+    // 顶部 3 条为置顶记录
     expect(within(region).getByText("P1")).toBeTruthy();
     expect(within(region).getByText("P2")).toBeTruthy();
     expect(within(region).getByText("P3")).toBeTruthy();
     expect(within(region).queryByText("P4")).toBeNull();
     expect(within(region).queryByText("N1")).toBeNull();
 
-    // 主列表 = [p4, n1] 共 2 条
+    // 主列表剩余 2 条
     const uls = document.querySelectorAll("section ul");
     const mainList = uls[uls.length - 1];
     const mainItems = mainList.querySelectorAll("li");
     expect(mainItems.length).toBe(2);
     expect(within(mainList as HTMLElement).getByText("P4")).toBeTruthy();
     expect(within(mainList as HTMLElement).getByText("N1")).toBeTruthy();
-    // 顶部已有的 p1/p2/p3 不应再出现在主列表
+    // 顶部已有的置顶记录不应再出现在主列表
     expect(within(mainList as HTMLElement).queryByText("P1")).toBeNull();
     expect(within(mainList as HTMLElement).queryByText("P2")).toBeNull();
     expect(within(mainList as HTMLElement).queryByText("P3")).toBeNull();
   });
 
   it("主列表顺序与原 items 顺序一致（不把剩余 priority 提到前面）", () => {
-    // 混排：n1 (non), p1 (priority), n2 (non), p2 (priority), n3 (non), p3 (priority), p4 (priority)
-    // 顶部 cap 3 → p1, p2, p3
-    // 主列表应保留原顺序：[n1, n2, n3, p4]，p4 留在末尾，而不是被提到 n1 之前
+    // 混排：non/priority 交替，末尾追加一条 priority
+    // 顶部 cap 3 → 前 3 条 priority
+    // 主列表应保留原顺序：剩余 non 在前，末尾的 priority 留在末尾而不是被提前
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -318,7 +318,7 @@ describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
       />,
     );
 
-    // 顶部 3 条：p1, p2, p3（按 items 中出现顺序）
+    // 顶部 3 条置顶记录（按 items 中出现顺序）
     const region = screen.getByTestId("library-needs-attention");
     const regionItems = region.querySelectorAll("li");
     expect(regionItems.length).toBe(3);
@@ -330,7 +330,7 @@ describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
     expect(within(region).queryByText("N2")).toBeNull();
     expect(within(region).queryByText("N3")).toBeNull();
 
-    // 主列表顺序应与原 items 顺序一致：[n1, n2, n3, p4]
+    // 主列表顺序应与原 items 顺序一致
     const uls = document.querySelectorAll("section ul");
     const mainList = uls[uls.length - 1] as HTMLElement;
     const mainItems = Array.from(mainList.querySelectorAll("li"));
@@ -340,7 +340,7 @@ describe("P2 去重 — 主列表排除已置顶的前 3 条", () => {
     );
     expect(mainTitles).toEqual(["N1", "N2", "N3", "P4"]);
 
-    // 顶部已有的 p1/p2/p3 不应再出现在主列表
+    // 顶部已有的置顶记录不应再出现在主列表
     expect(within(mainList).queryByText("P1")).toBeNull();
     expect(within(mainList).queryByText("P2")).toBeNull();
     expect(within(mainList).queryByText("P3")).toBeNull();

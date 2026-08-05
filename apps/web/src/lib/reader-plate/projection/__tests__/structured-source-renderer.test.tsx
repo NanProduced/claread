@@ -51,7 +51,7 @@ const SIMPLE_PARAGRAPH_DIAGNOSTIC: ReaderStructuredSourceDiagnostic = {
   outcome: "stable_document_ready",
 };
 
-const R14_COMPLEX_BLOCKS: ReaderStructuredSourceBlock[] = [
+const COMPLEX_DOCUMENT_BLOCKS: ReaderStructuredSourceBlock[] = [
   {
     block_id: "b1",
     block_type: "heading",
@@ -243,7 +243,7 @@ const R14_COMPLEX_BLOCKS: ReaderStructuredSourceBlock[] = [
   },
 ];
 
-const R14_COMPLEX_DIAGNOSTIC: ReaderStructuredSourceDiagnostic = {
+const COMPLEX_DOCUMENT_DIAGNOSTIC: ReaderStructuredSourceDiagnostic = {
   fixture_name: "r14_complex",
   warnings: [
     {
@@ -789,8 +789,8 @@ describe("StructuredSourceRenderer", () => {
     it("renders all block types in the tree", () => {
       const { container } = render(
         <StructuredSourceRenderer
-          blocks={R14_COMPLEX_BLOCKS}
-          diagnostic={R14_COMPLEX_DIAGNOSTIC}
+          blocks={COMPLEX_DOCUMENT_BLOCKS}
+          diagnostic={COMPLEX_DOCUMENT_DIAGNOSTIC}
         />,
       );
 
@@ -813,7 +813,7 @@ describe("StructuredSourceRenderer", () => {
 
     it("renders heading hierarchy h1 → h2 → h3", () => {
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const h1 = container.querySelector('[data-block-id="b1"]');
@@ -826,7 +826,7 @@ describe("StructuredSourceRenderer", () => {
 
     it("renders nested ordered list inside unordered list_item", () => {
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const outerList = container.querySelector('[data-block-id="b5"]');
@@ -837,14 +837,14 @@ describe("StructuredSourceRenderer", () => {
       expect(nestedOrderedList?.tagName).toBe("OL");
       expect(nestedOrderedList?.getAttribute("data-list-ordered")).toBe("true");
 
-      // The ordered list should be a descendant of the outer list_item b7
+      // The ordered list should be a descendant of the outer ordered-list list_item
       const listItemB7 = container.querySelector('[data-block-id="b7"]');
       expect(listItemB7?.contains(nestedOrderedList ?? null)).toBe(true);
     });
 
     it("renders table with thead and tbody", () => {
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const thead = container.querySelector(
@@ -856,7 +856,7 @@ describe("StructuredSourceRenderer", () => {
       expect(thead).toBeTruthy();
       expect(tbody).toBeTruthy();
 
-      // Header row b12 should be in thead; body row b15 in tbody
+      // The header row should be in thead; the body row in tbody
       const headerRow = thead?.querySelector('[data-block-id="b12"]');
       const bodyRow = tbody?.querySelector('[data-block-id="b15"]');
       expect(headerRow).toBeTruthy();
@@ -865,7 +865,7 @@ describe("StructuredSourceRenderer", () => {
 
     it("renders code_block with python language", () => {
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const codeBlock = container.querySelector('[data-block-id="b18"]');
@@ -876,11 +876,11 @@ describe("StructuredSourceRenderer", () => {
     });
 
     it("renders visible language badge for code_block with language", () => {
-      // Phase 3 / P2: code blocks with non-empty language render a visible
+      // code blocks with non-empty language render a visible
       // badge in the top-right corner so users can identify the language
       // without reading the code body.
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const codeBlock = container.querySelector('[data-block-id="b18"]');
@@ -890,7 +890,7 @@ describe("StructuredSourceRenderer", () => {
     });
 
     it("does not render language badge for code_block without language", () => {
-      // Phase 3 / P2: code blocks without a language identifier must not
+      // code blocks without a language identifier must not
       // render an empty badge.
       const blocksWithoutLang: ReaderStructuredSourceBlock[] = [
         {
@@ -915,7 +915,7 @@ describe("StructuredSourceRenderer", () => {
 
     it("renders blockquote and thematic_break", () => {
       const { container } = render(
-        <StructuredSourceRenderer blocks={R14_COMPLEX_BLOCKS} />,
+        <StructuredSourceRenderer blocks={COMPLEX_DOCUMENT_BLOCKS} />,
       );
 
       const blockquote = container.querySelector('[data-block-id="b19"]');
@@ -929,8 +929,8 @@ describe("StructuredSourceRenderer", () => {
     it("surfaces strikethrough_extension warning and stable outcome", () => {
       render(
         <StructuredSourceRenderer
-          blocks={R14_COMPLEX_BLOCKS}
-          diagnostic={R14_COMPLEX_DIAGNOSTIC}
+          blocks={COMPLEX_DOCUMENT_BLOCKS}
+          diagnostic={COMPLEX_DOCUMENT_DIAGNOSTIC}
         />,
       );
 
@@ -952,17 +952,17 @@ describe("StructuredSourceRenderer", () => {
         <StructuredSourceRenderer blocks={NESTED_LIST_BLOCKS} />,
       );
 
-      // Level 0: b1 (ul) → b2 (li)
+      // Level 0: outer list → its list item
       const rootList = container.querySelector('[data-block-id="b1"]');
       expect(rootList?.tagName).toBe("UL");
 
-      // Level 1: b3 (ul) inside b2, b7 (ol) inside b2
+      // Level 1: nested lists inside the list item
       const ul1 = container.querySelector('[data-block-id="b3"]');
       const ol1 = container.querySelector('[data-block-id="b7"]');
       expect(ul1?.tagName).toBe("UL");
       expect(ol1?.tagName).toBe("OL");
 
-      // Level 2: b5 (ul) inside b4, b9 (ol) inside b8
+      // Level 2: deeper nested lists inside their parents
       const ul2 = container.querySelector('[data-block-id="b5"]');
       const ol2 = container.querySelector('[data-block-id="b9"]');
       expect(ul2?.tagName).toBe("UL");
@@ -1033,7 +1033,7 @@ describe("StructuredSourceRenderer", () => {
     });
 
     it("does not render language badge for mermaid code_block", () => {
-      // Phase 3 / P2: mermaid blocks have a separate static-render path and
+      // mermaid blocks have a separate static-render path and
       // already carry data-mermaid; a "MERMAID" badge would be noise.
       const { container } = render(
         <StructuredSourceRenderer
@@ -1293,7 +1293,7 @@ describe("StructuredSourceRenderer", () => {
     });
 
     it("renderInlineMarks does not duplicate text when marks present", () => {
-      // Phase 4 / P3: regression test for the text duplication bug in
+      // regression test for the text duplication bug in
       // renderInlineMarks. Previously `nodes` was initialized to
       // `[textContent]` and then each mark was pushed, so the rendered
       // output would contain textContent + concatenation of mark.text
@@ -1343,7 +1343,7 @@ describe("StructuredSourceRenderer", () => {
     });
 
     it("renderInlineMarks returns textContent when marks are absent (unchanged)", () => {
-      // Phase 4 / P3: regression guard — the no-marks fast path must still
+      // regression guard — the no-marks fast path must still
       // return textContent as a plain string (this is the path the G0
       // frozen backend actually takes today).
       const { container } = render(

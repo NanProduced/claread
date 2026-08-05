@@ -18,7 +18,7 @@ function createEditor({ readOnly }: { readOnly: boolean }) {
   });
 }
 
-describe("Spike: Plate editor readOnly + CommentKit transform", () => {
+describe("Plate editor readOnly + CommentKit transform", () => {
   it("readOnly=false: tf.comment.setDraft adds draft comment mark", () => {
     const editor = createEditor({ readOnly: false });
     (editor.tf as any).select(editor.children[0], {

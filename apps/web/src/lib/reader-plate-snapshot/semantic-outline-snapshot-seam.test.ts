@@ -1,5 +1,5 @@
 /**
- * T5.4b: semantic_outline Web DTO / polling seam (B1–B10).
+ * semantic_outline Web DTO / polling seam.
  * No L2 UI — types, consumer helpers, progressive + L0/L1 isolation only.
  */
 
@@ -150,8 +150,8 @@ function emptyDoc(): ReaderRecordPlateDocument {
   } as ReaderRecordPlateDocument;
 }
 
-describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
-  it("B1: null and absent are both untrusted and safe", () => {
+describe("semantic outline snapshot seam", () => {
+  it("null and absent are both untrusted and safe", () => {
     expect(hasTrustedSemanticOutline(null)).toBe(false);
     expect(hasTrustedSemanticOutline(undefined)).toBe(false);
     const absent = makePuxSnapshot({
@@ -167,7 +167,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     expect(hasTrustedSemanticOutline(withNull.semantic_outline)).toBe(false);
   });
 
-  it("B2/B8: ready and partial are trusted; L0/L1 navigation items unchanged", () => {
+  it("ready and partial are trusted; L0/L1 navigation items unchanged", () => {
     const base = makePuxSnapshot({
       snapshotId: "s2",
       lastEventSequence: 1,
@@ -193,7 +193,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     expect(navReady.sourceIdentityKey).toBe(navNone.sourceIdentityKey);
   });
 
-  it("B3: layer_published remains reliable full reload", () => {
+  it("layer_published remains reliable full reload", () => {
     expect(RELIABLE_RELOAD_EVENT_TYPES.has("layer_published")).toBe(true);
     const event: ReaderEventResponseDto = {
       id: "ev1",
@@ -215,7 +215,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     expect(decision.kind).toBe("reload_snapshot");
   });
 
-  it("B4: same-source reload with outline accepted and cursor advances", () => {
+  it("same-source reload with outline accepted and cursor advances", () => {
     let state = createInitialProgressiveState();
     const s1 = makePuxSnapshot({
       snapshotId: "s4a",
@@ -248,7 +248,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     );
   });
 
-  it("B5: rejected stale snapshot with newer outline does not swap accepted", () => {
+  it("rejected stale snapshot with newer outline does not swap accepted", () => {
     let state = createInitialProgressiveState();
     const accepted = withOutline(
       makePuxSnapshot({
@@ -295,7 +295,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     );
   });
 
-  it("B6: outline source-identity key changes with base or generation", () => {
+  it("outline source-identity key changes with base or generation", () => {
     expect(buildOutlineSourceIdentityKey("base_a", 1)).toBe("base_a:1");
     expect(buildOutlineSourceIdentityKey("base_a", 2)).toBe("base_a:2");
     expect(buildOutlineSourceIdentityKey("base_b", 1)).toBe("base_b:1");
@@ -304,7 +304,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     );
   });
 
-  it("B7: null / absent / non-trusted status objects ignored without throw", () => {
+  it("null / absent / non-trusted status objects ignored without throw", () => {
     expect(hasTrustedSemanticOutline(null)).toBe(false);
     expect(hasTrustedSemanticOutline(undefined)).toBe(false);
     expect(hasTrustedSemanticOutline(readyOutline({ status: "failed" }))).toBe(
@@ -331,7 +331,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     expect(() => projectReaderRecordNavigation(snap, emptyDoc())).not.toThrow();
   });
 
-  it("B9: same snapshot_id re-apply is accepted (duplicate guard path)", () => {
+  it("same snapshot_id re-apply is accepted (duplicate guard path)", () => {
     let state = createInitialProgressiveState();
     const snap = makePuxSnapshot({
       snapshotId: "s9",
@@ -350,7 +350,7 @@ describe("T5.4b semantic outline snapshot seam (B1–B10)", () => {
     expect(a2.state.lastRejected).toBe(false);
   });
 
-  it("B10: outline inventory appear/disappear alone does not layer-regress", () => {
+  it("outline inventory appear/disappear alone does not layer-regress", () => {
     let state = createInitialProgressiveState();
     const withOutlineSnap = withOutline(
       makePuxSnapshot({

@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 
 /**
- * R1 Phase 1 — MarkdownTextInput 真实 Plate value lifecycle 红灯测试。
- * R2 Phase 2/3 — scheduling & lifecycle 契约测试。
+ * MarkdownTextInput 真实 Plate value lifecycle 红灯测试。
+ * scheduling & lifecycle 契约测试。
  *
  * 与 AnalyzeSubmitForm.test.tsx 不同，本套件**不 mock** MarkdownTextInput：
  * 渲染真实 Plate 编辑器，通过组件公开的 setValue / clear 驱动内容变化，封住
@@ -17,7 +17,7 @@
  *   value lifecycle 与序列化保真。
  * - 浏览器级：真实粘贴与 Ctrl/Cmd+Enter 由 Phase 5 Playwright 验收覆盖。
  *
- * R2 Phase 2 scheduling 合同（jsdom 可观测部分）：
+ * scheduling 合同（jsdom 可观测部分）：
  * - programmatic setValue/clear 立即 fire onChange，不依赖 debounce。
  * - 相同内容不重复触发回调（dedup）。
  * - flush() 返回提交所用的单一 Markdown 快照并吸收 pending debounce。
@@ -39,7 +39,7 @@ import {
   type MarkdownTextInputHandle,
 } from "./MarkdownTextInput";
 
-import { R1_TEST_MARKDOWN } from "./r1-test-fixtures";
+import { SUBMIT_TEST_MARKDOWN } from "./__tests__/submit-test-markdown";
 
 function renderEditor(props?: {
   onChange?: (markdown: string) => void;
@@ -79,7 +79,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
     const { ref, onChange, editorEl } = renderEditor();
 
     await act(async () => {
-      ref.current?.setValue(R1_TEST_MARKDOWN);
+      ref.current?.setValue(SUBMIT_TEST_MARKDOWN);
     });
 
     await waitFor(() => {
@@ -139,7 +139,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
     const { ref, onChange } = renderEditor();
 
     await act(async () => {
-      ref.current?.setValue(R1_TEST_MARKDOWN);
+      ref.current?.setValue(SUBMIT_TEST_MARKDOWN);
     });
     await waitFor(() => {
       expect(onChange).toHaveBeenCalled();
@@ -187,7 +187,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
 });
 
 // ===========================================================================
-// R2 Phase 2/3: Scheduling & lifecycle 契约测试
+// Scheduling & lifecycle 契约测试
 //
 // jsdom 无法驱动真实键盘事件（Slate 走 legacy beforeinput 路径），
 // 因此 debounce 窗口内"多次按键 → 一次回调"的完整验证由 Phase 5
@@ -202,7 +202,7 @@ describe("MarkdownTextInput value lifecycle (real Plate)", () => {
 // 7. 大文本（30k+ 字符）不崩溃且只 fire 一次。
 // ===========================================================================
 
-describe("MarkdownTextInput scheduling & lifecycle (R2 Phase 2/3)", () => {
+describe("MarkdownTextInput scheduling & lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   });
@@ -514,7 +514,7 @@ describe("MarkdownTextInput scheduling & lifecycle (R2 Phase 2/3)", () => {
   });
 });
 
-describe("R2R Phase 0/3: Strict Mode safety", () => {
+describe("Strict Mode safety", () => {
   it("onDegraded fires exactly once under <StrictMode>", async () => {
     const onDegraded = vi.fn();
     const { container } = render(
@@ -542,7 +542,7 @@ describe("R2R Phase 0/3: Strict Mode safety", () => {
   });
 });
 
-describe("R2R Phase 0/3: real serialize round-trip", () => {
+describe("real serialize round-trip", () => {
   it("Markdown → Plate → Markdown round-trip preserves h1-h3, nested list, code fence language, blockquote", async () => {
     const { ref } = renderEditor();
 

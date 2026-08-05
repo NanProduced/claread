@@ -24,7 +24,7 @@ const mockSession = {
 
 const SID = "22222222-2222-4222-8222-222222222222";
 
-describe("reconcileReaderAskSubmissionForWeb (R4)", () => {
+describe("reconcileReaderAskSubmissionForWeb", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getWebSession).mockResolvedValue(mockSession);

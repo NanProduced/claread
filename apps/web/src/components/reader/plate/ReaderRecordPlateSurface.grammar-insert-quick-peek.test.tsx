@@ -1,14 +1,14 @@
 /**
  * @vitest-environment jsdom
  *
- * T4.2a-PUX-R4-R2.2-P2c-R1 Task 4: Surface component tests for grammar
+ * Surface component tests for grammar
  * first-publish semantic insert path.
  *
  * Tests:
  * 1. 合法 grammar 首发不调用 setValue，不 replace 既有 paragraph
  * 2. 既有 paragraph / 词汇 mark DOM identity 保留
  * 3. vocabulary Quick Peek 锚定同一 paragraph 时 grammar insert 后仍可见，浮层 rect 非零
- * 4. T4.2a-PUX-R4-R3-R1: fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，
+ * 4. fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，
  *    浮层 rect 非零，不出现 detached (0,0) panel
  *
  * The merger is mocked to control targeted_apply vs fallback_full_reload,
@@ -83,7 +83,7 @@ vi.mock("@/components/editor/plugins/floating-toolbar-kit", async () => {
   };
 });
 
-// T4.2a-PUX-R4-R3-R2: Mock grammar expansion provider to spy on
+// Mock grammar expansion provider to spy on
 // clear / forgetItem / getExpandedItemIds. The mock Provider wires
 // the spy control to the Surface's grammarExpansionControlRef so
 // tests can assert selective forget vs clear behavior without using
@@ -894,7 +894,7 @@ function makeInsertCalloutGroup(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic insert", () => {
+describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
   it("合法 grammar 首发不调用 setValue，不 replace 既有 paragraph", async () => {
     const prevSnapshot = makeSnapshot();
     const nextSnapshot = makeNextSnapshot(prevSnapshot);
@@ -1119,7 +1119,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic in
     expect(paragraphBefore!.isSameNode(paragraphAfter)).toBe(true);
   });
 
-  it("T4.2a-PUX-R4-R3-R1: fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，浮层 rect 非零", async () => {
+  it("fallback full reload 时 Quick Peek 保持打开并重新锚定到原词汇，浮层 rect 非零", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1205,16 +1205,16 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2c grammar semantic in
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R3-R1: Quick Peek re-anchor fail-safe close scenarios
+// Quick Peek re-anchor fail-safe close scenarios
 //
-// These tests cover the deterministic-close branch of the R3-R1 re-anchor
+// These tests cover the deterministic-close branch of the re-anchor
 // logic: when the anchor is deleted, generation changes, or the resolver
 // fails, the Quick Peek must close without leaving a detached (0,0) panel.
 // Each test samples panel state before update, after DOM replace, and after
 // restore window.
 // ===========================================================================
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1 Quick Peek re-anchor fail-safe", () => {
+describe("ReaderRecordPlateSurface — Quick Peek re-anchor fail-safe", () => {
   it("anchor 词汇 mark 被删除 → Quick Peek 确定性关闭，无 detached panel", async () => {
     installQuickPeekFetchMock();
 
@@ -1441,21 +1441,21 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1 Quick Peek re-anchor f
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R3-R1-P1: Quick Peek async race guard
+// Quick Peek async race guard
 //
 // These tests verify the monotonic request token and invalidation points
 // that prevent stale snapshots, stale rAF callbacks, or invalidated
 // interactions from overwriting the current Quick Peek state.
 //
-// P1 guards tested:
-//   P1-1: Token guard — consecutive snapshot updates don't corrupt state
-//   P1-2: Close invalidation — dismiss during pending restore stays closed
-//   P1-3: Mark switch invalidation — switching marks during restore keeps
+// Race guards tested:
+//   Token guard — consecutive snapshot updates don't corrupt state
+//   Close invalidation — dismiss during pending restore stays closed
+//   Mark switch invalidation — switching marks during restore keeps
 //         the new mark's Quick Peek open (stale rAF aborts)
-//   P1-4: Precise mark resolution — resolver uses markId, not just
+//   Precise mark resolution — resolver uses markId, not just
 //         anchor_segment_id; deleting the original mark with a sibling mark
 //         remaining on the same segment still closes Quick Peek
-//   P1-5: Generation invalidation — generation switch during pending restore
+//   Generation invalidation — generation switch during pending restore
 //         stays closed (token mismatch + generation-scoped effect)
 // ===========================================================================
 
@@ -1492,8 +1492,8 @@ function makeSnapshotWithTwoVocabMarks(): ReaderPlateSnapshotDto {
   };
 }
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", () => {
-  it("P1-1: 连续两次 snapshot 更新 → 第一次 restore 不得覆盖第二次", async () => {
+describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
+  it("连续两次 snapshot 更新 → 第一次 restore 不得覆盖第二次", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1566,7 +1566,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", 
     ).not.toBeNull();
   });
 
-  it("P1-2: restore pending 时 dismiss Quick Peek → 保持关闭", async () => {
+  it("restore pending 时 dismiss Quick Peek → 保持关闭", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1623,7 +1623,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", 
     });
   });
 
-  it("P1-3: restore pending 时切换到同段另一 vocabulary mark → 锚定新 mark", async () => {
+  it("restore pending 时切换到同段另一 vocabulary mark → 锚定新 mark", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshotWithTwoVocabMarks();
@@ -1692,7 +1692,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", 
     expect(rect.height).toBeGreaterThan(0);
   });
 
-  it("P1-4: resolver 精确定位原 vocabulary mark — 删除原 mark 保留同段其他 mark → Quick Peek 关闭", async () => {
+  it("resolver 精确定位原 vocabulary mark — 删除原 mark 保留同段其他 mark → Quick Peek 关闭", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshotWithTwoVocabMarks();
@@ -1768,7 +1768,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", 
     });
   });
 
-  it("P1-5: restore pending 时 generation 切换 → token 失效 → Quick Peek 保持关闭", async () => {
+  it("restore pending 时 generation 切换 → token 失效 → Quick Peek 保持关闭", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1831,20 +1831,20 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1 async race guard", 
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R3-R1-P1.1: Re-anchor contract coverage closeout
+// Re-anchor contract coverage closeout
 //
 // Closes remaining contract gaps:
-//   P1.1-VT-1: base_id change during restore pending → old rAF aborts via
+//   base_id change during restore pending → old rAF aborts via
 //              token; no detached (0,0) panel
 //   duplicate-snapshot guard: same accepted snapshot identity early-returns
 //              without a false capture/setValue/rAF. This is not a fence
 //              rejection; rejected snapshots are covered at the polling/page seam.
-//   P1.1-VT-3: dismissed restore request → token invalid → resolver not
+//   dismissed restore request → token invalid → resolver not
 //              executed, no re-hook of old HTMLElement, re-open works
 // ===========================================================================
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage closeout", () => {
-  it("P1.1-VT-1: restore pending 时 base_id 改变 → 旧 rAF 失效，无 (0,0) panel", async () => {
+describe("ReaderRecordPlateSurface — Quick Peek contract coverage closeout", () => {
+  it("restore pending 时 base_id 改变 → 旧 rAF 失效，无 (0,0) panel", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -1884,7 +1884,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
     const panelBefore = await screen.findByTestId("reader-record-plate-lookup-panel");
     expect(panelBefore).toBeTruthy();
 
-    // 第一次 reload (base_id=base_1) — captures token T1, schedules rAF #1
+    // 第一次 reload (base_id=base_1) — captures the restore token, schedules rAF #1
     await act(async () => {
       rerender(
         <ReaderRecordPlateSurface
@@ -1996,7 +1996,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
     expect(rectAfter.top).toBeGreaterThan(0);
   });
 
-  it("P1.1-VT-3: dismissed restore → token 无效 → resolver 不执行，无 re-hook，re-open 正常", async () => {
+  it("dismissed restore → token 无效 → resolver 不执行，无 re-hook，re-open 正常", async () => {
     installQuickPeekFetchMock();
 
     const prevSnapshot = makeSnapshot();
@@ -2031,7 +2031,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
     // resolver 使用 `[data-anchor-segment-id] [data-reader-record-vocabulary-mark-id]` 组合选择器
     const querySelectorSpy = vi.spyOn(document, "querySelector");
 
-    // 触发 reload — captures token T1, schedules rAF
+    // 触发 reload — captures the restore token, schedules rAF
     await act(async () => {
       rerender(
         <ReaderRecordPlateSurface
@@ -2043,7 +2043,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
 
     // 在 rAF fire 之前 dismiss Quick Peek
     // onDismiss → setLookupState idle → lookupState.kind effect increments
-    // token to T2 + clears anchorRef → rAF token T1 !== T2 → abort
+    // token to the new one + clears anchorRef → stale rAF token mismatch → abort
     await act(async () => {
       const closeButton = screen.queryByRole("button", { name: "关闭预览卡片" });
       if (closeButton) {
@@ -2097,10 +2097,10 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R1-P1.1 contract coverage
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R3-R2: Selective grammar expansion forget & scroll-anchor
+// Selective grammar expansion forget & scroll-anchor
 // ---------------------------------------------------------------------------
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scroll-anchor", () => {
+describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => {
   afterEach(() => {
     mockGrammarControl.clear.mockReset();
     mockGrammarControl.forgetItem.mockReset();
@@ -2436,10 +2436,10 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scr
   });
 
   // -------------------------------------------------------------------------
-  // T4.2a-PUX-R4-R3-R2-P1: Restore State Machine Fence Repair
+  // Restore State Machine Fence Repair
   // -------------------------------------------------------------------------
 
-  it("4.7 (P1-A): pending restore 后到达不同 accepted snapshot → 旧 restore 失效;新 snapshot 正常进入 value swap;reload context 不被错误消费", async () => {
+  it("4.7: pending restore 后到达不同 accepted snapshot → 旧 restore 失效;新 snapshot 正常进入 value swap;reload context 不被错误消费", async () => {
     const prevSnapshot = makeSnapshot();
     const firstNext = makeNextSnapshot(prevSnapshot); // snapshot_2
     const secondNext: ReaderPlateSnapshotDto = {
@@ -2514,7 +2514,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scr
     expect(onReloadContextConsumed).toHaveBeenCalled();
   });
 
-  it("4.8 (P1-B): base_id switch 不执行 semantic scroll-anchor / savedScrollTop 跨 source 恢复", async () => {
+  it("4.8: base_id switch 不执行 semantic scroll-anchor / savedScrollTop 跨 source 恢复", async () => {
     Object.defineProperty(window, "scrollY", {
       value: 200,
       writable: true,
@@ -2589,7 +2589,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scr
     expect(scrollToSpy).not.toHaveBeenCalled();
   });
 
-  it("4.9 (P1-C): old rAF/timeout 在新 restore 建立后失效,不能消费新 pending record", async () => {
+  it("4.9: old rAF/timeout 在新 restore 建立后失效,不能消费新 pending record", async () => {
     // 使用不同的 getExpandedItemIds 返回值区分两次 restore
     // 第一次 restore: {itemA, itemB} — itemB 不存在 → forgetItem(itemB)
     // 第二次 restore: {itemC} — itemC 不存在 → forgetItem(itemC)
@@ -2676,7 +2676,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scr
     });
 
     // 恢复 real timers 并等待所有 rAF/timeout 完成
-    // T4.2a-PUX-R4-R3-R2-P1: 必须先 advance fake timers 让第二个 reload 的
+    // 必须先 advance fake timers 让第二个 reload 的
     // rAF/timeout 触发 (runRestore → forgetItem("itemC")),再切回 real timers。
     // 直接 vi.useRealTimers() 会丢弃 fake queue 中的 pending callback。
     await act(async () => {
@@ -2692,7 +2692,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R3-R2 selective forget & scr
     expect(mockGrammarControl.forgetItem).not.toHaveBeenCalledWith("itemB");
   });
 
-  it("4.10 (P1-D): targeted grammar replace 仅受影响 item collapse,其余 expanded item 保留", async () => {
+  it("4.10: targeted grammar replace 仅受影响 item collapse,其余 expanded item 保留", async () => {
     const prevSnapshot = makeSnapshot();
     const nextSnapshot = makeNextSnapshot(prevSnapshot);
     const event = makeGrammarFirstPublishEvent();

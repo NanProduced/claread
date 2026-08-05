@@ -402,7 +402,7 @@ describe("pickReaderOutlineSource (priority seam)", () => {
   });
 });
 
-describe("projectMarkdownOutlineView (B4 implementation)", () => {
+describe("projectMarkdownOutlineView", () => {
   it("returns an unavailable model when there are no navigation units", () => {
     const view = projectMarkdownOutlineView(
       makeSnapshot([], readyOutline()),
@@ -461,7 +461,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.every((i) => i.role === "section")).toBe(true);
     expect(view.panelItems.every((i) => i.parentKey === null)).toBe(true);
     expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
-    // Coverage: h1 covers [h1, p1] (last unit before h2); h2 covers [h2, p2] (last)
+    // Coverage: h1 covers [h1, paragraph-1] (last unit before h2); h2 covers [h2, paragraph-2] (last)
     expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p1" });
     expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p2" });
     // Tick items are depth===1 only.
@@ -508,13 +508,13 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
       makeSnapshot(units, readyOutline()),
       makeDoc(["h1", "h2", "p1", "h3", "p2", "h4", "p3"]),
     );
-    // h1 covers [h1, p2] (everything before h4, the next level-1 heading).
+    // h1 covers [h1, paragraph-2] (everything before h4, the next level-1 heading).
     expect(view.panelItems[0]!.coverage).toEqual({ startUnitId: "h1", endUnitId: "p2" });
-    // h2 covers [h2, p1] (everything before h3, the next level-2 heading).
+    // h2 covers [h2, paragraph-1] (everything before h3, the next level-2 heading).
     expect(view.panelItems[1]!.coverage).toEqual({ startUnitId: "h2", endUnitId: "p1" });
-    // h3 covers [h3, p2] (everything before h4, which is level-1 <= level-2).
+    // h3 covers [h3, paragraph-2] (everything before h4, which is level-1 <= level-2).
     expect(view.panelItems[2]!.coverage).toEqual({ startUnitId: "h3", endUnitId: "p2" });
-    // h4 covers [h4, p3] (last unit).
+    // h4 covers [h4, paragraph-3] (last unit).
     expect(view.panelItems[3]!.coverage).toEqual({ startUnitId: "h4", endUnitId: "p3" });
   });
 
@@ -581,7 +581,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.key)).toEqual(["md:h1", "md:h2"]);
   });
 
-  it("P0: treats unit_type === 'heading' as a heading even without stable_block_type (legacy heuristic path)", () => {
+  it("treats unit_type === 'heading' as a heading even without stable_block_type (legacy heuristic path)", () => {
     // Legacy snapshot: _classify_unit_type heuristically detected headings,
     // so unit_type === "heading" but stable_block_type is null and
     // heading_level is null. The frontend must still project these so the
@@ -602,8 +602,8 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.title)).toEqual(["Intro", "Body"]);
   });
 
-  it("P0: defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
-    // Defensive case: A5 annotation marked the block as heading but the
+  it("defaults heading_level to 1 when only stable_block_type === 'heading' is set", () => {
+    // Defensive case: an annotation marked the block as heading but the
     // payload did not carry a level. Should still project at level 1
     // instead of being skipped.
     const units: UnitIn[] = [
@@ -618,7 +618,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.depth)).toEqual([1, 1]);
   });
 
-  it("P0: prefers explicit heading_level over the default-1 fallback when unit_type is heading", () => {
+  it("prefers explicit heading_level over the default-1 fallback when unit_type is heading", () => {
     const units: UnitIn[] = [
       { unit_id: "h1", order_index: 1, unit_type: "heading", heading_level: 2, label: "Sub" },
       { unit_id: "h2", order_index: 2, unit_type: "heading", heading_level: 3, label: "SubSub" },
@@ -631,7 +631,7 @@ describe("projectMarkdownOutlineView (B4 implementation)", () => {
     expect(view.panelItems.map((i) => i.depth)).toEqual([2, 3]);
   });
 
-  it("P0: does not double-count a unit that has both unit_type and stable_block_type set to heading", () => {
+  it("does not double-count a unit that has both unit_type and stable_block_type set to heading", () => {
     const units: UnitIn[] = [
       {
         unit_id: "h1",

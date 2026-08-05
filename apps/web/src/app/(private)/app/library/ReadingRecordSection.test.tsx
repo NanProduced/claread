@@ -153,7 +153,7 @@ describe("ReadingRecordSection", () => {
     expect(screen.queryByText("可读·增强中")).toBeNull();
   });
 
-  it("renders 去处理 CTA for action_required records (priority region only after P2 dedup)", () => {
+  it("renders 去处理 CTA for action_required records (priority region only after dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[
@@ -165,7 +165,7 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    // P2 dedup: 1 priority item 出现在顶部 region，主列表里没有重复行
+    // 去重：1 priority item 出现在顶部 region，主列表里没有重复行
     expect(screen.getAllByText("去处理").length).toBe(1);
 
     const link = screen.getByText("First Reading").closest("a");
@@ -190,7 +190,7 @@ describe("ReadingRecordSection", () => {
       />,
     );
 
-    // needs_confirmation 行在顶部 region 渲染 1 次；P2 dedup 后主列表中不再重复
+    // needs_confirmation 行在顶部 region 渲染 1 次；去重后主列表中不再重复
     const ncRow = screen.getByText("First Reading").closest("li");
     expect(ncRow?.querySelector("a")?.getAttribute("href")).toBe(
       "/app/read?resume_candidate=reading_record_1",
@@ -218,7 +218,7 @@ describe("ReadingRecordSection", () => {
     expect(within(arRow as HTMLElement).getByText("去处理")).toBeTruthy();
   });
 
-  it("renders 查看详情 CTA for failed records (priority region only after P2 dedup)", () => {
+  it("renders 查看详情 CTA for failed records (priority region only after dedup)", () => {
     render(
       <ReadingRecordSection
         readingRecords={[

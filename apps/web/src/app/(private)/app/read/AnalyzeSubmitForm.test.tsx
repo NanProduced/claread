@@ -1453,10 +1453,10 @@ describe("candidate-confirm route guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// S4: candidate-document read route guard
+// candidate-document read route guard
 // ---------------------------------------------------------------------------
 
-describe("candidate-document read route guard (S4)", () => {
+describe("candidate-document read route guard", () => {
   const ROUTE_PATH =
     "src/app/api/web/reader/records/[recordId]/candidate-document/route.ts";
 
@@ -1503,7 +1503,7 @@ describe("confirmed-source route guard (L2)", () => {
 describe("pending-candidate helper shape (source guard)", () => {
   const HELPER_PATH = "src/app/(private)/app/read/pending-candidate.ts";
 
-  it("exposes the unified handoff fields required by F3 (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
+  it("exposes the unified handoff fields (filename, canonicalTextPreview) and tolerates text-only legacy fields", () => {
     const source = readFileSync(resolve(process.cwd(), HELPER_PATH), "utf-8");
     expect(source).toContain("readingRecordId");
     expect(source).toContain("candidateDocumentId");
@@ -1552,9 +1552,9 @@ describe("CandidateConfirmDialog shape (source guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resume_candidate entry (S4)
+// resume_candidate entry
 //
-// These tests lock in the S4 `?resume_candidate=...` entry path. They are
+// These tests lock in the `?resume_candidate=...` entry path. They are
 // pure DOM-level behavioral tests: window.location.search is set before
 // render, the BFF GET to
 // `/api/web/reader/records/{recordId}/candidate-document` is mocked
@@ -1623,7 +1623,7 @@ function installResumeFetchMock(payload: unknown, status = 200) {
     const url = String(input);
     if (url.includes("/confirmed-source")) {
       // L2 resume 入口先探测 confirmed-source；存量记录返回 404，
-      // 前端回退旧 candidate-document 流（本组 S4 用例锁定的行为）。
+      // 前端回退旧 candidate-document 流（本组用例锁定的行为）。
       return new Response(
         JSON.stringify({
           ok: false,
@@ -1652,7 +1652,7 @@ function setLocationSearch(search: string) {
   window.history.replaceState({}, "", url.toString());
 }
 
-describe("resume_candidate entry (S4)", () => {
+describe("resume_candidate entry", () => {
   it("200 with full_text preview opens the dialog in resume mode and does not prefill the textarea", async () => {
     setLocationSearch("?resume_candidate=rec_resume_1");
     installResumeFetchMock(makeResumeResponse("full_text"));

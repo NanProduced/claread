@@ -1,5 +1,5 @@
 /**
- * T4.2a-PUX-R4-R2.1C — Grammar Callout State Preservation Across Targeted Replace.
+ * Grammar Callout State Preservation Across Targeted Replace.
  *
  * Tests that the expanded/collapsed state of standalone grammar callouts
  * is preserved across `editor.tf.replaceNodes` on the SAME callout (target
@@ -40,7 +40,7 @@ import type {
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 
 // ---------------------------------------------------------------------------
-// Fixture builders (same shape as spike-targeted-slate-ops-prod-kit.test.tsx)
+// Fixture builders (same shape as plate-targeted-slate-ops-prod-kit.test.tsx)
 // ---------------------------------------------------------------------------
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";
@@ -184,7 +184,7 @@ function makeProjectedPlateValue(): Descendant[] {
   return projectReaderRecordPlateToPlateValue(doc);
 }
 
-// P2 fixture: grammar callout WITHOUT data.itemId — simulates legacy/edge
+// Legacy-shape fixture: grammar callout WITHOUT data.itemId — simulates legacy/edge
 // data where itemId is missing. The callout must fall back to localExpanded.
 function makeCalloutBlockWithoutItemId(): ReaderRecordPlateCalloutBlock {
   return {
@@ -308,7 +308,7 @@ async function renderHarness(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2.1C — Grammar callout state preservation", () => {
+describe("Grammar callout state preservation", () => {
   beforeEach(() => {
     if (!Range.prototype.getBoundingClientRect) {
       Range.prototype.getBoundingClientRect = vi.fn(() => ({
@@ -621,10 +621,10 @@ describe("T4.2a-PUX-R4-R2.1C — Grammar callout state preservation", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 6. P2: grammar callout WITHOUT itemId falls back to localExpanded
+  // 6. grammar callout WITHOUT itemId falls back to localExpanded
   // -------------------------------------------------------------------------
 
-  describe("6. P2: grammar callout without itemId uses localExpanded", () => {
+  describe("6. grammar callout without itemId uses localExpanded", () => {
     it("can be expanded and collapsed via local state when itemId is missing", async () => {
       const { container } = await renderHarness(
         makeProjectedPlateValueWithCalloutNoItemId(),

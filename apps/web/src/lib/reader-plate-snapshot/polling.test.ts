@@ -253,13 +253,13 @@ describe("decidePollingAction", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-O4-R2-D: payload-aware representation event classification.
+// Payload-aware representation event classification.
 // These tests verify that decidePollingAction delegates to the
 // payload-aware classifier for representation events (G1/G2/G3) and that
 // invalid payloads / fence mismatches force a reload (never cursor-only).
 // ---------------------------------------------------------------------------
 
-describe("decidePollingAction — payload-aware representation events (O4-R2-D)", () => {
+describe("decidePollingAction — payload-aware representation events", () => {
   const MATCHING_FENCE = { generation: 1, baseId: "base_1" };
   const MISMATCH_FENCE = { generation: 2, baseId: "base_other" };
 
@@ -537,7 +537,7 @@ describe("decidePollingAction — payload-aware representation events (O4-R2-D)"
 });
 
 // ---------------------------------------------------------------------------
-// T2.1 goal #4 / T4.2a-O4-R2-D: reader event payload audit.
+// Reader event payload audit.
 // Enumerate every ReaderEventType and classify it into one of three tiers:
 //
 //   1. Unconditional reload (3 types): always force a snapshot reload
@@ -588,7 +588,7 @@ const ALWAYS_CURSOR_ONLY_TYPES: readonly ReaderEventType[] = [
   "record_superseded",
 ] as const;
 
-describe("reader event reload audit (T2.1 goal #4 / O4-R2-D)", () => {
+describe("reader event reload audit", () => {
   it("every ReaderEventType is classified exactly once", () => {
     const seen = new Set(ALL_READER_EVENT_TYPES);
     expect(seen.size).toBe(ALL_READER_EVENT_TYPES.length);
@@ -639,7 +639,7 @@ describe("reader event reload audit (T2.1 goal #4 / O4-R2-D)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T2.1: hook-level tests for reload cursor semantics.
+// Hook-level tests for reload cursor semantics.
 // The cursor advances to `next_after_sequence` ONLY when `onReloadRequired`
 // resolves to `true` (a fresh snapshot was applied). On `false` (skip /
 // in-flight) or rejection, the cursor stays put so the next tick re-asks
@@ -648,7 +648,7 @@ describe("reader event reload audit (T2.1 goal #4 / O4-R2-D)", () => {
 // duplicate-reload bug (only one reload call after the second tick).
 // ---------------------------------------------------------------------------
 
-describe("useReaderPlatePolling reload cursor semantics (T2.1)", () => {
+describe("useReaderPlatePolling reload cursor semantics", () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {

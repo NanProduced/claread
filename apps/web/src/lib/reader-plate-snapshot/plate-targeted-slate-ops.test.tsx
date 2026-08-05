@@ -1,5 +1,6 @@
+// task-history: T4.2a-PUX-R4-R2-S1
 /**
- * T4.2a-PUX-R4-R2-S1 — Read-only Plate targeted update technical spike.
+ * Read-only Plate targeted update characterization tests.
  *
  * Spike goal: verify whether the real installed platejs@53.2.1 +
  * @platejs/slate@53.0.7 + @platejs/core@53.2.1 APIs can update a single
@@ -7,7 +8,7 @@
  * editor.tf.setValue(), WITHOUT rebuilding the entire Slate DOM, and while
  * preserving unrelated component local state.
  *
- * P1 FIX: Previous version rendered a Plate with one editor but operated
+ * Note: an earlier version rendered a Plate with one editor but operated
  * on a DIFFERENT editor created via renderHook. This version uses a single
  * editor exposed via callback from the mounted component, renders real
  * visible Plate content via registered Plate plugins (NOT the renderElement
@@ -299,7 +300,7 @@ async function renderMountedPlate(initialValue: SpikeValue) {
 // Spike tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2-S1 — mounted Plate targeted ops spike", () => {
+describe("mounted Plate targeted Slate ops", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

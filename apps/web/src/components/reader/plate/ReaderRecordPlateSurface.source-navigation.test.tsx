@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 /**
- * Default Plate source-navigation seam (R3C-C formal path).
+ * Default Plate source-navigation seam (formal path).
  * Mocks construction seams; does not re-implement identity/selector policy.
  */
 

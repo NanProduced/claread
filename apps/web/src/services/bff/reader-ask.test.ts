@@ -150,7 +150,7 @@ describe("reader-ask BFF RR cutover", () => {
     );
 
     expect(result.status).toBe(200);
-    // ASK-TURN-LIFECYCLE R1: signal is the new 5th arg; undefined when
+    // signal is the new 5th arg; undefined when
     // the caller (e.g. a server-to-server test) does not supply one.
     expect(createUpstreamReadingRecordAskStream).toHaveBeenCalledWith(
       "reading-record-1",
@@ -163,8 +163,8 @@ describe("reader-ask BFF RR cutover", () => {
     );
   });
 
-  it("forwards the browser AbortSignal to the upstream fetch (R1)", async () => {
-    // ASK-TURN-LIFECYCLE R1: a user stop / network abort / page navigation
+  it("forwards the browser AbortSignal to the upstream fetch", async () => {
+    // a user stop / network abort / page navigation
     // must cancel the upstream SSE connection too, so the FastAPI
     // generator's ``finally`` block fires and reconciles any still-
     // streaming turn_run / message row to ``cancelled``.

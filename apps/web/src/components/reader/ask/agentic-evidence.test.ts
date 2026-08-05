@@ -122,7 +122,7 @@ describe("projectAgenticEvidenceForDisplay", () => {
   });
 
   it("keeps search_hit displayable when rag_citation is missing, with null navigation (defensive projection test; guard rejects this in production)", () => {
-    // NOTE: With the R4-A1 strict guard, search_hit without rag_citation is
+    // NOTE: With the strict guard, search_hit without rag_citation is
     // illegal and would be rejected by isReaderAskAgenticEvidenceItem before
     // reaching the projection. This test verifies the projection function's
     // defensive behavior when called directly with incomplete data.
@@ -309,7 +309,7 @@ describe("projectAgenticEvidenceForDisplay", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A1: article_seed evidence projection
+// article_seed evidence projection
 //
 // article_seed is the baseline article context handle. It carries the article
 // text snippet (≤ 2000 chars) with provenance `baseline_context`. The full
@@ -321,7 +321,7 @@ describe("projectAgenticEvidenceForDisplay", () => {
 //   - have null ragNavigation (article_seed is non-RAG)
 // ---------------------------------------------------------------------------
 
-describe("projectAgenticEvidenceForDisplay — article_seed (R4-A1)", () => {
+describe("projectAgenticEvidenceForDisplay — article_seed", () => {
   it("projects article_seed with concise title and snippet only", () => {
     const input: ReaderAskAgenticEvidenceItemDto[] = [
       {
@@ -443,7 +443,7 @@ describe("projectAgenticEvidenceForDisplay — article_seed (R4-A1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4-A1 rework: strict cold/hot evidence legal-map guard integration
+// strict cold/hot evidence legal-map guard integration
 //
 // Verifies isReaderAskAgenticEvidenceItem (the per-item guard used by both
 // hot completed and cold hydration paths) enforces the legal kind↔source_tool
@@ -451,7 +451,7 @@ describe("projectAgenticEvidenceForDisplay — article_seed (R4-A1)", () => {
 // every legal combination without crashing.
 // ---------------------------------------------------------------------------
 
-describe("agentic evidence legal-map — guard and projection integration (R4-A1 rework)", () => {
+describe("agentic evidence legal-map — guard and projection integration", () => {
   const HANDLE = "evh_aabbccddeeff00112233445566778899";
 
   describe("guard accepts all 5 legal kind/source pairs", () => {
@@ -827,7 +827,7 @@ describe("agentic evidence legal-map — guard and projection integration (R4-A1
 });
 
 // ---------------------------------------------------------------------------
-// ASK-WEB-G0/G1: projectAgenticCitationsForDisplay — web citation projection
+// projectAgenticCitationsForDisplay — web citation projection
 //
 // Verifies that public citations split correctly by source_kind:
 //   - article citations: title="文章依据", url/sourceTitle/description=null
@@ -836,7 +836,7 @@ describe("agentic evidence legal-map — guard and projection integration (R4-A1
 // preserved. The projection must not invent fields or mutate the input.
 // ---------------------------------------------------------------------------
 
-describe("projectAgenticCitationsForDisplay — web citation projection (ASK-WEB-G0/G1)", () => {
+describe("projectAgenticCitationsForDisplay — web citation projection", () => {
   it("projects an article citation with article-stable title and null web fields", () => {
     const input: ReaderAskAgenticCitationDto[] = [
       {

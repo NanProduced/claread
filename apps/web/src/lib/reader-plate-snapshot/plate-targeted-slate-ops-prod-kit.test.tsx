@@ -1,7 +1,8 @@
+// task-history: T4.2a-PUX-R4-R2-S1-P2
 /**
- * T4.2a-PUX-R4-R2-S1-P2 — Production ReaderRecordPlateKit mounted spike.
+ * Production ReaderRecordPlateKit mounted targeted-ops characterization tests.
  *
- * P2 goal: verify that the real production ReaderRecordPlateKit (the same
+ * Goal: verify that the real production ReaderRecordPlateKit (the same
  * plugin collection used by ReaderRecordPlateSurface) renders real
  * ReaderBlocksKit nodes (reader_paragraph / reader_callout projected from
  * a real ReaderRecordPlateDocument) and that targeted Slate ops
@@ -12,7 +13,7 @@
  *   - preserve ReaderContentSummaryElement.expanded React local state
  *   - do NOT normalize the target node into an invalid structure
  *
- * P2 also verifies L4 selection behavior:
+ * Also verifies L4 selection behavior:
  *   - If jsdom produces a non-null editor.selection after setSelection,
  *     assert restore equality (PASS).
  *   - If jsdom still cannot produce a non-null selection, L4 is explicitly
@@ -380,7 +381,7 @@ async function renderMountedPlate(initialValue: Descendant[]) {
 // Spike tests
 // ---------------------------------------------------------------------------
 
-describe("T4.2a-PUX-R4-R2-S1-P2 — production ReaderRecordPlateKit mounted spike", () => {
+describe("production ReaderRecordPlateKit mounted targeted ops", () => {
   beforeEach(() => {
     // jsdom lacks Range.getBoundingClientRect and scrollIntoView.
     if (!Range.prototype.getBoundingClientRect) {

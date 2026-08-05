@@ -1,5 +1,5 @@
 /**
- * T4.2a-PUX-R1 focused tests: progressive transition fixture / event replay.
+ * Progressive transition fixture / event replay.
  *
  * No real LLM. Pure projection + polling decision contract only.
  */
@@ -298,7 +298,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
     expect(poll.nextCursor).toBe(5);
   });
 
-  it("does not advance cursor on failed snapshot reload (T2.1 hold)", () => {
+  it("does not advance cursor on failed snapshot reload (hold)", () => {
     const base = loadedAtTranslation();
     const poll = applyEventPoll(
       base.state,
@@ -325,7 +325,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Interaction preservation pure helpers (T2.1 surface contract)
+// Interaction preservation pure helpers (surface contract)
 // ---------------------------------------------------------------------------
 
 describe("interaction preservation across value swap", () => {

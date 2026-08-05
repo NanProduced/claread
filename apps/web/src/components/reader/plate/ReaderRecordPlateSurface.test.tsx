@@ -2875,7 +2875,7 @@ describe("ReaderRecordPlateSurface", () => {
       "[data-reader-record-reading-title]",
     );
     expect(title?.previousElementSibling).toBeNull();
-    // Hero eyebrow 已在 R1 中移除；模式标签只出现在 More Menu 与 action bar tab。
+    // Hero eyebrow 已移除；模式标签只出现在 More Menu 与 action bar tab。
     expect(header.textContent).not.toContain("精读模式 · 2026年6月24日");
     expect(header.textContent).not.toContain("2026年6月24日");
   });
@@ -6665,7 +6665,7 @@ describe("ReaderRecordPlateSurface", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2: Incremental projection merge integration tests
+// Incremental projection merge integration tests
 //
 // Verifies that the Surface correctly wires mergeIncrementalProjection into
 // its value swap effect: targeted_apply uses editor.tf.replaceNodes (non-target
@@ -6674,7 +6674,7 @@ describe("ReaderRecordPlateSurface", () => {
 // and that the reload context is consumed after the merge attempt.
 // ---------------------------------------------------------------------------
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", () => {
+describe("ReaderRecordPlateSurface — incremental projection", () => {
   function makeRepresentationEvent(
     eventType: "projection_ops" | "record_state_changed",
     section: string,
@@ -7123,14 +7123,14 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2 incremental projection", 
 });
 
 // ---------------------------------------------------------------------------
-// T4.2a-PUX-R4-R2.1E: layer_published changed-block-only integration tests.
+// layer_published changed-block-only integration tests.
 //
-// Verifies the Surface correctly applies the R2.1E changed-block-only path
+// Verifies the Surface correctly applies the layer_published changed-block-only path
 // for valid `layer_published` events (same topology revision) and falls back
 // to setValue for structural changes.
 // ---------------------------------------------------------------------------
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published changed-block-only", () => {
+describe("ReaderRecordPlateSurface — layer_published changed-block-only", () => {
   function makeValidLayerPublishedEvent(
     layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis" = "translation",
     sequence = 9,
@@ -7443,7 +7443,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
 
     // Quick Peek anchored on paragraph: targeted_apply on blockquote does NOT
     // close Quick Peek (paragraph block_id !== "paragraph:..." being replaced).
-    // Per R2.1E contract: only target paragraph replacement closes Quick Peek.
+    // Per the changed-block-only contract: only target paragraph replacement closes Quick Peek.
     // Translation revision targets blockquote → Quick Peek should stay open.
     await waitFor(() => {
       const panel = screen.queryByTestId("reader-record-plate-lookup-panel");
@@ -7532,7 +7532,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
     expect(quickPeekBefore.isConnected).toBe(false);
   });
 
-  it("R2.2-P1: vocabulary revision with same topology: targeted_apply preserves grammar callout expanded", async () => {
+  it("vocabulary revision with same topology: targeted_apply preserves grammar callout expanded", async () => {
     const prevSnapshot = makeSnapshot();
     const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
       vocabularyGloss: "记忆 (修订)",
@@ -7579,7 +7579,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
     expect(calloutAfter!.getAttribute("data-reader-record-callout-collapsed")).toBe("false");
   });
 
-  it("R2.2-P1: vocabulary revision with same topology: non-target blockquote DOM identity preserved", async () => {
+  it("vocabulary revision with same topology: non-target blockquote DOM identity preserved", async () => {
     const prevSnapshot = makeSnapshot();
     const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
       vocabularyGloss: "记忆 (修订)",
@@ -7629,7 +7629,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
     expect(vocabMarkAfter!.isConnected).toBe(true);
   });
 
-  it("R2.2-P1: vocabulary revision with selection on target paragraph: selection is cleared (not restored by stale offset)", async () => {
+  it("vocabulary revision with selection on target paragraph: selection is cleared (not restored by stale offset)", async () => {
     const prevSnapshot = makeSnapshot();
     const nextSnapshot = makeLayerRevisionSnapshot(prevSnapshot, {
       vocabularyGloss: "记忆 (修订)",
@@ -7856,12 +7856,12 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.1E layer_published change
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R2.2-P2a: Grammar Callout-Group Identity Stabilization
+// Grammar Callout-Group Identity Stabilization
 //
 // Method A2: group ID = `callout-group:{unitId}:{anchorSegmentId}` (no
 // position index). Cross-anchor callouts are split into independent groups.
 // Tests verify: stable ID, cross-anchor split, unique block IDs, independent
-// expansion, and R2.1E/R2.1C regression safety.
+// expansion, and changed-block-only regression safety.
 // ===========================================================================
 
 function defaultSeg1GrammarMarks(): ReaderGrammarNoteMarkDto[] {
@@ -8100,8 +8100,8 @@ function makeMultiUnitGrammarSnapshot(): ReaderPlateSnapshotDto {
   };
 }
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group identity", () => {
-  it("R2.2-P2a: same anchor multiple grammar items form one group with stable ID", () => {
+describe("ReaderRecordPlateSurface — grammar group identity", () => {
+  it("same anchor multiple grammar items form one group with stable ID", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
     );
@@ -8128,7 +8128,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(groups[1]?.dataset.readerRecordCalloutGroupCount).toBe("1");
   });
 
-  it("R2.2-P2a: different anchors' consecutive grammar callouts split into separate groups", () => {
+  it("different anchors' consecutive grammar callouts split into separate groups", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
     );
@@ -8163,7 +8163,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     );
   });
 
-  it("R2.2-P2a: all output block IDs are unique", () => {
+  it("all output block IDs are unique", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
     );
@@ -8178,7 +8178,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(allBlockIds.length).toBe(uniqueIds.size);
   });
 
-  it("R2.2-P2a: prepending item to same anchor preserves group ID", () => {
+  it("prepending item to same anchor preserves group ID", () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const { container, rerender } = render(
       <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
@@ -8224,7 +8224,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(groupAfter?.dataset.readerRecordCalloutGroupCount).toBe("3");
   });
 
-  it("R2.2-P2a: appending item to same anchor preserves group ID", () => {
+  it("appending item to same anchor preserves group ID", () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const { container, rerender } = render(
       <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
@@ -8266,7 +8266,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(groupAfter?.dataset.readerRecordCalloutGroupCount).toBe("3");
   });
 
-  it("R2.2-P2a: item count change in one anchor does not affect other anchor's group ID", () => {
+  it("item count change in one anchor does not affect other anchor's group ID", () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const { container, rerender } = render(
       <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
@@ -8309,7 +8309,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(seg2GroupAfter?.dataset.readerRecordCalloutGroupCount).toBe("1");
   });
 
-  it("R2.2-P2a: different units do not mix groups", () => {
+  it("different units do not mix groups", () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeMultiUnitGrammarSnapshot()} />,
     );
@@ -8335,7 +8335,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     // The key assertion is that all 4 IDs are unique.
   });
 
-  it("R2.2-P2a: two anchor groups have independent expand/collapse states", async () => {
+  it("two anchor groups have independent expand/collapse states", async () => {
     const { container } = render(
       <ReaderRecordPlateSurface snapshot={makeMultiAnchorGrammarSnapshot()} />,
     );
@@ -8383,7 +8383,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
     expect(group2Row?.dataset.readerRecordCalloutCollapsed).toBe("false");
   });
 
-  it("R2.2-P2a: grammar_note revision on anchor B preserves anchor A expansion via targeted_apply", async () => {
+  it("grammar_note revision on anchor B preserves anchor A expansion via targeted_apply", async () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const grammarEvent: ReaderEventResponseDto = {
       id: "evt_grammar_1",
@@ -8491,7 +8491,7 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a grammar group ident
 });
 
 // ===========================================================================
-// T4.2a-PUX-R4-R2.2-P2a P1 Evidence: tuple comparison, missing-identity
+// Group identity evidence: tuple comparison, missing-identity
 // conservative behavior, non-contiguous duplicate fail-closed, and global
 // block ID uniqueness.
 //
@@ -8524,12 +8524,12 @@ function makeSyntheticParagraph(id: string): unknown {
   return { type: "paragraph", id, children: [{ text: id }] };
 }
 
-describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple, fail-closed, uniqueness)", () => {
-  // P1-A: Explicit tuple comparison — different unitId, same anchorSegmentId
+describe("ReaderRecordPlateSurface — grammar group identity evidence (tuple, fail-closed, uniqueness)", () => {
+  // Explicit tuple comparison — different unitId, same anchorSegmentId
   // must NOT enter the same group. This proves the grouping condition
   // compares the complete (unitId, anchorSegmentId) tuple, not just
   // anchorSegmentId.
-  it("P1: different unitId with same anchorSegmentId does NOT mix groups", () => {
+  it("different unitId with same anchorSegmentId does NOT mix groups", () => {
     const calloutUnit1 = makeSyntheticGrammarCallout({
       itemId: "item_u1",
       unitId: "unit_1",
@@ -8552,8 +8552,8 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(groupBlocks[1]!.id).toBe("callout-group:unit_2:seg_1");
   });
 
-  // P1-B: Missing unitId — conservative fallback behavior.
-  it("P1: missing unitId produces non-stable fallback ID, not a fake stable ID", () => {
+  // Missing unitId — conservative fallback behavior.
+  it("missing unitId produces non-stable fallback ID, not a fake stable ID", () => {
     const calloutMissingUnitId = makeSyntheticGrammarCallout({
       itemId: "item_missing_unit",
       unitId: undefined,
@@ -8571,8 +8571,8 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(groupBlocks[0]!.id).not.toBe("callout-group::seg_1");
   });
 
-  // P1-C: Missing anchorSegmentId — conservative fallback behavior.
-  it("P1: missing anchorSegmentId produces non-stable fallback ID, not a fake stable ID", () => {
+  // Missing anchorSegmentId — conservative fallback behavior.
+  it("missing anchorSegmentId produces non-stable fallback ID, not a fake stable ID", () => {
     const calloutMissingAnchor = makeSyntheticGrammarCallout({
       itemId: "item_missing_anchor",
       unitId: "unit_1",
@@ -8589,9 +8589,9 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(groupBlocks[0]!.id).not.toBe("callout-group:unit_1:");
   });
 
-  // P1-D: Missing-identity callouts never group with stable-identity
+  // Missing-identity callouts never group with stable-identity
   // callouts, even if adjacent.
-  it("P1: missing-identity callout does NOT group with stable-identity callout", () => {
+  it("missing-identity callout does NOT group with stable-identity callout", () => {
     const stableCallout = makeSyntheticGrammarCallout({
       itemId: "item_stable",
       unitId: "unit_1",
@@ -8614,10 +8614,10 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(groupBlocks[1]!.id).toContain("fallback");
   });
 
-  // P1-E: Non-contiguous same (unitId, anchorSegmentId) must not create a
+  // Non-contiguous same (unitId, anchorSegmentId) must not create a
   // duplicate group ID or make the Reader unrenderable. The first run keeps
   // its stable group; the later anomalous run remains standalone callouts.
-  it("P1: non-contiguous same tuple keeps the article renderable without duplicate group IDs", () => {
+  it("non-contiguous same tuple keeps the article renderable without duplicate group IDs", () => {
     const callout1 = makeSyntheticGrammarCallout({
       itemId: "item_1",
       unitId: "unit_1",
@@ -8649,9 +8649,9 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(new Set(result.map((node) => node.id)).size).toBe(result.length);
   });
 
-  // P1-F: All top-level block IDs in the output are globally unique.
+  // All top-level block IDs in the output are globally unique.
   // This includes both callout-group blocks and non-callout blocks.
-  it("P1: all top-level block IDs are globally unique", () => {
+  it("all top-level block IDs are globally unique", () => {
     const calloutA = makeSyntheticGrammarCallout({
       itemId: "item_a",
       unitId: "unit_1",
@@ -8677,9 +8677,9 @@ describe("ReaderRecordPlateSurface — T4.2a-PUX-R4-R2.2-P2a P1 evidence (tuple,
     expect(allIds.length).toBe(uniqueIds.size);
   });
 
-  // P1-G: Multiple fallback (missing-identity) callouts each get unique
+  // Multiple fallback (missing-identity) callouts each get unique
   // fallback IDs — no collision among fallbacks.
-  it("P1: multiple missing-identity callouts get unique fallback IDs", () => {
+  it("multiple missing-identity callouts get unique fallback IDs", () => {
     const missing1 = makeSyntheticGrammarCallout({
       itemId: "missing_1",
       unitId: undefined,

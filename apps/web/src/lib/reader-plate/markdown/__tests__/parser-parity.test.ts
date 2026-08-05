@@ -1,5 +1,5 @@
 /**
- * Phase 2 / P1: 双 Parser Round-trip 一致性测试。
+ * 双 Parser Round-trip 一致性测试。
  *
  * 目标：验证前端 Plate + MarkdownKit 与后端 markdown_it_py 对同一
  * Markdown 输入产出结构一致的顶层 block 序列。fixtures 同步自后端

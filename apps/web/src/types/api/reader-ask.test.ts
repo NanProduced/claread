@@ -14,7 +14,7 @@ import {
 } from "@/types/api/reader-ask";
 
 // ---------------------------------------------------------------------------
-// ASK-WEB-G0/G1: web search guard tests
+// Web search guard tests
 //
 // Mirrors backend `services/api/app/services/reader_record_ask/web_search_contracts.py`:
 //   - WebSearchMode: "disabled" | "allowed"
@@ -196,7 +196,7 @@ describe("isReaderAskWebSearchSummary", () => {
 // isReaderAskAgenticCitationList — web citation branches
 // ---------------------------------------------------------------------------
 
-describe("isReaderAskAgenticCitationList — web citation branches (ASK-WEB-G0/G1)", () => {
+describe("isReaderAskAgenticCitationList — web citation branches", () => {
   it("accepts a valid web citation with url + title + description + snippet", () => {
     const citations: ReaderAskAgenticCitationDto[] = [
       {
@@ -559,7 +559,7 @@ describe("isReaderAskAgenticProgressPayload — Web Search activity safety", () 
 // isReaderAskAgenticCompletedPayload — web_search field validation
 // ---------------------------------------------------------------------------
 
-describe("isReaderAskAgenticCompletedPayload — web_search field (ASK-WEB-G0/G1)", () => {
+describe("isReaderAskAgenticCompletedPayload — web_search field", () => {
   it("accepts a completed payload with web_search: null (search not invoked)", () => {
     expect(isReaderAskAgenticCompletedPayload(makeValidCompletedPayload())).toBe(true);
   });

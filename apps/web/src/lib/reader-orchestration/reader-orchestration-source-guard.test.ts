@@ -30,7 +30,7 @@ import type { ReaderAskArticleRagSidecarDto } from "@/types/api/reader-ask";
 // 1. Ask article_rag sidecar — debug-only field stripping
 // ---------------------------------------------------------------------------
 
-describe("F7 source guard: Ask article_rag sidecar strips debug-only fields", () => {
+describe("Source guard: Ask article_rag sidecar strips debug-only fields", () => {
   const debugOnlyFields = [
     "failure_code",
     "retryable",
@@ -185,7 +185,7 @@ function listSourceFiles(rootDir: string): string[] {
   return results;
 }
 
-describe("F7 source guard: removed route helpers are not re-imported by new flow", () => {
+describe("Source guard: removed route helpers are not re-imported by new flow", () => {
   const scannedFiles: { path: string; content: string }[] = [];
 
   for (const root of NEW_FLOW_ROOTS) {
@@ -234,7 +234,7 @@ describe("F7 source guard: removed route helpers are not re-imported by new flow
 // 3. Removed route and BFF namespace guard
 // ---------------------------------------------------------------------------
 
-describe("F7 source guard: removed pages and old BFF namespaces stay absent", () => {
+describe("Source guard: removed pages and old BFF namespaces stay absent", () => {
   const removedPaths = [
     "src/app/(private)/app/reader-record/[recordId]/page.tsx",
     "src/app/(private)/app/reader-plate/page.tsx",
@@ -273,7 +273,7 @@ describe("F7 source guard: removed pages and old BFF namespaces stay absent", ()
 });
 
 // ---------------------------------------------------------------------------
-// 4. P-WEB Physical deletion and retained production chain guard
+// 4. Physical deletion and retained production chain guard
 // ---------------------------------------------------------------------------
 
 const PHYSICAL_DELETED_PATHS = [
@@ -366,7 +366,7 @@ const PHYSICAL_RETAINED_PATHS = [
   "tests/e2e/server-setup.ts",
 ] as const;
 
-describe("P-WEB Physical guard: retired clusters stay deleted", () => {
+describe("Physical guard: retired clusters stay deleted", () => {
   it.each(PHYSICAL_DELETED_PATHS)("does not restore deleted path %s", (relativePath) => {
     expect(existsSync(resolve(process.cwd(), relativePath))).toBe(false);
   });
@@ -446,7 +446,7 @@ const REMOVED_BFF_URL_MARKERS = [
   "/api/web/reader-plate/submit",
 ] as const;
 
-describe("F7 source guard: final Reader closure has no old BFF fetches", () => {
+describe("Source guard: final Reader closure has no old BFF fetches", () => {
   it.each(FINAL_READER_SOURCE_FILES)(
     "%s contains no removed BFF URL namespace",
     (relativePath) => {

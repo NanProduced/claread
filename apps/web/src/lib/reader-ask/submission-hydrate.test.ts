@@ -1,5 +1,5 @@
 /**
- * ASK-RETRY-CONTRACT-R6 — pure unit coverage for browser path + hydrate
+ * Pure unit coverage for browser path + hydrate
  * target selection (no React / no real network).
  */
 import { describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ const CANONICAL = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2";
 const CLIENT_SUB = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
 const LOCAL_ASST = "local-assistant-1";
 
-describe("R6 browser paths — never /retry/stream in browser", () => {
+describe("browser paths — never /retry/stream in browser", () => {
   it("persisted regenerate uses /retry only", () => {
     const path = browserAskRetryPath(RECORD, THREAD, CANONICAL);
     expect(path).toContain("/retry");
@@ -41,7 +41,7 @@ describe("R6 browser paths — never /retry/stream in browser", () => {
   });
 });
 
-describe("R6 resend vs regenerate target selection", () => {
+describe("resend vs regenerate target selection", () => {
   it("local pending resolves to resend, not /retry", () => {
     const target = classifyRetryTarget(LOCAL_ASST);
     expect(target).not.toBeNull();
@@ -70,7 +70,7 @@ describe("R6 resend vs regenerate target selection", () => {
   });
 });
 
-describe("R6 hydrate projection shapes (completed / failed / cancelled)", () => {
+describe("hydrate projection shapes (completed / failed / cancelled)", () => {
   type Snap = {
     status: string;
     assistant_message_id?: string;

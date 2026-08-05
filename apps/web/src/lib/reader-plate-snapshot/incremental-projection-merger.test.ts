@@ -1,14 +1,14 @@
 /**
- * Tests for T4.2a-PUX-R4-R2 / R2.1E: incremental-projection-merger pure function.
+ * Tests for the incremental-projection-merger pure function.
  *
  * Covers:
  * - G1 user_assets: upsert → targeted_apply (replace paragraph block)
  * - G2 ask_supplements: upsert → targeted_apply (replace callout block)
  * - G2 ask_supplements: delete → targeted_apply (remove callout block)
  * - G3 record_metadata: status_changed → targeted_apply (empty operations)
- * - R2.1E layer_published: same-topology revision → targeted_apply (changed-block-only replace)
- * - R2.1E layer_published: new / deleted / reordered / missing block_id / fence mismatch → fallback
- * - R2.1E layer_published: mixed batch (layer_published + projection_ops) → fallback
+ * - layer_published: same-topology revision → targeted_apply (changed-block-only replace)
+ * - layer_published: new / deleted / reordered / missing block_id / fence mismatch → fallback
+ * - layer_published: mixed batch (layer_published + projection_ops) → fallback
  * - Fail-closed: missing payload, unknown section/operation, fence mismatch,
  *   target not found, generation changed, base changed,
  *   non-representation event, no trigger events, delete target missing.
@@ -201,7 +201,7 @@ function makeCalloutNode(id: string, text: string): Descendant {
   } as unknown as Descendant;
 }
 
-// R2.1E: layer_published fixture builders.
+// layer_published fixture builders.
 
 const LAYER_UNIT_ID = "unit_1";
 
@@ -219,7 +219,7 @@ function makeLayerParagraphNode(
 }
 
 /**
- * R2.2-P1: Build a paragraph node carrying vocabulary marks on its text leaf.
+ * Build a paragraph node carrying vocabulary marks on its text leaf.
  *
  * vocabulary first-publish / revision changes the projected paragraph by
  * mutating `reader_vocabulary_marks` data on the source leaf — the paragraph
@@ -321,7 +321,7 @@ function makeLayerSentenceAnalysisNode(
 /**
  * Build a `layer_published` representation event with the v1 payload schema
  * (record_id, base_id, layer_id, layer_type, target_scope, target_key,
- * generation). Used to exercise the R2.1E changed-block-only path.
+ * generation). Used to exercise the layer_published changed-block-only path.
  */
 function makeLayerPublishedEvent(
   layerType: "translation" | "vocabulary" | "grammar_note" | "sentence_analysis",
@@ -864,9 +864,9 @@ describe("mergeIncrementalProjection", () => {
     });
   });
 
-  // --- R2.1E: layer_published changed-block-only apply ---
+  // --- layer_published changed-block-only apply ---
 
-  describe("R2.1E layer_published changed-block-only", () => {
+  describe("layer_published changed-block-only", () => {
     it("translation revision with same block topology: targeted_apply replaces changed blockquote", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
@@ -908,7 +908,7 @@ describe("mergeIncrementalProjection", () => {
     });
 
     it("vocabulary revision with same block topology: targeted_apply replaces changed paragraph", () => {
-      // R2.2-P1: This test now verifies REAL vocabulary mark data changes
+      // This test now verifies REAL vocabulary mark data changes
       // (previously prev/next were identical, producing 0 ops). The paragraph
       // block_id stays the same, but the leaf's marks array differs — the
       // merger must detect this as a semantic change and emit a replace op.
@@ -955,7 +955,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.preservedInteraction.preserveGrammarAccordion).toBe(true);
     });
 
-    it("R2.2-P1: vocabulary first-publish with vocab_highlight mark change: targeted_apply replaces paragraph", () => {
+    it("vocabulary first-publish with vocab_highlight mark change: targeted_apply replaces paragraph", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -993,7 +993,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.affectedTargetKeys).toEqual([LAYER_UNIT_ID]);
     });
 
-    it("R2.2-P1: vocabulary first-publish with context_gloss mark change: targeted_apply replaces paragraph", () => {
+    it("vocabulary first-publish with context_gloss mark change: targeted_apply replaces paragraph", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1024,7 +1024,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.operations[0].blockId).toBe("paragraph:seg_1");
     });
 
-    it("R2.2-P1: vocabulary first-publish with multiple mark kinds: targeted_apply replaces paragraph", () => {
+    it("vocabulary first-publish with multiple mark kinds: targeted_apply replaces paragraph", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1057,7 +1057,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.operations[0].blockId).toBe("paragraph:seg_1");
     });
 
-    it("R2.2-P1: vocabulary first-publish with multi-paragraph unit: only changed paragraph replaced", () => {
+    it("vocabulary first-publish with multi-paragraph unit: only changed paragraph replaced", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1092,7 +1092,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.operations[0].path).toEqual([0]);
     });
 
-    it("R2.2-P1: vocabulary first-publish with non-target unit block change: fallback_full_reload", () => {
+    it("vocabulary first-publish with non-target unit block change: fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1100,7 +1100,7 @@ describe("mergeIncrementalProjection", () => {
       });
 
       // Target unit paragraph gets vocabulary marks, BUT a non-target unit
-      // block also changes — P1-A guard must reject this.
+      // block also changes — the unrepresented-change guard must reject this.
       // The blockquote uses a DIFFERENT unitId so it is treated as a
       // non-target block; any semantic change to it must trigger fallback.
       const prevChildren = [
@@ -1136,7 +1136,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.kind).toBe("fallback_full_reload");
     });
 
-    it("R2.2-P1: vocabulary first-publish with block count mismatch: fallback_full_reload", () => {
+    it("vocabulary first-publish with block count mismatch: fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1166,7 +1166,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.kind).toBe("fallback_full_reload");
     });
 
-    it("R2.2-P1: vocabulary first-publish with fence mismatch (generation): fallback_full_reload", () => {
+    it("vocabulary first-publish with fence mismatch (generation): fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1197,7 +1197,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.reason).toBe("fence_mismatch_in_batch");
     });
 
-    it("R2.2-P1: vocabulary first-publish with mixed batch (layer_published + projection_ops): fallback_full_reload", () => {
+    it("vocabulary first-publish with mixed batch (layer_published + projection_ops): fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const vocabEvent = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1234,7 +1234,7 @@ describe("mergeIncrementalProjection", () => {
       expect(result.reason).toBe("non_layer_published_in_batch");
     });
 
-    it("R2.2-P1: vocabulary first-publish with target unit not found: fallback_full_reload", () => {
+    it("vocabulary first-publish with target unit not found: fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       // target_key points to a unit that doesn't exist in children.
@@ -1262,13 +1262,13 @@ describe("mergeIncrementalProjection", () => {
 
       // When target unit doesn't exist in children, ALL blocks are treated
       // as non-target. The paragraph children change (vocabulary marks added)
-      // is detected by P1-A.2 as an unrepresented change in a non-target
+      // is detected as an unrepresented change in a non-target
       // block. This is still fail-closed (fallback_full_reload); the exact
-      // reason depends on which P1-A guard fires first.
+      // reason depends on which unrepresented-change guard fires first.
       expect(result.kind).toBe("fallback_full_reload");
     });
 
-    it("R2.2-P1: vocabulary first-publish with invalid payload (missing target_key): fallback_full_reload", () => {
+    it("vocabulary first-publish with invalid payload (missing target_key): fallback_full_reload", () => {
       const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
       const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });
       const event = makeLayerPublishedEvent("vocabulary", LAYER_UNIT_ID, {
@@ -1960,10 +1960,10 @@ describe("mergeIncrementalProjection", () => {
       expect(result.operations).toHaveLength(1);
     });
 
-    // P1-A: unrepresented change detection — any change outside the
+    // Unrepresented change detection — any change outside the
     // event's target unit MUST cause fallback, otherwise the cursor
     // advances past the unrepresented change and the UI is stuck.
-    describe("P1-A unrepresented change in non-target block", () => {
+    describe("unrepresented change in non-target block", () => {
       it("non-target unit blockquote content change: fallback", () => {
         const prevSnapshot = makeSnapshot({ lastEventSequence: 1 });
         const nextSnapshot = makeSnapshot({ lastEventSequence: 2 });

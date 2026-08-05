@@ -1626,15 +1626,15 @@ describe("projectReaderPlateSnapshotToReaderRecordPlateDocument", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R1: stable paragraph inline marks must survive snapshot → document
-// projection. Before R1, `stableBlockType === "paragraph"` was NOT in
+// Stable paragraph inline marks must survive snapshot → document
+// projection. Previously `stableBlockType === "paragraph"` was NOT in
 // STABLE_BLOCK_TYPES_WITH_PLATE_PROJECTION and the stable builder had no
 // `case "paragraph"`, so paragraph units always took the legacy path and
 // silently dropped inlineMarks (emphasis rendered as plain text even though
 // the snapshot carried the marks).
 // ---------------------------------------------------------------------------
 
-describe("R1 stable paragraph inline marks projection", () => {
+describe("stable paragraph inline marks projection", () => {
   const EM_TEXT = "How we will roll this out safely.";
   const EM_END = EM_TEXT.length;
 
