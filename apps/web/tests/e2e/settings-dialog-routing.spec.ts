@@ -252,9 +252,9 @@ function parseRgb(rgb: string): [number, number, number, number] {
 }
 
 function colorDistance(left: string, right: string): number {
-  const [rA, gA, bA] = parseRgb(left);
-  const [rA2, gA2, bA2] = parseRgb(right);
-  return Math.sqrt((rA - rA2) ** 2 + (gA - gA2) ** 2 + (bA - bA2) ** 2);
+  const [r1, g1, b1] = parseRgb(left);
+  const [r2, g2, b2] = parseRgb(right);
+  return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2);
 }
 
 async function getBackgroundColor(locator: Locator): Promise<string> {

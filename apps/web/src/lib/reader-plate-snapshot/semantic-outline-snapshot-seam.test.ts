@@ -217,19 +217,19 @@ describe("semantic outline snapshot seam", () => {
 
   it("same-source reload with outline accepted and cursor advances", () => {
     let state = createInitialProgressiveState();
-    const baseSnapshot = makePuxSnapshot({
+    const s1 = makePuxSnapshot({
       snapshotId: "s4a",
       lastEventSequence: 1,
       readiness: "article_ready",
       layers: ["translation"],
     });
-    const a1 = applySnapshotReload(state, baseSnapshot);
+    const a1 = applySnapshotReload(state, s1);
     expect(a1.ok).toBe(true);
     if (!a1.ok) return;
     state = a1.state;
     expect(state.cursor).toBe(1);
 
-    const outlinedSnapshot = withOutline(
+    const s2 = withOutline(
       makePuxSnapshot({
         snapshotId: "s4b",
         lastEventSequence: 2,
@@ -239,7 +239,7 @@ describe("semantic outline snapshot seam", () => {
       readyOutline(),
       { inventory: true },
     );
-    const a2 = applySnapshotReload(state, outlinedSnapshot);
+    const a2 = applySnapshotReload(state, s2);
     expect(a2.ok).toBe(true);
     if (!a2.ok) return;
     expect(a2.state.cursor).toBe(2);

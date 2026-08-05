@@ -168,13 +168,13 @@ describe("canonical progressive transition replay", () => {
 
 describe("stale / duplicate / out-of-order event safety", () => {
   function loadedAtTranslation() {
-    const firstSnapshot = makePuxSnapshot({
+    const s1 = makePuxSnapshot({
       snapshotId: "snap_a",
       lastEventSequence: 1,
       readiness: "article_ready",
       layers: [],
     });
-    const secondSnapshot = makePuxSnapshot({
+    const s2 = makePuxSnapshot({
       snapshotId: "snap_b",
       lastEventSequence: 2,
       readiness: "article_ready",
@@ -183,7 +183,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
     return replayProgressiveSteps([
       {
         kind: "load_snapshot",
-        snapshot: firstSnapshot,
+        snapshot: s1,
         expectPhase: "article_ready_no_layers",
       },
       {
@@ -197,7 +197,7 @@ describe("stale / duplicate / out-of-order event safety", () => {
           ],
         }),
         expectDecision: "reload",
-        snapshotOnReload: secondSnapshot,
+        snapshotOnReload: s2,
         expectCursor: 2,
       },
       {

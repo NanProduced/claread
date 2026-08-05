@@ -146,11 +146,11 @@ describe("createCurrentPageIdentityLoader", () => {
         }),
     );
     const load = createCurrentPageIdentityLoader({ ...FENCE, fetchImpl });
-    const first = load();
-    const second = load();
+    const p1 = load();
+    const p2 = load();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     resolveFetch!(jsonResponse(okBody()));
-    const [a, b] = await Promise.all([first, second]);
+    const [a, b] = await Promise.all([p1, p2]);
     expect(a).toEqual(b);
     expect(a.stableDocument.status).toBe("ready");
   });
