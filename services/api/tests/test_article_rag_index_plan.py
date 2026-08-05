@@ -36,7 +36,6 @@ from app.database.connection import init_connection
 from app.database.json_compat import jsonb_param
 from app.services.reader_orchestration.article_rag_index_plan import (
     ArticleRagCitationRef,
-    ArticleRagIndexChunk,
     ArticleRagIndexPlan,
     ArticleRagIndexPlanError,
     ArticleRagIndexPlanService,
@@ -714,7 +713,7 @@ async def test_content_sha256_deterministic_across_rebuilds(index_env: asyncpg.P
     c2 = plan2.chunks[0]
     assert c1.chunk_id == c2.chunk_id
     assert c1.content_sha256 == c2.content_sha256
-    assert c1.content_sha256 == hashlib.sha256("Deterministic text.".encode("utf-8")).hexdigest()
+    assert c1.content_sha256 == hashlib.sha256(b"Deterministic text.").hexdigest()
     assert c1.embedding_text_sha256 == c2.embedding_text_sha256
 
 

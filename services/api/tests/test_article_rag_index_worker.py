@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -41,12 +41,6 @@ from app.services.reader_orchestration.article_rag_embedding_provider import (
 )
 from app.services.reader_orchestration.article_rag_index_bootstrap import (
     ArticleRagIndexBootstrapService,
-)
-from app.services.reader_orchestration.article_rag_index_plan import (
-    ArticleRagIndexPlan,
-    ArticleRagIndexPlanError,
-    ArticleRagIndexPlanService,
-    compute_plan_content_sha256,
 )
 from app.services.reader_orchestration.article_rag_index_worker import (
     ARTICLE_RAG_INDEX_JOB_SOURCE,
@@ -80,22 +74,13 @@ pytestmark = [
 # Reuse seed helpers + UUIDs from the I4A test module.
 from tests.test_article_rag_index_plan import (  # noqa: E402
     _BASE_ID,
-    _OTHER_USER_ID,
     _RECORD_ID,
     _STABLE_DOC_ID,
     _USER_ID,
     _build_base_text_and_offsets,
     _main_reading_policy,
-    _metadata_only_policy,
-    _rag_ask_only_policy,
-    _seed_base,
     _seed_block,
     _seed_full_environment,
-    _seed_record,
-    _seed_segment,
-    _seed_stable_document,
-    _seed_unit,
-    _seed_user,
 )
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
     BASELINE_SQL,

@@ -1840,7 +1840,7 @@ async def test_cutover_supersedes_legacy_translate_unit_jobs(
 
     # Manually insert two legacy translate_unit jobs in 'queued' status.
     legacy_job_ids: list[UUID] = []
-    for unit_id, unit_row in zip(legacy_unit_ids, unit_rows[:2]):
+    for unit_id, _unit_row in zip(legacy_unit_ids, unit_rows[:2], strict=False):
         async with strategy_env.acquire() as conn:
             run_id = await conn.fetchval(
                 """
@@ -1952,10 +1952,6 @@ async def test_cutover_supersedes_legacy_translate_unit_jobs(
     ]
     assert len(translation_batch_jobs) >= 2
     # No active translate_unit jobs remain
-    active_per_unit = [
-        j for j in jobs
-        if j["job_type"] == "translate_unit"
-    ]
     # The legacy jobs are still in the jobs list but should not be active
     async with strategy_env.acquire() as conn:
         active_count = await conn.fetchval(
@@ -2170,14 +2166,14 @@ async def test_active_window_job_prevents_overlapping_new_window(
 # heavy grouped/windowed path. The new word-based router splits them.
 _BBC_SENTENCES = (
     "The findings were published in a peer-reviewed journal on Tuesday morning.",
-    "Researchers said the experimental battery can hold more energy per unit of volume than common lithium-ion cells.",
-    "The design uses abundant materials rather than rare metals that have constrained supply chains.",
-    "Independent experts described the work as technically sound but cautioned that commercial deployment remains years away.",
-    "Energy storage is widely seen as a central challenge in the transition away from fossil fuels.",
-    "Solar and wind generation fluctuates with the weather so utilities need reliable ways to store surplus electricity.",
-    "The team said the battery maintained its performance over thousands of charge and discharge cycles without significant degradation.",
-    "Officials in several countries have indicated that storage technology will receive a growing share of public research funding.",
-    "The next phase will involve building a larger prototype and partnering with industry manufacturers to test mass production.",
+    "Researchers said the experimental battery can hold more energy per unit of volume than common lithium-ion cells.",  # noqa: E501
+    "The design uses abundant materials rather than rare metals that have constrained supply chains.",  # noqa: E501
+    "Independent experts described the work as technically sound but cautioned that commercial deployment remains years away.",  # noqa: E501
+    "Energy storage is widely seen as a central challenge in the transition away from fossil fuels.",  # noqa: E501
+    "Solar and wind generation fluctuates with the weather so utilities need reliable ways to store surplus electricity.",  # noqa: E501
+    "The team said the battery maintained its performance over thousands of charge and discharge cycles without significant degradation.",  # noqa: E501
+    "Officials in several countries have indicated that storage technology will receive a growing share of public research funding.",  # noqa: E501
+    "The next phase will involve building a larger prototype and partnering with industry manufacturers to test mass production.",  # noqa: E501
 )
 _BBC_PARAGRAPH = " ".join(_BBC_SENTENCES)
 

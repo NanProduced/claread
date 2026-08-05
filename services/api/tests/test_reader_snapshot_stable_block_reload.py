@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """R1 Phase 3 — Reader 持久化重载 Stable Block 结构等价红灯测试。
 
 封住的失效点：``repository.load_snapshot_facts`` 只读 ``reading_units``

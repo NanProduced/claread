@@ -40,7 +40,6 @@ from app.contracts.annotation import (
 )
 from app.schemas.reader_documents import (
     StableDocumentBlock,
-    StableDocumentInterpretationPolicy,
 )
 from app.services.reader_orchestration.base_builder import (
     EXACT_CANONICAL_TEXT_VERSION,
@@ -54,7 +53,6 @@ from app.services.reader_orchestration.document_freeze_persistence import (
     persist_stable_document_freeze_plan,
 )
 from app.services.reader_orchestration.document_freeze_plan import (
-    CANONICAL_TEXT_BLOCK_SEPARATOR,
     build_stable_document_freeze_plan,
 )
 
@@ -615,7 +613,7 @@ class TestBlockInsertParams:
 
 
 class TestIdempotency:
-    def test_same_generation_same_hash_with_complete_state_no_mutation_writes_but_performs_validation_reads(
+    def test_same_generation_same_hash_with_complete_state_no_mutation_writes_but_performs_validation_reads(  # noqa: E501
         self,
     ) -> None:
         """Same-hash idempotent branch: NO mutation writes, but DOES

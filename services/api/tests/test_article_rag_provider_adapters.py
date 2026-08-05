@@ -35,7 +35,6 @@ import types
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from typing import Any
-from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -52,13 +51,11 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagVectorChunk,
     ArticleRagVectorWriteMetadata,
     ArticleRagVectorWriteResult,
-    FakeArticleRagVectorWriter,
     UnconfiguredArticleRagEmbeddingProvider,
     UnconfiguredArticleRagVectorWriter,
 )
 from app.services.reader_orchestration.article_rag_vector_store import (
     _ARTICLE_RAG_CITATION_KEYS,
-    _FORBIDDEN_VECTOR_PAYLOAD_KEYS,
     READER_ARTICLE_RAG_VECTOR_PROVIDER_ZILLIZ,
     ZILLIZ_DEFAULT_VECTOR_DIM,
     ZillizArticleRagVectorWriter,
@@ -1371,7 +1368,7 @@ async def test_zilliz_writer_propagates_partial_upsert_count(
 ):
     """Partial upsert must NOT be silently coerced: worker Phase-4 check
     surfaces ``upserted_count != len(chunks)`` as retryable error."""
-    fake_client = _install_pymilvus_stub(monkeypatch, upserted_count=2)
+    _ = _install_pymilvus_stub(monkeypatch, upserted_count=2)
     writer = ZillizArticleRagVectorWriter(
         uri=_FAKE_ZILLIZ_URI,
         token=_FAKE_ZILLIZ_TOKEN,
@@ -1929,7 +1926,7 @@ def test_real_pymilvus_canonical_offsets_are_nullable_when_installed():
     the offset pair) remain non-nullable by default — there is no
     I4A-permitted path that produces a missing record_generation, so
     we do not relax that contract here."""
-    pymilvus = __import__("pymilvus")
+    _ = __import__("pymilvus")
     from app.services.reader_orchestration.article_rag_vector_store import (
         _build_pymilvus_collection_schema as build_schema,
     )
@@ -2143,7 +2140,7 @@ async def test_real_zilliz_smoke_is_opt_in_only(monkeypatch: pytest.MonkeyPatch)
     if "pymilvus" in sys.modules:
         del sys.modules["pymilvus"]
     try:
-        real_pymilvus = __import__("pymilvus")
+        _ = __import__("pymilvus")
     except ImportError:
         pytest.skip("pymilvus not installed")
 

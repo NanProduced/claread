@@ -36,16 +36,9 @@ from app.schemas.reader_orchestration import (
     ReaderSectionTranslationRequest,
     ReaderSectionTranslationResponse,
 )
-from app.services.reader_orchestration.job_bootstrap import (
-    TRANSLATION_BATCH_JOB_TYPE,
-)
 from app.services.reader_orchestration.section_identity import (
     SectionIdentity,
     encode_section_target_key,
-)
-from app.services.reader_orchestration.section_lane import (
-    SECTION_REQUEST_ORIGIN,
-    TRANSLATION_SECTION_OPERATION_FINGERPRINT,
 )
 from app.services.reader_orchestration.section_request_planner import (
     REASON_NO_TRUSTED_OUTLINE,

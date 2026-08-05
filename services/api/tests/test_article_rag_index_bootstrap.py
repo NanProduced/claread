@@ -64,14 +64,10 @@ from tests.test_article_rag_index_plan import (  # noqa: E402
     _build_base_text_and_offsets,
     _main_reading_policy,
     _metadata_only_policy,
-    _rag_ask_only_policy,
     _seed_base,
     _seed_block,
     _seed_full_environment,
     _seed_record,
-    _seed_segment,
-    _seed_stable_document,
-    _seed_unit,
     _seed_user,
 )
 from tests.test_reader_orchestration_schema_baseline import (  # noqa: E402
@@ -986,7 +982,7 @@ async def test_db_rejects_article_rag_index_build_with_null_base_id(
     await _seed_paragraph_environment(index_env)
     service = _build_service(index_env)
     # Create a real run first so we have a valid run_id to reference.
-    first = await service.bootstrap_article_rag_index(
+    _ = await service.bootstrap_article_rag_index(
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
     )
@@ -1049,7 +1045,7 @@ async def test_db_rejects_duplicate_active_index_run(
     status is in ('planned', 'queued', 'indexing', 'indexed')."""
     await _seed_paragraph_environment(index_env)
     service = _build_service(index_env)
-    first = await service.bootstrap_article_rag_index(
+    _ = await service.bootstrap_article_rag_index(
         reading_record_id=_RECORD_ID,
         user_id=_USER_ID,
     )

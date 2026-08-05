@@ -30,7 +30,6 @@ is monkeypatched so the test does not depend on real ``reading_records``
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 import uuid
@@ -49,9 +48,6 @@ from app.services.reader_orchestration.article_rag_index_worker import (
     ArticleRagIndexWorkerError,
     FakeArticleRagEmbeddingProvider,
 )
-from app.services.reader_orchestration.article_rag_index_worker import (
-    ArticleRagIndexWorkerError as _WorkerErrAlias,
-)
 from app.services.reader_orchestration.article_rag_retrieval_service import (
     FAILURE_CODE_RETRIEVAL_CONTRACT_MISMATCH,
     FAILURE_CODE_RETRIEVAL_EMBEDDING_DIMENSION_MISMATCH,
@@ -65,7 +61,6 @@ from app.services.reader_orchestration.article_rag_retrieval_service import (
     FAILURE_CODE_RETRIEVAL_VECTOR_METADATA_MISMATCH,
     FAILURE_CODE_RETRIEVAL_VECTOR_SEARCH_FAILED,
     MAX_RETRIEVAL_LIMIT,
-    ArticleRagRetrievalHit,
     ArticleRagRetrievalResult,
     ArticleRagRetrievalService,
     ArticleRagRetrievalServiceError,
@@ -111,9 +106,9 @@ class _FakeRecord(dict):
 
 @dataclass
 class _FakeAcquire:
-    conn: "_FakeConn"
+    conn: _FakeConn
 
-    async def __aenter__(self) -> "_FakeConn":
+    async def __aenter__(self) -> _FakeConn:
         return self.conn
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

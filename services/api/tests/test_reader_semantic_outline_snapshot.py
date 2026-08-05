@@ -228,7 +228,7 @@ def test_published_ready_projects_with_real_ids() -> None:
     assert dumped["semantic_outline"]["status"] == "ready"
     assert dumped["semantic_outline"]["publication"]["layer_id"] == LAYER_ID
     # audit inventory still lists the layer
-    assert any(l.layer_type == "semantic_outline" for l in snapshot.enhancement_layers)
+    assert any(layer.layer_type == "semantic_outline" for layer in snapshot.enhancement_layers)
 
 
 def test_published_partial_keeps_valid_nodes_only() -> None:
