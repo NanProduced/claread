@@ -215,6 +215,8 @@ describe("ImmersiveReaderSurface", () => {
     );
 
     expect(container.querySelector(".reader-context-focus-range")).toBeTruthy();
-    expect(container.querySelector(".reader-mark--context-muted")).toBeTruthy();
+    expect(
+      container.querySelector(".reader-mark--context-muted-foreground"),
+    ).toBeTruthy();
   });
 });
