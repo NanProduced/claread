@@ -2219,7 +2219,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(stack?.className).toContain("reader-record-mark-stack--user-highlight");
     expect(cssSource).toMatch(/\.reader-record-mark-stack--user-highlight:hover/);
     expect(cssSource).toMatch(
-      /--reader-mark-grammar-line-soft:\s*rgba\(95,\s*78,\s*138,\s*0\.7\)/,
+      /--reader-mark-grammar-line-soft:\s*var\(--grammar-violet\)/,
     );
     expect(cssSource).toMatch(/text-decoration-thickness:\s*0\.08em/);
     expect(cssSource).not.toMatch(
@@ -3135,7 +3135,34 @@ describe("ReaderRecordPlateSurface", () => {
   });
 
   it("anchors the navigation rail inside the canvas outline slot", () => {
-    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const snapshot = makeSnapshot();
+    snapshot.semantic_outline = {
+      schema_kind: "reader_semantic_outline",
+      schema_version: 1,
+      status: "ready",
+      source_identity: { base_id: "base_1", generation: 1 },
+      publication: {
+        outline_revision: "rev_1",
+        layer_id: "layer_ol",
+        published_at: "2026-07-17T00:00:00Z",
+      },
+      provenance: { kind: "llm", builder: "test", model: "m" },
+      diagnostics: { drops: [], skipped_node_count: 0 },
+      nodes: [
+        {
+          node_id: "n1",
+          parent_node_id: null,
+          depth: 1,
+          title: "Root A",
+          start_unit_id: "unit_1",
+          end_unit_id: "unit_1",
+          start_anchor_segment_id: null,
+          end_anchor_segment_id: null,
+          order_index: 1,
+        },
+      ],
+    };
+    render(<ReaderRecordPlateSurface snapshot={snapshot} />);
 
     const outlineSlot = document.querySelector(".reader-record-outline-slot");
     expect(outlineSlot).not.toBeNull();
@@ -3248,7 +3275,7 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(progressStatus).not.toBeNull();
     expect(progressStatus?.className).toContain("rounded-[0.5rem]");
-    expect(progressStatus?.className).toContain("bg-surface-warm");
+    expect(progressStatus?.className).toContain("bg-surface-raised");
     expect(progressStatus?.textContent).toContain("可以开始阅读");
 
     const blueDot = container.querySelector(
@@ -3741,8 +3768,8 @@ describe("ReaderRecordPlateSurface", () => {
     expect(metadata?.textContent).toContain("粘贴导入");
   });
 
-  it("keeps Plate toolbar as the only selection action surface and disables it when idle", () => {
-    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+  it("keeps Plate toolbar as the only selection action surface and unmounts it when idle", () => {
+    render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const actions = screen.getByTestId("reader-record-plate-selection-state");
 
     expect(actions.dataset.readerRecordActions).toBe("selection-state");
@@ -3751,18 +3778,17 @@ describe("ReaderRecordPlateSurface", () => {
       actions.querySelector('[data-reader-record-action-hint]')?.textContent,
     ).toContain("划取原文后");
 
-    const toolbarButtons = container.querySelectorAll<HTMLButtonElement>(
-      "[data-reader-record-toolbar-action]",
-    );
-    expect(toolbarButtons).toHaveLength(5);
-    for (const button of toolbarButtons) {
-      expect(button.disabled).toBe(true);
-      expect(button.getAttribute("title")).toBeNull();
-      expect(button.dataset.readerRecordDisabledReason).toBe("请选择稳定原文后再操作");
-    }
-    expect(container.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
-    expect(container.querySelector('[data-reader-record-actions="selection-context"]')).toBeNull();
-    expect(container.querySelector("[data-reader-record-test-action]")).toBeNull();
+    expect(
+      document.querySelector('[data-reader-record-toolbar-action]'),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-reader-record-floating-toolbar="selection-actions"]',
+      ),
+    ).toBeNull();
+    expect(document.querySelector('[data-reader-record-action="feedback"]')).toBeNull();
+    expect(document.querySelector('[data-reader-record-actions="selection-context"]')).toBeNull();
+    expect(document.querySelector("[data-reader-record-test-action]")).toBeNull();
   });
 
   it("renders the real Plate toolbar button set with disabled semantics in the toolbar harness", () => {
@@ -4755,7 +4781,9 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.click(lookupButton);
 
     const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
-    fireEvent.click(within(quickPeek).getByLabelText("打开词典"));
+    const openDictButton = within(quickPeek).getByLabelText("打开词典");
+    fireEvent.pointerDown(openDictButton);
+    fireEvent.click(openDictButton);
 
     const rail = await waitFor(() => {
       const node = container.querySelector<HTMLElement>(
@@ -5426,7 +5454,8 @@ describe("ReaderRecordPlateSurface", () => {
         screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeTruthy();
+    expect(document.querySelector(".ai-workspace-panel--surface-floating")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeNull();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
@@ -5616,7 +5645,8 @@ describe("ReaderRecordPlateSurface", () => {
         screen.getByRole("button", { name: "关闭 Ask Claread" }),
       ).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeTruthy();
+    expect(document.querySelector(".ai-workspace-panel--surface-floating")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "选择 Ask Claread 面板形式" })).toBeNull();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).includes(
@@ -6161,12 +6191,16 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectAcrossElements(sourceParagraph, 0, blockquote, 2);
     await waitFor(() => {
-      expect(copyButton.disabled).toBe(true);
-      expect(askButton.disabled).toBe(true);
-      expect(highlightButton.disabled).toBe(true);
+      expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
+      expect(actions.dataset.readerRecordSelectionSurfaceKind).not.toBe("source");
     });
-    expect(actions.dataset.readerRecordSelectionSupported).toBe("false");
-    expect(actions.dataset.readerRecordSelectionSurfaceKind).not.toBe("source");
+    await waitFor(() => {
+      expect(
+        document.querySelector(
+          '[data-reader-record-floating-toolbar="selection-actions"]',
+        ),
+      ).toBeNull();
+    });
   });
 
   it("disables Ask for grammar callout selections without a stable source anchor", async () => {
@@ -6536,7 +6570,7 @@ describe("ReaderRecordPlateSurface", () => {
     expect(surfaceSource).toContain("SelectionActionState");
     expect(surfaceSource).not.toMatch(/SelectionActionStrip/);
     expect(surfaceSource).not.toMatch(/data-reader-record-test-action/);
-    expect(surfaceSource).not.toMatch(/removeAllRanges/);
+    expect(surfaceSource).toContain("withinToolbar || withinDocument");
   });
 
   it("routes the Note toolbar action through the Plate CommentKit draft path", () => {
