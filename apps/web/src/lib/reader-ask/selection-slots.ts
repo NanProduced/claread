@@ -1,5 +1,5 @@
 /**
- * ASK-UX-COT-COMPOSER-R3 P1 — Reading Record Ask composer selection slots.
+ * Reading Record Ask composer selection slots.
  *
  * Pure decision logic for the composer's selection context model:
  * - a permanent implicit current-article context (never a slot here);

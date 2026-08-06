@@ -1,10 +1,9 @@
 /**
- * Ask composer send-context module (ARCH-OPT-C3).
+ * Ask composer send-context module.
  *
- * Owns the Ask-internal send-context state machine that previously leaked
- * into ReaderRecordPlateSurface: the composer attachment draft, the R3
- * selection slots (auto 0/1 + manual ≤3, anchor-fingerprint dedupe), the
- * quick-action request queue, and the send-time context merge. The plate
+ * Owns the Ask-internal send-context state machine: the composer attachment
+ * draft, selection slots (auto 0/1 + manual ≤3, anchor-fingerprint dedupe),
+ * the quick-action request queue, and the send-time context merge. The plate
  * stays a page/surface owner: it adapts its selection / dictionary / note
  * domains into ReaderAskAttachment values and reports them here.
  *
@@ -69,8 +68,10 @@ export type UseAskComposerContextArgs = {
   /** Panel open state — the auto slot only ingests while Ask is open. */
   open: boolean;
   /**
-   * Record/base/generation fence. Selection chips are bound to one
-   * immutable identity; a replacement clears every slot and fingerprint.
+   * Record/base/generation fence. Auto/manual selection slots and their
+   * fingerprints are bound to one identity; a replacement clears those
+   * selection slots and fingerprints only (explicit attachments and a
+   * pending quick action are left alone).
    */
   identityKey: string;
   /** Plate-adapted live single-range selection candidate (or null). */
@@ -98,8 +99,9 @@ export function useAskComposerContext({
   // the bridge re-emits the same selection).
   const lastAutoSelectionFingerprintRef = useRef<string | null>(null);
 
-  // Identity replacement clears every draft slot. Browser highlight
-  // dismissal does NOT clear slots; identity replacement does.
+  // Identity replacement clears auto/manual selection slots and their
+  // fingerprints only. Explicit attachments and pending quick actions
+  // survive. Browser highlight dismissal does NOT clear slots.
   useEffect(() => {
     setAutoSelectionAttachment(null);
     setManualSelectionAttachments([]);
@@ -107,14 +109,14 @@ export function useAskComposerContext({
     lastAutoSelectionFingerprintRef.current = null;
   }, [identityKey]);
 
-  // ASK-UX-COT-COMPOSER-R3 P1 — auto-ingest a legitimate stable single-
-  // range source selection into the composer auto slot while Ask is open
-  // (also covers opening the panel with an active selection). Clearing
-  // the browser highlight / Esc / blank clicks merely null the bridge
-  // result — the chip is NOT cleared. A new fingerprint replaces the
-  // auto slot without touching manual selections, notes, or external
-  // attachments. A ×-dismissed fingerprint never reappears until a
-  // genuinely new fingerprint selection happens.
+  // Auto-ingest a legitimate stable single-range source selection into
+  // the composer auto slot while Ask is open (also covers opening the
+  // panel with an active selection). Clearing the browser highlight /
+  // Esc / blank clicks merely null the bridge result — the chip is NOT
+  // cleared. A new fingerprint replaces the auto slot without touching
+  // manual selections, notes, or external attachments. A ×-dismissed
+  // fingerprint never reappears until a genuinely new fingerprint
+  // selection happens.
   useEffect(() => {
     if (!open) {
       return;
@@ -180,11 +182,11 @@ export function useAskComposerContext({
   }, []);
 
   /**
-   * ASK-UX-COT-COMPOSER-R3 P1 — "加入 Ask Claread": pin the current
-   * selection into the manual slots. If it IS the current auto slot it is
-   * promoted (no duplicate chip); otherwise appended. Anchor-fingerprint
-   * dedupe; capped at MAX_MANUAL_ASK_SELECTIONS. The caller opens the
-   * panel; this hook only mutates the slots.
+   * "加入 Ask Claread": pin the current selection into the manual slots.
+   * If it IS the current auto slot it is promoted (no duplicate chip);
+   * otherwise appended. Anchor-fingerprint dedupe; capped at
+   * MAX_MANUAL_ASK_SELECTIONS. The caller opens the panel; this hook only
+   * mutates the slots.
    */
   const pinSelection = useCallback(() => {
     // Opening the toolbar menu moves focus away from the document and may

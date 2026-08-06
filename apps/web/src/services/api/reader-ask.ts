@@ -38,11 +38,11 @@ interface ReaderRecordAskMessageRequestDto {
    */
   anchor?: Record<string, unknown> | null;
   /**
-   * ASK-UX-COT-COMPOSER-R3 P2 — canonical plural focus anchors (≤4:
-   * one auto-ingested selection plus up to three pinned selections):
-   * every auto/manual selection anchor the composer carries, in slot
-   * order (auto first, then pinned manuals). The backend gates each
-   * anchor fail-closed against the same record/base/generation/document.
+   * Canonical plural focus anchors (≤4: one auto-ingested selection plus
+   * up to three pinned selections): every auto/manual selection anchor
+   * the composer carries, in slot order (auto first, then pinned manuals).
+   * The backend gates each anchor fail-closed against the same
+   * record/base/generation/document.
    */
   focus_anchors?: Record<string, unknown>[] | null;
   /**
@@ -60,7 +60,7 @@ function readingRecordAskPath(recordId: string, suffix = ""): string {
   return `/reader/records/${encodeURIComponent(recordId)}/ask${suffix}`;
 }
 
-/** ASK-UX-COT-COMPOSER-R3 P2 — transport cap mirrors the backend schema. */
+/** Transport cap mirrors the backend schema. */
 // One auto-ingested emphasis selection plus up to three user-pinned
 // selections.  This must match the visible composer slot contract.
 const MAX_READER_RECORD_FOCUS_ANCHORS = 4;

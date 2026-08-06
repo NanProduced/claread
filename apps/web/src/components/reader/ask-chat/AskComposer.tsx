@@ -96,10 +96,10 @@ function AskComposerSurface({
       className="w-full rounded-lg border-border/50 bg-muted/30 shadow-none transition-colors focus-within:border-border/80"
     >
       {hasContextStrip ? (
-        // ASK-UX-COT-COMPOSER-R3 P1 — the context strip is a fixed,
-        // horizontally scrollable row: chips never wrap-stack and squeeze
-        // the textarea (mobile), and no second vertical scroll owner is
-        // created. Chips are shrink-0; overflow scrolls sideways.
+        // Context strip is a fixed, horizontally scrollable row: chips never
+        // wrap-stack and squeeze the textarea (mobile), and no second
+        // vertical scroll owner is created. Chips are shrink-0; overflow
+        // scrolls sideways.
         <PromptInputHeader
           className="w-full flex-nowrap items-center gap-1.5 overflow-x-auto border-b border-border/40 px-3 py-2 [scrollbar-width:thin]"
           data-ask-context-strip="true"

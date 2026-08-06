@@ -2,8 +2,8 @@
  * Ask message state: SSE event coalescing into UI message patches, plus
  * cold-history normalization and assistant block projection (pure).
  *
- * Moved verbatim from AiWorkspacePanel.tsx (ARCH-OPT-C3). The panel keeps
- * page-level orchestration; this file owns the turn-message state machine.
+ * The panel keeps page-level orchestration; this module owns the
+ * turn-message state machine.
  */
 import {
   aggregateArticleEvidenceOutcome,
@@ -1059,9 +1059,3 @@ export function buildAssistantBlocks(message: ReaderAskUiMessageDto): AskPanelBl
   void message;
   return [{ kind: "answer" }];
 }
-
-
-
-
-
-

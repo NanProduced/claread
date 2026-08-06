@@ -121,10 +121,6 @@ import {
   normalizeReaderAskMessages,
   type AskPanelConversationItem,
 } from "./ask/message-state";
-
-// Re-export pure helpers so existing unit tests keep a stable import path
-// while the implementation lives in the Ask message-state module.
-export { createSseMessageHandler, normalizeReaderAskMessages };
 import { consumeReaderAskSse } from "./ask/sse";
 import { TurnLifecycleMetrics } from "./ask/turn-lifecycle";
 import {
@@ -392,7 +388,7 @@ function AttachmentChips({
 }
 
 /**
- * ASK-UX-COT-COMPOSER-R3 P1 — permanent current-article composer chip.
+ * Permanent current-article composer chip.
  * Renders the page-authoritative record title (snapshot.record.title via
  * the `recordTitle` prop — never the thread title) as a non-removable
  * document chip, first in the strip. It visualizes the implicit "current
@@ -422,10 +418,10 @@ function CurrentArticleChip({ title }: { title: string }) {
 }
 
 /**
- * ASK-UX-COT-COMPOSER-R3 P1 — composer chip for an auto/manual selection
- * slot. Quote icon + truncated source text; each chip is independently
- * removable via the slot callback. Selection identity (dedupe/promote)
- * is owned by the surface via the anchor fingerprint — never the label.
+ * Composer chip for an auto/manual selection slot. Quote icon + truncated
+ * source text; each chip is independently removable via the slot callback.
+ * Selection identity (dedupe/promote) is owned by the surface via the
+ * anchor fingerprint — never the label.
  */
 function SelectionContextChip({
   attachment,
@@ -1082,9 +1078,9 @@ export interface AiWorkspacePanelProps {
   recordId: string;
   recordTitle?: string | null;
   /**
-   * ARCH-OPT-C3 — Ask composer send-context seam. The host (plate) owns the
-   * Ask module's composer context (attachment draft, R3 selection slots,
-   * quick-action queue, send merge); the panel only renders and consumes it.
+   * Ask composer send-context seam. The host (plate) owns the composer
+   * context (attachment draft, selection slots, quick-action queue, send
+   * merge); the panel only renders and consumes it.
    */
   composer: AskComposerContext;
   onToggle: () => void;
@@ -1307,9 +1303,9 @@ export function AiWorkspacePanel({
     (attachment) => !(attachment.kind === "record_ref" && attachment.metadata.recordId === recordId),
   );
 
-  // ASK-UX-COT-COMPOSER-R3 P1 — page-authoritative article title for the
-  // permanent composer chip (snapshot.record.title via the recordTitle
-  // prop; pageIdentity as a defensive fallback). Never the thread title.
+  // Page-authoritative article title for the permanent composer chip
+  // (snapshot.record.title via the recordTitle prop; pageIdentity as a
+  // defensive fallback). Never the thread title.
   const currentArticleChipTitle =
     recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
 
@@ -1701,10 +1697,10 @@ export function AiWorkspacePanel({
     }
 
     const attachmentMode = options?.attachmentMode ?? "merge_current";
-    // ASK-UX-COT-COMPOSER-R3 P1 — the composer context module owns the
-    // selection slots; ordinary sends merge them into the request context
-    // (draft selections survive the message). `exact` replays a previously
-    // persisted/pending turn verbatim, without current draft slots.
+    // The composer context module owns the selection slots; ordinary sends
+    // merge them into the request context (draft selections survive the
+    // message). `exact` replays a previously persisted/pending turn
+    // verbatim, without current draft slots.
     const baseAttachments = options?.attachments ?? attachments;
     const usedAttachments =
       attachmentMode === "merge_current"
@@ -2870,9 +2866,9 @@ export function AiWorkspacePanel({
         placeholder={COMPOSER_PLACEHOLDER}
         contextStrip={
           <>
-            {/* ASK-UX-COT-COMPOSER-R3 P1 — the permanent current-article
-                chip is implicit context and non-removable, followed by the
-                auto/manual selections and explicit attachments. */}
+            {/* Permanent current-article chip is implicit context and
+                non-removable, followed by auto/manual selections and
+                explicit attachments. */}
             <CurrentArticleChip title={currentArticleChipTitle} />
             {autoSelectionAttachment ? (
               <SelectionContextChip

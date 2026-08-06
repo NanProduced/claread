@@ -60,10 +60,10 @@ export interface ReaderToolbarActionState {
 export interface ReaderToolbarActions {
   onAsk: () => void;
   /**
-   * ASK-UX-COT-COMPOSER-R3 P1 — pin the current selection into the Ask
-   * composer's manual selection slots (auto→manual promotion or append,
-   * anchor-fingerprint dedupe, max 3). Hosts that do not implement the
-   * selection-slot model fall back to {@link onAsk}.
+   * Pin the current selection into the Ask composer's manual selection
+   * slots (auto→manual promotion or append, anchor-fingerprint dedupe,
+   * max 3). Hosts that do not implement the selection-slot model fall
+   * back to {@link onAsk}.
    */
   onPinSelectionToAsk?: () => void;
   /**

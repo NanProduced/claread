@@ -15,12 +15,14 @@ import { consumeReaderAskSse } from "./ask/sse";
 import { makeLogicalTerminalResult } from "./ask/turn-lifecycle";
 import {
   AiWorkspacePanel,
-  createSseMessageHandler,
   formatSourceNavigationFeedback,
-  normalizeReaderAskMessages,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
 import type { AskComposerContext } from "./ask/composer-context";
+import {
+  createSseMessageHandler,
+  normalizeReaderAskMessages,
+} from "./ask/message-state";
 import { mergeAttachments } from "@/lib/reader-ask/send-request";
 
 const completedPayload = {

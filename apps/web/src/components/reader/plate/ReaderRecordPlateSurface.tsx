@@ -3928,18 +3928,6 @@ export function ReaderRecordPlateSurface({
       setCapacityDowngradeDismissed(false);
     }
   }, [hasSidecarCapacity]);
-  // ARCH-OPT-C3 — Ask composer send-context lives in useAskComposerContext.
-  // Declared here so open/identity are available; selectionCandidate is
-  // bound after currentAskSelectionAttachment is computed (hooks may not
-  // move, so the candidate is mirrored via a one-line effect).
-  const askComposerIdentityKey = `${snapshot.record_id}:${snapshot.base.base_id}:${snapshot.record.generation}`;
-  const [askSelectionCandidate, setAskSelectionCandidate] =
-    useState<ReaderAskAttachment | null>(null);
-  const askComposer = useAskComposerContext({
-    open: askOpen,
-    identityKey: askComposerIdentityKey,
-    selectionCandidate: askSelectionCandidate,
-  });
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -4679,10 +4667,14 @@ export function ReaderRecordPlateSurface({
     return null;
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
-  // Mirror plate-adapted selection into the Ask composer context.
-  useEffect(() => {
-    setAskSelectionCandidate(currentAskSelectionAttachment);
-  }, [currentAskSelectionAttachment]);
+  // Ask composer send-context: plate adapts the live selection, then the
+  // composer module owns slots / draft / quick-action / send merge.
+  const askComposerIdentityKey = `${snapshot.record_id}:${snapshot.base.base_id}:${snapshot.record.generation}`;
+  const askComposer = useAskComposerContext({
+    open: askOpen,
+    identityKey: askComposerIdentityKey,
+    selectionCandidate: currentAskSelectionAttachment,
+  });
 
   const openDictionaryRail = useCallback(() => {
     releaseSidebarForReadingTool();
@@ -4816,8 +4808,8 @@ export function ReaderRecordPlateSurface({
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   /**
-   * ASK-UX-COT-COMPOSER-R3 P1 — "加入 Ask Claread": pin via the Ask
-   * composer context (slot policy lives there), then open the panel.
+   * "加入 Ask Claread": pin via the Ask composer context (slot policy
+   * lives there), then open the panel.
    */
   const handlePinSelectionToAsk = useCallback(() => {
     askComposer.pinSelection();
