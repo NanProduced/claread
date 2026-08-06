@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/primitives/tooltip";
+import { SettingsDialogProvider } from "@/components/settings/SettingsDialogProvider";
 import { AppShell } from ".";
 
 const navigationMock = vi.hoisted(() => ({
@@ -58,11 +59,13 @@ afterEach(() => {
 describe("AppShell", () => {
   it("uses a Notion-style closed/overlay/locked sidebar contract on reader pages", () => {
     const { container } = render(
-      <TooltipProvider>
-        <AppShell>
-          <main>Reader surface</main>
-        </AppShell>
-      </TooltipProvider>,
+      <SettingsDialogProvider>
+        <TooltipProvider>
+          <AppShell>
+            <main>Reader surface</main>
+          </AppShell>
+        </TooltipProvider>
+      </SettingsDialogProvider>,
     );
 
     const shell = container.querySelector<HTMLElement>('[data-app-shell="true"]');
@@ -98,7 +101,9 @@ describe("AppShell", () => {
     expect(screen.getByText("阅读资产")).not.toBeNull();
     expect(screen.getAllByText("全部阅读记录")).toHaveLength(2);
     expect(screen.getAllByText("生词本")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "打开用户菜单" })).not.toBeNull();
+    expect(
+      document.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]'),
+    ).not.toBeNull();
     expect(screen.getByText("Free")).not.toBeNull();
     expect(screen.queryByText("阅读工作区")).toBeNull();
 
@@ -139,11 +144,13 @@ describe("AppShell", () => {
     navigationMock.pathname = "/app/library";
 
     const { container } = render(
-      <TooltipProvider>
-        <AppShell>
-          <main>Library</main>
-        </AppShell>
-      </TooltipProvider>,
+      <SettingsDialogProvider>
+        <TooltipProvider>
+          <AppShell>
+            <main>Library</main>
+          </AppShell>
+        </TooltipProvider>
+      </SettingsDialogProvider>,
     );
 
     const shell = container.querySelector<HTMLElement>('[data-app-shell="true"]');
@@ -164,6 +171,8 @@ describe("AppShell", () => {
     expect(shell?.dataset.appSidebarState).toBe("overlay");
     expect(sidebar?.dataset.appSidebarState).toBe("overlay");
 
-    expect(screen.getByRole("button", { name: "打开用户菜单" })).not.toBeNull();
+    expect(
+      document.querySelector<HTMLElement>('[data-desktop-user-menu-trigger="true"]'),
+    ).not.toBeNull();
   });
 });
