@@ -234,7 +234,7 @@ export function createSseMessageHandler(
   onMessageIdAssigned: ((assignedId: string) => void) | undefined,
   onError: (message: string) => void,
   onAgenticActivity?: (event: AgenticActivityEvent) => void,
-  // ASK-UX-MOBILE-R3 — canonical terminal-notice callback. Fired after a
+  // Canonical terminal-notice callback. Fired after a
   // trusted identity check passes (see applyAgenticTerminal). The panel uses
   // projectTurnTerminalNotice to build the AskSystemNotice from these fields
   // — it must NOT hand-craft a notice from the formatted message string.
@@ -246,7 +246,7 @@ export function createSseMessageHandler(
     finalStatus: string | null;
     terminalReason: string | null;
   }) => void,
-  // ASK-UX-MOBILE-R3 — canonical optional-tool warning callback. Fired
+  // Canonical optional-tool warning callback. Fired
   // from applyAgenticCompleted only when the final public activity fold is
   // degraded or failed. The panel uses projectOptionalToolWarning to build
   // a dismissible turn-scoped warning notice bound to the canonical
@@ -271,7 +271,7 @@ export function createSseMessageHandler(
     threadId: string;
     turnRunId: string;
   } | null = null;
-  // R3 P1b: identity of the active run, captured when agentic.run_started
+  // identity of the active run, captured when agentic.run_started
   // is accepted. Every v2 event that can mutate the turn must match this
   // identity. Provider reasoning events are intentionally not part of the
   // public v2 contract and are ignored at this boundary.
@@ -280,7 +280,7 @@ export function createSseMessageHandler(
     threadId: string;
     turnRunId: string;
   } | null = null;
-  // R4-2: generation_id tracking for message.preview_reset /
+  // generation_id tracking for message.preview_reset /
   // message.delta attribution. ``null`` means no preview_reset has been
   // accepted yet — the first generation (generation_id=0) is implicitly
   // active. After a trusted preview_reset, only deltas whose
@@ -354,7 +354,7 @@ export function createSseMessageHandler(
           status: "completed",
           // Agentic wire field is answer_text; map into the UI content slot only.
           content_md: payload.answer_text,
-          // ASK-TURN-LIFECYCLE R2 — atomically drop the provisional preview
+          // Atomically drop the provisional preview
           // when the canonical answer arrives. The provisional slot must
           // never survive a committed terminal.
           provisional_content_md: null,
@@ -408,7 +408,7 @@ export function createSseMessageHandler(
     if (agenticTerminalHandled) {
       return;
     }
-    // ASK-UX-MOBILE-R3 — foreign / stale terminal guard. If a trusted
+    // Foreign / stale terminal guard. If a trusted
     // run_started was accepted, the terminal must match its identity
     // exactly (message_id / thread_id / turn_run_id). A foreign or stale
     // terminal is dropped silently: no notice, no UI change, no composer
@@ -433,7 +433,7 @@ export function createSseMessageHandler(
       type: "terminal",
       finalStatus: payload.final_status,
     });
-    // ASK-UX-MOBILE-R3 — fire the canonical terminal-notice callback with
+    // Fire the canonical terminal-notice callback with
     // the typed fields. The panel uses projectTurnTerminalNotice to build
     // the AskSystemNotice. We no longer route the formatted string through
     // onError (which the panel would hand-craft into a notice). onError is
@@ -465,10 +465,10 @@ export function createSseMessageHandler(
           id: payload.message_id || message.id,
           thread_id: payload.thread_id || message.thread_id,
           status: nextStatus,
-          // R4-A6-T3: keep the typed terminal status so the interrupted
+          // Keep the typed terminal status so the interrupted
           // bubble can refine its copy (context_stale / cancelled / …).
           final_status: payload.final_status,
-          // ASK-TURN-LIFECYCLE R2 — non-ok terminals must NEVER preserve
+          // Non-ok terminals must NEVER preserve
           // the provisional preview as canonical. Drop the provisional
           // slot and keep `content_md` exactly as it was before this
           // turn started (empty for a fresh turn, or the previous
@@ -578,7 +578,7 @@ export function createSseMessageHandler(
           currentMessageId = event.data.message_id;
           onMessageIdAssigned?.(event.data.message_id);
         }
-        // R3 P1b: capture the active run identity for subsequent public
+        // Capture the active run identity for subsequent public
         // activity and answer lifecycle events.
         activeRunIdentity = {
           messageId: event.data.message_id,
@@ -704,7 +704,7 @@ export function createSseMessageHandler(
     }
 
     if (event.event === "message.preview_reset") {
-      // R4-2: canonical preview-reset wire. The server emits this at a
+      // Canonical message.preview_reset wire. The server emits this at a
       // tool-result / ModelRetry boundary BEFORE the new generation
       // streams its first delta. The client MUST clear
       // provisional_content_md (the in-progress preview) but MUST NOT
@@ -765,7 +765,7 @@ export function createSseMessageHandler(
           message.id === currentMessageId
             ? {
                 ...message,
-                // R4-2: clear the provisional preview only. Canonical
+                // Clear the provisional preview only. Canonical
                 // content_md is never touched by a reset — it is
                 // replaced atomically by message.completed.
                 provisional_content_md: "",
@@ -797,7 +797,7 @@ export function createSseMessageHandler(
         // insufficient when the message/thread/run identity is foreign.
         return;
       }
-      // R4-2: attribute the delta to the active generation. After a
+      // Attribute the message.delta to the active generation. After a
       // trusted preview_reset, only deltas whose generation_id matches
       // activeGenerationId are applied — stale-generation deltas (from
       // an older generation whose preview was just cleared) are
@@ -828,7 +828,7 @@ export function createSseMessageHandler(
           onAgenticActivity?.({ type: "answer_started", generationId });
         }
       }
-      // ASK-TURN-LIFECYCLE R2 — deltas accumulate into the provisional
+      // message.delta accumulates into the provisional
       // preview slot only. `content_md` is reserved for the canonical
       // answer that arrives atomically via `message.completed`. This
       // guarantees that an output-validator failure / cancel / abort
@@ -911,7 +911,7 @@ export function createSseMessageHandler(
                 status: "failed",
                 compacting: false,
                 replan_status: "idle",
-                // ASK-TURN-LIFECYCLE R2 — drop provisional preview on
+                // Drop provisional preview on
                 // stream error; never preserve half answers.
                 provisional_content_md: null,
               }
@@ -1037,10 +1037,10 @@ function normalizeReaderAskMessages(
       supplement_candidates: [],
       persisted_supplements: [],
       follow_up_suggestions: [],
-      // ASK-TURN-LIFECYCLE R2 — cold history never carries a provisional
+      // Cold history never carries a provisional
       // preview. Only the canonical `content_md` is persisted server-side.
       provisional_content_md: null,
-      // ASK-COT — cold v2 turns render the canonical answer only; the typed
+      // Cold v2 turns render the canonical answer only; the typed
       // process steps are session-memory only and never persist across reload.
       agentic_process_snapshot: null,
       context_compaction: null,

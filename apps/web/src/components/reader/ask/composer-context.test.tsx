@@ -195,6 +195,10 @@ describe("useAskComposerContext", () => {
   });
 
   it("identity replacement clears auto/manual selection and fingerprints but keeps attachments and pending quick action", () => {
+    // Host is responsible for identity-fencing selectionCandidate before it
+    // reaches this hook. When identityKey changes, the hook clears auto/manual
+    // slots + fingerprints only; explicit attachments and pending quick action
+    // keep their existing semantics.
     const candidate = selection({ id: "a" });
     const note = noteAttachment();
     const pending: ReaderAskQuickActionRequest = {
@@ -224,8 +228,8 @@ describe("useAskComposerContext", () => {
     expect(result.current.attachments).toEqual([note]);
     expect(result.current.pendingQuickActionRequest).toEqual(pending);
 
-    // Drop the live candidate so identity clear is observable without the
-    // auto-ingest effect immediately re-filling the auto slot.
+    // Host-fenced null candidate (stale draft rejected) so identity clear is
+    // observable without the auto-ingest effect immediately re-filling.
     rerender({
       open: true,
       identityKey: "record-1:base-1:2",
@@ -244,7 +248,7 @@ describe("useAskComposerContext", () => {
     expect(result.current.attachments).toEqual([note]);
     expect(result.current.pendingQuickActionRequest).toEqual(pending);
 
-    // After identity change, the same fingerprint is free to re-ingest.
+    // After identity change, a host-fenced matching candidate re-ingests.
     rerender({
       open: true,
       identityKey: "record-1:base-1:3",
