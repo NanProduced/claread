@@ -414,7 +414,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -483,7 +483,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -551,7 +551,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
     }
 
     selectTextInElement(vocabMark, 0, "Institutional".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -571,7 +571,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -624,7 +624,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
     }
 
     selectTextInElement(vocabMarkBefore, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -641,7 +641,7 @@ describe("ReaderRecordPlateSurface — grammar semantic insert", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -755,7 +755,7 @@ describe("ReaderRecordPlateSurface — Quick Peek re-anchor fail-safe", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -800,7 +800,7 @@ describe("ReaderRecordPlateSurface — Quick Peek re-anchor fail-safe", () => {
     expect(vocabMarkBefore).not.toBeNull();
 
     selectTextInElement(vocabMarkBefore!, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -883,7 +883,7 @@ describe("ReaderRecordPlateSurface — Quick Peek re-anchor fail-safe", () => {
     expect(vocabMarkBefore).not.toBeNull();
 
     selectTextInElement(vocabMarkBefore!, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -897,7 +897,7 @@ describe("ReaderRecordPlateSurface — Quick Peek re-anchor fail-safe", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1008,7 +1008,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={firstNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1019,7 +1019,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={secondNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1076,7 +1076,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1133,7 +1133,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1223,7 +1223,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1284,7 +1284,7 @@ describe("ReaderRecordPlateSurface — Quick Peek async race guard", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={firstNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1363,7 +1363,7 @@ describe("ReaderRecordPlateSurface — Quick Peek contract coverage closeout", (
       rerender(
         <ReaderRecordPlateSurface
           snapshot={firstNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1375,7 +1375,7 @@ describe("ReaderRecordPlateSurface — Quick Peek contract coverage closeout", (
       rerender(
         <ReaderRecordPlateSurface
           snapshot={baseChangeNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1438,7 +1438,7 @@ describe("ReaderRecordPlateSurface — Quick Peek contract coverage closeout", (
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1510,7 +1510,7 @@ describe("ReaderRecordPlateSurface — Quick Peek contract coverage closeout", (
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1635,7 +1635,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1688,7 +1688,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1801,7 +1801,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1870,7 +1870,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -1953,7 +1953,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={firstNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={onReloadContextConsumed}
         />,
       );
@@ -1970,7 +1970,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={secondNext}
-          pendingReloadContext={makeReloadContext([event2])}
+          pendingReloadContext={makeReloadContext([event2], "layer_published")}
           onReloadContextConsumed={onReloadContextConsumed}
         />,
       );
@@ -2049,7 +2049,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={baseSwitchedSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -2126,7 +2126,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={firstNext}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });
@@ -2144,7 +2144,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={secondNext}
-          pendingReloadContext={makeReloadContext([event2])}
+          pendingReloadContext={makeReloadContext([event2], "layer_published")}
         />,
       );
     });
@@ -2214,7 +2214,7 @@ describe("ReaderRecordPlateSurface — selective forget & scroll-anchor", () => 
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
         />,
       );
     });

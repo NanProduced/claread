@@ -210,7 +210,7 @@ export function makeUnit({
   };
 }
 
-export function makeProgress(): ReaderEnhancementProgressDto {
+function makeProgress(): ReaderEnhancementProgressDto {
   return {
     overall_status: "readable_enhancing",
     layers: [
@@ -463,7 +463,7 @@ export function makeDictionaryEntryResult(query = "memory"): WebDictResult {
 
 export function makeReloadContext(
   events: ReaderEventResponseDto[],
-  reason = "layer_published",
+  reason: string,
 ): ReloadContext {
   return {
     cursor: 8,
@@ -522,7 +522,6 @@ export function selectTextInElement(element: HTMLElement, startOffset: number, e
 }
 
 export function selectionActionButton(
-  _container: HTMLElement,
   action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
 ): HTMLButtonElement | null {
   return document.querySelector<HTMLButtonElement>(
@@ -531,11 +530,10 @@ export function selectionActionButton(
 }
 
 export async function waitForSelectionAction(
-  container: HTMLElement,
   action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
 ) {
   return waitFor(() => {
-    const button = selectionActionButton(container, action);
+    const button = selectionActionButton(action);
     if (!button) {
       throw new Error(`Selection action not found: ${action}`);
     }

@@ -2717,7 +2717,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const askButton = await waitForSelectionAction(container, "ask");
+    const askButton = await waitForSelectionAction("ask");
     await openAskPanelFromToolbar(askButton);
 
     await waitFor(() => {
@@ -3491,11 +3491,10 @@ describe("ReaderRecordPlateSurface", () => {
     expect(
       actions.querySelector('[data-reader-record-action-hint]')?.textContent,
     ).toContain("已选：memory");
-    await waitForSelectionAction(container, "lookup");
+    await waitForSelectionAction("lookup");
     for (const action of ["lookup", "copy", "highlight", "note", "ask"]) {
       expect(
         selectionActionButton(
-          container,
           action as "lookup" | "copy" | "highlight" | "note" | "ask",
         )?.disabled,
       ).toBe(false);
@@ -3542,7 +3541,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const copyButton = await waitForSelectionAction(container, "copy");
+    const copyButton = await waitForSelectionAction("copy");
     await waitFor(() => {
       expect(copyButton.disabled).toBe(false);
     });
@@ -4211,14 +4210,14 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
     fireEvent.click(lookupButton);
 
     await screen.findByTestId("reader-record-plate-lookup-panel");
-    expect(selectionActionButton(container, "lookup")).toBeNull();
+    expect(selectionActionButton("lookup")).toBeNull();
     const nonFavoritesCalls = fetchMock.mock.calls.filter(
         ([url]) => !(typeof url === "string" && url.includes("/favorite")),
     );
@@ -4257,7 +4256,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
 
     const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
@@ -4304,7 +4303,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
 
     const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
@@ -4368,7 +4367,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
     const quickPeek = await screen.findByTestId("reader-record-plate-lookup-panel");
     fireEvent.click(within(quickPeek).getByLabelText("打开词典"));
@@ -4438,7 +4437,7 @@ describe("ReaderRecordPlateSurface", () => {
     const startOffset = sourceLeaf.textContent?.indexOf("shapes") ?? -1;
     expect(startOffset).toBeGreaterThanOrEqual(0);
     selectTextInElement(sourceLeaf, startOffset, startOffset + "shapes ".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     await waitFor(() => {
       expect(lookupButton.disabled).toBe(false);
     });
@@ -4446,7 +4445,7 @@ describe("ReaderRecordPlateSurface", () => {
     fireEvent.doubleClick(sourceLeaf);
 
     await screen.findByTestId("reader-record-plate-lookup-panel");
-    expect(selectionActionButton(container, "lookup")).toBeNull();
+    expect(selectionActionButton("lookup")).toBeNull();
     expect(window.getSelection()?.toString()).not.toBe("shapes ");
     const lookupCall = fetchMock.mock.calls.find(
       ([url]) => typeof url === "string" && url.includes("/api/web/dict/lookup"),
@@ -4490,7 +4489,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const highlightButton = await waitForSelectionAction("highlight");
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
     });
@@ -4694,7 +4693,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(highlight, 0, "policy".length);
-    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const highlightButton = await waitForSelectionAction("highlight");
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
     });
@@ -4780,7 +4779,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectAcrossElements(policyMark, 0, choicesLeaf, " choices".length);
-    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const highlightButton = await waitForSelectionAction("highlight");
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
     });
@@ -4820,7 +4819,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const noteButton = await waitForSelectionAction(container, "note");
+    const noteButton = await waitForSelectionAction("note");
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
     });
@@ -4885,7 +4884,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const noteButton = await waitForSelectionAction(container, "note");
+    const noteButton = await waitForSelectionAction("note");
     fireEvent.click(noteButton);
 
     const duplicateWarning = await screen.findByTestId(
@@ -4944,7 +4943,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const noteButton = await waitForSelectionAction(container, "note");
+    const noteButton = await waitForSelectionAction("note");
     fireEvent.click(noteButton);
 
     await screen.findByTestId("reader-record-note-duplicate-warning");
@@ -4973,7 +4972,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const askButton = await waitForSelectionAction(container, "ask");
+    const askButton = await waitForSelectionAction("ask");
     await openAskPanelFromToolbar(askButton);
 
     await waitFor(() => {
@@ -5106,7 +5105,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const askButton = await waitForSelectionAction(container, "ask");
+    const askButton = await waitForSelectionAction("ask");
     await submitAskPromptFromToolbar(askButton, "这句话为什么这样表达？");
 
     await waitFor(() => {
@@ -5430,7 +5429,7 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(memoryMark, 0, "memory".length);
 
-    const noteButton = await waitForSelectionAction(container, "note");
+    const noteButton = await waitForSelectionAction("note");
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
     });
@@ -5556,11 +5555,11 @@ describe("ReaderRecordPlateSurface", () => {
     });
     expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
 
-    const lookupButton = await waitForSelectionAction(container, "lookup");
-    const copyButton = await waitForSelectionAction(container, "copy");
-    const askButton = await waitForSelectionAction(container, "ask");
-    const highlightButton = await waitForSelectionAction(container, "highlight");
-    const noteButton = await waitForSelectionAction(container, "note");
+    const lookupButton = await waitForSelectionAction("lookup");
+    const copyButton = await waitForSelectionAction("copy");
+    const askButton = await waitForSelectionAction("ask");
+    const highlightButton = await waitForSelectionAction("highlight");
+    const noteButton = await waitForSelectionAction("note");
 
     expect(copyButton.disabled).toBe(false);
     expect(askButton.disabled).toBe(true);
@@ -5624,11 +5623,11 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
     expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_translation_1");
 
-    const lookupButton = await waitForSelectionAction(container, "lookup");
-    const copyButton = await waitForSelectionAction(container, "copy");
-    const askButton = await waitForSelectionAction(container, "ask");
-    const highlightButton = await waitForSelectionAction(container, "highlight");
-    const noteButton = await waitForSelectionAction(container, "note");
+    const lookupButton = await waitForSelectionAction("lookup");
+    const copyButton = await waitForSelectionAction("copy");
+    const askButton = await waitForSelectionAction("ask");
+    const highlightButton = await waitForSelectionAction("highlight");
+    const noteButton = await waitForSelectionAction("note");
 
     expect(copyButton.disabled).toBe(false);
     expect(askButton.disabled).toBe(true);
@@ -5679,7 +5678,7 @@ describe("ReaderRecordPlateSurface", () => {
     });
     expect(actions.dataset.readerRecordSelectionAnchorSegmentId).toBeUndefined();
 
-    const askButton = await waitForSelectionAction(container, "ask");
+    const askButton = await waitForSelectionAction("ask");
     expect(askButton.disabled).toBe(true);
     expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
     fireEvent.click(askButton);
@@ -5706,9 +5705,9 @@ describe("ReaderRecordPlateSurface", () => {
 
     selectTextInElement(sourceParagraph, 0, "Institutional".length);
     const actions = screen.getByTestId("reader-record-plate-selection-state");
-    const copyButton = await waitForSelectionAction(container, "copy");
-    const askButton = await waitForSelectionAction(container, "ask");
-    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const copyButton = await waitForSelectionAction("copy");
+    const askButton = await waitForSelectionAction("ask");
+    const highlightButton = await waitForSelectionAction("highlight");
     await waitFor(() => {
       expect(actions.dataset.readerRecordSelectionSurfaceKind).toBe("source");
       expect(copyButton.disabled).toBe(false);
@@ -5770,11 +5769,11 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionUnitId).toBe("unit_1");
     expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_grammar_1");
 
-    const askButton = await waitForSelectionAction(container, "ask");
-    const lookupButton = await waitForSelectionAction(container, "lookup");
-    const copyButton = await waitForSelectionAction(container, "copy");
-    const highlightButton = await waitForSelectionAction(container, "highlight");
-    const noteButton = await waitForSelectionAction(container, "note");
+    const askButton = await waitForSelectionAction("ask");
+    const lookupButton = await waitForSelectionAction("lookup");
+    const copyButton = await waitForSelectionAction("copy");
+    const highlightButton = await waitForSelectionAction("highlight");
+    const noteButton = await waitForSelectionAction("note");
     expect(copyButton.disabled).toBe(false);
     expect(askButton.disabled).toBe(true);
     expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
@@ -5834,8 +5833,8 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionLayerId).toBe("layer_sentence_analysis_1");
     expect(actions.dataset.readerRecordSelectionAnalysisId).toBe("analysis_1");
 
-    const askButton = await waitForSelectionAction(container, "ask");
-    const copyButton = await waitForSelectionAction(container, "copy");
+    const askButton = await waitForSelectionAction("ask");
+    const copyButton = await waitForSelectionAction("copy");
     expect(copyButton.disabled).toBe(false);
     expect(askButton.disabled).toBe(true);
     expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
@@ -5885,8 +5884,8 @@ describe("ReaderRecordPlateSurface", () => {
     expect(actions.dataset.readerRecordSelectionSupported).toBe("true");
     expect(actions.dataset.readerRecordSelectionBlockId).toBe("sentence_analysis:analysis_1");
 
-    const askButton = await waitForSelectionAction(container, "ask");
-    const copyButton = await waitForSelectionAction(container, "copy");
+    const askButton = await waitForSelectionAction("ask");
+    const copyButton = await waitForSelectionAction("copy");
     expect(copyButton.disabled).toBe(false);
     expect(askButton.disabled).toBe(true);
     expect(askButton.dataset.readerRecordDisabledReason).toBe("当前仅支持原文 Ask");
@@ -6183,7 +6182,7 @@ describe("ReaderRecordPlateSurface", () => {
     }
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const noteButton = await waitForSelectionAction(container, "note");
+    const noteButton = await waitForSelectionAction("note");
     await waitFor(() => {
       expect(noteButton.disabled).toBe(false);
     });
@@ -6365,7 +6364,7 @@ describe("ReaderRecordPlateSurface", () => {
       throw new Error("Expected policy highlight mark");
     }
     selectTextInElement(highlight, 0, "policy".length);
-    const highlightButton = await waitForSelectionAction(container, "highlight");
+    const highlightButton = await waitForSelectionAction("highlight");
     await waitFor(() => {
       expect(highlightButton.disabled).toBe(false);
     });
@@ -6879,7 +6878,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
     if (!memoryMark) throw new Error("Expected memory vocabulary mark");
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
 
     const quickPeekBefore = await screen.findByTestId(
@@ -7205,7 +7204,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
     if (!memoryMark) throw new Error("Expected memory vocabulary mark");
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
 
     const quickPeekBefore = await screen.findByTestId(
@@ -7288,7 +7287,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
     if (!memoryMark) throw new Error("Expected memory vocabulary mark");
 
     selectTextInElement(memoryMark, 0, "memory".length);
-    const lookupButton = await waitForSelectionAction(container, "lookup");
+    const lookupButton = await waitForSelectionAction("lookup");
     fireEvent.click(lookupButton);
 
     const quickPeekBefore = await screen.findByTestId(
