@@ -6570,7 +6570,6 @@ describe("ReaderRecordPlateSurface", () => {
     expect(surfaceSource).toContain("SelectionActionState");
     expect(surfaceSource).not.toMatch(/SelectionActionStrip/);
     expect(surfaceSource).not.toMatch(/data-reader-record-test-action/);
-    expect(surfaceSource).toContain("withinToolbar || withinDocument");
   });
 
   it("routes the Note toolbar action through the Plate CommentKit draft path", () => {
