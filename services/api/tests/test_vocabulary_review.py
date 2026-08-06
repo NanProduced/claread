@@ -275,3 +275,58 @@ class TestVocabularyCreateInitializesReview:
         assert isinstance(payload, dict)
         assert payload["review"]["stage"] == 0
         assert payload["review"]["next_review_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Route: PATCH /vocabulary/{vocab_id} mastery_status write boundary
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateMasteryStatusBoundary:
+    """mastery_status 值域以 DB CHECK vocabulary_book_mastery_status_check 为唯一权威。
+
+    非法值必须在 FastAPI 请求边界以 422 拒绝，且不得进入更新 service。
+    """
+
+    VALID_STATUSES = ("new", "learning", "review", "mastered", "archived")
+
+    @pytest.mark.parametrize("status", VALID_STATUSES)
+    @_mock_auth()
+    @patch(
+        "app.services.user_assets.vocabulary.update_vocabulary",
+        new_callable=AsyncMock,
+    )
+    def test_accepts_every_db_check_value(self, mock_update, _mock_session, status):
+        vid = uuid4()
+        mock_update.return_value = _make_vocab_row(vid, mastery_status=status)
+
+        resp = client.patch(
+            f"/vocabulary/{vid}",
+            json={"mastery_status": status},
+            headers=AUTH_HEADERS,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["mastery_status"] == status
+        mock_update.assert_awaited_once()
+        assert mock_update.call_args.kwargs["mastery_status"] == status
+
+    @pytest.mark.parametrize(
+        "status", ["reviewing", "unknown_status", "MASTERED", ""]
+    )
+    @_mock_auth()
+    @patch(
+        "app.services.user_assets.vocabulary.update_vocabulary",
+        new_callable=AsyncMock,
+    )
+    def test_rejects_value_outside_db_check_before_service(
+        self, mock_update, _mock_session, status
+    ):
+        resp = client.patch(
+            f"/vocabulary/{uuid4()}",
+            json={"mastery_status": status},
+            headers=AUTH_HEADERS,
+        )
+
+        assert resp.status_code == 422
+        mock_update.assert_not_awaited()
