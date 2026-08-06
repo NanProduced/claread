@@ -6936,21 +6936,6 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
     };
   }
 
-  function makeReloadContextLayer(
-    events: ReaderEventResponseDto[],
-  ): ReloadContext {
-    return {
-      cursor: 8,
-      events,
-      triggerClassification: {
-        kind: "reload_snapshot",
-        reason: "layer_published",
-      },
-      acceptedSnapshotFence: { generation: 1, baseId: "base_1" },
-      reason: "layer_published",
-    };
-  }
-
   function makeLayerRevisionSnapshot(
     prev: ReaderPlateSnapshotDto,
     overrides: {
@@ -7063,7 +7048,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
         );
@@ -7102,7 +7087,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7142,7 +7127,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7218,7 +7203,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7300,7 +7285,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7347,7 +7332,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7388,7 +7373,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7445,7 +7430,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7523,7 +7508,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7570,7 +7555,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([event])}
+          pendingReloadContext={makeReloadContext([event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7623,7 +7608,7 @@ describe("ReaderRecordPlateSurface — layer_published changed-block-only", () =
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContextLayer([layerEvent, g1Event])}
+          pendingReloadContext={makeReloadContext([layerEvent, g1Event], "layer_published")}
           onReloadContextConsumed={() => {}}
         />,
       );
