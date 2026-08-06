@@ -9,11 +9,9 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  READER_PLATE_SNAPSHOT_SCHEMA_KIND,
   READER_TEXT_RANGE_HASH_ALGORITHM,
   READER_TEXT_RANGE_OFFSET_UNIT,
   type ReaderAnchorSegmentNodeDto,
-  type ReaderEnhancementProgressDto,
   type ReaderEventResponseDto,
   type ReaderGrammarNoteMarkDto,
   type ReaderPlateSnapshotDto,
@@ -21,7 +19,6 @@ import {
   type ReaderSnapshotUserAssetDto,
   type ReaderTitleGenerationStatus,
   type ReaderUnitNodeDto,
-  type ReaderVocabularyMarkDto,
 } from "@/types/api/reader-plate";
 import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import type { WebDictResult } from "@/types/api/dict";
@@ -91,9 +88,25 @@ import {
 } from "./ReaderRecordPlateSurface";
 import type { ReaderCalloutElement } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
 import { READER_CALLOUT_TYPE } from "@/lib/reader-plate/projection/reader-record-plate-to-plate-value";
-
-const SOURCE_TEXT = "Institutional memory shapes policy choices.";
-const TRANSLATION_TEXT = "制度记忆会塑造政策选择。";
+import {
+  SOURCE_TEXT,
+  TRANSLATION_TEXT,
+  firstTextNode,
+  focusNearestEditor,
+  makeAnchorSegmentNode,
+  makeDictionaryEntryResult,
+  makeGrammarMark,
+  makeNextSnapshot,
+  makeReloadContext,
+  makeSnapshot,
+  makeSplitSegmentSnapshot,
+  makeUserAsset,
+  makeUnit,
+  makeVocabularyMark,
+  selectTextInElement,
+  selectionActionButton,
+  waitForSelectionAction,
+} from "./reader-record-plate-surface-fixtures";
 
 beforeEach(() => {
   // jsdom does not implement Range.getBoundingClientRect
@@ -158,286 +171,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-
-function makeVocabularyMark(
-  overrides: Partial<ReaderVocabularyMarkDto> = {},
-): ReaderVocabularyMarkDto {
-  return {
-    mark_id: "vocab_mark_1",
-    layer_id: "layer_vocab_1",
-    item_type: "phrase_gloss",
-    anchor_segment_id: "seg_1",
-    start_offset: 14,
-    end_offset: 20,
-    selected_text: "memory",
-    segment_start_utf16: 14,
-    segment_end_utf16: 20,
-    starts_here: true,
-    ends_here: true,
-    phrase: "memory",
-    phrase_type: "fixed_collocation",
-    gloss: "记忆",
-    example: "Institutional memory shapes choices.",
-    ...overrides,
-  } as ReaderVocabularyMarkDto;
-}
-
-function makeGrammarMark(
-  overrides: Partial<ReaderGrammarNoteMarkDto> = {},
-): ReaderGrammarNoteMarkDto {
-  return {
-    mark_id: "grammar_mark_1",
-    item_id: "grammar_item_1",
-    owner: "system_ai",
-    layer_id: "layer_grammar_1",
-    item_type: "grammar_note",
-    anchor_segment_id: "seg_1",
-    start_offset: 21,
-    end_offset: 27,
-    selected_text: "shapes",
-    segment_start_utf16: 21,
-    segment_end_utf16: 27,
-    starts_here: true,
-    ends_here: true,
-    span_index: 0,
-    span_count: 1,
-    show_note_chip: true,
-    grammar_point: "predicate verb",
-    pattern: "subject + verb",
-    note: "shapes is the predicate verb.",
-    ...overrides,
-  };
-}
-
-function makeUserAsset(
-  overrides: Partial<ReaderSnapshotUserAssetDto> = {},
-): ReaderSnapshotUserAssetDto {
-  return {
-    asset_id: "asset_highlight_1",
-    asset_type: "highlight",
-    owner: "user",
-    reading_record_id: "record_1",
-    generation: 1,
-    anchor: {
-      anchor_type: "text_range",
-      base_id: "base_1",
-      unit_id: "unit_1",
-      anchor_segment_id: "seg_1",
-      sentence_id: "sent_1",
-      segment_type: "sentence",
-      offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
-      start_offset: 14,
-      end_offset: 20,
-      selected_text: "memory",
-      text_hash: computeUtf16FNV1a("memory"),
-      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-    },
-    created_at: "2026-06-24T01:00:00Z",
-    updated_at: "2026-06-24T01:00:00Z",
-    ...overrides,
-  };
-}
-
-function makeUnit({
-  vocabularyMarks = [makeVocabularyMark()],
-  grammarMarks = [makeGrammarMark()],
-  analysis = "Institutional memory is the subject.",
-  analysisChunks = [
-    { order: 1, label: "subject", text: "Institutional memory" },
-  ],
-}: {
-  vocabularyMarks?: ReaderVocabularyMarkDto[];
-  grammarMarks?: ReaderGrammarNoteMarkDto[];
-  analysis?: string;
-  analysisChunks?: Array<{ order: number; label: string; text: string }>;
-} = {}): ReaderUnitNodeDto {
-  return {
-    type: "reader_unit",
-    owner: "stable",
-    base_id: "base_1",
-    unit_id: "unit_1",
-    order_index: 1,
-    unit_type: "body",
-    boundary_quality: "normal",
-    base_start_utf16: 0,
-    base_end_utf16: SOURCE_TEXT.length,
-    text_hash: "unit_hash",
-    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-    children: [
-      {
-        type: "reader_source_block",
-        owner: "stable",
-        base_id: "base_1",
-        unit_id: "unit_1",
-        base_start_utf16: 0,
-        base_end_utf16: SOURCE_TEXT.length,
-        children: [
-          {
-            type: "reader_anchor_segment",
-            owner: "stable",
-            base_id: "base_1",
-            unit_id: "unit_1",
-            anchor_segment_id: "seg_1",
-            sentence_id: "sent_1",
-            segment_type: "sentence",
-            boundary_quality: "normal",
-            base_start_utf16: 0,
-            base_end_utf16: SOURCE_TEXT.length,
-            unit_start_utf16: 0,
-            unit_end_utf16: SOURCE_TEXT.length,
-            text_hash: "seg_hash",
-            hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-            children: [
-              {
-                text: SOURCE_TEXT,
-                owner: "stable",
-                lock_source: true,
-                source_role: "segment_text",
-                base_start_utf16: 0,
-                base_end_utf16: SOURCE_TEXT.length,
-                anchor_segment_id: "seg_1",
-                segment_start_utf16: 0,
-                segment_end_utf16: SOURCE_TEXT.length,
-                reader_vocabulary_marks: vocabularyMarks,
-                reader_grammar_note_marks: grammarMarks,
-              },
-            ],
-          },
-        ],
-      },
-      {
-        type: "reader_translation_group",
-        owner: "system_ai",
-        layer_id: "layer_translation_1",
-        layer_version: 1,
-        base_id: "base_1",
-        unit_id: "unit_1",
-        target_scope: "unit",
-        target_key: "unit_1",
-        group_id: "group_translation_1",
-        covered_anchor_segment_ids: ["seg_1"],
-        source_text_hash: "unit_hash_1",
-        children: [{ text: TRANSLATION_TEXT }],
-      },
-      {
-        type: "reader_sentence_analysis",
-        owner: "system_ai",
-        analysis_id: "analysis_1",
-        layer_id: "layer_sentence_analysis_1",
-        layer_version: 1,
-        base_id: "base_1",
-        unit_id: "unit_1",
-        target_scope: "unit",
-        target_key: "unit_1",
-        anchor_segment_id: "seg_1",
-        selected_text: SOURCE_TEXT,
-        label: "subject and predicate",
-        analysis,
-        chunks: analysisChunks,
-        children: [{ text: analysis }],
-      },
-    ],
-  };
-}
-
-function makeProgress(): ReaderEnhancementProgressDto {
-  return {
-    overall_status: "readable_enhancing",
-    layers: [
-      {
-        capability: "translation",
-        layer_type: "translation",
-        status: "succeeded",
-        layer_id: "layer_translation_1",
-        target_scope: "unit",
-        target_key: "unit_1",
-      },
-      {
-        capability: "grammar",
-        layer_type: "grammar_note",
-        status: "processing",
-        job_id: "job_grammar_1",
-        target_scope: "anchor_segment",
-        target_key: "seg_1",
-      },
-    ],
-  };
-}
-
-function makeSnapshot(
-  userAssets: ReaderSnapshotUserAssetDto[] = [],
-): ReaderPlateSnapshotDto {
-  return {
-    schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
-    snapshot_id: "snapshot_1",
-    snapshot_taken_at: "2026-06-24T00:00:00Z",
-    last_event_sequence: 8,
-    record_id: "record_1",
-    record: {
-      title: "Reader Record Plate Surface Fixture",
-      display_title_zh: null,
-      title_generation_status: "pending",
-      title_generation_error_code: null,
-      title_generation_error_message: null,
-      reading_goal: "daily_reading",
-      reading_variant: "intensive_reading",
-      created_at: "2026-06-24T00:00:00Z",
-      source_type: "plain_text",
-      source_metadata: {},
-      generation: 1,
-      product_state: "readable_enhancing",
-      readiness_state: "article_ready",
-    },
-    base: {
-      base_id: "base_1",
-      content_sha256: "a".repeat(64),
-      canonicalizer_version: "test",
-      builder_version: "test",
-      segmenter_version: "test",
-      text_length_utf16: SOURCE_TEXT.length,
-      hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-    },
-    navigation: {
-      units: [
-        {
-          unit_id: "unit_1",
-          order_index: 1,
-          unit_type: "body",
-          boundary_quality: "normal",
-          label: null,
-          base_start_utf16: 0,
-          base_end_utf16: SOURCE_TEXT.length,
-          text_hash: "unit_hash",
-          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-        },
-      ],
-    },
-    anchor_segments: [
-      {
-        anchor_segment_id: "seg_1",
-        sentence_id: "sent_1",
-        paragraph_id: "unit_1",
-        unit_id: "unit_1",
-        order_index: 1,
-        unit_order_index: 1,
-        segment_type: "sentence",
-        boundary_quality: "normal",
-        base_start_utf16: 0,
-        base_end_utf16: SOURCE_TEXT.length,
-        unit_start_utf16: 0,
-        unit_end_utf16: SOURCE_TEXT.length,
-        text_hash: "seg_hash",
-        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-      },
-    ],
-    enhancement_layers: [],
-    enhancement_progress: makeProgress(),
-    ask_supplements: [],
-    user_assets: userAssets,
-    parsed_decisions: [],
-    value: [makeUnit()],
-  };
-}
 
 function makeOverlappingMarkSnapshot(): ReaderPlateSnapshotDto {
   return {
@@ -591,127 +324,6 @@ function headerSourceTitleElement(container: HTMLElement): HTMLElement | null {
   );
 }
 
-function makeAnchorSegmentNode(
-  overrides: Partial<ReaderAnchorSegmentNodeDto> & {
-    anchor_segment_id: string;
-    sentence_id: string;
-    unit_start_utf16: number;
-    unit_end_utf16: number;
-    text: string;
-  },
-): ReaderAnchorSegmentNodeDto {
-  const {
-    text,
-    anchor_segment_id,
-    sentence_id,
-    unit_start_utf16,
-    unit_end_utf16,
-    ...rest
-  } = overrides;
-
-  return {
-    type: "reader_anchor_segment",
-    owner: "stable",
-    base_id: "base_1",
-    unit_id: "unit_1",
-    anchor_segment_id,
-    sentence_id,
-    segment_type: "sentence",
-    boundary_quality: "normal",
-    base_start_utf16: unit_start_utf16,
-    base_end_utf16: unit_end_utf16,
-    unit_start_utf16,
-    unit_end_utf16,
-    text_hash: computeUtf16FNV1a(text),
-    hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-    children: [
-      {
-        text,
-        owner: "stable",
-        lock_source: true,
-        source_role: "segment_text",
-        base_start_utf16: unit_start_utf16,
-        base_end_utf16: unit_end_utf16,
-        anchor_segment_id,
-        segment_start_utf16: 0,
-        segment_end_utf16: text.length,
-      },
-    ],
-    ...rest,
-  };
-}
-
-function makeSplitSegmentSnapshot(): ReaderPlateSnapshotDto {
-  const firstText = "Institutional memory ";
-  const secondText = "shapes policy choices.";
-  const firstSegment = makeAnchorSegmentNode({
-    anchor_segment_id: "seg_1",
-    sentence_id: "sent_1",
-    unit_start_utf16: 0,
-    unit_end_utf16: firstText.length,
-    text: firstText,
-  });
-  const secondSegment = makeAnchorSegmentNode({
-    anchor_segment_id: "seg_2",
-    sentence_id: "sent_2",
-    unit_start_utf16: firstText.length,
-    unit_end_utf16: firstText.length + secondText.length,
-    text: secondText,
-  });
-  const sourceBlock: ReaderSourceBlockNodeDto = {
-    type: "reader_source_block",
-    owner: "stable",
-    base_id: "base_1",
-    unit_id: "unit_1",
-    base_start_utf16: 0,
-    base_end_utf16: SOURCE_TEXT.length,
-    children: [firstSegment, secondSegment],
-  };
-  const unit: ReaderUnitNodeDto = {
-    ...makeUnit(),
-    children: [sourceBlock],
-  };
-
-  return {
-    ...makeSnapshot(),
-    anchor_segments: [
-      {
-        anchor_segment_id: "seg_1",
-        sentence_id: "sent_1",
-        paragraph_id: "unit_1",
-        unit_id: "unit_1",
-        order_index: 1,
-        unit_order_index: 1,
-        segment_type: "sentence",
-        boundary_quality: "normal",
-        base_start_utf16: 0,
-        base_end_utf16: firstText.length,
-        unit_start_utf16: 0,
-        unit_end_utf16: firstText.length,
-        text_hash: computeUtf16FNV1a(firstText),
-        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-      },
-      {
-        anchor_segment_id: "seg_2",
-        sentence_id: "sent_2",
-        paragraph_id: "unit_1",
-        unit_id: "unit_1",
-        order_index: 2,
-        unit_order_index: 2,
-        segment_type: "sentence",
-        boundary_quality: "normal",
-        base_start_utf16: firstText.length,
-        base_end_utf16: firstText.length + secondText.length,
-        unit_start_utf16: firstText.length,
-        unit_end_utf16: firstText.length + secondText.length,
-        text_hash: computeUtf16FNV1a(secondText),
-        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
-      },
-    ],
-    value: [unit],
-  };
-}
-
 function makeSplitSegmentTranslationSnapshot(): ReaderPlateSnapshotDto {
   const snapshot = makeSplitSegmentSnapshot();
   const unit = snapshot.value[0];
@@ -832,37 +444,6 @@ function makeGroupedSeg2PhraseGlossSnapshot(): ReaderPlateSnapshotDto {
   return snapshot;
 }
 
-function makeDictionaryEntryResult(query = "memory"): WebDictResult {
-  return {
-    kind: "entry",
-    query,
-    provider: "test",
-    cached: true,
-    entry: {
-      id: 1,
-      word: query,
-      baseWord: query,
-      phonetic: "/memory/",
-      meanings: [
-        {
-          partOfSpeech: "noun",
-          definitions: [
-            {
-              meaning: "the ability to remember information",
-              example: "Institutional memory shapes choices.",
-            },
-          ],
-        },
-      ],
-      examples: [],
-      phrases: [],
-      entryKind: "entry",
-      exchange: [],
-      tags: [],
-    },
-  };
-}
-
 function makePolicyChoicesDisambiguationResult(): WebDictResult {
   return {
     kind: "disambiguation",
@@ -903,38 +484,6 @@ function installClipboardMock() {
   return writeText;
 }
 
-function firstTextNode(element: HTMLElement): Text {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  const node = walker.nextNode();
-  if (!node) {
-    throw new Error("Expected text node");
-  }
-  return node as Text;
-}
-
-function focusNearestEditor(element: HTMLElement) {
-  const editor = element.closest<HTMLElement>(
-    '[contenteditable="true"], [data-slate-editor="true"]',
-  );
-  if (!editor) {
-    return;
-  }
-  editor.focus();
-  fireEvent.focus(editor);
-}
-
-function selectTextInElement(element: HTMLElement, startOffset: number, endOffset: number) {
-  focusNearestEditor(element);
-  const textNode = firstTextNode(element);
-  const range = document.createRange();
-  range.setStart(textNode, startOffset);
-  range.setEnd(textNode, endOffset);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-  document.dispatchEvent(new Event("selectionchange"));
-}
-
 function selectAcrossElements(
   startElement: HTMLElement,
   startOffset: number,
@@ -949,28 +498,6 @@ function selectAcrossElements(
   selection?.removeAllRanges();
   selection?.addRange(range);
   document.dispatchEvent(new Event("selectionchange"));
-}
-
-function selectionActionButton(
-  _container: HTMLElement,
-  action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
-): HTMLButtonElement | null {
-  return document.querySelector<HTMLButtonElement>(
-    `[data-reader-record-toolbar-action="${action}"]`,
-  );
-}
-
-async function waitForSelectionAction(
-  container: HTMLElement,
-  action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
-) {
-  return waitFor(() => {
-    const button = selectionActionButton(container, action);
-    if (!button) {
-      throw new Error(`Selection action not found: ${action}`);
-    }
-    return button;
-  });
 }
 
 async function openAskPanelFromToolbar(askButton: HTMLButtonElement) {
@@ -6474,7 +6001,55 @@ describe("ReaderRecordPlateSurface", () => {
     });
   });
 
-  it("keeps Quick Peek mark references live and does not resolve mark intent from DOM JSON payloads", () => {
+  it("keeps Quick Peek mark references live and does not resolve mark intent from DOM JSON payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const policyMark = makeVocabularyMark({
+      mark_id: "vocab_mark_policy",
+      start_offset: 28,
+      end_offset: 42,
+      segment_start_utf16: 28,
+      segment_end_utf16: 42,
+      selected_text: "policy choices",
+      phrase: "policy choices",
+      gloss: "政策选择",
+    });
+    const snapshot = {
+      ...makeSnapshot(),
+      value: [makeUnit({ vocabularyMarks: [makeVocabularyMark(), policyMark] })],
+    };
+    const { container } = render(<ReaderRecordPlateSurface snapshot={snapshot} />);
+
+    expect(container.querySelector("[data-reader-record-mark-payload]")).toBeNull();
+
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    const policyMarkElement = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_policy"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    expect(policyMarkElement).not.toBeNull();
+    if (!memoryMark || !policyMarkElement) {
+      throw new Error("Expected vocabulary marks");
+    }
+
+    fireEvent.click(memoryMark);
+    const peek = await screen.findByTestId("reader-record-plate-lookup-panel");
+    expect(peek.textContent).toContain("记忆");
+
+    fireEvent.click(policyMarkElement);
+    await waitFor(() => {
+      const livePeek = screen.queryByTestId("reader-record-plate-lookup-panel");
+      expect(livePeek).not.toBeNull();
+      expect(livePeek?.textContent).toContain("政策选择");
+    });
+
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
@@ -6483,14 +6058,9 @@ describe("ReaderRecordPlateSurface", () => {
       resolve(process.cwd(), "src/components/editor/plugins/reader-leaf-kit.tsx"),
       "utf8",
     );
-
-    expect(surfaceSource).toContain(
-      'quickPeekAnchorRef.current = { kind: "element", element: anchor };',
-    );
     expect(surfaceSource).not.toContain(
       'quickPeekAnchorRef.current = { kind: "range", getRect: () => rect };',
     );
-    expect(surfaceSource).toContain("handleLeafClickIntent");
     expect(surfaceSource).not.toMatch(/onClickCapture/);
     expect(surfaceSource).not.toMatch(/handleSurfaceClick/);
     expect(surfaceSource).not.toMatch(/readerRecordMarkPayload/);
@@ -6539,79 +6109,139 @@ describe("ReaderRecordPlateSurface", () => {
     }
   });
 
-  it("keeps production selection UI on the Plate FloatingToolbar path without hidden test controls", () => {
+  it("keeps production selection UI on the Plate FloatingToolbar path without hidden test controls", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    const toolbar = await waitFor(() => {
+      const toolbarElement = document.querySelector<HTMLElement>(
+        '[data-reader-record-floating-toolbar="selection-actions"]',
+      );
+      if (!toolbarElement) {
+        throw new Error("Expected production selection floating toolbar");
+      }
+      return toolbarElement;
+    });
+    const buttons = Array.from(
+      toolbar.querySelectorAll<HTMLButtonElement>("[data-reader-record-toolbar-action]"),
+    );
+    expect(buttons.map((button) => button.dataset.readerRecordToolbarAction)).toEqual([
+      "ask",
+      "lookup",
+      "copy",
+      "translate",
+      "highlight",
+      "note",
+    ]);
+    for (const button of buttons) {
+      expect(button.className).toContain("rounded-[8px]");
+      expect(button.className).not.toContain("hover:bg-ink");
+      const isAsk = button.dataset.readerRecordToolbarAction === "ask";
+      expect(button.className).toContain(
+        isAsk ? "hover:bg-lens-blue-soft/50" : "hover:bg-lens-blue-soft/35",
+      );
+    }
+    expect(document.querySelector("[data-reader-record-test-action]")).toBeNull();
+
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
     );
-    const floatingToolbarKitSource = readFileSync(
-      resolve(process.cwd(), "src/components/editor/plugins/floating-toolbar-kit.tsx"),
-      "utf8",
-    );
-    const toolbarSource = readFileSync(
-      resolve(
-        process.cwd(),
-        "src/components/editor/plugins/reader-floating-toolbar-buttons.tsx",
-      ),
-      "utf8",
-    );
-
-    expect(floatingToolbarKitSource).toContain("FloatingToolbar");
-    expect(floatingToolbarKitSource).toContain(
-      'data-reader-record-floating-toolbar="plate"',
-    );
-    expect(floatingToolbarKitSource).toContain("!shadow-[0_8px_20px");
-    expect(floatingToolbarKitSource).toContain(
-      "[&_[data-slot=separator][data-orientation=vertical]]:h-6",
-    );
-    expect(toolbarSource).toContain("rounded-[8px]");
-    expect(toolbarSource).toContain("hover:bg-lens-blue-soft/35");
-    expect(toolbarSource).not.toMatch(/hover:bg-ink/);
-    expect(surfaceSource).toContain("SelectionActionState");
     expect(surfaceSource).not.toMatch(/SelectionActionStrip/);
     expect(surfaceSource).not.toMatch(/data-reader-record-test-action/);
   });
 
-  it("routes the Note toolbar action through the Plate CommentKit draft path", () => {
+  it("routes the Note toolbar action through the Plate CommentKit draft path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+    const noteButton = await waitForSelectionAction(container, "note");
+    await waitFor(() => {
+      expect(noteButton.disabled).toBe(false);
+    });
+    fireEvent.click(noteButton);
+
+    const panel = await screen.findByTestId("reader-record-inline-comment-panel");
+    expect(panel.dataset.readerRecordCommentMode).toBe("draft");
+    expect(
+      panel.querySelector('[data-reader-record-note-quote="true"]')?.textContent,
+    ).toContain("memory");
+    expect(await screen.findByTestId("reader-record-plate-note-input")).toBeTruthy();
+
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
     );
-    const inlineCommentPanelSource = readFileSync(
-      resolve(process.cwd(), "src/components/reader/plate/InlineCommentPanel.tsx"),
-      "utf8",
-    );
-    const commentNodeSource = readFileSync(
-      resolve(process.cwd(), "src/components/ui/comment-node.tsx"),
-      "utf8",
-    );
-    const toolbarSource = readFileSync(
-      resolve(
-        process.cwd(),
-        "src/components/editor/plugins/reader-floating-toolbar-buttons.tsx",
-      ),
-      "utf8",
-    );
-
-    expect(toolbarSource).toContain("export function ReaderNoteToolbarButton");
-    expect(toolbarSource).toContain("ToolbarButton");
-    expect(toolbarSource).toContain("ToolbarGroup");
-    expect(toolbarSource).toContain("AIMenu");
-    expect(surfaceSource).toContain("commentApiRef.current?.setDraft()");
-    expect(surfaceSource).toContain("commentApiRef.current?.setActiveId");
-    expect(surfaceSource).toContain("commentApiRef.current?.removeDraftMark()");
     expect(surfaceSource).not.toMatch(/ReaderRecordNoteComposer/);
-    expect(surfaceSource).toContain("READER_RECORD_DRAFT_COMMENT_SELECTOR");
-    expect(surfaceSource).toContain("boundingRectForElements(draftAnchors)");
-    expect(inlineCommentPanelSource).toContain("api.comment.nodes({ at: [], isDraft: true })");
-    expect(inlineCommentPanelSource).toContain("getCommentCount(node) > 0");
-    expect(commentNodeSource).toContain('"data-reader-record-comment-draft"');
-    expect(inlineCommentPanelSource).toMatch(
-      /if \(isDraft\) \{\s+props\.onCancelDraft\(\);\s+return;\s+\}\s+setOption\("activeId", null\);/,
-    );
   });
 
-  it("keeps new user highlight choices to yellow, mint, and rose", () => {
+  it("keeps new user highlight choices to yellow, mint, and rose", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <ReaderRecordPlateSurface snapshot={makeSnapshot([makePolicyHighlightAsset()])} />,
+    );
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+
+    fireEvent.click(highlight);
+
+    const menu = await waitFor(() => {
+      const menuElement = document.querySelector<HTMLElement>(
+        '[data-reader-record-floating-toolbar="highlight-menu"]',
+      );
+      if (!menuElement) {
+        throw new Error("Expected highlight color menu");
+      }
+      return menuElement;
+    });
+    expect(
+      Array.from(
+        menu.querySelectorAll<HTMLElement>("[data-reader-record-highlight-color]"),
+      ).map((option) => option.dataset.readerRecordHighlightColor),
+    ).toEqual(["warm_yellow", "soft_mint", "soft_rose"]);
+    expect(screen.getByLabelText("切换为黄色")).toBeTruthy();
+    expect(screen.getByLabelText("切换为绿色")).toBeTruthy();
+    expect(screen.getByLabelText("切换为粉色")).toBeTruthy();
+
     const surfaceSource = readFileSync(
       resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
       "utf8",
@@ -6623,12 +6253,6 @@ describe("ReaderRecordPlateSurface", () => {
       "src/components/reader/plate/ReaderMarkLeaf.tsx",
       "src/app/globals.css",
     ].map((filePath) => readFileSync(resolve(process.cwd(), filePath), "utf8"));
-
-    expect(
-      Array.from(
-        surfaceSource.matchAll(/value: "(warm_yellow|soft_mint|soft_rose)"/g),
-      ).map((match) => match[1]),
-    ).toEqual(["warm_yellow", "soft_mint", "soft_rose"]);
     for (const source of [surfaceSource, ...userHighlightSources]) {
       expect(source).not.toMatch(/soft_blue/);
       expect(source).not.toMatch(/soft_green/);
@@ -6699,16 +6323,91 @@ describe("ReaderRecordPlateSurface", () => {
     expect(analysisBlock?.className).toContain("reader-record-plate-sentence-analysis");
   });
 
-  it("surface source code includes auto-dismiss timer for UI polish", () => {
-    // Normalize CRLF → LF so this source-text assertion is host-EOL independent
-    // (Windows checkouts often keep ReaderRecordPlateSurface.tsx as CRLF).
-    const source = readFileSync(
-      resolve(process.cwd(), "src/components/reader/plate/ReaderRecordPlateSurface.tsx"),
-      "utf-8",
-    ).replace(/\r\n/g, "\n");
-    expect(source).toContain(
-      'window.setTimeout(() => {\n      setWriteState({ kind: "idle" });\n    }, 4000)',
+  it("auto-dismisses the saved write state back to idle after four seconds", async () => {
+    let resolveHighlightWrite!: (response: Response) => void;
+    const highlightWriteGate = new Promise<Response>((resolve) => {
+      resolveHighlightWrite = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/favorite")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, favorited: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      if (url.startsWith("/api/web/reader/records/record_1/highlights")) {
+        return highlightWriteGate;
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onRequestSnapshotReload = vi.fn().mockResolvedValue(undefined);
+
+    const { container } = render(
+      <ReaderRecordPlateSurface
+        snapshot={makeSnapshot([makePolicyHighlightAsset()])}
+        onRequestSnapshotReload={onRequestSnapshotReload}
+      />,
     );
+    const writeState = container.querySelector<HTMLElement>(
+      '[data-reader-record-actions="selection-state"]',
+    );
+    expect(writeState?.dataset.readerRecordWriteState).toBe("idle");
+
+    const highlight = container.querySelector<HTMLElement>(
+      '[data-reader-record-user-highlight-asset-id="asset_highlight_policy"]',
+    );
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error("Expected policy highlight mark");
+    }
+    selectTextInElement(highlight, 0, "policy".length);
+    const highlightButton = await waitForSelectionAction(container, "highlight");
+    await waitFor(() => {
+      expect(highlightButton.disabled).toBe(false);
+    });
+    fireEvent.click(highlightButton);
+
+    await waitFor(() => {
+      expect(writeState?.dataset.readerRecordWriteState).toBe("saving");
+    });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        resolveHighlightWrite(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              status: "updated",
+              item: makeHighlightWriteItem({ color: "warm_yellow" }),
+              session: { state: "signed_in" },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        );
+      });
+      await act(async () => {});
+      expect(writeState?.dataset.readerRecordWriteState).toBe("saved");
+
+      act(() => {
+        vi.advanceTimersByTime(3999);
+      });
+      expect(writeState?.dataset.readerRecordWriteState).toBe("saved");
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(writeState?.dataset.readerRecordWriteState).toBe("idle");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("paragraph block carries anchor segment metadata as data attributes", () => {
@@ -6823,34 +6522,6 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
     };
   }
 
-  function makeReloadContext(
-    events: ReaderEventResponseDto[],
-    reason = "user_asset_written",
-  ): ReloadContext {
-    return {
-      cursor: 8,
-      events,
-      triggerClassification: {
-        kind: "reload_snapshot",
-        reason,
-      },
-      acceptedSnapshotFence: { generation: 1, baseId: "base_1" },
-      reason,
-    };
-  }
-
-  function makeNextSnapshot(
-    prev: ReaderPlateSnapshotDto,
-    overrides: { userAssets?: ReaderSnapshotUserAssetDto[] } = {},
-  ): ReaderPlateSnapshotDto {
-    return {
-      ...prev,
-      snapshot_id: "snapshot_2",
-      last_event_sequence: 9,
-      user_assets: overrides.userAssets ?? prev.user_assets,
-    };
-  }
-
   it("G1 user_assets upsert: targeted_apply preserves non-target DOM identity", async () => {
     const prevSnapshot = makeSnapshot([makeUserAsset({ note_text: "old note" })]);
     const nextSnapshot = makeNextSnapshot(prevSnapshot, {
@@ -6882,7 +6553,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "user_asset_written")}
           onReloadContextConsumed={() => {
             reloadContextConsumed = true;
           }}
@@ -7056,7 +6727,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "user_asset_written")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7107,7 +6778,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "user_asset_written")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7154,7 +6825,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "user_asset_written")}
           onReloadContextConsumed={() => {}}
         />,
       );
@@ -7220,7 +6891,7 @@ describe("ReaderRecordPlateSurface — incremental projection", () => {
       rerender(
         <ReaderRecordPlateSurface
           snapshot={nextSnapshot}
-          pendingReloadContext={makeReloadContext([event])}
+          pendingReloadContext={makeReloadContext([event], "user_asset_written")}
           onReloadContextConsumed={() => {}}
         />,
       );
