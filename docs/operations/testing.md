@@ -117,6 +117,15 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
+Web vitest 门禁（2026-08-06 基线全绿，159 个测试文件 / 2810 passed / 0 failed；双重运行均绿）：
+
+```powershell
+cd apps/web
+pnpm exec vitest run
+```
+
+基线修复全部为测试契约同步（toolbar FloatingPortal 落 body、MessageChannel 延迟 commit 需 `await act`、Ask 侧栏容量在 jsdom 为 false 时隐藏入口、混合选区关闭工具栏、`-foreground` mark 类名、AppShell 需 `SettingsDialogProvider` 等），零生产代码改动。
+
 Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
 当前仓库未提交稳定的 Reader Playwright 用例。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，需在本地浏览器做交互回归；等 committed e2e 恢复后，再把命令补回本文。
