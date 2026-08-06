@@ -770,10 +770,10 @@ function selectTextInElement(element: HTMLElement, startOffset: number, endOffse
 }
 
 function selectionActionButton(
-  container: HTMLElement,
+  _container: HTMLElement,
   action: "lookup" | "copy" | "ask" | "highlight" | "note",
 ): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(
+  return document.querySelector<HTMLButtonElement>(
     `[data-reader-record-toolbar-action="${action}"]`,
   );
 }

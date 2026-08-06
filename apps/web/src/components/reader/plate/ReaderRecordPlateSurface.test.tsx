@@ -952,10 +952,10 @@ function selectAcrossElements(
 }
 
 function selectionActionButton(
-  container: HTMLElement,
+  _container: HTMLElement,
   action: "lookup" | "copy" | "translate" | "ask" | "highlight" | "note",
 ): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(
+  return document.querySelector<HTMLButtonElement>(
     `[data-reader-record-toolbar-action="${action}"]`,
   );
 }
@@ -8258,7 +8258,7 @@ describe("ReaderRecordPlateSurface — grammar group identity", () => {
     expect(allBlockIds.length).toBe(uniqueIds.size);
   });
 
-  it("prepending item to same anchor preserves group ID", () => {
+  it("prepending item to same anchor preserves group ID", async () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const { container, rerender } = render(
       <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
@@ -8290,7 +8290,9 @@ describe("ReaderRecordPlateSurface — grammar group identity", () => {
       ],
     });
 
-    rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+    });
 
     const groupAfter = container.querySelector<HTMLElement>(
       '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
@@ -8304,7 +8306,7 @@ describe("ReaderRecordPlateSurface — grammar group identity", () => {
     expect(groupAfter?.dataset.readerRecordCalloutGroupCount).toBe("3");
   });
 
-  it("appending item to same anchor preserves group ID", () => {
+  it("appending item to same anchor preserves group ID", async () => {
     const initialSnapshot = makeMultiAnchorGrammarSnapshot();
     const { container, rerender } = render(
       <ReaderRecordPlateSurface snapshot={initialSnapshot} />,
@@ -8335,7 +8337,9 @@ describe("ReaderRecordPlateSurface — grammar group identity", () => {
       ],
     });
 
-    rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={updatedSnapshot} />);
+    });
 
     const groupAfter = container.querySelector<HTMLElement>(
       '[data-reader-record-block-id="callout-group:unit_1:seg_1"]',
