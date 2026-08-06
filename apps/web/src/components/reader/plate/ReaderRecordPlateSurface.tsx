@@ -20,6 +20,10 @@ import {
   AiWorkspacePanel,
   type AiWorkspaceSurface,
 } from "@/components/reader/AiWorkspacePanel";
+import {
+  useAskComposerContext,
+  type ReaderAskQuickActionRequest,
+} from "@/components/reader/ask/composer-context";
 import { useAppShellLayout } from "@/components/layout/app-shell";
 import { ReaderRecordNavigationRail } from "@/components/reader/plate/ReaderRecordNavigationRail";
 import {
@@ -41,7 +45,6 @@ import {
   type ReaderRecordSelectionAnchorBridgeResult,
 } from "@/lib/reader-plate/projection/reader-record-dom-selection";
 import {
-  askAttachmentKey,
   hashAnchorText,
   type ReaderAskAttachment,
   type ReaderAskPageIdentity,
@@ -115,14 +118,7 @@ import {
   ReaderFloatingToolbarButtons,
   ReaderToolbarActionsProvider,
   type ReaderToolbarActions,
-  type ReaderToolbarActionState,
 } from "@/components/editor/plugins/reader-floating-toolbar-buttons";
-import {
-  askSelectionAnchorFingerprint,
-  decideAutoSelectionIngest,
-  decidePinSelection,
-  MAX_MANUAL_ASK_SELECTIONS,
-} from "@/lib/reader-ask/selection-slots";
 import {
   ReaderFloatingSurface,
   useReaderFloatingLayer,
@@ -1572,12 +1568,7 @@ function askAttachmentFromVocabularyInspect(
   };
 }
 
-type PendingReaderRecordAskRequest = {
-  content: string;
-  entryAction: ReaderAskEntryActionDto;
-  attachments: ReaderAskAttachment[];
-  submissionMode?: "chat" | "quick_action";
-};
+type PendingReaderRecordAskRequest = ReaderAskQuickActionRequest;
 
 type ReaderLeafClickResolver = (
   leaf: PlateTextNode,
@@ -3937,43 +3928,18 @@ export function ReaderRecordPlateSurface({
       setCapacityDowngradeDismissed(false);
     }
   }, [hasSidecarCapacity]);
-  const [askAttachments, setAskAttachments] = useState<ReaderAskAttachment[]>([]);
-  // ASK-UX-COT-COMPOSER-R3 P1 — composer selection slots. auto: the latest
-  // legitimate stable single-range source selection (0/1), replaced by the
-  // next new selection and immune to highlight dismissal / Esc / blank
-  // clicks. manual: up to 3 pinned selections (toolbar "加入 Ask Claread"),
-  // anchor-fingerprint deduped, surviving panel toggles, highlight
-  // dismissal and message sends. Both are session-scoped drafts — page
-  // refresh starts clean (no persisted-draft pretense).
-  const [autoAskSelection, setAutoAskSelection] =
+  // ARCH-OPT-C3 — Ask composer send-context lives in useAskComposerContext.
+  // Declared here so open/identity are available; selectionCandidate is
+  // bound after currentAskSelectionAttachment is computed (hooks may not
+  // move, so the candidate is mirrored via a one-line effect).
+  const askComposerIdentityKey = `${snapshot.record_id}:${snapshot.base.base_id}:${snapshot.record.generation}`;
+  const [askSelectionCandidate, setAskSelectionCandidate] =
     useState<ReaderAskAttachment | null>(null);
-  const [manualAskSelections, setManualAskSelections] = useState<
-    ReaderAskAttachment[]
-  >([]);
-  // Fingerprint the user ×-dismissed from the auto slot: the SAME still-
-  // active native selection must not auto reappear until a genuinely new
-  // fingerprint selection happens.
-  const dismissedAutoSelectionFingerprintRef = useRef<string | null>(null);
-  // Last fingerprint written to the auto slot (avoids rewrite churn when
-  // the bridge re-emits the same selection).
-  const lastAutoSelectionFingerprintRef = useRef<string | null>(null);
-  // Selection chips are bound to one immutable record/base/generation
-  // identity.  A page/base regeneration must never leave a visually valid
-  // chip that the backend will reject as stale (or, worse, attach to the next
-  // page).  Browser highlight dismissal does not clear slots; identity
-  // replacement does.
-  useEffect(() => {
-    setAutoAskSelection(null);
-    setManualAskSelections([]);
-    dismissedAutoSelectionFingerprintRef.current = null;
-    lastAutoSelectionFingerprintRef.current = null;
-  }, [
-    snapshot.record_id,
-    snapshot.base.base_id,
-    snapshot.record.generation,
-  ]);
-  const [pendingAskRequest, setPendingAskRequest] =
-    useState<PendingReaderRecordAskRequest | null>(null);
+  const askComposer = useAskComposerContext({
+    open: askOpen,
+    identityKey: askComposerIdentityKey,
+    selectionCandidate: askSelectionCandidate,
+  });
   const [feedbackState, setFeedbackState] = useState<SaveState>({ kind: "idle" });
   const [feedbackTarget, setFeedbackTarget] = useState<{
     blockId: string;
@@ -4713,48 +4679,10 @@ export function ReaderRecordPlateSurface({
     return null;
   }, [activeSelection, askPageIdentity, snapshot.record_id]);
 
-  // ASK-UX-COT-COMPOSER-R3 P1 — auto-ingest a legitimate stable single-
-  // range source selection into the composer auto slot while Ask is open
-  // (also covers opening the panel with an active selection). Clearing
-  // the browser highlight / Esc / blank clicks merely null the bridge
-  // result — the chip is NOT cleared. A new fingerprint replaces the
-  // auto slot without touching manual selections, notes, or external
-  // attachments. A ×-dismissed fingerprint never reappears until a
-  // genuinely new fingerprint selection happens.
+  // Mirror plate-adapted selection into the Ask composer context.
   useEffect(() => {
-    if (!askOpen) {
-      return;
-    }
-    const decision = decideAutoSelectionIngest({
-      candidate: currentAskSelectionAttachment,
-      currentFingerprint: lastAutoSelectionFingerprintRef.current,
-      dismissedFingerprint: dismissedAutoSelectionFingerprintRef.current,
-    });
-    if (decision.kind !== "ingest") {
-      return;
-    }
-    // A new valid selection clears the dismissal — returning to the old
-    // range afterwards counts as a fresh selection again.
-    dismissedAutoSelectionFingerprintRef.current = null;
-    lastAutoSelectionFingerprintRef.current = decision.fingerprint;
-    setAutoAskSelection(decision.attachment);
-  }, [askOpen, currentAskSelectionAttachment]);
-
-  const handleRemoveAutoAskSelection = useCallback(() => {
-    setAutoAskSelection((current) => {
-      if (current) {
-        dismissedAutoSelectionFingerprintRef.current =
-          askSelectionAnchorFingerprint(current);
-      }
-      return null;
-    });
-  }, []);
-
-  const handleRemoveManualAskSelection = useCallback((attachmentKey: string) => {
-    setManualAskSelections((current) =>
-      current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey),
-    );
-  }, []);
+    setAskSelectionCandidate(currentAskSelectionAttachment);
+  }, [currentAskSelectionAttachment]);
 
   const openDictionaryRail = useCallback(() => {
     releaseSidebarForReadingTool();
@@ -4797,22 +4725,11 @@ export function ReaderRecordPlateSurface({
     setDictionaryOpen(false);
   }, []);
 
-  const handleRemoveAskAttachment = useCallback((attachmentKey: string) => {
-    setAskAttachments((current) =>
-      current.filter((attachment) => askAttachmentKey(attachment) !== attachmentKey),
-    );
-  }, []);
-
   const openAskPanel = useCallback((
     attachment?: ReaderAskAttachment | null,
     pendingRequest?: PendingReaderRecordAskRequest | null,
   ) => {
-    if (attachment === null) {
-      setAskAttachments([]);
-    } else if (attachment) {
-      setAskAttachments([attachment]);
-    }
-    setPendingAskRequest(pendingRequest ?? null);
+    askComposer.enter(attachment, pendingRequest ?? null);
     setAskOpen(true);
     setDictionaryOpen(false);
     setDictionaryAIPanelOpen(false);
@@ -4823,7 +4740,7 @@ export function ReaderRecordPlateSurface({
     setHighlightMenu(null);
     setNoteMenu(null);
     setFeedbackTarget(null);
-  }, []);
+  }, [askComposer]);
 
   const handleAttachInspectToAsk = useCallback(() => {
     if (!inspectState) {
@@ -4899,60 +4816,15 @@ export function ReaderRecordPlateSurface({
   }, [currentAskSelectionAttachment, openAskPanel]);
 
   /**
-   * ASK-UX-COT-COMPOSER-R3 P1 — "加入 Ask Claread": pin the current
-   * selection into the manual slots. If it IS the current auto slot it is
-   * promoted (no duplicate chip); otherwise appended. Anchor-fingerprint
-   * dedupe; capped at {@link MAX_MANUAL_ASK_SELECTIONS}; opens the panel
-   * without disturbing other drafts.
+   * ASK-UX-COT-COMPOSER-R3 P1 — "加入 Ask Claread": pin via the Ask
+   * composer context (slot policy lives there), then open the panel.
    */
   const handlePinSelectionToAsk = useCallback(() => {
-    // Opening the toolbar menu moves focus away from the document and may
-    // collapse the native Selection before the menu item is chosen. The auto
-    // slot is the Host-owned frozen copy of that same selection, so it is the
-    // safe fallback for the explicit pin action.
-    const candidate = currentAskSelectionAttachment ?? autoAskSelection;
-    if (!candidate) {
-      return;
-    }
-    const decision = decidePinSelection({
-      candidate,
-      autoSelection: autoAskSelection,
-      manualSelections: manualAskSelections,
-    });
-    switch (decision.kind) {
-      case "noop":
-        return;
-      case "blocked-full":
-        return;
-      case "promote":
-        setAutoAskSelection(null);
-        setManualAskSelections((current) => [...current, candidate]);
-        break;
-      case "append":
-        setManualAskSelections((current) => [...current, candidate]);
-        break;
-      case "already-manual":
-        break;
-    }
-    // The pinned selection must not reappear in the auto slot while the
-    // same native selection is still active.
-    dismissedAutoSelectionFingerprintRef.current = decision.fingerprint;
-    lastAutoSelectionFingerprintRef.current = decision.fingerprint;
+    askComposer.pinSelection();
     openAskPanel(undefined, null);
-  }, [autoAskSelection, currentAskSelectionAttachment, manualAskSelections, openAskPanel]);
+  }, [askComposer, openAskPanel]);
 
-  const pinSelectionState = useMemo<ReaderToolbarActionState>(() => {
-    const decision = decidePinSelection({
-      candidate: currentAskSelectionAttachment ?? autoAskSelection,
-      autoSelection: autoAskSelection,
-      manualSelections: manualAskSelections,
-    });
-    const full = manualAskSelections.length >= MAX_MANUAL_ASK_SELECTIONS;
-    return {
-      disabled: decision.kind === "blocked-full",
-      reason: decision.kind === "blocked-full" || full ? "最多固定 3 个选区" : undefined,
-    };
-  }, [autoAskSelection, currentAskSelectionAttachment, manualAskSelections]);
+  const pinSelectionState = askComposer.pinSelectionState;
 
   const handleDictionarySearch = useCallback(
     async (query: string) => {
@@ -6317,17 +6189,8 @@ export function ReaderRecordPlateSurface({
           pageIdentity={askPageIdentity}
           recordId={snapshot.record_id}
           recordTitle={askRecordTitle}
-          attachments={askAttachments}
-          autoSelectionAttachment={autoAskSelection}
-          manualSelectionAttachments={manualAskSelections}
-          onRemoveAutoSelection={handleRemoveAutoAskSelection}
-          onRemoveManualSelection={handleRemoveManualAskSelection}
-          pendingQuickActionRequest={pendingAskRequest}
-          onRemoveAttachment={handleRemoveAskAttachment}
-          onClearAttachments={() => setAskAttachments([])}
-          onPendingQuickActionConsumed={() => setPendingAskRequest(null)}
+          composer={askComposer}
           onChangeSurface={setAskSurface}
-          onOpenSidecar={() => setAskSurface("sidecar")}
           onToggle={() => setAskOpen((current) => !current)}
           hasSidecarCapacity={hasSidecarCapacity}
           capacityDowngradeNotice={

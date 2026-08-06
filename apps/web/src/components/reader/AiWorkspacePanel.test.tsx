@@ -20,6 +20,8 @@ import {
   normalizeReaderAskMessages,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
+import type { AskComposerContext } from "./ask/composer-context";
+import { mergeAttachments } from "@/lib/reader-ask/send-request";
 
 const completedPayload = {
   execution_version: "reader_record_ask_agentic_v2",
@@ -279,15 +281,47 @@ function mockThreadMessages(messages: ReaderAskUiMessageDto[]) {
   });
 }
 
+function createTestComposer(
+  overrides: Partial<AskComposerContext> = {},
+): AskComposerContext {
+  const base: AskComposerContext = {
+    attachments: [],
+    autoSelectionAttachment: null,
+    manualSelectionAttachments: [],
+    pendingQuickActionRequest: null,
+    pinSelectionState: { disabled: false },
+    enter: vi.fn(),
+    pinSelection: vi.fn(),
+    removeAutoSelection: vi.fn(),
+    removeManualSelection: vi.fn(),
+    removeAttachment: vi.fn(),
+    clearAttachments: vi.fn(),
+    consumePendingQuickAction: vi.fn(),
+    // Identity placeholder — replaced after overrides so slot fields win.
+    buildSendAttachments: (items) => items,
+  };
+  const composer = { ...base, ...overrides };
+  if (!overrides.buildSendAttachments) {
+    composer.buildSendAttachments = (items) => {
+      const slots = [
+        ...(composer.autoSelectionAttachment
+          ? [composer.autoSelectionAttachment]
+          : []),
+        ...composer.manualSelectionAttachments,
+      ];
+      return slots.length === 0 ? items : mergeAttachments(items, slots);
+    };
+  }
+  return composer;
+}
+
 function renderPanel(overrides: Partial<AiWorkspacePanelProps> = {}) {
   const props: AiWorkspacePanelProps = {
     open: true,
     pageIdentity,
     recordId: "record-1",
     recordTitle: "Test Reader",
-    attachments: [],
-    onRemoveAttachment: vi.fn(),
-    onClearAttachments: vi.fn(),
+    composer: createTestComposer(),
     onToggle: vi.fn(),
     ...overrides,
   };
@@ -316,7 +350,9 @@ describe("AiWorkspacePanel", () => {
 
   it("uses the Claread AI mark for the closed launcher", () => {
     const onToggle = vi.fn();
-    const { container } = renderPanel({ open: false, onToggle });
+    const { container } = renderPanel({ open: false, onToggle,
+        composer: createTestComposer(),
+      });
 
     const launcher = screen.getByRole("button", { name: "打开 Ask Claread" });
     expect(container.querySelector("[data-claread-ai-mark='true']")).not.toBeNull();
@@ -333,10 +369,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -356,10 +392,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -379,10 +415,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[sentenceAttachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [sentenceAttachment],
+        })}
       />,
     );
 
@@ -401,10 +437,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[sentenceAttachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [sentenceAttachment],
+        })}
       />,
     );
 
@@ -441,10 +477,11 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[attachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={onClearAttachments}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [attachment],
+          clearAttachments: onClearAttachments,
+        })}
       />,
     );
 
@@ -523,10 +560,10 @@ describe("AiWorkspacePanel", () => {
         }}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[attachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [attachment],
+        })}
       />,
     );
 
@@ -565,10 +602,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[sentenceAttachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [sentenceAttachment],
+        })}
       />,
     );
 
@@ -604,10 +641,11 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[attachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={onClearAttachments}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [attachment],
+          clearAttachments: onClearAttachments,
+        })}
       />,
     );
 
@@ -634,10 +672,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[attachment]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [attachment],
+        })}
       />,
     );
 
@@ -668,10 +706,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -715,8 +753,10 @@ describe("AiWorkspacePanel", () => {
     renderPanel({
       recordId: "record-1",
       recordTitle: "Reading Record",
-      attachments: [rrAttachment],
-    });
+        composer: createTestComposer({
+          attachments: [rrAttachment],
+        }),
+      });
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();
@@ -898,10 +938,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -1056,10 +1096,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -1223,10 +1263,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -1396,10 +1436,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -1415,369 +1455,20 @@ describe("AiWorkspacePanel", () => {
     expect(screen.getByText("标注有帮助")).not.toBeNull();
   });
 
-  it("includes liveContextAttachment in request attachments when no other attachments", async () => {
-    render(
-      <AiWorkspacePanel
-        open
-        pageIdentity={pageIdentity}
-        recordId="record-1"
-        recordTitle="Test Reader"
-        attachments={[]}
-        liveContextAttachment={sentenceAttachment}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
-        onToggle={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
-      target: { value: "解释这句" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-
-    await waitFor(() => {
-      const streamCall = vi
-        .mocked(global.fetch)
-        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-      expect(streamCall).toBeTruthy();
-    });
-
-    const streamCall = vi
-      .mocked(global.fetch)
-      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
-    const bodyAttachments = body.attachments as Record<string, unknown>[];
-    expect(bodyAttachments).toHaveLength(1);
-    expect(bodyAttachments[0]).toMatchObject({
-      kind: "text_selection",
-      subtype: "sentence",
-      label: "整句",
-      selected_text: "Climate change presents an existential challenge.",
-    });
-  });
-
-  it("merges liveContextAttachment with existing attachments in request", async () => {
-    const externalRecordAttachment: ReaderAskAttachment = {
-      kind: "record_ref",
-      subtype: "related_record",
-      label: "Climate Policy",
-      targetKey: "record:record-2:record",
-      metadata: {
-        pageIdentity,
-        sourceSurface: "ask_context_picker",
-        entryAction: "ask_about_this",
-        recordId: "record-2",
-        recordTitle: "Climate Policy",
-      },
-    };
-
-    render(
-      <AiWorkspacePanel
-        open
-        pageIdentity={pageIdentity}
-        recordId="record-1"
-        recordTitle="Test Reader"
-        attachments={[externalRecordAttachment]}
-        liveContextAttachment={sentenceAttachment}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
-        onToggle={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
-      target: { value: "结合另一篇文章解释这句" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-
-    await waitFor(() => {
-      const streamCall = vi
-        .mocked(global.fetch)
-        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-      expect(streamCall).toBeTruthy();
-    });
-
-    const streamCall = vi
-      .mocked(global.fetch)
-      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
-    const bodyAttachments = body.attachments as Record<string, unknown>[];
-    expect(bodyAttachments).toHaveLength(2);
-    expect(bodyAttachments.some((a) => a.kind === "record_ref" && a.subtype === "related_record")).toBe(true);
-    expect(bodyAttachments.some((a) => a.kind === "text_selection" && a.subtype === "sentence")).toBe(true);
-  });
-
-  it("deduplicates liveContextAttachment when same attachment already exists in attachments", async () => {
-    render(
-      <AiWorkspacePanel
-        open
-        pageIdentity={pageIdentity}
-        recordId="record-1"
-        recordTitle="Test Reader"
-        attachments={[sentenceAttachment]}
-        liveContextAttachment={sentenceAttachment}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
-        onToggle={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
-      target: { value: "解释这句" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-
-    await waitFor(() => {
-      const streamCall = vi
-        .mocked(global.fetch)
-        .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-      expect(streamCall).toBeTruthy();
-    });
-
-    const streamCall = vi
-      .mocked(global.fetch)
-      .mock.calls.findLast(([url]) => String(url).includes("/messages/stream"));
-    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
-    const bodyAttachments = body.attachments as Record<string, unknown>[];
-    // Same attachment should appear only once, not duplicated
-    expect(bodyAttachments).toHaveLength(1);
-    expect(bodyAttachments[0]).toMatchObject({
-      kind: "text_selection",
-      subtype: "sentence",
-    });
-  });
-
-  it("does not inject liveContextAttachment into quick action requests", async () => {
-    const quickActionAttachment: ReaderAskAttachment = {
-      kind: "text_selection",
-      subtype: "text_range",
-      label: "选区",
-      selectedText: "quick action text",
-      targetKey: "record:record-1:range:s2:0:16:hash2",
-      metadata: {
-        pageIdentity,
-        sourceSurface: "selection_toolbar",
-        entryAction: "explain_this",
-        sentenceId: "s2",
-        paragraphId: "p1",
-      },
-    };
-
-    const onPendingQuickActionConsumed = vi.fn();
-    render(
-      <AiWorkspacePanel
-        open
-        pageIdentity={pageIdentity}
-        recordId="record-1"
-        recordTitle="Test Reader"
-        attachments={[]}
-        liveContextAttachment={sentenceAttachment}
-        pendingQuickActionRequest={{
-          content: "解释这段语法",
-          attachments: [quickActionAttachment],
-          entryAction: "explain_this",
-        }}
-        onPendingQuickActionConsumed={onPendingQuickActionConsumed}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
-        onToggle={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      const streamCall = vi
-        .mocked(global.fetch)
-        .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
-      expect(streamCall).toBeTruthy();
-    });
-
-    const streamCall = vi
-      .mocked(global.fetch)
-      .mock.calls.find(([url]) => String(url).includes("/messages/stream"));
-    const body = JSON.parse(String(streamCall?.[1]?.body)) as Record<string, unknown>;
-    const bodyAttachments = body.attachments as Record<string, unknown>[];
-
-    // Quick action should only have its own attachment, not the liveContextAttachment
-    expect(bodyAttachments).toHaveLength(1);
-    expect(bodyAttachments[0]).toMatchObject({
-      kind: "text_selection",
-      subtype: "text_range",
-      selected_text: "quick action text",
-    });
-  });
-
-  it.skip("legacy interrupted history fixture is replaced by typed v2 terminal coverage", async () => {
-    vi.mocked(global.fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/api/web/reader/records/record-1/ask/threads/thread-1")) {
-        return jsonResponse({
-          id: "thread-1",
-          record_id: "record-1",
-          title: "Ask Claread",
-          is_default: true,
-          archived_at: null,
-          created_at: "2026-05-20T00:00:00Z",
-          updated_at: "2026-05-20T00:00:00Z",
-          last_message_at: null,
-          messages: [
-            {
-              id: "msg-user-1",
-              thread_id: "thread-1",
-              role: "user",
-              status: "completed",
-              content_md: "解释一下这个语法点",
-              resolved_intent: "grammar",
-              context_anchors: [],
-              citations: [],
-              action_proposals: [],
-              tool_trace: [],
-              evidence: [],
-              trace_summary: null,
-              disambiguation: null,
-              external_asset_disambiguation: null,
-              response_cards: [],
-              resolved_context: null,
-              context_plan: null,
-              resolved_context_input: {
-                page_identity: {
-                  record_id: "record-1",
-                  title: "Test Reader",
-                  surface: "reader",
-                  source: "reader_2_0",
-                  available_context_capabilities: ["record_context"],
-                  has_article_overview: true,
-                  has_sentence_entries: true,
-                  has_annotations: true,
-                  has_reader_notes: true,
-                },
-                entry_action: "why_here",
-                attachments: [],
-                normalized_anchors: [],
-                current_record_context: null,
-                external_record_contexts: [],
-                external_asset_contexts: [],
-              },
-              run_info: null,
-              supplement_candidates: [],
-              persisted_supplements: [],
-              usage_event_id: null,
-              created_at: "2026-05-20T00:00:00Z",
-              updated_at: "2026-05-20T00:00:00Z",
-            },
-            {
-              id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-              thread_id: "thread-1",
-              role: "assistant",
-              status: "interrupted",
-              execution_version: "reader_record_ask_agentic_v2",
-              final_status: "cancelled",
-              content_md: "这是一个让步从句，even if 表示",
-              resolved_intent: "grammar",
-              context_anchors: [],
-              citations: [],
-              action_proposals: [],
-              tool_trace: [],
-              evidence: [],
-              trace_summary: null,
-              disambiguation: null,
-              external_asset_disambiguation: null,
-              response_cards: [],
-              resolved_context: null,
-              context_plan: null,
-              resolved_context_input: null,
-              run_info: null,
-              supplement_candidates: [],
-              persisted_supplements: [],
-              usage_event_id: null,
-              created_at: "2026-05-20T00:00:00Z",
-              updated_at: "2026-05-20T00:00:00Z",
-            },
-          ],
-        });
-      }
-      // Browser retry ABI is /retry (never /retry/stream) — simulate regenerate
-      if (url.includes("/retry") && !url.includes("/retry/stream")) {
-        return new Response("", {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        });
-      }
-      return mockFetch()(input, init);
-    });
-
-    render(
-      <AiWorkspacePanel
-        open
-        pageIdentity={pageIdentity}
-        recordId="record-1"
-        recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
-        onToggle={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("输出中断，可重新生成。")).not.toBeNull();
-    });
-
-    // The button must say "重新生成", not "继续" or "继续生成"
-    const regenerateButton = screen.getByRole("button", { name: "重新生成" });
-    expect(regenerateButton).not.toBeNull();
-    expect(regenerateButton.getAttribute("title")).toBe("重新生成");
-
-    // Must NOT show "继续生成" or "继续" anywhere
-    expect(screen.queryByText("继续生成")).toBeNull();
-    expect(screen.queryByText("继续")).toBeNull();
-
-    // Clicking the button triggers a full regenerate on browser /retry ABI
-    fireEvent.click(regenerateButton);
-
-    await waitFor(() => {
-      const retryCall = vi
-        .mocked(global.fetch)
-        .mock.calls.find(([url]) => {
-          const value = String(url);
-          return value.includes("/retry") && !value.includes("/retry/stream");
-        });
-      expect(retryCall).toBeTruthy();
-      expect(String(retryCall?.[0])).toContain("/retry");
-      expect(String(retryCall?.[0])).not.toContain("/retry/stream");
-      expect(retryCall?.[1]?.method).toBe("POST");
-    });
-  });
-
   it("renders the current selection inside the attachment chip row", async () => {
-    const onRemoveAutoSelection = vi.fn();
-    const onComposerTextareaFocus = vi.fn();
-    const onComposerTextareaBlur = vi.fn();
-    const onRemoveAttachment = vi.fn();
+    const removeAutoSelection = vi.fn();
+    const removeAttachment = vi.fn();
     render(
       <AiWorkspacePanel
         open
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        autoSelectionAttachment={sentenceAttachment}
-        onRemoveAutoSelection={onRemoveAutoSelection}
-        onComposerTextareaFocus={onComposerTextareaFocus}
-        onComposerTextareaBlur={onComposerTextareaBlur}
-        onRemoveAttachment={onRemoveAttachment}
-        onClearAttachments={vi.fn()}
+        composer={createTestComposer({
+          autoSelectionAttachment: sentenceAttachment,
+          removeAutoSelection,
+          removeAttachment,
+        })}
         onToggle={vi.fn()}
       />,
     );
@@ -1789,22 +1480,17 @@ describe("AiWorkspacePanel", () => {
       "自动选区：Climate change presents an existential challenge.",
     );
     fireEvent.click(selectionChip);
-    expect(onRemoveAutoSelection).not.toHaveBeenCalled();
-    expect(onRemoveAttachment).not.toHaveBeenCalled();
+    expect(removeAutoSelection).not.toHaveBeenCalled();
+    expect(removeAttachment).not.toHaveBeenCalled();
     expect(selectionChip.textContent).toContain("Climate change presents an existential");
     expect(selectionChip.textContent).toContain("…");
     expect(selectionChip.querySelector(".truncate")).not.toBeNull();
     expect(screen.getByLabelText(/移除自动选区/)).not.toBeNull();
 
     const textarea = screen.getByPlaceholderText("继续问这篇文章…");
-    const composer = textarea.closest(".cursor-text");
-    composer?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const composerEl = textarea.closest(".cursor-text");
+    composerEl?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(document.activeElement).not.toBe(textarea);
-
-    fireEvent.focus(textarea);
-    expect(onComposerTextareaFocus).toHaveBeenCalledTimes(1);
-    fireEvent.blur(textarea);
-    expect(onComposerTextareaBlur).toHaveBeenCalledTimes(1);
   });
 
   it("renders canonical citation badges in the Ask answer surface", async () => {
@@ -1867,10 +1553,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -2433,10 +2119,10 @@ describe("AiWorkspacePanel", () => {
         pageIdentity={pageIdentity}
         recordId="record-1"
         recordTitle="Test Reader"
-        attachments={[]}
-        onRemoveAttachment={vi.fn()}
-        onClearAttachments={vi.fn()}
         onToggle={vi.fn()}
+        composer={createTestComposer({
+          attachments: [],
+        })}
       />,
     );
 
@@ -2700,8 +2386,9 @@ describe("AiWorkspacePanel", () => {
       // line does not render at all.
       renderPanel({
         recordTitle: "Test Reader",
-        attachments: [],
-        liveContextAttachment: null,
+        composer: createTestComposer({
+          attachments: [],
+        }),
       });
 
       await waitFor(() => {
@@ -2716,8 +2403,10 @@ describe("AiWorkspacePanel", () => {
     it("provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
       renderPanel({
         recordTitle: "Test Reader",
-        liveContextAttachment: sentenceAttachment,
-        attachments: [noteAttachment],
+        composer: createTestComposer({
+          autoSelectionAttachment: sentenceAttachment,
+          attachments: [noteAttachment],
+        }),
       });
 
       await waitFor(() => {
@@ -2727,15 +2416,16 @@ describe("AiWorkspacePanel", () => {
       const summary = screen.getByText(/基于：/);
       // The current article must NOT appear — only explicit context.
       expect(summary.textContent).not.toContain("当前文章");
-      expect(summary.textContent).toContain("选中句");
+      expect(summary.textContent).toContain("选中段");
       expect(summary.textContent).toContain("1 条笔记");
     });
 
     it("no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
       renderPanel({
         recordTitle: "",
-        attachments: [],
-        liveContextAttachment: null,
+        composer: createTestComposer({
+          attachments: [],
+        }),
       });
 
       await waitFor(() => {
@@ -2752,8 +2442,9 @@ describe("AiWorkspacePanel", () => {
       // is the sole source of truth for the current-record chip.
       renderPanel({
         recordTitle: "页面标题文章",
-        attachments: [],
-        liveContextAttachment: null,
+        composer: createTestComposer({
+          attachments: [],
+        }),
       });
 
       await waitFor(() => {
@@ -2770,6 +2461,7 @@ describe("AiWorkspacePanel", () => {
       renderPanel({
         surface: "floating",
         onChangeSurface,
+        composer: createTestComposer(),
       });
 
       await waitFor(() => {
@@ -2792,6 +2484,7 @@ describe("AiWorkspacePanel", () => {
         capacityDowngradeNotice:
           "当前阅读区较窄，Ask Claread 已暂以浮窗展示；空间恢复后将回到侧边栏。",
         onDismissCapacityDowngradeNotice,
+        composer: createTestComposer(),
       });
 
       await waitFor(() => {
@@ -2811,6 +2504,7 @@ describe("AiWorkspacePanel", () => {
     it("does not expose a dead dismiss control when a downgrade notice has no dismiss callback", async () => {
       renderPanel({
         capacityDowngradeNotice: "当前阅读区较窄，Ask Claread 以浮窗形式展示。",
+        composer: createTestComposer(),
       });
 
       await waitFor(() => {
@@ -2822,6 +2516,7 @@ describe("AiWorkspacePanel", () => {
     it("capacity downgrade notice does not render when null", async () => {
       renderPanel({
         capacityDowngradeNotice: null,
+        composer: createTestComposer(),
       });
 
       await waitFor(() => {
@@ -4401,7 +4096,6 @@ describe("createSseMessageHandler – agentic stream", () => {
     expect(getMessages()[0].content_md).toBe("legacy after agentic");
     expect(getMessages()[0].agentic_evidence ?? null).toBeNull();
   });
-
 
   it("projects agentic progress into activity callbacks with monotonic sequence rules", () => {
     const { handler, onAgenticActivity, getMessages, onMessageIdAssigned } = setupHandler([
@@ -6191,7 +5885,8 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
       surface: "floating",
       onChangeSurface: vi.fn(),
       hasSidecarCapacity: false,
-    });
+        composer: createTestComposer(),
+      });
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();
@@ -6213,7 +5908,8 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
       surface: "floating",
       onChangeSurface: vi.fn(),
       hasSidecarCapacity: true,
-    });
+        composer: createTestComposer(),
+      });
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();
@@ -7476,7 +7172,8 @@ describe("RR composer selection slots", () => {
   it("always renders the non-removable current-article chip from the record title (never the thread title)", async () => {
     const { container } = renderPanel({
       recordTitle: "机构记忆与政策连续性",
-    });
+        composer: createTestComposer(),
+      });
     const chip = await waitFor(() => {
       const found = container.querySelector("[data-ask-current-article-chip]");
       expect(found).not.toBeNull();
@@ -7503,9 +7200,11 @@ describe("RR composer selection slots", () => {
     const manual1 = rrSelectionAttachment("m1", [10, 16], "固定选区一");
     const manual2 = rrSelectionAttachment("m2", [20, 26], "固定选区二");
     const { container } = renderPanel({
-      autoSelectionAttachment: auto,
-      manualSelectionAttachments: [manual1, manual2],
-    });
+      composer: createTestComposer({
+          autoSelectionAttachment: auto,
+          manualSelectionAttachments: [manual1, manual2],
+        }),
+      });
     const strip = await waitFor(() => {
       const found = container.querySelector("[data-ask-context-strip]");
       expect(found).not.toBeNull();
@@ -7525,32 +7224,36 @@ describe("RR composer selection slots", () => {
   });
 
   it("auto and manual chips are independently removable via their slot callbacks", async () => {
-    const onRemoveAutoSelection = vi.fn();
-    const onRemoveManualSelection = vi.fn();
+    const removeAutoSelection = vi.fn();
+    const removeManualSelection = vi.fn();
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const manual = rrSelectionAttachment("m1", [10, 16], "固定选区一");
     renderPanel({
-      autoSelectionAttachment: auto,
-      manualSelectionAttachments: [manual],
-      onRemoveAutoSelection,
-      onRemoveManualSelection,
+      composer: createTestComposer({
+        autoSelectionAttachment: auto,
+        manualSelectionAttachments: [manual],
+        removeAutoSelection,
+        removeManualSelection,
+      }),
     });
     fireEvent.click(
       await screen.findByRole("button", { name: "移除自动选区：自动选区文本" }),
     );
-    expect(onRemoveAutoSelection).toHaveBeenCalledTimes(1);
+    expect(removeAutoSelection).toHaveBeenCalledTimes(1);
     fireEvent.click(
       screen.getByRole("button", { name: "移除固定选区：固定选区一" }),
     );
-    expect(onRemoveManualSelection).toHaveBeenCalledTimes(1);
+    expect(removeManualSelection).toHaveBeenCalledTimes(1);
   });
 
   it("sends auto + manual selections as explicit attachments and keeps them after send", async () => {
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const manual = rrSelectionAttachment("m1", [10, 16], "固定选区一");
     const { container } = renderPanel({
-      autoSelectionAttachment: auto,
-      manualSelectionAttachments: [manual],
+      composer: createTestComposer({
+        autoSelectionAttachment: auto,
+        manualSelectionAttachments: [manual],
+      }),
     });
 
     fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
@@ -7597,13 +7300,15 @@ describe("RR composer selection slots", () => {
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const explicit = rrSelectionAttachment("quick", [30, 36], "快捷动作附件");
     renderPanel({
-      autoSelectionAttachment: auto,
-      pendingQuickActionRequest: {
-        content: "解释选区",
-        attachments: [explicit],
-        entryAction: "ask_about_this",
-        submissionMode: "quick_action",
-      },
+      composer: createTestComposer({
+        autoSelectionAttachment: auto,
+        pendingQuickActionRequest: {
+          content: "解释选区",
+          attachments: [explicit],
+          entryAction: "ask_about_this",
+          submissionMode: "quick_action",
+        },
+      }),
     });
 
     await waitFor(() => {
@@ -7630,7 +7335,9 @@ describe("RR composer selection slots", () => {
   it("surfaces explicit selections in provenance but never the implicit article", async () => {
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const { container } = renderPanel({
-      autoSelectionAttachment: auto,
+      composer: createTestComposer({
+        autoSelectionAttachment: auto,
+      }),
     });
     await waitFor(() => {
       expect(container.textContent).toContain("基于：选中段");
