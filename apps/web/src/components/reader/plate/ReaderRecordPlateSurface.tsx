@@ -520,26 +520,6 @@ function singleRangeDraft(
     : null;
 }
 
-/**
- * Fail-closed Ask selection identity check.
- *
- * A live `activeSelection` may still carry a draft stamped with a previous
- * record/base/generation for one render after the snapshot identity changes
- * (the clear runs in an effect). That stale draft must never become an Ask
- * selection candidate — otherwise the composer identity fence clears slots
- * and immediately re-ingests the old range.
- */
-export function isCurrentAskSelectionDraft(
-  draft: Pick<ReaderRecordAnchorDraft, "record_id" | "base_id" | "generation">,
-  current: { recordId: string; baseId: string; generation: number },
-): boolean {
-  return (
-    draft.record_id === current.recordId &&
-    draft.base_id === current.baseId &&
-    draft.generation === current.generation
-  );
-}
-
 // T4.2a-PUX-R4-R2.1C: extract grammar itemId from a stable blockId of
 // the form `callout:grammar:{itemId}`. Returns null for non-grammar or
 // malformed blockIds. Used by the targeted remove path to forget the
@@ -4658,11 +4638,9 @@ export function ReaderRecordPlateSurface({
       // effect runs. Reject drafts stamped for a previous record/base/generation
       // so the composer never re-ingests a stale range after its own identity fence.
       if (
-        !isCurrentAskSelectionDraft(draft, {
-          recordId: snapshot.record_id,
-          baseId: snapshot.base.base_id,
-          generation: snapshot.record.generation,
-        })
+        draft.record_id !== snapshot.record_id ||
+        draft.base_id !== snapshot.base.base_id ||
+        draft.generation !== snapshot.record.generation
       ) {
         return null;
       }

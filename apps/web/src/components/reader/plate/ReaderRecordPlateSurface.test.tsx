@@ -5457,6 +5457,86 @@ describe("ReaderRecordPlateSurface", () => {
     expect(attachment?.metadata).not.toHaveProperty("anchor_segment_id");
   });
 
+  it("does not re-ingest a stale selection draft when snapshot generation advances before selection clear", async () => {
+    // Production path: currentAskSelectionAttachment. On the first render after
+    // generation advances, activeSelection still holds the gen-1 draft (clear
+    // runs in an effect). Without the host fence, that draft becomes a
+    // selectionCandidate and the composer re-ingests it after its own identity
+    // clear. With the fence, the candidate is null and the auto chip stays empty.
+    const fetchMock = installReaderAskFetchMock();
+    const gen1 = makeSnapshot();
+    const gen2: ReaderPlateSnapshotDto = {
+      ...gen1,
+      snapshot_id: "snapshot_gen2",
+      record: {
+        ...gen1.record,
+        generation: 2,
+      },
+    };
+
+    const { container, rerender } = render(
+      <ReaderRecordPlateSurface snapshot={gen1} />,
+    );
+    const memoryMark = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMark).not.toBeNull();
+    if (!memoryMark) {
+      throw new Error("Expected memory mark");
+    }
+
+    selectTextInElement(memoryMark, 0, "memory".length);
+
+    // Open Ask via launcher so the auto slot (not pin/manual) is under test.
+    const openLauncher = await screen.findByRole("button", {
+      name: "打开 Ask Claread",
+    });
+    await act(async () => {
+      fireEvent.click(openLauncher);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "关闭 Ask Claread" })).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
+    });
+
+    // Advance generation while the native selection (and thus the bridge draft)
+    // is still gen-1-stamped for this render. Do not manually null the candidate.
+    await act(async () => {
+      rerender(<ReaderRecordPlateSurface snapshot={gen2} />);
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-ask-selection-slot="auto"]')).toBeNull();
+    });
+    expect(document.querySelector('[data-ask-selection-slot="manual"]')).toBeNull();
+
+    // Same-identity protection: a fresh selection under gen2 re-enters the auto slot.
+    const memoryMarkGen2 = container.querySelector<HTMLElement>(
+      '[data-reader-record-vocabulary-mark-id="vocab_mark_1"]',
+    );
+    expect(memoryMarkGen2).not.toBeNull();
+    if (!memoryMarkGen2) {
+      throw new Error("Expected memory mark after generation advance");
+    }
+    selectTextInElement(memoryMarkGen2, 0, "memory".length);
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
+    });
+
+    const attachment = await sendAskComposerMessageAndReadFirstAttachment(fetchMock);
+    expect(attachment?.selected_text).toBe("memory");
+    expect(attachment?.metadata).toMatchObject({
+      reading_record_anchor: {
+        record_id: "record_1",
+        base_id: "base_1",
+        generation: 2,
+      },
+    });
+  });
   it("submits a toolbar Ask prompt with the current selection as context", async () => {
     const fetchMock = installReaderAskFetchMock();
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
