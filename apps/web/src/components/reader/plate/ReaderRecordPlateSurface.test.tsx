@@ -20,7 +20,6 @@ import {
   type ReaderTitleGenerationStatus,
   type ReaderUnitNodeDto,
 } from "@/types/api/reader-plate";
-import type { ReloadContext } from "@/lib/reader-plate-snapshot/polling";
 import type { WebDictResult } from "@/types/api/dict";
 import {
   ReaderAskToolbarButton,
