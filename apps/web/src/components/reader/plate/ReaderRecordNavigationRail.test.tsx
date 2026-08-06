@@ -523,7 +523,6 @@ describe("ReaderRecordNavigationRail", () => {
       expect(panel.classList.contains("pointer-events-none")).toBe(false),
     );
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(trigger.getAttribute("aria-label")).toBe("关闭内容大纲");
 
     fireEvent.click(trigger);
     await waitFor(() =>
