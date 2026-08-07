@@ -11,8 +11,7 @@
     "@directus/extensions-sdk": "11.0.10",
     "typescript": "^5.8.3",
     "vue": "3.4.27",
-    "vue-router": "4.4.0",
-    "zod": "3.23.8"
+    "vue-router": "4.4.0"
   },
   "directus:extension": {
     "type": "bundle",
