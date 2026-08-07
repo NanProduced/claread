@@ -1060,6 +1060,37 @@ def test_frozen_artifact_matches_regeneration(sample_id: str) -> None:
     )
 
 
+def test_frozen_artifacts_carry_no_legacy_baseline_key() -> None:
+    """Single-chain contract: no ``legacy_baseline`` top-level key.
+
+    The legacy scene-render chain was removed; the artifact carries no
+    ``legacy_baseline`` field. Both the checked-in frozen JSON and a
+    fresh regeneration must keep the key absent. The closed schema
+    (``extra="forbid"``) additionally rejects any reintroduction at
+    load time, so this assertion pins the regression direction.
+    """
+    import json
+
+    from verification.reader_baseline.parse_eval.frozen_artifacts import (
+        FROZEN_SAMPLE_IDS,
+        build_frozen_artifact_for_sample,
+        load_frozen_artifact_json,
+    )
+
+    for sample_id in FROZEN_SAMPLE_IDS:
+        on_disk = json.loads(load_frozen_artifact_json(sample_id))
+        assert "legacy_baseline" not in on_disk, (
+            f"on-disk frozen artifact for {sample_id!r} must not carry "
+            f"a legacy_baseline key"
+        )
+        artifact, fresh_json, _ = build_frozen_artifact_for_sample(sample_id)
+        assert "legacy_baseline" not in json.loads(fresh_json), (
+            f"regenerated frozen artifact for {sample_id!r} must not "
+            f"carry a legacy_baseline key"
+        )
+        assert "legacy_baseline" not in artifact.model_dump()
+
+
 def test_frozen_manifest_has_three_entries() -> None:
     """The frozen manifest has exactly 3 entries, one per fixed sample."""
     from verification.reader_baseline.parse_eval.frozen_artifacts import (

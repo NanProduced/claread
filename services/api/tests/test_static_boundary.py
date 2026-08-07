@@ -470,3 +470,66 @@ def test_canonical_acceptance_and_runbook_avoid_legacy_article_rag_ask_chain() -
         "recommend the retired article_rag_ask_* chain; offenders: "
         + ", ".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# parse_eval single-chain contract guard
+#
+# The parse_eval artifact contract is single-chain: the retired
+# baseline-chain comparison surface (the frozen-baseline sidecar
+# module, the freeze schema types, and the unavailable-freeze builder)
+# was physically deleted.  The guards below keep the baseline chain
+# dead — the sidecar module file must stay physically absent, and the
+# retired identifiers must never reappear in production ``app/`` code
+# or in the ``verification/`` baseline harness.  ``tests/`` is outside
+# the scanned surface by scope, not by exemption: the focused negative
+# assertion in ``test_reader_parse_eval.py`` keeps the frozen
+# artifacts free of the retired key.
+# ---------------------------------------------------------------------------
+
+VERIFICATION_DIR = REPO_ROOT / "verification"
+
+_PARSE_EVAL_RETIRED_BASELINE_SIDECAR_FILE = (
+    VERIFICATION_DIR / "reader_baseline" / "parse_eval" / "legacy_sidecar.py"
+)
+
+_PARSE_EVAL_RETIRED_BASELINE_CHAIN_MARKERS = (
+    "legacy_baseline",
+    "legacy_sidecar",
+    "LegacyBaselineStatusLiteral",
+    "LegacyBaselineFreeze",
+    "build_legacy_baseline",
+)
+
+
+def test_parse_eval_single_chain_contract_has_no_retired_baseline_chain_symbols() -> None:
+    """parse eval single-chain contract: retired baseline-chain symbols stay gone.
+
+    First asserts the retired baseline sidecar module is physically
+    absent — restoring it fails here immediately.  Then scans every
+    ``verification/`` and ``app/`` Python module for the retired
+    baseline-chain identifiers with no path or identifier exemption,
+    so a revived field, literal, builder, or import is caught wherever
+    it reappears.
+    """
+    assert not _PARSE_EVAL_RETIRED_BASELINE_SIDECAR_FILE.exists(), (
+        "retired parse eval baseline sidecar module must stay physically "
+        "deleted; revived: "
+        + _PARSE_EVAL_RETIRED_BASELINE_SIDECAR_FILE.relative_to(REPO_ROOT).as_posix()
+    )
+
+    offenders: list[str] = []
+    for root in (VERIFICATION_DIR, APP_DIR):
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            source = _read_text(path)
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            for marker in _PARSE_EVAL_RETIRED_BASELINE_CHAIN_MARKERS:
+                if marker in source:
+                    offenders.append(f"{rel} -> {marker}")
+
+    assert offenders == [], (
+        "parse eval single-chain contract has no retired baseline-chain "
+        "symbols; offenders: " + ", ".join(offenders)
+    )
