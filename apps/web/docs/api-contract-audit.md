@@ -1,6 +1,8 @@
 # API 契约审计
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-18
+> **状态**: `HISTORICAL` | **审计时点**: 2026-05-18 | **标记日期**: 2026-08-08
+>
+> 本文审计对象是 cutover 前的旧 API 面（`/analyze`、`/analysis-tasks`、`/records`、render scene、旧枚举等），这些路由与 schema 已在 Architectural Cutover 中物理删除。**本文不再代表任何当前接口事实，不得作为当前实现入口或集成依据。** 当前后端接口事实以 `services/api/docs/api-contracts.md` 与 OpenAPI 为准；当前 Web BFF 面以 `implementation-plan.md` 的能力地图和 `apps/web/src/app/api/web/` 源码为准。本文仅保留作为首期接入决策的历史记录。
 
 本文审计 Claread Web 首期需要的后端接口、字段、枚举和错误态，以及当前在 OpenAPI / response_model 中的稳定性。
 

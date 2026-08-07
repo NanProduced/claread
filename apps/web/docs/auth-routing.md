@@ -1,6 +1,6 @@
 # Web Auth Routing
 
-> **Status**: `CURRENT` | **Last updated**: 2026-05-25
+> **Status**: `CURRENT` | **Last updated**: 2026-08-08
 
 This document defines Claread Web's route boundary and login redirect contract.
 
@@ -18,7 +18,6 @@ These routes are publicly reachable and do not require a Web session.
 | `/blog` | Public blog placeholder |
 | `/daily` | Public Daily Reader index |
 | `/daily/:articleId` | Public Daily Reader article |
-| `/examples/:slug` | Public annotated examples |
 | `/share/:shareId` | Public share page |
 
 Public reading is allowed. Saving, adding vocabulary, writing personal notes, and other asset actions still require login.
@@ -43,6 +42,8 @@ These routes are the authenticated Claread workspace. They are intercepted by `p
 | `/app/vocabulary` | User vocabulary assets |
 | `/app/review` | Review queue entered from Vocabulary |
 | `/app/settings` | Account, quota, feedback, and preferences |
+| `/app/settings/feedback` | Feedback records |
+| `/app/settings/ledger` | Credit ledger |
 | `/app/reader/:recordId` | Private Reader route |
 
 Protected pages must not render anonymous empty states. Missing sessions redirect to `/login?next=<path>`.
@@ -75,4 +76,4 @@ The Web session contract exposes exactly three product states:
 
 ## Backend Boundary
 
-`proxy.ts` is only an early browser guard. It does not replace BFF or upstream authorization. Web BFF handlers must continue to validate session state before touching user records, vocabulary, feedback, annotations, favorites, review, or analysis tasks.
+`proxy.ts` is only an early browser guard. It does not replace BFF or upstream authorization. Web BFF handlers must continue to validate session state before touching user records, vocabulary, feedback, annotations, favorites, review, or reader orchestration data.

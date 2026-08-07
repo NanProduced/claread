@@ -59,9 +59,13 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 | Ask | `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/reset` | 重置线程 |
 | Ask | `POST /reader/records/{reading_record_id}/ask/messages/{message_id}/citations/{citation_id}/navigate` | citation 回源定位 |
 | Dict AI | `POST /dict/ai` | 词典 AI 增强；登录用户的正式 AI 能力入口，支持 `context_explain` 与 `missing_fallback` |
-| User Annotations | `POST /user-annotations`、`GET /user-annotations` | 用户高亮（Reading Record anchor） |
+| User Annotations | `POST /user-annotations`、`GET /user-annotations` | 用户高亮创建与列表（`reading_record_id` 可选过滤），Reading Record anchor |
+| User Annotations | `PATCH /user-annotations/{annotation_id}`、`DELETE /user-annotations/{annotation_id}` | 按资源 ID 更新（颜色/payload）与删除高亮 |
 | Reader Notes | `POST /reader-notes`、`GET /reader-notes`、`PATCH /reader-notes/{id}`、`DELETE /reader-notes/{id}` | 用户笔记（Reading Record anchor） |
-| Favorites | `POST /favorites`、`GET /favorites` | 文章收藏 |
+| Favorites | `POST /favorites`、`GET /favorites` | 文章收藏创建（按 `target_type + target_key` 去重）与列表 |
+| Favorites | `DELETE /favorites/target` | 按 target identity（query `target_type + target_key`）取消收藏；不是资源 ID 路径 |
+| Vocabulary | `GET /vocabulary`、`POST /vocabulary` | Web 生词列表与写入（BFF `/api/web/vocabulary`） |
+| Vocabulary | `PATCH /vocabulary/{vocab_id}`、`DELETE /vocabulary/{vocab_id}` | 按资源 ID 更新（mastery/备注）与删除生词（BFF `/api/web/vocabulary/[id]`） |
 
 ## ID 语义
 
@@ -95,6 +99,8 @@ Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF 
 - 用户高亮（`user_annotations`）当前只有 Reading Record anchor 一种合同：`reading_record_id + base_id + generation + unit_id + anchor_segment_id + unit_start_utf16 + unit_end_utf16 + text_hash`，UTF-16 code unit offset + `fnv1a32-utf16` hash，由后端按当前 active base 的 anchor segment 切片校验；anchor gate 是唯一校验权威。高亮冲突统一走后端 resolver：exact hit 复用原对象，subset / superset / partial overlap 合并到单一高亮，多条重叠时保留最早记录并 soft-delete 其余记录。
 - 用户笔记（`reader_notes`）`quote_mode='sentence' | 'text_range' | 'multi_text'` 与高亮共用同一套 UTF-16 text anchor 校验；`GET /reader-notes` 使用 `reading_record_id` 作为必填查询参数。笔记只做 exact-hit reopen，不参与高亮冲突合并；`PATCH /reader-notes/{id}` 只允许修改 `note_text`，修改 quote identity 必须删除后重建。
 - `vocabulary_book.dict_entry_id` 指向 `dict_entries.id`；词典重导前必须处理 ID 稳定性。
+- 收藏的身份模型：`POST /favorites` 以请求体 `target_type + target_key`（target identity）去重，响应返回收藏资源 `id`；取消收藏走 `DELETE /favorites/target`，同样以 query 中的 `target_type + target_key` 定位，当前没有按资源 ID 删除收藏的 route。Web BFF `/api/web/reader/records/[recordId]/favorite` 的 DELETE 在上游映射为该 target 删除。
+- 高亮/笔记/生词的更新与删除都按资源 ID 路径参数定位（`{annotation_id}` / `{id}` / `{vocab_id}`），与 favorites 的 target identity 模型不同，不得混用。
 - 生词来源引用（`SourceRef`）的 canonical 字段是 `reading_record_id`（可搭配 `daily_reader_article_id`）；`cloud_record_id` 仅为 legacy 兼容字段。
 
 ## 后续增强方向

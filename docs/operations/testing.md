@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-05（任务编号 naming guard 已在 API 与 Web 双侧收口，allowlist 上限均为 0）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-08（API 与 Web 双侧均存在任务编号 naming guard 静态检查；全仓最终 residual 收口状态依赖尚未 landing 的测试治理 replacement 分支，本文不提前记录终态）
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -55,12 +55,12 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
 
-- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查三层目标中的任务编号：新测试文件名、`app/` 生产符号（AST 标识符）、`tests/**` 测试标识符（FunctionDef / AsyncFunctionDef / ClassDef 与 module-level 赋值名）。**检测规则**为通用「单字母 + 1–3 位数字」token（可选 trailing letter，如 `t58a`/`i4x`）+ 整 token `round<N>` + CamelCase `R16`/`Round2` 形态；不再依赖按家族堆叠的窄正则。业务/技术 KEEP 词（`v2`、`g1`–`g5`、`h1`–`h6`、`e2e`、`i18n`、`utf8`/`utf16`、`fnv1a32`、`tecd3`、`sha256` 等）显式排除。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于上限（test-file **0**、test-identifier **0**、production-symbol **0**）。历史任务编号命名的模块、常量与测试文件已全部改为业务名。持久化协议值（env 字符串、failure_code、policy 字面量、job_type/fingerprint 线值）属于字面量/协议豁免，不属于命名漂移。收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量与注释豁免——协议值、fixture 载荷、migration 版本、`execution_version`、artifact version、workflow version、dataset/env 身份等持久化协议值不在 guard 扫描范围。
+- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查三层目标中的任务编号：新测试文件名、`app/` 生产符号（AST 标识符）、`tests/**` 测试标识符（FunctionDef / AsyncFunctionDef / ClassDef 与 module-level 赋值名）。**检测规则**为通用「单字母 + 1–3 位数字」token（可选 trailing letter，如 `t58a`/`i4x`）+ 整 token `round<N>` + CamelCase `R16`/`Round2` 形态；不再依赖按家族堆叠的窄正则。业务/技术 KEEP 词（`v2`、`g1`–`g5`、`h1`–`h6`、`e2e`、`i18n`、`utf8`/`utf16`、`fnv1a32`、`tecd3`、`sha256` 等）显式排除。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于 guard 文件中声明的上限，当前上限值以 `test_task_number_naming_guard.py` 中的 ceiling 常量为准。持久化协议值（env 字符串、failure_code、policy 字面量、job_type/fingerprint 线值）属于字面量/协议豁免，不属于命名漂移。收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量与注释豁免——协议值、fixture 载荷、migration 版本、`execution_version`、artifact version、workflow version、dataset/env 身份等持久化协议值不在 guard 扫描范围。
 - **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，test-file allowlist 已清空、**相等 ratchet 上限 0**；同时对测试源码逐行 fail-closed 扫描大写任务码形态，`task-history:` 行豁免，code-identity allowlist 采用 strip-then-scan 且相等 ratchet，豁免身份不会掩护同行真实任务码。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）、表示事件合同名（`G1`/`G2`/`G3`）属持久化/业务身份，不视为任务编号。
 
 改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
 
-标识符层治理已收口：tests/** 内任务码文件名与标识符已改为业务名，最终 allowlist 为 **test-file 0、test-identifier 0、production-symbol 0**。collection 对账按「改名/路径变更 1:1 映射」执行，不以冻结总数为合同（总数随环境/基线变化）。持久化协议字符串值保持不变。当前可用 guard 命令：
+collection 对账按「改名/路径变更 1:1 映射」执行，不以冻结总数为合同（总数随环境/基线变化）。持久化协议字符串值保持不变。全仓最终 residual 收口状态依赖尚未 landing 的测试治理 replacement 分支，landing 后需同步更新本节与顶部状态行。当前可用 guard 命令：
 
 ```powershell
 cd services/api

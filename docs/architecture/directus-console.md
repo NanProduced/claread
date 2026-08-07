@@ -106,7 +106,7 @@ cutover 后保留的 Directus custom module：
 - **自动同步派生**：`label`（自 `output_fragment.label`）、`target_node`（自 `example_type`）、`output_fragment.type`
 - **Machine-derived RAG 字段**：`grammar_tags`、`retrieval_text`、`derived_at`、`derived_by`
 
-派生与校验都由 `apps/directus/extensions/hooks-bundle/src/index.js` 的 validation hook 完成（`validateFragmentShape` / `syncLabelFromFragment` / `normalizeGrammarTagsField` / `extractGeneratedRagFields`）。条目经 `services/api/scripts/ingest_grammar_seed.py`（或后续 promotion workflow）进入 Zilliz collection。
+派生与校验都由 `apps/directus/extensions/hooks-bundle/src/index.js` 的 validation hook 完成（`validateFragmentShape` / `syncLabelFromFragment` / `normalizeGrammarTagsField` / `extractGeneratedRagFields`）。条目当前只保存在 PostgreSQL，不进入 Zilliz；当前唯一入库路径是 `services/api/prompts/examples/grammar.yaml` → `generate_grammar_seed.py` → `ingest_grammar_seed.py` → Zilliz。Directus → seed → Zilliz 的 promotion 链路尚未实现，属于未来能力。
 
 `output_fragment` 契约、retrieval_text 格式、grammar_tags 归一化、Zilliz schema 和联动更新清单等运行时契约见 `docs/architecture/reader-rag.md`。
 

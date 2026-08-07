@@ -2,22 +2,22 @@
 
 > **状态**: `CURRENT` | **最后验证**: 2026-08-08（旧 eval-center 集成图相关运行时已按当前代码重核：API 侧 `eval_adapter` 已删除，校验与派生字段生成收口到 Directus hook、seed 脚本与审计脚本）
 
-本文记录 Reader 主链 grammar few-shot RAG 的当前运行时契约：Example Lab 示例如何成为 prompt 注入真源、检索文本与标签如何归一化、以及改动契约时必须联动更新的位置。Example Lab 的 Directus 控制面定位见 `docs/architecture/directus-console.md`。
+本文记录 Reader 主链 grammar few-shot RAG 的当前运行时契约：seed 示例如何成为 prompt 注入真源、检索文本与标签如何归一化、以及改动契约时必须联动更新的位置。Example Lab 的 Directus authoring 控制面定位见 `docs/architecture/directus-console.md`。
 
 ## 数据流
 
-### Authoring → PostgreSQL → Zilliz
+### Authoring 面（未接入 Zilliz）
 
 ```text
 Directus Example Lab (authoring, eval_example_lab_entries)
   ↓ hooks-bundle: validateFragmentShape + syncLabelFromFragment
      + normalizeGrammarTagsField + extractGeneratedRagFields
-PostgreSQL eval_example_lab_entries
-  ↓ services/api/scripts/ingest_grammar_seed.py（或后续 promotion workflow）
-Zilliz collection（grammar_note_examples / sentence_analysis_examples）
+PostgreSQL eval_example_lab_entries（仅 authoring / 校验 / 派生字段复核）
 ```
 
-### Seed → Zilliz
+Example Lab 当前是 few-shot example 的 authoring、validation、derived-field 管理界面；条目只保存在 PostgreSQL，**当前不进入 Zilliz**。Directus → seed → Zilliz 的导出 / promotion / 发布链路尚未实现，是未来能力。
+
+### Seed → Zilliz（当前唯一可执行入库路径）
 
 ```text
 services/api/prompts/examples/grammar.yaml
@@ -226,11 +226,18 @@ source_sentence: <sentence>
 
 ## 最小回归建议
 
+以下 pytest 命令需在 `services/api/` 目录下运行（仓库根没有 Python project 配置）：
+
 ```powershell
-uv run pytest services/api/tests/test_grammar_retrieval_hints.py -q
-uv run pytest services/api/tests/test_rag_infra.py -q
-uv run pytest services/api/tests/test_rag_integration.py -q
-uv run pytest services/api/tests/test_rag_readiness.py -q
+# cwd: services/api
+uv run pytest tests/test_grammar_retrieval_hints.py -q
+uv run pytest tests/test_rag_infra.py -q
+uv run pytest tests/test_rag_integration.py -q
+uv run pytest tests/test_rag_readiness.py -q
+```
+
+```powershell
+# cwd: 仓库根
 pnpm directus:extensions:build
 ```
 

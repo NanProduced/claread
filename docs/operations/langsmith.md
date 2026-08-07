@@ -10,8 +10,8 @@
 - 单一 project `claread-dev`（或操作者自配的同义命名），不支持"每请求切 project"。所有写 trace 的链路落在同一个 project。
 - 当前有两条 trace 来源：
   - **LangGraph callback + `@traceable`**：覆盖 Daily Reader 固定 workflow 的 LLM 调用。
-  - **PydanticAI 1.x OpenTelemetry instrumentation**：覆盖 Reader orchestration worker 和 Ask Claread agent 的模型调用，由 `LANGSMITH_OTEL_ENABLED=true` 开启；生产应开启，测试默认关闭（`tests/conftest.py`）。
-- PydanticAI agent 在未执行 `Agent.instrument_all()` 的进程里**不产生** trace，不要依赖 PydanticAI 自动产出。
+  - **PydanticAI 1.x OpenTelemetry instrumentation**：覆盖在已初始化进程中运行的 PydanticAI agent 模型调用（当前即 API 进程内的 Ask Claread agent），由 `LANGSMITH_OTEL_ENABLED=true` 开启；生产应开启，测试默认关闭（`tests/conftest.py`）。
+- PydanticAI agent 在未执行 `Agent.instrument_all()` 的进程里**不产生** trace，不要依赖 PydanticAI 自动产出。`Agent.instrument_all()` 只经 `setup_langsmith()` 注册，而 `setup_langsmith()` 只在 API 进程 bootstrap（`app/main.py`）调用一次。**standalone Reader enhancement worker（`scripts/run_reader_enhancement_worker.py`）当前不调用 `setup_langsmith()`，因此其 PydanticAI agent 调用当前不写入 LangSmith**；不能把 standalone worker 描述为必然产生 trace。Reader 侧的运行时观测以 PG `reader_runtime_spans` 为准。
 - Reader orchestration 的运行时事实源是 PostgreSQL `reader_runtime_spans`；LangSmith run 通过 `langsmith_run_id` 回填与 PG span 行关联，LangSmith 不是 runtime 状态权威。
 
 ## 环境变量
@@ -33,16 +33,17 @@ LANGSMITH_OTEL_ENABLED=true
 
 | 链路 | 入口 | span / run 名 | 备注 |
 |------|------|---------------|------|
-| Daily Reader 自动管线 | `services/daily_reader/pipeline.py` 选稿+workflow | 根 run `daily_reader`，tag `surface:daily_reader_pipeline` | LangGraph `graph.ainvoke` config 显式传入 |
-| Daily Reader LLM 子调用 | `services/daily_reader/workflow.py` | `daily_highlight_llm_call`、`daily_paragraph_notes_llm_call`、`daily_takeaways_llm_call`、`daily_review_llm_call`、`daily_refinement_llm_call` | `@traceable(run_type="llm")` |
-| Daily Reader 选稿评分 | `services/daily_reader/scoring.py` | `daily_scoring_llm_call`（orphan，无根） | `@traceable(run_type="llm")` |
-| Reader orchestration worker | enhancement worker 内 PydanticAI agent | `reader_layer_translation_agent`、`reader_layer_vocabulary_agent`、`reader_layer_grammar_bundle_agent`、`reader_layer_grammar_window_agent`、`reader_title_generation_agent`、`reader_semantic_outline_agent` 及对应 batch agent | OTEL span，需 `LANGSMITH_OTEL_ENABLED=true` |
-| Ask Claread 主 agent | `services/reader_record_ask/agent.py` | PydanticAI agent 默认 span | 同上，随 `instrument_all()` 继承 |
+| Daily Reader 自动管线 | `services/api/app/services/daily_reader/pipeline.py` 选稿+workflow | 根 run `daily_reader`，tag `surface:daily_reader_pipeline` | LangGraph `graph.ainvoke` config 显式传入 |
+| Daily Reader LLM 子调用 | `services/api/app/services/daily_reader/workflow.py` | `daily_highlight_llm_call`、`daily_paragraph_notes_llm_call`、`daily_takeaways_llm_call`、`daily_review_llm_call`、`daily_refinement_llm_call` | `@traceable(run_type="llm")` |
+| Daily Reader 选稿评分 | `services/api/app/services/daily_reader/scoring.py` | `daily_scoring_llm_call`（orphan，无根） | `@traceable(run_type="llm")` |
+| Reader orchestration agent | enhancement worker 内 PydanticAI agent | `reader_layer_translation_agent`、`reader_layer_vocabulary_agent`、`reader_layer_grammar_bundle_agent`、`reader_layer_grammar_window_agent`、`reader_title_generation_agent`、`reader_semantic_outline_agent` 及对应 batch agent | OTEL span，仅当所在进程经 `setup_langsmith()` 初始化且 `LANGSMITH_OTEL_ENABLED=true`；standalone enhancement worker 当前无此初始化路径，不产生这些 span |
+| Ask Claread 主 agent | `services/api/app/services/reader_record_ask/agent.py` | PydanticAI agent 默认 span | 随 API 进程的 `instrument_all()` 继承 |
 
 **不产生 LangSmith trace 的路径**：
 
-- learner reasoning projector（`learner_reasoning/projector.py` 显式 `instrument=False`）。
+- learner reasoning projector（`services/api/app/services/reader_record_ask/learner_reasoning/projector.py` 显式 `instrument=False`）。
 - 未开启 OTEL 的进程中的任何 PydanticAI 调用。
+- standalone Reader enhancement worker：入口脚本不调用 `setup_langsmith()`，未注册 `Agent.instrument_all()`。
 - 旧 `/analyze` 主链、旧 eval-center 子路径（`/eval/article-analysis/*`）：已物理删除，不再有对应 trace 行为。
 
 ## `surface` 标签现状

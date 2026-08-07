@@ -43,7 +43,7 @@
 | `name_or_term` | 专名及术语 | 多词专名、机构、地点、作品名或领域概念 |
 | `idiom` | 习语 | 意义不能可靠逐词还原的惯用比喻性表达 |
 
-候选不属于四者之一时模型应跳过。旧值 `collocation` / `phrasal_verb` / `proper_noun` / `compound` / `other` 已移除，schema 校验直接拒绝。
+候选不属于四者之一时模型应跳过。在当前 Reader orchestration 的 candidate / published schema 边界（`services/api/app/schemas/reader_orchestration.py`），旧值 `collocation` / `phrasal_verb` / `proper_noun` / `compound` / `other` 会被 schema 校验直接拒绝。注意该拒绝只覆盖这条边界：`services/api/app/schemas/internal/analysis.py` 与 `services/api/prompts/examples/vocabulary.yaml` 属于不同上下文的合同，仍可能保留相似历史取值，不能据此宣称全仓 schema / prompt 已统一拒绝旧值。
 
 短语有效性不由统一词数定义：旧的七词上限已从 prompt 和确定性守卫中移除，后端只保留结构安全检查（连续精确锚定、字段长度上限、来源出现唯一性、拒绝明显完整句）。
 
@@ -76,7 +76,7 @@
 
 ## 失败与校验行为
 
-- 旧值或臆造的 `phrase_type` 直接 schema 校验失败，不合成兜底类别。
+- 在 Reader orchestration candidate / published 边界，旧值或臆造的 `phrase_type` 直接 schema 校验失败，不合成兜底类别。
 - 多词 `context_gloss` 候选带诊断跳过。
 - 非法或歧义锚点继续走现有 fail-closed / skip 行为。
 - 可选 `learning_note` 缺失是正常状态，不降低条目等级。

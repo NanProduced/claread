@@ -4,7 +4,7 @@
 
 当前 Web 已形成可用产品基线，采用三段式路由边界：
 
-- 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/examples/:slug`、`/share/:shareId`
+- 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/share/:shareId`
 - 认证区：`/login`
 - 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/settings/feedback`、`/app/settings/ledger`、`/app/reader/:recordId`
 
@@ -82,7 +82,7 @@ pnpm --filter @claread/web run build
 Web 专项文档位于 `apps/web/docs/`：
 
 - `implementation-plan.md` — 当前产品边界、路由与页面 IA
-- `api-contract-audit.md` — BFF / API 契约审计
+- `api-contract-audit.md` — **HISTORICAL**：cutover 前旧 API 面审计，仅供回看
 - `reader-ia.md` — Reader 信息架构
 - `tech-stack-options.md` — 技术栈选型
 - `auth-routing.md` — 认证路由规则
