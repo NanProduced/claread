@@ -1,6 +1,6 @@
 ## 1. 研究目的
 
-> **文档分类：历史参考**。本文档是纯语言学/教学学研究参考，不是实现规范。当前 daily_reading 的实现规范以 [差异化输出执行架构设计](../workflow/v3/differentiated-output-strategy-design.md) 为准。
+> **文档分类：历史参考**。本文档是纯语言学/教学学研究参考，不是实现规范。当前 daily_reading 的实现规范以代码与 `docs/product/learning-annotation-policy.md` 为准。
 
 本文档从纯英语学习与语言学研究角度，分析 `daily_reading` 下三个 variant（`beginner_reading` / `intermediate_reading` / `intensive_reading`）在词汇、语法、翻译/阅读理解三个维度上的差异，为后续讲解策略设计提供学理依据。
 
