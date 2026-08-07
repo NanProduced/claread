@@ -91,9 +91,6 @@ PROVIDER_DURATION_STATUS_UNAVAILABLE: Final = "unavailable"
 PROVIDER_DURATION_SOURCE_ADAPTER_ENVELOPE: Final = "provider_adapter_envelope"
 PROVIDER_DURATION_SOURCE_NONE: Final = "none"
 
-# Deprecated alias kept for imports that referenced the old source label.
-PROVIDER_DURATION_SOURCE_RESPONSE_FIELD: Final = PROVIDER_DURATION_SOURCE_ADAPTER_ENVELOPE
-
 # Envelope contract (set only by provider adapters, never by workers/local
 # timers). Kind+version are required; duration field is required and must
 # coerce to non-negative ms.

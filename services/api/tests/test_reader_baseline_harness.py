@@ -7,10 +7,7 @@ baseline numbers stay comparable across refactors.
 
 from __future__ import annotations
 
-import asyncio
-import os
 from pathlib import Path
-from uuid import UUID
 
 import pytest
 
@@ -60,49 +57,6 @@ def test_load_unknown_sample_raises_file_not_found() -> None:
 
     with pytest.raises(FileNotFoundError):
         golden_samples.load_sample("definitely_not_a_real_sample")
-
-
-# ---------------------------------------------------------------------------
-# Old chain introspection (no LLM, no DB)
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_chain_introspection_is_durable() -> None:
-    from verification.reader_baseline import old_chain
-
-    contract = old_chain.introspect()
-    assert contract.chain_name == "article_analysis"
-    assert contract.capability_code == "analysis_full"
-    assert contract.render_scene_field == "render_scene_json"
-    assert "translations" in contract.known_top_level_fields
-    assert "sentence_entries" in contract.known_top_level_fields
-    assert "vocabulary" in contract.known_top_level_fields
-    assert "grammar_notes" in contract.known_top_level_fields
-
-
-def test_legacy_chain_real_llm_runs_default_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    from verification.reader_baseline import old_chain
-
-    monkeypatch.delenv(old_chain.LEGACY_REAL_LLM_ENV_FLAG, raising=False)
-    assert old_chain.is_real_llm_runs_allowed() is False
-
-    monkeypatch.setenv(old_chain.LEGACY_REAL_LLM_ENV_FLAG, "1")
-    assert old_chain.is_real_llm_runs_allowed() is True
-
-
-def test_legacy_chain_run_end_to_end_refuses_without_opt_in() -> None:
-    from verification.reader_baseline import old_chain
-
-    # Ensure the env opt-in is off for this test regardless of the
-    # surrounding shell.
-    previous = os.environ.pop(old_chain.LEGACY_REAL_LLM_ENV_FLAG, None)
-    try:
-        with pytest.raises(RuntimeError) as exc:
-            asyncio.run(old_chain.run_end_to_end(plain_text="Some text."))
-        assert old_chain.LEGACY_REAL_LLM_ENV_FLAG in str(exc.value)
-    finally:
-        if previous is not None:
-            os.environ[old_chain.LEGACY_REAL_LLM_ENV_FLAG] = previous
 
 
 # ---------------------------------------------------------------------------
@@ -325,11 +279,10 @@ def test_new_chain_metric_to_jsonable_is_serialisable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_report_includes_legacy_introspection() -> None:
-    from verification.reader_baseline import golden_samples, old_chain, report
+def test_build_report_renders_new_chain_shape() -> None:
+    from verification.reader_baseline import golden_samples, report
 
     sample = golden_samples.load_sample("short_news")
-    contract = old_chain.introspect()
     metrics_payload = {
         "executor_mode": "fake",
         "executor_note": "dev/test-only deterministic fake executors",
@@ -385,15 +338,15 @@ def test_build_report_includes_legacy_introspection() -> None:
     report_obj = report.build_report(
         sample=sample,
         new_metrics=_StubMetrics(),  # type: ignore[arg-type]
-        old_contract=contract,
-        old_outcome=None,
         notes="",
     )
     md = report_obj.to_markdown()
     assert "short_news" in md
-    assert "Legacy article_analysis chain" in md
-    assert "article_analysis" in md  # legacy chain name from contract
-    assert "Skipped" in md  # legacy chain end-to-end is opt-in only
+    assert "## New orchestration chain" in md
+    assert "executor_mode" in md
+    payload = report_obj.to_jsonable()
+    assert payload["completion_status"] == "complete"
+    assert payload["is_complete"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -745,51 +698,6 @@ def test_summarise_pool_none_keeps_usage_skipped() -> None:
     assert payload["usage"]["total_tokens"] == 0
 
 
-def test_legacy_usage_helper_handles_missing_state() -> None:
-    from verification.reader_baseline import old_chain
-
-    assert old_chain._usage_from_state({}) is None
-    assert (
-        old_chain._usage_from_state({"usage_summary": {"available": False}}) is None
-    )
-
-
-def test_legacy_usage_helper_maps_aggregate_and_per_agent() -> None:
-    from verification.reader_baseline import old_chain
-
-    state = {
-        "usage_summary": {
-            "available": True,
-            "per_agent": {
-                "translation": {
-                    "input_tokens": 10,
-                    "output_tokens": 20,
-                    "total_tokens": 30,
-                },
-                "vocabulary": {
-                    "input_tokens": 5,
-                    "output_tokens": 5,
-                    "total_tokens": 10,
-                },
-            },
-            "aggregate": {
-                "input_tokens": 15,
-                "output_tokens": 25,
-                "total_tokens": 40,
-            },
-        }
-    }
-    usage = old_chain._usage_from_state(state)
-    assert usage is not None
-    payload = usage.to_jsonable()
-    assert payload["source"] == "usage_summary"
-    assert payload["event_count"] == 2
-    assert payload["input_tokens"] == 15
-    assert payload["total_tokens"] == 40
-    assert "translation" in payload["by_capability"]
-    assert payload["by_capability"]["translation"]["total_tokens"] == 30
-
-
 # ---------------------------------------------------------------------------
 # P0-4: reading metadata
 # ---------------------------------------------------------------------------
@@ -908,11 +816,10 @@ def test_cli_rejects_public_schema_name_at_argparse() -> None:
 def test_report_to_jsonable_contains_completion_and_usage_and_metadata() -> None:
     from uuid import uuid4
 
-    from verification.reader_baseline import golden_samples, old_chain, report
-    from verification.reader_baseline.new_chain import NewChainMetrics, UsageMetrics
+    from verification.reader_baseline import golden_samples, report
+    from verification.reader_baseline.new_chain import UsageMetrics
 
     sample = golden_samples.load_sample("reuters_bbc_970")
-    contract = old_chain.introspect()
 
     class _StubMetrics:
         def to_jsonable(self) -> dict:
@@ -938,8 +845,6 @@ def test_report_to_jsonable_contains_completion_and_usage_and_metadata() -> None
     report_obj = report.build_report(
         sample=sample,
         new_metrics=_StubMetrics(),  # type: ignore[arg-type]
-        old_contract=contract,
-        old_outcome=None,
     )
     payload = report_obj.to_jsonable()
     assert payload["completion_status"] == "incomplete"
@@ -960,15 +865,13 @@ def test_build_report_uses_resolved_reading_metadata_over_sample_default() -> No
     metadata reflects what was actually used at run time, not the
     static default.
     """
-    from verification.reader_baseline import golden_samples, old_chain, report
+    from verification.reader_baseline import golden_samples, report
 
     sample = golden_samples.load_sample("reuters_bbc_970")
     # Sanity: the manifest really does set exam/ielts_toefl so the
     # override is a *change*, not a no-op.
     assert sample.reading_goal == "exam"
     assert sample.reading_variant == "ielts_toefl"
-
-    contract = old_chain.introspect()
 
     class _StubMetrics:
         def to_jsonable(self) -> dict:
@@ -991,8 +894,6 @@ def test_build_report_uses_resolved_reading_metadata_over_sample_default() -> No
     report_obj = report.build_report(
         sample=sample,
         new_metrics=_StubMetrics(),  # type: ignore[arg-type]
-        old_contract=contract,
-        old_outcome=None,
         reading_goal="academic",
         reading_variant="academic_general",
     )
@@ -1004,8 +905,6 @@ def test_build_report_uses_resolved_reading_metadata_over_sample_default() -> No
     report_default = report.build_report(
         sample=sample,
         new_metrics=_StubMetrics(),  # type: ignore[arg-type]
-        old_contract=contract,
-        old_outcome=None,
     )
     default_payload = report_default.to_jsonable()
     assert default_payload["reading_goal"] == "exam"
@@ -1018,7 +917,7 @@ def test_cli_resolve_reading_metadata_round_trip() -> None:
     """
     from types import SimpleNamespace
 
-    from verification.reader_baseline import cli_helpers, golden_samples, old_chain, report
+    from verification.reader_baseline import cli_helpers, golden_samples, report
 
     sample = golden_samples.load_sample("short_news")
     # ``short_news`` manifest sets daily_reading / intermediate_reading.
@@ -1032,8 +931,6 @@ def test_cli_resolve_reading_metadata_round_trip() -> None:
     )
     assert goal == "exam"
     assert variant == "kaoyan"
-
-    contract = old_chain.introspect()
 
     class _StubMetrics:
         def to_jsonable(self) -> dict:
@@ -1054,8 +951,6 @@ def test_cli_resolve_reading_metadata_round_trip() -> None:
     report_obj = report.build_report(
         sample=sample,
         new_metrics=_StubMetrics(),  # type: ignore[arg-type]
-        old_contract=contract,
-        old_outcome=None,
         reading_goal=goal,
         reading_variant=variant,
     )
@@ -1120,9 +1015,6 @@ def test_reuters_bbc_970_manifest_metadata_persists_in_new_chain_record() -> Non
     assert sample.reading_variant == "ielts_toefl"
 
     async def _drive() -> None:
-        # Pin the env opt-in flag *off* for this test; we do not
-        # want to call the legacy chain end-to-end.
-        previous = os.environ.pop("READER_BASELINE_REAL_LLM", None)
         await init_db(
             settings.database_url,
             pool_size=settings.database_pool_size,
@@ -1164,15 +1056,9 @@ def test_reuters_bbc_970_manifest_metadata_persists_in_new_chain_record() -> Non
                     assert metrics.record_reading_goal == "exam"
                     assert metrics.record_reading_variant == "ielts_toefl"
 
-                    contract_obj = __import__(
-                        "verification.reader_baseline.old_chain",
-                        fromlist=["introspect"],
-                    ).introspect()
                     report_obj = report.build_report(
                         sample=sample,
                         new_metrics=metrics,
-                        old_contract=contract_obj,
-                        old_outcome=None,
                         reading_goal=goal,
                         reading_variant=variant,
                     )
@@ -1189,8 +1075,6 @@ def test_reuters_bbc_970_manifest_metadata_persists_in_new_chain_record() -> Non
                 finally:
                     db_connection.DB_POOL = previous_pool
         finally:
-            if previous is not None:
-                os.environ["READER_BASELINE_REAL_LLM"] = previous
             await close_db()
 
     asyncio.run(_drive())

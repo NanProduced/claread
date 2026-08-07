@@ -22,18 +22,11 @@ Usage examples (run from the repo root):
         --allow-fake-executors --reading-goal exam \\
         --reading-variant ielts_toefl
 
-    # Also run the legacy chain end-to-end on a single sample.
-    # Requires a real LLM credential and READER_BASELINE_REAL_LLM=1.
-    READER_BASELINE_REAL_LLM=1 python services/api/scripts/compare_reader_chains.py \\
-        --samples reuters_bbc_970 --executor-mode real --also-run-legacy
-
 Exit codes:
 
 - ``0`` -- every sample completed successfully.
 - ``2`` -- at least one sample is ``incomplete`` or the new chain
   raised an exception.
-- ``3`` -- the legacy chain was requested and produced a
-  ``legacy_error``.
 
 Outputs are written under
 ``verification/reader_baseline/runs/<UTC-timestamp>/<sample_id>.{json,md}``.
@@ -68,7 +61,6 @@ from verification.reader_baseline import (  # noqa: E402
     cli_helpers,
     golden_samples,
     new_chain,
-    old_chain,
     report,
     schema_setup,
 )
@@ -77,7 +69,6 @@ from verification.reader_baseline.report import ComparisonReport  # noqa: E402
 
 EXIT_OK = 0
 EXIT_INCOMPLETE = 2
-EXIT_LEGACY_FAILED = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +76,6 @@ class CliArgs:
     samples: tuple[str, ...]
     executor_mode: str
     allow_fake_executors: bool
-    also_run_legacy: bool
     output_root: Path
     max_ticks: int
     max_jobs: int
@@ -113,9 +103,8 @@ def _parse_args() -> CliArgs:
     parser = argparse.ArgumentParser(
         description=(
             "Run the new Reader orchestration chain on the fixed "
-            "golden sample set, optionally also run the legacy "
-            "article_analysis workflow for comparison, and emit a "
-            "structured comparison report per sample."
+            "golden sample set and emit a structured observation "
+            "report per sample."
         )
     )
     parser.add_argument(
@@ -141,15 +130,6 @@ def _parse_args() -> CliArgs:
         "--allow-fake-executors",
         action="store_true",
         help="Required when --executor-mode=fake.",
-    )
-    parser.add_argument(
-        "--also-run-legacy",
-        action="store_true",
-        help=(
-            "Also run the legacy article_analysis workflow end-to-end. "
-            "Requires READER_BASELINE_REAL_LLM=1 and a configured model "
-            "profile; without it, this option is ignored."
-        ),
     )
     parser.add_argument(
         "--output-root",
@@ -212,7 +192,6 @@ def _parse_args() -> CliArgs:
         samples=samples,
         executor_mode=raw.executor_mode,
         allow_fake_executors=raw.allow_fake_executors,
-        also_run_legacy=raw.also_run_legacy,
         output_root=raw.output_root,
         max_ticks=raw.max_ticks,
         max_jobs=raw.max_jobs,
@@ -290,61 +269,15 @@ async def _run_new_chain(
     return await new_chain.summarise_async(result=result, pool=pool)
 
 
-async def _run_legacy_chain(
-    *,
-    sample: GoldenSample,
-    reading_goal: str,
-    reading_variant: str,
-) -> old_chain.LegacyChainRunOutcome | None:
-    """Run the legacy chain on a single sample, if allowed.
-
-    Returns ``None`` when the env opt-in is missing or the chain
-    fails. The caller records the failure as a note in the report.
-    """
-    if not old_chain.is_real_llm_runs_allowed():
-        return None
-    try:
-        return await old_chain.run_end_to_end(
-            plain_text=sample.plain_text,
-            reading_goal=reading_goal,  # type: ignore[arg-type]
-            reading_variant=reading_variant,  # type: ignore[arg-type]
-        )
-    except Exception as exc:  # pragma: no cover - we surface as note
-        # We deliberately catch all exceptions so the report still
-        # gets written. The exception type and message are kept in
-        # the notes field.
-        raise LegacyRunError(str(exc)) from exc
-
-
-class LegacyRunError(RuntimeError):
-    """Wraps a legacy chain failure so the CLI can report it."""
-
-
 async def _run_one_sample(
     *,
     sample: GoldenSample,
     args: CliArgs,
     user_id: UUID,
     pool: asyncpg.Pool,
-) -> tuple[ComparisonReport, str | None]:
-    """Run a single sample through both chains and return the report."""
+) -> ComparisonReport:
+    """Run a single sample through the new chain and return the report."""
     reading_goal, reading_variant = _resolve_reading_metadata(sample=sample, args=args)
-    legacy_error: str | None = None
-    legacy_outcome: old_chain.LegacyChainRunOutcome | None = None
-    if args.also_run_legacy and old_chain.is_real_llm_runs_allowed():
-        try:
-            legacy_outcome = await _run_legacy_chain(
-                sample=sample,
-                reading_goal=reading_goal,
-                reading_variant=reading_variant,
-            )
-        except LegacyRunError as exc:
-            legacy_error = f"legacy chain failed: {exc}"
-    elif args.also_run_legacy and not old_chain.is_real_llm_runs_allowed():
-        legacy_error = (
-            "legacy chain end-to-end run was requested but "
-            f"{old_chain.LEGACY_REAL_LLM_ENV_FLAG}=1 is not set"
-        )
     new_metrics = await _run_new_chain(
         sample=sample,
         args=args,
@@ -353,21 +286,12 @@ async def _run_one_sample(
         reading_variant=reading_variant,
         pool=pool,
     )
-    notes = ""
-    if legacy_error:
-        notes = legacy_error
-    contract = old_chain.introspect()
-    return (
-        report.build_report(
-            sample=sample,
-            new_metrics=new_metrics,
-            old_contract=contract,
-            old_outcome=legacy_outcome,
-            notes=notes,
-            reading_goal=reading_goal,
-            reading_variant=reading_variant,
-        ),
-        legacy_error,
+    return report.build_report(
+        sample=sample,
+        new_metrics=new_metrics,
+        notes="",
+        reading_goal=reading_goal,
+        reading_variant=reading_variant,
     )
 
 
@@ -388,15 +312,12 @@ def _classify_status(
     *,
     completion_status: str,
     error: str | None,
-    legacy_error: str | None,
 ) -> str:
-    """Map (completion, new-chain error, legacy error) -> ``status`` string."""
+    """Map (completion, new-chain error) -> ``status`` string."""
     if error is not None:
         return "failed"
     if completion_status != "complete":
         return "incomplete"
-    if legacy_error is not None:
-        return "legacy_error"
     return "ok"
 
 
@@ -405,8 +326,6 @@ def _summarise_status(summary: list[dict[str, object]]) -> int:
     statuses = {entry.get("status") for entry in summary}
     if "failed" in statuses or "incomplete" in statuses:
         return EXIT_INCOMPLETE
-    if "legacy_error" in statuses:
-        return EXIT_LEGACY_FAILED
     return EXIT_OK
 
 
@@ -435,7 +354,7 @@ async def _run_all(args: CliArgs) -> int:
                 sample = golden_samples.load_sample(sample_id)
                 error: str | None = None
                 try:
-                    report_obj, legacy_error = await _run_one_sample(
+                    report_obj = await _run_one_sample(
                         sample=sample, args=args, user_id=user_id, pool=pool
                     )
                 except Exception as exc:
@@ -444,7 +363,6 @@ async def _run_all(args: CliArgs) -> int:
                     # sample does not abort the whole run.
                     error = f"{type(exc).__name__}: {exc}"
                     report_obj = None
-                    legacy_error = None
                 if report_obj is None:
                     summary.append(
                         {
@@ -464,7 +382,6 @@ async def _run_all(args: CliArgs) -> int:
                 status = _classify_status(
                     completion_status=report_obj.completion_status,
                     error=None,
-                    legacy_error=legacy_error,
                 )
                 summary.append(
                     {
@@ -491,14 +408,11 @@ async def _run_all(args: CliArgs) -> int:
                         ),
                         "reading_goal": report_obj.reading_goal,
                         "reading_variant": report_obj.reading_variant,
-                        "legacy_outcome_present": report_obj.old_chain_outcome is not None,
-                        "legacy_error": legacy_error,
                     }
                 )
                 marker = {
                     "ok": "OK  ",
                     "incomplete": "INC ",
-                    "legacy_error": "LEG ",
                     "failed": "FAIL",
                 }.get(status, "    ")
                 print(

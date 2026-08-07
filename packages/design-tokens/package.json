@@ -8,7 +8,6 @@
   },
   "exports": {
     "./web/tokens.css": "./src/web/tokens.css",
-    "./web/fonts": "./src/web/fonts.ts",
     "./web/tailwind-preset": "./src/web/tailwind-preset.ts"
   }
 }
