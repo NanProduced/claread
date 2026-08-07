@@ -8,7 +8,7 @@ Claread 的词典能力不是“通用在线词典替代品”，而是阅读器
 
 - 点词后在当前语境下快速命中合理词条
 - 支持单词、短语、词形变化和部分片段类查询
-- 为生词本、复习和 Ask Claread 提供统一词条来源
+- 为生词本和复习提供统一词条来源
 - 在正式词典缺失时用 AI 做增强和兜底
 
 当前数据基础来自开源词典 DMX/MDX 解析后落入 PostgreSQL，因此不具备有道、柯林斯、韦氏那种原生商业词典的完整深度。现阶段重点不是“追平专业词典”，而是尽量把现有数据组织好、查询准、兜底稳。
@@ -281,7 +281,6 @@ cache key 会包含：
 - Web Reader 词典侧栏
 - 微信小程序日读页与相关词典视图
 - 微信小程序生词详情 / 学习卡
-- Ask Claread 的 dictionary tools
 - 生词本中的 `dict_entry_id` 依赖链
 
 这意味着词典服务改造不能只按 Web UI 决策，必须考虑：
@@ -370,7 +369,7 @@ cache key 会包含：
      - 或短语命中后映射到的 canonical entry
 
 4. **客户端层**
-   - Web Reader、微信小程序、Ask Claread 应共享同一套 phrase 查询语义
+   - Web Reader、微信小程序应共享同一套 phrase 查询语义
    - 点击搭配、点击 phrase gloss、手动 phrase 搜索，都应落到同一种服务能力上
    - 不能让 Web 走 phrase lookup、小程序仍把 phrase 当静态文本
 
@@ -389,8 +388,6 @@ cache key 会包含：
   - `VocabDetailView`
   - `VocabStudyCard`
   - 日读页相关词典入口
-- Ask：
-  - dictionary lookup tool 的 phrase 行为需要保持一致
 
 ##### 难度与收益判断
 
