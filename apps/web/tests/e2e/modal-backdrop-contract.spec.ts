@@ -135,21 +135,6 @@ async function mockBffRoutes(page: Page) {
     });
   });
 
-  // Credit ledger — needed by Settings usage section (showLedger=true).
-  await page.route("**/api/web/credit-ledger**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        items: [],
-        total: 0,
-        limit: 20,
-        offset: 0,
-      }),
-    });
-  });
-
   // Feedback — needed by Settings support section.
   await page.route("**/api/web/feedback**", async (route) => {
     await route.fulfill({

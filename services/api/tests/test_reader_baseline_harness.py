@@ -366,13 +366,9 @@ def test_schema_setup_dependencies_have_a_baseline_sql() -> None:
     from verification.reader_baseline import schema_setup
 
     declared = set(schema_setup.REQUIRED_MIGRATION_NAMES)
-    # The list must include the baseline + every reader orchestration
-    # migration the smoke harness loads up to 0014 inclusive, plus
-    # 0015 (grammar-window plans) and 0016 (grammar-window window spans).
-    assert "0001_initial_schema.sql" in declared
-    assert "0014_reader_runtime_spans.sql" in declared
-    assert "0015_layer_analysis_plans.sql" in declared
-    assert "0016_reader_runtime_spans_grammar_bundle_window.sql" in declared
+    # The single baseline migration replaces every per-step
+    # migration; the isolated schema loads exactly this file.
+    assert declared == {"0001_initial.sql"}
     # No accidental duplicates.
     assert len(declared) == len(schema_setup.REQUIRED_MIGRATION_NAMES)
 
@@ -785,7 +781,7 @@ def test_cli_rejects_public_schema_name_at_argparse() -> None:
 
     cmd = [
         sys.executable,
-        "services/api/scripts/compare_reader_chains.py",
+        "services/api/scripts/run_reader_baseline.py",
         "--samples",
         "short_news",
         "--executor-mode",
@@ -796,7 +792,7 @@ def test_cli_rejects_public_schema_name_at_argparse() -> None:
     ]
     result = subprocess.run(
         cmd,
-        cwd="C:/Users/nanpr/claread/claread",
+        cwd=str(API_ROOT.parent),
         capture_output=True,
         text=True,
         timeout=30,

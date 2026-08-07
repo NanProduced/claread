@@ -2,7 +2,8 @@
 
 This module turns a ``ReaderEnhancementSmokeHarness`` result (or the
 plain ``ReaderPipelineRunSummary`` and ``ReaderPlateSnapshot``) into a
-flat ``dict`` of metrics suitable for cross-chain comparison.
+flat ``dict`` of metrics suitable for baseline reporting and
+cross-run comparison.
 
 The metrics are computed from the *already-published* chain state.
 The module does not call the LLM, does not modify any database row,
@@ -81,10 +82,8 @@ class LayerItemCounts:
 class UsageMetrics:
     """Aggregated token / latency / event counts.
 
-    The same shape is reused for the new chain (``ai_usage_events``)
-    and the legacy chain (``state['usage_summary']``). All counters
-    are zero when no usage is observed; that is a meaningful
-    signal, not a missing field.
+    All counters are zero when no usage is observed; that is a
+    meaningful signal, not a missing field.
     """
 
     event_count: int = 0
@@ -120,9 +119,9 @@ async def _fetch_record_reading_metadata(
     """Read the persisted reading_goal / reading_variant for a record.
 
     Returns an empty dict when ``pool`` is ``None`` or the row is
-    not found. The new chain stores the metadata on
-    ``reading_records``; the legacy chain never writes there, so
-    the comparison report can show what *each* chain actually used.
+    not found. The chain stores the metadata on
+    ``reading_records``, so the report can show what the chain
+    actually used.
     """
     if pool is None:
         return {}

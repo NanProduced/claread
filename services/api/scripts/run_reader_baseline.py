@@ -1,23 +1,22 @@
-"""Reader chain baseline comparison CLI.
+"""Reader baseline CLI.
 
 Usage examples (run from the repo root):
 
     # List available samples.
-    python services/api/scripts/compare_reader_chains.py --samples list
+    python services/api/scripts/run_reader_baseline.py --samples list
 
-    # Run new chain on every golden sample using the dev smoke harness
-    # (deterministic fake executors). Legacy chain is introspected
-    # only; no LLM calls are made.
-    python services/api/scripts/compare_reader_chains.py \\
+    # Run the Reader orchestration chain on every golden sample using
+    # the dev smoke harness (deterministic fake executors); no LLM
+    # calls are made.
+    python services/api/scripts/run_reader_baseline.py \\
         --samples all --executor-mode fake --allow-fake-executors
 
     # Run new chain on a single sample with the real LLM profile.
-    python services/api/scripts/compare_reader_chains.py \\
+    python services/api/scripts/run_reader_baseline.py \\
         --samples short_news --executor-mode real
 
-    # Override the reading metadata for one run (new + old chain
-    # receive the same value).
-    python services/api/scripts/compare_reader_chains.py \\
+    # Override the reading metadata for one run.
+    python services/api/scripts/run_reader_baseline.py \\
         --samples reuters_bbc_970 --executor-mode fake \\
         --allow-fake-executors --reading-goal exam \\
         --reading-variant ielts_toefl
@@ -166,8 +165,7 @@ def _parse_args() -> CliArgs:
         default=None,
         help=(
             "Override the ``reading_goal`` resolved from the sample "
-            "manifest. The new and legacy chains both receive the "
-            "same value."
+            "manifest. The chain receives the same value."
         ),
     )
     parser.add_argument(
@@ -175,7 +173,7 @@ def _parse_args() -> CliArgs:
         default=None,
         help=(
             "Override the ``reading_variant`` resolved from the "
-            "sample manifest. Both chains receive the same value."
+            "sample manifest. The chain receives the same value."
         ),
     )
     raw = parser.parse_args()
@@ -207,7 +205,7 @@ def _resolve_reading_metadata(
     sample: GoldenSample,
     args: CliArgs,
 ) -> tuple[str, str]:
-    """Pick the (reading_goal, reading_variant) the two chains share.
+    """Pick the (reading_goal, reading_variant) the chain runs with.
 
     Implementation lives in :mod:`verification.reader_baseline.cli_helpers`
     so the test suite can call it without loading this script via
@@ -244,7 +242,7 @@ async def _run_new_chain(
     The ``reading_goal`` / ``reading_variant`` resolved by
     :func:`cli_helpers.resolve_reading_metadata` are forwarded to
     the smoke harness so the persisted record reflects the same
-    metadata the report and the legacy chain see.
+    metadata the report shows.
     """
     from app.services.reader_orchestration.smoke_harness import (
         ReaderEnhancementSmokeHarness,

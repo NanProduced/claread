@@ -12,7 +12,7 @@ Layout:
   ``verification/golden_samples``.
 - ``new_chain`` -- extractors for new orchestration metrics
   (``ReaderPipelineRunSummary`` and ``ReaderPlateSnapshot``).
-- ``report`` -- render a structured JSON / Markdown comparison
+- ``report`` -- render a structured JSON / Markdown observation
   record.
 
 The package is intentionally import-safe: importing it does not

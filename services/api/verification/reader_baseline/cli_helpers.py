@@ -32,13 +32,12 @@ def resolve_reading_metadata(
     sample: GoldenSample,
     overrides: ReadingMetadataOverrides,
 ) -> tuple[str, str]:
-    """Pick the (reading_goal, reading_variant) the two chains share.
+    """Pick the (reading_goal, reading_variant) the chain runs with.
 
     ``overrides`` wins over the per-sample manifest, which wins over
     the chain default ``("daily_reading", "intermediate_reading")``.
-    Both chains are then called with the same pair, so the baseline
-    report does not blur a goal/variant difference into a chain
-    difference.
+    The chain then runs with the resolved pair, so the baseline
+    report reflects the metadata the run actually used.
     """
     goal = overrides.reading_goal or sample.reading_goal
     variant = overrides.reading_variant or sample.reading_variant

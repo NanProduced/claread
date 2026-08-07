@@ -2,8 +2,8 @@
 
 The corpus is read-only fixture data. It is *not* a database record
 and is not associated with any user. It exists so the baseline
-harness can run the same articles through both the new orchestration
-chain and the legacy article_analysis workflow.
+harness can run the same articles through the Reader orchestration
+chain.
 """
 
 from __future__ import annotations
