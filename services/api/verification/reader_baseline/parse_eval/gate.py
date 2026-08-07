@@ -62,7 +62,6 @@ from .constants import (
     FORBIDDEN_KEY_MARKERS,
     PRODUCER_SEMANTIC_VERSION,
     PRODUCER_VERSION,
-    SHA256_LOWERCASE_HEX_RE,
     ZERO_FNV1A32,
     ZERO_SHA256,
 )
@@ -78,7 +77,6 @@ from .schema import (
     AnchorMap,
     ArtifactProvenance,
     ArtifactRunnerProvenance,
-    LegacyBaselineFreeze,
     ParseEvalArtifactV1,
     PublishedLayerFact,
     PublishedLayerSummary,
@@ -1043,68 +1041,6 @@ def _check_prompt_revision_provenance(
 def _check_forbidden_markers(artifact: ParseEvalArtifactV1) -> list[GateFinding]:
     """Key-only forbidden marker scan (R1)."""
     return _scan_forbidden_markers_keys_only(artifact)
-
-
-def _check_legacy_baseline(artifact: ParseEvalArtifactV1) -> list[GateFinding]:
-    findings: list[GateFinding] = []
-    freeze: LegacyBaselineFreeze = artifact.legacy_baseline
-    if freeze.status == "frozen":
-        if (
-            freeze.input_canonical_text_sha256
-            != artifact.document.canonical_text_sha256
-        ):
-            findings.append(
-                GateFinding(
-                    check="legacy_baseline.input_hash_mismatch",
-                    severity="error",
-                    detail=(
-                        "frozen baseline input_canonical_text_sha256 "
-                        "does not match document.canonical_text_sha256"
-                    ),
-                )
-            )
-        if not freeze.content_hash or not SHA256_LOWERCASE_HEX_RE.match(
-            freeze.content_hash
-        ):
-            findings.append(
-                GateFinding(
-                    check="legacy_baseline.content_hash_invalid",
-                    severity="error",
-                    detail="frozen baseline content_hash is invalid",
-                )
-            )
-        if not freeze.source_location or not freeze.source_location.strip():
-            findings.append(
-                GateFinding(
-                    check="legacy_baseline.source_location_missing",
-                    severity="error",
-                    detail="frozen baseline source_location is empty",
-                )
-            )
-        if not freeze.provenance or not freeze.provenance.strip():
-            findings.append(
-                GateFinding(
-                    check="legacy_baseline.provenance_missing",
-                    severity="error",
-                    detail="frozen baseline provenance is empty",
-                )
-            )
-    elif freeze.status == "unavailable":
-        if (
-            not freeze.unavailable_reason
-            or not freeze.unavailable_reason.strip()
-        ):
-            findings.append(
-                GateFinding(
-                    check="legacy_baseline.unavailable_reason_missing",
-                    severity="error",
-                    detail=(
-                        "unavailable baseline requires non-empty "
-                        "unavailable_reason"
-                    ),
-                )
-            )
-    return findings
 
 
 def _check_artifact_provenance(

@@ -119,7 +119,6 @@ CanonicalizerVersionLiteral = Literal[
 ]
 ExecutorModeLiteral = Literal["fake", "real"]
 CompletionStatusLiteral = Literal["complete", "incomplete"]
-LegacyBaselineStatusLiteral = Literal["frozen", "unavailable"]
 ArtifactSourceKindLiteral = Literal[
     "golden_sample",
     "reader_record",
@@ -715,122 +714,6 @@ class ArtifactProvenance(BaseModel):
     produced_at_iso_utc: StrictStr | None = None
     forbidden_fields_present: Literal[False] = False
     artifact_id_semantic_inputs: ArtifactIdSemanticInputs
-
-
-# ---------------------------------------------------------------------------
-# Legacy baseline freeze
-# ---------------------------------------------------------------------------
-
-
-class LegacyBaselineFreeze(BaseModel):
-    """Frozen legacy-chain baseline reference.
-
-    Per the task spec, we MAY freeze 1-2 already-existing legacy
-    outputs. If no qualifying existing output is found, the status
-    MUST be ``unavailable`` with a structured reason — never a fake
-    or new-chain output masquerading as legacy.
-
-    When ``status == "frozen"``:
-      - ``input_canonical_text_sha256`` MUST equal the artifact's
-        ``document.canonical_text_sha256`` (the gate checks this).
-      - ``content_hash`` is a SHA-256 over a normalised summary of
-        the legacy output (frozen output keys + per-key counts).
-      - ``source_location`` is a stable file path or origin marker.
-
-    When ``status == "unavailable"``:
-      - ``capability_code``, ``chain_name``, ``input_canonical_text_sha256``,
-        ``content_hash``, ``source_location``, ``provenance`` are None.
-      - ``frozen_output_keys`` and ``layer_counts`` are empty.
-      - ``unavailable_reason`` MUST be a non-empty structured reason.
-
-    Note: the field is named ``frozen_output_keys`` (not
-    ``render_scene_keys``) so the forbidden-marker gate scan does not
-    false-positive on the field name itself.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: LegacyBaselineStatusLiteral
-    capability_code: StrictStr | None = None
-    chain_name: StrictStr | None = None
-    input_canonical_text_sha256: StrictStr | None = None
-    frozen_output_keys: list[StrictStr] = Field(default_factory=list)
-    layer_counts: dict[StrictStr, StrictInt] = Field(default_factory=dict)
-    content_hash: StrictStr | None = None
-    source_location: StrictStr | None = None
-    provenance: StrictStr | None = None
-    visible_limitations: list[StrictStr] = Field(default_factory=list)
-    unavailable_reason: StrictStr | None = None
-
-    @field_validator("content_hash")
-    @classmethod
-    def _validate_content_hash(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        if not SHA256_LOWERCASE_HEX_RE.match(v):
-            raise ValueError(
-                "content_hash must be 64 lowercase hex chars or null"
-            )
-        return v
-
-    @field_validator("input_canonical_text_sha256")
-    @classmethod
-    def _validate_input_sha(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        if not SHA256_LOWERCASE_HEX_RE.match(v):
-            raise ValueError(
-                "input_canonical_text_sha256 must be 64 lowercase hex chars or null"
-            )
-        return v
-
-    @model_validator(mode="after")
-    def _validate_status_consistency(self) -> LegacyBaselineFreeze:
-        if self.status == "unavailable":
-            if not self.unavailable_reason or not self.unavailable_reason.strip():
-                raise ValueError(
-                    "legacy baseline unavailable requires non-empty unavailable_reason"
-                )
-            forbidden_when_unavailable = (
-                "capability_code",
-                "chain_name",
-                "input_canonical_text_sha256",
-                "content_hash",
-                "source_location",
-                "provenance",
-            )
-            for field_name in forbidden_when_unavailable:
-                if getattr(self, field_name) is not None:
-                    raise ValueError(
-                        f"legacy baseline unavailable must not carry {field_name!r}"
-                    )
-            if self.frozen_output_keys:
-                raise ValueError(
-                    "legacy baseline unavailable must not carry frozen_output_keys"
-                )
-            if self.layer_counts:
-                raise ValueError(
-                    "legacy baseline unavailable must not carry layer_counts"
-                )
-        elif self.status == "frozen":
-            required_when_frozen = (
-                "capability_code",
-                "chain_name",
-                "input_canonical_text_sha256",
-                "content_hash",
-                "source_location",
-                "provenance",
-            )
-            for field_name in required_when_frozen:
-                if getattr(self, field_name) is None:
-                    raise ValueError(
-                        f"legacy baseline frozen requires {field_name!r}"
-                    )
-            if self.unavailable_reason is not None:
-                raise ValueError(
-                    "legacy baseline frozen must not carry unavailable_reason"
-                )
-        return self
 
 
 # ---------------------------------------------------------------------------

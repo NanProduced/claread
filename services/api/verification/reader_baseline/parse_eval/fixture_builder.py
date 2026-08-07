@@ -57,7 +57,6 @@ from .schema import (
     ArtifactSourceProvenance,
     CanonicalizerVersionLiteral,
     DocumentIdentity,
-    LegacyBaselineFreeze,
     NavigationUnitFact,
     ParseEvalArtifactV1,
     PublishedLayerSummary,
@@ -234,46 +233,6 @@ def build_hermetic_anchor_map(canonical_text: str) -> AnchorMap:
     return AnchorMap(
         navigation_units=navigation_units,
         anchor_segments=anchor_segments,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Fixture-grade legacy baseline (unavailable)
-# ---------------------------------------------------------------------------
-
-
-def build_legacy_baseline_unavailable(sample_id: str) -> LegacyBaselineFreeze:
-    """Build the structured ``unavailable`` legacy baseline freeze.
-
-    Per the task spec: the legacy chain requires
-    ``READER_BASELINE_REAL_LLM=1`` and a configured model profile to
-    actually run. Task 5A is offline-only and never calls the real
-    LLM. No qualifying already-existing frozen output is currently
-    checked into the repository, so the V1 freeze status is
-    ``unavailable`` with a structured reason.
-
-    Task 5B (or a follow-up) may wire a real frozen baseline by
-    recording an already-produced render_scene JSON under
-    ``verification/reader_baseline/legacy_frozen/`` and pointing
-    ``source_location`` at it.
-    """
-    return LegacyBaselineFreeze(
-        status="unavailable",
-        unavailable_reason=(
-            f"no qualifying already-existing legacy scene-render output "
-            f"is checked into the repository for sample {sample_id!r}; "
-            f"Task 5A is offline-only and refuses to call the real LLM "
-            f"(env flag READER_BASELINE_REAL_LLM=1 not set, and the "
-            f"legacy chain has no deterministic fake executor). Use "
-            f"Task 5B to record a real frozen baseline after a "
-            f"reviewer-approved real-LLM run."
-        ),
-        visible_limitations=[
-            "legacy chain always calls a real LLM (no deterministic fake executor)",
-            "legacy chain writes a scene-render payload, not enhancement_layers / reader_events",
-            "legacy chain does not persist reading_records.reading_goal / reading_variant",
-            "real-LLM runs require READER_BASELINE_REAL_LLM=1 and a configured model profile",
-        ],
     )
 
 
