@@ -61,7 +61,6 @@
     "react-dom": "^19.2.0",
     "remark-gfm": "^4.0.1",
     "server-only": "^0.0.1",
-    "shiki": "^4.0.2",
     "sonner": "^2.0.7",
     "streamdown": "^2.5.0",
     "tailwind-merge": "^3.0.0",
@@ -69,7 +68,6 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.0.0",
     "@ladle/react": "^5.1.1",
     "@playwright/test": "^1.50.0",
     "@tailwindcss/postcss": "^4.0.0",

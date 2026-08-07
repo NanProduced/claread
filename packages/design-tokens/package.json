@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "next": "^16.2.2"
-  },
   "exports": {
     "./web/tokens.css": "./src/web/tokens.css",
     "./web/tailwind-preset": "./src/web/tailwind-preset.ts"
