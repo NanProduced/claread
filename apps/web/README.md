@@ -56,9 +56,9 @@ $env:CLAREAD_WEB_DEBUG_SESSION_TOKEN="<dev session token>"
 
 本地手机号登录默认使用 mock provider，验证码固定为 `888888`。如需让 Web 走 FastAPI 手机号登录，将 `CLAREAD_PHONE_AUTH_PROVIDER` 设置为 `fastapi`（或兼容值 `aliyun_dypnsapi`），并在 `services/api/.env` 中启用 `PHONE_AUTH_PROVIDER="aliyun_dypnsapi"`。阿里云云通信号码认证服务 Dypnsapi 的模板、签名、AK/SK 都只配置在 FastAPI 侧，Web BFF 只负责 httpOnly cookie 与 session 投影。
 
-未设置调试 session、上游不可用或记录缺少完整 `render_scene_json` 时，功能页显示明确错误态或空态，不再在产品路径回落到 mock demo。
+未设置调试 session 或上游不可用时，功能页显示明确错误态或空态，不再在产品路径回落到 mock demo。
 
-`/app/read` 的真实解析提交已通过 BFF 接入：浏览器提交到 `/api/web/analysis/submit`，Next.js BFF 携带 Web session 调 FastAPI `/analysis-tasks`；同步等待超时时，浏览器继续轮询 `/api/web/analysis/tasks/[taskId]`，任务成功后跳转到 `/app/reader/[cloudRecordId]`。
+`/app/read` 的真实解析提交已通过 BFF 接入：浏览器提交到 `/api/web/reader/records/input`，Next.js BFF 携带 Web session 调 FastAPI `POST /reader/records/input`；浏览器随后轮询 `/api/web/reader/records/[recordId]/events` 与快照端点，记录可用后进入 `/app/reader/[recordId]`。文件上传链路走 `/api/web/reader/source-artifacts/*`。
 
 验证：
 

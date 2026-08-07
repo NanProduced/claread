@@ -137,7 +137,7 @@ pnpm directus:extensions:watch
 Directus overlay 读取：
 
 - `infra/docker/.env`
-- `apps/directus/.env.example`
+- `apps/directus/.env`（本地文件，不提交；仓库只提供 `apps/directus/.env.example` 占位）
 
 本地默认管理员：
 
@@ -256,7 +256,6 @@ dev/staging/prod 由构建环境注入。
 
 | 场景 | 校验层次 | 说明 |
 |------|---------|------|
-| `list_model_profile_summaries` | resolve-only | eval/ops 静态目录，不承诺可 build |
 | `validate_model_selection(buildable=False)` | resolve-only | 默认只校验链路完整性 |
 | `validate_model_selection(buildable=True)` | buildable | 显式要求主 profile 与声明的 fallback profiles 都可 build |
 | Ask model option catalog (`_validate_catalog`) | buildable | 每个 enabled option 必须可 build |
@@ -276,8 +275,10 @@ uv run pytest tests/test_health.py -q
 
 ```powershell
 cd services/api
-uv run pytest tests/test_analyze_workflow.py tests/test_academic_workflow.py tests/test_task_center.py tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
+uv run pytest tests/test_quota_credits.py tests/test_user_assets.py tests/test_vocabulary_review.py -q
 ```
+
+Reader orchestration 与 Ask 的完整验证入口见 `docs/operations/testing.md`。
 
 小程序和 Web 的构建/类型检查优先使用根目录脚本，见上方 `pnpm workspace`。
 
@@ -285,5 +286,5 @@ Directus scaffold 验证入口：
 
 ```powershell
 pnpm directus:extensions:build
-docker compose --env-file infra/docker/.env --env-file apps/directus/.env.example -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml config
+docker compose --env-file infra/docker/.env --env-file apps/directus/.env -f infra/docker/docker-compose.local.yml -f infra/docker/docker-compose.directus.yml config
 ```

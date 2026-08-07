@@ -8,7 +8,7 @@
 |------|------|------|
 | 全局产品气质 | `docs/product/design-context.md` | Claread 的阅读体验、语气、视觉方向和反模式 |
 | 全局设计规则 | `docs/design/` | 跨端可复用的排版、信息密度、状态、动效原则 |
-| 小程序专属 | `apps/miniprogram/docs/` | 微信小程序 / Taro 约束、当前冻结 UI、包体和平台能力 |
+| 小程序专属 | `apps/miniprogram/`（README + AGENTS） | 微信小程序 / Taro 约束、包体和平台能力 |
 | Web 专属 | `apps/web/docs/` | Web 端布局、交互、浏览器测试、桌面和移动 Web 体验 |
 
 ## 迁移规则
