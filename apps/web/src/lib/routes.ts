@@ -10,7 +10,6 @@ export const shareDemoRoute = "/share/demo" as Route;
 export const loginPath = "/login";
 export const loginRouteBase = "/login" as Route;
 
-export const appHomeRoute = "/app" as Route;
 export const appReadRoute = "/app/read" as Route;
 export const appLibraryRoute = "/app/library" as Route;
 export const appVocabularyRoute = "/app/vocabulary" as Route;

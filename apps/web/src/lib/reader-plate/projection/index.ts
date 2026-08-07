@@ -23,7 +23,6 @@ export {
   type ReaderRecordPlateTextAnchor,
   type ReaderRecordPlateTextLeaf,
   type ReaderRecordPlateTranslationTextLeaf,
-  type ReaderRecordPlateCalloutTextLeaf,
   type ReaderRecordPlateUserHighlightMark,
   type ReaderRecordPlateUserNoteMark,
   type ReaderRecordPlateVocabularyMark,

@@ -373,14 +373,6 @@ export interface ReaderRecordPlateHrBlock {
   data: ReaderRecordPlateStableBlockData;
 }
 
-/**
- * @deprecated 使用 `Descendant[]` 替代。保留为兼容别名。
- * Callout children 现在是标准 Plate 节点树，由 deserializeMarkdownToBlocks 生成。
- */
-export interface ReaderRecordPlateCalloutTextLeaf {
-  text: string;
-}
-
 export interface ReaderRecordPlateProgress {
   overallStatus: ReaderEnhancementProgressOverallStatus | "unknown";
   layers: ReaderRecordPlateProgressLayer[];

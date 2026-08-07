@@ -23,7 +23,6 @@ const NEUTRALIZED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/app/(public)/daily/page.tsx", label: "Daily index" },
   { rel: "src/app/(public)/daily/[articleId]/page.tsx", label: "Daily article" },
   { rel: "src/app/(private)/app/settings/FeedbackForm.tsx", label: "Settings FeedbackForm" },
-  { rel: "src/app/(private)/app/settings/CreditLedgerPanel.tsx", label: "Settings CreditLedgerPanel" },
   { rel: "src/app/(private)/app/settings/MyFeedbackList.tsx", label: "Settings MyFeedbackList" },
   { rel: "src/app/(private)/app/settings/NicknameEditor.tsx", label: "Settings NicknameEditor" },
   { rel: "src/app/(private)/app/settings/page.tsx", label: "Settings page" },

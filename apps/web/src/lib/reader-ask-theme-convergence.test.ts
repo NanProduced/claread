@@ -23,8 +23,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/components/reader/settings/ReaderSettingsPanel.tsx", label: "ReaderSettingsPanel" },
   // Reader component layer
   { rel: "src/components/reader/FavoriteButton.tsx", label: "FavoriteButton (component)" },
-  { rel: "src/components/reader/ReaderGlobalFeedbackPrompt.tsx", label: "ReaderGlobalFeedbackPrompt" },
-  { rel: "src/components/reader/ReaderContextPanel.tsx", label: "ReaderContextPanel" },
   { rel: "src/components/reader/AnnotationGutter.tsx", label: "AnnotationGutter" },
   { rel: "src/components/reader/interaction.ts", label: "interaction" },
   // Reader plate layer
@@ -37,7 +35,6 @@ const CONVERGED_FILES: ReadonlyArray<{ rel: string; label: string }> = [
   { rel: "src/components/reader/dictionary/ReaderDictionaryRecentStrip.tsx", label: "ReaderDictionaryRecentStrip" },
   // Reader ask-chat
   { rel: "src/components/reader/ask-chat/ConversationShell.tsx", label: "ConversationShell" },
-  { rel: "src/components/reader/ask-chat/ArticleRagCitationList.tsx", label: "ArticleRagCitationList" },
   // Reader / Ask page layer
   { rel: "src/app/(private)/app/reader/[recordId]/FavoriteButton.tsx", label: "FavoriteButton (page)" },
   { rel: "src/app/(private)/app/read/page.tsx", label: "read page" },
@@ -297,7 +294,6 @@ describe("reader theme localStorage contract", () => {
     const filesToCheck = [
       "src/components/reader/settings/ReaderSettingsPanel.tsx",
       "src/components/reader/settings/shared.ts",
-      "src/components/reader/ReaderContextPanel.tsx",
       "src/app/(private)/app/read/page.tsx",
     ];
     for (const file of filesToCheck) {

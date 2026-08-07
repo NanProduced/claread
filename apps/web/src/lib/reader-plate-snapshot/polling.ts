@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   classifyReaderEvent,
-  RELIABLE_RELOAD_EVENT_TYPES,
   type ReaderEventClassification,
   type SnapshotFenceContext,
 } from "@/lib/reader-plate-snapshot/representation-event-classifier";
@@ -54,17 +53,6 @@ export type PollingDecision =
   | { kind: "reload"; reason: string; reloadContext: ReloadContext }
   | { kind: "advance"; cursor: number; hasMore: boolean }
   | { kind: "caught_up"; cursor: number };
-
-/**
- * Event types that unconditionally force a snapshot reload, regardless of
- * payload. Re-exported from the payload-aware classifier so existing imports
- * keep working; the classifier is the single source of truth.
- *
- * @deprecated Import {@link RELIABLE_RELOAD_EVENT_TYPES} from
- *   `representation-event-classifier` directly. This alias is kept only for
- *   backward compatibility during the O4-R2-D rollout.
- */
-export const RELOAD_TRIGGER_EVENT_TYPES = RELIABLE_RELOAD_EVENT_TYPES;
 
 /**
  * Pure decision function: given the cursor sent and the poll response,

@@ -6246,7 +6246,6 @@ describe("ReaderRecordPlateSurface", () => {
     );
     const userHighlightSources = [
       "src/components/reader/SelectionToolbar.tsx",
-      "src/components/reader/ReaderContextPanel.tsx",
       "src/components/editor/plugins/reader-leaf-kit.tsx",
       "src/components/reader/plate/ReaderMarkLeaf.tsx",
       "src/app/globals.css",

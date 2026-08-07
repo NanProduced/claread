@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   decidePollingAction,
-  RELOAD_TRIGGER_EVENT_TYPES,
   useReaderPlatePolling,
 } from "@/lib/reader-plate-snapshot/polling";
+import { RELIABLE_RELOAD_EVENT_TYPES } from "@/lib/reader-plate-snapshot/representation-event-classifier";
 import type {
   ReaderEventPollResponseDto,
   ReaderEventResponseDto,
@@ -244,11 +244,11 @@ describe("decidePollingAction", () => {
     expect(decision).toMatchObject({ kind: "reload", reason: "counter mismatch" });
   });
 
-  it("RELOAD_TRIGGER_EVENT_TYPES contains reload-worthy reader events", () => {
-    expect(RELOAD_TRIGGER_EVENT_TYPES.has("layer_published")).toBe(true);
-    expect(RELOAD_TRIGGER_EVENT_TYPES.has("record_product_state_updated")).toBe(true);
-    expect(RELOAD_TRIGGER_EVENT_TYPES.has("projection_reset_required")).toBe(true);
-    expect(RELOAD_TRIGGER_EVENT_TYPES.has("article_ready")).toBe(false);
+  it("RELIABLE_RELOAD_EVENT_TYPES contains reload-worthy reader events", () => {
+    expect(RELIABLE_RELOAD_EVENT_TYPES.has("layer_published")).toBe(true);
+    expect(RELIABLE_RELOAD_EVENT_TYPES.has("record_product_state_updated")).toBe(true);
+    expect(RELIABLE_RELOAD_EVENT_TYPES.has("projection_reset_required")).toBe(true);
+    expect(RELIABLE_RELOAD_EVENT_TYPES.has("article_ready")).toBe(false);
   });
 });
 
@@ -598,30 +598,30 @@ describe("reader event reload audit", () => {
       // Each event type must be either an unconditional reload trigger or
       // a non-trigger (payload-dependent or cursor-only) — no event type
       // should be unclassified.
-      const isTrigger = RELOAD_TRIGGER_EVENT_TYPES.has(eventType);
+      const isTrigger = RELIABLE_RELOAD_EVENT_TYPES.has(eventType);
       const expectedTrigger = triggers.has(eventType);
       expect(isTrigger).toBe(expectedTrigger);
     }
   });
 
   it("exactly 3 unconditional reload-trigger event types force a full snapshot reload", () => {
-    expect(RELOAD_TRIGGER_EVENT_TYPES.size).toBe(3);
+    expect(RELIABLE_RELOAD_EVENT_TYPES.size).toBe(3);
     for (const eventType of EXPECTED_RELOAD_TRIGGERS) {
-      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(true);
+      expect(RELIABLE_RELOAD_EVENT_TYPES.has(eventType)).toBe(true);
     }
   });
 
   it("2 payload-dependent types are NOT in the unconditional reload set", () => {
     expect(PAYLOAD_DEPENDENT_TYPES).toHaveLength(2);
     for (const eventType of PAYLOAD_DEPENDENT_TYPES) {
-      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(false);
+      expect(RELIABLE_RELOAD_EVENT_TYPES.has(eventType)).toBe(false);
     }
   });
 
   it("6 always-cursor-only types are NOT in the unconditional reload set", () => {
     expect(ALWAYS_CURSOR_ONLY_TYPES).toHaveLength(6);
     for (const eventType of ALWAYS_CURSOR_ONLY_TYPES) {
-      expect(RELOAD_TRIGGER_EVENT_TYPES.has(eventType)).toBe(false);
+      expect(RELIABLE_RELOAD_EVENT_TYPES.has(eventType)).toBe(false);
     }
   });
 
