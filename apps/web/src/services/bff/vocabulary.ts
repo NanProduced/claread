@@ -6,6 +6,7 @@ import { getWebSession, projectSession, type WebSession } from "@/services/bff/s
 import type {
   ReaderVocabularyLookupMatchDto,
   VocabularyCreateRequestDto,
+  VocabularyMasteryStatusDto,
   VocabularyResponseDto,
   VocabularySourceRefDto,
   VocabularyUpsertResponseDto,
@@ -597,7 +598,7 @@ export async function getVocabularyLookupMatch(
 
 export async function updateVocabularyFromWeb(
   vocabId: string,
-  body: { mastery_status?: string },
+  body: { mastery_status?: VocabularyMasteryStatusDto },
 ): Promise<{ ok: true; item: VocabularyItemVm } | { ok: false; status: number; code: string; message: string }> {
   const session = await getWebSession();
 

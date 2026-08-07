@@ -13,13 +13,13 @@ All DB interactions are mocked.
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.main import app
 from app.services.user_assets.vocabulary import (
@@ -102,7 +102,8 @@ class TestEnsureReviewPayload:
 
     def test_existing_review_preserved(self):
         payload = {"review": {"stage": 3, "next_review_at": "2026-05-20T00:00:00+00:00",
-                              "last_result": "known", "last_reviewed_at": "2026-05-10T00:00:00+00:00"}}
+                              "last_result": "known",
+                              "last_reviewed_at": "2026-05-10T00:00:00+00:00"}}
         assert _ensure_review_payload(payload)["review"]["stage"] == 3
 
     def test_other_fields_preserved(self):
@@ -184,7 +185,11 @@ class TestSubmitReviewRoute:
                    "last_result": "known", "last_reviewed_at": datetime.now(UTC).isoformat()}})}
         self._setup_review_mocks(mock_pool, row, updated)
 
-        resp = client.post(f"/vocabulary/{vid}/review", json={"result": "known"}, headers=AUTH_HEADERS)
+        resp = client.post(
+            f"/vocabulary/{vid}/review",
+            json={"result": "known"},
+            headers=AUTH_HEADERS,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["stage"] == 1
@@ -199,10 +204,15 @@ class TestSubmitReviewRoute:
         updated = {**row, "review_count": 6, "mastery_status": "learning",
                    "payload_json": json.dumps({"review": {"stage": 0,
                    "next_review_at": _compute_next_review_at(0),
-                   "last_result": "unfamiliar", "last_reviewed_at": datetime.now(UTC).isoformat()}})}
+                   "last_result": "unfamiliar",
+                   "last_reviewed_at": datetime.now(UTC).isoformat()}})}
         self._setup_review_mocks(mock_pool, row, updated)
 
-        resp = client.post(f"/vocabulary/{vid}/review", json={"result": "unfamiliar"}, headers=AUTH_HEADERS)
+        resp = client.post(
+            f"/vocabulary/{vid}/review",
+            json={"result": "unfamiliar"},
+            headers=AUTH_HEADERS,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["stage"] == 0
@@ -219,7 +229,11 @@ class TestSubmitReviewRoute:
                    "last_reviewed_at": datetime.now(UTC).isoformat()}})}
         self._setup_review_mocks(mock_pool, row, updated)
 
-        resp = client.post(f"/vocabulary/{vid}/review", json={"result": "known"}, headers=AUTH_HEADERS)
+        resp = client.post(
+            f"/vocabulary/{vid}/review",
+            json={"result": "known"},
+            headers=AUTH_HEADERS,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["stage"] == 5
@@ -234,12 +248,16 @@ class TestSubmitReviewRoute:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        resp = client.post(f"/vocabulary/{uuid4()}/review", json={"result": "known"}, headers=AUTH_HEADERS)
+        resp = client.post(
+            f"/vocabulary/{uuid4()}/review",
+            json={"result": "known"},
+            headers=AUTH_HEADERS,
+        )
         assert resp.status_code == 404
 
     def test_invalid_result_rejected(self):
         from app.schemas.user_assets.vocabulary import ReviewSubmitRequest
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ReviewSubmitRequest(result="invalid_value")
 
 
@@ -275,3 +293,58 @@ class TestVocabularyCreateInitializesReview:
         assert isinstance(payload, dict)
         assert payload["review"]["stage"] == 0
         assert payload["review"]["next_review_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Route: PATCH /vocabulary/{vocab_id} mastery_status write boundary
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateMasteryStatusBoundary:
+    """mastery_status 值域以 DB CHECK vocabulary_book_mastery_status_check 为唯一权威。
+
+    非法值必须在 FastAPI 请求边界以 422 拒绝，且不得进入更新 service。
+    """
+
+    VALID_STATUSES = ("new", "learning", "review", "mastered", "archived")
+
+    @pytest.mark.parametrize("status", VALID_STATUSES)
+    @_mock_auth()
+    @patch(
+        "app.services.user_assets.vocabulary.update_vocabulary",
+        new_callable=AsyncMock,
+    )
+    def test_accepts_every_db_check_value(self, mock_update, _mock_session, status):
+        vid = uuid4()
+        mock_update.return_value = _make_vocab_row(vid, mastery_status=status)
+
+        resp = client.patch(
+            f"/vocabulary/{vid}",
+            json={"mastery_status": status},
+            headers=AUTH_HEADERS,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["mastery_status"] == status
+        mock_update.assert_awaited_once()
+        assert mock_update.call_args.kwargs["mastery_status"] == status
+
+    @pytest.mark.parametrize(
+        "status", ["reviewing", "unknown_status", "MASTERED", ""]
+    )
+    @_mock_auth()
+    @patch(
+        "app.services.user_assets.vocabulary.update_vocabulary",
+        new_callable=AsyncMock,
+    )
+    def test_rejects_value_outside_db_check_before_service(
+        self, mock_update, _mock_session, status
+    ):
+        resp = client.patch(
+            f"/vocabulary/{uuid4()}",
+            json={"mastery_status": status},
+            headers=AUTH_HEADERS,
+        )
+
+        assert resp.status_code == 422
+        mock_update.assert_not_awaited()

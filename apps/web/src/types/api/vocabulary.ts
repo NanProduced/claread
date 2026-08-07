@@ -1,4 +1,5 @@
-export type VocabularyMasteryStatusDto = "new" | "learning" | "reviewing" | "mastered" | string;
+// 值域以 PostgreSQL CHECK vocabulary_book_mastery_status_check 为唯一权威。
+export type VocabularyMasteryStatusDto = "new" | "learning" | "review" | "mastered" | "archived";
 
 export interface VocabularySourceRefDto {
   reading_record_id?: string | null;

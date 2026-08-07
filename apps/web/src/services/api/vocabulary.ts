@@ -4,6 +4,7 @@ import { fastApiFetch, type UpstreamResult } from "@/services/api/upstream";
 import type {
   VocabularyCreateRequestDto,
   VocabularyListResponseDto,
+  VocabularyMasteryStatusDto,
   VocabularyResponseDto,
   VocabularyUpsertResponseDto,
 } from "@/types/api/vocabulary";
@@ -59,7 +60,11 @@ export function createVocabulary(
 export function patchVocabulary(
   sessionToken: string,
   vocabId: string,
-  body: { mastery_status?: string; short_meaning?: string; payload_json?: Record<string, unknown> },
+  body: {
+    mastery_status?: VocabularyMasteryStatusDto;
+    short_meaning?: string;
+    payload_json?: Record<string, unknown>;
+  },
 ): Promise<UpstreamResult<VocabularyResponseDto>> {
   return fastApiFetch<VocabularyResponseDto>(`/vocabulary/${vocabId}`, {
     method: "PATCH",

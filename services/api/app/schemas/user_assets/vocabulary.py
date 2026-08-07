@@ -87,7 +87,10 @@ class VocabularyCreateRequest(BaseModel):
 class VocabularyUpdateRequest(BaseModel):
     """PATCH /vocabulary/{id} — update a vocabulary entry."""
 
-    mastery_status: str | None = Field(default=None)
+    # 值域以 PostgreSQL CHECK vocabulary_book_mastery_status_check 为唯一权威。
+    mastery_status: Literal[
+        "new", "learning", "review", "mastered", "archived"
+    ] | None = Field(default=None)
     short_meaning: str | None = Field(default=None)
     payload_json: dict[str, Any] | None = None
 

@@ -1,3 +1,5 @@
+import type { VocabularyMasteryStatusDto } from "@/types/api/vocabulary";
+
 export type ReviewSubmitResultDto = "known" | "unfamiliar";
 
 export interface ReviewSubmitRequestDto {
@@ -9,6 +11,6 @@ export interface ReviewResultResponseDto {
   lemma: string;
   stage: number;
   next_review_at: string | null;
-  mastery_status: string;
+  mastery_status: VocabularyMasteryStatusDto;
   review_count: number;
 }
