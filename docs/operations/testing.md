@@ -1,6 +1,6 @@
 # 测试与验证
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-08（API 与 Web 双侧均存在任务编号 naming guard 静态检查；全仓最终 residual 收口状态依赖尚未 landing 的测试治理 replacement 分支，本文不提前记录终态）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-08
 
 先验证当前后端、小程序和 Web，再进入大范围产品体验或架构改动。
 
@@ -35,7 +35,7 @@ uv run pytest services/api/tests -q
 | 治理 marker，已有消费者（naming guard 测试） | `chain_infra` / `seam_pure_unit` / `life_permanent_regression` |
 | 渐进 taxonomy，尚无消费者，随存量补标逐步启用 | 其余全部 `chain_*` / `seam_*` / `life_*` |
 
-尚无消费者的 marker 只保证“已声明、可用于 `-m`”，不保证当前能选中任何测试；不要把零消费者组合写成当前可用命令。任务编号（单字母+数字形态的历史追踪码）**不设 marker**，只放文件顶部注释 `# task-history: ...`，不进入 `-m` 运行选择。
+尚无消费者的 marker 只保证“已声明、可用于 `-m`”，不保证当前能选中任何测试；不要把零消费者组合写成当前可用命令。任务编号（单字母+数字形态的历史追踪码）**不设 marker**，不进入 `-m` 运行选择。
 
 当前可用的 marker 选择命令（有实际消费者）：
 
@@ -51,29 +51,33 @@ uv run pytest -m "real_llm" -v   # 需同时满足三重门禁环境变量
 uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 ```
 
-## 任务编号 naming guard 与 allowlist ratchet
+## 任务编号 naming guard
 
-任务编号是历史追踪信息，不是业务身份。两条 guard 阻止其回流：
+任务编号是历史追踪信息，不是业务身份，不应出现在新测试文件名、测试标识符或生产符号中。仓库提供两条静态 guard 阻止其回流：
 
-- **API**：`services/api/tests/test_task_number_naming_guard.py`。检查三层目标中的任务编号：新测试文件名、`app/` 生产符号（AST 标识符）、`tests/**` 测试标识符（FunctionDef / AsyncFunctionDef / ClassDef 与 module-level 赋值名）。**检测规则**为通用「单字母 + 1–3 位数字」token（可选 trailing letter，如 `t58a`/`i4x`）+ 整 token `round<N>` + CamelCase `R16`/`Round2` 形态；不再依赖按家族堆叠的窄正则。业务/技术 KEEP 词（`v2`、`g1`–`g5`、`h1`–`h6`、`e2e`、`i18n`、`utf8`/`utf16`、`fnv1a32`、`tecd3`、`sha256` 等）显式排除。存量进入精确 allowlist，**相等 ratchet**：allowlist 数量必须恰好等于 guard 文件中声明的上限，当前上限值以 `test_task_number_naming_guard.py` 中的 ceiling 常量为准。持久化协议值（env 字符串、failure_code、policy 字面量、job_type/fingerprint 线值）属于字面量/协议豁免，不属于命名漂移。收缩后不得回升；改名/删除必须在同一变更中移除对应条目并同步降低上限；新文件/新符号禁止带任务编号。字符串字面量与注释豁免——协议值、fixture 载荷、migration 版本、`execution_version`、artifact version、workflow version、dataset/env 身份等持久化协议值不在 guard 扫描范围。
-- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`。复用 reader-orchestration source guard 的 node:fs 扫描模式，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试文件名，test-file allowlist 已清空、**相等 ratchet 上限 0**；同时对测试源码逐行 fail-closed 扫描大写任务码形态，`task-history:` 行豁免，code-identity allowlist 采用 strip-then-scan 且相等 ratchet，豁免身份不会掩护同行真实任务码。产品版本号（`-v2`）、文章等级（`-g5-`）、领域词（`l1-heading`）、表示事件合同名（`G1`/`G2`/`G3`）属持久化/业务身份，不视为任务编号。
+- **API**：`services/api/tests/test_task_number_naming_guard.py`，扫描 `app/` 生产符号与 `tests/**` 测试文件。
+- **Web**：`apps/web/src/lib/reader-orchestration/task-number-naming-guard.test.ts`，覆盖 `src/**` vitest 与 `tests/**` Playwright 测试。
 
-改名既有任务编号文件时：只改文件名与顶部 `# task-history:` 注释，不改断言、不合并测试、不迁目录，并同步收缩 guard allowlist 与其 ceiling。
+两条 guard 均为纯文件系统 / AST 检查，无 DB、无网络、无 LLM，可在任何 PR 门禁运行。具体扫描规则、豁免词表、allowlist 与 ceiling 以 guard 源码为准，本文不复制；改名或删除被扫描对象时，在同一变更中同步维护 guard 源码中的对应条目。
 
-collection 对账按「改名/路径变更 1:1 映射」执行，不以冻结总数为合同（总数随环境/基线变化）。持久化协议字符串值保持不变。全仓最终 residual 收口状态依赖尚未 landing 的测试治理 replacement 分支，landing 后需同步更新本节与顶部状态行。当前可用 guard 命令：
+持久化协议值（env 字符串、failure_code、policy 字面量、migration 版本、`execution_version`、artifact / workflow / dataset 身份等）是持久化身份，不属于命名漂移。
+
+运行方式：
 
 ```powershell
 cd services/api
 uv run pytest tests/test_task_number_naming_guard.py -q
 ```
 
-至此“任务历史仅存顶部 `# task-history:` 注释与持久化协议值”对 API **文件名、测试标识符与生产符号**均成立。
+Web guard 随 vitest 套件运行：
 
-## 后续 API/Web 并行治理边界
+```powershell
+pnpm --filter @claread/web test
+```
 
-- **API/Evals ownership**：`services/api` marker 补标、allowlist 收缩、剩余任务编号文件改名归 API 治理任务。`evals/` 是独立 pytest 项目，**不继承** API conftest，但已有自己的 `evals/tests/conftest.py`：声明 `real_llm` marker、镜像同一三重门禁并 monkeypatch 相同 provider 边界，fail-closed regression 已落地；后续 evals 治理（naming guard / 补标）独立排期，不与 API 治理任务混批。
-- **Web ownership**：vitest guard、命名治理、`// task-history:` 注释归 Web 治理任务；不拆分 ReaderRecordPlateSurface mega-suite、不改 Web 生产逻辑，除非另行审批。
-- 两侧 guard 均为纯文件系统/AST 检查，无 DB、无网络、无 LLM，可在任何 PR 门禁运行。
+## evals 离线门禁
+
+`evals/` 是独立 pytest 项目，不继承 API conftest；`evals/tests/conftest.py` 声明 `real_llm` marker，真实 provider 调用必须显式 opt-in，离线门禁默认 fail-closed 不调用 provider。
 
 ## 后端静态检查
 
@@ -242,7 +246,7 @@ pnpm directus:llm-config:sync-metadata
 
 工作目录：仓库根目录。
 
-当前与 grammar RAG 收口最相关的测试为：
+当前与 grammar RAG 最相关的测试为：
 
 ```powershell
 uv run pytest services/api/tests/test_grammar_retrieval_hints.py -q

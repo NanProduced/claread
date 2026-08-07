@@ -2,7 +2,7 @@
 
 > **状态**: `CURRENT` | **最后验证**: 2026-08-08（旧 eval-center 集成图相关运行时已按当前代码重核：API 侧 `eval_adapter` 已删除，校验与派生字段生成收口到 Directus hook、seed 脚本与审计脚本）
 
-本文记录 Reader 主链 grammar few-shot RAG 的当前运行时契约：seed 示例如何成为 prompt 注入真源、检索文本与标签如何归一化、以及改动契约时必须联动更新的位置。Example Lab 的 Directus authoring 控制面定位见 `docs/architecture/directus-console.md`。
+本文记录 Reader 主链 grammar few-shot RAG 的当前运行时契约：运行时材料来源、检索结果进入 prompt 的 payload 结构、检索文本与标签归一化，以及改动契约时必须联动更新的位置。Example Lab 的 Directus authoring 控制面定位见 `docs/architecture/directus-console.md`。
 
 ## 数据流
 
@@ -45,7 +45,7 @@ prompt 注入（sentence_text + output_fragment），经 strategy_builder（`que
 
 ## output_fragment 契约
 
-`output_fragment` 是 few-shot 注入 prompt 的唯一真源。Directus 中保存的 JSON、schema 校验的结构、进入 prompt 注入的结构必须同构。
+`output_fragment` 是 few-shot 检索结果进入 prompt 时使用的规范字段与 payload 结构：Zilliz 中保存的 JSON、各层 schema 校验的结构、进入 prompt 注入的结构必须同构。它是数据结构合同，不表示 Directus 是当前运行时数据源——当前进入 Zilliz 的材料只来自上方 seed 链路。
 
 ### grammar_note
 
@@ -241,8 +241,7 @@ uv run pytest tests/test_rag_readiness.py -q
 pnpm directus:extensions:build
 ```
 
-人工 smoke：
+人工 smoke（两个独立检查，互不代表对方通过）：
 
-- Example Lab 条目可保存，`output_fragment` 契约校验有效
-- 派生字段（`grammar_tags` / `retrieval_text` / `derived_*`）按 hook 正确生成
-- grammar RAG 变更后：重建 Zilliz collection → 重新 ingest → Reader 侧 RAG smoke
+- Example Lab authoring 面：条目可保存，`output_fragment` 契约校验有效，派生字段（`grammar_tags` / `retrieval_text` / `derived_*`）按 hook 正确生成。该检查只覆盖 PostgreSQL 内 authoring / validation / derived-field 管理，不触发、也不证明任何 Zilliz 或 Reader runtime 行为。
+- seed / Zilliz runtime 面：grammar seed 或 RAG 契约变更后，重建 Zilliz collection → 重新 ingest → Reader 侧 RAG smoke。该检查的输入只来自 `prompts/examples/grammar.yaml` seed 链路，与 Directus 条目无关。

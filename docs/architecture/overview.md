@@ -44,6 +44,6 @@ PostgreSQL 是业务事实源。Redis 是缓存和任务辅助能力。词典三
 
 ## 当前基线
 
-当前包含后端 API 服务、微信小程序客户端、Web baseline、Directus 内部控制面、数据库 baseline、词典数据资产，以及 `evals/` 下的离线 artifact / evaluation harness（当前离线基线验收为 970 passed / 5 skipped；真实 provider eval 需显式 opt-in，默认不开启）。尚未启动的是 Claread Console / Eval control plane 按新 orchestration 的重新设计，以及后续文章解析标注质量提升；Few-shot RAG promotion 同样属于后续规划。
+当前包含后端 API 服务、微信小程序客户端、Web baseline、Directus 内部控制面、数据库 baseline、词典数据资产，以及 `evals/` 下可离线运行的 artifact / evaluation harness。真实 provider evaluation 必须显式 opt-in，默认离线门禁不调用 provider；具体命令与当前验收方式见 `docs/operations/testing.md`。尚未启动的是 Claread Console / Eval control plane 按新 orchestration 的重新设计，以及后续文章解析标注质量提升；Few-shot RAG promotion 同样属于后续规划。
 
 迁移过程本身不是新仓库主线事实。新仓库文档只保留多端化决策、当前可运行状态和必要的开发边界。
