@@ -1,37 +1,21 @@
-"""R4-A4-2R2 — Runtime Fixture Identity 最终闭合 tests.
+"""Runtime fixture identity tests (reader_record_ask eval).
 
-Spec: R4-A4-2R2 — Runtime Fixture Identity 最终闭合.
-
-Task contract (10 required test scenarios):
-
-1. Same fixture assembled twice → same hash (determinism).
-2. text/order/truncation/coverage change → hash changes (sensitivity).
-3. BBC real_phase1 case missing expected_runtime_fixture_fingerprint
-   → builder=0, provider=0 (fail-closed at preflight).
-4. Mismatch (computed != expected) → calls=0 (fail-closed at preflight).
-5. artifact/manifest/dataset identity inconsistency → aggregate blocked
-   (three-layer check via _runtime_fixture_identity_mismatches).
-6. Required atomic fact not supported by fixture → calls=0
-   (precheck_required_facts_support returns non-empty list).
-7. Phase 1 planner restores 10 cases × 3 reps = 30 logical runs.
-8. Synthetic absent-year and publish-date cases do not contain year
-   tokens in their expected answer (must_declare_no_year=True,
-   allowed_temporal_claims=[]).
-9. Aggregate budget audit does not depend on current shell env
-   (_compute_budget_semantics reads from manifest, not env).
-10. Full reader_record_ask eval tests + ruff + git diff --check pass
-    (verified via separate command runs, not in this file).
-
-No real LLM / provider calls. All tests are deterministic and use
-mocks / minimal pydantic models / the actual dataset on disk.
+Covers fingerprint determinism/sensitivity, the three-layer
+dataset/manifest/artifact identity check, required-facts precheck,
+Phase 1 planner composition, synthetic no-year case contracts, and
+budget semantics. No real LLM / provider calls; all data is mocked or
+generated deterministically under ``tmp_path``.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.runtime_fixture import (
@@ -53,9 +37,6 @@ from claread_eval.reader_record_ask.schema import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNER_PATH = (
     _REPO_ROOT / "evals" / "scripts" / "run_reader_record_ask_eval.py"
-)
-_DATASET_DIR = (
-    _REPO_ROOT / "evals" / "tmp" / "reader-record-ask-r4-a3"
 )
 
 
@@ -133,6 +114,94 @@ def _make_bbc_real_phase1_case(
             expected_runtime_fixture_fingerprint
         ),
     )
+
+
+@pytest.fixture(scope="module")
+def generated_dataset_dir(tmp_path_factory) -> Path:
+    """Generate the minimal on-disk dataset contract for Scenarios 7-8.
+
+    Deterministically written under ``tmp_path`` — the tests must not
+    depend on the gitignored operational dataset at
+    ``evals/tmp/reader-record-ask-r4-a3/``.
+
+    Contract asserted by Scenarios 7-8:
+    - exactly 10 ``real_phase1`` cases (PhasePlanner phase=1, 3 reps
+      → 30 planned logical runs), including ``syn-absent-year`` and
+      ``syn-publish-date-unknown``;
+    - ``bbc-publish-date-unknown`` / ``bbc-absent-year-unknown`` exist
+      but are ``offline_only`` (excluded from Phase 1);
+    - ``syn-absent-year``: article has no year tokens;
+      ``must_declare_no_year=True``, ``allowed_temporal_claims=[]``;
+    - ``syn-publish-date-unknown``: article contains event year 2024
+      but no publish-date indicators; ``must_declare_no_year=True``,
+      ``allowed_temporal_claims=[]``, and a ``forbidden_answer_patterns``
+      entry mentioning 2024.
+    """
+    dataset_dir = tmp_path_factory.mktemp("r4-a3-dataset")
+    cases_dir = dataset_dir / "cases"
+    cases_dir.mkdir()
+    (dataset_dir / "dataset.yaml").write_text(
+        json.dumps(
+            {
+                "id": "reader-record-ask-r4-a3",
+                "schema_version": "r4-a3-dataset-v1",
+                "description": "generated test dataset",
+                "case_globs": ["cases/*.json"],
+                "tags": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cases = [
+        _make_synthetic_case(
+            case_id="syn-absent-year",
+            phase_tags=["real_phase1"],
+        ),
+        _make_synthetic_case(
+            case_id="syn-publish-date-unknown",
+            phase_tags=["real_phase1"],
+        ),
+    ]
+    cases[0].question_category = "absent_year"
+    cases[0].expected = ReaderRecordAskR4A3Expected(
+        must_declare_no_year=True,
+        allowed_temporal_claims=[],
+    )
+    cases[1].question_category = "publish_date"
+    cases[1].article_text = (
+        "社区读书会于2024年春天启动了巡回活动，志愿者们轮流主持讨论。"
+    )
+    cases[1].expected = ReaderRecordAskR4A3Expected(
+        must_declare_no_year=True,
+        allowed_temporal_claims=[],
+        forbidden_answer_patterns=["发布于2024", "刊登于2024"],
+    )
+    cases.extend(
+        _make_synthetic_case(
+            case_id=f"syn-phase1-{idx}",
+            phase_tags=["real_phase1"],
+        )
+        for idx in range(8)
+    )
+    cases.extend(
+        [
+            _make_bbc_real_phase1_case(
+                case_id="bbc-publish-date-unknown",
+            ),
+            _make_bbc_real_phase1_case(
+                case_id="bbc-absent-year-unknown",
+            ),
+        ]
+    )
+    cases[-2].phase_tags = ["offline_only"]
+    cases[-1].phase_tags = ["offline_only"]
+
+    for case in cases:
+        (cases_dir / f"{case.id}.json").write_text(
+            case.model_dump_json(indent=2), encoding="utf-8"
+        )
+    return dataset_dir
 
 
 def _make_artifact(
@@ -950,14 +1019,14 @@ class TestScenario7PhasePlannerRestores30Runs:
     """Scenario 7: PhasePlanner with the actual dataset produces 10
     cases × 3 repetitions = 30 logical runs."""
 
-    def test_phase1_has_10_cases(self) -> None:
+    def test_phase1_has_10_cases(self, generated_dataset_dir: Path) -> None:
         """Phase 1 selects exactly 10 real_phase1 cases."""
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
@@ -966,7 +1035,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         cases = planner.cases_to_run
         assert len(cases) == 10
 
-    def test_phase1_planned_logical_runs_is_30(self) -> None:
+    def test_phase1_planned_logical_runs_is_30(self, generated_dataset_dir: Path) -> None:
         """PhasePlanner.planned_logical_runs == 30 (10 cases × 3
         reps)."""
         from claread_eval.reader_record_ask.loader import (
@@ -974,7 +1043,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
@@ -982,28 +1051,28 @@ class TestScenario7PhasePlannerRestores30Runs:
         )
         assert planner.planned_logical_runs == 30
 
-    def test_phase1_repetitions_is_3(self) -> None:
+    def test_phase1_repetitions_is_3(self, generated_dataset_dir: Path) -> None:
         """Phase 1 repetitions == 3 (default)."""
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
         )
         assert planner.repetitions == 3
 
-    def test_phase1_includes_syn_absent_year(self) -> None:
+    def test_phase1_includes_syn_absent_year(self, generated_dataset_dir: Path) -> None:
         """Phase 1 includes the synthetic absent-year case."""
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
@@ -1012,7 +1081,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         case_ids = {c.id for c in planner.cases_to_run}
         assert "syn-absent-year" in case_ids
 
-    def test_phase1_includes_syn_publish_date_unknown(self) -> None:
+    def test_phase1_includes_syn_publish_date_unknown(self, generated_dataset_dir: Path) -> None:
         """Phase 1 includes the new synthetic publish-date-unknown
         case."""
         from claread_eval.reader_record_ask.loader import (
@@ -1020,7 +1089,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
@@ -1029,7 +1098,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         case_ids = {c.id for c in planner.cases_to_run}
         assert "syn-publish-date-unknown" in case_ids
 
-    def test_phase1_excludes_offline_only(self) -> None:
+    def test_phase1_excludes_offline_only(self, generated_dataset_dir: Path) -> None:
         """Phase 1 excludes offline_only cases (BBC publish-date/
         absent-year stay offline-only)."""
         from claread_eval.reader_record_ask.loader import (
@@ -1037,7 +1106,7 @@ class TestScenario7PhasePlannerRestores30Runs:
         )
         from claread_eval.reader_record_ask.phase_planner import PhasePlanner
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         planner = PhasePlanner(
             dataset=snapshot.dataset,
             phase=1,
@@ -1061,31 +1130,31 @@ class TestScenario8SyntheticCasesNoYear:
     ``allowed_temporal_claims=[]`` — the expected answer must NOT
     contain year tokens."""
 
-    def test_syn_absent_year_must_declare_no_year(self) -> None:
+    def test_syn_absent_year_must_declare_no_year(self, generated_dataset_dir: Path) -> None:
         """syn-absent-year has must_declare_no_year=True."""
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
         )
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         cases_by_id = {c.id: c for c in snapshot.dataset.cases}
         case = cases_by_id["syn-absent-year"]
         assert case.expected.must_declare_no_year is True
         assert case.expected.allowed_temporal_claims == []
 
-    def test_syn_publish_date_must_declare_no_year(self) -> None:
+    def test_syn_publish_date_must_declare_no_year(self, generated_dataset_dir: Path) -> None:
         """syn-publish-date-unknown has must_declare_no_year=True."""
         from claread_eval.reader_record_ask.loader import (
             load_r4_a3_dataset_with_snapshot,
         )
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         cases_by_id = {c.id: c for c in snapshot.dataset.cases}
         case = cases_by_id["syn-publish-date-unknown"]
         assert case.expected.must_declare_no_year is True
         assert case.expected.allowed_temporal_claims == []
 
-    def test_syn_absent_year_article_has_no_year(self) -> None:
+    def test_syn_absent_year_article_has_no_year(self, generated_dataset_dir: Path) -> None:
         """syn-absent-year article text does NOT contain year tokens
         (pure scene description)."""
         import re
@@ -1095,7 +1164,7 @@ class TestScenario8SyntheticCasesNoYear:
         )
 
         YEAR_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])\s*年?")
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         cases_by_id = {c.id: c for c in snapshot.dataset.cases}
         case = cases_by_id["syn-absent-year"]
         matches = YEAR_RE.findall(case.article_text or "")
@@ -1105,7 +1174,7 @@ class TestScenario8SyntheticCasesNoYear:
         )
 
     def test_syn_publish_date_article_has_event_year_but_no_publish_date(
-        self,
+        self, generated_dataset_dir: Path
     ) -> None:
         """syn-publish-date-unknown article HAS event year (2024) but
         does NOT contain publish-date indicators. The event year must
@@ -1114,7 +1183,7 @@ class TestScenario8SyntheticCasesNoYear:
             load_r4_a3_dataset_with_snapshot,
         )
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         cases_by_id = {c.id: c for c in snapshot.dataset.cases}
         case = cases_by_id["syn-publish-date-unknown"]
         # Article contains event year 2024
@@ -1134,7 +1203,7 @@ class TestScenario8SyntheticCasesNoYear:
         assert len(case.expected.forbidden_answer_patterns) > 0
 
     def test_syn_publish_date_forbidden_patterns_block_event_year_as_publish(
-        self,
+        self, generated_dataset_dir: Path
     ) -> None:
         """syn-publish-date-unknown forbidden_answer_patterns block
         patterns that would treat event year 2024 as publish date."""
@@ -1142,7 +1211,7 @@ class TestScenario8SyntheticCasesNoYear:
             load_r4_a3_dataset_with_snapshot,
         )
 
-        snapshot = load_r4_a3_dataset_with_snapshot(_DATASET_DIR)
+        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
         cases_by_id = {c.id: c for c in snapshot.dataset.cases}
         case = cases_by_id["syn-publish-date-unknown"]
         forbidden = case.expected.forbidden_answer_patterns
