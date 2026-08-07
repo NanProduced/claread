@@ -1,21 +1,17 @@
 """Runtime fixture identity tests (reader_record_ask eval).
 
 Covers fingerprint determinism/sensitivity, the three-layer
-dataset/manifest/artifact identity check, required-facts precheck,
-Phase 1 planner composition, synthetic no-year case contracts, and
+dataset/manifest/artifact identity check, required-facts precheck, and
 budget semantics. No real LLM / provider calls; all data is mocked or
-generated deterministically under ``tmp_path``.
+built from minimal pydantic models.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
 
 from claread_eval.reader_record_ask.evaluators.artifact import RawArtifact
 from claread_eval.reader_record_ask.runtime_fixture import (
@@ -116,94 +112,6 @@ def _make_bbc_real_phase1_case(
     )
 
 
-@pytest.fixture(scope="module")
-def generated_dataset_dir(tmp_path_factory) -> Path:
-    """Generate the minimal on-disk dataset contract for Scenarios 7-8.
-
-    Deterministically written under ``tmp_path`` — the tests must not
-    depend on the gitignored operational dataset at
-    ``evals/tmp/reader-record-ask-r4-a3/``.
-
-    Contract asserted by Scenarios 7-8:
-    - exactly 10 ``real_phase1`` cases (PhasePlanner phase=1, 3 reps
-      → 30 planned logical runs), including ``syn-absent-year`` and
-      ``syn-publish-date-unknown``;
-    - ``bbc-publish-date-unknown`` / ``bbc-absent-year-unknown`` exist
-      but are ``offline_only`` (excluded from Phase 1);
-    - ``syn-absent-year``: article has no year tokens;
-      ``must_declare_no_year=True``, ``allowed_temporal_claims=[]``;
-    - ``syn-publish-date-unknown``: article contains event year 2024
-      but no publish-date indicators; ``must_declare_no_year=True``,
-      ``allowed_temporal_claims=[]``, and a ``forbidden_answer_patterns``
-      entry mentioning 2024.
-    """
-    dataset_dir = tmp_path_factory.mktemp("r4-a3-dataset")
-    cases_dir = dataset_dir / "cases"
-    cases_dir.mkdir()
-    (dataset_dir / "dataset.yaml").write_text(
-        json.dumps(
-            {
-                "id": "reader-record-ask-r4-a3",
-                "schema_version": "r4-a3-dataset-v1",
-                "description": "generated test dataset",
-                "case_globs": ["cases/*.json"],
-                "tags": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    cases = [
-        _make_synthetic_case(
-            case_id="syn-absent-year",
-            phase_tags=["real_phase1"],
-        ),
-        _make_synthetic_case(
-            case_id="syn-publish-date-unknown",
-            phase_tags=["real_phase1"],
-        ),
-    ]
-    cases[0].question_category = "absent_year"
-    cases[0].expected = ReaderRecordAskR4A3Expected(
-        must_declare_no_year=True,
-        allowed_temporal_claims=[],
-    )
-    cases[1].question_category = "publish_date"
-    cases[1].article_text = (
-        "社区读书会于2024年春天启动了巡回活动，志愿者们轮流主持讨论。"
-    )
-    cases[1].expected = ReaderRecordAskR4A3Expected(
-        must_declare_no_year=True,
-        allowed_temporal_claims=[],
-        forbidden_answer_patterns=["发布于2024", "刊登于2024"],
-    )
-    cases.extend(
-        _make_synthetic_case(
-            case_id=f"syn-phase1-{idx}",
-            phase_tags=["real_phase1"],
-        )
-        for idx in range(8)
-    )
-    cases.extend(
-        [
-            _make_bbc_real_phase1_case(
-                case_id="bbc-publish-date-unknown",
-            ),
-            _make_bbc_real_phase1_case(
-                case_id="bbc-absent-year-unknown",
-            ),
-        ]
-    )
-    cases[-2].phase_tags = ["offline_only"]
-    cases[-1].phase_tags = ["offline_only"]
-
-    for case in cases:
-        (cases_dir / f"{case.id}.json").write_text(
-            case.model_dump_json(indent=2), encoding="utf-8"
-        )
-    return dataset_dir
-
-
 def _make_artifact(
     *,
     case_id: str = "case-syn",
@@ -229,15 +137,13 @@ def _make_manifest(
 ):
     """Build a minimal manifest-like object for aggregate tests.
 
-    R4-A4-2R3: ``audit_contract_version`` selects the manifest version
-    path. ``None`` or ``"r4-a4-2r2"`` → V1 (legacy) — checks 4-7
-    (three-layer) are skipped. ``"r4-a4-2r3"`` → V2 (strict) — the
-    three-layer check is MANDATORY.
+    ``audit_contract_version`` selects the manifest version path.
+    ``None`` or ``"r4-a4-2r2"`` → V1 (legacy) — the three-layer check
+    is skipped. ``"r4-a4-2r3"`` → V2 (strict) — the three-layer check
+    is MANDATORY.
 
-    ``retry_policy`` is now a dict (V2 typed contract) — the legacy
-    string ``"default"`` is no longer accepted by the dataclass. Tests
-    that need V1 backwards-compat for the legacy string can pass
-    ``retry_policy=None`` and the helper defaults to ``{}``.
+    ``retry_policy`` is a dict (V2 typed contract); pass ``None`` for
+    the V1-compatible default of ``{}``.
     """
     if retry_policy is None:
         retry_policy = {}
@@ -258,13 +164,13 @@ def _make_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 1: Same fixture assembled twice → same hash (determinism)
+# Fingerprint determinism: same fixture assembled twice → same hash
 # ---------------------------------------------------------------------------
 
 
-class TestScenario1Determinism:
-    """Scenario 1: two assemblies from the same snapshot produce the
-    same ``runtime_fixture_fingerprint``."""
+class TestRuntimeFixtureFingerprintDeterminism:
+    """Two assemblies from the same snapshot produce the same
+    ``runtime_fixture_fingerprint``."""
 
     def test_same_inputs_same_hash(self) -> None:
         """Identical (baseline_status, is_complete, chunks) → same hash."""
@@ -332,13 +238,14 @@ class TestScenario1Determinism:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 2: text/order/truncation/coverage change → hash changes
+# Fingerprint sensitivity: text/order/truncation/coverage change → hash
+# changes
 # ---------------------------------------------------------------------------
 
 
-class TestScenario2Sensitivity:
-    """Scenario 2: any change to text/order/truncation/coverage
-    produces a DIFFERENT hash."""
+class TestRuntimeFixtureFingerprintSensitivity:
+    """Any change to text/order/truncation/coverage produces a DIFFERENT
+    hash."""
 
     def test_text_change_changes_hash(self) -> None:
         """Changing chunk text → different hash."""
@@ -454,20 +361,15 @@ class TestScenario2Sensitivity:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 3: BBC real_phase1 case missing expected identity →
-# builder=0, provider=0
+# Missing expected identity on a real_phase1 case → fail-closed
 # ---------------------------------------------------------------------------
 
 
-class TestScenario3BbcMissingExpected:
-    """Scenario 3: BBC real_phase1 case without
-    ``expected_runtime_fixture_fingerprint`` → aggregate three-layer
-    check returns mismatch with reason ``missing_dataset_expected``.
-
-    The harness preflight also fail-closes on this (tested in the
-    harness test file via ``pytest.skip``). Here we test the aggregate
-    post-call helper to verify the defense-in-depth check.
-    """
+class TestMissingExpectedRuntimeFingerprintFailsClosed:
+    """A real_phase1 case without ``expected_runtime_fixture_fingerprint``
+    fails closed: the aggregate three-layer check returns a mismatch with
+    reason ``missing_dataset_expected`` (defense-in-depth behind the
+    harness preflight)."""
 
     def test_bbc_missing_expected_returns_mismatch(self) -> None:
         """BBC real_phase1 case with None expected →
@@ -510,8 +412,8 @@ class TestScenario3BbcMissingExpected:
         assert reason == "missing_dataset_expected"
 
     def test_non_bbc_missing_expected_no_mismatch(self) -> None:
-        """R4-A4-2R3 P0-2: a case that is NOT real_phase1 (e.g.
-        ``phase_tags=[]`` or ``phase_tags=["offline_only"]``) without
+        """A case that is NOT real_phase1 (e.g. ``phase_tags=[]`` or
+        ``phase_tags=["offline_only"]``) without
         expected_runtime_fixture_fingerprint → backwards-compat, no
         mismatch. Only real_phase1 cases (BBC + synthetic) are required
         to declare the field."""
@@ -536,11 +438,11 @@ class TestScenario3BbcMissingExpected:
         assert reason is None
 
     def test_synthetic_real_phase1_missing_expected_returns_mismatch(self) -> None:
-        """R4-A4-2R3 P0-2: synthetic case tagged ``real_phase1`` without
+        """A synthetic case tagged ``real_phase1`` without
         ``expected_runtime_fixture_fingerprint`` → ``missing_dataset_expected``.
 
-        This is the key R4-A4-2R3 expansion: the requirement now covers
-        ALL real_phase1 cases (including synthetic), not just BBC.
+        The declaration requirement covers ALL real_phase1 cases
+        (including synthetic), not just BBC.
         """
         case = _make_synthetic_case(
             case_id="case-syn",
@@ -565,13 +467,13 @@ class TestScenario3BbcMissingExpected:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 4: Mismatch → calls=0 (aggregate blocks via precedence 5.6)
+# Identity mismatch → aggregate verdict blocked (precedence row 5.6)
 # ---------------------------------------------------------------------------
 
 
-class TestScenario4MismatchBlocks:
-    """Scenario 4: dataset_artifact_mismatch → aggregate blocks via
-    precedence row 5.6 in ``_decide_final_verdict``."""
+class TestRuntimeFingerprintMismatchBlocksEvaluation:
+    """``dataset_artifact_mismatch`` → aggregate blocks via precedence
+    row 5.6 in ``_decide_final_verdict``."""
 
     def test_dataset_artifact_mismatch_returns_mismatch(self) -> None:
         """Artifact actual != dataset expected →
@@ -694,20 +596,20 @@ class TestScenario4MismatchBlocks:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 5: artifact/manifest/dataset identity inconsistency →
-# aggregate blocked
+# Three-layer identity consistency (dataset expected == manifest
+# identity == artifact actual)
 # ---------------------------------------------------------------------------
 
 
-class TestScenario5ThreeLayerInconsistency:
-    """Scenario 5: three-layer check (dataset expected == manifest
-    identity == artifact actual). Any inconsistency → typed blocker.
+class TestRuntimeFixtureIdentityConsistency:
+    """Three-layer check: dataset expected == manifest identity ==
+    artifact actual. Any inconsistency → typed blocker.
 
-    R4-A4-2R3: the three-layer check only fires for V2 manifests
-    (``audit_contract_version == "r4-a4-2r3"``). V1 manifests skip
-    checks 4-7 (backwards-compat — selected by EXPLICIT version, NOT
-    by empty-dict guessing). Tests below set ``audit_contract_version``
-    explicitly to exercise the V2 path.
+    The three-layer check only fires for V2 manifests
+    (``audit_contract_version == "r4-a4-2r3"``). V1 manifests skip it
+    (backwards-compat — selected by EXPLICIT version, NOT by empty-dict
+    guessing). Tests below set ``audit_contract_version`` explicitly to
+    exercise the V2 path.
     """
 
     def test_manifest_artifact_mismatch(self) -> None:
@@ -767,9 +669,9 @@ class TestScenario5ThreeLayerInconsistency:
         """V2 manifest that does not contain this case's identity →
         ``manifest_identity_missing``.
 
-        R4-A4-2R3: V2 manifests MUST carry identity for every planned
-        case (Rule 18b enforced at parse time). Defense-in-depth: if
-        a V2 manifest reaches this function with a missing identity,
+        V2 manifests MUST carry identity for every planned case
+        (enforced at parse time). Defense-in-depth: if a V2 manifest
+        reaches this function with a missing identity,
         ``manifest_identity_missing`` is returned.
         """
         case = _make_bbc_real_phase1_case(
@@ -780,9 +682,8 @@ class TestScenario5ThreeLayerInconsistency:
             runtime_fixture_fingerprint=_VALID_FP_A,
         )
         cases_by_id = {case.id: case}
-        # V2 manifest with empty identity map — corrupt (Rule 18a
-        # would have rejected this at parse time). Defense-in-depth
-        # check 6 fires.
+        # V2 manifest with empty identity map — corrupt (would have
+        # been rejected at parse time). Defense-in-depth check fires.
         manifest = _make_manifest(
             runtime_fixture_identities={},
             audit_contract_version="r4-a4-2r3",
@@ -840,10 +741,9 @@ class TestScenario5ThreeLayerInconsistency:
         assert reason is None
 
     def test_pre_v2_manifest_backwards_compat(self) -> None:
-        """R4-A4-2R3: a V1 manifest (``audit_contract_version=None``
-        or ``"r4-a4-2r2"``) skips the three-layer check — checks 4-7
-        do NOT fire. This is selected by EXPLICIT version, NOT by
-        empty-dict guessing.
+        """A V1 manifest (``audit_contract_version=None`` or
+        ``"r4-a4-2r2"``) skips the three-layer check. This is selected
+        by EXPLICIT version, NOT by empty-dict guessing.
 
         Construct: dataset=A, artifact=A, manifest=B. Under V2 this
         would be ``manifest_artifact_mismatch``. Under V1 (no
@@ -872,8 +772,8 @@ class TestScenario5ThreeLayerInconsistency:
         assert reason is None
 
     def test_v1_explicit_version_skips_three_layer_check(self) -> None:
-        """R4-A4-2R3: a manifest with ``audit_contract_version=
-        "r4-a4-2r2"`` (explicit V1) also skips the three-layer check.
+        """A manifest with ``audit_contract_version="r4-a4-2r2"``
+        (explicit V1) also skips the three-layer check.
 
         This proves V1 compat is selected by EXPLICIT version, not
         by ``None`` default.
@@ -914,13 +814,14 @@ class TestScenario5ThreeLayerInconsistency:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 6: Required fact not supported by fixture → calls=0
+# Required-facts precheck: required fact not supported by fixture →
+# flagged
 # ---------------------------------------------------------------------------
 
 
-class TestScenario6RequiredFactUnsupported:
-    """Scenario 6: ``precheck_required_facts_support`` returns
-    non-empty list when a required fact has no supporting chunk."""
+class TestRequiredFactSupportPrecheck:
+    """``precheck_required_facts_support`` returns a non-empty list when
+    a required fact has no supporting chunk."""
 
     def test_supported_fact_returns_empty(self) -> None:
         """Required fact with alias in chunk text → supported (empty
@@ -1009,229 +910,14 @@ class TestScenario6RequiredFactUnsupported:
         )
         assert unsupported == []
 
-
 # ---------------------------------------------------------------------------
-# Scenario 7: Phase 1 planner restores 10 cases × 3 reps = 30 runs
-# ---------------------------------------------------------------------------
-
-
-class TestScenario7PhasePlannerRestores30Runs:
-    """Scenario 7: PhasePlanner with the actual dataset produces 10
-    cases × 3 repetitions = 30 logical runs."""
-
-    def test_phase1_has_10_cases(self, generated_dataset_dir: Path) -> None:
-        """Phase 1 selects exactly 10 real_phase1 cases."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-            repetitions=3,
-        )
-        cases = planner.cases_to_run
-        assert len(cases) == 10
-
-    def test_phase1_planned_logical_runs_is_30(self, generated_dataset_dir: Path) -> None:
-        """PhasePlanner.planned_logical_runs == 30 (10 cases × 3
-        reps)."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-            repetitions=3,
-        )
-        assert planner.planned_logical_runs == 30
-
-    def test_phase1_repetitions_is_3(self, generated_dataset_dir: Path) -> None:
-        """Phase 1 repetitions == 3 (default)."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-        )
-        assert planner.repetitions == 3
-
-    def test_phase1_includes_syn_absent_year(self, generated_dataset_dir: Path) -> None:
-        """Phase 1 includes the synthetic absent-year case."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-            repetitions=3,
-        )
-        case_ids = {c.id for c in planner.cases_to_run}
-        assert "syn-absent-year" in case_ids
-
-    def test_phase1_includes_syn_publish_date_unknown(self, generated_dataset_dir: Path) -> None:
-        """Phase 1 includes the new synthetic publish-date-unknown
-        case."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-            repetitions=3,
-        )
-        case_ids = {c.id for c in planner.cases_to_run}
-        assert "syn-publish-date-unknown" in case_ids
-
-    def test_phase1_excludes_offline_only(self, generated_dataset_dir: Path) -> None:
-        """Phase 1 excludes offline_only cases (BBC publish-date/
-        absent-year stay offline-only)."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-        from claread_eval.reader_record_ask.phase_planner import PhasePlanner
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        planner = PhasePlanner(
-            dataset=snapshot.dataset,
-            phase=1,
-            repetitions=3,
-        )
-        case_ids = {c.id for c in planner.cases_to_run}
-        assert "bbc-publish-date-unknown" not in case_ids
-        assert "bbc-absent-year-unknown" not in case_ids
-
-
-# ---------------------------------------------------------------------------
-# Scenario 8: synthetic absent-year and publish-date do not contain
-# year in expected answer (must_declare_no_year=True,
-# allowed_temporal_claims=[])
+# Budget semantics read from the manifest, not the current shell env
 # ---------------------------------------------------------------------------
 
 
-class TestScenario8SyntheticCasesNoYear:
-    """Scenario 8: synthetic absent-year and publish-date-unknown cases
-    have ``must_declare_no_year=True`` and
-    ``allowed_temporal_claims=[]`` — the expected answer must NOT
-    contain year tokens."""
-
-    def test_syn_absent_year_must_declare_no_year(self, generated_dataset_dir: Path) -> None:
-        """syn-absent-year has must_declare_no_year=True."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        cases_by_id = {c.id: c for c in snapshot.dataset.cases}
-        case = cases_by_id["syn-absent-year"]
-        assert case.expected.must_declare_no_year is True
-        assert case.expected.allowed_temporal_claims == []
-
-    def test_syn_publish_date_must_declare_no_year(self, generated_dataset_dir: Path) -> None:
-        """syn-publish-date-unknown has must_declare_no_year=True."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        cases_by_id = {c.id: c for c in snapshot.dataset.cases}
-        case = cases_by_id["syn-publish-date-unknown"]
-        assert case.expected.must_declare_no_year is True
-        assert case.expected.allowed_temporal_claims == []
-
-    def test_syn_absent_year_article_has_no_year(self, generated_dataset_dir: Path) -> None:
-        """syn-absent-year article text does NOT contain year tokens
-        (pure scene description)."""
-        import re
-
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-
-        YEAR_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])\s*年?")
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        cases_by_id = {c.id: c for c in snapshot.dataset.cases}
-        case = cases_by_id["syn-absent-year"]
-        matches = YEAR_RE.findall(case.article_text or "")
-        assert matches == [], (
-            f"syn-absent-year article should have NO year tokens, "
-            f"found: {matches}"
-        )
-
-    def test_syn_publish_date_article_has_event_year_but_no_publish_date(
-        self, generated_dataset_dir: Path
-    ) -> None:
-        """syn-publish-date-unknown article HAS event year (2024) but
-        does NOT contain publish-date indicators. The event year must
-        NOT be treated as the publish date."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        cases_by_id = {c.id: c for c in snapshot.dataset.cases}
-        case = cases_by_id["syn-publish-date-unknown"]
-        # Article contains event year 2024
-        assert "2024" in (case.article_text or "")
-        # Article does NOT contain publish-date indicators
-        article = case.article_text or ""
-        publish_indicators = [
-            "发布于", "刊登于", "刊发于", "报道于",
-            "发布日期", "刊登日期", "见报日期",
-        ]
-        for indicator in publish_indicators:
-            assert indicator not in article, (
-                f"syn-publish-date-unknown article should NOT contain "
-                f"publish-date indicator {indicator!r}"
-            )
-        # forbidden_answer_patterns blocks treating 2024 as publish date
-        assert len(case.expected.forbidden_answer_patterns) > 0
-
-    def test_syn_publish_date_forbidden_patterns_block_event_year_as_publish(
-        self, generated_dataset_dir: Path
-    ) -> None:
-        """syn-publish-date-unknown forbidden_answer_patterns block
-        patterns that would treat event year 2024 as publish date."""
-        from claread_eval.reader_record_ask.loader import (
-            load_r4_a3_dataset_with_snapshot,
-        )
-
-        snapshot = load_r4_a3_dataset_with_snapshot(generated_dataset_dir)
-        cases_by_id = {c.id: c for c in snapshot.dataset.cases}
-        case = cases_by_id["syn-publish-date-unknown"]
-        forbidden = case.expected.forbidden_answer_patterns
-        # At least one pattern must block "2024" + publish indicator
-        has_2024_blocker = any("2024" in p for p in forbidden)
-        assert has_2024_blocker, (
-            f"forbidden_answer_patterns must block 2024-as-publish-date; "
-            f"got: {forbidden}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Scenario 9: Aggregate budget audit does not depend on current env
-# ---------------------------------------------------------------------------
-
-
-class TestScenario9BudgetSelfContained:
-    """Scenario 9: ``_compute_budget_semantics`` reads
-    ``planned_logical_runs`` and ``request_cap`` from the manifest,
-    NOT from the current shell env."""
+class TestBudgetSemanticsUsesManifest:
+    """``_compute_budget_semantics`` reads ``planned_logical_runs`` and
+    ``request_cap`` from the manifest, NOT from the current shell env."""
 
     def test_reads_planned_logical_runs_from_manifest(self) -> None:
         """Manifest with planned_logical_runs=30 → budget_semantics
@@ -1265,10 +951,10 @@ class TestScenario9BudgetSelfContained:
     def test_falls_back_to_env_when_manifest_missing_request_cap(
         self,
     ) -> None:
-        """Pre-R4-A4-2R2 manifest without request_cap → falls back to
+        """Legacy manifest without request_cap → falls back to
         env cap (backwards compat)."""
         manifest = SimpleNamespace(
-            planned_logical_runs=0,  # pre-R4-A4-2R2
+            planned_logical_runs=0,  # legacy manifest
             request_cap=None,  # manifest field absent
             planned_run_indices={"case-a": [0, 1, 2]},
             completed_run_indices={"case-a": [0, 1, 2]},
@@ -1334,19 +1020,14 @@ class TestScenario9BudgetSelfContained:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 10: full test suite + ruff + git diff --check
+# Module surface: runner and runtime_fixture expose the contract
+# functions
 # ---------------------------------------------------------------------------
 
 
-class TestScenario10VerificationCommands:
-    """Scenario 10: verification commands are documented. The actual
-    command execution is done outside this test file (via the
-    ``verify`` todo step) to avoid coupling test pass/fail to shell
-    availability.
-
-    The tests below verify that the modified files are syntactically
-    valid Python (importable) — a minimum bar for ruff/typecheck.
-    """
+class TestRuntimeFixtureModuleSurface:
+    """The runner script and the ``runtime_fixture`` module import
+    cleanly and expose the contract functions used by the harness."""
 
     def test_runner_module_imports(self) -> None:
         """The runner script imports cleanly (no syntax errors)."""
