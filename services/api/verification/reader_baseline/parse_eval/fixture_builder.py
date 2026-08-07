@@ -447,8 +447,6 @@ def build_fixture_artifact_from_sample(
         prompt_revision=None,
     )
 
-    legacy_baseline = build_legacy_baseline_unavailable(sample.sample_id)
-
     artifact_id_semantic_inputs = ArtifactIdSemanticInputs(
         canonical_text_sha256=canonical_text_sha256,
         schema_version=ARTIFACT_SCHEMA_VERSION,
@@ -482,7 +480,6 @@ def build_fixture_artifact_from_sample(
         runner_provenance=runner_provenance,
         model_profile_provenance=model_profile_provenance,
         prompt_revision_provenance=prompt_revision_provenance,
-        legacy_baseline=legacy_baseline,
         artifact_provenance=artifact_provenance,
     )
 
@@ -497,7 +494,6 @@ __all__ = [
     "sha256_hex",
     "canonicalize_hermetic",
     "build_hermetic_anchor_map",
-    "build_legacy_baseline_unavailable",
     "derive_artifact_id",
     "build_fixture_artifact_from_sample",
 ]

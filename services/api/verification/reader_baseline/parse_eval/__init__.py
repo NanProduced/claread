@@ -20,8 +20,6 @@ maintainable module layout:
   recompute the full-text SHA-256, UTF-16 length, and per-unit /
   per-segment FNV-1a hashes without embedding the full text in the
   artifact.
-- :mod:`.legacy_sidecar` — legacy baseline freeze helpers (unavailable
-  status builder + frozen baseline recorder for Task 5B).
 
 All modules are hermetic for the offline path: no DB, no LLM, no
 spaCy, no ``app`` runtime import. The reader_adapter imports the

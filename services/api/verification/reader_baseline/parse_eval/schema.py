@@ -869,7 +869,6 @@ class ParseEvalArtifactV1(BaseModel):
     runner_provenance: ArtifactRunnerProvenance
     model_profile_provenance: ArtifactModelProfileProvenance
     prompt_revision_provenance: ArtifactPromptRevisionProvenance
-    legacy_baseline: LegacyBaselineFreeze
     artifact_provenance: ArtifactProvenance
 
     @field_validator("artifact_id")
@@ -880,20 +879,6 @@ class ParseEvalArtifactV1(BaseModel):
                 "artifact_id must be 64 lowercase hex chars (SHA-256)"
             )
         return v
-
-    @model_validator(mode="after")
-    def _validate_legacy_baseline_input_hash_match(self) -> ParseEvalArtifactV1:
-        if self.legacy_baseline.status == "frozen":
-            if (
-                self.legacy_baseline.input_canonical_text_sha256
-                != self.document.canonical_text_sha256
-            ):
-                raise ValueError(
-                    "legacy baseline frozen requires "
-                    "input_canonical_text_sha256 to equal "
-                    "document.canonical_text_sha256"
-                )
-        return self
 
     @model_validator(mode="after")
     def _validate_artifact_id_semantic_inputs(self) -> ParseEvalArtifactV1:
@@ -954,7 +939,6 @@ __all__ = [
     "CanonicalizerVersionLiteral",
     "ExecutorModeLiteral",
     "CompletionStatusLiteral",
-    "LegacyBaselineStatusLiteral",
     "ArtifactSourceKindLiteral",
     "LayerOutputKindLiteral",
     "SampleIdentity",
@@ -977,6 +961,5 @@ __all__ = [
     "ArtifactPromptRevisionProvenance",
     "ArtifactIdSemanticInputs",
     "ArtifactProvenance",
-    "LegacyBaselineFreeze",
     "ParseEvalArtifactV1",
 ]

@@ -56,7 +56,6 @@ from .fixture_builder import (
     sha256_hex,
     utf16_code_unit_length,
 )
-from .legacy_sidecar import build_legacy_baseline_unavailable_for_record
 from .schema import (
     AnchorMap,
     AnchorSegmentFact,
@@ -69,7 +68,6 @@ from .schema import (
     ArtifactSegmenterProvenance,
     ArtifactSourceProvenance,
     DocumentIdentity,
-    LegacyBaselineFreeze,
     NavigationUnitFact,
     ParseEvalArtifactV1,
     PublishedLayerFact,
@@ -815,7 +813,6 @@ def build_artifact_from_snapshot(
     model_profile: str | None = None,
     prompt_revision: str | None = None,
     deterministic_clock_token: str = DEFAULT_DETERMINISTIC_CLOCK_TOKEN,
-    legacy_baseline: LegacyBaselineFreeze | None = None,
 ) -> ParseEvalArtifactV1:
     """Build an official API-side ``ParseEvalArtifactV1`` from a snapshot.
 
@@ -861,9 +858,6 @@ def build_artifact_from_snapshot(
         model_profile: Required when ``executor_mode="real"``.
         prompt_revision: Required when ``executor_mode="real"``.
         deterministic_clock_token: Stable token for reproducibility.
-        legacy_baseline: Optional pre-built legacy baseline freeze.
-            When ``None``, the adapter builds an ``unavailable``
-            baseline for the given ``source_id``.
 
     Returns:
         A validated :class:`.schema.ParseEvalArtifactV1`.
@@ -963,9 +957,6 @@ def build_artifact_from_snapshot(
         prompt_revision=prompt_revision if not is_fake else None,
     )
 
-    if legacy_baseline is None:
-        legacy_baseline = build_legacy_baseline_unavailable_for_record(source_id)
-
     artifact_id_semantic_inputs = ArtifactIdSemanticInputs(
         canonical_text_sha256=canonical_text_sha256,
         schema_version=ARTIFACT_SCHEMA_VERSION,
@@ -996,7 +987,6 @@ def build_artifact_from_snapshot(
         runner_provenance=runner_provenance,
         model_profile_provenance=model_profile_provenance,
         prompt_revision_provenance=prompt_revision_provenance,
-        legacy_baseline=legacy_baseline,
         artifact_provenance=artifact_provenance,
     )
 

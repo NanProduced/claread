@@ -1349,7 +1349,6 @@ def run_gate(
     findings.extend(_check_model_profile_provenance(artifact))
     findings.extend(_check_prompt_revision_provenance(artifact))
     findings.extend(_check_forbidden_markers(artifact))
-    findings.extend(_check_legacy_baseline(artifact))
     findings.extend(_check_artifact_provenance(artifact))
     findings.extend(_check_provenance_producer_policy(artifact))
 

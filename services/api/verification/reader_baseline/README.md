@@ -49,3 +49,16 @@ sample is incomplete or raises.
 - `cli_helpers.py` — helpers shared by the CLI and the focused tests.
 - `parse_eval/` — parse-stage evaluation subsystem with its own
   frozen-artifact contract.
+
+## Parse eval contract
+
+The single canonical parse-eval artifact schema is
+`reader_parse_eval_artifact.v1`
+(`parse_eval/schema.py::ParseEvalArtifactV1`, closed with
+`extra="forbid"`). The harness evaluates only the current Reader
+chain: the legacy scene-render chain was removed together with
+`old_chain.py`, no freezable legacy-chain output ever existed in
+the repository, and the artifact carries no `legacy_baseline`
+field. Focused tests assert that every frozen artifact's top-level
+key set excludes `legacy_baseline`, and the closed schema rejects
+any reintroduction at load time.
