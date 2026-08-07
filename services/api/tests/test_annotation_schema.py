@@ -12,7 +12,6 @@ from app.schemas.internal.analysis import (
     AnnotationOutput,
     VocabHighlight,
 )
-from app.schemas.analysis import SentenceEntry
 
 
 def test_vocab_highlight_rejects_unknown_fields() -> None:
@@ -88,27 +87,34 @@ def test_annotation_output_accepts_mixed_annotations() -> None:
     assert len(output.annotations) == 5
 
 
-def test_sentence_entry_accepts_reader_ask_supplement_projection_fields() -> None:
-    entry = SentenceEntry.model_validate(
-        {
-            "id": "ask-supplement:supp-1",
-            "sentence_id": "s1",
-            "entry_type": "grammar_note",
-            "label": "AI 补充语法旁注",
-            "title": "补充说明",
-            "content": "补充内容",
-            "source_kind": "ask_supplement",
-            "supplement_id": "supp-1",
-            "deletable": True,
-            "target_key": "sentence:s1",
-            "paragraph_id": "p1",
-            "created_from_turn_run_id": "run-1",
-            "schema_version": "reader-ask-supplement-v1",
-            "lifecycle_status": "persisted",
-        }
-    )
+def test_phrase_gloss_rejects_more_than_four_spans() -> None:
+    with pytest.raises(ValidationError):
+        PhraseGloss(
+            sentence_id="s1",
+            text="pick one of the five options",
+            spans=[
+                SpanRef(text="pick"),
+                SpanRef(text="one"),
+                SpanRef(text="of"),
+                SpanRef(text="the five"),
+                SpanRef(text="options"),
+            ],
+            phrase_type="collocation",
+            zh="从五个选项中选一个",
+        )
 
-    assert entry.source_kind == "ask_supplement"
-    assert entry.supplement_id == "supp-1"
-    assert entry.deletable is True
-    assert entry.created_from_turn_run_id == "run-1"
+
+def test_grammar_note_rejects_more_than_four_spans() -> None:
+    with pytest.raises(ValidationError):
+        GrammarNote(
+            sentence_id="s1",
+            spans=[
+                SpanRef(text="she"),
+                SpanRef(text="has"),
+                SpanRef(text="been"),
+                SpanRef(text="working"),
+                SpanRef(text="here"),
+            ],
+            label="现在完成进行时",
+            note_zh="has been doing 表示动作持续到现在",
+        )
