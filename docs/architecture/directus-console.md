@@ -1,6 +1,6 @@
 # Claread Console
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability module 已物理删除，按新 orchestration 重建属于 post-cutover backlog）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability module 已物理删除，按新 orchestration 重建属于 post-cutover backlog）
 
 ## 定位
 
@@ -190,7 +190,7 @@ Directus / Claread Console 负责：
 | 层 | 表前缀 | 说明 |
 |----|--------|------|
 | 业务层 | 无前缀 | 现有业务表（Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 等），Directus 默认只读 |
-| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理属于 DATA-AUDIT post-cutover backlog |
+| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理属于 post-cutover 数据清理 backlog |
 | 配置层 | `llm_*` | LLM Config 控制面表，Directus 可读写 |
 | 系统层 | `directus_*` | Directus 系统表，不手动干预 |
 
@@ -206,7 +206,7 @@ Directus / Claread Console 负责：
 以下事项属于 post-cutover backlog，不在本文写成已完成：
 
 - Console / Eval 按新 orchestration 重建（治理化控制面）
-- 旧 Eval 控制面表与 `analysis_*` 残留本地库清理（DATA-AUDIT；这些表已不在 baseline schema 中）
+- 旧 Eval 控制面表与 `analysis_*` 残留本地库清理（这些表已不在 baseline schema 中）
 - 统一监测与计费适配
 
 ## 当前事实源

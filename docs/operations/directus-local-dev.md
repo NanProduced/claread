@@ -1,6 +1,6 @@
 # Directus 本地开发
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata` 命令已物理删除）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata` 命令已物理删除）
 
 本文描述 `Claread Console` 的本地 Directus runtime、metadata sync 和当前扩展开发方式。
 
@@ -41,7 +41,7 @@ pnpm directus:llm-config:import-bundle
 
 旧 `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata` 已在 cutover 中从 root 与 `apps/directus` `package.json` 移除，`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮；不要在文档或脚本中再写成可用命令。
 
-## Fresh volume 启动（DATA-SCHEMA-BASELINE D2）
+## Fresh volume 启动
 
 全新 PostgreSQL volume（仅由 `infra/migrations/0001_initial.sql` 初始化）没有任何 `directus_*` system tables，`directus start` 会拒绝启动。首次启动前执行一次性 bootstrap（compose entrypoint 固定为 `directus start`，所以要用 entrypoint override）：
 
@@ -152,7 +152,7 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 需要区分：
 
 - 业务表
-  - `reader_*`、`ai_usage_events`、`reader_ask_*` 等（旧 `analysis_*` 数据层清理属于 DATA-AUDIT post-cutover backlog）
+  - `reader_*`、`ai_usage_events`、`reader_ask_*` 等（旧 `analysis_*` 数据层清理属于 post-cutover 数据清理 backlog）
 - Directus system tables
   - `directus_collections`
   - `directus_fields`
