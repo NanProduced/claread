@@ -100,6 +100,16 @@ cutover 后保留的 Directus custom module：
 - 线上 RAG promotion
 - ingestion 状态编排
 
+字段分层：
+
+- **人工维护真源**：`sentence_text`、`output_fragment`（few-shot JSON，唯一 prompt 注入真源）、`example_type`、`reading_variant`（硬过滤）、`quality_score`、`approved`（发布门槛）
+- **自动同步派生**：`label`（自 `output_fragment.label`）、`target_node`（自 `example_type`）、`output_fragment.type`
+- **Machine-derived RAG 字段**：`grammar_tags`、`retrieval_text`、`derived_at`、`derived_by`
+
+派生与校验都由 `apps/directus/extensions/hooks-bundle/src/index.js` 的 validation hook 完成（`validateFragmentShape` / `syncLabelFromFragment` / `normalizeGrammarTagsField` / `extractGeneratedRagFields`）。条目经 `services/api/scripts/ingest_grammar_seed.py`（或后续 promotion workflow）进入 Zilliz collection。
+
+`output_fragment` 契约、retrieval_text 格式、grammar_tags 归一化、Zilliz schema 和联动更新清单等运行时契约见 `docs/architecture/reader-rag.md`。
+
 ## Example Lab / Grammar RAG 当前契约
 
 ### Authoring 真源
@@ -143,7 +153,7 @@ cutover 后保留的 Directus custom module：
 
 ### retrieval_text
 
-`retrieval_text` 是 grammar example 的 embedding 主文本，使用稳定的 colon 格式：
+`retrieval_text` 是 grammar example 的 embedding 主文本，使用稳定的 colon 格式（完整契约与 query 侧格式见 `docs/architecture/reader-rag.md`）：
 
 ```text
 variant: ...
@@ -180,7 +190,7 @@ Directus / Claread Console 负责：
 | 层 | 表前缀 | 说明 |
 |----|--------|------|
 | 业务层 | 无前缀 | 现有业务表（Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 等），Directus 默认只读 |
-| 控制层 | `eval_*` / `eval_node_lab_*` / `eval_workflow_*` | 旧 Eval Center 控制面表（cutover 后 module 已删除，表清理属于 DATA-AUDIT post-cutover backlog） |
+| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理属于 DATA-AUDIT post-cutover backlog |
 | 配置层 | `llm_*` | LLM Config 控制面表，Directus 可读写 |
 | 系统层 | `directus_*` | Directus 系统表，不手动干预 |
 
@@ -196,7 +206,7 @@ Directus / Claread Console 负责：
 以下事项属于 post-cutover backlog，不在本文写成已完成：
 
 - Console / Eval 按新 orchestration 重建（治理化控制面）
-- 12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）
+- 旧 Eval 控制面表与 `analysis_*` 残留本地库清理（DATA-AUDIT；这些表已不在 baseline schema 中）
 - 统一监测与计费适配
 
 ## 当前事实源

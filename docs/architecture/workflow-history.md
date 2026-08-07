@@ -1,6 +1,6 @@
 # Workflow 历史经验
 
-本文是参考文档，只记录旧 workflow 方案为什么被放弃，以及迁移到新仓库后应避免重复的问题。当前实现基线见 `docs/architecture/workflow.md`，不要用本文覆盖当前代码事实。
+本文是参考文档，只记录旧 workflow 方案为什么被放弃，以及迁移到新仓库后应避免重复的问题。当前生产架构是 Reader orchestration，见 `docs/initiatives/reader-agentic-orchestration/target-architecture.md`；旧 v3 workflow 的稳定事实快照见 `docs/architecture/workflow.md`（历史文档）。不要用本文覆盖当前代码事实。
 
 ## v0
 
@@ -47,9 +47,9 @@ v3 的核心改进是分层：
 
 ## 新仓库原则
 
-- 新功能优先沿 v3 的分层思路扩展。
+- v3 已在 cutover 中退出，但其分层思路（canonical 事实与 render projection 分离、goal 差异化、normalize/ground/修复分层）延续到 Reader orchestration 新链。
 - Web 端可以有更强 render profile，但不应要求后端专门复制一套业务服务。
-- 如果要引入 Directus、LLM-as-a-Judge 或 few-shot RAG，应作为 v3 之后的扩展层，而不是把旧 regression 脚本复活。
+- Directus、LLM-as-a-Judge 或 few-shot RAG 应作为新链之后的扩展层，而不是把旧 regression 脚本复活。
 
 ## v3 锚点重构（2026-06）
 
@@ -69,4 +69,13 @@ v3 的核心改进是分层：
 保留经验：
 
 - 结构化输出可以约束 JSON 形状，不能保证模型复制的 quote 一定来自原文
-- 必须同时建设 Pydantic schema、normalize 阶段 source quote resolve、清晰 drop log、Eval Center 可观察性
+- 必须同时建设 Pydantic schema、normalize 阶段 source quote resolve、清晰 drop log 和可观察性
+
+## v3 退出时仍有效的经验（cutover 后提炼）
+
+旧 v3 workflow 已在 cutover 中物理删除，但以下工程经验对新链仍然成立：
+
+- **锚点坐标必须机器可校验、fail-closed**。旧 RenderScene range anchor contract 的有效内核——UTF-16 code unit offset、半开区间、每个 range 带 text 做 slice 校验、校验失败丢弃并记 warning 而不 fallback 到 text search——已延续到新链的 Anchor Segment / UTF-16 + `fnv1a32-utf16` hash 校验。错误高亮比高亮缺失更严重。
+- **repair 应该是 item-level 而不是 full-result**。局部 patch repair 配合明确的触发阈值和 drop 口径，比整次重跑更可控。
+- **LLM 配置可观察性要区分 resolved config 与 observed behavior**。静态解析出的 profile/provider/model 和运行时实际填充的结构化输出行为是两份事实，trace 中都应保留。
+- **实验性模型策略（如 tool_choice=required）保持可选 profile**，不写成默认生产策略。

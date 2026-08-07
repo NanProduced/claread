@@ -1,6 +1,6 @@
 # Claread 文档
 
-> **状态**: `CURRENT` | **最后验证**: 2026-06-06
+> **状态**: `CURRENT` | **最后验证**: 2026-08-08
 
 本目录是 Claread 的全局文档入口。
 
@@ -16,6 +16,8 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 
 ## 当前真相源
 
+### 产品与主线
+
 | 文档 | 用途 |
 |------|------|
 | `PRODUCT.md` | impeccable 跨端产品与品牌上下文，定义 Claread 总体定位和设计原则 |
@@ -24,28 +26,62 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/product/current-state.md` | 当前可运行基线、下一步和已知边界 |
 | `docs/product/competitive-landscape.md` | 阅读、笔记、英语学习和 AI 竞品格局，以及 Claread 差异化 |
 | `docs/product/product-page-direction.md` | Claread public product page 的定位、信息架构、签名 Demo、文案和视觉方向 |
-| `docs/development/mainline.md` | 当前开发主线和近期方向 |
-| `docs/initiatives/reader-agentic-orchestration/` | Reader AI Workflow -> agentic orchestration 重构期间的专项权威上下文 |
 | `docs/product/design-context.md` | 产品气质、阅读体验原则、跨端设计方向 |
 | `docs/product/ask-claread.md` | Ask Claread 当前正式产品说明与冻结边界 |
-| `docs/architecture/ask-claread.md` | Ask Claread 当前正式架构说明；定义 agent-loop-first runtime、turn-run/output/eval-trace 与受控跨文章边界 |
+| `docs/product/learning-annotation-policy.md` | Reader 学习批注（vocabulary / grammar / translation）当前生成质量策略 |
+| `docs/development/mainline.md` | 当前开发主线和近期方向 |
+| `docs/initiatives/reader-agentic-orchestration/` | Reader AI Workflow -> agentic orchestration 重构期间的专项权威上下文 |
+
+### 架构
+
+| 文档 | 用途 |
+|------|------|
+| `docs/architecture/overview.md` | 架构总览与核心边界 |
+| `docs/architecture/ask-claread.md` | Ask Claread 当前正式架构说明：article-bound agent-loop runtime、turn run、受控工具与文章 RAG |
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
-| `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力、文本选区、批注收藏与学习资产差异 |
-| `docs/architecture/backend-multiclient-review.md` | 后端多端化架构评审和待评估问题域 |
-| `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab / grammar RAG 契约 |
-| `docs/architecture/eval-center-integration-map.md` | Eval Center / Example Lab / grammar RAG 联动说明（历史文档，cutover 后旧 Eval Center 已物理删除） |
-| `docs/architecture/workflow.md` | 旧 v3 workflow 架构（历史文档，cutover 后已物理删除；当前架构见 `docs/initiatives/reader-agentic-orchestration/`） |
+| `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力差异 |
+| `docs/architecture/directus-console.md` | Claread Console 的当前定位、post-cutover 模块边界与 Example Lab 控制面契约 |
+| `docs/architecture/reader-rag.md` | Grammar few-shot RAG 当前运行时契约：output_fragment、retrieval_text、grammar_tags 归一化、Zilliz schema 与联动更新清单 |
+| `docs/architecture/dictionary.md` | 词典架构：数据来源、查询链路与增强方向 |
+| `docs/architecture/ai-usage-audit-and-billing.md` | AI 使用审计与积分结算底座 |
+
+### 运维
+
+| 文档 | 用途 |
+|------|------|
+| `docs/operations/local-dev.md` | 本地开发环境 |
+| `docs/operations/testing.md` | 测试与验证入口 |
 | `docs/operations/directus-local-dev.md` | Directus 本地开发与热更新说明 |
 | `docs/operations/langsmith.md` | LangSmith trace 规范 |
 | `docs/operations/model-config.md` | 模型 profile / preset 配置 |
 | `docs/operations/prompt-versioning.md` | prompt registry 和版本规则 |
-| `docs/design/AGENTS.md` | 跨端设计决策规则 |
+
+### 服务与客户端
+
+| 文档 | 用途 |
+|------|------|
 | `services/api/README.md` | 后端服务启动、结构和边界 |
+| `services/api/docs/api-contracts.md` | 当前后端 API 契约与 ID / 枚举语义 |
+| `services/api/docs/database.md` | 数据库 baseline、词典资产保护与恢复 |
 | `services/api/docs/daily-reader.md` | Daily Reader 后端 workflow、reading unit 语义和后续收口项 |
 | `services/worker/README.md` | 后台 worker 预留职责 |
 | `packages/README.md` | contracts、shared-utils、design-tokens 边界 |
 | `apps/miniprogram/README.md` | 微信小程序客户端启动、结构和平台限制 |
+| `apps/web/README.md` | Web 客户端启动、路由边界和 BFF 接入 |
+| `apps/directus/README.md` | Claread Console 本地 runtime 与扩展工作区 |
+
+### 治理与历史
+
+| 文档 | 用途 |
+|------|------|
+| `docs/documentation-guide.md` | 文档管理与巡检指南 |
+| `docs/design/AGENTS.md` | 跨端设计决策规则 |
+| `docs/architecture/workflow.md` | 旧 v3 workflow 架构历史文档（旧代码已物理删除，本文保留作历史证据） |
+| `docs/architecture/workflow-history.md` | 旧 workflow v0-v3 的经验教训与 cutover 后仍有效的工程原则 |
+| `docs/architecture/eval-center-integration-map.md` | 旧 Eval Center / Example Lab / grammar RAG 联动说明（历史文档；当前运行时契约见 `docs/architecture/reader-rag.md`） |
+
+`docs/reference/` 子树（differentiated、grammar-xray）是参考资料，由各子目录自身 README 索引，不作为全局真相源。
 
 ## 文档原则
 
