@@ -251,9 +251,10 @@ class ReaderSpanRecorder:
         Best-effort: failures are logged and swallowed.
 
         ``langsmith_run_id`` is set only from the explicit value passed by the
-        caller. Single-owner contract (C3): the ``worker_tick`` that owns the
-        LLM call consumes the LangSmith id (via the ``end_worker_span_*``
-        helpers) and passes it here. The recorder does NOT auto-read the
+        caller. Direct recorder calls never consume worker-owned LangSmith
+        identity: the ``worker_tick`` that owns the LLM call consumes the
+        LangSmith id (via the ``end_worker_span_*`` helpers) and passes it
+        here. The recorder does NOT auto-read the
         :class:`LangSmithIdBridgeProcessor` ContextVar, so a stale id can never
         leak into a non-owning span (``publish_fence`` / ``claim`` / ``no_job``
         / ``pipeline_root``) or the next tick.
@@ -461,9 +462,10 @@ async def end_worker_span_success(
         usage_event_id=ai_usage_event_id,
         status=STATUS_SUCCEEDED,
     )
-    # C3 single-owner: this worker_tick owns the LLM call's LangSmith run id.
-    # Consume (read+clear) it here so it cannot leak into a later-ending span
-    # (publish_fence / next tick); pass it explicitly to the span end.
+    # Worker-tick LangSmith ownership: this worker_tick owns the LLM call's
+    # LangSmith run id. Consume (read+clear) it here so it cannot leak into a
+    # later-ending span (publish_fence / next tick); pass it explicitly to the
+    # span end.
     langsmith_run_id = consume_current_langsmith_run_id()
     await get_default_recorder().end_span(
         span,
@@ -553,8 +555,9 @@ async def _end_worker_span_failure(
         correlation,
         duration=current_duration_provenance(),
     )
-    # C3 single-owner: a failed/fenced worker_tick still owns its LLM call's
-    # LangSmith run id; consume (read+clear) and pass it explicitly.
+    # Worker-tick LangSmith ownership: a failed/fenced worker_tick still owns
+    # its LLM call's LangSmith run id; consume (read+clear) and pass it
+    # explicitly.
     langsmith_run_id = consume_current_langsmith_run_id()
     await get_default_recorder().end_span(
         span,

@@ -5,7 +5,7 @@ Custom :class:`opentelemetry.sdk.trace.SpanProcessor` that captures
 PydanticAI LLM spans (emitted by ``Agent.instrument_all()``) and stores
 them in a :class:`contextvars.ContextVar`.
 
-Single-owner contract (RUNTIME-OBSERVABILITY-CLOSURE-R1 / C3): the LangSmith
+Worker-tick LangSmith ownership: the LangSmith
 run id belongs to exactly one span — the ``worker_tick`` that owns the LLM
 call. That owner consumes the id explicitly via
 :func:`consume_current_langsmith_run_id` (through the
@@ -88,7 +88,7 @@ def clear_langsmith_ids() -> None:
 def consume_current_langsmith_run_id() -> str | None:
     """Read and clear the current LangSmith ids, returning the run id.
 
-    Single-owner consumption point (C3): only the ``worker_tick`` that owns
+    Single-owner consumption point: only the ``worker_tick`` that owns
     the LLM call invokes this (via the ``end_worker_span_*`` helpers). Reading
     clears the ContextVar so the id cannot be inherited by a span that ends
     later in the same context (``publish_fence`` / the next ``worker_tick``).

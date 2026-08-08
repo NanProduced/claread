@@ -14,9 +14,9 @@ and P3 (LangSmith run_id backfill):
 - ``LangSmithIdBridgeProcessor.on_end`` extracts
   ``langsmith.trace.id`` / ``langsmith.span.id`` from a fake span and
   stores them in the ContextVar
-- C3 single-owner: ``end_span`` does NOT auto-consume the ContextVar; the
-  owning worker_tick passes ``langsmith_run_id`` explicitly (and an explicit
-  value always wins)
+- Single-owner LangSmith identity: ``end_span`` does NOT auto-consume the
+  ContextVar; the owning worker_tick passes ``langsmith_run_id`` explicitly
+  (and an explicit value always wins)
 """
 
 from __future__ import annotations
@@ -513,7 +513,7 @@ def test_langsmith_id_bridge_processor_ignores_non_langsmith_spans() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: end_span does NOT auto-backfill langsmith_run_id (C3 single-owner)
+# Direct recorder calls never consume worker-owned LangSmith identity
 # ---------------------------------------------------------------------------
 
 
@@ -532,9 +532,9 @@ async def test_end_span_does_not_auto_backfill_langsmith_run_id(
         trace_id=uuid4(),
         span_kind=SPAN_KIND_PIPELINE_ROOT,
     )
-    # Caller does NOT pass langsmith_run_id. Under the C3 single-owner
-    # contract end_span must not auto-consume the ContextVar, so the stale id
-    # cannot leak into this span.
+    # Caller does NOT pass langsmith_run_id. Under the single-owner contract
+    # end_span must not auto-consume the ContextVar, so the stale id cannot
+    # leak into this span.
     await recorder.end_span(span, status=STATUS_SUCCEEDED)
 
     row = await _fetch_span_row(pool, span.span_id)

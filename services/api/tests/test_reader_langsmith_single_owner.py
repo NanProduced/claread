@@ -1,26 +1,23 @@
-"""C3 closure tests: LangSmith run id is owned by exactly one worker_tick.
+"""LangSmith run id is owned by exactly one worker_tick.
 
-RUNTIME-OBSERVABILITY-CLOSURE-R1 (C3).
+``_CURRENT_LANGSMITH_IDS`` holds the LangSmith trace/span id captured when a
+PydanticAI LLM span ends. Within one execution context, that id must reach
+exactly one ``reader_runtime_spans`` row — the ``worker_tick`` that owns the
+LLM call — and must not leak into any other span.
 
-Baseline (RED) gap: ``_CURRENT_LANGSMITH_IDS`` is set-only-never-cleared and
-``ReaderSpanRecorder.end_span`` unconditionally auto-backfills
-``langsmith_run_id`` from that ContextVar whenever the caller does not pass an
-explicit value. Within one execution context, after a single LLM span ends
-(setting the ContextVar), every later span that ends without an explicit id —
-``publish_fence`` / ``claim`` / ``no_job`` / ``pipeline_root`` / the next
-``worker_tick`` — inherits the same stale LangSmith run id.
-
-The single-owner contract frozen by the audit:
+Worker-tick LangSmith ownership contract:
 
 - only the ``worker_tick`` that owns the LLM call consumes the id (explicitly);
 - the id is cleared before the attempt starts and reset after it ends
   (success / failure / exception);
-- the generic ``end_span`` must NOT auto-consume-and-clear the ContextVar.
+- the generic ``end_span`` does NOT auto-consume the ContextVar, so a
+  ``publish_fence`` / ``claim`` / ``no_job`` / ``pipeline_root`` span or the
+  next ``worker_tick`` never inherits a stale id.
 
-This file also records why the *generic read-then-clear* alternative is
-forbidden: after the model call the ``publish_fence`` span normally ends before
-the ``worker_tick`` span, so a first-read-clear inside ``end_span`` would
-misattribute the id to the fence and starve the real owner.
+This file also records why a *generic read-then-clear* inside ``end_span`` is
+wrong: after the model call the ``publish_fence`` span normally ends before the
+``worker_tick`` span, so a first-read-clear would misattribute the id to the
+fence and starve the real owner.
 """
 
 from __future__ import annotations

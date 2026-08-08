@@ -15,9 +15,10 @@ Requirements covered:
     it with ``status='succeeded'`` (success) or ``status='failed'`` with
     ``failure_class='fence_violation'`` / ``failure_class='publish_exception'``
     (failure).
-  - Requirement 8: ``end_span`` auto-populates ``langsmith_run_id`` from
-    the ``LangSmithIdBridgeProcessor`` ContextVar when the caller does not
-    pass an explicit value (mock test).
+  - Grammar-window worker-tick LangSmith ownership: the owning
+    ``worker_tick`` carries ``langsmith_run_id`` (consumed from the
+    ``LangSmithIdBridgeProcessor`` ContextVar during the window's LLM call),
+    while the ``publish_fence`` span does not inherit it (mock test).
 """
 
 from __future__ import annotations
@@ -812,7 +813,7 @@ async def test_grammar_window_publish_fence_span_value_error_records_publish_exc
 
 
 # ---------------------------------------------------------------------------
-# Requirement 8 (C3 single-owner): the owning grammar-window worker_tick
+# Grammar-window worker-tick LangSmith ownership: the owning worker_tick
 # carries langsmith_run_id; the publish_fence span does NOT inherit it.
 # ---------------------------------------------------------------------------
 
@@ -820,7 +821,7 @@ async def test_grammar_window_publish_fence_span_value_error_records_publish_exc
 async def test_grammar_window_worker_tick_single_owner_langsmith_run_id(
     grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
-    """C3 single-owner contract for the grammar-window lane.
+    """Worker-tick LangSmith ownership for the grammar-window lane.
 
     The mock executor sets ``_CURRENT_LANGSMITH_IDS`` inside ``generate()`` —
     the same moment ``LangSmithIdBridgeProcessor.on_end`` captures the run id
@@ -857,7 +858,7 @@ async def test_grammar_window_worker_tick_single_owner_langsmith_run_id(
             user_id=user_id,
             lease_owner="grammar-window-langsmith-single-owner",
             lease_duration=LEASE_DURATION,
-            # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
+            # GROUPED_WINDOWED article requires higher limits.
             max_ticks=100,
             max_jobs=80,
         )

@@ -782,9 +782,9 @@ class ReaderEnhancementPipelineRunner:
             worker_type=worker_type,
             metadata={"lease_owner": lease_owner},
         )
-        # C3 single-owner: drop any stale LangSmith id before this attempt's
-        # LLM call so a leftover from a crashed previous attempt cannot be
-        # consumed by this tick.
+        # Clear stale LangSmith correlation before dispatch: drop any stale id
+        # before this attempt's LLM call so a leftover from a crashed previous
+        # attempt cannot be consumed by this tick.
         clear_langsmith_ids()
         try:
             async with recorder.use_span(span_ctx):
@@ -818,10 +818,10 @@ class ReaderEnhancementPipelineRunner:
             )
             raise
         finally:
-            # C3 single-owner: never leak this attempt's LangSmith id to the
-            # next tick. The owning worker already consumed it on a handled
-            # success/failure; this clears the residue left when the worker
-            # raised before consuming.
+            # Never leak this attempt's LangSmith id to the next tick. The
+            # owning worker already consumed it on a handled success/failure;
+            # this clears the residue left when the worker raised before
+            # consuming.
             clear_langsmith_ids()
 
     async def _dispatch_worker_attempt(

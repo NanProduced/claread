@@ -1,13 +1,10 @@
-"""C1 closure tests: semantic_outline worker_tick span must end exactly once.
+"""Semantic outline processed outcomes close their worker span.
 
-RUNTIME-OBSERVABILITY-CLOSURE-R1 (C1).
-
-Baseline (RED) contract gap: every *other* enhancement worker (translation /
-vocabulary / grammar / display_title) ends its own ``worker_tick`` span inside
-``process_claimed_*_job`` via the ``end_worker_span_*`` helpers. The semantic
-outline worker never references the span recorder, so every semantic_outline
-tick that actually processed a job leaves its ``worker_tick`` row stuck at
-``status='started'`` (a deterministic dangling-span leak).
+Every enhancement worker (translation / vocabulary / grammar / display_title)
+ends its own ``worker_tick`` span inside ``process_claimed_*_job`` via the
+``end_worker_span_*`` helpers. The semantic outline worker does the same, so a
+semantic_outline tick that actually processed a job never leaves its
+``worker_tick`` row stuck at ``status='started'`` (a dangling-span leak).
 
 These tests drive the semantic outline worker under an active ``worker_tick``
 span (exactly how ``ReaderEnhancementPipelineRunner._run_worker_attempt`` wraps
@@ -21,8 +18,8 @@ for each processed-job outcome:
 
 The ``no_job`` and uncaught-exception convergence is owned by the pipeline
 runner (not the worker) and already terminates the span correctly; the last two
-tests lock that existing behavior so it is not misreported as a C1 defect and so
-the worker-side fix cannot double-end those spans.
+tests lock that existing behavior so the worker-side change cannot double-end
+those spans.
 """
 
 from __future__ import annotations
@@ -183,7 +180,7 @@ async def _seed_ready_article_with_outline_job(
 
 
 # ---------------------------------------------------------------------------
-# C1 RED/GREEN: processed-job outcomes must close the worker_tick span
+# Semantic outline processed outcomes close their worker span
 # ---------------------------------------------------------------------------
 
 
@@ -303,8 +300,8 @@ async def test_semantic_outline_fence_violation_closes_worker_tick_span(
 
 # ---------------------------------------------------------------------------
 # no_job / uncaught-exception convergence is owned by the pipeline runner and
-# already terminates the span. These lock the existing behavior (must NOT be
-# misreported as a C1 defect) and ensure the worker-side fix never double-ends.
+# already terminates the span. These lock the existing behavior and ensure the
+# worker-side change never double-ends those spans.
 # ---------------------------------------------------------------------------
 
 
