@@ -3,10 +3,18 @@
 Custom :class:`opentelemetry.sdk.trace.SpanProcessor` that captures
 ``langsmith.trace.id`` and ``langsmith.span.id`` attributes from
 PydanticAI LLM spans (emitted by ``Agent.instrument_all()``) and stores
-them in a :class:`contextvars.ContextVar` so
-``ReaderSpanRecorder.end_span`` can backfill
-``reader_runtime_spans.langsmith_run_id`` without touching every worker
-call site.
+them in a :class:`contextvars.ContextVar`.
+
+Single-owner contract (RUNTIME-OBSERVABILITY-CLOSURE-R1 / C3): the LangSmith
+run id belongs to exactly one span — the ``worker_tick`` that owns the LLM
+call. That owner consumes the id explicitly via
+:func:`consume_current_langsmith_run_id` (through the
+``end_worker_span_success`` / ``end_worker_span_execution_error`` /
+``end_worker_span_fence_violation`` / ``end_worker_span_generic_exception``
+helpers) and passes it to ``ReaderSpanRecorder.end_span``. The recorder no
+longer auto-reads the ContextVar, and the pipeline clears it at every worker
+attempt boundary, so a stale id can never leak into a ``publish_fence`` /
+``claim`` / ``no_job`` / ``pipeline_root`` span or the next tick.
 
 Best-effort by design: failures are logged at warning level and
 swallowed so they never break the worker's main path.
@@ -67,12 +75,33 @@ def get_current_langsmith_ids() -> LangSmithIds | None:
 
 
 def clear_langsmith_ids() -> None:
-    """Reset the ContextVar (mainly for tests)."""
+    """Reset the ContextVar.
+
+    Used at worker attempt boundaries (clear before an attempt starts and
+    reset after it ends) and by tests so a stale LangSmith id never leaks
+    into a later-ending span or the next tick.
+    """
 
     _CURRENT_LANGSMITH_IDS.set(None)
 
 
-def _extract_langsmith_ids(span: "ReadableSpan") -> LangSmithIds | None:
+def consume_current_langsmith_run_id() -> str | None:
+    """Read and clear the current LangSmith ids, returning the run id.
+
+    Single-owner consumption point (C3): only the ``worker_tick`` that owns
+    the LLM call invokes this (via the ``end_worker_span_*`` helpers). Reading
+    clears the ContextVar so the id cannot be inherited by a span that ends
+    later in the same context (``publish_fence`` / the next ``worker_tick``).
+    Returns ``None`` when no LangSmith-managed OTel span has ended in the
+    current async context.
+    """
+
+    ids = _CURRENT_LANGSMITH_IDS.get()
+    _CURRENT_LANGSMITH_IDS.set(None)
+    return ids.run_id if ids is not None else None
+
+
+def _extract_langsmith_ids(span: ReadableSpan) -> LangSmithIds | None:
     """Read ``langsmith.trace.id`` / ``langsmith.span.id`` from span attrs.
 
     Returns ``None`` when either attribute is missing or not a string
@@ -109,13 +138,13 @@ class LangSmithIdBridgeProcessor:
 
     def on_start(
         self,
-        span: "Span",
-        parent_context: "Context | None" = None,
+        span: Span,
+        parent_context: Context | None = None,
     ) -> None:
         # No-op: we only need on_end to capture IDs.
         return
 
-    def on_end(self, span: "ReadableSpan") -> None:
+    def on_end(self, span: ReadableSpan) -> None:
         if not self._enabled:
             return
         try:

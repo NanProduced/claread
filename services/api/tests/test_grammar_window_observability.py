@@ -34,6 +34,11 @@ import pytest
 
 from app.contracts.annotation import compute_text_range_hash
 from app.database import connection as db_connection
+from app.observability.langsmith_span_processor import (
+    _CURRENT_LANGSMITH_IDS,
+    LangSmithIds,
+    clear_langsmith_ids,
+)
 from app.schemas.reader_orchestration import ReaderTextRangeAnchor
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
@@ -116,8 +121,14 @@ class _ObservabilityMockExecutor:
     non-zero token counts.
     """
 
-    def __init__(self, *, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        *,
+        pool: asyncpg.Pool,
+        langsmith_ids: LangSmithIds | None = None,
+    ) -> None:
         self._pool = pool
+        self._langsmith_ids = langsmith_ids
         self.last_candidate_contents: list[WindowCandidateContent] = []
         self.call_count = 0
 
@@ -125,6 +136,11 @@ class _ObservabilityMockExecutor:
         self, context: dict[str, Any]
     ) -> GrammarWindowExecutionResult:
         self.call_count += 1
+        if self._langsmith_ids is not None:
+            # Simulate LangSmithIdBridgeProcessor.on_end capturing the run id
+            # the moment this window's PydanticAI LLM span ends (i.e. during
+            # the worker attempt, after the attempt-boundary clear).
+            _CURRENT_LANGSMITH_IDS.set(self._langsmith_ids)
         self.last_candidate_contents = []
 
         target_anchors = context.get("target_anchors", [])
@@ -796,45 +812,38 @@ async def test_grammar_window_publish_fence_span_value_error_records_publish_exc
 
 
 # ---------------------------------------------------------------------------
-# Requirement 8: LangSmith bridge — end_span auto-populates langsmith_run_id
-# from the LangSmithIdBridgeProcessor ContextVar
+# Requirement 8 (C3 single-owner): the owning grammar-window worker_tick
+# carries langsmith_run_id; the publish_fence span does NOT inherit it.
 # ---------------------------------------------------------------------------
 
 
-async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
+async def test_grammar_window_worker_tick_single_owner_langsmith_run_id(
     grammar_window_obs_env: asyncpg.Pool,
 ) -> None:
-    """Requirement 8: ``end_span`` auto-populates ``langsmith_run_id`` on the
-    ``worker_tick`` span from the ``LangSmithIdBridgeProcessor`` ContextVar.
+    """C3 single-owner contract for the grammar-window lane.
 
-    This proves the dual-track PG span + LangSmith bridge design: when a
-    LangSmith-managed OTel span ends inside the worker's async context
-    (setting ``_CURRENT_LANGSMITH_IDS``), the subsequent
-    ``end_worker_span_success`` call reads the ContextVar and writes
-    ``langsmith_run_id`` to the ``reader_runtime_spans`` row — without the
-    worker call site needing to thread the LangSmith run ID explicitly.
-
-    The test simulates the ContextVar state that
-    ``LangSmithIdBridgeProcessor.on_end`` would set after a real PydanticAI
-    LLM span ends. We don't need a real LangSmith export — the ContextVar is
-    the bridge contract.
+    The mock executor sets ``_CURRENT_LANGSMITH_IDS`` inside ``generate()`` —
+    the same moment ``LangSmithIdBridgeProcessor.on_end`` captures the run id
+    after a real PydanticAI LLM span ends. The owning ``worker_tick`` consumes
+    that id via ``end_worker_span_success`` and writes it to
+    ``reader_runtime_spans.langsmith_run_id``. The ``publish_fence`` span ends
+    before the worker_tick and must NOT inherit the id: the generic
+    ``end_span`` no longer auto-reads the ContextVar.
     """
-    from app.observability.langsmith_span_processor import (
-        _CURRENT_LANGSMITH_IDS,
-        LangSmithIds,
-        clear_langsmith_ids,
-    )
-
     pool = grammar_window_obs_env
     user_id = await insert_user(pool)
     article = await submit_article_ready(
         pool,
         user_id=user_id,
         plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
-        title="grammar-window LangSmith Bridge",
+        title="grammar-window LangSmith single-owner",
     )
 
-    executor = _ObservabilityMockExecutor(pool=pool)
+    mock_ids = LangSmithIds(
+        trace_id="langsmith-trace-grammar-window-bridge",
+        span_id="langsmith-span-grammar-window-bridge",
+    )
+    executor = _ObservabilityMockExecutor(pool=pool, langsmith_ids=mock_ids)
     runner = _make_grammar_window_runner(pool, executor=executor)
 
     await runner.bootstrap_missing_jobs(
@@ -842,26 +851,17 @@ async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
         user_id=user_id,
     )
 
-    # Simulate LangSmithIdBridgeProcessor.on_end setting the ContextVar
-    # after a PydanticAI LLM span ends. The worker_tick span's end_span
-    # will read this ContextVar and backfill langsmith_run_id.
-    mock_ids = LangSmithIds(
-        trace_id="langsmith-trace-grammar-window-bridge",
-        span_id="langsmith-span-grammar-window-bridge",
-    )
-    token = _CURRENT_LANGSMITH_IDS.set(mock_ids)
     try:
         run_summary = await runner.run(
             record_id=article.record_id,
             user_id=user_id,
-            lease_owner="grammar-window-langsmith-bridge",
+            lease_owner="grammar-window-langsmith-single-owner",
             lease_duration=LEASE_DURATION,
             # T4.2a-R1: GROUPED_WINDOWED article requires higher limits.
             max_ticks=100,
             max_jobs=80,
         )
     finally:
-        _CURRENT_LANGSMITH_IDS.reset(token)
         clear_langsmith_ids()
 
     assert run_summary.outcome_counts.failed_terminal == 0, (
@@ -871,9 +871,7 @@ async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
         "grammar-window window worker must have ticked at least once"
     )
 
-    # Verify the worker_tick span carries langsmith_run_id backfilled from
-    # the ContextVar. Filter for the SUCCEEDED span (later ticks may produce
-    # SKIPPED spans when the job is already terminal).
+    # The owning succeeded worker_tick carries the LangSmith run id.
     async with pool.acquire() as conn:
         span_row = await conn.fetchrow(
             """
@@ -891,14 +889,13 @@ async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
         "succeeded worker_tick span must exist for grammar-window window run"
     )
     assert span_row["langsmith_run_id"] == mock_ids.run_id, (
-        f"worker_tick span langsmith_run_id must match ContextVar; "
+        f"owning worker_tick span langsmith_run_id must match the LLM run; "
         f"got {span_row['langsmith_run_id']!r}, "
         f"expected {mock_ids.run_id!r}"
     )
 
-    # Also verify the publish_fence span carries the same langsmith_run_id
-    # (the ContextVar persists across both span lifecycles within the same
-    # async context).
+    # The publish_fence span ends before the worker_tick and must NOT inherit
+    # the LangSmith run id (single-owner; no generic end_span auto-read).
     async with pool.acquire() as conn:
         fence_span = await conn.fetchrow(
             """
@@ -912,8 +909,7 @@ async def test_grammar_window_worker_end_span_backfills_langsmith_run_id(
         )
 
     if fence_span is not None:
-        assert fence_span["langsmith_run_id"] == mock_ids.run_id, (
-            f"publish_fence span langsmith_run_id must match ContextVar; "
-            f"got {fence_span['langsmith_run_id']!r}, "
-            f"expected {mock_ids.run_id!r}"
+        assert fence_span["langsmith_run_id"] is None, (
+            f"publish_fence span must not inherit the LangSmith run id; "
+            f"got {fence_span['langsmith_run_id']!r}"
         )

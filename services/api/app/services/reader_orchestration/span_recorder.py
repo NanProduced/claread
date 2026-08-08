@@ -37,6 +37,7 @@ import asyncpg
 
 from app.database import connection as db_connection
 from app.database.json_compat import ensure_json_object, jsonb_param
+from app.observability.langsmith_span_processor import consume_current_langsmith_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -249,26 +250,14 @@ class ReaderSpanRecorder:
 
         Best-effort: failures are logged and swallowed.
 
-        ``langsmith_run_id`` is auto-populated from the
-        :class:`LangSmithIdBridgeProcessor` ContextVar when the caller does
-        not pass an explicit value. This couples PG span rows to LangSmith
-        runs without requiring every caller to thread the value through.
+        ``langsmith_run_id`` is set only from the explicit value passed by the
+        caller. Single-owner contract (C3): the ``worker_tick`` that owns the
+        LLM call consumes the LangSmith id (via the ``end_worker_span_*``
+        helpers) and passes it here. The recorder does NOT auto-read the
+        :class:`LangSmithIdBridgeProcessor` ContextVar, so a stale id can never
+        leak into a non-owning span (``publish_fence`` / ``claim`` / ``no_job``
+        / ``pipeline_root``) or the next tick.
         """
-
-        if langsmith_run_id is None:
-            # Lazy import avoids a hard dependency on the OTel SDK at
-            # module load time (tests may run without LangSmith wired).
-            try:
-                from app.observability.langsmith_span_processor import (
-                    get_current_langsmith_ids,
-                )
-            except ImportError:
-                get_current_langsmith_ids = None  # type: ignore[assignment]
-
-            if get_current_langsmith_ids is not None:
-                ids = get_current_langsmith_ids()
-                if ids is not None:
-                    langsmith_run_id = ids.run_id
 
         try:
             async with self.get_pool().acquire() as conn:
@@ -472,6 +461,10 @@ async def end_worker_span_success(
         usage_event_id=ai_usage_event_id,
         status=STATUS_SUCCEEDED,
     )
+    # C3 single-owner: this worker_tick owns the LLM call's LangSmith run id.
+    # Consume (read+clear) it here so it cannot leak into a later-ending span
+    # (publish_fence / next tick); pass it explicitly to the span end.
+    langsmith_run_id = consume_current_langsmith_run_id()
     await get_default_recorder().end_span(
         span,
         status=STATUS_SUCCEEDED,
@@ -485,6 +478,7 @@ async def end_worker_span_success(
         model_name=model_name,
         model_provider=model_provider,
         capability_code=capability_code,
+        langsmith_run_id=langsmith_run_id,
         extra_metadata=extra_metadata,
     )
 
@@ -559,6 +553,9 @@ async def _end_worker_span_failure(
         correlation,
         duration=current_duration_provenance(),
     )
+    # C3 single-owner: a failed/fenced worker_tick still owns its LLM call's
+    # LangSmith run id; consume (read+clear) and pass it explicitly.
+    langsmith_run_id = consume_current_langsmith_run_id()
     await get_default_recorder().end_span(
         span,
         status=status,
@@ -567,5 +564,6 @@ async def _end_worker_span_failure(
         capability_code=(
             correlation.capability_code if correlation is not None else None
         ),
+        langsmith_run_id=langsmith_run_id,
         extra_metadata=extra_metadata or None,
     )

@@ -11,6 +11,7 @@ import asyncpg
 from app.config.settings import Settings, get_settings
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
+from app.observability.langsmith_span_processor import clear_langsmith_ids
 from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_READER_GRAMMAR_BUNDLE,
@@ -781,6 +782,10 @@ class ReaderEnhancementPipelineRunner:
             worker_type=worker_type,
             metadata={"lease_owner": lease_owner},
         )
+        # C3 single-owner: drop any stale LangSmith id before this attempt's
+        # LLM call so a leftover from a crashed previous attempt cannot be
+        # consumed by this tick.
+        clear_langsmith_ids()
         try:
             async with recorder.use_span(span_ctx):
                 attempt = await self._dispatch_worker_attempt(
@@ -812,6 +817,12 @@ class ReaderEnhancementPipelineRunner:
                 failure_code=type(exc).__name__,
             )
             raise
+        finally:
+            # C3 single-owner: never leak this attempt's LangSmith id to the
+            # next tick. The owning worker already consumed it on a handled
+            # success/failure; this clears the residue left when the worker
+            # raised before consuming.
+            clear_langsmith_ids()
 
     async def _dispatch_worker_attempt(
         self,
