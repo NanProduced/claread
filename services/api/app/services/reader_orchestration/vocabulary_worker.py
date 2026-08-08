@@ -1106,6 +1106,37 @@ def _build_vocabulary_batch_quality_json(
     return quality_json
 
 
+def _failed_vocabulary_usage_attrs(
+    execution: VocabularyExecutionResult | VocabularyBatchExecutionResult | None,
+    error: VocabularyExecutionError | None = None,
+) -> dict[str, Any]:
+    """Extract the invocation's usage attributes for a failed usage event.
+
+    When the executor already returned (provider called and usage_data may
+    be present) the event carries the real usage payload and the model
+    identity; otherwise the typed error's model identity is used when
+    available and no tokens are fabricated.
+    """
+    if execution is not None:
+        return {
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "usage_data": execution.usage_data,
+        }
+    if error is not None:
+        return {
+            "prompt_version": error.prompt_version,
+            "model_route": error.model_route,
+            "model_profile": error.model_profile,
+            "model_provider": error.model_provider,
+            "model_name": error.model_name,
+        }
+    return {}
+
+
 class VocabularyWorkerService:
     def __init__(
         self,
@@ -1511,6 +1542,7 @@ class VocabularyWorkerService:
         any other ``Exception`` → ``failed_terminal``.
         """
         context: VocabularyBatchJobContext | None = None
+        execution: VocabularyBatchExecutionResult | None = None
 
         try:
             context = await self._load_batch_job_context(claim.job_id)
@@ -1556,6 +1588,16 @@ class VocabularyWorkerService:
                 model_name=execution.model_name,
             )
         except FenceViolationError:
+            # The model call completed (tokens spent) but the publish fence
+            # failed — record the invocation's usage so the usage table
+            # reflects real model consumption. Mirrors the grammar per-unit
+            # fence path; the failed event never carries a layer id.
+            await self._record_batch_failed_usage_event(
+                context=context,
+                error_code="publish_fence_failed",
+                error_message="vocabulary batch publish fence failed",
+                **_failed_vocabulary_usage_attrs(execution),
+            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1969,6 +2011,7 @@ class VocabularyWorkerService:
         model_profile: str | None = None,
         model_provider: str | None = None,
         model_name: str | None = None,
+        usage_data: dict[str, Any] | None = None,
     ) -> UUID | None:
         if context is None:
             return None
@@ -1991,6 +2034,7 @@ class VocabularyWorkerService:
                 model_provider=model_provider,
                 model_name=model_name,
                 planner_kind="llm_worker",
+                usage_data=usage_data,
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
                 error_message=error_message,
