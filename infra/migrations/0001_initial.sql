@@ -1290,6 +1290,7 @@ CREATE TABLE reading_bases (
     language text,
     title_snapshot text,
     navigation_json jsonb DEFAULT '{"units": []}'::jsonb NOT NULL,
+    diagnostics_json jsonb DEFAULT '{"version": "stable_annotation_diagnostics_v1", "items": []}'::jsonb NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
     frozen_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,

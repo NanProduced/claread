@@ -25,7 +25,6 @@ from app.services.reader_orchestration.automatic_layer_policy import (
     filter_units_for_automatic_layer,
 )
 from app.services.reader_orchestration.base_builder import (
-    StableBlockAnnotation,
     build_reading_base_from_canonical_text,
 )
 from app.services.reader_orchestration.input_document_normalizer import (
@@ -40,6 +39,9 @@ from app.services.reader_orchestration.job_bootstrap import (
 from app.services.reader_orchestration.semantic_classifier import (
     SEMANTIC_CONTRACT_V1,
     annotate_blocks_with_semantic,
+)
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    StableBlockAnnotation,
 )
 from app.services.reader_orchestration.stable_ready_input_application_service import (
     StableReadyInputApplicationService,

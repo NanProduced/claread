@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.contracts.annotation import (
@@ -13,6 +13,14 @@ from app.contracts.annotation import (
     utf16_code_unit_length,
 )
 from app.services import nlp_model_registry
+
+from .stable_annotation_analysis import (
+    AcceptedStableBlockAnnotation,
+    StableAnnotationAnalysis,
+    StableBlockAnnotation,
+    StableUnitRange,
+    analyze_stable_annotations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,35 +195,6 @@ class StableReadingBase:
 
 
 @dataclass(frozen=True, slots=True)
-class StableBlockAnnotation:
-    """A5: stable block interval annotation for unit classification.
-
-    A ``StableBlockAnnotation`` carries the stable ``block_type`` and
-    payload of a ``StableDocumentBlock`` plus its UTF-16 range in the
-    canonical text. When ``build_reading_base_from_canonical_text`` is
-    given a sequence of these annotations, a built unit whose
-    ``(base_start_utf16, base_end_utf16)`` exactly matches an
-    annotation's ``(start_utf16, end_utf16)`` derives its ``unit_type``
-    from ``block_type`` instead of the legacy text heuristic, and the
-    annotation's payload (heading level / inline marks / table role /
-    parent block id) is projected onto the unit and into the snapshot
-    ``reader_source_block`` payload.
-
-    Annotations that do not match any unit's UTF-16 range are silently
-    ignored — the heuristic runs for that unit and no stable block
-    fields are emitted. This keeps the annotation path fail-safe: a
-    stale or mismatched annotation can never corrupt the unit type.
-    """
-
-    start_utf16: int
-    end_utf16: int
-    block_type: str
-    block_id: str
-    parent_block_id: str | None = None
-    payload_json: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
 class BuiltReadingUnit:
     reading_record_id: str
     base_id: str
@@ -310,6 +289,10 @@ class ReadingBaseBuildResult:
     # anchors above remain location/scheduling carriers; they must not be
     # used to reconstruct list/table/callout structure on reload.
     stable_document_blocks: tuple[Any, ...] = ()
+    # Analyzer output for the supplied stable annotations (None on the
+    # legacy / low-impact path): accepted annotations, deterministic
+    # diagnostics, and per-unit structural policy override records.
+    annotation_analysis: StableAnnotationAnalysis | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,24 +455,34 @@ def _build_reading_base_core(
         language=language,
     )
 
-    # A5: index stable block annotations by their UTF-16 range so the
-    # unit loop can do an O(1) exact-match lookup. Multiple annotations
-    # with the same range are disallowed — the freeze plan guarantees
-    # uniqueness, and a duplicate here means the caller built the
-    # annotations incorrectly. We keep the FIRST annotation per range
-    # and silently ignore later duplicates to stay fail-safe (the
-    # heuristic would have classified the unit identically anyway).
-    annotations_by_range: dict[tuple[int, int], StableBlockAnnotation] = {}
-    if stable_block_annotations:
-        for annotation in stable_block_annotations:
-            key = (annotation.start_utf16, annotation.end_utf16)
-            if annotation.start_utf16 >= annotation.end_utf16:
-                # Invalid range — skip silently rather than failing the
-                # whole build. The freeze plan is responsible for
-                # emitting valid ranges; a bad annotation must never
-                # corrupt the unit classification.
-                continue
-            annotations_by_range.setdefault(key, annotation)
+    # A5: every supplied annotation passes through the single analyzer
+    # module BEFORE any filtering. It owns range validity, duplicate
+    # judgement, inline mark validation, diagnostics, and per-unit
+    # structural policy override attribution. Only its accepted
+    # annotations feed the exact-match lookup below.
+    annotation_analysis: StableAnnotationAnalysis | None = None
+    accepted_by_range: dict[tuple[int, int], AcceptedStableBlockAnnotation] = {}
+    if stable_block_annotations is not None:
+        unit_ranges = [
+            StableUnitRange(
+                unit_id=f"u{index}",
+                start_utf16=utf16_prefix[char_start],
+                end_utf16=utf16_prefix[char_end],
+            )
+            for index, (char_start, char_end) in enumerate(block_spans, start=1)
+        ]
+        annotation_analysis = analyze_stable_annotations(
+            raw_annotations=stable_block_annotations,
+            base_utf16_length=utf16_prefix[-1],
+            unit_ranges=unit_ranges,
+        )
+        accepted_by_range = {
+            (
+                accepted.annotation.start_utf16,
+                accepted.annotation.end_utf16,
+            ): accepted
+            for accepted in annotation_analysis.accepted_annotations
+        }
 
     units: list[BuiltReadingUnit] = []
     anchor_segments: list[BuiltAnchorSegment] = []
@@ -565,8 +558,11 @@ def _build_reading_base_core(
         # detect Markdown headings. For all other stable block types
         # the heuristic ``unit_type`` is kept — the authoritative
         # block type is in ``stable_block_type``.
-        matched_annotation = annotations_by_range.get(
+        matched_accepted = accepted_by_range.get(
             (base_start_utf16, base_end_utf16)
+        )
+        matched_annotation = (
+            matched_accepted.annotation if matched_accepted is not None else None
         )
         stable_block_type: str | None = None
         stable_block_id: str | None = None
@@ -592,7 +588,7 @@ def _build_reading_base_core(
                 unit_type = "heading"
             payload = matched_annotation.payload_json or {}
             heading_level = _extract_heading_level(payload)
-            inline_marks = _extract_inline_marks(payload)
+            inline_marks = matched_accepted.inline_marks if matched_accepted else ()
             table_role = _derive_table_role(matched_annotation.block_type)
             # L1: code language + table header/alignment metadata.
             if matched_annotation.block_type == "code_block":
@@ -697,6 +693,7 @@ def _build_reading_base_core(
         units=tuple(units),
         anchor_segments=tuple(anchor_segments),
         navigation_units=tuple(navigation_units),
+        annotation_analysis=annotation_analysis,
     )
     validate_reading_base_build_result(result)
     return result
@@ -1460,27 +1457,6 @@ def _extract_heading_level(payload: dict[str, Any]) -> int | None:
     if raw < 1:
         return None
     return raw
-
-
-def _extract_inline_marks(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-    """A5: extract inline marks from a stable block payload.
-
-    The Markdown ecosystem refactor stores inline marks under
-    ``payload_json.inline_marks`` as a list of objects with
-    ``type`` / ``start`` / ``end`` keys (UTF-16 offsets into the
-    block's canonical text). Returns an empty tuple when the key is
-    absent or the value is not a list. Each entry must be a dict;
-    non-dict entries are skipped silently so a malformed payload can
-    never corrupt the inline_marks tuple.
-    """
-    raw = payload.get("inline_marks")
-    if not isinstance(raw, list):
-        return ()
-    marks: list[dict[str, Any]] = []
-    for entry in raw:
-        if isinstance(entry, dict):
-            marks.append(entry)
-    return tuple(marks)
 
 
 def _derive_table_role(block_type: str) -> str | None:

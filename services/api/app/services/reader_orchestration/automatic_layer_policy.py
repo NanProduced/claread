@@ -119,17 +119,31 @@ class AutomaticLayerPolicy:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> AutomaticLayerPolicy | None:
+        """Strict parse: exactly the four persisted keys, each a native bool.
+
+        Missing keys, extra keys, strings (including ``"false"``),
+        integers (including ``0`` / ``1``), and any other truthy/falsy
+        stand-ins return ``None`` — only the exact writer shape produced
+        by :meth:`as_dict` is well-formed.
+        """
         if not isinstance(data, Mapping):
             return None
-        try:
-            return cls(
-                translation=bool(data["translation"]),
-                vocabulary=bool(data["vocabulary"]),
-                grammar_note=bool(data["grammar_note"]),
-                sentence_analysis=bool(data["sentence_analysis"]),
-            )
-        except (KeyError, TypeError, ValueError):
+        if set(data.keys()) != {
+            "translation",
+            "vocabulary",
+            "grammar_note",
+            "sentence_analysis",
+        }:
             return None
+        values = (
+            data["translation"],
+            data["vocabulary"],
+            data["grammar_note"],
+            data["sentence_analysis"],
+        )
+        if any(not isinstance(value, bool) for value in values):
+            return None
+        return cls(*values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +408,46 @@ def read_unit_semantic_metadata(
     return dict(semantic) if isinstance(semantic, Mapping) else None
 
 
+STRUCTURAL_INTEGRITY_OVERRIDE_VERSION: Final[str] = "structural_integrity_override_v1"
+SEMANTIC_INTEGRITY_OVERRIDE_KEY: Final[str] = "semantic_integrity_override"
+
+
+def build_semantic_integrity_override(*, reason_code: str) -> dict[str, Any]:
+    """Persisted ``metadata_json.semantic_integrity_override`` object.
+
+    The recorded policy is always the recorded all-off produced by the
+    same :class:`AutomaticLayerPolicy` interface (never a second key
+    mapping); ``reason_code`` shares the diagnostics code vocabulary.
+    """
+    return {
+        "override_version": STRUCTURAL_INTEGRITY_OVERRIDE_VERSION,
+        "policy": AutomaticLayerPolicy.all_off().as_dict(),
+        "reason_code": reason_code,
+    }
+
+
+def _read_semantic_integrity_override(
+    metadata_json: Mapping[str, Any] | None,
+) -> AutomaticLayerPolicy | None:
+    """Well-formed recorded override policy, or None when absent/malformed.
+
+    Well-formed means: exact override version plus a policy mapping that
+    passes the strict :meth:`AutomaticLayerPolicy.from_mapping` parse.
+    Malformed overrides fall back to the caller's existing paths.
+    """
+    if not isinstance(metadata_json, Mapping):
+        return None
+    override = metadata_json.get(SEMANTIC_INTEGRITY_OVERRIDE_KEY)
+    if not isinstance(override, Mapping):
+        return None
+    if override.get("override_version") != STRUCTURAL_INTEGRITY_OVERRIDE_VERSION:
+        return None
+    reason_code = override.get("reason_code")
+    if not isinstance(reason_code, str) or not reason_code:
+        return None
+    return AutomaticLayerPolicy.from_mapping(override.get("policy"))
+
+
 def policy_from_unit_metadata(
     metadata_json: Mapping[str, Any] | None,
     *,
@@ -408,6 +462,29 @@ def policy_from_unit_metadata(
       - prefer_recorded uses stored automatic_layer_policy when well-formed
       - still returns resolver_version from the record for fence checks
     """
+    # The structural integrity override is the strongest recorded truth:
+    # a well-formed recorded all-off wins before any semantic / legacy
+    # path (same prefer_recorded fence semantics). Malformed overrides
+    # fall through to the existing paths.
+    override_policy = _read_semantic_integrity_override(metadata_json)
+    if override_policy is not None:
+        semantic_for_identity = read_unit_semantic_metadata(metadata_json) or {}
+        override_contract = semantic_for_identity.get("contract_version")
+        override_resolver = semantic_for_identity.get("resolver_version")
+        return ResolvedAutomaticLayerPolicy(
+            policy=override_policy,
+            contract_version=(
+                override_contract if isinstance(override_contract, str) else None
+            ),
+            resolver_version=(
+                override_resolver
+                if isinstance(override_resolver, str) and override_resolver.strip()
+                else AUTOMATIC_LAYER_POLICY_RESOLVER_V1
+            ),
+            content_role=None,
+            is_legacy=False,
+        )
+
     semantic = read_unit_semantic_metadata(metadata_json)
     if semantic is None:
         return resolve_automatic_layer_policy(

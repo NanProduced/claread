@@ -41,13 +41,14 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
 
 from app.contracts.annotation import utf16_code_unit_length
+
+from .source_link_policy import is_safe_source_link
 
 # ---------------------------------------------------------------------------
 # Identity constants (Clause 1)
@@ -60,8 +61,6 @@ PROFILE = "commonmark_gfm_v1"
 # ---------------------------------------------------------------------------
 # Link safety (Clause 3.5)
 # ---------------------------------------------------------------------------
-
-SAFE_LINK_PROTOCOLS = frozenset({"http", "https", "mailto"})
 
 # ---------------------------------------------------------------------------
 # Authoritative Normalization 三级分类（L1）
@@ -152,20 +151,6 @@ _MSG_UNSUP_DEFINITION_LIST = (
     "Definition-list structure is not supported in the first phase; text is "
     "retained for safe review."
 )
-
-
-def _is_safe_link(href: str) -> bool:
-    """Return True if the link protocol is whitelisted (or relative)."""
-    if not href:
-        return False
-    try:
-        parsed = urlparse(href)
-    except ValueError:
-        return False
-    scheme = parsed.scheme.lower()
-    if not scheme:
-        return True  # Relative link / anchor
-    return scheme in SAFE_LINK_PROTOCOLS
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +378,7 @@ def _extract_and_strip_links(text: str) -> tuple[str, list[dict[str, str]], list
                 i += 1
                 continue
             href = text[close_bracket + 2:k]
-            if _is_safe_link(href):
+            if is_safe_source_link(href):
                 safe_links.append({"text": label, "href": href})
             else:
                 unsafe_links.append(
@@ -432,7 +417,7 @@ def _extract_links_from_link_open(
         elif child.type == "link_close":
             if in_link:
                 link_text = "".join(current_link_text)
-                if _is_safe_link(current_href):
+                if is_safe_source_link(current_href):
                     safe_links.append({"text": link_text, "href": current_href})
                 else:
                     unsafe_links.append(
@@ -572,7 +557,7 @@ def _process_inline_with_marks(
                     match = _try_match_link_pattern(content, i)
                     if match is not None:
                         label, href, next_i = match
-                        is_safe = _is_safe_link(href)
+                        is_safe = is_safe_source_link(href)
                         start = current_utf16
                         _append_text(label)
                         end = current_utf16
@@ -626,7 +611,7 @@ def _process_inline_with_marks(
             open_link = {
                 "start": current_utf16,
                 "href": href,
-                "is_safe": _is_safe_link(href),
+                "is_safe": is_safe_source_link(href),
                 "label_parts": [],
             }
         elif ctype == "link_close":

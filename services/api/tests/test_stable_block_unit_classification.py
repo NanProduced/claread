@@ -31,13 +31,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+
 from app.contracts.annotation import utf16_code_unit_length
 from app.services.reader_orchestration import (
     build_reader_plate_snapshot,
 )
 from app.services.reader_orchestration.base_builder import (
-    StableBlockAnnotation,
     build_reading_base_from_canonical_text,
+)
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    StableBlockAnnotation,
 )
 
 pytestmark = [

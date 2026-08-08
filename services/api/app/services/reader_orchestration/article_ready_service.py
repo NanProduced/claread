@@ -116,6 +116,11 @@ class ArticleReadyPersistenceService:
                     record_id=record_id,
                     base_id=base_id,
                     units=build_result.units,
+                    policy_overrides=(
+                        build_result.annotation_analysis.policy_overrides
+                        if build_result.annotation_analysis is not None
+                        else ()
+                    ),
                 )
                 await self._repository.insert_anchor_segments(
                     conn,
