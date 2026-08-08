@@ -2,7 +2,7 @@
 
 /**
  * Default Plate source-navigation seam (formal path).
- * Mocks construction seams; does not re-implement identity/selector policy.
+ * Mocks the construction seam; does not re-implement DOM/selector policy.
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -14,54 +14,22 @@ import {
   type ReaderPlateSnapshotDto,
 } from "@/types/api/reader-plate";
 
-const loadFactoryCalls: Array<{
-  readingRecordId: string;
-  baseId: string;
-  recordGeneration: number;
-}> = [];
-
-const navigateFactoryResultA = Object.assign(vi.fn(async () => ({
-  status: "target_not_found" as const,
-  attemptedModes: ["unit" as const],
-})), { __navId: "nav-a" });
-
-const navigateFactoryResultB = Object.assign(vi.fn(async () => ({
-  status: "target_not_found" as const,
-  attemptedModes: ["unit" as const],
-})), { __navId: "nav-b" });
+const navigateFactoryResultA = Object.assign(
+  vi.fn(async () => ({
+    status: "target_not_found" as const,
+    attemptedModes: ["unit" as const],
+  })),
+  { __navId: "nav-a" },
+);
 
 let navigateCallCount = 0;
 
 vi.mock(
-  "@/lib/reader-orchestration/agentic-source-navigation/current-page-identity-loader",
-  () => ({
-    createCurrentPageIdentityLoader: (input: {
-      readingRecordId: string;
-      baseId: string;
-      recordGeneration: number;
-    }) => {
-      loadFactoryCalls.push({ ...input });
-      return async () => ({
-        readingRecordId: input.readingRecordId,
-        baseId: input.baseId,
-        recordGeneration: input.recordGeneration,
-        stableDocument: {
-          status: "not_ready" as const,
-          stableDocumentId: null,
-        },
-      });
-    },
-  }),
-);
-
-vi.mock(
   "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation",
   () => ({
-    createNavigateAgenticSource: () => {
+    createArticleLocationNavigator: () => {
       navigateCallCount += 1;
-      return navigateCallCount === 1
-        ? navigateFactoryResultA
-        : navigateFactoryResultB;
+      return navigateFactoryResultA;
     },
   }),
 );
@@ -169,16 +137,15 @@ function minimalSnapshot(
 describe("ReaderRecordPlateSurface source navigation (formal path)", () => {
   beforeEach(() => {
     panelPropsSpy.mockClear();
-    loadFactoryCalls.length = 0;
     navigateCallCount = 0;
   });
 
-  it("1–2. passes function onNavigateAgenticSource without identity/DOM props", () => {
+  it("passes a typed-location navigation callback without identity/DOM props", () => {
     render(<ReaderRecordPlateSurface snapshot={minimalSnapshot()} />);
     expect(panelPropsSpy).toHaveBeenCalled();
     const props = panelPropsSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(typeof props.onNavigateAgenticSource).toBe("function");
-    expect(props.onNavigateAgenticSource).toBe(navigateFactoryResultA);
+    expect(typeof props.onNavigateToArticleLocation).toBe("function");
+    expect(props.onNavigateToArticleLocation).toBe(navigateFactoryResultA);
     expect(props).not.toHaveProperty("loadCurrentPageIdentity");
     expect(props).not.toHaveProperty("currentPageIdentity");
     expect(props).not.toHaveProperty("document");
@@ -186,73 +153,35 @@ describe("ReaderRecordPlateSurface source navigation (formal path)", () => {
     expect(props).not.toHaveProperty("stableDocumentId");
   });
 
-  it("3. loader is built from snapshot record/base/generation", () => {
-    render(
-      <ReaderRecordPlateSurface
-        snapshot={minimalSnapshot({
-          record_id: "rec-x",
-          base_id: "base-y",
-          generation: 7,
-        })}
-      />,
-    );
-    expect(loadFactoryCalls).toEqual([
-      {
-        readingRecordId: "rec-x",
-        baseId: "base-y",
-        recordGeneration: 7,
-      },
-    ]);
-  });
-
-  it("4. generation change rebuilds navigation callback identity", () => {
-    const { rerender } = render(
-      <ReaderRecordPlateSurface snapshot={minimalSnapshot({ generation: 1 })} />,
-    );
-    const first = (panelPropsSpy.mock.calls[0]![0] as {
-      onNavigateAgenticSource: unknown;
-    }).onNavigateAgenticSource;
-
-    rerender(
-      <ReaderRecordPlateSurface snapshot={minimalSnapshot({ generation: 2 })} />,
-    );
-    const second = (panelPropsSpy.mock.calls.at(-1)![0] as {
-      onNavigateAgenticSource: unknown;
-    }).onNavigateAgenticSource;
-
-    expect(first).toBe(navigateFactoryResultA);
-    expect(second).toBe(navigateFactoryResultB);
-    expect(second).not.toBe(first);
-  });
-
-  it("5. same identity re-render does not rebuild navigation callback", () => {
+  it("keeps one stable callback identity across snapshot re-renders", () => {
     const snap = minimalSnapshot({ generation: 3 });
     const { rerender } = render(<ReaderRecordPlateSurface snapshot={snap} />);
     const first = (panelPropsSpy.mock.calls[0]![0] as {
-      onNavigateAgenticSource: unknown;
-    }).onNavigateAgenticSource;
+      onNavigateToArticleLocation: unknown;
+    }).onNavigateToArticleLocation;
     const factoriesAfterFirst = navigateCallCount;
 
-    // New object, same fence identity fields
+    // New snapshot object; the DOM adapter resolves at click time, so the
+    // callback does not depend on snapshot identity fields.
     rerender(
       <ReaderRecordPlateSurface
         snapshot={{ ...snap, snapshot_id: "snap-plate-1-rerender" }}
       />,
     );
     const second = (panelPropsSpy.mock.calls.at(-1)![0] as {
-      onNavigateAgenticSource: unknown;
-    }).onNavigateAgenticSource;
+      onNavigateToArticleLocation: unknown;
+    }).onNavigateToArticleLocation;
 
     expect(second).toBe(first);
     expect(navigateCallCount).toBe(factoriesAfterFirst);
   });
 
-  it("6. callback is createNavigateAgenticSource return value (not inline DOM ops)", () => {
+  it("callback is the navigator factory return value (not inline DOM ops)", () => {
     render(<ReaderRecordPlateSurface snapshot={minimalSnapshot()} />);
     const props = panelPropsSpy.mock.calls[0]![0] as {
-      onNavigateAgenticSource: { __navId?: string };
+      onNavigateToArticleLocation: { __navId?: string };
     };
-    expect(props.onNavigateAgenticSource.__navId).toBe("nav-a");
+    expect(props.onNavigateToArticleLocation.__navId).toBe("nav-a");
     expect(navigateCallCount).toBeGreaterThanOrEqual(1);
   });
 });
