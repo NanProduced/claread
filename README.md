@@ -2,12 +2,12 @@
 
 Claread 是一个多端英文阅读辅助产品。当前基线包含：
 
-- `services/api/`：通用 FastAPI 后端，承载用户、记录、任务、词典、用户资产、配额、workflow 和 Ask Claread。
+- `services/api/`：通用 FastAPI 后端，承载用户、Reader orchestration、Ask Claread、词典、用户资产、配额和 Daily Reader。
 - `apps/miniprogram/`：微信小程序客户端。
 - `apps/web/`：Web 产品客户端，通过 Next.js BFF 接入真实后端。
-- `apps/directus/`：Claread Console 控制面，承载 Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab。
+- `apps/directus/`：Claread Console 本地 Directus runtime 与控制面扩展，当前保留通用 metadata 展示 module、LLM Config 控制面、reader-orch 只读诊断 endpoint 和 Example Lab Collection。
 - `infra/docker/`：本地 PostgreSQL / Redis。
-- `infra/migrations/`：数据库初始基线 SQL（业务表 + Eval Center 控制面表）。
+- `infra/migrations/`：数据库初始基线 SQL（当前业务表单一 baseline）。
 
 所有客户端共享同一套后端业务核心和 PostgreSQL 数据。客户端差异通过 auth adapter、render profile、capability profile 和客户端 UI 层处理，不复制后端。
 
@@ -79,7 +79,7 @@ pnpm directus:up
 pnpm directus:extensions:watch
 ```
 
-默认访问 `http://127.0.0.1:8055/admin`。Claread Console 已承载 Eval Center、Render Scene Inspector、Parse Run Observability 和 Example Lab 等可用能力，不再只是空骨架。详细说明见 `docs/operations/directus-local-dev.md`。
+默认访问 `http://127.0.0.1:8055/admin`。Claread Console 当前保留通用 metadata 展示 module、LLM Config 控制面、reader-orch 只读诊断 endpoint 和 Example Lab Collection；更完整的治理化控制面是后续功能稳定后的独立规划。详细说明见 `docs/operations/directus-local-dev.md`。
 
 本地 Directus 默认管理员登录邮箱为 `admin@claread.dev`，密码由本地 `apps/directus/.env` 或启动环境中的 `ADMIN_PASSWORD` 配置；仓库示例只保留占位值。
 

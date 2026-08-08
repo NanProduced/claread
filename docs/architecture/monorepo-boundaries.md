@@ -91,7 +91,7 @@ scripts/    # 仓库级辅助脚本
 当前关键内容：
 
 - `infra/docker/docker-compose.local.yml`
-- `infra/migrations/0001_initial_schema.sql`
+- `infra/migrations/0001_initial.sql`
 - `infra/scripts/`
 
 规则：

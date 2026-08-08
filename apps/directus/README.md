@@ -88,11 +88,11 @@ http://127.0.0.1:8055/mcp?access_token=<DIRECTUS_ACCESS_TOKEN>
 
 MCP 在 Claread 中的定位是辅助 Directus schema / collection / relation / flow 开发，不替代仓库里的 SQL migration、扩展源码开发或代码评审。
 
-Claude Code 项目级接入已配置在仓库根目录 [`.mcp.json`](/C:/Users/nanpr/claread/claread/.mcp.json)。
+Claude Code 项目级接入配置在仓库根目录 `.mcp.json`（本地文件，不提交；配置说明见 `docs/operations/directus-local-dev.md`）。
 
 - server name: `directus-local`
 - transport: `http`
-- auth helper: [apps/directus/scripts/directus-mcp-headers-helper.mjs](/C:/Users/nanpr/claread/claread/apps/directus/scripts/directus-mcp-headers-helper.mjs)
+- auth helper: `apps/directus/scripts/directus-mcp-headers-helper.mjs`
 
 该 helper 会在连接时登录本地 Directus，并输出 `Authorization` header，供 Claude Code 动态鉴权。
 

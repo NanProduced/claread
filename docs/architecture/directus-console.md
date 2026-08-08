@@ -1,6 +1,6 @@
 # Claread Console
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability module 已物理删除，按新 orchestration 重建属于 post-cutover backlog）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability module 已物理删除，按新 orchestration 重建属于 post-cutover backlog）
 
 ## 定位
 
@@ -100,11 +100,21 @@ cutover 后保留的 Directus custom module：
 - 线上 RAG promotion
 - ingestion 状态编排
 
+字段分层：
+
+- **人工维护字段**：`sentence_text`、`output_fragment`（few-shot JSON，结构须与运行时 prompt 注入使用的 payload 合同兼容，合同见 `docs/architecture/reader-rag.md`）、`example_type`、`reading_variant`（硬过滤）、`quality_score`、`approved`（发布门槛）
+- **自动同步派生**：`label`（自 `output_fragment.label`）、`target_node`（自 `example_type`）、`output_fragment.type`
+- **Machine-derived RAG 字段**：`grammar_tags`、`retrieval_text`、`derived_at`、`derived_by`
+
+派生与校验都由 `apps/directus/extensions/hooks-bundle/src/index.js` 的 validation hook 完成（`validateFragmentShape` / `syncLabelFromFragment` / `normalizeGrammarTagsField` / `extractGeneratedRagFields`）。Example Lab 当前只负责 PostgreSQL 内的 authoring、validation 和 derived-field 管理：条目不进入 Zilliz，保存条目不会触发 Zilliz rebuild，也不影响 Reader runtime。当前唯一入库路径是 `services/api/prompts/examples/grammar.yaml` → `generate_grammar_seed.py` → `data/seed/grammar_seed_v1.jsonl` → `ingest_grammar_seed.py` → Zilliz → Reader runtime retrieval。Directus → seed → Zilliz 的 promotion 链路尚未实现，属于未来能力。
+
+`output_fragment` 契约、retrieval_text 格式、grammar_tags 归一化、Zilliz schema 和联动更新清单等运行时契约见 `docs/architecture/reader-rag.md`。
+
 ## Example Lab / Grammar RAG 当前契约
 
-### Authoring 真源
+### Authoring 字段
 
-人工维护的 few-shot 真源是：
+Example Lab 中人工维护的字段是：
 
 - `sentence_text`
 - `output_fragment`
@@ -143,7 +153,7 @@ cutover 后保留的 Directus custom module：
 
 ### retrieval_text
 
-`retrieval_text` 是 grammar example 的 embedding 主文本，使用稳定的 colon 格式：
+`retrieval_text` 是 grammar example 的 embedding 主文本，使用稳定的 colon 格式（完整契约与 query 侧格式见 `docs/architecture/reader-rag.md`）：
 
 ```text
 variant: ...
@@ -180,7 +190,7 @@ Directus / Claread Console 负责：
 | 层 | 表前缀 | 说明 |
 |----|--------|------|
 | 业务层 | 无前缀 | 现有业务表（Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 等），Directus 默认只读 |
-| 控制层 | `eval_*` / `eval_node_lab_*` / `eval_workflow_*` | 旧 Eval Center 控制面表（cutover 后 module 已删除，表清理属于 DATA-AUDIT post-cutover backlog） |
+| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理属于 post-cutover 数据清理 backlog |
 | 配置层 | `llm_*` | LLM Config 控制面表，Directus 可读写 |
 | 系统层 | `directus_*` | Directus 系统表，不手动干预 |
 
@@ -196,7 +206,7 @@ Directus / Claread Console 负责：
 以下事项属于 post-cutover backlog，不在本文写成已完成：
 
 - Console / Eval 按新 orchestration 重建（治理化控制面）
-- 12 张旧 Eval 表与 `analysis_*` 数据层清理（DATA-AUDIT）
+- 旧 Eval 控制面表与 `analysis_*` 残留本地库清理（这些表已不在 baseline schema 中）
 - 统一监测与计费适配
 
 ## 当前事实源

@@ -121,7 +121,7 @@
 - [ ] `services/api/AGENTS.md` 中的后端边界（如"不写小程序专属逻辑"）是否与代码一致。
       验证：搜索 `services/api/app/` 中硬编码的 `wechat_miniprogram`、`miniprogram` 等字符串，并判断是否属于 auth adapter / 兼容层。只有小程序假设泄漏到通用业务核心时才标为问题。
 - [ ] `docs/operations/prompt-versioning.md` 中的 registry 路径和版本规则是否仍被遵守。
-      验证：文档中的路径与 `services/api/config/prompts/` 实际目录结构一致。
+      验证：文档中的路径与 `services/api/prompts/` 实际目录结构一致。
 - [ ] 后端新增的 `response_model`、枚举、错误态是否已在客户端契约文档中同步。
       验证：比对以下同步对：
       - `services/api/app/schemas/*.py` ↔ `apps/web/docs/api-contract-audit.md`

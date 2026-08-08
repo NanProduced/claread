@@ -22,28 +22,28 @@ claread/
 └── docs/
 ```
 
-其中 `apps/miniprogram/`、`apps/web/`、`services/api/`、`infra/`、`packages/contracts/`、`packages/design-tokens/`、`docs/` 已进入当前可运行基线。`apps/directus/`、`services/worker/`、`packages/shared-utils/`、`evals/` 是后续扩展位置。
+其中 `apps/miniprogram/`、`apps/web/`、`apps/directus/`、`services/api/`、`infra/`、`packages/contracts/`、`packages/design-tokens/`、`evals/`、`docs/` 已进入当前可运行基线。`services/worker/`、`packages/shared-utils/` 是后续扩展位置。
 
 ## 核心边界
 
 | 模块 | 职责 |
 |------|------|
-| `services/api` | 通用后端 API、认证、分析任务、用户资产、词典、Daily Reader |
+| `services/api` | 通用后端 API、认证、Reader orchestration、Ask Claread、用户资产、词典、Daily Reader |
 | `apps/miniprogram` | 微信小程序客户端，当前稳定基线 |
 | `apps/web` | Web baseline 与后续高保真阅读体验 |
 | `packages/contracts` | 跨端契约常量和类型，当前覆盖批注/收藏/text range 基础常量 |
-| `apps/directus` | 后续内部数据面板和运营工具 |
+| `apps/directus` | 内部控制面（Claread Console），当前承载 metadata 展示、LLM Config、reader-orch 只读诊断和 Example Lab |
 | `infra` | Docker、migration、数据库脚本、部署材料 |
-| `evals` | 后续 LLM-as-a-Judge、数据集、rubric、运行记录 |
+| `evals` | 离线 artifact / evaluation harness（数据集、rubric、baselines），当前已有可运行离线基线 |
 
 ## 数据原则
 
 PostgreSQL 是业务事实源。Redis 是缓存和任务辅助能力。词典三表是本地高成本资产，应单独保护。
 
-不同客户端可以有不同 render profile，但应共享 canonical analysis result、用户资产和词典数据。
+不同客户端可以有不同 render profile，但应共享 canonical Reader 事实（Stable Document / Reading Units / Anchor Segments / Enhancement Layers）、用户资产和词典数据。
 
 ## 当前基线
 
-当前包含后端 API 服务、微信小程序客户端、Web baseline、数据库 baseline 和词典数据资产。Directus、LLM-as-a-Judge 和 Few-shot RAG 后续评估后接入。
+当前包含后端 API 服务、微信小程序客户端、Web baseline、Directus 内部控制面、数据库 baseline、词典数据资产，以及 `evals/` 下可离线运行的 artifact / evaluation harness。真实 provider evaluation 必须显式 opt-in，默认离线门禁不调用 provider；具体命令与当前验收方式见 `docs/operations/testing.md`。尚未启动的是 Claread Console / Eval control plane 按新 orchestration 的重新设计，以及后续文章解析标注质量提升；Few-shot RAG promotion 同样属于后续规划。
 
 迁移过程本身不是新仓库主线事实。新仓库文档只保留多端化决策、当前可运行状态和必要的开发边界。

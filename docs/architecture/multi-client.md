@@ -1,6 +1,6 @@
 # 多端架构
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Analysis service 写入路径与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构；旧 `analysis_*` 表的精确状态见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Analysis service 写入路径与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构；旧 `analysis_*` 表的精确状态见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`）
 
 ## 结论
 
@@ -58,12 +58,12 @@ PostgreSQL 是事务型数据真相源。
 - user_identities
 - user_sessions
 - reading_records（Reading Record）
-- stable_documents / stable_document_blocks（Stable Document）
+- stable_reading_documents / stable_document_blocks（Stable Document）
 - reading_units / anchor_segments（Reading Units / Anchor Segments）
 - enhancement_layers（Enhancement Layers）
 - reader_events（事件日志）
 - reader_runtime_spans（runtime span）
-- reader_ask_threads / reader_ask_turns / reader_ask_supplements（Ask agentic v2）
+- reader_ask_threads / reader_ask_turn_runs / reader_ask_supplements（Ask agentic v2）
 - vocabulary_book
 - favorite_records
 - user_annotations / reader_notes
@@ -72,7 +72,7 @@ PostgreSQL 是事务型数据真相源。
 - dict_entries / dict_lookup_targets / dict_redirects
 - ai_usage_events（usage/ledger）
 
-旧 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）已在 cutover 中物理删除；对应 `analysis_*` 表分三类：4 张 legacy 孤儿表（`analysis_debug_snapshots`、`analysis_task_events`、`analysis_overview_tasks`、`analysis_overview_task_events`）、3 张 legacy 仍被只读引用表（`analysis_records`、`analysis_results`、`analysis_tasks`，被 `user_assets/records.py`、`text_anchors.py`、`quota/ledger.py` 引用）、2 张新链在用表（`analysis_windows`、`layer_analysis_plans`，必须保护）。表 DROP 与引用迁移属于 DATA-AUDIT post-cutover backlog。
+旧 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）已在 cutover 中物理删除；后端代码对 `analysis_records`、`analysis_results`、`analysis_tasks` 的引用已全部迁移到 Reading Record 事实，这些旧表与 legacy 孤儿表（`analysis_debug_snapshots`、`analysis_task_events`、`analysis_overview_tasks`、`analysis_overview_task_events`）已不在 baseline migration（`infra/migrations/0001_initial.sql`）中。`analysis_windows` 与 `layer_analysis_plans` 是新链在用表，必须保护。残留本地开发库中的旧表清理属于 post-cutover 数据清理 backlog。
 
 Redis 用于缓存和多 worker 场景下的共享状态。
 
@@ -123,7 +123,7 @@ Stable Document / Reading Units / Anchor Segments
 
 Reader orchestration 的调试摘要通过 `reader_events` 和 `reader_runtime_spans` 承载，记录 runtime span、job lifecycle、layer publish 事实。
 
-旧 `analysis_debug_snapshots` 表的写入路径已在 cutover 中物理删除；该表属于 legacy 孤儿表，DROP 属于 DATA-AUDIT post-cutover backlog。
+旧 `analysis_debug_snapshots` 表的写入路径已在 cutover 中物理删除；该表属于 legacy 孤儿表，DROP 属于 post-cutover 数据清理 backlog。
 
 ## 认证策略
 

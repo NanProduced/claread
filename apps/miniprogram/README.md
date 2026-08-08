@@ -61,11 +61,11 @@ pnpm run typecheck
 ```text
 src/
   pages/        # 主包页面
-  packageA/     # 历史、生词、个人中心等分包
+  packageA/     # 生词、复习、个人中心等分包
   packageB/     # 每日精读分包
   packageC/     # 反馈、引导、关于等分包
   components/   # 小程序 UI 组件
-  services/     # API、storage、sync、auth 等服务
+  services/     # API、storage、auth 等服务
   stores/       # Zustand 状态
   types/        # API DTO 和 ViewModel
   config/       # 环境、路由、阅读目标、反馈配置
@@ -89,45 +89,24 @@ Web 端可以共享业务契约，但应使用 Web 原生实现。
 
 ## ID 契约
 
-小程序当前依赖三类 ID：
+小程序当前依赖的 ID：
 
 | 字段 | 语义 | 用途 |
 |------|------|------|
-| `clientRecordId` | 客户端生成的稳定记录 ID | 页面路由、本地 storage、历史回看 |
-| `cloudRecordId` | 云端 `analysis_records.id` UUID | 后端写操作、云端记录引用 |
-| `taskId` | 分析任务 ID | 任务状态查询和轮询 |
+| `reading_record_id` | canonical 阅读记录身份（`reading_records.id` UUID） | 生词来源引用等跨端共享语义 |
 
-禁止把云端 UUID 写入本应表达 `clientRecordId` 的字段。
+旧的 `clientRecordId` / `cloudRecordId` / `taskId` 已随旧分析链从读写路径完全移除。禁止把云端 UUID 写入客户端本地身份字段。
 
-## 本地优先同步
+## 本地缓存
 
-用户资产使用本地优先策略：
+cutover 后小程序本地缓存只保留收藏与生词本片段：
 
-1. 用户操作先写本地 storage。
-2. 写入持久化 sync queue。
-3. 后台 flush 到云端。
-4. 云端成功后更新本地同步状态。
-5. 同步失败不回滚用户可见结果。
-
-关键本地 key：
-
-- `analysis_record_ids`
-- `analysis_record_{id}`
-- `record_identity_map`
-- `sync_queue`
-- `reader_notes`
-- `user_annotations`
+- `favorite_records`
 - `vocab_ids`
 - `vocab_entry_{id}`
 - `vocab_lemma_index`
-- `favorite_records`
-- `reading_preferences_local`
+- `vocab_inspect_entry`
 
-Reader 标注当前遵循以下小程序端边界：
+旧 analysis 草稿、记录 identity map、sync queue 和 Reader 标注缓存已随旧分析链移除。小程序 Reader 提交与阅读能力在 cutover 中下线，后续按新 contract 单独评估；当前小程序主链路为每日精读、生词本、复习、查词、反馈和个人中心。
 
-- 句子级高亮可以直接创建或更新。
-- 句子级笔记默认先进入预览态，再通过二级菜单编辑或删除。
-- Web 创建的 `text_range` / `multi_text` 高亮与笔记在小程序端只负责回显和 focus，不在结果页改写锚点。
-- 结果页进入时会先读取本地 `reader_notes` cache，再用云端 `GET /reader-notes?analysis_record_id=...` 结果覆盖。
-
-稳定基线范围见 `apps/miniprogram/docs/freeze-baseline.md`。小程序会继续推进功能和体验增强，但新增能力应服从多端 API 契约。
+小程序会继续推进功能和体验增强，但新增能力应服从多端 API 契约。

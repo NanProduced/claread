@@ -2,16 +2,16 @@
 
 `services/worker/` 是后续后台异步任务服务的预留目录。
 
-当前不用急着实现独立 worker。现阶段分析任务 worker 仍在 `services/api/` 内运行，便于保持小程序和后端基线稳定。
+当前不用急着实现独立 worker。现阶段 Reader orchestration 与 Daily Reader 的后台执行仍在 `services/api/` 内运行，便于保持小程序和后端基线稳定。
 
 ## 未来职责
 
 当后台任务变重时，可以逐步把以下能力拆到独立 worker：
 
-- 分析任务队列消费。
+- Reader orchestration 队列消费。
 - Daily Reader 抓取和生成。
 - Web / 小程序不同 render snapshot 生成。
-- LLM-as-a-Judge 评测运行。
+- 离线评测运行。
 - Directus 触发的后台 action。
 - RAG ingestion。
 - 审核样本写入 Zilliz。
@@ -42,7 +42,7 @@
 - 幂等策略。
 - 失败重试和死信处理。
 - worker heartbeat。
-- 与 `analysis_tasks` 状态机的关系。
+- 与 `reader_runs` / `reader_jobs` 状态机的关系。
 - 日志、trace 和 usage 记录。
 
 当前阶段不要为了目录存在而创建空服务框架。

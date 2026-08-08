@@ -2,7 +2,7 @@
 
 `services/api/` 是 Claread 的通用后端服务，不是某个客户端的专属后端。
 
-当前第一个客户端是微信小程序，后续 Web、内部工具、评测和 RAG 流程也会复用这套后端业务内核。
+当前客户端是微信小程序和 Web（Web 是 Reader 提交主链的唯一客户端），内部工具、评测和 RAG 流程也复用这套后端业务内核。
 
 ## 技术栈
 
@@ -20,10 +20,10 @@
 
 - 认证与 session。
 - 用户资料和配额。
-- 分析任务提交、排队、轮询。
-- Workflow 编排和模型调用。
-- 结构化分析结果生成。
-- 历史记录、生词本、收藏、用户批注。
+- Reader orchestration：Reading Record 提交、候选确认、稳定基座冻结、增强层生成与快照投影。
+- Ask Claread agentic 执行链。
+- 结构化阅读事实生成（Stable Document / Reading Units / Anchor Segments / Enhancement Layers）。
+- 生词本、收藏、用户批注、用户笔记。
 - 词典查询和缓存。
 - 每日精读 pipeline。
 - 反馈与奖励。
@@ -145,7 +145,7 @@ PostgreSQL 是主数据源。
 infra/migrations/
 ```
 
-当前数据库基线是 pre-release squashed `0001_initial_schema.sql`。
+当前数据库基线是 pre-release squashed `0001_initial.sql`。
 
 如果本地库早于最新 `0001` 启动，新增字段需要手动补齐；例如 Ask Claread 线程模型选择字段：
 
@@ -161,23 +161,24 @@ Daily Reader 的 workflow、reading unit 语义和后续收口项见 `services/a
 
 关键 API：
 
-- `POST /analysis-tasks`
-- `GET /analysis-tasks/{task_id}`
-- `GET /analysis-tasks/current`
-- `POST /analyze`
+- `POST /reader/records/input`
+- `GET /reader/records`
+- `GET /reader/records/{record_id}/snapshot`
+- `GET /reader/records/{record_id}/events`
+- `POST /reader/records/{record_id}/candidate-documents/{candidate_document_id}/confirm`
+- `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream`
 - `POST /auth/wechat/login`
 - `GET /auth/session/me`
 - `PATCH /auth/profile`
-- `GET /records`
-- `GET /records/{record_id}`
-- `GET /records/by-client-id/{client_record_id}`
 - `GET /vocabulary`
 - `POST /vocabulary`
 - `POST /vocabulary/highlights`
+- `GET /me/quota`
 - `GET /me/quota/anonymous`
 - `GET /me/credit/ledger`
 - `GET /dict`
 - `GET /dict/entry`
+- `POST /dict/ai`
 - `GET /daily-reader/today`
 - `GET /daily-reader`
 

@@ -3,474 +3,97 @@
 ## 文档状态
 
 - 状态：current implementation architecture
-- 日期：2026-06-17
-- 适用范围：Claread Web Reader 内当前 Ask Claread 模块
+- 日期：2026-08-08
+- 适用范围：Claread Web Reader 内当前 Ask Claread 模块（`services/api/app/services/reader_record_ask/`）
 - 文档关系：
   - 当前产品边界见 `docs/product/ask-claread.md`
   - 当前主线与后续评估见 `docs/development/mainline.md`
 
 ## 架构目标
 
-当前 Ask Claread 已冻结为：
-
-`article-rooted, agent-loop-first, turn-run-backed, write-confirmed`
-
-的 Reader 内阅读助手。
-
-它的核心目标不是做泛聊天，而是围绕当前文章、显式附件和受控跨文章扩展来回答问题、产出证据，并处理可确认写入动作。
-
-`agent-loop-first` 表示主回答 agent 直接消费最小 payload（overview、anchors、attachments、history），并按需调用 read tools 解析上下文，而不是先经过独立的 semantic planner LLM 预解析。`planner_first` 仅作为历史 trace value 保留，没有任何 live condition 触发它。
-
-## 当前运行分层
-
-Ask Claread 当前采用四层真相源：
-
-- `conversation`
-- `turn_run`
-- `user_visible_output`
-- `eval_trace`
-
-其中：
-
-- `conversation` 代表单文章 active conversation
-- `turn_run` 代表单次 assistant 运行
-- `user_visible_output` 代表当前 run 的正式产品输出
-- `eval_trace` 代表 runtime、capability、action 与 supplement 的结构化审计
+当前 Ask Claread 已冻结为 `article-bound, agent-loop-first, turn-run-backed` 的 Reader 内阅读助手：主回答 agent 直接消费服务端装配的 ContextEnvelope，按需调用受控工具取证，产出带来源标注的回答。旧 planner-first 链路、旧 9-tool registry、旧 supplement/写动作生命周期已物理删除，不在当前架构面内。
 
 ## 当前主链
 
-当前 `service.py` 负责编排，稳定主链为：
+```text
+route (reader_record_ask.py)
+  -> service.py（preflight：anchor 校验、model option 解析、执行配置编译、提交幂等 claim）
+  -> production_stream.py（SSE + 持久化 adapter）
+  -> runtime.py / turn_coordinator.py（单轮状态中心：ContextEnvelope、预算、工具分发、fence）
+  -> agent.py（PydanticAI 主 agent + grounding output validator）
+  -> finalizer.py（fence 复核、证据解析、公开 citation）
+  -> repository.py（turn run CAS 落库）
+```
 
-1. 读取请求与线程状态
-2. 解析 attachments / anchors / page identity
-3. live service 不再调用 route resolver；`planner_first` 仅作为 trace value 保留
-4. 基于 attachments / anchors 构造 minimal context plan 与 minimal trace summary，不调用任何 planner LLM
-5. 若为 `selection_toolbar` 触发的快捷分析操作，先执行结构化句法生成
-6. 构建 answer runtime input contract（包含 overview、anchors、attachments、history、agent-loop hints）
-7. 主回答 agent 按需调用 read tools（`get_record_context` / `resolve_known_reference` / `get_record_insights` / `get_user_vocabulary_book` 等）解析上下文
-8. 生成回答或生成 disambiguation output
-9. post-process 为 `user_visible_output`
-10. 写入 `turn_run.user_visible_output_json`
-11. 更新 assistant message 的最小兼容状态指针
+关键约束：
 
-其中第 5 步的快捷分析路径具有固定约束：
+- 发送 preflight 在 `StreamingResponse` 之前完成提交幂等 claim（`ensure_submission_for_send` 单事务）；preflight 失败返回真实 HTTP 4xx/503，不用 SSE error frame 兜底。
+- 上下文由 `context_envelope.py` / `envelope_builder.py` 从当前文章快照事实装配，带 fingerprint；model view 经 9 账户预算（`model_view_budget.py`）裁剪后以 untrusted block 渲染进 prompt。
+- Turn 状态机冻结为 `idle -> running -> finalizing -> committed|failed|cancelled`（`turn_lifecycle.py`）。
 
-- `entry_action in {"why_here", "explain_this"}`
-- 且主 attachment `metadata.source_surface == "selection_toolbar"`
-- Ask 会先运行 `generate_sentence_annotation`
-- `grammar` 可基于整句理解，但必须保留 focus span
-- `breakdown` 只接受 sentence-level 输入；片段级输入会返回结构化 `not_applicable`
+## 主 agent 与工具
 
-这意味着快捷分析已经不是“先发一条默认聊天消息，再希望 agent 自己选 tool”，而是 Ask 主链中的显式结构化预处理阶段。
+`create_reading_record_ask_agent`（`agent.py`）：
 
-## 当前核心模块
+- 模型解析链：`reader-ask-model-options.json` -> `model_options.py` -> `execution_config.py` -> `build_model_for_route(reader_ask)`；无启用档位时回落路由默认。
+- 输出契约：`AgentAnswerDraftOutput`（`response_kind ∈ grounded_answer / clarification / source_unavailable` + `answer_blocks`），由 `grounding_validator.py` 作为 output validator 强制（`retries={"tools": 1, "output": 2}`）。
+- 工具按条件挂载，全部经 `TurnCoordinator` 分发并受预算约束：
 
-### Planner
+| 工具 | 挂载条件 | 约束 |
+|------|----------|------|
+| `expand_evidence` | 本轮存在可展开证据指针 | opaque `cur_` 指针状态机，进程级 pointer ledger |
+| `search_current_article` | 文章 RAG port 可执行 | 每轮最多 1 次调用；不可用时模型看不到该工具 |
+| `search_web` | 请求 `web_search_mode="allowed"` 且 capability 可解析 | registry `max_calls=2`、`max_results_per_call=5`；决定性结果后经 prepare hook 退役 |
 
-`planner.py` 当前保留为 agent-loop runtime 复用的 pure helper 集合，不再调用任何 planner LLM。当前仍提供的 helper 包括：
+旧 `read_range` 仅保留为离线契约，不在生产挂载。预算耗尽抛 `HostBudgetExhausted`。
 
-- `MinimalPlanningSnapshot` / `build_minimal_context_plan` / `build_minimal_trace_summary`
-- attachment id parser
-- context plan / trace summary 构造
-- resolved context helper
+## 文章 RAG
 
-`planner.plan_request(...)`、`build_planner_input(...)` 和基于 `ReaderAskPlannerDecision` 的 decision-consumption helper 已删除；旧 semantic planner 的 input / decision / fallback 组装逻辑不再作为可调用架构面存在。
+- `build_production_article_rag_port`（`production_wiring.py`）：仅在 `READER_ARTICLE_RAG_ENABLED=true` 且 embedding provider 与 vector provider 均非 Unconfigured 时返回 `RetrievalBackedArticleRagPort`，否则返回 `None`（零 RAG I/O）。
+- 索引生命周期存于 `reader_article_rag_index_runs`（`planned|queued|indexing|indexed|failed|superseded`，只存 truth-layer hash 与 chunk_count，不存 chunk 文本；每文档唯一 active 索引）。
+- 路由：`GET /reader/records/{record_id}/article-rag-index/status`、`POST .../ensure`。
+- 检索结果为 typed 状态（`not_ready / not_indexed / indexing / unavailable / empty`），经 `article_rag_model_view.py` 清洗后才进入 model view。
 
-`ReaderAskPlanningSnapshot` 作为 typed dataclass 仍保留，用于 trace 与 eval 观测，但 `planner_decision` / `planner_validation_status` / `reference_needs` / `retrieval_needs` / `resolved_references` / `structured_asset_needs` / `structured_asset_resolution` / `working_set` / `disambiguation_state` / `external_asset_disambiguation_state` / `clarification_only` 等字段在 agent-loop-first 路径下不再由独立 planner LLM 产出，而是由主回答 agent 在 tool loop 内按需解析。
+## Web search
 
-live service 不再调用 route resolver；`"planner_first"` 仅作为 `PlannerRoute` Literal 与 trace value 保留，没有任何 live condition 触发它。`planner_route_policy.py` 仅保留历史 literal、兼容 helper 和 agent-loop hint predicate。
+- Adapter registry 按精确模型名 fail-closed：Qwen（DashScope Responses 兼容端点）与 DeepSeek（Anthropic 兼容端点）两个 backend；构造前做 HTTPS origin 校验。
+- 策略常量：`reader_record_ask_web_search_v1`，超时 18s，`max_calls=2`、`max_results_per_call=5`。
+- `web_search_mode="allowed"` 但 capability/backend 无法解析时，请求返回 503 `web_search_unavailable`。
 
-### Resolver
+## 证据、citation 与回源
 
-`resolver.py` 当前负责两层解析：
+- 证据以 `evh_` 句柄注册（`evidence.py` / `evidence_registry.py`），展开走 `EvidenceExpansionSession` 状态机；web 证据有独立的镜像 registry。
+- `finalizer.py` 复核 generation fence 后把句柄解析为公开 `PublicCitation`；公开面是 no-evh（不暴露句柄、fingerprint、原始证据），受限证据只存 `resolved_evidence_json`。
+- 回源导航 `POST .../citations/{citation_id}/navigate`：客户端只提交 citation_id，服务端基于权威快照加载 `LiveDocumentFence`，要求消息 `final_status=ok`，返回 typed 定位（`unit_id` / `anchor_segment_id` / UTF-16 区间）或状态原因。
 
-- known record reference resolution
-- structured asset lookup
+## 持久化
 
-当前支持：
+- `reader_ask_turn_runs`：run 身份、`run_attempt` / `supersedes_run_id`、`status`（`streaming|completed|failed|interrupted|cancelled|stale`）、`final_status`（`ok|context_stale|invalid_citations|failed|cancelled`）、`user_visible_output_json`、`resolved_evidence_json`、`reasoning_projection_json`、envelope fingerprint/snapshot；终态写入经 CAS 幂等。
+- `reader_ask_client_submissions`：`(thread_id, client_submission_id)` 主键去重，`claim_generation` CAS；重复提交不重复调模型。
+- 中断收敛：路由 `finally` 把仍 `streaming` 的行 reconcile 为 `cancelled`；后台 `StaleStreamSweeper`（启动 sweep + 60s 周期）只向 cancelled/failed 收敛，绝不提交半成品。
+- 历史投影（`history_projection.py`）：DB `final_status` 列是唯一状态权威；不投影受限证据；`current_eval_trace` 恒为 `None`（`reader_ask_eval_traces` 不在 baseline schema，评测走 `evals/` artifact 文件式 harness）。
 
-- title / normalized title 命中
-- explicit `record_ref.related_record`
-- external stable `analysis_ref`
-- external stable `supplement_ref`
+## Thread memory
 
-补充约束：
+`thread_memory/`：LLM compactor 只产出窄化 `CompactionDraft`（事实 + 来源 ID），存储、CAS（`version`）、fence 与置信度由服务端负责；快照可从 canonical 消息完全重建，CAS 不匹配时走确定性无 LLM emergency 重建。压缩生命周期发 `context.compaction.*` SSE。
 
-- external `analysis_ref / supplement_ref` 的 resolved asset 现在必须带正文级 `content_md` 与 compact summary，供 Ask runtime 直接回答
-- explicit asset ref 与 resolver 命中同一对象时，以 resolver 返回的富上下文对象为准，不保留摘要级占位 ref
-- known reference resolution 当前 pipeline 是 candidate pool -> deterministic title scoring -> optional semantic rerank -> deterministic resolution policy
-- semantic rerank 边界已经可注入，但生产默认 `REFERENCE_RERANKER_ENABLED=False`，不启用真实 LLM rerank
-- `resolution_meta` 是 planning snapshot / eval 观察数据，不进入 answer agent prompt
+## Learner reasoning 投影
 
-当前不支持：
+`learner_reasoning/projector.py` 是独立小 agent（无工具、`instrument=False`、不可见 reasoning 内容经 scrub 后输入），产出 ≤80 字中性中文摘要（策略 `learner_reasoning_v1`）。功能开关 `reader_record_ask_learner_reasoning_enabled`（默认关）；快照经 `agentic.learner_reasoning.snapshot` 流式下发并随 turn run 持久化。
 
-- hybrid retrieval
-- external sentence window
-- external dictionary path
-- 自由的 excerpt / favorite / annotation 跨文章检索
+## 计费与用量
 
-后续如果启用真实 LLM / embedding rerank，必须先补齐 timeout、candidate limit、成本控制、trace/eval 样本和 fallback 策略。`_CROSS_LANG_MAP` / `_cross_lang_score()` 作为 legacy semantic fallback 保留，只有能证明中文用户标题引用能力不回退时才评估移除。
+- capability 常量 `reader_ask`；加权计费配置（`analysis_weighted_tokens_v1` 公式 + 每档位 `price_multiplier`）定义在 `app/services/ai_usage/billing.py` 并挂载到 model option。
+- turn run 已预留 `usage_summary_json` / `usage_event_id` 列；实际写账接入（预扣/结算/退款闭环）属于 post-cutover backlog。
 
-### Runtime Contract
+## 评测
 
-`runtime_contract.py` 当前是 answer runtime 的唯一输入构造入口。answer runtime 只消费：
-
-- `planning_snapshot`（历史兼容字段；live agent-loop 路径通常为 `None`）
-- `resolved_context_input`
-- `response_contract`
-- 必要的 history / attachment / citation 摘要
-- `submission_mode`
-- `quick_action_annotation`
-
-历史 planner schema 中的 `answer_policy` 不再是 live answer prompt 的输入。若未来重新引入回答策略层，必须先明确它是硬约束、软偏好，还是可被 answer agent 覆盖的策略建议，并补对应 eval。
-
-### Agent Tools / Write Gate
-
-Ask Claread 的 agent-callable tool surface 由 `reader_ask_tool_registry.py` 统一定义。当前固定为 9 个 agent-callable 工具：
-
-- `get_record_context`
-- `get_record_insights`
-- `get_user_vocabulary_book`
-- `resolve_known_reference`
-- `load_explicit_attachment_context`
-- `generate_sentence_annotation`
-- `propose_save_note`
-- `propose_save_highlight`
-- `suggest_prompts`
-
-此外 registry 中还有 1 个 non-callable 工具：
-
-- `lookup_record_by_embedding` — reserved，未来 pgvector RAG 占位，`agent_callable=False`
-
-`search_user_vocabulary` 已在 Round 5 完全移除（零调用者，由 `get_user_vocabulary_book` 替代）。`lookup_dictionary_entry` 与 `run_dictionary_ai_context_explain` 已在 Round 7 从 registry 和 service runtime 中删除；dictionary anchor / attachment 现在通过 agent-loop hint 与当前文章语境处理，不再暴露 dictionary tool。
-
-工具契约的稳定边界：
-
-- tool name 必须来自 registry 常量；`@agent.tool(name=...)` 与 `run_tool(...)` 不允许回退为硬编码字符串。
-- tool observation 经 `reader_ask_tool_observation.py` 规范化为 `status`、`summary`、`next_actions`、`artifacts`。
-- `reader_ask_tool_runtime.py` 负责 budget、trace、SSE `tool.started / tool.completed / tool.failed` 事件，以及 availability hard enforcement。
-- `reader_ask_tool_policy.py` 负责构造 tool availability。当前默认 policy 仍允许全部 9 个 agent-callable tools，以保持生产行为不变；后续收紧可用工具必须经由该 policy，不由 planner 直接越权。
-- `reader_ask_tool_registry.py` 中的 `output_kind` / `observation_statuses` 描述 tool implementation 自身的 IO contract；runtime wrapper 注入的 policy error 另由 runtime contract 测试覆盖。
-
-写动作采用 proposal-only 模型：
-
-- `propose_save_note` / `propose_save_highlight` 只创建 runtime `action_request`，且 `requires_confirmation=True`。
-- 无 primary anchor 时由 write gate 直接返回稳定 error payload，不消耗 tool budget，也不创建 action request。
-- `note_text` 缺失属于 tool 内部校验，会经过 `run_tool`，消耗一次 tool budget，并返回稳定 error observation。
-- grammar supplement 的 `create_supplement_grammar_note` 仍是 confirmation path 的 action type，不是 agent-callable tool，不进入上述 9 个 tool registry。
-- PydanticAI `Tool(requires_approval=True)` / `Agent.iter()` 暂不接入 live Ask：跨 HTTP roundtrip 保活 agent run 与当前 FastAPI 请求生命周期冲突。当前写动作继续采用 proposal-only + 用户确认模型。
-
-### Facade / Invocation Wiring
-
-`service.py` 当前仍是 Ask Claread 的入口编排层，但不再直接构造 agent deps、reader-ask model route 或 agent stream lifecycle。
-
-稳定 wiring 边界为：
-
-- `agent_deps_factory.py` 是 `ReaderAskAgentDeps` 的唯一 service 路径构造入口，并统一注入 `tool_availability`。
-- `agent_invocation.py` 负责 reader-ask agent/model resolution、non-streaming replan 调用与 agent stream lifecycle facade。`reader_ask_planner` model route 已在 Round 16 彻底移除，`planner_model_name` DTO 字段已在 Round 18 从后端与 Web 契约中删除。
-- `ReaderAskAgentDeps.event_queue` 是 stream-wide event bus，类型语义为 `Queue[tuple[str, dict[str, Any]]]`；`ToolEventName` 只约束 tool runtime 内部 `_emit_tool_event(...)` 的 `tool.started / tool.completed / tool.failed`。
-
-`service.py` 不应重新直接调用：
-
-- `ReaderAskAgentDeps(...)`
-- `build_tool_availability(...)` / `ToolAvailabilityInput(...)`
-- `get_reader_ask_agent()` / `build_reader_ask_prompt(...)`
-- reader-ask route 常量或 `build_model_for_route(...)`
-- `agent_runner_svc` 的 stream lifecycle 函数
-
-### Output Contract
-
-`output_contract.py` 当前定义 Ask 的正式内部输出模型。新运行的正式产品输出统一来自 `turn_run.user_visible_output_json`，而不是 assistant message metadata。
-
-### Retry / Regenerate
-
-`retry / regenerate` 当前统一视为同一 user turn 下的新 assistant run：
-
-- 不新增 user turn。
-- 新 run 会 supersede 被 retry 的旧 run。
-- 当前用户可见输出始终以最新 run 的 `turn_run.user_visible_output_json` 为准。
-- interrupted run 可以保留 partial output 作为历史状态，但前端入口文案是“重新生成”，不承诺从断点续写。
-- 刷新页面只恢复已持久化的正文与 thinking 快照，不自动恢复原 SSE 连接，也不继续跑同一个未完成 run。
-
-### Repository
-
-`repository.py` 当前负责：
-
-- thread / message / turn_run / eval_trace 持久化
-- current run hydration
-- legacy metadata fallback
-
-当前读取规则固定为：
-
-1. 有 `current_turn_run_id` 时，优先 hydrate `user_visible_output_json`
-2. 旧数据没有 current run 时，回退到 legacy metadata
-3. `interrupted` 是正式持久状态，不再在 hydration 时退化成 `failed`
-
-## 当前公开 contract
-
-当前公开请求固定为：
-
-- `content`
-- `page_identity`
-- `attachments`
-- `entry_action`
-- 可选 `model`
-
-当前完成态 payload 的正式来源是 `ReaderAskUserVisibleOutput`，对外仍保持兼容 DTO，不额外暴露内部 trace 结构。
-
-当前 SSE 额外稳定事件包括：
-
-- `reasoning.started / reasoning.delta / reasoning.completed`
-- `message.interrupted`
-
-补充：
-
-- `reasoning.*` 在流式阶段仍按 SSE 增量驱动
-- `streaming` run 会按节流 checkpoint 持续回写 `turn_run.user_visible_output_json`，至少覆盖当前 `content_md / reasoning_md / reasoning_status`
-- 一旦本轮 run 完成或中断，最终 `reasoning_md / reasoning_status` 会并入 `turn_run.user_visible_output_json`
-- 刷新页面后的 thinking 恢复，优先读取当前 `turn_run.user_visible_output_json` 中最后一次已持久化快照；这只恢复已生成内容，不恢复原 SSE 连接或自动续跑模型
-
-当前完成态 payload 额外暴露两个与快捷分析相关的稳定字段：
-
-- `submission_mode`：`chat | quick_action`
-- `response_cards`：包含 `grammar_note_card` 与 `sentence_breakdown_card`
-
-## 当前上下文模型
-
-### 当前文章上下文
-
-当前文章上下文可以包括：
-
-- primary anchor
-- local context window
-- article overview
-- stable record insights
-- dictionary context
-
-这些内容是否进入运行，由主回答 agent 在 tool loop 内按需决定。
-
-### Article Overview / Overview Hint
-
-`article overview` 当前被视为可选增强 observation，而不是 Ask 的必要前提。
-
-读取优先级：
-
-1. learning `analysis_results.page_state_json.derived.overview_hint`，仅 `status=ready`
-2. academic `render_scene.content_summary.overview`
-3. academic `sentence_entries.content_summary` 的兼容降级文本
-4. 无 overview
-
-补充语义：
-
-- learning overview 通过异步、best-effort 的轻量 `overview hint` 生成
-- overview hint 允许返回 `unavailable`，表示文本过碎、过短或缺乏篇章逻辑
-- Ask answer agent 只把它当弱线索，用于 record 判别和 article-level 首轮理解
-- 需要更高覆盖度时，仍应主动拉 `record_context`、`source_excerpt` 或 external context
-
-### 跨文章上下文
-
-当前跨文章上下文是受控扩展，只允许：
-
-- explicit external `record_ref`
-- known title reference
-- external `analysis_ref`
-- external `supplement_ref`
-
-跨文章上下文当前分两层：
-
-- `external_record_contexts`
-- `external_asset_contexts`
-
-其中 external record context 的 article overview 同样遵循“有则用之”的弱增强语义，并保留来源标识：
-
-- `learning_overview_hint_agent`
-- `academic_render_scene`
-
-## 当前快捷分析模型
-
-快捷分析仍属于 Ask 线程，但不再伪装成普通聊天提问。
-
-### Grammar Quick Action
-
-- `sentence` 选区：按整句分析
-- `text_range` 选区：保留原始 focus span，并自动扩展到所在整句理解
-- 若片段过短、无法稳定套用语法结构，返回结构化 `not_applicable`
-
-### Breakdown Quick Action
-
-- 仅 `sentence` 选区允许产出正式 `sentence_breakdown_card`
-- `text_range` 不强行拆句，会返回“建议扩展到整句”的结构化不可分析结果
-
-### Frontend Rendering
-
-- `submission_mode=quick_action` 的 assistant turn 采用 `response_cards -> answer -> citations` 的 block 顺序
-- user turn 采用 compact operation header，不再显示伪聊天气泡
-- composer context 只表示“下一轮待发送的上下文”，发送成功后清空
-
-## 当前 HITP / Disambiguation
-
-当前 HITP 已经是正式机制，而不是异常 fallback。
-
-### Record-level HITP
-
-当标题引用命中多个候选文章时：
-
-- resolver/runtime 进入 `disambiguation_state`
-- 当前 run 不走主回答生成
-- Ask 面板展示 record-level candidate cards
-
-### Asset-level HITP
-
-当 external record 已确定，但 asset 命中多个候选时：
-
-- resolver/runtime 进入 `external_asset_disambiguation_state`
-- 当前 run 不走主回答生成
-- Ask 面板展示 asset-level candidate cards
-
-## 当前 supplement 架构
-
-当前 supplement 采用独立 supplement layer，不复用 `user_annotations`。
-
-首批只开放：
-
-- `assistant_supplement.grammar_note`
-
-当前链路：
-
-1. 生成 `supplement_candidate`
-2. 用户 confirm
-3. persist 到 supplement layer
-4. 当前页 projection 可见
-5. 可 delete
-6. delete 后同步回写相关 run 的 `persisted_supplements`
-
-## 当前持久化与恢复
-
-### Turn Run
-
-`reader_ask_turn_runs` 当前保存：
-
-- run 身份
-- run_attempt / supersedes_run_id
-- status
-- resolved_intent
-- `user_visible_output_json`
-- usage summary / usage event
-- started / completed / failed 时间
-
-补充：
-
-- `user_visible_output_json` 现在同时承载 final output 和 streaming checkpoint
-- checkpoint 由服务层按节流策略回写，不逐 token 落库
-- `message` 层仍只保留最小兼容状态与 `current_turn_run_id` 指针
-
-### Eval Trace
-
-`reader_ask_eval_traces` 当前保存：
-
-- `planning_snapshot_json`
-- `capability_trace_json`
-- `action_audit_json`
-- `supplement_audit_json`
-- `metrics_json`
-
-`planning_snapshot_json` 是历史列名。Round 20 之后，新写入内容会显式带上：
-
-- `trace_kind="agent_loop_trace_snapshot"`：表示这是 agent loop runtime trace，而不是 planner LLM 输出
-- `runtime_route="agent_loop"`：供 eval / dashboard 使用的新语义字段
-- `planner_removed=true`：明确当前 live path 没有 planner
-
-旧兼容字段 `planner_skipped` / `planner_route_used` 暂时保留，便于历史测试和已有 eval reader 继续读取。新消费方应优先使用 `runtime_route` 与 `trace_kind`。
-
-`metrics_json` 同样保留 `planner_route` 兼容字段，但新消费方应优先使用 `runtime_route`。
-
-### Message
-
-assistant message 当前只保留：
-
-- 线程排序与 role / status
-- `current_turn_run_id`
-- 极薄兼容 metadata
-
-它不再是新运行的主输出承载。
-
-## 当前可解释性与审计
-
-当前每轮运行都会保留：
-
-- `context_plan`
-- `resolved_context_input`
-- `evidence`
-- `trace_summary`
-- `run_info`
-- `eval_trace`
-
-这使 Ask Claread 当前已经具备冻结后的评估基础。
+Ask 质量评测不依赖在线表：`evals/claread_eval/reader_record_ask/` 提供 artifact 文件式 harness（11 个评估维度 + aggregator），入口 `evals/scripts/run_reader_record_ask_eval.py`；真实 LLM 阶段经 env gate 调用 `services/api/tests/test_reader_record_ask_real_llm_eval.py`。
 
 ## 当前明确不做
 
-当前架构不覆盖：
-
-- hybrid retrieval / default RAG
-- 多线程列表与复杂 source management
-- 独立 AI 工作台
-- 直接保存整条 assistant 回答为笔记
-- 把用户高亮 / 用户笔记当作独立可检索资产中心
-- 开放式 `plan -> act/tool -> observe -> revise` agent loop
-- 新 tracing backend 或通用 checkpoint 表，除非有明确 eval、恢复或运维需求
-
-## 当前边界说明
-
-Reader 标注体系完成重构后，Ask Claread 已不再依赖“用户学习资产”聚合层。当前稳定主路径收口为：
-
-- explicit record reference
-- known title reference
-- explicit annotation reference（通过 `annotation_ref.anchor_payload.anchor_type` 区分高亮 `user_annotation` 或笔记 `reader_note`）
-- external stable analysis / supplement assets
-
-后续若继续扩展跨文章能力，应优先评估：
-
-- agent-loop runtime 的 history expansion 条件
-- resolver 的 future structured lookup 扩展点
-- agent tools 中是否需要新增受控的跨文章引用入口
-
-Ask Claread 当前已是 agent-loop-only harness：主回答 agent 直接消费 minimal payload，按需调用 controlled read tools 解析上下文，再生成回答并 stream/checkpoint/recovery。后续若评估受限 multi-step reader loop，必须先限定最大 step 数、稳定每步 tool observation、接入 eval trace，并保证 UI 只表达用户能理解的处理状态。
-
-### 当前 Attachment 类型与 Anchor 类型
-
-`ReaderAskAttachmentKind` 枚举当前值：
-
-- `text_selection` — 用户选区
-- `annotation_ref` — 引用用户批注资产；具体是高亮还是笔记，由 attachment payload / metadata 决定
-- `analysis_ref` — 引用分析结果
-- `supplement_ref` — 引用 AI 补充
-- `record_ref` — 引用文章
-
-`ReaderAskAnchorType` 枚举当前值：
-
-- `sentence`
-- `text_range`
-- `multi_text`
-- `sentence_entry`
-- `user_annotation` — 锚点类型：用户高亮
-- `reader_note` — 锚点类型：用户笔记
-- `dictionary_entry`
-
-当前明确不存在：
-
-- `paragraph`
-- `article`
-- 独立的 `highlight` anchor type
-- 独立的 `annotation` anchor type
-
-当前公开 `ReaderAskAttachmentPayload.anchor_type` 只允许：
-
-- `sentence`
-- `text_range`
-- `multi_text`
-
-`annotation_ref` 在服务端解析后，才会被映射成 `user_annotation` 或 `reader_note`。也就是说：
-
-- `annotation_ref` 是 attachment kind
-- `user_annotation` / `reader_note` 是 normalized anchor type
-- 不能把两者混写成同一层枚举
+- 跨文章检索、跨文章引用入口与历史资产自由查询。
+- agent 写动作（保存笔记/高亮、生成 supplement）与 proposal-confirm 写生命周期。
+- 多线程列表、独立 AI 工作台、对话级人格记忆。
+- PydanticAI `Tool(requires_approval=True)` / 跨 HTTP roundtrip 保活 agent run。
+- 把 LangSmith trace 当作 runtime 状态权威（runtime 事实源是 PostgreSQL turn run 与 `reader_runtime_spans`）。

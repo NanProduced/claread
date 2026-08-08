@@ -71,12 +71,12 @@ httpOnly cookie   # Web session token
 
 Reader 当前稳定基线已经进入：
 
-`后端 canonical render_scene + Web 侧 Plate readOnly runtime`
+`后端 Reader orchestration snapshot + Web 侧 Plate readOnly runtime`
 
 具体原则：
 
-- 后端 `AnyRenderSceneModel` 继续作为跨端 canonical 文章结构输出。
-- Web 不让后端直接产出 Plate AST，而是通过 `renderSceneToPlateDocument` 做 `RenderScene -> Plate document` projection。
+- 后端 Reader orchestration 产出 record snapshot（recursive stable block tree + enhancement layers），是当前跨端文章结构事实源；旧 `render_scene` 事实源已在 cutover 物理删除。
+- Web 不让后端直接产出 Plate AST，而是通过 `reader-plate` projection（`reader-record-plate-document`）做 `snapshot -> Plate document` 投影。
 - Web Reader 主画布当前已运行在 `platejs/react` readOnly runtime 上，而不是 `PlateStatic`。
 - `apps/web/src/lib/reader-plate/` 已形成 projection + bridges 结构，当前至少包含 `selection / assets / dictionary / jump / ask` 五组 bridge。
 - 浏览器侧的 selection、Ask attachment、词典 hit-test 和用户资产回源，仍需尊重现有 `target_key / UTF-16 offset / text_hash / segments` 合同。

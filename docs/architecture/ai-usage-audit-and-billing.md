@@ -15,7 +15,7 @@
 | 审计层 | `ai_usage_events` | 记录一次 AI 调用发生了什么，包括作用域、能力代码、usage、模型信息、状态和关联对象 |
 | 结算层 | `user_credit_accounts` / `user_credit_ledger` | 只负责用户余额与积分变动 |
 
-现阶段 `analysis_audit_logs` 继续保留作兼容和排障，但新的统一 AI 审计以 `ai_usage_events` 为准。
+统一 AI 审计以 `ai_usage_events` 为准；旧 `analysis_audit_logs` 表已随旧分析链退出，不再是审计事实源。
 
 ## Usage Scope
 
@@ -48,10 +48,13 @@
 - `analysis_full`
 - `dict_ai_lookup`
 - `reader_ask`
+- `reader_translation` / `reader_vocabulary` / `reader_grammar_bundle` / `reader_title_generation` / `reader_semantic_outline`
 - `grammar_xray`
 - `artifact_summary`
+- `analysis_overview_hint`
 - `daily_reader_pipeline`
 - `daily_reader_scoring`
+- `rag_embedding` / `rag_rerank`
 
 新增能力接入前，应先确定 capability code，再决定 scope 和 billing mode。
 
@@ -59,40 +62,29 @@
 
 | 调用链路 | scope | billing_mode | capability_code | 说明 |
 |------|------|------|------|------|
-| `POST /analysis-tasks` worker 执行 | `user_billed` | `user_points` | `analysis_full` | 登录用户正式分析主链路 |
-| `POST /analyze` | `anonymous_trial` / `eval_debug` | `trial` / `no_charge` | `analysis_full` | 兼容匿名试用与调试直连，不应扩展成新能力总入口 |
+| Reader orchestration worker（translation / vocabulary / grammar_bundle / display_title / semantic_outline / pipeline_runner） | `system_internal` | `internal_only` | `reader_translation` 等 reader_* 代码 | 增强层生成的统一 usage 审计，关联 reading_record / run / job / layer |
 | `POST /dict/ai` | `user_billed` | `user_points` | `dict_ai_lookup` | 登录用户的词典 AI 能力；支持 `context_explain` 与 `missing_fallback` |
-| `POST /reader-ask/threads/{thread_id}/messages/stream` | `user_billed` | `user_points` | `reader_ask` | Reader 内 Ask Claread 流式对话；当前文章为默认上下文，按需扩展到历史资产 |
+| `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream` | `user_billed` | `user_points` | `reader_ask` | Reader 内 Ask Claread 流式对话；当前文章为默认上下文 |
 | Daily Reader scoring | `system_internal` | `internal_only` | `daily_reader_scoring` | 候选文章 LLM 评分 |
 | Daily Reader workflow / retry | `system_internal` | `internal_only` | `daily_reader_pipeline` | 精读正文生成与重跑 |
 
-## `/analyze` 的定位
-
-`/analyze` 当前保留给两类场景：
-
-- 匿名试用直连分析
-- 本地调试、评测和 runtime `model_selection` 验证
-
-它不走 `analysis-tasks` 的任务状态、记录落库包装和用户积分结算主链路。后续正式用户侧 AI 能力不应继续叠加在 `/analyze` 上，而应走新的能力入口或受控任务链路。
+Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event_id` 落账）是已预留字段，实际写账接入属于 post-cutover backlog。
 
 ## 计费策略现状
 
 当前已接入用户积分策略的 capability 包括：
 
-- `analysis_full`
-  - policy: `analysis_weighted_tokens_v1`
-  - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
 - `dict_ai_lookup`
   - policy: `dict_ai_fixed_points_v1`
   - 固定价格: 每次 `5` 点
   - 真实 token usage 仍写入 `ai_usage_events` 与 billing metadata，仅用于审计和后续定价回看
 - `reader_ask`
   - policy: `analysis_weighted_tokens_v1`
-  - 预留: 每轮默认先预扣 `10` 点，完成后按 token 加权结果结算并退回未使用部分
+  - 计费配置按 Ask model option 挂载（`price_multiplier` 来自 `reader-ask-model-options.json`）
   - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
-  - metadata 需补线程 ID、record ID、anchor 摘要、是否触发历史资产检索与工具轨迹摘要
-  - Ask 内部如果调用了 `dict_ai context_explain`，其 usage 也并入 Ask 的聚合 usage summary，不再额外暴露成用户侧独立扣点动作
-  - 实现上应同时收紧 prompt 和 output 预算，避免只在结算阶段做超额截断
+  - turn run 已预留 `usage_summary_json` / `usage_event_id` 字段；实际预扣/结算写账接入属于 post-cutover backlog
+
+`analysis_full` 与 `analysis_weighted_tokens_v1` 的加权公式保留为通用计费策略；Reader orchestration worker 当前按 `system_internal` / `internal_only` 只审计不结算，用户侧计费口径待统一监测与计费适配收口。
 
 该策略已经从任务执行器中抽离到统一的 `app/services/ai_usage/billing.py`，后续 Ask Claread、Grammar X-Ray 等能力应按 capability 独立扩展。
 

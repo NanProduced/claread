@@ -11,7 +11,7 @@
 
 - 原文画布、句子、段落、译文。
 - 机器标注：`vocab_highlight`、`phrase_gloss`、`context_gloss`、`grammar_note`、`term_note`、`logic_note`。
-- 用户批注：高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`）；笔记已移至独立 `reader_notes` API（`quote_mode` 支持 `sentence / text_range / multi_text`）；收藏只有文章级（`target_type='analysis_record'`），句子级和局部 text_range/multi_text 收藏已删除。
+- 用户批注：高亮（`user_annotations`，`anchor_type` 支持 `sentence / text_range / multi_text`）；笔记已移至独立 `reader_notes` API（`quote_mode` 支持 `sentence / text_range / multi_text`）；收藏只有文章级（`target_type='reading_record'`，另有 `daily_reader_article`），句子级和局部 text_range/multi_text 收藏已删除。
 - 画布左侧词典详情层、浮动上下文/阅读设置面板、右侧 AI 工作区 shell。
 - `grammar_note` / `sentence_analysis` 句后卡。
 
@@ -20,7 +20,7 @@
 - 完整 landing、公开每日精读、Library/Vocabulary 全量组件。
 - Grammar X-Ray。当前 `grammar_note` 和 `sentence_analysis` 不得被命名或渲染为 X-Ray。
 
-当前 Reader 2.0 已经采用 `Plate + readOnly` 作为 Web 文档 runtime。本文不展开所有桥接细节，但默认事实是：Reader 当前运行在 `render_scene -> Plate document -> Plate readOnly runtime` 链路上，`reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已经存在。
+当前 Reader 已经采用 `Plate + readOnly` 作为 Web 文档 runtime。本文不展开所有桥接细节，但默认事实是：Reader 当前运行在 `Reader orchestration snapshot -> Plate document -> Plate readOnly runtime` 链路上，`reader-plate` projection 与 `selection / assets / dictionary / jump / ask` bridges 已经存在。
 
 ## 2. Product Rules
 
@@ -52,8 +52,8 @@
 
 1. **Light/Dark system.** 用户偏好为 `system | Light | Dark`；`system` 跟随操作系统解析。渲染主题仅允许 `Light | Dark` 两种 (`system` 不是第三套 token)。`:root` 与 `.light` 是同一份中性偏冷 Light token 的唯一声明来源；仅由 `.dark` 覆盖 Dark。Reader-internal 视觉装饰不属于本主题模型；`--reading-paper-surface` 仅作为 class-free 兼容名从 root/.dark token 派生，Reader 不再持有运行时 canvas 主题选择器或独立 Paper 渐变背景。Claread token 与 `lens-blue` / 语义标注色继续按语义层表达，避免在 CSS 中出现 `.paper` 选择器或主题为 `paper` 的 dataset 写入。Vintage Paper 等 shadcn theme 仅作 moodboard，不直接套用; 后续正式初始化 shadcn/ui 时, 应把 Claread token 映射到 shadcn semantic tokens, 而不是用第三方主题覆盖 Claread 视觉.
 2. **Reader Floating Layer.** 所有锚定原文 token、句子或 DOM selection 的短时浮层统一走 Floating UI。Radix / shadcn Popover 继续用于按钮触发的常规菜单；原文画布上的轻释义、选区工具栏、语法 hover、二级操作菜单归入 Reader floating layer。
-3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端已按 UTF-16 offset、hash、render scene 切片和 sentence 顺序做严格校验。后续重点是资产跳转强调和跨文章资产索引。
-4. **Plate Runtime as Web Projection.** Reader 2.0 将逐步迁移到 `canonical render_scene -> Plate document` 的投影模式；后端 canonical render scene 与小程序消费链路保持不变，Plate 只作为 Web projection/document runtime。
+3. **Annotation Anchor Model.** 当前已支持句子级批注、单句内 `text_range` 和跨句/跨段 `multi_text`。Reader DOM 持续输出 `data-paragraph-id`、`data-sentence-id` 和原文 selection 锚点；后端按 reading unit / anchor segment、unit-local UTF-16 offset 和 `text_hash` 做严格校验。后续重点是资产跳转强调和跨文章资产索引。
+4. **Plate Runtime as Web Projection.** Reader 已完成到 `Reader orchestration snapshot -> Plate document` 投影模式的迁移；后端 snapshot 是唯一文章结构事实源，Plate 只作为 Web projection/document runtime。
 
 ## 3. Stack Rules
 

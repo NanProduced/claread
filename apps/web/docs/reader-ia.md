@@ -1,6 +1,6 @@
 # Web Reader 信息架构
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-26
+> **状态**: `CURRENT` | **最后更新**: 2026-08-08（渲染链路与记录接口已对齐 cutover 后 Reader orchestration 事实）
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
@@ -17,7 +17,7 @@
 
 ## 当前实现状态
 
-当前 Web Reader 已经不是纯方向草图，而是运行在 `render_scene -> Plate document -> Plate readOnly runtime` 的真实实现上。需要以当前代码为准理解 IA：
+当前 Web Reader 已经不是纯方向草图，而是运行在 `Reader orchestration snapshot（stable block tree）-> Plate document -> Plate readOnly runtime` 的真实实现上。需要以当前代码为准理解 IA：
 
 - 原文与译文已经收口为稳定双层阅读面：英文正文是主层，译文是第二阅读层，不再只是普通 muted 段落。
 - `vocab / phrase / context` 三类 lexical marks 已改成完整覆盖的色块高亮家族；`grammar_note / sentence_analysis` 则回到句下解释层，不再沿用旧的右侧集中说明心智。
@@ -242,7 +242,7 @@ Grammar X-Ray 是未来 Web 高保真语法透视能力，不属于当前 baseli
 
 ### 前期技术调研摘录（非定稿）
 
-Web Reader 当前是只读 `render_scene` 渲染，不建议首期引入 ProseMirror / Tiptap 作为正文渲染引擎。更稳妥的方向是：
+以下为 cutover 前调研摘录，当时 Web Reader 只读 `render_scene` 渲染（该事实源已删除，当前为 Reader orchestration snapshot）；结论“不引入 ProseMirror / Tiptap、沿用 Plate readOnly”仍然成立。当时的方向是：
 
 - 以 `article.render_text` 的绝对 offset 作为文本锚点坐标系。
 - Reader DOM 渲染时给 paragraph / sentence / text segment 标记 `data-start`、`data-end`，用浏览器 Selection / Range API 将用户选区反算回 offset。
@@ -299,9 +299,9 @@ v1 操作流程：
 
 点击批注 → 主阅读区滚动到对应位置并高亮。
 
-### 与 render_scene inline_marks 的关系
+### 与后端 inline_marks 的关系
 
-- `inline_marks` 是后端分析产出的标注（vocab_highlight / phrase_gloss / context_gloss / grammar_note）
+- `inline_marks` 是后端 Reader orchestration 产出的机器标注（vocab_highlight / phrase_gloss / context_gloss / grammar_note），随 snapshot 进入 Plate projection
 - `user_annotations` 是用户手动创建的高亮批注（highlight）；笔记功能已移至独立 `reader_notes` API
 - 两者独立存在，UI 上可叠加显示
 - inline_marks 不可编辑，user_annotations 可编辑/删除
@@ -315,14 +315,14 @@ Library 承载阅读历史列表，提供文章索引和阅读记录管理（继
 
 ### 筛选维度
 
-- `reading_goal`：exam / daily_reading / academic
-- `source_type`：user_input / daily_article / imported / ocr
+- `reading_goal`：daily_reading / exam（Reader orchestration 当前枚举；旧 academic 已在 cutover 下线）
+- `source_type`：pasted_text / txt_file / markdown_file / ocr_text / pdf_text / url_text
 - 日期范围：date_from / date_to
 - 搜索：标题/原文片段客户端搜索；后端语义搜索后置
 
 ### 详情进入
 
-- 点击记录 → `GET /records/{id}?include_render_scene=true` → 进入 Reader 页
+- 点击记录 → Web BFF `GET /api/web/reader/records/{recordId}/snapshot` 加载快照 → 进入 Reader 页
 - Reader 页 URL：`/app/reader/{record_id}`
 
 ### 与小程序差异

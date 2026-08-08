@@ -6,9 +6,11 @@
 
 - Web 后续可以增加字段、adapter 和 render profile。
 - 不能破坏小程序当前依赖的字段、状态码和 ID 语义。
-- `@claread/contracts` 当前先承载跨端常量和轻量类型；OpenAPI 后续应作为完整 DTO 生成来源。
+- `@claread/contracts` 当前先承载跨端常量和轻量类型（仅 Web 接入）；OpenAPI 后续应作为完整 DTO 生成来源。
 
-## 小程序强依赖接口
+## 小程序当前依赖接口
+
+小程序在 cutover 后只保留以下接口族；Reader 提交与阅读主链当前仅 Web 接入。
 
 | 领域 | 接口 | 说明 |
 |------|------|------|
@@ -16,78 +18,90 @@
 | Auth | `GET /auth/session/me` | 登录态恢复和用户资料 |
 | Auth | `PATCH /auth/profile` | 用户资料和阅读偏好更新 |
 | Auth | `POST /auth/session/logout` | 退出登录 |
-| Analyze | `POST /analyze` | 匿名试用 / 调试兼容直连；不走正式任务与积分结算主链路 |
-| Tasks | `POST /analysis-tasks` | 登录用户主分析链路 |
-| Tasks | `GET /analysis-tasks/current` | 恢复活跃任务 |
-| Tasks | `GET /analysis-tasks/{task_id}` | 任务轮询 |
-| Records | `POST /records` | 云端记录同步 |
-| Records | `GET /records` | 历史记录列表 |
-| Records | `GET /records/{record_id}` | 记录详情 |
-| Records | `GET /records/by-client-id/{client_record_id}` | 本地 ID 查云端记录 |
 | Quota | `GET /me/quota` | 登录用户额度 |
 | Quota | `GET /me/quota/anonymous` | 游客额度查询 |
 | Quota | `POST /me/quota/check` | 额度检查；匿名路径会消耗试用次数 |
 | Credit | `GET /me/credit/ledger` | 积分流水 |
 | Dict | `GET /dict` | 查词 |
 | Dict | `GET /dict/entry` | 词条详情 |
-| Dict AI | `POST /dict/ai` | 词典 AI 增强；登录用户的正式 AI 能力入口，支持 `context_explain` 与 `missing_fallback` |
-| Reader Ask | `GET /reader-ask/threads?record_id=...` | 当前文章 Ask 线程列表；Web Reader 内使用 |
-| Reader Ask | `POST /reader-ask/threads` | 创建默认线程或 `New chat` |
-| Reader Ask | `GET /reader-ask/threads/{thread_id}` | Ask 线程详情与最近消息 |
-| Reader Ask | `POST /reader-ask/threads/{thread_id}/messages/stream` | Ask Claread 流式回复；SSE，要求登录态与积分预留 |
-| Reader Ask | `POST /reader-ask/threads/{thread_id}/actions/{action_id}/confirm` | 确认执行 Ask 提议的写操作 |
 | Vocabulary | `POST /vocabulary` | 生词同步 |
 | Vocabulary | `GET /vocabulary` | 生词列表 |
-| Vocabulary | `POST /vocabulary/highlights` | 结果页高亮和已收藏生词匹配 |
+| Vocabulary | `POST /vocabulary/highlights` | 阅读页高亮和已收藏生词匹配 |
 | Vocabulary | `GET /vocabulary/review/due` | 生词复习 |
+| Vocabulary | `POST /vocabulary/{vocab_id}/review` | 提交复习结果 |
 | Feedback | `POST /feedback` | 用户反馈 |
-| User Annotations | `POST /user-annotations` | 用户高亮，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
-| User Annotations | `GET /user-annotations` | 用户批注列表 |
-| Reader Notes | `POST /reader-notes` | 用户笔记，支持句子、单句内 `text_range` 和跨句/跨段 `multi_text` |
-| Reader Notes | `GET /reader-notes` | 用户笔记列表 |
-| Favorites | `POST /favorites` | 收藏文章 |
-| Favorites | `GET /favorites` | 收藏列表 |
 | Daily Reader | `GET /daily-reader/today` | 今日精读 |
 | Daily Reader | `GET /daily-reader` | 往期精读列表 |
 | Daily Reader | `GET /daily-reader/{article_id}` | 精读详情 |
+
+## Web 接入接口（Reader orchestration 主链）
+
+Web 浏览器不直接消费 FastAPI 原始端点；以下接口经 Next.js BFF `/api/web/reader/**` 代理接入。
+
+| 领域 | 接口 | 说明 |
+|------|------|------|
+| Reader 提交 | `POST /reader/records/input` | 统一输入提交，路由到 stable freeze / candidate / action-required |
+| Reader 提交 | `POST /reader/records/stable-ready-input` | stable-ready 输入直接冻结为 Reading Record |
+| Source Artifact | `POST /reader/source-artifacts/init-upload`、`/complete-upload`、`/submit-input`、`GET /pipeline-status` | 文件上传链路的 artifact 注册、绑定与状态查询 |
+| Candidate | `POST /reader/records/{record_id}/candidate-documents/{candidate_document_id}/confirm` | 确认候选文档并重建快照 |
+| Reader 读取 | `GET /reader/records` | 当前用户 Reading Record 列表 |
+| Reader 读取 | `GET /reader/records/{record_id}/snapshot` | 从 DB facts 重建的 ReaderPlateSnapshot |
+| Reader 读取 | `GET /reader/records/{record_id}/events` | 按 sequence cursor 轮询已提交 reader events |
+| Reader 读取 | `GET /reader/records/{record_id}/stable-document`、`/candidate-document`、`/confirmed-source` | Plate 投影事实源 |
+| Reader 读取 | `POST /reader/records/{record_id}/opened` | 记录打开时间戳 |
+| Reader 增强 | `POST /reader/records/{record_id}/section-translation` | 显式段落同步翻译 |
+| Article RAG | `GET /reader/records/{record_id}/article-rag-index/status`、`POST /ensure` | 文章 RAG 索引生命周期 |
+| Ask | `GET /reader/records/{reading_record_id}/ask/threads`、`POST .../threads/default`、`GET .../threads/{thread_id}` | 当前文章 Ask 线程 |
+| Ask | `GET /reader/records/{reading_record_id}/ask/model-options` | Ask 可选模型档位 |
+| Ask | `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream` | Ask Claread 流式回复；SSE，要求登录态 |
+| Ask | `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/{message_id}/retry/stream` | 重试某一 assistant 回复 |
+| Ask | `GET /reader/records/{reading_record_id}/ask/threads/{thread_id}/submissions/{client_submission_id}` | 客户端提交幂等 reconcile |
+| Ask | `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/reset` | 重置线程 |
+| Ask | `POST /reader/records/{reading_record_id}/ask/messages/{message_id}/citations/{citation_id}/navigate` | citation 回源定位 |
+| Dict AI | `POST /dict/ai` | 词典 AI 增强；登录用户的正式 AI 能力入口，支持 `context_explain` 与 `missing_fallback` |
+| User Annotations | `POST /user-annotations`、`GET /user-annotations` | 用户高亮创建与列表（`reading_record_id` 可选过滤），Reading Record anchor |
+| User Annotations | `PATCH /user-annotations/{annotation_id}`、`DELETE /user-annotations/{annotation_id}` | 按资源 ID 更新（颜色/payload）与删除高亮 |
+| Reader Notes | `POST /reader-notes`、`GET /reader-notes`、`PATCH /reader-notes/{id}`、`DELETE /reader-notes/{id}` | 用户笔记（Reading Record anchor） |
+| Favorites | `POST /favorites`、`GET /favorites` | 文章收藏创建（按 `target_type + target_key` 去重）与列表 |
+| Favorites | `DELETE /favorites/target` | 按 target identity（query `target_type + target_key`）取消收藏；不是资源 ID 路径 |
+| Vocabulary | `GET /vocabulary`、`POST /vocabulary` | Web 生词列表与写入（BFF `/api/web/vocabulary`） |
+| Vocabulary | `PATCH /vocabulary/{vocab_id}`、`DELETE /vocabulary/{vocab_id}` | 按资源 ID 更新（mastery/备注）与删除生词（BFF `/api/web/vocabulary/[id]`） |
 
 ## ID 语义
 
 | 字段 | 含义 |
 |------|------|
-| `client_record_id` | 客户端生成的稳定记录 ID |
-| `cloud_record_id` | 后端 `analysis_records.id` |
-| `task_id` | 分析任务 ID |
-| `record_id` | 兼容字段；新代码优先区分 `client_record_id` 和 `cloud_record_id` |
+| `reading_record_id` | canonical 阅读记录身份，映射 `reading_records.id`（UUID） |
+| `client_record_id` | 客户端生成的稳定记录 ID，`reading_records.client_record_id`，blank 规范化为 `NULL`，重复 active 值返回 409 |
+| `cloud_record_id` | legacy 历史字段，原映射已删除的 `analysis_records.id`；当前仅作为 vocabulary `SourceRef.payload_json` 的可选兼容字段保留，新代码不得再写入或依赖 |
+
+## 枚举域（PG CHECK 为权威）
+
+| 字段 | 当前值域 |
+|------|----------|
+| `reading_records.reading_goal` | `daily_reading` / `exam` |
+| `reading_records.reading_variant` | `daily_reading`：`beginner_reading` / `intermediate_reading` / `intensive_reading`；`exam`：`gaokao` / `cet` / `kaoyan` / `tem` / `ielts_toefl` |
+| `reading_records.source_type` | `text` / `markdown` / `file` / `url` / `pdf` / `ocr` / `image` |
+| `vocabulary_book.mastery_status` | `new` / `learning` / `review` / `mastered` / `archived`（默认 `new`，PG CHECK 是唯一权威） |
+| `favorite_records.target_type` | `reading_record` / `daily_reader_article` |
 
 ## 当前契约状态
 
 - `/dict`、`/dict/entry` 和 `POST /dict/ai` 都声明了 response model。
 - 手机号验证码登录已通过 `provider=phone` 和 `client_platform=web` 接入统一身份模型。
-- `POST /analyze` 明确定义为兼容入口，保留给匿名试用和调试评测；新的正式 AI 能力不应继续直接挂在该路由上。
 - `POST /dict/ai` 是首个正式用户侧词典 AI 能力入口；要求登录态、参与积分结算、写入统一 AI usage 审计，并在 `missing_fallback` 成功后把 AI 输出写入候选池 `dict_ai_candidate_entries`。
 - `POST /dict/ai` 当前按固定价格结算：`context_explain` 与 `missing_fallback` 都是每次 `5` 点；真实 token usage 只用于审计，不直接映射用户侧扣点。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 是 Reader 内 Ask Claread 的正式用户侧 AI 能力入口；要求登录态、默认绑定当前文章线程、支持 SSE 流式 markdown 输出，并接入统一 AI usage 审计与积分预留/退回闭环。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 请求体当前公开 shape 固定为 `content`、`page_identity`、`attachments`、`entry_action` 和可选 `model`；`task_mode`、`reader_focus`、`anchors` 不再作为公开主字段。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前事件合同包括：`thread.ready`、`message.started`、`message.delta`、`reasoning.started`、`reasoning.delta`、`reasoning.completed`、`tool.started`、`tool.completed`、`tool.failed`、`message.interrupted`、`message.completed`、`error`。Web 通过 Next.js BFF 代理消费 SSE，不直接让浏览器拼装 FastAPI 原始实现细节。
-- `POST /reader-ask/threads/{thread_id}/messages/stream` 当前已经切到模型侧 tool-call runtime；`message.completed` canonical payload 的正式来源是 `ReaderAskUserVisibleOutput`，当前稳定字段包括 `content_md`、`submission_mode`、`resolved_intent`、`citations`、`evidence`、`context_plan`、`resolved_context_input`、`trace_summary`、`disambiguation`、`external_asset_disambiguation`、`response_cards`、`action_proposals`、`supplement_candidates`、`persisted_supplements`、`run_info`、`usage_summary` 和 `billed_points`。
-- Ask runtime 中的 `article_overview` 当前采用“弱增强”语义：academic record 继续复用 `render_scene.content_summary.overview`；learning record 则可能通过异步生成的 `analysis_results.page_state_json.derived.overview_hint` 提供 `ready | pending | unavailable | failed | stale` 状态，不作为 Ask 成功运行的必要条件。
-- `message.completed` 相关 record context 当前允许附带 `article_overview_status`、`article_overview_source`、`article_overview_confidence` 作为非强依赖辅助字段，供前端和调试面板展示。
-- `POST /reader-ask/threads/{thread_id}/messages/{message_id}/retry/stream` 只接受 assistant message id；若上一次 run 处于 `interrupted`，Web 应展示“继续生成”，但底层仍复用同一 retry endpoint 产生同一 user turn 的新 run。
-- `resolved_context` 当前用于兼容摘要展示；planner 输入侧的正式上下文说明以 `context_plan` 和 `resolved_context_input` 为准。
-- `source_type` 统一为 `user_input / daily_article / imported / ocr`。
-- `RecordCreateRequest.source_type` 使用统一枚举。
-- `TaskSubmitResponse` / `TaskStatusResponse` 兼容只传 `record_id` 时自动补 `cloud_record_id`。
-- `user_annotations.anchor_type='text_range'` 使用 UTF-16 code unit offset，要求 `analysis_record_id`、`sentence_id`、`selected_text`、`start_offset`、`end_offset`、`text_hash`，并校验 render scene sentence 切片。
-- `user_annotations.anchor_type='multi_text'` 使用 `payload_json.segments[]` 保存多段 anchor；每段都按同一套 UTF-16 offset 和 `fnv1a32-utf16` hash 校验，并要求顺序与 render scene article sentence 顺序一致。
-- `user_annotations` 当前只承载用户高亮。高亮冲突统一走后端 resolver：exact hit 复用原对象，subset / superset / partial overlap 合并到单一高亮，多条重叠时保留最早记录并 soft-delete 其余记录；若并集恰好覆盖整句，anchor 会自动升级为 `sentence`。
-- `favorite_records.target_type` 当前仅允许 `analysis_record` 和 `daily_reader_article`。
-- `reader_notes.quote_mode='sentence' | 'text_range' | 'multi_text'` 与 `user_annotations` 共用同一套 UTF-16 text anchor 校验；`GET /reader-notes` 使用 `analysis_record_id` 作为查询参数。
-- `reader_notes` 只做 exact-hit reopen，不参与高亮冲突合并：`target_key` 完全一致时 reopen/编辑已有笔记，不新增重复 note；重叠但不完全相同的 quote 可以并存为不同 note。
-- `PATCH /reader-notes/{id}` 只允许修改 `note_text`。修改 quote identity 不走 patch，必须删除旧 note 后重建。
-- 删除 record 时，后端会同步 soft-delete 同一 `analysis_record_id` 下的文章收藏、高亮和笔记，避免留下孤儿数据。
+- Ask Claread 的正式用户侧入口是 `POST /reader/records/{reading_record_id}/ask/threads/{thread_id}/messages/stream`；要求登录态、默认绑定当前文章线程、SSE 流式输出。请求体公开 shape 为 `content`、可选 `entry_action`、可选 `focus_anchors`（`anchor` 单数仅作旧单选兼容入口）、可选 `model`、可选 `web_search_mode` 和幂等用 `client_submission_id`；上下文装配由服务端 ContextEnvelope 决定，前端不拼装上下文细节。
+- Ask SSE 事件合同：`thread.ready`、`message.started`、`message.delta`、`message.preview_reset`、`message.completed`、`error`、`agentic.run_started`、`agentic.progress`、`agentic.terminal`、`agentic.learner_reasoning.snapshot`、`context.compaction.started|completed|failed|fallback`、`submission.reconcile`。Web 通过 Next.js BFF 代理消费 SSE，不直接拼装 FastAPI 原始实现细节。
+- `message.completed` 的 canonical payload 是 `ReaderRecordAskCompletedDTO`：`answer_text`、`answer_blocks`、`citations`（含 web 与 RAG citation）、`knowledge_mode`、`source_status` 与可选 `web_search` 摘要；非 ok 终态走 `ReaderRecordAskTerminalDTO`（`agentic.terminal` / `error`），不携带可展示答案。学习者推理摘要经独立 `agentic.learner_reasoning.snapshot` 事件流式下发并随 turn run 持久化。
+- `POST .../messages/{message_id}/retry/stream` 只接受 assistant message id；若上一次 run 处于 `interrupted`，Web 应展示"继续生成"，但底层仍复用同一 retry endpoint 产生同一 user turn 的新 run（`supersedes_run_id` 串联）。
+- 客户端提交幂等：`reader_ask_client_submissions` 按 `(thread_id, client_submission_id)` 去重；重复提交不会重复调用模型，reconcile 通过 SSE `submission.reconcile` 或 submissions 查询端点返回 `wait / retry / resend` 提示。
+- 用户高亮（`user_annotations`）当前只有 Reading Record anchor 一种合同：`reading_record_id + base_id + generation + unit_id + anchor_segment_id + unit_start_utf16 + unit_end_utf16 + text_hash`，UTF-16 code unit offset + `fnv1a32-utf16` hash，由后端按当前 active base 的 anchor segment 切片校验；anchor gate 是唯一校验权威。高亮冲突统一走后端 resolver：exact hit 复用原对象，subset / superset / partial overlap 合并到单一高亮，多条重叠时保留最早记录并 soft-delete 其余记录。
+- 用户笔记（`reader_notes`）`quote_mode='sentence' | 'text_range' | 'multi_text'` 与高亮共用同一套 UTF-16 text anchor 校验；`GET /reader-notes` 使用 `reading_record_id` 作为必填查询参数。笔记只做 exact-hit reopen，不参与高亮冲突合并；`PATCH /reader-notes/{id}` 只允许修改 `note_text`，修改 quote identity 必须删除后重建。
 - `vocabulary_book.dict_entry_id` 指向 `dict_entries.id`；词典重导前必须处理 ID 稳定性。
-- `VocabHighlight` 拒绝未知字段，避免 LLM 草稿把旧字段静默带入 canonical annotation。
+- 收藏的身份模型：`POST /favorites` 以请求体 `target_type + target_key`（target identity）去重，响应返回收藏资源 `id`；取消收藏走 `DELETE /favorites/target`，同样以 query 中的 `target_type + target_key` 定位，当前没有按资源 ID 删除收藏的 route。Web BFF `/api/web/reader/records/[recordId]/favorite` 的 DELETE 在上游映射为该 target 删除。
+- 高亮/笔记/生词的更新与删除都按资源 ID 路径参数定位（`{annotation_id}` / `{id}` / `{vocab_id}`），与 favorites 的 target identity 模型不同，不得混用。
+- 生词来源引用（`SourceRef`）的 canonical 字段是 `reading_record_id`（可搭配 `daily_reader_article_id`）；`cloud_record_id` 仅为 legacy 兼容字段。
 
 ## 后续增强方向
 

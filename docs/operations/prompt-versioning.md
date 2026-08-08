@@ -28,14 +28,16 @@ services/api/prompts/registry.yaml
 4. 跑相关 workflow 测试。
 5. 在提交信息或变更说明里记录 prompt version。
 
-示例：
+示例（prompt preview 当前只支持 Daily Reader agent）：
 
 ```bash
 curl -X POST http://localhost:8000/debug/prompt-preview \
   -H "x-debug-api-key: <key>" \
   -H "Content-Type: application/json" \
-  -d '{"reading_goal":"exam","reading_variant":"gaokao","agent_type":"vocabulary","include_instructions":true}'
+  -d '{"reading_goal":"daily_reading","reading_variant":"intensive_reading","agent_type":"daily_vocab","include_instructions":true}'
 ```
+
+`agent_type` 当前只允许 `daily_vocab` / `daily_footer` / `daily_interpretation` / `daily_review` / `daily_refinement`。
 
 ## 约束
 

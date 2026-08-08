@@ -4,7 +4,7 @@ Claread 后端使用 PostgreSQL 作为业务事实源。Redis 用于缓存和任
 
 ## Migration Baseline
 
-DATA-SCHEMA-BASELINE D2 之后，schema 基线只有单一 fresh baseline：
+当前，schema 基线只有单一 fresh baseline：
 
 ```text
 infra/migrations/0001_initial.sql

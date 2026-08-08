@@ -154,7 +154,7 @@ Claread 后端当前使用三层模型配置：
 
 这里的 `description` 既是前端提示文案，也承担“注释”作用。因为配置文件使用严格 JSON，不支持额外注释字段。
 
-结算上，Ask 现在按实际 usage 计算积分，再用“预扣 + 差额补扣/退款”完成 settle；不再把最终扣费硬封顶到 `reserved_points`。
+结算上，Ask 的加权计费配置已按 model option 挂载；turn run 的 `usage_summary_json` / `usage_event_id` 落账闭环属于 post-cutover backlog，接入前不要把预扣金额当作已生效扣费。
 
 ## 环境变量建议
 
@@ -181,31 +181,7 @@ MOONSHOT_API_KEY=...
 
 ## 请求级切换
 
-`POST /analyze` 仍可带 `model_selection`。现在推荐优先切 profile 或 preset，而不是在请求里临时拼 provider 信息。
-
-```json
-{
-  "text": "Your English article...",
-  "model_selection": {
-    "preset": "workflow_qwen37_max"
-  }
-}
-```
-
-或者：
-
-```json
-{
-  "text": "Your English article...",
-  "model_selection": {
-    "routes": {
-      "annotation_generation": {
-        "profile": "workflow-deepseek-v4-pro"
-      }
-    }
-  }
-}
-```
+旧 `/analyze` 的请求级 `model_selection` 入口已随旧分析链物理删除。当前模型选择统一走 profile / preset 配置与 Ask model option catalog，不支持在业务请求里临时拼 provider 信息；Ask 用户侧只通过 `model` 字段选择 `reader-ask-model-options.json` 中已启用且可 build 的档位。
 
 ## 注意事项
 

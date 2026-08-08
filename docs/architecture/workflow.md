@@ -1,6 +1,6 @@
 # Workflow 架构（历史文档）
 
-> **状态**: `HISTORICAL` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 v3 workflow、`analysis_results.render_scene_json` 事实源、`learning_workflow.py` 已物理删除。本文档保留作历史证据，不再代表当前生产架构。当前 Reader orchestration 架构见 `docs/initiatives/reader-agentic-orchestration/target-architecture.md`。）
+> **状态**: `HISTORICAL` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 v3 workflow、`analysis_results.render_scene_json` 事实源、`learning_workflow.py` 已物理删除。本文档保留作历史证据，不再代表当前生产架构；其中仍有效的工程经验已提炼到 `docs/architecture/workflow-history.md`。当前 Reader orchestration 架构见 `docs/initiatives/reader-agentic-orchestration/target-architecture.md`。）
 
 本文档记录 cutover 前 Claread 旧分析 workflow（v3 思路）的稳定事实。旧仓库中的 v0/v1/v2 是更早的历史方案。cutover 后旧 v3 workflow 已物理删除，新链以 Reader orchestration 为当前生产架构。
 

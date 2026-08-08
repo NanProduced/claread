@@ -1,6 +1,6 @@
 # Eval Center / Example Lab / Grammar RAG 联动说明（历史文档）
 
-> **状态**: `HISTORICAL` | **最后验证**: 2026-08-03（CUTOVER-DOC-TRUTH-CLOSEOUT-R1：Architectural Cutover Complete；旧 Eval Center / Node Lab / Workflow Lab / Run History / Parse Run Observability / Render Scene Inspector module 已物理删除。本文档保留作历史证据，不再代表当前控制面状态。当前控制面状态见 `docs/architecture/directus-console.md`。）
+> **状态**: `HISTORICAL` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Node Lab / Workflow Lab / Run History / Parse Run Observability / Render Scene Inspector module 已物理删除。本文档保留作历史证据，不再代表当前控制面状态。当前控制面状态见 `docs/architecture/directus-console.md`；grammar RAG 运行时契约的当前事实源是 `docs/architecture/reader-rag.md`。）
 
 本文档说明 cutover 前 Directus / Eval Center / Example Lab / services/api / PostgreSQL / Zilliz 之间的耦合关系与联动更新点。cutover 后旧 Eval Center module 已物理删除，按新 orchestration 重建属于 post-cutover backlog；Example Lab 作为 Directus Collection 保留。当前控制面状态以 `docs/architecture/directus-console.md` 为准。
 

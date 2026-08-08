@@ -1,6 +1,6 @@
 ## 1. 文档定位
 
-> **文档分类：历史参考**。本文档是 TEM variant 的分析决策记录，结论为 TEM variant 推迟为方案 B、不合并入 kaoyan。当前 exam variant 的实现规范以 [差异化输出执行架构设计](../workflow/v3/differentiated-output-strategy-design.md) 为准。
+> **文档分类：历史参考**。本文档是 TEM variant 的分析决策记录，结论为 TEM variant 推迟为方案 B、不合并入 kaoyan。当前 exam variant 的实现规范以代码与 `docs/product/learning-annotation-policy.md` 为准。
 
 本文档分析 TEM-4（专四）和 TEM-8（专八）的阅读考察特征，并重点评估：**能否将 kaoyan 和 tem 合并为同一个 variant（即设计文档中的 `gre_tem`）？**
 

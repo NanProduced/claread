@@ -1,13 +1,12 @@
 # Directus Scripts
 
-> CUTOVER-CONTROL-EVAL-LONG Logical tombstones:
-> - `sync-parse-run-observability-metadata.mjs` / `sync-eval-center-metadata.mjs` 已**物理删除**（Physical cutover），不再存在于仓库；重新添加属于 cutover 回归。
+> Cutover 后静态事实（由 `check-logical-registration.mjs` 强制）：
+> - `sync-parse-run-observability-metadata.mjs` / `sync-eval-center-metadata.mjs` 已**物理删除**，不再存在于仓库；重新添加属于 cutover 回归。
 > - 根目录与 `apps/directus/package.json` 已移除 `parse-run:sync-metadata` / `eval-center:sync-metadata` 脚本别名。
-> - `infra/scripts/init-eval-center-dev.ps1` fail-closed：在任何 Docker/DDL 之前退出。
-> - `check-logical-registration.mjs` 为 L-GATE 静态门禁。
-> - Reader observability 唯一 endpoint：`reader-orch`（`/reader-orch/*`）。
-> - Example Lab **数据校验 hook** 保留；Example Lab UI/module/endpoint 仍注销。
-> - 静态注销 ≠ 运行态 Directus metadata 已清理；metadata cleanup 与旧入口不可达属于集成 L-ACCEPT gate。
+> - `infra/scripts/init-eval-center-dev.ps1`、eval-center 数据 reset 脚本和旧 Eval 表 drop manifest 已**物理删除且必须保持删除**；旧 Eval 控制面表已不在单一 baseline schema 中。
+> - Reader observability 唯一 endpoint：`reader-orch`（`/reader-orch/*`，4 个只读路由）。
+> - Example Lab 保留为原生 Collection + hooks-bundle **数据校验 hook**；旧 Eval Center UI/module/endpoint 源树保持物理删除，不恢复。
+> - 静态删除 ≠ 运行态 Directus 实例中的旧 metadata 已清理；运行实例的 metadata cleanup 与旧入口不可达验证属于集成验收与数据清理 backlog。
 
 本目录包含 Directus 本地开发与 metadata 同步脚本。
 
@@ -38,13 +37,13 @@
 
 ### check-logical-registration.mjs
 
-Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`reader-orch` 正向存在、retired sync 脚本已物理删除、init 脚本 fail-closed、Example Lab 校验 hook 保留。
+Cutover 静态注册门禁：校验旧 module/endpoint 源树保持物理删除、retired sync / reset / init / drop 脚本保持物理删除、`reader-orch` endpoint 与 4 个只读路由存在、Example Lab 校验 hook 保留、`eval_example_lab_entries` 受保护不被 TRUNCATE/DROP/DELETE。
 
 | 项目 | 说明 |
 |------|------|
 | 入口 | `pnpm --dir apps/directus run registration:check` |
 | 会写 SQL / metadata | 否 |
-| 典型场景 | L-GATE / CI 静态检查 |
+| 典型场景 | 静态注册门禁 / CI 检查 |
 
 ### sync-llm-config-metadata.mjs
 
@@ -94,8 +93,8 @@ Logical cutover 静态门禁：校验旧 module/panel/endpoint 未注册、`read
 
 ## 注意事项
 
-- 退役 sync 脚本已物理删除；`init-eval-center-dev.ps1` 不是运维入口，调用必须失败。
+- 退役 sync、reset、init、drop 脚本已物理删除且必须保持删除；`init-eval-center-dev.ps1` 不是运维入口。
 - 仍活跃的 LLM Config sync 会直接操作本地 PostgreSQL 和 Directus metadata，不要在生产环境运行。
 - `DIRECTUS_SKIP_SQL_BOOTSTRAP=true` 可跳过 SQL 执行（仅同步 Directus metadata）。
 - `DIRECTUS_SKIP_RESTART=true` 可跳过容器重启。
-- 静态注销不证明现有 Directus 实例中的旧 dashboard/module bar/collection metadata 已清理；那是集成 L-ACCEPT / Data owner 工作。
+- 静态删除不证明运行中 Directus 实例里的旧 dashboard/module bar/collection metadata 已清理；运行实例清理与旧入口不可达验证属于集成验收与数据清理 backlog。

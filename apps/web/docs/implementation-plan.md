@@ -1,6 +1,6 @@
 # Web 实施计划
 
-> **状态**: `CURRENT` | **最后更新**: 2026-05-26
+> **状态**: `CURRENT` | **最后更新**: 2026-08-08（后端依赖已对齐 cutover 后 Reader orchestration 与 Web BFF 事实）
 
 本文记录 Claread Web 当前稳定实施边界，只保留已确认的产品与技术合同。
 
@@ -8,9 +8,9 @@
 
 Claread Web 现在采用三段式路由结构：
 
-- 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/examples/:slug`、`/share/:shareId`
+- 公共区：`/`、`/about`、`/help`、`/blog`、`/daily`、`/daily/:articleId`、`/share/:shareId`
 - 认证区：`/login`
-- 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/reader/:recordId`
+- 私有应用区：`/app/read`、`/app/library`、`/app/vocabulary`、`/app/review`、`/app/settings`、`/app/settings/feedback`、`/app/settings/ledger`、`/app/reader/:recordId`
 
 `/app` 只作为私有入口并立即落到 `/app/read`。旧私有路径 `/read`、`/library`、`/vocabulary`、`/review`、`/settings`、`/reader/:id` 已从产品合同中删除，不保留兼容层。
 
@@ -39,19 +39,23 @@ Claread Web 现在采用三段式路由结构：
 
 ## 首期能力地图
 
-| 模块 | 页面 | 后端依赖 | 当前状态 |
+浏览器不直连 FastAPI；私有区数据一律经过同源 Web BFF（`/api/web/*`）再到 FastAPI 上游。公共区页面由 Server Component 服务端调用上游。
+
+| 模块 | 页面 | Web BFF / 上游依赖 | 当前状态 |
 | --- | --- | --- | --- |
-| 输入与分析提交 | `/app/read` | `POST /analysis-tasks` | 已接入 |
-| 任务状态轮询 | `/app/read` | `GET /analysis-tasks/{id}` | 已接入 |
-| 结果阅读 | `/app/reader/:recordId` | `GET /records/{id}` | 已接入 |
-| 历史记录 | `/app/library` | `GET /records` | 已接入 |
-| 词典查词 | Reader | `GET /dict` / `GET /dict/entry` | 已接入 |
-| 登录与配额 | `/login`、`/app/settings` | Web BFF + session / quota APIs | 已接入 |
-| 收藏 | Reader / Library | favorites APIs | 已接入 |
-| 生词本 | `/app/vocabulary` | vocabulary APIs | 已接入 |
-| 生词复习 | `/app/review` | review APIs | 已接入 |
-| 批注与笔记 | Reader | annotations / reader-notes APIs | 已接入 |
-| 公开内容 | `/daily`、`/daily/:articleId`、`/examples/:slug` | Daily / public content APIs | 已接入基础形态 |
+| 输入提交 | `/app/read` | `POST /api/web/reader/records/input`；文件走 `/api/web/reader/source-artifacts/*`（init-upload → complete-upload → submit-input） | 已接入 |
+| 解析进度 | `/app/reader/:recordId` | `GET /api/web/reader/records/[recordId]/snapshot` + `/events` 轮询推进 | 已接入 |
+| 结果阅读 | `/app/reader/:recordId` | snapshot / stable-document / candidate-document(s) / section-translation / confirmed-source BFF | 已接入 |
+| 历史记录 | `/app/library` | `GET /api/web/reader/records` | 已接入 |
+| Ask Claread | `/app/reader/:recordId` | `ask/threads`、`ask/threads/[threadId]/messages/stream`、citations navigate、model-options BFF | 已接入 |
+| 词典查词 | Reader | `/api/web/dict/lookup` / `/dict/entry` / `/dict/ai` | 已接入 |
+| 登录与配额 | `/login`、`/app/settings` | `/api/web/session`、`/api/web/auth/phone/*`、`/api/web/profile`；`/app/settings/ledger` 展示积分流水 | 已接入 |
+| 收藏 | Reader | `/api/web/reader/records/[recordId]/favorite` | 已接入 |
+| 生词本 | `/app/vocabulary` | `/api/web/vocabulary`、`/api/web/vocabulary/[id]` | 已接入 |
+| 生词复习 | `/app/review` | `/api/web/review/items`、`/api/web/review/items/[id]/submit` | 已接入 |
+| 批注与笔记 | Reader | `/api/web/reader/records/[recordId]/highlights`、`/notes`（含 `[id]` 更新/删除） | 已接入 |
+| 反馈 | `/app/settings/feedback` | `/api/web/feedback`、`/api/web/feedback/[id]` | 已接入 |
+| 公开内容 | `/daily`、`/daily/:articleId` | Server Component 经 `services/api/daily-reader.ts` 调 FastAPI daily-reader 上游 | 已接入基础形态 |
 
 ## 页面 IA
 
@@ -60,14 +64,13 @@ Claread Web 现在采用三段式路由结构：
 | `/` | P1 | 正式公共首页与产品入口 |
 | `/daily` | P1 | 每日精读入口和列表 |
 | `/daily/:articleId` | P1 | 公开每日精读详情 |
-| `/examples/:slug` | P1 | 公开示例详情 |
 | `/login` | P1 | 手机号登录入口 |
 | `/app/read` | P0 | 粘贴即解读与最近记录入口 |
 | `/app/reader/:recordId` | P0 | 核心 Reader |
 | `/app/library` | P0 | 阅读记录 |
 | `/app/vocabulary` | P1 | 生词本 |
 | `/app/review` | P1 | 生词复习 |
-| `/app/settings` | P1 | 账户、配额、主题与反馈 |
+| `/app/settings` | P1 | 账户、配额、主题；`/app/settings/feedback` 反馈、`/app/settings/ledger` 积分流水 |
 | `/share/:shareId` | P2 | 分享页 |
 | `/about`、`/help`、`/blog` | P3 | 公共内容占位 |
 
