@@ -6,9 +6,10 @@ Model/executor returns candidate refs; publisher maps to opaque ids.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 from uuid import UUID
 
 import asyncpg
@@ -19,11 +20,14 @@ from app.services.ai_usage import (
     BILLING_MODE_INTERNAL_ONLY,
     CAPABILITY_READER_SEMANTIC_OUTLINE,
     STATUS_FAILED,
-    STATUS_SUCCEEDED as USAGE_STATUS_SUCCEEDED,
     USAGE_SCOPE_SYSTEM_INTERNAL,
     AIUsageEventCreate,
     record_ai_usage_event,
 )
+from app.services.ai_usage import (
+    STATUS_SUCCEEDED as USAGE_STATUS_SUCCEEDED,
+)
+from app.services.ai_usage.execution_diagnostics import with_execution_correlation
 
 from .job_bootstrap import (
     SEMANTIC_OUTLINE_JOB_TYPE,
@@ -44,6 +48,12 @@ from .semantic_outline_publisher import (
     SemanticOutlineCandidateNode,
     SemanticOutlineLayerPublisher,
     SemanticOutlinePublishResult,
+)
+from .span_recorder import (
+    end_worker_span_execution_error,
+    end_worker_span_fence_violation,
+    end_worker_span_generic_exception,
+    end_worker_span_success,
 )
 
 DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY = timedelta(minutes=5)
@@ -392,6 +402,7 @@ class SemanticOutlineWorkerService:
             retry_delay=retry_delay,
         )
 
+    @with_execution_correlation(CAPABILITY_READER_SEMANTIC_OUTLINE)
     async def process_claimed_semantic_outline_job(
         self,
         *,
@@ -447,8 +458,19 @@ class SemanticOutlineWorkerService:
                     context=context,
                     publish_result=publish_result,
                 )
-                await self._maybe_record_success_usage(
+                event_id = await self._maybe_record_success_usage(
                     context=context, execution=execution
+                )
+                await end_worker_span_success(
+                    ai_usage_event_id=event_id,
+                    usage_data=execution.usage_data,
+                    model_route=(
+                        execution.model_route
+                        or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+                    ),
+                    model_name=execution.model_name or execution.model,
+                    model_provider=execution.model_provider,
+                    capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
                 )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
@@ -459,17 +481,24 @@ class SemanticOutlineWorkerService:
 
             # V=0 / failed / worker_failure: fail-closed, preserve old layer.
             if context.attempt_count >= context.max_attempts or execution.worker_failure:
+                terminal_failure_code = (
+                    "semantic_outline_validation_failed"
+                    if not execution.worker_failure
+                    else "semantic_outline_worker_failure"
+                )
                 await self._complete_job_failed_terminal(
                     claim=claim,
                     context=context,
                     publish_result=publish_result,
-                    failure_code="semantic_outline_validation_failed"
-                    if not execution.worker_failure
-                    else "semantic_outline_worker_failure",
+                    failure_code=terminal_failure_code,
                 )
                 # Provider already called: still one usage event when usage present.
                 await self._maybe_record_success_usage(
                     context=context, execution=execution
+                )
+                await end_worker_span_execution_error(
+                    failure_class="validation",
+                    failure_code=terminal_failure_code,
                 )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
@@ -488,6 +517,10 @@ class SemanticOutlineWorkerService:
             await self._maybe_record_success_usage(
                 context=context, execution=execution
             )
+            await end_worker_span_execution_error(
+                failure_class="validation",
+                failure_code="semantic_outline_retryable",
+            )
             return SemanticOutlineJobProcessResult(
                 claim=claim,
                 context=context,
@@ -496,6 +529,7 @@ class SemanticOutlineWorkerService:
                 error_code="semantic_outline_retryable",
             )
         except FenceViolationError:
+            await end_worker_span_fence_violation()
             raise
         except SemanticOutlineGenerationError as exc:
             # Permanent configuration / 4xx-class: no blind retry; job + run
@@ -514,6 +548,10 @@ class SemanticOutlineWorkerService:
                     failure_message=failure_message,
                 )
                 await self._maybe_record_error_usage(context=context, error=exc)
+                await end_worker_span_execution_error(
+                    failure_class=exc.failure_class,
+                    failure_code=exc.failure_code,
+                )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
                     context=context,
@@ -532,6 +570,10 @@ class SemanticOutlineWorkerService:
             )
             # Timeout without usage → zero event; call with usage → one event.
             await self._maybe_record_error_usage(context=context, error=exc)
+            await end_worker_span_execution_error(
+                failure_class=exc.failure_class,
+                failure_code=exc.failure_code,
+            )
             # Keep run open (running) for the next attempt — do not finish it.
             return SemanticOutlineJobProcessResult(
                 claim=claim,
@@ -557,6 +599,9 @@ class SemanticOutlineWorkerService:
                     failure_class="worker",
                     failure_code=type(exc).__name__,
                 )
+                await end_worker_span_generic_exception(
+                    layer="semantic_outline", exc=exc
+                )
                 return SemanticOutlineJobProcessResult(
                     claim=claim,
                     context=context,
@@ -572,6 +617,9 @@ class SemanticOutlineWorkerService:
                 failure_code=type(exc).__name__,
                 failure_message=str(exc)[:240],
                 rationale_code="semantic_outline_worker_error",
+            )
+            await end_worker_span_generic_exception(
+                layer="semantic_outline", exc=exc
             )
             return SemanticOutlineJobProcessResult(
                 claim=claim,
