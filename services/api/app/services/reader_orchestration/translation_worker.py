@@ -1345,6 +1345,7 @@ class TranslationWorkerService:
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
     ) -> TranslationJobProcessResult:
         context: TranslationJobContext | None = None
+        execution: TranslationExecutionResult | None = None
 
         try:
             context = await self._load_job_context(claim.job_id)
@@ -1392,6 +1393,16 @@ class TranslationWorkerService:
             )
         except FenceViolationError:
             await end_worker_span_fence_violation()
+            # The model call completed (tokens spent) but the publish fence
+            # failed — record the invocation's usage so the usage table
+            # reflects real model consumption. Mirrors the grammar per-unit
+            # fence path; the failed event never carries a layer id.
+            await self._record_failed_usage_event(
+                context=context,
+                error_code="publish_fence_failed",
+                error_message="translation unit publish fence failed",
+                **_failed_translation_usage_attrs(execution),
+            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1452,6 +1463,7 @@ class TranslationWorkerService:
                     context=context,
                     error_code=exc.failure_code,
                     error_message=str(exc),
+                    **_failed_translation_usage_attrs(execution),
                 )
                 await end_worker_span_execution_error(
                     failure_class=exc.failure_class,
@@ -1483,6 +1495,7 @@ class TranslationWorkerService:
                 context=context,
                 error_code=exc.failure_code,
                 error_message=str(exc),
+                **_failed_translation_usage_attrs(execution),
             )
             await end_worker_span_execution_error(
                 failure_class=exc.failure_class,
@@ -1514,6 +1527,7 @@ class TranslationWorkerService:
                 context=context,
                 error_code=type(exc).__name__,
                 error_message=str(exc),
+                **_failed_translation_usage_attrs(execution),
             )
             await end_worker_span_generic_exception(layer="translation", exc=exc)
             return TranslationJobProcessResult(
@@ -1714,6 +1728,7 @@ class TranslationWorkerService:
                     context=context,
                     error_code=exc.failure_code,
                     error_message=str(exc),
+                    **_failed_translation_usage_attrs(execution),
                 )
                 await end_worker_span_execution_error(
                     failure_class=exc.failure_class,
@@ -1745,6 +1760,7 @@ class TranslationWorkerService:
                 context=context,
                 error_code=exc.failure_code,
                 error_message=str(exc),
+                **_failed_translation_usage_attrs(execution),
             )
             await end_worker_span_execution_error(
                 failure_class=exc.failure_class,
@@ -1776,6 +1792,7 @@ class TranslationWorkerService:
                 context=context,
                 error_code=type(exc).__name__,
                 error_message=str(exc),
+                **_failed_translation_usage_attrs(execution),
             )
             await end_worker_span_generic_exception(layer="translation", exc=exc)
             return TranslationBatchJobProcessResult(
@@ -2508,6 +2525,12 @@ class TranslationWorkerService:
         context: TranslationJobContext | None,
         error_code: str,
         error_message: str,
+        prompt_version: str | None = None,
+        model_route: str = MODEL_ROUTE_READER_LAYER_TRANSLATION,
+        model_profile: str | None = None,
+        model_provider: str | None = None,
+        model_name: str | None = None,
+        usage_data: dict[str, Any] | None = None,
     ) -> UUID | None:
         if context is None:
             return None
@@ -2523,8 +2546,14 @@ class TranslationWorkerService:
                 reader_job_id=context.job_id,
                 workflow_name="reader_orchestration",
                 workflow_version="d4-p1-translation-worker",
-                model_route=MODEL_ROUTE_READER_LAYER_TRANSLATION,
+                prompt_version=prompt_version,
+                model_route=model_route,
+                model_profile_id=model_profile,
+                model_profile=model_profile,
+                model_provider=model_provider,
+                model_name=model_name,
                 planner_kind="llm_worker",
+                usage_data=usage_data,
                 operation_fingerprint=context.operation_fingerprint,
                 error_code=error_code,
                 error_message=error_message,
