@@ -3319,16 +3319,17 @@ async def test_batch_window_output_preserves_translation_group_contract() -> Non
     assert w2_group.source_text_hash == compute_text_range_hash(w2_span)
 
 # ---------------------------------------------------------------------------#
-# RUNTIME-USAGE-FAILURE-COMPLETENESS (C5/C6): failure-side usage completeness
+# Failure-side usage completeness
 # ---------------------------------------------------------------------------#
 # Every failure path below proves that a real model invocation that returned
 # usage_data persists EXACTLY ONE usage event (tokens + model identity +
-# run/job/record identity), while no-provider-call failures never fabricate
-# tokens.
+# run/job/record identity), while an executor that returns without a usage
+# payload never fabricates tokens.
 
 
-class _FenceRaisingTranslationPublisher(_CapturingPublisher):
-    """Injected publisher that fails the publish fence after the model call."""
+class _PostExecutionFailTranslationPublisher(_CapturingPublisher):
+    """Injected publisher that raises the given error after the model call
+    (publish fence violation, typed worker error, or generic failure)."""
 
     def __init__(self, error: Exception) -> None:
         super().__init__()
@@ -3339,6 +3340,72 @@ class _FenceRaisingTranslationPublisher(_CapturingPublisher):
 
     async def publish_article_translation_batch(self, **kwargs) -> object:
         raise self.error
+
+
+async def _tamper_unit_job_into_batch(
+    pool: asyncpg.Pool,
+    *,
+    job_id: UUID,
+    unit_id: str,
+    job_type: str,
+) -> None:
+    """Tamper a per-unit job into a batch job: the batch context loader
+    resolves units from input_json.target_unit_ids."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT input_json FROM reader_jobs WHERE id = $1",
+            job_id,
+        )
+        input_json = dict(row["input_json"])
+        input_json["target_unit_ids"] = [unit_id]
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET job_type = $2,
+                target_type = 'unit_range',
+                input_json = $3::jsonb
+            WHERE id = $1
+            """,
+            job_id,
+            job_type,
+            jsonb_param(input_json),
+        )
+
+
+class _PostExecutionFailBatchTranslator:
+    """Fake batch translator whose output fails post-execution hydration
+    (an unknown group id → typed terminal validation failure)."""
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        return TranslationBatchExecutionResult(
+            output=TranslationBatchGenerationOutput(
+                units=[
+                    TranslationBatchUnitOutput(
+                        unit_id=context.units[0].unit_id,
+                        groups=[
+                            TranslationBatchGroupOutput(
+                                group_id="bogus-group",
+                                translated_text="x",
+                            )
+                        ],
+                    )
+                ]
+            ),
+            usage_data={
+                "aggregate": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                }
+            },
+            prompt_version="test-batch-typed-fail",
+            model_profile="fake-batch-profile",
+            model_provider="fake-provider",
+            model_name="fake-batch-model",
+        )
 
 
 async def _fetch_translation_usage_rows(pool: asyncpg.Pool, job_id: UUID) -> list[asyncpg.Record]:
@@ -3360,9 +3427,10 @@ async def _fetch_translation_usage_rows(pool: asyncpg.Pool, job_id: UUID) -> lis
 async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """C5/C6 per-unit: provider returned usage_data, publish fence fails.
-    Exactly one failed usage event must carry the consumed tokens, the
-    model identity and the run/job identity; the job still ends superseded."""
+    """Provider returned usage_data and the publish fence fails after the
+    model execution. Exactly one failed usage event must carry the consumed
+    tokens, the model identity and the run/job identity; the job still ends
+    superseded."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
     await TranslationJobBootstrapService(pool=translation_worker_env).bootstrap_translation_run(
@@ -3372,7 +3440,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     worker = TranslationWorkerService(
         pool=translation_worker_env,
         translator=_StaticTranslator(_translation_generation_output()),
-        layer_publisher=_FenceRaisingTranslationPublisher(
+        layer_publisher=_PostExecutionFailTranslationPublisher(
             FenceViolationError("translation publish fence failed for usage test")
         ),
     )
@@ -3423,9 +3491,9 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
 async def test_worker_retryable_failure_after_provider_call_records_failed_usage_with_tokens(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 per-unit retryable: provider returned usage_data, a retryable
-    failure follows. The failed usage event must keep the consumed tokens
-    and the model identity; the job still ends retry_later."""
+    """Retryable post-execution failure: provider returned usage_data, a
+    retryable failure follows. The failed usage event must keep the consumed
+    tokens and the model identity; the job still ends retry_later."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
     await TranslationJobBootstrapService(pool=translation_worker_env).bootstrap_translation_run(
@@ -3435,7 +3503,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     worker = TranslationWorkerService(
         pool=translation_worker_env,
         translator=_StaticTranslator(_translation_generation_output()),
-        layer_publisher=_FenceRaisingTranslationPublisher(
+        layer_publisher=_PostExecutionFailTranslationPublisher(
             TranslationExecutionError(
                 "post-provider retryable failure",
                 retryable=True,
@@ -3489,9 +3557,9 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
 async def test_worker_terminal_failure_after_provider_call_records_failed_usage_with_tokens(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 per-unit terminal: provider returned usage_data, hydration fails
-    terminally. The failed usage event must keep the consumed tokens and
-    the model identity; the job still ends failed_terminal."""
+    """Terminal post-execution failure: provider returned usage_data,
+    hydration fails terminally. The failed usage event must keep the consumed
+    tokens and the model identity; the job still ends failed_terminal."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
     await TranslationJobBootstrapService(pool=translation_worker_env).bootstrap_translation_run(
@@ -3548,10 +3616,10 @@ async def test_worker_terminal_failure_after_provider_call_records_failed_usage_
 async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """C5 batch: provider returned usage_data, batch publish fence fails.
-    Exactly one failed usage event must carry the consumed tokens and the
-    model identity; the job still ends superseded and the fence still
-    propagates."""
+    """Batch publish fence after model execution: provider returned
+    usage_data, the batch publish fence fails. Exactly one failed usage
+    event must carry the consumed tokens and the model identity; the job
+    still ends superseded and the fence still propagates."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
     bootstrap = TranslationJobBootstrapService(pool=translation_worker_env)
@@ -3561,28 +3629,16 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
     )
     # Tamper the per-unit job into a batch job: the batch context loader
     # resolves units from input_json.target_unit_ids.
-    async with translation_worker_env.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT input_json FROM reader_jobs WHERE id = $1",
-            bootstrap_result.job_id,
-        )
-        input_json = dict(row["input_json"])
-        input_json["target_unit_ids"] = [bootstrap_result.unit_id]
-        await conn.execute(
-            """
-            UPDATE reader_jobs
-            SET job_type = 'translate_article',
-                target_type = 'unit_range',
-                input_json = $2::jsonb
-            WHERE id = $1
-            """,
-            bootstrap_result.job_id,
-            jsonb_param(input_json),
-        )
+    await _tamper_unit_job_into_batch(
+        translation_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="translate_article",
+    )
     worker = TranslationWorkerService(
         pool=translation_worker_env,
         batch_translator=DevFakeTranslationBatchExecutor(),
-        layer_publisher=_FenceRaisingTranslationPublisher(
+        layer_publisher=_PostExecutionFailTranslationPublisher(
             FenceViolationError("translation batch publish fence failed for usage test")
         ),
     )
@@ -3636,9 +3692,9 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
 async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 guard: provider returned no reliable usage payload. The failed
-    event keeps the confirmed no-token semantics; no zero snapshot is
-    fabricated into metadata."""
+    """Executor returned without a reliable usage payload. The failed event
+    keeps the confirmed no-token semantics: tokens stay 0 and no zero
+    snapshot is fabricated into metadata."""
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
     await TranslationJobBootstrapService(pool=translation_worker_env).bootstrap_translation_run(
@@ -3650,7 +3706,7 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     worker = TranslationWorkerService(
         pool=translation_worker_env,
         translator=translator,
-        layer_publisher=_FenceRaisingTranslationPublisher(
+        layer_publisher=_PostExecutionFailTranslationPublisher(
             TranslationExecutionError(
                 "post-provider retryable failure",
                 retryable=True,
@@ -3680,3 +3736,203 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     assert usage_row["total_tokens"] == 0
     metadata_json = dict(usage_row["metadata_json"])
     assert "usage_snapshot" not in metadata_json
+
+async def test_worker_generic_failure_after_provider_call_records_failed_usage_with_tokens(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    """Generic post-execution failure: provider returned usage_data, an
+    untyped exception follows. The failed usage event must keep the consumed
+    tokens and the model identity; the job still ends failed_terminal."""
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(pool=translation_worker_env).bootstrap_translation_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=_StaticTranslator(_translation_generation_output()),
+        layer_publisher=_PostExecutionFailTranslationPublisher(
+            RuntimeError("post-provider generic failure")
+        ),
+    )
+
+    result = await worker.process_next_translation_job(
+        lease_owner="translation-worker-generic-after-provider",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+
+    usage_rows = await _fetch_translation_usage_rows(
+        translation_worker_env, result.claim.job_id
+    )
+    async with translation_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+        run_row = await conn.fetchrow(
+            "SELECT status, finished_at FROM reader_runs WHERE id = $1",
+            result.claim.run_id,
+        )
+
+    assert job_row is not None and job_row["status"] == "failed_terminal"
+    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert run_row["finished_at"] is not None
+    assert len(usage_rows) == 1
+    usage_row = usage_rows[0]
+    assert usage_row["status"] == "failed"
+    assert usage_row["capability_code"] == "reader_translation"
+    assert usage_row["model_route"] == "reader_layer_translation"
+    assert usage_row["model_profile_id"] == "fake-profile"
+    assert usage_row["model_provider"] == "fake-provider"
+    assert usage_row["model_name"] == "fake-model"
+    assert usage_row["reader_run_id"] == result.claim.run_id
+    assert usage_row["reader_job_id"] == result.claim.job_id
+    assert usage_row["input_tokens"] == 12
+    assert usage_row["output_tokens"] == 18
+    assert usage_row["total_tokens"] == 30
+    assert usage_row["error_code"] == "RuntimeError"
+
+
+async def test_batch_worker_typed_failure_after_provider_call_records_failed_usage_with_tokens(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    """Typed post-execution failure on the batch path: the provider returned
+    usage_data but hydration rejects the output terminally. The failed usage
+    event keeps the consumed tokens and the model identity; the job still
+    ends failed_terminal."""
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    bootstrap = TranslationJobBootstrapService(pool=translation_worker_env)
+    bootstrap_result = await bootstrap.bootstrap_translation_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    await _tamper_unit_job_into_batch(
+        translation_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="translate_article",
+    )
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        batch_translator=_PostExecutionFailBatchTranslator(),
+    )
+    claim = await worker.claim_translation_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="translation-batch-worker-typed-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+
+    result = await worker.process_claimed_translation_batch_job(claim=claim)
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+
+    usage_rows = await _fetch_translation_usage_rows(
+        translation_worker_env, claim.job_id
+    )
+    async with translation_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            claim.job_id,
+        )
+        run_row = await conn.fetchrow(
+            "SELECT status FROM reader_runs WHERE id = $1",
+            claim.run_id,
+        )
+
+    assert job_row is not None and job_row["status"] == "failed_terminal"
+    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert len(usage_rows) == 1
+    usage_row = usage_rows[0]
+    assert usage_row["status"] == "failed"
+    assert usage_row["capability_code"] == "reader_translation"
+    assert usage_row["model_route"] == "reader_layer_translation"
+    assert usage_row["model_profile_id"] == "fake-batch-profile"
+    assert usage_row["model_provider"] == "fake-provider"
+    assert usage_row["model_name"] == "fake-batch-model"
+    assert usage_row["reader_run_id"] == claim.run_id
+    assert usage_row["reader_job_id"] == claim.job_id
+    assert usage_row["input_tokens"] == 1
+    assert usage_row["output_tokens"] == 1
+    assert usage_row["total_tokens"] == 2
+    assert usage_row["error_code"] == "translation_batch_extra_group"
+
+
+async def test_batch_worker_generic_failure_after_provider_call_records_failed_usage_with_tokens(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    """Generic post-execution failure on the batch path: the provider
+    returned usage_data, an untyped exception follows. The failed usage
+    event keeps the consumed tokens and the model identity; the job still
+    ends failed_terminal."""
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    bootstrap = TranslationJobBootstrapService(pool=translation_worker_env)
+    bootstrap_result = await bootstrap.bootstrap_translation_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    await _tamper_unit_job_into_batch(
+        translation_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="translate_article",
+    )
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        batch_translator=DevFakeTranslationBatchExecutor(),
+        layer_publisher=_PostExecutionFailTranslationPublisher(
+            RuntimeError("post-provider batch generic failure")
+        ),
+    )
+    claim = await worker.claim_translation_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="translation-batch-worker-generic-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+
+    result = await worker.process_claimed_translation_batch_job(claim=claim)
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+
+    usage_rows = await _fetch_translation_usage_rows(
+        translation_worker_env, claim.job_id
+    )
+    async with translation_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            claim.job_id,
+        )
+        run_row = await conn.fetchrow(
+            "SELECT status FROM reader_runs WHERE id = $1",
+            claim.run_id,
+        )
+
+    assert job_row is not None and job_row["status"] == "failed_terminal"
+    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert len(usage_rows) == 1
+    usage_row = usage_rows[0]
+    assert usage_row["status"] == "failed"
+    assert usage_row["capability_code"] == "reader_translation"
+    assert usage_row["model_route"] == "reader_layer_translation"
+    assert usage_row["model_profile_id"] == "reader_smoke_fake_translation_batch"
+    assert usage_row["model_provider"] == "fake"
+    assert usage_row["model_name"] == "reader-smoke-fake-translation-batch"
+    assert usage_row["reader_run_id"] == claim.run_id
+    assert usage_row["reader_job_id"] == claim.job_id
+    assert usage_row["input_tokens"] == 1
+    assert usage_row["output_tokens"] == 1
+    assert usage_row["total_tokens"] == 2
+    assert usage_row["error_code"] == "RuntimeError"

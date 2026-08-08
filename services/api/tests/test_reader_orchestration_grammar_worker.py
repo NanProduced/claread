@@ -3985,12 +3985,13 @@ def test_variant_grammar_bundle_soft_lens_drops_exam_jargon_exception(
     assert "备考学生" in text
 
 # ---------------------------------------------------------------------------#
-# RUNTIME-USAGE-FAILURE-COMPLETENESS (C5/C6): failure-side usage completeness
+# Failure-side usage completeness
 # ---------------------------------------------------------------------------#
 
 
-class _FenceRaisingGrammarPublisher:
-    """Injected publisher that fails the publish fence after the model call."""
+class _PostExecutionFailGrammarPublisher:
+    """Injected publisher that raises the given error after the model call
+    (publish fence violation, typed worker error, or generic failure)."""
 
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -4018,11 +4019,11 @@ async def _fetch_grammar_usage_rows(pool: asyncpg.Pool, job_id: UUID) -> list[as
 async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """C5 reference semantics (grammar per-unit fence baseline): provider
-    returned usage_data, publish fence fails. Exactly one failed usage
-    event carries the consumed tokens, the model identity and the run/job
-    identity; the job still ends superseded. This is the semantics that the
-    translation/vocabulary fence paths must align with."""
+    """Grammar per-unit publish-fence baseline: provider returned
+    usage_data, the publish fence fails after the model execution. Exactly
+    one failed usage event carries the consumed tokens, the model identity
+    and the run/job identity; the job still ends superseded. This is the
+    reference semantics the translation/vocabulary fence paths align with."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4032,7 +4033,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     worker = GrammarBundleWorkerService(
         pool=grammar_worker_env,
         executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
-        layer_publisher=_FenceRaisingGrammarPublisher(
+        layer_publisher=_PostExecutionFailGrammarPublisher(
             FenceViolationError("grammar publish fence failed for usage test")
         ),
     )
@@ -4081,9 +4082,9 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
 async def test_worker_retryable_failure_after_provider_call_records_failed_usage_with_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 per-unit retryable: provider returned usage_data, a retryable
-    failure follows. The failed usage event must keep the consumed tokens
-    and the model identity; the job still ends retry_later."""
+    """Retryable post-execution failure: provider returned usage_data, a
+    retryable failure follows. The failed usage event must keep the consumed
+    tokens and the model identity; the job still ends retry_later."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4093,7 +4094,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     worker = GrammarBundleWorkerService(
         pool=grammar_worker_env,
         executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
-        layer_publisher=_FenceRaisingGrammarPublisher(
+        layer_publisher=_PostExecutionFailGrammarPublisher(
             GrammarExecutionError(
                 "post-provider retryable failure",
                 retryable=True,
@@ -4145,9 +4146,10 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
 async def test_worker_terminal_failure_after_provider_call_records_failed_usage_with_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 per-unit terminal: provider returned usage_data, bundle validation
-    fails terminally. The failed usage event must keep the consumed tokens
-    and the model identity; the job still ends failed_terminal."""
+    """Terminal post-execution failure: provider returned usage_data,
+    bundle validation fails terminally. The failed usage event must keep the
+    consumed tokens and the model identity; the job still ends
+    failed_terminal."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4200,9 +4202,9 @@ async def test_worker_terminal_failure_after_provider_call_records_failed_usage_
 async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """C6 guard: provider returned no reliable usage payload. The failed
-    event keeps the confirmed no-token semantics; no zero snapshot is
-    fabricated into metadata."""
+    """Executor returned without a reliable usage payload. The failed event
+    keeps the confirmed no-token semantics: tokens stay 0 and no zero
+    snapshot is fabricated into metadata."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4214,7 +4216,7 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     worker = GrammarBundleWorkerService(
         pool=grammar_worker_env,
         executor=executor,
-        layer_publisher=_FenceRaisingGrammarPublisher(
+        layer_publisher=_PostExecutionFailGrammarPublisher(
             GrammarExecutionError(
                 "post-provider retryable failure",
                 retryable=True,
@@ -4242,3 +4244,60 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     assert usage_row["total_tokens"] == 0
     metadata_json = dict(usage_row["metadata_json"])
     assert "usage_snapshot" not in metadata_json
+
+async def test_worker_generic_failure_after_provider_call_records_failed_usage_with_tokens(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    """Generic post-execution failure: provider returned usage_data, an
+    untyped exception follows. The failed usage event must keep the consumed
+    tokens and the model identity; the job still ends failed_terminal."""
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+        layer_publisher=_PostExecutionFailGrammarPublisher(
+            RuntimeError("post-provider generic failure")
+        ),
+    )
+
+    result = await worker.process_next_grammar_job(
+        lease_owner="grammar-worker-generic-after-provider",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "failed_terminal"
+
+    usage_rows = await _fetch_grammar_usage_rows(grammar_worker_env, result.claim.job_id)
+    async with grammar_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+        run_row = await conn.fetchrow(
+            "SELECT status, finished_at FROM reader_runs WHERE id = $1",
+            result.claim.run_id,
+        )
+
+    assert job_row is not None and job_row["status"] == "failed_terminal"
+    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert run_row["finished_at"] is not None
+    assert len(usage_rows) == 1
+    usage_row = usage_rows[0]
+    assert usage_row["status"] == "failed"
+    assert usage_row["capability_code"] == "reader_grammar_bundle"
+    assert usage_row["model_route"] == "reader_layer_grammar_bundle"
+    assert usage_row["model_profile_id"] == "fake-grammar-profile"
+    assert usage_row["model_provider"] == "fake-provider"
+    assert usage_row["model_name"] == "fake-grammar-model"
+    assert usage_row["reader_run_id"] == result.claim.run_id
+    assert usage_row["reader_job_id"] == result.claim.job_id
+    assert usage_row["input_tokens"] == 12
+    assert usage_row["output_tokens"] == 18
+    assert usage_row["total_tokens"] == 30
+    assert usage_row["error_code"] == "RuntimeError"
