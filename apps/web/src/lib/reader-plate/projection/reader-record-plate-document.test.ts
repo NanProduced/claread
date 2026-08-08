@@ -2401,3 +2401,868 @@ describe("Stable Document tree projection", () => {
   );
 });
 });
+
+// ---------------------------------------------------------------------------
+// Wrapper composition order — the flat sequence from mapUnitToBlocks is the
+// only anchor-level order authority; the Stable tree contributes wrapper
+// structure only. Overlays defer past their wrapper per the shared policy.
+// ---------------------------------------------------------------------------
+describe("wrapper composition order", () => {
+  type WgSeg = { id: string; text: string };
+  type WgTranslation = {
+    groupId: string;
+    layerId: string;
+    covers: string[];
+    text: string;
+  };
+  type WgAnalysis = { analysisId: string; segId: string; text: string };
+  type WgUnit = {
+    unitId: string;
+    segs: WgSeg[];
+    stableBlockType: string;
+    stableBlockId: string;
+    parentStableBlockId?: string | null;
+    headingLevel?: number | null;
+    contentRole?:
+      | "prose"
+      | "quotation"
+      | "source_callout"
+      | "citation_reference"
+      | "prompt_question"
+      | "link_only"
+      | null;
+    grammarMarks?: Array<ReaderGrammarNoteMarkDto & { segId?: never }>;
+    translations?: WgTranslation[];
+    analyses?: WgAnalysis[];
+  };
+
+  function wgTreeNode(
+    overrides: Partial<ReaderStableDocumentBlockNodeDto>,
+  ): ReaderStableDocumentBlockNodeDto {
+    return {
+      block_id: "block",
+      parent_block_id: null,
+      order_index: 0,
+      block_type: "unknown",
+      text_content: null,
+      payload: {},
+      source_refs: {},
+      quality: {},
+      canonical_text_start_utf16: null,
+      canonical_text_end_utf16: null,
+      interpretation_policy: {},
+      unit_id: null,
+      anchor_segment_ids: [],
+      children: [],
+      ...overrides,
+    };
+  }
+
+  function buildWgSnapshot(
+    specs: WgUnit[],
+    extras: {
+      tree?: ReaderStableDocumentBlockNodeDto[];
+      supplements?: ReaderSnapshotAskSupplementDto[];
+    } = {},
+  ): ReaderPlateSnapshotDto {
+    let offset = 0;
+    const anchorSegments: ReaderPlateSnapshotDto["anchor_segments"] = [];
+    const navigationUnits: ReaderPlateSnapshotDto["navigation"]["units"] = [];
+    const valueUnits: ReaderUnitNodeDto[] = [];
+
+    for (const [unitIndex, spec] of specs.entries()) {
+      const unitStart = offset;
+      const segNodes: ReaderSourceBlockChildNodeDto[] = [];
+      for (const seg of spec.segs) {
+        const start = offset;
+        const end = start + seg.text.length;
+        offset = end;
+        anchorSegments.push({
+          anchor_segment_id: seg.id,
+          sentence_id: `sent_${seg.id}`,
+          paragraph_id: spec.unitId,
+          unit_id: spec.unitId,
+          order_index: anchorSegments.length + 1,
+          unit_order_index: 1,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: start,
+          base_end_utf16: end,
+          unit_start_utf16: start - unitStart,
+          unit_end_utf16: end - unitStart,
+          text_hash: `hash_${seg.id}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        });
+        segNodes.push({
+          type: "reader_anchor_segment",
+          owner: "stable",
+          base_id: "base_w1",
+          unit_id: spec.unitId,
+          anchor_segment_id: seg.id,
+          sentence_id: `sent_${seg.id}`,
+          segment_type: "sentence",
+          boundary_quality: "normal",
+          base_start_utf16: start,
+          base_end_utf16: end,
+          unit_start_utf16: start - unitStart,
+          unit_end_utf16: end - unitStart,
+          text_hash: `hash_${seg.id}`,
+          hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+          children: [
+            {
+              text: seg.text,
+              owner: "stable",
+              lock_source: true,
+              source_role: "segment_text",
+              base_start_utf16: start,
+              base_end_utf16: end,
+              anchor_segment_id: seg.id,
+              segment_start_utf16: 0,
+              segment_end_utf16: seg.text.length,
+              ...(spec.grammarMarks && spec.grammarMarks.length > 0
+                ? {
+                    reader_grammar_note_marks: spec.grammarMarks.filter(
+                      (mark) => mark.anchor_segment_id === seg.id,
+                    ),
+                  }
+                : {}),
+            },
+          ],
+        });
+      }
+      offset += 2;
+
+      const sourceBlock: ReaderSourceBlockNodeDto = {
+        type: "reader_source_block",
+        owner: "stable",
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        stableBlockType: spec.stableBlockType,
+        stableBlockId: spec.stableBlockId,
+        headingLevel: spec.headingLevel ?? null,
+        contentRole: spec.contentRole ?? null,
+        parentStableBlockId: spec.parentStableBlockId ?? null,
+        children: segNodes,
+      };
+
+      const translations = (spec.translations ?? []).map((group) => ({
+        type: "reader_translation_group" as const,
+        owner: "system_ai" as const,
+        layer_id: group.layerId,
+        layer_version: 1,
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        target_scope: "unit" as const,
+        target_key: spec.unitId,
+        group_id: group.groupId,
+        covered_anchor_segment_ids: group.covers,
+        source_text_hash: `hash_${group.groupId}`,
+        children: [{ text: group.text }],
+      }));
+
+      const analyses = (spec.analyses ?? []).map((analysis) => ({
+        type: "reader_sentence_analysis" as const,
+        owner: "system_ai" as const,
+        analysis_id: analysis.analysisId,
+        layer_id: `layer_${analysis.analysisId}`,
+        layer_version: 1,
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        target_scope: "unit" as const,
+        target_key: spec.unitId,
+        anchor_segment_id: analysis.segId,
+        selected_text: analysis.text,
+        label: "clause",
+        analysis: `analysis of ${analysis.text}`,
+        chunks: [{ order: 1, label: "clause", text: analysis.text }],
+        children: [{ text: `analysis of ${analysis.text}` }],
+      }));
+
+      navigationUnits.push({
+        unit_id: spec.unitId,
+        order_index: unitIndex + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        label: null,
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        stable_block_type: spec.stableBlockType,
+        heading_level: spec.headingLevel ?? null,
+      });
+
+      valueUnits.push({
+        type: "reader_unit",
+        owner: "stable",
+        base_id: "base_w1",
+        unit_id: spec.unitId,
+        order_index: unitIndex + 1,
+        unit_type: "body",
+        boundary_quality: "normal",
+        base_start_utf16: unitStart,
+        base_end_utf16: offset - 2,
+        text_hash: `hash_${spec.unitId}`,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+        children: [sourceBlock, ...translations, ...analyses],
+      });
+    }
+
+    return {
+      schema_kind: READER_PLATE_SNAPSHOT_SCHEMA_KIND,
+      snapshot_id: "snapshot_w1",
+      snapshot_taken_at: "2026-08-08T00:00:00Z",
+      last_event_sequence: 1,
+      record_id: "record_w1",
+      record: {
+        title: "Wrapper Composition Fixture",
+        display_title_zh: null,
+        title_generation_status: "pending",
+        title_generation_error_code: null,
+        title_generation_error_message: null,
+        reading_goal: "daily_reading",
+        reading_variant: "intensive_reading",
+        created_at: "2026-08-08T00:00:00Z",
+        source_type: "markdown",
+        source_metadata: {},
+        generation: 1,
+        product_state: "readable_enhancing",
+        readiness_state: "article_ready",
+      },
+      base: {
+        base_id: "base_w1",
+        content_sha256: "c".repeat(64),
+        canonicalizer_version: "test",
+        builder_version: "test",
+        segmenter_version: "test",
+        text_length_utf16: offset,
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+      navigation: { units: navigationUnits },
+      anchor_segments: anchorSegments,
+      enhancement_layers: [],
+      enhancement_progress: undefined,
+      ask_supplements: extras.supplements ?? [],
+      user_assets: [],
+      parsed_decisions: [],
+      value: valueUnits,
+      ...(extras.tree ? { stable_document_tree: extras.tree } : {}),
+    };
+  }
+
+  function wgSupplement(options: {
+    supplementId: string;
+    unitId: string;
+    segId: string;
+    selectedText: string;
+  }): ReaderSnapshotAskSupplementDto {
+    return makeSupplement({
+      supplement_id: options.supplementId,
+      anchor: {
+        anchor_type: "text_range",
+        base_id: "base_w1",
+        unit_id: options.unitId,
+        anchor_segment_id: options.segId,
+        sentence_id: `sent_${options.segId}`,
+        segment_type: "sentence",
+        offset_unit: READER_TEXT_RANGE_OFFSET_UNIT,
+        start_offset: 0,
+        end_offset: options.selectedText.length,
+        selected_text: options.selectedText,
+        text_hash: computeUtf16FNV1a(options.selectedText),
+        hash_algorithm: READER_TEXT_RANGE_HASH_ALGORITHM,
+      },
+    });
+  }
+
+  const multiSpanUnit: WgUnit = {
+    unitId: "u3",
+    segs: [
+      { id: "s5", text: "First source sentence." },
+      { id: "s6", text: "Second source sentence." },
+      { id: "s7", text: "Third source sentence." },
+      { id: "s8", text: "Final source sentence." },
+    ],
+    stableBlockType: "paragraph",
+    stableBlockId: "para_u3",
+    translations: [
+      {
+        groupId: "g5_7",
+        layerId: "layer_translation_1",
+        covers: ["s5", "s6", "s7"],
+        text: "前三句的译文。",
+      },
+      {
+        groupId: "g8_8",
+        layerId: "layer_translation_1",
+        covers: ["s8"],
+        text: "最后一句的译文。",
+      },
+    ],
+    analyses: [
+      { analysisId: "analysis_s6", segId: "s6", text: "Second source sentence." },
+      { analysisId: "analysis_s7", segId: "s7", text: "Third source sentence." },
+    ],
+  };
+
+  const expectedInterleavedIds = [
+    "paragraph:s5",
+    "blockquote:layer_translation_1:g5_7",
+    "sentence_analysis:analysis_s6",
+    "sentence_analysis:analysis_s7",
+    "paragraph:s8",
+    "blockquote:layer_translation_1:g8_8",
+  ];
+
+  it("keeps multi-span units interleaved (tree-present): translation/annotations stay at their own anchor positions", () => {
+    const snapshot = buildWgSnapshot([multiSpanUnit], {
+      tree: [wgTreeNode({ block_id: "para_u3", block_type: "paragraph" })],
+    });
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual(
+      expectedInterleavedIds,
+    );
+    const firstSpan = document.children[0];
+    expect((firstSpan.data as ReaderRecordPlateStableBlockData).unitId).toBe("u3");
+    expect(
+      (firstSpan.data as ReaderRecordPlateStableBlockData).isUnitStart,
+    ).toBe(true);
+    const secondSpan = document.children[4];
+    expect(
+      (secondSpan.data as ReaderRecordPlateStableBlockData).isUnitStart ??
+        false,
+    ).toBe(false);
+  });
+
+  it("keeps multi-span units interleaved on the legacy flat path (tree-absent)", () => {
+    const snapshot = buildWgSnapshot([multiSpanUnit]);
+    delete (snapshot as { stable_document_tree?: unknown }).stable_document_tree;
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual(
+      expectedInterleavedIds,
+    );
+  });
+
+  it("groups list items across overlays, keeps nested lists and ordered, and defers translations after the whole list", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_i1",
+          segs: [{ id: "i1", text: "First item" }],
+          stableBlockType: "list_item",
+          stableBlockId: "item_1",
+          parentStableBlockId: "list_1",
+          translations: [
+            {
+              groupId: "tr_i1",
+              layerId: "layer_translation_1",
+              covers: ["i1"],
+              text: "第一项译文。",
+            },
+          ],
+        },
+        {
+          unitId: "u_n1",
+          segs: [{ id: "n1", text: "Nested item" }],
+          stableBlockType: "list_item",
+          stableBlockId: "item_n1",
+          parentStableBlockId: "list_nested",
+          translations: [
+            {
+              groupId: "tr_n1",
+              layerId: "layer_translation_1",
+              covers: ["n1"],
+              text: "嵌套项译文。",
+            },
+          ],
+        },
+        {
+          unitId: "u_i2",
+          segs: [{ id: "i2", text: "Second item" }],
+          stableBlockType: "list_item",
+          stableBlockId: "item_2",
+          parentStableBlockId: "list_1",
+          translations: [
+            {
+              groupId: "tr_i2",
+              layerId: "layer_translation_1",
+              covers: ["i2"],
+              text: "第二项译文。",
+            },
+          ],
+        },
+      ],
+      {
+        tree: [
+          wgTreeNode({
+            block_id: "list_1",
+            block_type: "list",
+            payload: { ordered: true },
+            children: [
+              wgTreeNode({
+                block_id: "item_1",
+                parent_block_id: "list_1",
+                block_type: "list_item",
+                children: [
+                  wgTreeNode({
+                    block_id: "list_nested",
+                    parent_block_id: "item_1",
+                    block_type: "list",
+                    payload: { ordered: false },
+                    children: [
+                      wgTreeNode({
+                        block_id: "item_n1",
+                        parent_block_id: "list_nested",
+                        block_type: "list_item",
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+              wgTreeNode({
+                block_id: "item_2",
+                parent_block_id: "list_1",
+                order_index: 1,
+                block_type: "list_item",
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "list:list_1",
+      "blockquote:layer_translation_1:tr_i1",
+      "blockquote:layer_translation_1:tr_n1",
+      "blockquote:layer_translation_1:tr_i2",
+    ]);
+    const list = document.children[0];
+    if (!list || list.type !== "list") {
+      throw new Error("list wrapper missing");
+    }
+    expect(list.ordered).toBe(true);
+    expect(list.children.map((item) => item.id)).toEqual([
+      "list_item:i1",
+      "list_item:i2",
+    ]);
+    const firstItem = list.children[0];
+    expect(firstItem.nestedChildren?.map((nested) => nested.id)).toEqual([
+      "list:list_nested",
+    ]);
+    expect(
+      (list.data as ReaderRecordPlateStableBlockData).isUnitStart,
+    ).toBe(true);
+    expect((list.data as ReaderRecordPlateStableBlockData).unitId).toBe("u_i1");
+  });
+
+  it("keeps flat-path list grouping across overlays with ordered left as the known legacy limitation", () => {
+    const snapshot = buildWgSnapshot([
+      {
+        unitId: "u_i1",
+        segs: [{ id: "i1", text: "First item" }],
+        stableBlockType: "list_item",
+        stableBlockId: "item_1",
+        parentStableBlockId: "list_1",
+        translations: [
+          {
+            groupId: "tr_i1",
+            layerId: "layer_translation_1",
+            covers: ["i1"],
+            text: "第一项译文。",
+          },
+        ],
+      },
+      {
+        unitId: "u_i2",
+        segs: [{ id: "i2", text: "Second item" }],
+        stableBlockType: "list_item",
+        stableBlockId: "item_2",
+        parentStableBlockId: "list_1",
+        translations: [
+          {
+            groupId: "tr_i2",
+            layerId: "layer_translation_1",
+            covers: ["i2"],
+            text: "第二项译文。",
+          },
+        ],
+      },
+    ]);
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "list:list_1",
+      "blockquote:layer_translation_1:tr_i1",
+      "blockquote:layer_translation_1:tr_i2",
+    ]);
+    const list = document.children[0];
+    if (!list || list.type !== "list") {
+      throw new Error("list wrapper missing");
+    }
+    expect(list.ordered).toBe(false);
+    expect(list.children.map((item) => item.id)).toEqual([
+      "list_item:i1",
+      "list_item:i2",
+    ]);
+  });
+
+  it("defers a table-cell supplement card after the whole table while cell anchors stay in place", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_c11",
+          segs: [{ id: "c11", text: "Name" }],
+          stableBlockType: "table_cell",
+          stableBlockId: "cell_11",
+          parentStableBlockId: "row_1",
+        },
+        {
+          unitId: "u_c12",
+          segs: [{ id: "c12", text: "Value" }],
+          stableBlockType: "table_cell",
+          stableBlockId: "cell_12",
+          parentStableBlockId: "row_1",
+        },
+      ],
+      {
+        supplements: [
+          wgSupplement({
+            supplementId: "supplement_c11",
+            unitId: "u_c11",
+            segId: "c11",
+            selectedText: "Name",
+          }),
+        ],
+        tree: [
+          wgTreeNode({
+            block_id: "table_1",
+            block_type: "table",
+            children: [
+              wgTreeNode({
+                block_id: "row_1",
+                parent_block_id: "table_1",
+                block_type: "table_row",
+                children: [
+                  wgTreeNode({
+                    block_id: "cell_11",
+                    parent_block_id: "row_1",
+                    block_type: "table_cell",
+                  }),
+                  wgTreeNode({
+                    block_id: "cell_12",
+                    parent_block_id: "row_1",
+                    block_type: "table_cell",
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "table:table_1",
+      "callout:supplement:supplement_c11",
+    ]);
+    const table = document.children[0];
+    if (!table || table.type !== "table") {
+      throw new Error("table wrapper missing");
+    }
+    expect(
+      table.children[0].children.map((cell) => cell.id),
+    ).toEqual(["table_cell:c11", "table_cell:c12"]);
+  });
+
+  it("keeps heading translations in place (no deferral for plain leaves)", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_h1",
+          segs: [{ id: "h1", text: "Section heading" }],
+          stableBlockType: "heading",
+          stableBlockId: "head_1",
+          headingLevel: 2,
+          translations: [
+            {
+              groupId: "tr_h1",
+              layerId: "layer_translation_1",
+              covers: ["h1"],
+              text: "章节标题译文。",
+            },
+          ],
+        },
+      ],
+      { tree: [wgTreeNode({ block_id: "head_1", block_type: "heading" })] },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "heading:h1",
+      "blockquote:layer_translation_1:tr_h1",
+    ]);
+  });
+
+  it("closes code blocks to supplement cards via the single eligibility signal", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_code",
+          segs: [{ id: "code1", text: "const answer = 42;" }],
+          stableBlockType: "code_block",
+          stableBlockId: "code_1",
+        },
+        {
+          unitId: "u_para",
+          segs: [{ id: "p1", text: "A normal paragraph." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "para_1",
+        },
+      ],
+      {
+        supplements: [
+          wgSupplement({
+            supplementId: "supplement_code",
+            unitId: "u_code",
+            segId: "code1",
+            selectedText: "const answer = 42;",
+          }),
+          wgSupplement({
+            supplementId: "supplement_para",
+            unitId: "u_para",
+            segId: "p1",
+            selectedText: "A normal paragraph.",
+          }),
+        ],
+        tree: [
+          wgTreeNode({ block_id: "code_1", block_type: "code_block" }),
+          wgTreeNode({
+            block_id: "para_1",
+            order_index: 1,
+            block_type: "paragraph",
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "code_block:code1",
+      "paragraph:p1",
+      "callout:supplement:supplement_para",
+    ]);
+  });
+
+  it("emits nothing for thematic_break nodes (no unit, no mount point)", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "p1", text: "Body paragraph." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "para_1",
+        },
+      ],
+      {
+        tree: [
+          wgTreeNode({ block_id: "para_1", block_type: "paragraph" }),
+          wgTreeNode({
+            block_id: "hr_1",
+            order_index: 1,
+            block_type: "thematic_break",
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual(["paragraph:p1"]);
+  });
+
+  it("defers a plain blockquote's translation as a sibling after the source structure", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_q1",
+          segs: [{ id: "q1", text: "Quoted line one." }],
+          stableBlockType: "blockquote",
+          stableBlockId: "quote_child_1",
+          parentStableBlockId: "quote_1",
+          translations: [
+            {
+              groupId: "tr_q1",
+              layerId: "layer_translation_1",
+              covers: ["q1"],
+              text: "第一行引文译文。",
+            },
+          ],
+        },
+        {
+          unitId: "u_q2",
+          segs: [{ id: "q2", text: "Quoted line two." }],
+          stableBlockType: "blockquote",
+          stableBlockId: "quote_child_2",
+          parentStableBlockId: "quote_1",
+        },
+      ],
+      {
+        tree: [
+          wgTreeNode({
+            block_id: "quote_1",
+            block_type: "blockquote",
+            content_role: "prose",
+            children: [
+              wgTreeNode({
+                block_id: "quote_child_1",
+                parent_block_id: "quote_1",
+                block_type: "paragraph",
+              }),
+              wgTreeNode({
+                block_id: "quote_child_2",
+                parent_block_id: "quote_1",
+                order_index: 1,
+                block_type: "paragraph",
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "markdown_blockquote:q1",
+      "markdown_blockquote:q2",
+      "blockquote:layer_translation_1:tr_q1",
+    ]);
+  });
+
+  it("defers a source callout's translation as a sibling after the callout wrapper", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          unitId: "u_p1",
+          segs: [{ id: "p1", text: "Callout body one." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "callout_child_1",
+          parentStableBlockId: "callout_1",
+          translations: [
+            {
+              groupId: "tr_p1",
+              layerId: "layer_translation_1",
+              covers: ["p1"],
+              text: "旁注正文一译文。",
+            },
+          ],
+        },
+        {
+          unitId: "u_p2",
+          segs: [{ id: "p2", text: "Callout body two." }],
+          stableBlockType: "paragraph",
+          stableBlockId: "callout_child_2",
+          parentStableBlockId: "callout_1",
+        },
+      ],
+      {
+        tree: [
+          wgTreeNode({
+            block_id: "callout_1",
+            block_type: "blockquote",
+            content_role: "source_callout",
+            children: [
+              wgTreeNode({
+                block_id: "callout_child_1",
+                parent_block_id: "callout_1",
+                block_type: "paragraph",
+              }),
+              wgTreeNode({
+                block_id: "callout_child_2",
+                parent_block_id: "callout_1",
+                order_index: 1,
+                block_type: "paragraph",
+              }),
+            ],
+          }),
+        ],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "source_callout:callout_1",
+      "blockquote:layer_translation_1:tr_p1",
+    ]);
+    const callout = document.children[0];
+    if (!callout || callout.type !== "source_callout") {
+      throw new Error("source callout wrapper missing");
+    }
+    expect(
+      callout.children.map((child) => ("id" in child ? child.id : "text")),
+    ).toEqual([
+      "paragraph:p1",
+      "paragraph:p2",
+    ]);
+  });
+
+  it("keeps grammar → analysis → supplement annotation order across segments in the tree path", () => {
+    const snapshot = buildWgSnapshot(
+      [
+        {
+          ...multiSpanUnit,
+          grammarMarks: [
+            makeGrammarMark({
+              mark_id: "grammar_mark_s6",
+              item_id: "grammar_item_s6",
+              anchor_segment_id: "s6",
+              start_offset: 0,
+              end_offset: 6,
+              segment_start_utf16: 0,
+              segment_end_utf16: 6,
+            }),
+          ],
+        },
+      ],
+      {
+        supplements: [
+          wgSupplement({
+            supplementId: "supplement_s7",
+            unitId: "u3",
+            segId: "s7",
+            selectedText: "Third source sentence.",
+          }),
+        ],
+        tree: [wgTreeNode({ block_id: "para_u3", block_type: "paragraph" })],
+      },
+    );
+
+    const document = projectReaderPlateSnapshotToReaderRecordPlateDocument(snapshot);
+
+    expect(document.children.map((child) => child.id)).toEqual([
+      "paragraph:s5",
+      "blockquote:layer_translation_1:g5_7",
+      "callout:grammar:grammar_item_s6",
+      "sentence_analysis:analysis_s6",
+      "sentence_analysis:analysis_s7",
+      "callout:supplement:supplement_s7",
+      "paragraph:s8",
+      "blockquote:layer_translation_1:g8_8",
+    ]);
+  });
+});

@@ -1866,13 +1866,17 @@ function buildSupplementCalloutBlocks(
 function buildAnnotationBlocksForSegments(
   segments: ReaderAnchorSegmentNode[],
   context: UnitProjectionContext,
+  options?: { supplementEligible?: boolean },
 ): ReaderRecordPlateBlock[] {
   const blocks: ReaderRecordPlateBlock[] = [];
+  const supplementEligible = options?.supplementEligible ?? true;
 
   for (const segment of segments) {
     blocks.push(...buildGrammarCalloutBlocks(segment));
     blocks.push(...buildSentenceAnalysisBlocks(segment, context));
-    blocks.push(...buildSupplementCalloutBlocks(segment, context));
+    if (supplementEligible) {
+      blocks.push(...buildSupplementCalloutBlocks(segment, context));
+    }
   }
 
   return blocks;
@@ -1998,6 +2002,12 @@ function mapUnitToBlocks(
   const stableBlockType = getUnitStableBlockType(unit);
   const sourceBlock = stableBlockType ? findUnitSourceBlock(unit) : null;
   const useStableProjection = stableBlockType !== null && sourceBlock !== null;
+  // Supplement eligibility is derived from the same single stableBlockType
+  // signal: code blocks are fail-closed for Ask supplement cards, every
+  // other block kind follows the shared wrapper policy. Legacy units without
+  // a stable type keep the historical eligible default.
+  const supplementEligible =
+    !useStableProjection || stableBlockType !== "code_block";
 
   const sourceChildrenForAnchorRange = (
     startAnchorIndex: number,
@@ -2057,7 +2067,11 @@ function mapUnitToBlocks(
         ),
       );
       isFirstAnchorSegmentInUnit = false;
-      blocks.push(...buildAnnotationBlocksForSegments(segments, context));
+      blocks.push(
+        ...buildAnnotationBlocksForSegments(segments, context, {
+          supplementEligible,
+        }),
+      );
       return;
     }
 
@@ -2102,7 +2116,11 @@ function mapUnitToBlocks(
     if (blockquote) {
       blocks.push(blockquote);
     }
-    blocks.push(...buildAnnotationBlocksForSegments(span.coveredSegments, context));
+    blocks.push(
+      ...buildAnnotationBlocksForSegments(span.coveredSegments, context, {
+        supplementEligible,
+      }),
+    );
     nextAnchorIndex = span.endAnchorIndex + 1;
   }
 
@@ -2127,17 +2145,11 @@ function mapUnitToBlocks(
 // reconstruct the nesting.
 //
 // Strategy: post-process the flat `children` array from `mapUnitToBlocks`.
-// Group consecutive `list_item` blocks by `parentStableBlockId` into `list`
-// wrappers. Group consecutive `table_cell` blocks into rows (by
-// `parentStableBlockId`) and then into a single `table` wrapper per
-// contiguous run.
-//
-// Non-leaf blocks (callouts, translations, paragraphs, headings, etc.)
-// between leaf blocks break the contiguous run — each side forms its own
-// wrapper. This is acceptable because Markdown source documents typically
-// do not have per-item AI annotations, and the alternative (moving
-// annotation blocks inside list items) requires changing the
-// `list_item` children type which is out of B2.6 scope.
+// Group `list_item` blocks by `parentStableBlockId` into `list` wrappers.
+// Group `table_cell` blocks into rows (by `parentStableBlockId`) and then
+// into a single `table` wrapper per contiguous run. Overlay blocks between
+// leaves of the same wrapper are deferred past the wrapper instead of
+// breaking the run (see `isWrapperOverlayBlock`); any other block closes it.
 // ---------------------------------------------------------------------------
 
 /**
@@ -2313,12 +2325,14 @@ function groupTableCellsIntoTable(
 
 /**
  * Post-process the flat block array to reconstruct `list` / `table` /
- * `table_row` wrapper blocks from consecutive `list_item` / `table_cell`
- * leaf blocks.
+ * `table_row` wrapper blocks from `list_item` / `table_cell` leaf blocks.
  *
- * Non-leaf blocks between leaf blocks break the contiguous run — each
- * side forms its own wrapper. This keeps the grouping deterministic and
- * avoids mis-associating items across structural boundaries.
+ * Overlay blocks (translations / callouts / sentence analyses) between leaf
+ * blocks of the same wrapper no longer break the run: items keep grouping
+ * by `parentStableBlockId` across overlays, and the skipped overlays are
+ * re-emitted right after the wrapper in their original order. A block that
+ * is neither an overlay nor a matching leaf closes the run, so unrelated
+ * content never moves.
  */
 function groupStableWrapperBlocks(
   blocks: ReaderRecordPlateBlock[],
@@ -2331,27 +2345,56 @@ function groupStableWrapperBlocks(
     const block = blocks[index];
 
     if (block.type === "list_item") {
-      // Collect a contiguous run of list_item blocks.
-      const run: ReaderRecordPlateListItemBlock[] = [];
-      while (
-        index < blocks.length &&
-        blocks[index].type === "list_item"
-      ) {
-        run.push(blocks[index] as ReaderRecordPlateListItemBlock);
-        index += 1;
+      const parentId =
+        (block as ReaderRecordPlateListItemBlock).data.parentStableBlockId ??
+        null;
+      const run: ReaderRecordPlateListItemBlock[] = [
+        block as ReaderRecordPlateListItemBlock,
+      ];
+      const deferred: ReaderRecordPlateBlock[] = [];
+      index += 1;
+      while (index < blocks.length) {
+        const candidate = blocks[index];
+        if (isWrapperOverlayBlock(candidate)) {
+          deferred.push(candidate);
+          index += 1;
+          continue;
+        }
+        if (
+          candidate.type === "list_item" &&
+          ((candidate as ReaderRecordPlateListItemBlock).data
+            .parentStableBlockId ?? null) === parentId
+        ) {
+          run.push(candidate as ReaderRecordPlateListItemBlock);
+          index += 1;
+          continue;
+        }
+        break;
       }
       result.push(...groupListItemsIntoLists(run));
+      result.push(...deferred);
     } else if (block.type === "table_cell") {
-      // Collect a contiguous run of table_cell blocks.
-      const run: ReaderRecordPlateTableCellBlock[] = [];
-      while (
-        index < blocks.length &&
-        blocks[index].type === "table_cell"
-      ) {
-        run.push(blocks[index] as ReaderRecordPlateTableCellBlock);
-        index += 1;
+      const run: ReaderRecordPlateTableCellBlock[] = [
+        block as ReaderRecordPlateTableCellBlock,
+      ];
+      const deferred: ReaderRecordPlateBlock[] = [];
+      index += 1;
+      while (index < blocks.length) {
+        const candidate = blocks[index];
+        if (isWrapperOverlayBlock(candidate)) {
+          deferred.push(candidate);
+          index += 1;
+          continue;
+        }
+        if (candidate.type === "table_cell") {
+          run.push(candidate as ReaderRecordPlateTableCellBlock);
+          index += 1;
+          continue;
+        }
+        break;
       }
       result.push(...groupTableCellsIntoTable(run, tableCounter));
+      result.push(...deferred);
     } else {
       result.push(block);
       index += 1;
@@ -2362,163 +2405,180 @@ function groupStableWrapperBlocks(
 }
 
 /**
- * Project the server-owned Stable Document tree into Plate blocks.
+ * Compose the server-owned Stable Document tree with the flat block array.
  *
- * The `reader_unit` value remains the source of anchor/layer leaves, while
- * this function uses only stable block ids and parent/child rows for
- * structure.  It is intentionally a compatibility seam: legacy snapshots
- * without `stable_document_tree` use `groupStableWrapperBlocks` above.
+ * Order authority: the `mapUnitToBlocks` flat output is the only
+ * anchor-level ordering. Every source span stays at its own flat position
+ * and every overlay stays interleaved unless a wrapper policy defers it.
+ * The tree contributes structure only: list/table row-cell membership,
+ * nesting (nested lists, quote children), and wrapper payload (ordered,
+ * alignments, header rows, display icon). No global re-bucketing by
+ * stableBlockId and no reordering of unrelated blocks.
+ *
+ * Controlled overlay postposition (wrapper policy):
+ * - list: overlays between items move after the whole list in anchor order;
+ *   items group across overlays; nested lists and `ordered` come from the
+ *   persisted tree.
+ * - table: overlays (Ask supplements) move after the whole table; anchors
+ *   stay in their cells.
+ * - blockquote / source_callout: source structure stays inside the wrapper;
+ *   translation overlays move out as siblings right after it.
+ *
+ * Legacy snapshots without `stable_document_tree` use
+ * `groupStableWrapperBlocks` above with the same deferral policy.
  */
 function projectStableDocumentTree(
   nodes: ReaderStableDocumentBlockNodeDto[],
   flatBlocks: ReaderRecordPlateBlock[],
 ): ReaderRecordPlateBlock[] {
-  const blocksByStableId = new Map<string, ReaderRecordPlateBlock[]>();
-  const firstFlatIndexByStableId = new Map<string, number>();
-  flatBlocks.forEach((block, index) => {
-    const stableBlockId = getStableBlockId(block);
-    if (stableBlockId === null) return;
-    const blocks = blocksByStableId.get(stableBlockId) ?? [];
-    blocks.push(block);
-    blocksByStableId.set(stableBlockId, blocks);
-    firstFlatIndexByStableId.set(
-      stableBlockId,
-      Math.min(firstFlatIndexByStableId.get(stableBlockId) ?? index, index),
-    );
-  });
-
-  const treeIds = new Set<string>();
-  const emittedIds = new Set<string>();
-
-  const projectLeaf = (
-    node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateBlock[] => {
-    treeIds.add(node.block_id);
-    const blocks = blocksByStableId.get(node.block_id);
-    if (blocks && blocks.length > 0) {
-      emittedIds.add(node.block_id);
-      markDescendantIds(node);
-      return blocks;
+  // ------------------------------------------------------------------
+  // Tree indexes — structure membership only, never order.
+  // ------------------------------------------------------------------
+  const listNodeByItemId = new Map<
+    string,
+    ReaderStableDocumentBlockNodeDto
+  >();
+  const parentItemIdByListId = new Map<string, string>();
+  const tableByCellId = new Map<
+    string,
+    {
+      table: ReaderStableDocumentBlockNodeDto;
+      row: ReaderStableDocumentBlockNodeDto;
     }
-    return node.children.flatMap(projectNode);
-  };
+  >();
+  const quoteByLeafId = new Map<string, ReaderStableDocumentBlockNodeDto>();
 
-  const projectListItem = (
+  const collectDescendantIds = (
     node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateListItemBlock | null => {
-    treeIds.add(node.block_id);
-    const blocks = blocksByStableId.get(node.block_id) ?? [];
-    const listItems = blocks.filter(isListItemBlock);
-    const block = listItems[0];
-    if (!block) return null;
-    emittedIds.add(node.block_id);
-    const nestedChildren = node.children
-      .filter((child) => child.block_type === "list")
-      .flatMap(projectNode)
-      .filter(isListBlock);
-    const mergedBlock =
-      listItems.length === 1
-        ? block
-        : {
-            ...block,
-            children: listItems.flatMap((item) => item.children),
-            data: {
-              ...block.data,
-              coveredAnchorSegmentIds: listItems.flatMap(
-                (item) => item.data.coveredAnchorSegmentIds,
-              ),
-            },
-          };
-    return nestedChildren.length > 0
-      ? { ...mergedBlock, nestedChildren }
-      : mergedBlock;
-  };
+  ): string[] => [
+    ...node.children.map((child) => child.block_id),
+    ...node.children.flatMap(collectDescendantIds),
+  ];
 
-  const projectList = (
+  const indexTreeNode = (
     node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateListBlock[] => {
-    treeIds.add(node.block_id);
-    const items = node.children
-      .filter((child) => child.block_type === "list_item")
-      .map(projectListItem)
-      .filter((item): item is ReaderRecordPlateListItemBlock => item !== null);
-    if (items.length === 0) return [];
-
-    const firstData = items[0].data;
-    const payload = node.payload;
-    const ordered = payload["ordered"] === true;
-    emittedIds.add(node.block_id);
-    return [
-      {
-        type: "list",
-        id: `list:${node.block_id}`,
-        ordered,
-        children: items,
-        data: {
-          ...firstData,
-          stableBlockType: "list",
-          stableBlockId: node.block_id,
-          parentStableBlockId: node.parent_block_id,
-        },
-      },
-    ];
-  };
-
-  const projectSourceCallout = (
-    node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateSourceCalloutBlock[] => {
-    treeIds.add(node.block_id);
-    const projectedChildBlocks = node.children.flatMap(projectNode);
-    const legacyBlocks = blocksByStableId.get(node.block_id) ?? [];
-    if (projectedChildBlocks.length === 0) {
-      const sourceCalloutBlocks = legacyBlocks.filter(
-        (block): block is ReaderRecordPlateSourceCalloutBlock =>
-          block.type === "source_callout",
-      );
-      if (sourceCalloutBlocks.length > 0) {
-        emittedIds.add(node.block_id);
-        return sourceCalloutBlocks;
+    parentItemId: string | null,
+  ): void => {
+    if (node.block_type === "list") {
+      if (parentItemId !== null) {
+        parentItemIdByListId.set(node.block_id, parentItemId);
       }
-      return [];
+      for (const child of node.children) {
+        if (child.block_type !== "list_item") continue;
+        listNodeByItemId.set(child.block_id, node);
+        for (const grandchild of child.children) {
+          if (grandchild.block_type === "list") {
+            indexTreeNode(grandchild, child.block_id);
+          }
+        }
+      }
+      return;
     }
+    if (node.block_type === "table") {
+      for (const row of node.children.filter(
+        (child) => child.block_type === "table_row",
+      )) {
+        for (const cell of row.children.filter(
+          (child) => child.block_type === "table_cell",
+        )) {
+          tableByCellId.set(cell.block_id, { table: node, row });
+        }
+      }
+      return;
+    }
+    // Recurse first so an inner quote wins over an outer one.
+    for (const child of node.children) {
+      indexTreeNode(child, null);
+    }
+    if (node.block_type === "blockquote") {
+      for (const leafId of collectDescendantIds(node)) {
+        if (!quoteByLeafId.has(leafId)) {
+          quoteByLeafId.set(leafId, node);
+        }
+      }
+    }
+  };
+  for (const node of nodes) {
+    indexTreeNode(node, null);
+  }
 
-    const rawDisplayIcon = node.payload["display_icon"];
-    const displayIcon =
-      typeof rawDisplayIcon === "string" && isSafeCalloutEmoji(rawDisplayIcon)
-        ? rawDisplayIcon
-        : null;
-    const childBlocks = projectedChildBlocks;
-    const firstChild = childBlocks[0];
-    if (!firstChild) return [];
-    const firstData = firstChild.data as ReaderRecordPlateStableBlockData;
-    emittedIds.add(node.block_id);
-    return [
-      {
-        type: "source_callout",
-        id: `source_callout:${node.block_id}`,
-        children: childBlocks,
-        data: {
-          ...firstData,
-          stableBlockType: "source_callout",
-          stableBlockId: node.block_id,
-          parentStableBlockId: node.parent_block_id,
-          calloutIcon: displayIcon,
-        },
-      },
-    ];
+  // ------------------------------------------------------------------
+  // Span pool — flat blocks keyed by stableBlockId, in flat order.
+  // ------------------------------------------------------------------
+  const spanPool = new Map<string, ReaderRecordPlateBlock[]>();
+  for (const block of flatBlocks) {
+    const stableBlockId = getStableBlockId(block);
+    if (stableBlockId === null) continue;
+    const pooled = spanPool.get(stableBlockId) ?? [];
+    pooled.push(block);
+    spanPool.set(stableBlockId, pooled);
+  }
+  const takeSpans = (stableBlockId: string): ReaderRecordPlateBlock[] => {
+    const spans = spanPool.get(stableBlockId) ?? [];
+    spanPool.delete(stableBlockId);
+    return spans;
   };
 
-  const projectTable = (
-    node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateTableBlock[] => {
-    treeIds.add(node.block_id);
+  const composedListIds = new Set<string>();
+
+  const composeList = (
+    listNode: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateListBlock | null => {
+    if (composedListIds.has(listNode.block_id)) return null;
+    const items: ReaderRecordPlateListItemBlock[] = [];
+    for (const child of listNode.children) {
+      if (child.block_type !== "list_item") continue;
+      const spans = takeSpans(child.block_id).filter(isListItemBlock);
+      if (spans.length === 0) continue;
+      const first = spans[0];
+      const merged: ReaderRecordPlateListItemBlock =
+        spans.length === 1
+          ? first
+          : {
+              ...first,
+              children: spans.flatMap((item) => item.children),
+              data: {
+                ...first.data,
+                coveredAnchorSegmentIds: spans.flatMap(
+                  (item) => item.data.coveredAnchorSegmentIds,
+                ),
+              },
+            };
+      const nestedChildren = child.children
+        .filter((grandchild) => grandchild.block_type === "list")
+        .map(composeList)
+        .filter((list): list is ReaderRecordPlateListBlock => list !== null);
+      items.push(
+        nestedChildren.length > 0 ? { ...merged, nestedChildren } : merged,
+      );
+    }
+    if (items.length === 0) return null;
+    composedListIds.add(listNode.block_id);
+    const firstData = items[0].data;
+    return {
+      type: "list",
+      id: `list:${listNode.block_id}`,
+      ordered: listNode.payload["ordered"] === true,
+      children: items,
+      data: {
+        ...firstData,
+        stableBlockType: "list",
+        stableBlockId: listNode.block_id,
+        parentStableBlockId: listNode.parent_block_id,
+      },
+    };
+  };
+
+  const composeTable = (
+    tableNode: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateTableBlock | null => {
     const rows: ReaderRecordPlateTableRowBlock[] = [];
-    for (const rowNode of node.children.filter(
+    for (const rowNode of tableNode.children.filter(
       (child) => child.block_type === "table_row",
     )) {
       const cells = rowNode.children
         .filter((child) => child.block_type === "table_cell")
-        .flatMap(projectLeaf)
+        .flatMap((cellNode) => takeSpans(cellNode.block_id))
         .filter(isTableCellBlock)
         .map((cell, columnIndex) => ({
           ...cell,
@@ -2526,7 +2586,6 @@ function projectStableDocumentTree(
         }));
       if (cells.length === 0) continue;
       const firstCellData = cells[0].data;
-      emittedIds.add(rowNode.block_id);
       rows.push({
         type: "table_row",
         id: `table_row:${rowNode.block_id}`,
@@ -2535,16 +2594,16 @@ function projectStableDocumentTree(
           ...firstCellData,
           stableBlockType: "table_row",
           stableBlockId: rowNode.block_id,
-          parentStableBlockId: node.block_id,
+          parentStableBlockId: tableNode.block_id,
           isHeader: cells.every((cell) => cell.data.isHeader === true),
           rowIndex: rows.length,
         },
       });
     }
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return null;
 
     const firstRow = rows[0];
-    const payload = node.payload;
+    const payload = tableNode.payload;
     const alignments = firstRow.children.map(
       (cell) => cell.data.alignment ?? "default",
     );
@@ -2552,87 +2611,226 @@ function projectStableDocumentTree(
     while (headerRows < rows.length && rows[headerRows].data.isHeader === true) {
       headerRows += 1;
     }
-    emittedIds.add(node.block_id);
+    return {
+      type: "table",
+      id: `table:${tableNode.block_id}`,
+      children: rows,
+      data: {
+        ...firstRow.data,
+        stableBlockType: "table",
+        stableBlockId: tableNode.block_id,
+        parentStableBlockId: tableNode.parent_block_id,
+        alignments:
+          Array.isArray(payload["alignments"]) &&
+          payload["alignments"].every((value) => typeof value === "string")
+            ? (payload["alignments"] as string[])
+            : alignments,
+        headerRows:
+          typeof payload["header_rows"] === "number"
+            ? payload["header_rows"]
+            : headerRows,
+      },
+    };
+  };
+
+  const composeSourceCallout = (
+    quoteNode: ReaderStableDocumentBlockNodeDto,
+  ): ReaderRecordPlateBlock[] => {
+    const childBlocks = quoteNode.children.flatMap(composeNodeContent);
+    if (childBlocks.length === 0) {
+      // The callout itself is one leaf unit (no structured children).
+      return takeSpans(quoteNode.block_id).filter(
+        (block): block is ReaderRecordPlateSourceCalloutBlock =>
+          block.type === "source_callout",
+      );
+    }
+    const rawDisplayIcon = quoteNode.payload["display_icon"];
+    const displayIcon =
+      typeof rawDisplayIcon === "string" && isSafeCalloutEmoji(rawDisplayIcon)
+        ? rawDisplayIcon
+        : null;
+    const firstChild = childBlocks[0];
+    if (!firstChild) return [];
+    const firstData = firstChild.data as ReaderRecordPlateStableBlockData;
     return [
       {
-        type: "table",
-        id: `table:${node.block_id}`,
-        children: rows,
+        type: "source_callout",
+        id: `source_callout:${quoteNode.block_id}`,
+        children: childBlocks,
         data: {
-          ...firstRow.data,
-          stableBlockType: "table",
-          stableBlockId: node.block_id,
-          parentStableBlockId: node.parent_block_id,
-          alignments:
-            Array.isArray(payload["alignments"]) &&
-            payload["alignments"].every((value) => typeof value === "string")
-              ? (payload["alignments"] as string[])
-              : alignments,
-          headerRows:
-            typeof payload["header_rows"] === "number"
-              ? payload["header_rows"]
-              : headerRows,
+          ...firstData,
+          stableBlockType: "source_callout",
+          stableBlockId: quoteNode.block_id,
+          parentStableBlockId: quoteNode.parent_block_id,
+          calloutIcon: displayIcon,
         },
       },
     ];
   };
 
-  const projectNode = (
+  // Quote inner content: source structure only, in flat order.
+  function composeNodeContent(
     node: ReaderStableDocumentBlockNodeDto,
-  ): ReaderRecordPlateBlock[] => {
-    treeIds.add(node.block_id);
-    switch (node.block_type) {
-      case "list":
-        return projectList(node);
-      case "table":
-        return projectTable(node);
-      case "table_row":
-      case "table_cell":
-        return projectLeaf(node);
-      case "blockquote":
-        return node.content_role === "source_callout"
-          ? projectSourceCallout(node)
-          : projectLeaf(node);
-      default:
-        return projectLeaf(node);
+  ): ReaderRecordPlateBlock[] {
+    if (node.block_type === "list") {
+      const list = composeList(node);
+      return list ? [list] : [];
     }
-  };
-
-  const markDescendantIds = (node: ReaderStableDocumentBlockNodeDto) => {
-    node.children.forEach((child) => {
-      treeIds.add(child.block_id);
-      emittedIds.add(child.block_id);
-      markDescendantIds(child);
-    });
-  };
-
-  const stableItems: Array<{
-    index: number;
-    priority: number;
-    block: ReaderRecordPlateBlock;
-  }> = [];
-  for (const node of nodes) {
-    const projected = projectNode(node);
-    const index = subtreeFirstFlatIndex(node, firstFlatIndexByStableId);
-    projected.forEach((block) => {
-      stableItems.push({ index, priority: 0, block });
-    });
+    if (node.block_type === "table") {
+      const table = composeTable(node);
+      return table ? [table] : [];
+    }
+    if (
+      node.block_type === "blockquote" &&
+      node.content_role === "source_callout"
+    ) {
+      return composeSourceCallout(node);
+    }
+    const ownSpans = takeSpans(node.block_id);
+    if (ownSpans.length > 0) return ownSpans;
+    return node.children.flatMap(composeNodeContent);
   }
 
-  const fallbackItems = flatBlocks.flatMap((block, index) => {
+  // ------------------------------------------------------------------
+  // Flat-driven scan. Wrappers replace the position of their first leaf;
+  // deferred overlays flush right after their wrapper. Everything else
+  // keeps its exact flat position.
+  // ------------------------------------------------------------------
+  const result: ReaderRecordPlateBlock[] = [];
+  let index = 0;
+  while (index < flatBlocks.length) {
+    const block = flatBlocks[index];
     const stableBlockId = getStableBlockId(block);
-    if (
-      stableBlockId !== null &&
-      (treeIds.has(stableBlockId) || emittedIds.has(stableBlockId))
-    ) {
-      return [];
-    }
-    return [{ index, priority: 1, block }];
-  });
 
-  return [...stableItems, ...fallbackItems]
-    .sort((left, right) => left.index - right.index || left.priority - right.priority)
-    .map((item) => item.block);
+    if (stableBlockId === null) {
+      result.push(block);
+      index += 1;
+      continue;
+    }
+    if (!spanPool.has(stableBlockId)) {
+      // Already composed into a wrapper emitted earlier.
+      index += 1;
+      continue;
+    }
+
+    const quoteNode = quoteByLeafId.get(stableBlockId);
+    if (quoteNode) {
+      const deferred: ReaderRecordPlateBlock[] = [];
+      let end = index + 1;
+      while (end < flatBlocks.length) {
+        const candidate = flatBlocks[end];
+        const candidateId = getStableBlockId(candidate);
+        if (
+          candidateId !== null &&
+          spanPool.has(candidateId) &&
+          quoteByLeafId.get(candidateId) === quoteNode
+        ) {
+          end += 1;
+          continue;
+        }
+        if (candidateId === null && isWrapperOverlayBlock(candidate)) {
+          deferred.push(candidate);
+          end += 1;
+          continue;
+        }
+        break;
+      }
+      if (quoteNode.content_role === "source_callout") {
+        result.push(...composeSourceCallout(quoteNode));
+      } else {
+        result.push(...quoteNode.children.flatMap(composeNodeContent));
+      }
+      result.push(...deferred);
+      index = end;
+      continue;
+    }
+
+    const listNode = listNodeByItemId.get(stableBlockId);
+    if (listNode) {
+      const deferred: ReaderRecordPlateBlock[] = [];
+      const runItemIds = new Set<string>([stableBlockId]);
+      let end = index + 1;
+      while (end < flatBlocks.length) {
+        const candidate = flatBlocks[end];
+        const candidateId = getStableBlockId(candidate);
+        if (candidateId !== null && spanPool.has(candidateId)) {
+          const candidateList = listNodeByItemId.get(candidateId);
+          const belongsToRun =
+            candidateList === listNode ||
+            (candidateList !== undefined &&
+              runItemIds.has(
+                parentItemIdByListId.get(candidateList.block_id) ?? "",
+              ));
+          if (belongsToRun) {
+            runItemIds.add(candidateId);
+            end += 1;
+            continue;
+          }
+          break;
+        }
+        if (candidateId === null && isWrapperOverlayBlock(candidate)) {
+          deferred.push(candidate);
+          end += 1;
+          continue;
+        }
+        break;
+      }
+      const list = composeList(listNode);
+      if (list) {
+        result.push(list);
+      }
+      result.push(...deferred);
+      index = end;
+      continue;
+    }
+
+    const tableInfo = tableByCellId.get(stableBlockId);
+    if (tableInfo) {
+      const deferred: ReaderRecordPlateBlock[] = [];
+      let end = index + 1;
+      while (end < flatBlocks.length) {
+        const candidate = flatBlocks[end];
+        const candidateId = getStableBlockId(candidate);
+        if (
+          candidateId !== null &&
+          spanPool.has(candidateId) &&
+          tableByCellId.get(candidateId)?.table === tableInfo.table
+        ) {
+          end += 1;
+          continue;
+        }
+        if (candidateId === null && isWrapperOverlayBlock(candidate)) {
+          deferred.push(candidate);
+          end += 1;
+          continue;
+        }
+        break;
+      }
+      const table = composeTable(tableInfo.table);
+      if (table) {
+        result.push(table);
+      }
+      result.push(...deferred);
+      index = end;
+      continue;
+    }
+
+    // Plain leaf: emit exactly this span; later spans of the same
+    // stableBlockId keep their own flat positions.
+    const pooledSpans = spanPool.get(stableBlockId) ?? [];
+    const [firstSpan, ...restSpans] = pooledSpans;
+    if (firstSpan) {
+      result.push(firstSpan);
+    }
+    if (restSpans.length > 0) {
+      spanPool.set(stableBlockId, restSpans);
+    } else {
+      spanPool.delete(stableBlockId);
+    }
+    index += 1;
+  }
+
+  return result;
 }
 
 function getStableBlockId(block: ReaderRecordPlateBlock): string | null {
@@ -2641,16 +2839,17 @@ function getStableBlockId(block: ReaderRecordPlateBlock): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function subtreeFirstFlatIndex(
-  node: ReaderStableDocumentBlockNodeDto,
-  firstFlatIndexByStableId: Map<string, number>,
-): number {
-  const own = firstFlatIndexByStableId.get(node.block_id);
-  const childIndexes = node.children.map((child) =>
-    subtreeFirstFlatIndex(child, firstFlatIndexByStableId),
+/**
+ * Overlay blocks carry no stableBlockId and may be deferred past a wrapper
+ * (translation blockquotes, callouts, sentence analyses). Source blocks —
+ * including legacy paragraphs without a stable id — are never overlays.
+ */
+function isWrapperOverlayBlock(block: ReaderRecordPlateBlock): boolean {
+  return (
+    block.type === "blockquote" ||
+    block.type === "callout" ||
+    block.type === "sentence_analysis"
   );
-  const indexes = [own ?? Number.MAX_SAFE_INTEGER, ...childIndexes];
-  return Math.min(...indexes);
 }
 
 function isListBlock(
