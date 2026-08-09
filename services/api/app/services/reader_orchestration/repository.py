@@ -1230,6 +1230,7 @@ class ReaderOrchestrationRepository:
         stable_block_rows = await conn.fetch(
             """
             SELECT b.block_id, b.parent_block_id, b.block_type,
+                   b.order_index,
                    b.text_content, b.payload_json, b.source_refs_json,
                    b.quality_json, b.interpretation_policy_json,
                    b.canonical_text_start_utf16 AS block_start_utf16,
