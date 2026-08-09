@@ -484,7 +484,7 @@ def _lingering_heartbeat_tasks() -> list[asyncio.Task]:
 
 
 def _expected_invocation_key(claim: ClaimResult) -> str:
-    return f"reader:reader_grammar_bundle:{claim.job_id}:{claim.attempt_count}:0"
+    return f"reader:reader_grammar_bundle:{claim.job_id}:{claim.attempt_count}:1"
 
 
 # ---------------------------------------------------------------------------
@@ -647,7 +647,7 @@ async def test_usage_persisted_immediately_and_outcome_updates_same_row(
     assert row["usage_data"] == REAL_USAGE
     assert row["metadata"]["model_call_completed"] is True
     assert row["metadata"]["attempt_ordinal"] == claim.attempt_count
-    assert row["metadata"]["execution_slot"] == 0
+    assert row["metadata"]["execution_slot"] == 1
     assert [u["status"] for u in usage_store.updates] == [
         GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
     ]
@@ -927,17 +927,17 @@ async def test_materialization_failure_pauses_before_publish_then_reconciles_onc
     publisher = FakePublisher()
     service = _build_service(runtime, executor, publisher)
     _patch_worker_db(monkeypatch, service)
-    # A DB-to-DB materialization failure cannot authorize publication.
-    # The captured receipt stays pending for a later provider-free pass.
+    # A DB-to-DB materialization failure does not revoke a valid captured
+    # receipt. Business publication proceeds while usage stays pending.
     usage_store.fail_next_records = 1
 
     result = await service.process_claimed_grammar_batch_job(
         claim=_make_claim(), lease_duration=timedelta(seconds=120)
     )
 
-    assert result.status == "paused"
-    assert publisher.calls == []
-    assert [call["target_status"] for call in runtime.transitions] == ["paused"]
+    assert result.status == "succeeded"
+    assert len(publisher.calls) == 1
+    assert runtime.transitions == []
     assert usage_store.record_attempts == 1
     assert usage_store.insert_count == 0
     journal = service._journal_service

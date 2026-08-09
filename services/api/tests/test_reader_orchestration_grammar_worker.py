@@ -5,6 +5,7 @@ import dataclasses
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -21,6 +22,15 @@ from app.schemas.reader_orchestration import (
     SentenceAnalysisChunk,
     SentenceAnalysisItem,
     SentenceAnalysisLayerOutput,
+)
+from app.services.model_execution_journal import (
+    BeginDisposition,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import (
+    ModelExecutionJournalService,
 )
 from app.services.reader_orchestration import grammar_worker as grammar_worker_module
 from app.services.reader_orchestration.article_ready_service import (
@@ -2605,6 +2615,474 @@ async def grammar_batch_env() -> asyncpg.Pool:
         db_connection.DB_POOL = original_pool
         await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
         await admin_conn.close()
+
+
+class _FailIfBatchProviderCalled:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_batch(self, context):
+        self.calls += 1
+        raise AssertionError("provider must not be called during captured resume")
+
+
+class _FailingMaterializerJournal(ModelExecutionJournalService):
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        super().__init__(pool)
+        self.calls = 0
+
+    async def materialize_pending(self, **kwargs):
+        self.calls += 1
+        raise RuntimeError("injected usage materialization failure")
+
+
+class _CaptureConflictJournal:
+    async def begin_execution(self, *, identity, invocation_kind):
+        return BeginDisposition(
+            journal_id=uuid4(),
+            invocation_key=identity.invocation_key,
+            capture_state="started",
+            provider_call_allowed=True,
+        )
+
+    async def capture_execution(self, *, identity, prepared):
+        raise CaptureEnvelopeConflictError("capture_envelope_conflict")
+
+
+async def _seed_captured_grammar_batch_resume(
+    pool: asyncpg.Pool,
+    *,
+    delivery_state: str,
+):
+    user_id = await insert_user(pool)
+    submit_result = await ArticleReadyPersistenceService(
+        pool=pool
+    ).submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=_BATCH_ARTICLE_TEXT,
+            title=f"Captured Grammar {delivery_state}",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+    await EnhancementJobBootstrapService(pool=pool).bootstrap_missing_jobs(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+    seed_executor = _StaticGrammarBatchExecutor()
+    seed_worker = GrammarBundleWorkerService(
+        pool=pool,
+        batch_executor=seed_executor,
+    )
+    claim = await seed_worker.claim_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-batch-seed",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None
+    context = await seed_worker._load_batch_job_context(claim.job_id)
+    execution = await seed_executor.generate_batch(context)
+    assert len(seed_executor.calls) == 1
+
+    identity = ExecutionIdentity(
+        invocation_key=(
+            f"reader:reader_grammar_bundle:{claim.job_id}:"
+            f"{claim.attempt_count}:1"
+        ),
+        reader_job_id=claim.job_id,
+        reader_run_id=claim.run_id,
+        attempt_ordinal=claim.attempt_count,
+        execution_slot=1,
+    )
+    prepared = prepare_capture_envelope(
+        invocation_kind="reader.grammar_batch",
+        resume_payload_kind="reader.grammar_batch.result",
+        resume_payload_schema_version=1,
+        usage_event_draft_schema_version=1,
+        normalized_payload={
+            "outputs": [
+                {
+                    "unit_id": unit_id,
+                    "output": output.model_dump(mode="json"),
+                }
+                for unit_id, output in execution.outputs
+            ],
+            "diagnostics": execution.diagnostics,
+        },
+        usage_event_draft={
+            "usage_scope": "system_internal",
+            "capability_code": "reader_grammar_bundle",
+            "billing_mode": "internal_only",
+            "status": "model_call_completed",
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": "reader_orchestration_v1",
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "unit_count": len(context.units),
+                "source_language": context.source_language,
+                "model_call_completed": True,
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        },
+    )
+    journal = ModelExecutionJournalService(pool)
+    await journal.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await journal.capture_execution(identity=identity, prepared=prepared)
+    if delivery_state == "reconciled":
+        summary = await journal.materialize_pending(limit=1)
+        assert summary.reconciled == 1
+    elif delivery_state == "dead_letter":
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE ai_model_execution_journal
+                SET usage_delivery_state = 'dead_letter',
+                    delivery_attempt_count = 1,
+                    delivery_last_error_code = 'injected_delivery_failure',
+                    delivery_last_error_message = 'injected failure',
+                    dead_lettered_at = NOW(),
+                    updated_at = NOW()
+                WHERE invocation_key = $1
+                """,
+                identity.invocation_key,
+            )
+    else:
+        assert delivery_state == "pending"
+    runtime = ReaderJobRuntime(pool=pool)
+    await runtime.transition(
+        job_id=claim.job_id,
+        target_status="paused",
+        lease_token=claim.lease_token,
+        pause_owner="system",
+        rationale_code="model_execution_captured_resume_required",
+        failure_class="model_execution",
+        failure_code="post_provider_resume_required",
+    )
+    return submit_result, claim, identity
+
+
+def test_batch_execution_identity_is_one_based() -> None:
+    claim = SimpleNamespace(job_id=uuid4(), run_id=uuid4(), attempt_count=3)
+
+    identity = GrammarBundleWorkerService._batch_execution_identity(claim)
+
+    assert identity.execution_slot == 1
+    assert identity.invocation_key.endswith(":3:1")
+
+
+async def test_batch_capture_conflict_is_paused_by_fenced_reader_adapter(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_batch_env)
+    submit_result = await ArticleReadyPersistenceService(
+        pool=grammar_batch_env
+    ).submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=_BATCH_ARTICLE_TEXT,
+            title="Grammar Capture Conflict",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+    await EnhancementJobBootstrapService(
+        pool=grammar_batch_env
+    ).bootstrap_missing_jobs(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+    executor = _StaticGrammarBatchExecutor()
+    result = await GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=executor,
+        journal_service=_CaptureConflictJournal(),
+    ).process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-conflict-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert len(executor.calls) == 1
+    async with grammar_batch_env.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT status, pause_owner, rationale_code, failure_code
+            FROM reader_jobs WHERE id = $1
+            """,
+            result.claim.job_id,
+        )
+    assert row["status"] == "paused"
+    assert row["pause_owner"] == "system"
+    assert row["rationale_code"] == "model_execution_capture_conflict"
+    assert row["failure_code"] == "capture_envelope_conflict"
+
+
+async def test_fresh_batch_pending_usage_does_not_gate_business_publish(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_batch_env)
+    submit_result = await ArticleReadyPersistenceService(
+        pool=grammar_batch_env
+    ).submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=_BATCH_ARTICLE_TEXT,
+            title="Fresh Grammar Pending Usage",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+    await EnhancementJobBootstrapService(
+        pool=grammar_batch_env
+    ).bootstrap_missing_jobs(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+    executor = _StaticGrammarBatchExecutor()
+    failing_materializer = _FailingMaterializerJournal(grammar_batch_env)
+
+    result = await GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=executor,
+        journal_service=failing_materializer,
+    ).process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-fresh-pending",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    assert len(executor.calls) == 1
+    assert failing_materializer.calls == 1
+    async with grammar_batch_env.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT status FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+        journal = await conn.fetchrow(
+            """
+            SELECT usage_delivery_state, ai_usage_event_id
+            FROM ai_model_execution_journal WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        layer_count = await conn.fetchval(
+            """
+            SELECT count(*) FROM enhancement_layers
+            WHERE source_job_id = $1 AND status = 'published'
+            """,
+            result.claim.job_id,
+        )
+    assert job["status"] == "succeeded"
+    assert journal["usage_delivery_state"] == "pending"
+    assert journal["ai_usage_event_id"] is None
+    assert layer_count > 0
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_captured_batch_delivery_state_does_not_gate_business_publish(
+    grammar_batch_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    submit_result, original_claim, identity = (
+        await _seed_captured_grammar_batch_resume(
+            grammar_batch_env,
+            delivery_state=delivery_state,
+        )
+    )
+    resume_executor = _FailIfBatchProviderCalled()
+    failing_materializer = _FailingMaterializerJournal(grammar_batch_env)
+    journal_service = (
+        failing_materializer
+        if delivery_state == "pending"
+        else ModelExecutionJournalService(grammar_batch_env)
+    )
+    worker = GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=resume_executor,
+        journal_service=journal_service,
+    )
+
+    resumed = await worker.process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner=f"grammar-resume-{delivery_state}",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None and resumed.status == "succeeded"
+    assert resume_executor.calls == 0
+    async with grammar_batch_env.acquire() as conn:
+        job = await conn.fetchrow(
+            """
+            SELECT status, attempt_count, lease_token
+            FROM reader_jobs WHERE id = $1
+            """,
+            original_claim.job_id,
+        )
+        journal = await conn.fetchrow(
+            """
+            SELECT usage_delivery_state, ai_usage_event_id
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        layer_count = await conn.fetchval(
+            """
+            SELECT count(*) FROM enhancement_layers
+            WHERE source_job_id = $1 AND status = 'published'
+            """,
+            original_claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert job["status"] == "succeeded"
+    assert job["attempt_count"] == original_claim.attempt_count == 1
+    assert job["lease_token"] is None
+    assert journal["usage_delivery_state"] == delivery_state
+    assert layer_count > 0
+    assert usage_count == int(delivery_state == "reconciled")
+
+    repeated = await worker.process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner=f"grammar-repeat-{delivery_state}",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert repeated is None
+    assert resume_executor.calls == 0
+
+    if delivery_state == "pending":
+        materializer = ModelExecutionJournalService(grammar_batch_env)
+        first = await materializer.materialize_pending(limit=1)
+        second = await materializer.materialize_pending(limit=1)
+        assert first.reconciled == 1
+        assert second.reconciled == 0
+        async with grammar_batch_env.acquire() as conn:
+            usage_count = await conn.fetchval(
+                """
+                SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1
+                """,
+                identity.invocation_key,
+            )
+        assert usage_count == 1
+
+
+async def test_captured_batch_valid_receipt_cannot_bypass_reader_fence(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    submit_result, original_claim, identity = (
+        await _seed_captured_grammar_batch_resume(
+            grammar_batch_env,
+            delivery_state="reconciled",
+        )
+    )
+    async with grammar_batch_env.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE reading_bases SET status = 'superseded' WHERE id = $1",
+                submit_result.base_id,
+            )
+            new_base_id = await conn.fetchval(
+                """
+                INSERT INTO reading_bases (
+                    reading_record_id, base_version, record_generation,
+                    text, content_sha256, content_utf16_length,
+                    canonicalizer_version, builder_version,
+                    segmenter_version, language, title_snapshot,
+                    navigation_json, status
+                )
+                SELECT
+                    reading_record_id, base_version + 1, 2,
+                    text, content_sha256, content_utf16_length,
+                    canonicalizer_version, builder_version,
+                    segmenter_version, language, title_snapshot,
+                    navigation_json, 'active'
+                FROM reading_bases
+                WHERE id = $1
+                RETURNING id
+                """,
+                submit_result.base_id,
+            )
+            assert new_base_id is not None
+            await conn.execute(
+                """
+                UPDATE reading_records
+                SET generation = 2, active_base_id = $2
+                WHERE id = $1
+                """,
+                submit_result.record_id,
+                new_base_id,
+            )
+    resume_executor = _FailIfBatchProviderCalled()
+
+    result = await GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=resume_executor,
+    ).process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-invalid-fence",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is None
+    assert resume_executor.calls == 0
+    async with grammar_batch_env.acquire() as conn:
+        job = await conn.fetchrow(
+            "SELECT status, attempt_count FROM reader_jobs WHERE id = $1",
+            original_claim.job_id,
+        )
+        layer_count = await conn.fetchval(
+            "SELECT count(*) FROM enhancement_layers WHERE source_job_id = $1",
+            original_claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert job["status"] == "superseded"
+    assert job["attempt_count"] == original_claim.attempt_count == 1
+    assert layer_count == 0
+    assert usage_count == 1
 
 
 @pytest.mark.anyio

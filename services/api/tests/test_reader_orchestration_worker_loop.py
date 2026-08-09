@@ -801,12 +801,12 @@ async def test_scan_selects_system_paused_captured_grammar_batch(
 
     identity = ExecutionIdentity(
         invocation_key=(
-            f"reader:reader_grammar_bundle:{job['id']}:1:0"
+            f"reader:reader_grammar_bundle:{job['id']}:1:1"
         ),
         reader_job_id=job["id"],
         reader_run_id=job["run_id"],
         attempt_ordinal=1,
-        execution_slot=0,
+        execution_slot=1,
     )
     journal = ModelExecutionJournalService(pool=worker_loop_env)
     await journal.begin_execution(

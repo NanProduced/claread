@@ -80,6 +80,8 @@ from .job_runtime import (
     ClaimResult,
     FenceViolationError,
     IllegalTransitionError,
+    LeaseExpiredError,
+    LeaseTokenMismatchError,
     ReaderJobRuntime,
     mark_reader_run_running,
     mark_reader_run_status,
@@ -1710,7 +1712,7 @@ class GrammarBundleWorkerService:
             → generate_batch returns
             → persist the versioned result + usage draft as CAPTURED/PENDING
               under ``reader:{capability}:{job}:{attempt}:{slot}``
-            → DB-only materializer reconciles the unique usage event
+            → DB-only materializer best-effort reconciles the unique usage event
             → check ownership
             → publish
             → UPDATE THE SAME usage row with the publication outcome
@@ -1980,7 +1982,27 @@ class GrammarBundleWorkerService:
                         claim=claim,
                     )
                 )
-            except CaptureEnvelopeConflictError:
+            except CaptureEnvelopeConflictError as exc:
+                try:
+                    await self._pause_model_execution_claim(
+                        claim,
+                        rationale_code="model_execution_capture_conflict",
+                        failure_code="capture_envelope_conflict",
+                        failure_message=str(exc),
+                    )
+                except (
+                    FenceViolationError,
+                    IllegalTransitionError,
+                    LeaseExpiredError,
+                    LeaseTokenMismatchError,
+                    LookupError,
+                ):
+                    return GrammarBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                        ownership_lost=True,
+                    )
                 return GrammarBatchJobProcessResult(
                     claim=claim,
                     context=context,
@@ -2004,24 +2026,6 @@ class GrammarBundleWorkerService:
                     model_provider=execution.model_provider,
                     model_name=execution.model_name,
                 )
-            if usage_event_id is None:
-                await self._pause_model_execution_claim(
-                    claim,
-                    rationale_code="model_execution_captured_resume_required",
-                    failure_code="post_provider_resume_required",
-                )
-                return GrammarBatchJobProcessResult(
-                    claim=claim,
-                    context=context,
-                    status="paused",
-                    usage_data=execution.usage_data,
-                    prompt_version=execution.prompt_version,
-                    model_route=execution.model_route,
-                    model_profile=execution.model_profile,
-                    model_provider=execution.model_provider,
-                    model_name=execution.model_name,
-                )
-
             # Ownership gate BEFORE publish (R7-3b): actively probe
             # the lease — catches both loop-detected loss AND leases
             # that expired since the last renewal (e.g. stalled or
@@ -2210,21 +2214,21 @@ class GrammarBundleWorkerService:
         )
         await heartbeat.start()
         try:
-            await self._journal_service.materialize_pending()
-            receipt = await self._journal_service.load_captured_receipt(
-                invocation_key=receipt.identity.invocation_key
-            )
             usage_event_id = receipt.ai_usage_event_id
-            if usage_event_id is None:
-                await self._pause_model_execution_claim(
-                    claim,
-                    rationale_code="model_execution_captured_resume_required",
-                    failure_code="post_provider_resume_required",
+            try:
+                await self._journal_service.materialize_pending()
+                materialized_receipt = (
+                    await self._journal_service.load_captured_receipt(
+                        invocation_key=receipt.identity.invocation_key
+                    )
                 )
-                return GrammarBatchJobProcessResult(
-                    claim=claim,
-                    context=context,
-                    status="paused",
+                usage_event_id = materialized_receipt.ai_usage_event_id
+            except Exception as exc:
+                logger.warning(
+                    "grammar_batch_usage_delivery_deferred: invocation_key=%s "
+                    "error=%s",
+                    receipt.identity.invocation_key,
+                    type(exc).__name__,
                 )
 
             try:
@@ -2595,7 +2599,7 @@ class GrammarBundleWorkerService:
 
     @staticmethod
     def _batch_execution_identity(claim: ClaimResult) -> ExecutionIdentity:
-        execution_slot = 0
+        execution_slot = 1
         return ExecutionIdentity(
             invocation_key=(
                 f"reader:{CAPABILITY_READER_GRAMMAR_BUNDLE}:"
@@ -2694,10 +2698,18 @@ class GrammarBundleWorkerService:
             identity=identity,
             prepared=prepared,
         )
-        await self._journal_service.materialize_pending()
-        receipt = await self._journal_service.load_captured_receipt(
-            invocation_key=receipt.identity.invocation_key
-        )
+        try:
+            await self._journal_service.materialize_pending()
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=receipt.identity.invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "grammar_batch_usage_delivery_deferred: invocation_key=%s "
+                "error=%s",
+                receipt.identity.invocation_key,
+                type(exc).__name__,
+            )
         return receipt.ai_usage_event_id
 
 
