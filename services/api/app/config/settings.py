@@ -83,15 +83,6 @@ class Settings(BaseSettings):
     # authority; public surfaces receive only Host-validated Chinese
     # stage summaries. Raw reasoning never enters SSE/DTO/DB/logs.
     reader_record_ask_learner_reasoning_enabled: bool = False
-    # ASK-WEB-G1-R2: Web Search capability provider for reader_record_ask.
-    # Empty string means "no provider wired" — the resolver returns a
-    # disabled capability and the runtime must NOT mount ``search_web``.
-    # The fake backend is test-only and must NEVER be selected in
-    # production; production deployments set this to a real provider
-    # identifier (e.g. ``dashscope_responses``) only after its wire
-    # probe passes (G2+). Tests inject FakeWebSearchBackend directly
-    # via the stream constructor and bypass this setting entirely.
-    reader_record_ask_web_search_provider: str = ""
     # Round 16: ``reader_ask_planner_model_profile`` has been removed.
     # The live agent-loop-first path no longer resolves a planner LLM.
     reader_ask_replan_model_profile: str = ""

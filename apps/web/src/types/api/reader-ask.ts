@@ -750,7 +750,7 @@ export interface ReaderAskSelectedModelDto {
   /**
    * ASK-WEB-G1-R2: server-declared Web Search capability for this model
    * option. ``"available"`` only when a real provider is wired via
-   * ``settings.reader_record_ask_web_search_provider``. The frontend
+   * the selected model's ResolvedModelConfig binding. The frontend
    * gates Search toggle visibility on this signal (in addition to the
    * page scope). Optional on the wire for backward compat with legacy
    * backends — defaults to ``"unavailable"`` when absent (fail-closed).

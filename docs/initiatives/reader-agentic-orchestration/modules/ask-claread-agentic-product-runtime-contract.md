@@ -279,6 +279,13 @@ Answer streaming uses an explicit provisional-draft model:
 6. Cancellation, validation failure, or persistence failure never leaves a
    provisional answer, citation, or learner-reasoning snapshot in cold history.
 
+For each final model attempt, the Pydantic output-validator seam is the only
+grounding-validation owner. A valid attempt is validated exactly once; a legal
+output retry starts a new attempt and receives exactly one new validation. On
+success the validator publishes one immutable validated-block artifact, and the
+runtime consumes that same artifact once for finalization. The runtime must not
+repeat grounding validation or rebuild a second accepted artifact.
+
 The exact SSE event names and persistence schema are implementation details, but
 hot and cold projections must be byte-equivalent for the committed user-visible
 answer and learner-reasoning summary text.

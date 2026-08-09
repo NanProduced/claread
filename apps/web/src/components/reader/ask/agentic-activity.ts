@@ -7,6 +7,12 @@
 
 export const AGENTIC_EXECUTION_VERSION = "reader_record_ask_agentic_v2" as const;
 
+function warnIgnoredProgress(reason: string): void {
+  if (process.env.NODE_ENV === "development") {
+    console.warn("[AskAgenticActivity] ignored progress", reason);
+  }
+}
+
 export type AgenticActivityPhase =
   | "agent_running"
   | "analysis"
@@ -432,6 +438,7 @@ export function reduceAgenticActivityEvent(
 
   // progress
   if (TERMINAL_STATUSES.has(state.status)) {
+    warnIgnoredProgress("terminal_state");
     return state;
   }
 
@@ -440,17 +447,20 @@ export function reduceAgenticActivityEvent(
     payload.execution_version != null &&
     payload.execution_version !== AGENTIC_EXECUTION_VERSION
   ) {
+    warnIgnoredProgress("execution_version");
     return state;
   }
 
   const sequence = asNonNegativeInt(payload.sequence);
   if (sequence == null || sequence <= state.lastSequence) {
+    warnIgnoredProgress("sequence");
     return state;
   }
 
   const phase = asPhase(payload.phase);
   const summary = sanitizeSummary(payload.summary);
   if (phase == null || summary == null) {
+    warnIgnoredProgress("invalid_phase_or_summary");
     return state;
   }
 
@@ -466,6 +476,7 @@ export function reduceAgenticActivityEvent(
   // Answering is driven by identity-valid message.delta events. Citation
   // checking is driven by the backend's typed started/completed/failed rows.
   if (phase === "composing_answer") {
+    warnIgnoredProgress("composing_answer_not_public");
     return state;
   }
   const elapsedMs = asNonNegativeInt(payload.elapsed_ms) ?? state.elapsedMs;

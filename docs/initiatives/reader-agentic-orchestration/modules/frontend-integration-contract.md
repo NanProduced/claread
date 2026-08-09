@@ -363,6 +363,24 @@ Do not render raw `failure_code`, `reason_code`, exception text, provider URI,
 tokens, query text, or chunk text from diagnostics. Those fields are for logs
 and developer diagnostics only.
 
+## Ask Agentic Progress And Pre-stream Errors
+
+The Ask process panel projects only typed lifecycle truth:
+
+- the first identity-valid `message.delta` owns the public answer-generation
+  step; backend `composing_answer` remains private and is ignored;
+- `validating_evidence` is emitted only for `grounded_answer` and carries
+  `started` with no outcome, `completed` with `ok`, or `failed` with one of
+  `context_stale`, `invalid_citations`, or `unavailable`;
+- clarification and source-unavailable responses do not fabricate a citation
+  check, and a typed terminal closes any still-running check as failed.
+
+The pre-stream HTTP code `web_search_unavailable` maps in
+`ask-error-messages.ts` to fixed friendly copy. The turn notice offers
+“关闭联网并重新发送”, reuses the same `client_submission_id`, and resends with
+`web_search_mode="disabled"`. Raw upstream detail is never rendered. No API
+`user_message` field is required.
+
 
 ## Display Order Contract（Stable Document 展示顺序）
 

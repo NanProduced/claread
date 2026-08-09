@@ -17,9 +17,7 @@ from app.schemas.reader_record_ask_stream import (
 )
 from app.services.reader_record_ask import model_options as model_options_svc
 from app.services.reader_record_ask import repository as repo
-from app.services.reader_record_ask.web_search_common import (
-    resolve_web_search_availability_for_option,
-)
+from app.services.reader_record_ask import web_search_common
 
 
 def _parse_uuid(value: str, detail: str) -> UUID:
@@ -56,7 +54,7 @@ def _selected_model_payload(
     # previous local copy was removed in G3-R1 to collapse all
     # capability projection into a single canonical call chain.
     web_search_capability: Literal["unavailable", "available"] = (
-        resolve_web_search_availability_for_option(option)
+        web_search_common.resolve_web_search_availability_for_option(option)
     )
     return ReaderAskSelectedModel(
         key=option.key,

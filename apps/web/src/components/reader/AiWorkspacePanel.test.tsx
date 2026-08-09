@@ -558,6 +558,98 @@ describe("AiWorkspacePanel", () => {
     expect(onClearAttachments).toHaveBeenCalledTimes(1);
   });
 
+  it("maps web_search_unavailable and resends the same submission with web search disabled", async () => {
+    const fallbackFetch = mockFetch();
+    let streamAttempts = 0;
+    const fetchWithUnavailable = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const requestUrl = new URL(String(input), "http://localhost");
+        if (
+          requestUrl.pathname ===
+          "/api/web/reader/records/record-1/ask/model-options"
+        ) {
+          return jsonResponse({
+            default_key: "ask-clarity",
+            items: [
+              {
+                key: "ask-clarity",
+                label: "Qwen 3.7 Max",
+                description: "Web capable",
+                model_name: "qwen3.7-max",
+                replan_model_name: "qwen3.7-max",
+                price_multiplier: 1,
+                is_default: true,
+                web_search_capability: "available",
+              },
+            ],
+          });
+        }
+        if (requestUrl.pathname.endsWith("/messages/stream")) {
+          streamAttempts += 1;
+          if (streamAttempts === 1) {
+            return new Response(
+              'event: error\ndata: {"code":"web_search_unavailable","detail":"PRIVATE_PROVIDER_DETAIL"}\n\n',
+              {
+                status: 503,
+                headers: { "content-type": "text/event-stream" },
+              },
+            );
+          }
+        }
+        return fallbackFetch(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchWithUnavailable);
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "message.started",
+        data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
+      });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+    renderPanel();
+
+    const webToggle = await screen.findByRole("button", {
+      name: "联网搜索已关闭",
+    });
+    fireEvent.click(webToggle);
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "查一下最新资料" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(
+      await screen.findByText("当前模型暂不支持联网搜索。"),
+    ).not.toBeNull();
+    expect(screen.queryByText(/PRIVATE_PROVIDER_DETAIL/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "关闭联网并重新发送" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        fetchWithUnavailable.mock.calls.filter(([url]) =>
+          String(url).includes("/messages/stream"),
+        ),
+      ).toHaveLength(2);
+    });
+    const streamCalls = fetchWithUnavailable.mock.calls.filter(([url]) =>
+      String(url).includes("/messages/stream"),
+    );
+    const firstBody = JSON.parse(String(streamCalls[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    const secondBody = JSON.parse(String(streamCalls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(firstBody.web_search_mode).toBe("allowed");
+    expect(secondBody.web_search_mode).toBe("disabled");
+    expect(secondBody.client_submission_id).toBe(firstBody.client_submission_id);
+  });
+
   it("serializes page identity from current reader facts instead of hardcoded capability flags", async () => {
     render(
       <AiWorkspacePanel

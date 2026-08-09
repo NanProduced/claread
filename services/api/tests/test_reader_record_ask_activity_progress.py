@@ -607,6 +607,25 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
     )
 
 
+def test_progress_projector_records_only_ordered_public_tool_names() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    for event in (
+        ToolCallEvent(tool_name="read_range", args={}),
+        ToolCallEvent(tool_name="secret_internal_tool", args={"query": "SECRET"}),
+        ToolCallEvent(tool_name="search_current_article", args={}),
+        WebSearchCallEvent(call_sequence=1, attempt_count=None),
+    ):
+        projector.project(event)
+
+    assert projector.tool_call_sequence == [
+        "read_range",
+        "search_current_article",
+        "search_web",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_validating_progress_arrives_before_finalizer_returns() -> None:
     """Grounded answers expose the complete typed citation-check lifecycle."""

@@ -26,6 +26,9 @@ export const ASK_INCOMPLETE_MESSAGE = "这次回答没有完成。请稍后重�
 /** Fixed copy for fetch-level network failures. */
 export const NETWORK_ERROR_MESSAGE = "网络连接失败，请检查网络后重试。";
 
+/** Stable pre-stream capability failure owned by the browser UI. */
+export const WEB_SEARCH_UNAVAILABLE_MESSAGE = "当前模型暂不支持联网搜索。";
+
 /**
  * ASK-RETRY-CONTRACT-R1 — pending/optimistic submission never reached a
  * canonical assistant id. CTA is 重新发送, not 重新生成.
@@ -112,6 +115,7 @@ export const FINAL_STATUS_BUBBLE_MESSAGES: Record<string, string> = {
 /** Known SSE `error` event codes → fixed Chinese message. */
 export const KNOWN_STREAM_ERROR_CODES: Record<string, string> = {
   SSE_PARSE_ERROR: "数据解析异常，请重试。",
+  web_search_unavailable: WEB_SEARCH_UNAVAILABLE_MESSAGE,
 };
 
 /**
@@ -242,6 +246,7 @@ const KNOWN_FRIENDLY_PATTERNS: readonly RegExp[] = [
   /请求失败/,
   /没有找到这轮.*澄清对应的原始问题/,
   /部分可选能力暂不可用/,
+  /当前模型暂不支持联网搜索/,
 ];
 
 /** Whitelist gate for the composer banner — never passes raw errors. */

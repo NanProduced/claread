@@ -78,8 +78,9 @@ Official protocol references:
 
 ## Capability and construction
 
-Capability is derived from the resolved Ask model execution, not from a global
-provider string alone.
+Capability is derived from the selected option's `ResolvedModelConfig` and the
+production adapter registry. There is no global Web Search provider setting,
+environment selector, compatibility alias, or deprecated fallback.
 
 A model option is `available` only when all of the following are true:
 
@@ -102,6 +103,12 @@ existing typed unavailable response.
 The model-option API exposes `web_search_capability="available"` using the
 same readiness resolver. Do not hard-code availability by option label or
 match user question text.
+
+If capability is no longer executable between model-options projection and
+send, the POST correctly fails closed before streaming with the stable code
+`web_search_unavailable`. The browser owns the friendly copy and may offer a
+same-submission retry with Web Search disabled; it must not reinterpret that
+legal GET/POST timing difference as resolver drift.
 
 ## Outcomes and public boundary
 

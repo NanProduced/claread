@@ -51,13 +51,20 @@ function normalizeUpstreamError(
   fallbackDetail: string,
 ): { code: string; detail: string } {
   if (payload && typeof payload === "object") {
+    const nestedDetail = (payload as { detail?: unknown }).detail;
+    const nestedEnvelope =
+      nestedDetail && typeof nestedDetail === "object" ? nestedDetail : null;
     const code = typeof (payload as { code?: unknown }).code === "string"
       ? (payload as { code: string }).code
-      : fallbackCode;
+      : typeof (nestedEnvelope as { code?: unknown } | null)?.code === "string"
+        ? (nestedEnvelope as { code: string }).code
+        : fallbackCode;
     const detail = typeof (payload as { detail?: unknown }).detail === "string"
       ? (payload as { detail: string }).detail
       : typeof (payload as { message?: unknown }).message === "string"
         ? (payload as { message: string }).message
+        : typeof (nestedEnvelope as { message?: unknown } | null)?.message === "string"
+          ? (nestedEnvelope as { message: string }).message
         : fallbackDetail;
     return { code, detail };
   }
@@ -150,8 +157,16 @@ async function buildStreamErrorResponse(upstream: Response): Promise<Response> {
   }
 
   const error = normalizeUpstreamError(payload, "UPSTREAM_ERROR", fallbackDetail);
-  const detail = isDevelopmentRuntime() ? error.detail : fallbackDetail;
-  const code = isDevelopmentRuntime() ? error.code : "UPSTREAM_ERROR";
+  const detail =
+    error.code === "web_search_unavailable"
+      ? fallbackDetail
+      : isDevelopmentRuntime()
+        ? error.detail
+        : fallbackDetail;
+  const code =
+    error.code === "web_search_unavailable" || isDevelopmentRuntime()
+      ? error.code
+      : "UPSTREAM_ERROR";
 
   return new Response(
     `event: error\ndata: ${JSON.stringify({ code, detail }, undefined, 0)}\n\n`,

@@ -128,6 +128,7 @@ import {
   ASK_UNAVAILABLE_MESSAGE,
   OPTIONAL_TOOL_WARNING_MESSAGE,
   PENDING_SUBMISSION_RESEND_MESSAGE,
+  formatStreamErrorMessage,
   interruptedBubbleMessage,
   toUserFacingErrorMessage,
 } from "./ask/ask-error-messages";
@@ -166,6 +167,7 @@ import {
   projectPanelInitNotice,
   projectSendFailureNotice,
   projectTurnTerminalNotice,
+  projectWebSearchUnavailableNotice,
   type AskSystemNotice,
   type AskSystemNoticeCtaAction,
 } from "./ask/ask-system-notice";
@@ -176,6 +178,16 @@ type ErrorEnvelope = {
   code?: string;
   payload?: unknown;
 };
+
+class AskStreamHttpError extends Error {
+  constructor(
+    readonly code: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AskStreamHttpError";
+  }
+}
 
 /** Reads NODE_ENV lazily so tests can toggle dev behavior via stubEnv. */
 function isDevMode(): boolean {
@@ -269,6 +281,23 @@ function parseJsonPayload<T>(rawText: string): T | string | null {
   } catch {
     return rawText;
   }
+}
+
+function parseStreamErrorEnvelope(rawText: string): ErrorEnvelope {
+  const direct = parseJsonPayload<ErrorEnvelope>(rawText);
+  if (direct && typeof direct === "object") {
+    return direct;
+  }
+  for (const line of rawText.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) {
+      continue;
+    }
+    const payload = parseJsonPayload<ErrorEnvelope>(line.slice(5).trim());
+    if (payload && typeof payload === "object") {
+      return payload;
+    }
+  }
+  return {};
 }
 
 function extractNestedDetail(value: unknown): string | null {
@@ -765,6 +794,7 @@ function MessageBubble({
   item,
   onRetry,
   onResend,
+  onDisableWebSearchAndResend,
   resolveRetryTarget,
   agenticActivity,
   turnNotice,
@@ -775,6 +805,7 @@ function MessageBubble({
   item: AskPanelConversationItem;
   onRetry: (messageId: string) => void;
   onResend?: (localAssistantId: string) => void;
+  onDisableWebSearchAndResend?: (localAssistantId: string) => void;
   /** R8: pending recovery may force resend for UUID bubbles. */
   resolveRetryTarget: (
     messageId: string,
@@ -943,6 +974,12 @@ function MessageBubble({
                                           onResend
                                         ) {
                                           onResend(message.id);
+                                        } else if (
+                                          turnNotice.cta?.action ===
+                                            "disable_web_resend" &&
+                                          onDisableWebSearchAndResend
+                                        ) {
+                                          onDisableWebSearchAndResend(message.id);
                                         }
                                       },
                                       variant: "ghost",
@@ -1424,7 +1461,7 @@ export function AiWorkspacePanel({
   const selectedModelOption = findModelOptionSummary(modelOptions, effectiveSelectedModelKey);
   // ASK-WEB-G1-R2: server-declared Web Search capability for the current
   // model option. ``available`` only when a real provider is wired via
-  // ``settings.reader_record_ask_web_search_provider``. The Search toggle
+  // the selected model's ResolvedModelConfig binding. The Search toggle
   // is visible/enabled only when the host has declared this capability —
   // never inferred from the request toggle or page scope alone. Defaults
   // to ``"unavailable"`` when the field is absent (legacy backend /
@@ -1989,6 +2026,31 @@ export function AiWorkspacePanel({
       dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
     };
 
+    const applyWebSearchUnavailableNotice = () => {
+      const activeId = activeAssistantId();
+      rekeyPendingSend(
+        pendingSendByLocalAssistantRef.current,
+        tempAssistantId,
+        activeId,
+      );
+      setTurnNotices((prev) => ({
+        ...prev,
+        [activeId]: projectWebSearchUnavailableNotice({ messageId: activeId }),
+      }));
+      setMessages((current) =>
+        current.map((message) =>
+          messageMatchesActiveAssistant(
+            message.id,
+            activeId,
+            tempAssistantId,
+          )
+            ? { ...message, status: "failed" }
+            : message,
+        ),
+      );
+      dispatchAgenticActivity({ type: "terminal", finalStatus: "failed" });
+    };
+
     const reconcileSubmission = async (): Promise<boolean> => {
       const reconcileUrl = browserAskSubmissionPath(
         recordId,
@@ -2181,7 +2243,12 @@ export function AiWorkspacePanel({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "发送失败");
-        throw new Error(errorText || "发送消息失败。");
+        const envelope = parseStreamErrorEnvelope(errorText);
+        const code = typeof envelope.code === "string" ? envelope.code : null;
+        throw new AskStreamHttpError(
+          code,
+          formatStreamErrorMessage(envelope, { dev: isDevMode() }),
+        );
       }
 
       const streamResult = await consumeReaderAskSse(
@@ -2310,6 +2377,11 @@ export function AiWorkspacePanel({
           ),
         );
         dispatchAgenticActivity({ type: "terminal", finalStatus: "cancelled" });
+      } else if (
+        error instanceof AskStreamHttpError &&
+        error.code === "web_search_unavailable"
+      ) {
+        applyWebSearchUnavailableNotice();
       } else {
         // R7: non-abort transport failure → same reconcileSubmission helper.
         try {
@@ -2402,7 +2474,19 @@ export function AiWorkspacePanel({
       entryAction: pending.entryAction,
       clearComposer: false,
       clientSubmissionId: pending.clientSubmissionId,
+      webSearchModeOverride: pending.webSearchMode,
     });
+  }
+
+  async function handleDisableWebSearchAndResend(assistantMessageId: string) {
+    const pending =
+      pendingSendByLocalAssistantRef.current.get(assistantMessageId) ?? null;
+    if (!pending || sending) {
+      return;
+    }
+    pending.webSearchMode = "disabled";
+    setWebSearchMode("disabled");
+    await handleResend(assistantMessageId);
   }
 
   /** Stop the in-flight SSE stream (user clicked the stop button). */
@@ -2913,6 +2997,7 @@ export function AiWorkspacePanel({
                 item={item}
                 onRetry={handleRetry}
                 onResend={handleResend}
+                onDisableWebSearchAndResend={handleDisableWebSearchAndResend}
                 resolveRetryTarget={resolveRetryTarget}
                 agenticActivity={
                   item.role === "assistant" &&

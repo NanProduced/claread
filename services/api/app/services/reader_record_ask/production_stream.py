@@ -829,6 +829,7 @@ class _ProgressProjector:
         # so observers can audit the per-turn web search budget without
         # touching the agent's tool surface.
         self.web_search_calls = 0
+        self.tool_call_sequence: list[str] = []
         self._agent_started_emitted = False
         self._validation_running = False
         # ASK-WEB-R4: per-attempt telemetry context. ``turn_run_id`` and
@@ -940,6 +941,7 @@ class _ProgressProjector:
                 # article evidence.
                 return out
             if tool == TOOL_EXPAND_EVIDENCE:
+                self.tool_call_sequence.append(TOOL_EXPAND_EVIDENCE)
                 out.append(
                     self._next(
                         phase="searching_article",
@@ -955,6 +957,7 @@ class _ProgressProjector:
                 # Unknown tools: stay on generic agent activity, no dynamic names
                 # and no repeated agent_running/started spam.
                 return out
+            self.tool_call_sequence.append(tool)
             if tool == TOOL_READ_RANGE:
                 self.read_range_calls += 1
                 out.append(
@@ -1088,6 +1091,7 @@ class _ProgressProjector:
         # call sequence + typed outcome. The projector maps them to the
         # ``searching_web`` phase with ``search_web`` tool_name.
         if isinstance(event, WebSearchCallEvent):
+            self.tool_call_sequence.append(TOOL_SEARCH_WEB)
             out.append(
                 self._next(
                     phase="searching_web",
@@ -1799,12 +1803,22 @@ async def _run_agentic_turn(
             terminal_emitted = True
             return
         except Exception as exc:
+            raise_site = getattr(exc, "reader_ask_raise_site", "transport")
+            if raise_site not in {"transport", "runtime_type", "runtime_blocks"}:
+                raise_site = "transport"
+            final_output_type = getattr(
+                exc, "reader_ask_final_output_type", "unavailable"
+            )
+            if not isinstance(final_output_type, str) or not final_output_type:
+                final_output_type = "unavailable"
+            tool_sequence = ">".join(projector.tool_call_sequence) or "none"
             logger.warning(
                 "reader_record_ask agent run failed: type=%s turn_run_id=%s "
                 "message_id=%s model_route=%s envelope_fp=%s total_ms=%s "
                 "progress_events=%s ttfa_ms=%s read_range_calls=%s search_calls=%s "
                 "web_search_calls=%s output_validation_final_attempts=%s "
-                "output_validation_retry_requests=%s lifecycle=%s",
+                "output_validation_retry_requests=%s raise_site=%s "
+                "final_output_type=%s tool_sequence=%s lifecycle=%s",
                 type(exc).__name__,
                 turn["id"],
                 assistant_msg["id"],
@@ -1818,6 +1832,9 @@ async def _run_agentic_turn(
                 projector.web_search_calls,
                 runtime_observation.output_validation_final_attempts,
                 runtime_observation.output_validation_retry_requests,
+                raise_site,
+                final_output_type,
+                tool_sequence,
                 metrics.to_log_dict(),
             )
             for frame in await _failure_terminal_frames(

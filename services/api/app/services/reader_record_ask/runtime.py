@@ -376,13 +376,19 @@ async def run_reading_record_ask(
         observation.execution_stage = "agent_run_completed"
     agent_output = streamed.output
     if not isinstance(agent_output, AgentAnswerDraftOutput):
-        raise TypeError("agent returned an invalid structured answer output")
+        error = TypeError("agent returned an invalid structured answer output")
+        error.reader_ask_raise_site = "runtime_type"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = type(agent_output).__name__  # type: ignore[attr-defined]
+        raise error
     validated_answer_blocks = deps.consume_validated_answer_blocks()
     if (
         agent_output.response_kind == "grounded_answer"
         and validated_answer_blocks is None
     ):
-        raise TypeError("grounded answer did not pass block validation")
+        error = TypeError("grounded answer did not pass block validation")
+        error.reader_ask_raise_site = "runtime_blocks"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = type(agent_output).__name__  # type: ignore[attr-defined]
+        raise error
     if (
         validated_answer_blocks is not None
         and agent_output.validated_answer_blocks is None

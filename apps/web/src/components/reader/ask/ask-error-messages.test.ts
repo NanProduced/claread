@@ -14,6 +14,7 @@ import {
   FINAL_STATUS_MESSAGES,
   KNOWN_STREAM_ERROR_CODES,
   NETWORK_ERROR_MESSAGE,
+  WEB_SEARCH_UNAVAILABLE_MESSAGE,
   TERMINAL_REASON_MESSAGES,
   formatAgenticTerminalMessage,
   formatStreamErrorMessage,
@@ -105,6 +106,16 @@ describe("formatStreamErrorMessage", () => {
     expect(shown).toBe(KNOWN_STREAM_ERROR_CODES.SSE_PARSE_ERROR);
     expect(shown).not.toContain("oops");
     expect(shown).not.toContain("Failed to parse");
+  });
+
+  it("maps web_search_unavailable to one fixed friendly message", () => {
+    const shown = formatStreamErrorMessage(
+      { code: "web_search_unavailable", detail: "provider route and secret query" },
+      { dev: false },
+    );
+    expect(shown).toBe(WEB_SEARCH_UNAVAILABLE_MESSAGE);
+    expect(shown).not.toContain("provider");
+    expect(shown).not.toContain("secret query");
   });
 
   it("never leaks raw detail for unknown codes (prod fallback, DEV code-only)", () => {

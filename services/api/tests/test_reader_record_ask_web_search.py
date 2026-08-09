@@ -819,8 +819,8 @@ class TestAgentConditionalWebSearch:
 # ---------------------------------------------------------------------------
 #
 # The capability resolver must NOT declare ``enabled_for_turn=True`` based
-# only on a non-empty ``settings.reader_record_ask_web_search_provider``
-# string. Until a real ``WebSearchBackend`` adapter is registered in the
+# only on a global provider selector. Until a real ``WebSearchBackend``
+# adapter is registered in the
 # production adapter registry, every production path must return
 # ``enabled_for_turn=False`` (typed unavailable).
 #
@@ -1171,6 +1171,56 @@ class TestSelectedModelPayloadProjection:
         )
         payload = ask_service._selected_model_payload(option)
         assert payload["web_search_capability"] == "unavailable"
+
+    def test_model_projection_and_send_share_canonical_binding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.llm.types import ResolvedModelConfig
+        from app.services.reader_record_ask import (
+            execution_config,
+            thread_service,
+            web_search_common,
+        )
+        from app.services.reader_record_ask.web_search_adapter_registry import (
+            ResolvedWebSearchBinding,
+        )
+
+        calls: list[str] = []
+        model_config = ResolvedModelConfig(
+            route="reader_ask",
+            profile_name="canonical-profile",
+            provider="dashscope",
+            adapter="openai_compatible",
+            model_name="qwen-plus",
+        )
+
+        def canonical_binding(model_config):
+            calls.append(model_config.model_name)
+            return ResolvedWebSearchBinding(capability=None, backend=None)
+
+        monkeypatch.setattr(
+            web_search_common, "resolve_web_search_binding", canonical_binding
+        )
+        monkeypatch.setattr(
+            web_search_common, "resolve_model_config", lambda *args, **kwargs: model_config
+        )
+        monkeypatch.setattr(
+            execution_config,
+            "build_model_for_route",
+            lambda *args, **kwargs: (object(), model_config),
+        )
+        option = self._make_option(
+            key="canonical", label="Canonical", main_model_name="qwen-plus"
+        )
+
+        payload = thread_service._selected_model_payload(option)
+        execution = execution_config.resolve_reader_record_ask_execution(
+            option, web_search_mode="allowed"
+        )
+
+        assert payload["web_search_capability"] == "unavailable"
+        assert execution.web_search_capability is None
+        assert calls == ["qwen-plus", "qwen-plus"]
 
 
 # ---------------------------------------------------------------------------

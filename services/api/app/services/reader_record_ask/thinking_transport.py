@@ -735,13 +735,19 @@ async def run_agent_with_thinking_transport(
             _finish_analysis()
 
     if final_output is None:
-        raise RuntimeError("agent run produced no final output")
+        error = RuntimeError("agent run produced no final output")
+        error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = "NoneType"  # type: ignore[attr-defined]
+        raise error
 
     if deps.observation is not None:
         deps.observation.transport_final_output_object_id = id(final_output)
 
     if not isinstance(final_output, AgentAnswerDraftOutput):
-        raise TypeError("agent transport received an invalid structured output")
+        error = TypeError("agent transport received an invalid structured output")
+        error.reader_ask_raise_site = "transport"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = type(final_output).__name__  # type: ignore[attr-defined]
+        raise error
 
     return StreamedAgentOutcome(
         output=final_output,

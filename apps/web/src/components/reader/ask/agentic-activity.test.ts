@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   aggregateArticleEvidenceOutcome,
   agenticActivityAriaLabel,
@@ -36,6 +36,11 @@ function runningState(): AgenticActivityState {
     turnRunId: "turn-1",
   });
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("reduceAgenticActivityEvent", () => {
   it("binds a run without fabricating a learner step", () => {
@@ -412,6 +417,28 @@ describe("reduceAgenticActivityEvent", () => {
       progress(1, "agent_running", "   "),
     );
     expect(afterEmptySummary.lastSequence).toBe(0);
+  });
+
+  it("warns without payload content when development drops malformed progress", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const state = runningState();
+    reduceAgenticActivityEvent(state, progress(1, "not_a_phase", "SECRET_SUMMARY"));
+    expect(warn).toHaveBeenCalledWith(
+      "[AskAgenticActivity] ignored progress",
+      "invalid_phase_or_summary",
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("SECRET_SUMMARY");
+  });
+
+  it("keeps malformed-progress drops silent in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    reduceAgenticActivityEvent(
+      runningState(),
+      progress(1, "not_a_phase", "SECRET_SUMMARY"),
+    );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("never keeps internal-looking fields from the payload", () => {
