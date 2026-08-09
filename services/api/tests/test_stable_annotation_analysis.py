@@ -37,6 +37,7 @@ def ann(
     *,
     block_type: str = "paragraph",
     block_id: str = "b1",
+    parent_block_id: str | None = None,
     payload: dict | None = None,
 ) -> StableBlockAnnotation:
     return StableBlockAnnotation(
@@ -44,6 +45,7 @@ def ann(
         end_utf16=end,  # type: ignore[arg-type]
         block_type=block_type,
         block_id=block_id,
+        parent_block_id=parent_block_id,
         payload_json=payload or {},
     )
 
@@ -168,6 +170,64 @@ class TestJudgmentTable:
         )
         assert first.diagnostics == second.diagnostics
         assert first.policy_overrides == second.policy_overrides
+
+
+class TestParentBlockIdentity:
+    """parent_block_id belongs to the structural duplicate identity."""
+
+    def test_same_parent_duplicate_dedupes_without_override(self):
+        first = ann(0, 10, block_id="b1", parent_block_id="w1")
+        same = ann(0, 10, block_id="b1", parent_block_id="w1")
+        result = analyze([first, same])
+        assert [a.annotation.block_id for a in result.accepted_annotations] == ["b1"]
+        assert codes(result) == [ANNOTATION_DUPLICATE_CONSISTENT]
+        assert result.policy_overrides == ()
+
+    def test_different_parent_duplicate_conflicts_and_overrides_unit(self):
+        # Same range/type/id/payload pointing at a different wrapper parent
+        # is structural corruption, not a semantic-consistent duplicate.
+        first = ann(0, 10, block_id="b1", parent_block_id="w1")
+        moved = ann(0, 10, block_id="b1", parent_block_id="w2")
+        result = analyze([first, moved])
+        assert [a.annotation.block_id for a in result.accepted_annotations] == ["b1"]
+        assert codes(result) == [ANNOTATION_CONFLICTING_DUPLICATE]
+        assert [(o.unit_id, o.reason_code) for o in result.policy_overrides] == [
+            ("u1", ANNOTATION_CONFLICTING_DUPLICATE),
+        ]
+
+    def test_missing_parent_on_one_side_also_conflicts(self):
+        first = ann(0, 10, block_id="b1", parent_block_id="w1")
+        orphaned = ann(0, 10, block_id="b1")
+        result = analyze([first, orphaned])
+        assert codes(result) == [ANNOTATION_CONFLICTING_DUPLICATE]
+        assert [(o.unit_id, o.reason_code) for o in result.policy_overrides] == [
+            ("u1", ANNOTATION_CONFLICTING_DUPLICATE),
+        ]
+
+    def test_parent_conflict_first_wins_is_stable_for_fixed_input_order(self):
+        annotations = [
+            ann(0, 10, block_id="b1", parent_block_id="w1"),
+            ann(0, 10, block_id="b1", parent_block_id="w2"),
+        ]
+        first_run = analyze(annotations)
+        second_run = analyze(list(annotations))
+        assert first_run == second_run
+        # First-wins only decides the displayed structure: the accepted
+        # annotation keeps the first-seen parent.
+        assert first_run.accepted_annotations[0].annotation.parent_block_id == "w1"
+
+    def test_parent_conflict_diagnostic_ordering_is_deterministic(self):
+        ordered = [
+            ann(0, 10, block_id="b1", parent_block_id="w1"),
+            ann(0, 10, block_id="b1", parent_block_id="w2"),
+            ann(12, 24, block_id="b2", parent_block_id="w1"),
+            ann(12, 24, block_id="b2", parent_block_id="w3"),
+        ]
+        reference = analyze(ordered)
+        shuffled = analyze([ordered[2], ordered[0], ordered[3], ordered[1]])
+        assert codes(reference) == [ANNOTATION_CONFLICTING_DUPLICATE] * 2
+        assert reference.diagnostics == shuffled.diagnostics
+        assert reference.policy_overrides == shuffled.policy_overrides
 
 
 class TestInlineMarkValidation:

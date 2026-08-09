@@ -285,6 +285,7 @@ def analyze_stable_annotations(
             consistent = (
                 duplicate.block_type == first.block_type
                 and duplicate.block_id == first.block_id
+                and duplicate.parent_block_id == first.parent_block_id
                 and duplicate.payload_json == first.payload_json
             )
             if consistent:
