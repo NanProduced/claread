@@ -25,6 +25,11 @@ from app.schemas.reader_orchestration import (
     VocabularyHighlightItem,
     VocabularyLayerOutput,
 )
+from app.services.model_execution_journal import (
+    ExecutionIdentity,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -32,12 +37,12 @@ from app.services.reader_orchestration.completion_finalizer import (
     COMPLETION_TARGET_READINESS_STATE,
     RECORD_COMPLETION_FINALIZED_EVENT_TYPE,
 )
-from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleExecutionResult,
     DisplayTitleJobContext,
     DisplayTitleWorkerService,
 )
+from app.services.reader_orchestration.event_runtime import ReaderEventRuntime
 from app.services.reader_orchestration.grammar_worker import (
     GrammarBundleWorkerService,
     GrammarExecutionResult,
@@ -747,6 +752,100 @@ async def test_scan_eligible_records_requires_active_base_status_and_presence(
     assert missing_base.record_id not in candidate_ids
 
 
+async def test_scan_selects_system_paused_captured_grammar_batch(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(worker_loop_env)
+    article = await submit_article_ready(
+        worker_loop_env,
+        user_id=user_id,
+        title="Captured Grammar Resume",
+    )
+    await EnhancementJobBootstrapService(
+        pool=worker_loop_env
+    ).bootstrap_missing_jobs(
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+
+    async with worker_loop_env.acquire() as conn:
+        job = await conn.fetchrow(
+            """
+            SELECT id, run_id
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'build_grammar_bundle'
+              AND target_type = 'unit_range'
+            """,
+            article.record_id,
+        )
+        assert job is not None
+        await conn.execute(
+            "DELETE FROM reader_jobs WHERE reading_record_id = $1 AND id <> $2",
+            article.record_id,
+            job["id"],
+        )
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'paused',
+                attempt_count = 1,
+                pause_owner = 'system',
+                rationale_code = 'model_execution_captured_resume_required',
+                failure_class = 'model_execution',
+                failure_code = 'post_provider_resume_required'
+            WHERE id = $1
+            """,
+            job["id"],
+        )
+
+    identity = ExecutionIdentity(
+        invocation_key=(
+            f"reader:reader_grammar_bundle:{job['id']}:1:1"
+        ),
+        reader_job_id=job["id"],
+        reader_run_id=job["run_id"],
+        attempt_ordinal=1,
+        execution_slot=1,
+    )
+    journal = ModelExecutionJournalService(pool=worker_loop_env)
+    await journal.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await journal.capture_execution(
+        identity=identity,
+        prepared=prepare_capture_envelope(
+            invocation_kind="reader.grammar_batch",
+            resume_payload_kind="reader.grammar_batch.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={"outputs": [], "diagnostics": None},
+            usage_event_draft={
+                "usage_scope": "system_internal",
+                "capability_code": "reader_grammar_bundle",
+                "billing_mode": "internal_only",
+                "status": "model_call_completed",
+                "user_id": str(user_id),
+                "reading_record_id": str(article.record_id),
+                "reader_run_id": str(job["run_id"]),
+                "reader_job_id": str(job["id"]),
+                "model_route": "reader_layer_grammar_bundle",
+                "model_provider": "fake-provider",
+                "model_name": "fake-model",
+            },
+        ),
+    )
+
+    candidates = await ReaderEnhancementWorkerLoopService(
+        pool=worker_loop_env
+    ).scan_eligible_records(batch_size=20)
+    candidate = next(
+        item for item in candidates if item.record_id == article.record_id
+    )
+    assert candidate.runnable_job_count == 1
+
+
 async def test_process_candidate_skips_when_record_lock_is_unavailable(
     worker_loop_env: asyncpg.Pool,
 ) -> None:
@@ -911,7 +1010,11 @@ async def test_process_candidate_forwards_custom_lease_duration_to_pipeline_runn
         user_id=user_id,
         after_sequence=article.article_ready_sequence,
     )
-    assert [event for event in events_after_retry if event.event_type != "record_state_changed"] == []
+    assert [
+        event
+        for event in events_after_retry
+        if event.event_type != "record_state_changed"
+    ] == []
 
 
 async def test_worker_loop_real_chain_updates_snapshot_progress_and_emits_reload_events(

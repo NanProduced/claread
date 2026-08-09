@@ -36,6 +36,7 @@ from .helpers import (
 from .service import (
     AIUsageEventCreate,
     fetch_usage_event_id_by_invocation_key,
+    insert_ai_usage_event_by_invocation_key_in_transaction,
     record_ai_usage_event,
     record_model_invocation_usage_event,
     update_ai_usage_event_outcome,
@@ -98,6 +99,7 @@ __all__ = [
     "compute_dict_ai_cost_points",
     "compute_reader_ask_cost_points",
     "fetch_usage_event_id_by_invocation_key",
+    "insert_ai_usage_event_by_invocation_key_in_transaction",
     "record_ai_usage_event",
     "record_model_invocation_usage_event",
     "resolve_model_metadata",

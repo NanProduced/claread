@@ -189,6 +189,25 @@ class ReaderEnhancementWorkerLoopService:
                                        job.status = 'retry_later'
                                        AND job.available_at <= NOW()
                                    )
+                                   OR (
+                                       job.status = 'paused'
+                                       AND job.job_type = 'build_grammar_bundle'
+                                       AND job.target_type = 'unit_range'
+                                       AND job.pause_owner = 'system'
+                                       AND job.rationale_code =
+                                           'model_execution_captured_resume_required'
+                                       AND job.failure_class = 'model_execution'
+                                       AND job.failure_code =
+                                           'post_provider_resume_required'
+                                       AND EXISTS (
+                                           SELECT 1
+                                           FROM ai_model_execution_journal journal
+                                           WHERE journal.reader_job_id = job.id
+                                             AND journal.attempt_ordinal =
+                                                 job.attempt_count
+                                             AND journal.capture_state = 'captured'
+                                       )
+                                   )
                               )
                               AND (job.input_json->>'request_origin')
                                   IS DISTINCT FROM 'section_v1'
