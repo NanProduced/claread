@@ -222,6 +222,14 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
+        WHERE conname = 'ai_model_execution_journal_execution_slot_check'
+          AND pg_get_constraintdef(oid) LIKE '%execution_slot >= 1%'
+    ) THEN
+        RAISE EXCEPTION 'journal execution_slot must be 1-based';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
         WHERE conname = 'ai_model_execution_journal_usage_event_link_check'
           AND pg_get_constraintdef(oid) LIKE '%reconciled%ai_usage_event_id IS NOT NULL%'
     ) THEN

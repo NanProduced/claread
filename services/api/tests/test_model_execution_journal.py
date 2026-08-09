@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
@@ -9,6 +10,9 @@ from app.services.model_execution_journal.payload_codec import (
     canonical_json_bytes,
     decode_resume_payload,
     prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import (
+    ModelExecutionJournalService,
 )
 
 
@@ -93,6 +97,14 @@ def test_capture_hash_uses_canonical_json_key_order() -> None:
     )
 
     assert first.capture_envelope_sha256 == second.capture_envelope_sha256
+
+
+def test_journal_service_does_not_own_reader_job_state() -> None:
+    source = inspect.getsource(ModelExecutionJournalService)
+
+    assert "reader_jobs" not in source
+    assert "reader_job_events" not in source
+    assert "_pause_owning_job_for_conflict" not in source
 
 
 @pytest.mark.parametrize(

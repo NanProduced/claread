@@ -14,6 +14,7 @@ from app.database.connection import init_connection
 from app.services.model_execution_journal import (
     CaptureEnvelopeConflictError,
     ExecutionIdentity,
+    PayloadContractError,
     prepare_capture_envelope,
 )
 from app.services.model_execution_journal.service import (
@@ -372,12 +373,12 @@ async def _begin_journal_for_claim(
     identity = ExecutionIdentity(
         invocation_key=(
             f"reader:grammar_batch:{claim.job_id}:"
-            f"{claim.attempt_count}:0"
+            f"{claim.attempt_count}:1"
         ),
         reader_job_id=claim.job_id,
         reader_run_id=claim.run_id,
         attempt_ordinal=claim.attempt_count,
-        execution_slot=0,
+        execution_slot=1,
     )
     journal = ModelExecutionJournalService(pool)
     begun = await journal.begin_execution(
@@ -2367,11 +2368,11 @@ async def test_both_normal_claim_seams_fail_closed_for_prior_receipts(
         attempt_count=1,
     )
     started_identity = ExecutionIdentity(
-        invocation_key=f"reader:grammar_batch:{started_job_id}:1:0",
+        invocation_key=f"reader:grammar_batch:{started_job_id}:1:1",
         reader_job_id=started_job_id,
         reader_run_id=run_id,
         attempt_ordinal=1,
-        execution_slot=0,
+        execution_slot=1,
     )
     await journal.begin_execution(
         identity=started_identity,
@@ -2398,11 +2399,11 @@ async def test_both_normal_claim_seams_fail_closed_for_prior_receipts(
         attempt_count=1,
     )
     captured_identity = ExecutionIdentity(
-        invocation_key=f"reader:grammar_batch:{captured_job_id}:1:0",
+        invocation_key=f"reader:grammar_batch:{captured_job_id}:1:1",
         reader_job_id=captured_job_id,
         reader_run_id=run_id,
         attempt_ordinal=1,
-        execution_slot=0,
+        execution_slot=1,
     )
     await journal.begin_execution(
         identity=captured_identity,
@@ -2554,10 +2555,203 @@ async def test_capture_conflict_system_pauses_owning_job_atomically(
         )
 
     row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_CLAIMED
+    assert row["lease_token"] == claim.lease_token
+
+    await runtime.transition(
+        job_id=job_id,
+        target_status=STATUS_PAUSED,
+        lease_token=claim.lease_token,
+        pause_owner="system",
+        rationale_code="model_execution_capture_conflict",
+        failure_class="model_execution",
+        failure_code="capture_envelope_conflict",
+    )
+
+    row = await _fetch_job(job_runtime_env, job_id)
     assert row["status"] == STATUS_PAUSED
     assert row["pause_owner"] == "system"
     assert row["rationale_code"] == "model_execution_capture_conflict"
     assert row["failure_code"] == "capture_envelope_conflict"
+
+
+@pytest.mark.parametrize("mismatch_field", ["reader_job_id", "reader_run_id"])
+async def test_capture_rejects_usage_draft_execution_identity_mismatch(
+    job_runtime_env: asyncpg.Pool,
+    mismatch_field: str,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key=f"identity-mismatch-{mismatch_field}",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="identity-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=False,
+    )
+    draft_job_id = uuid4() if mismatch_field == "reader_job_id" else job_id
+    draft_run_id = uuid4() if mismatch_field == "reader_run_id" else run_id
+
+    with pytest.raises(
+        PayloadContractError,
+        match="usage_draft_execution_identity_mismatch",
+    ):
+        await ModelExecutionJournalService(job_runtime_env).capture_execution(
+            identity=identity,
+            prepared=_journal_capture_payload(
+                user_id=user_id,
+                record_id=record_id,
+                run_id=draft_run_id,
+                job_id=draft_job_id,
+            ),
+        )
+
+    async with job_runtime_env.acquire() as conn:
+        capture_state = await conn.fetchval(
+            """
+            SELECT capture_state FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        event_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert capture_state == "started"
+    assert event_count == 0
+
+
+async def test_stale_attempt_capture_conflict_cannot_pause_new_lease(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="stale-conflict-new-lease",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    original = await runtime.claim_next_job(
+        lease_owner="original-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert original is not None and original.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=original,
+        captured=True,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+    assert await runtime.recover_stale_leases() == 1
+    resumed = await runtime.claim_captured_resume(
+        job_id=job_id,
+        lease_owner="new-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert resumed is not None
+
+    with pytest.raises(CaptureEnvelopeConflictError):
+        await ModelExecutionJournalService(job_runtime_env).capture_execution(
+            identity=identity,
+            prepared=_journal_capture_payload(
+                user_id=user_id,
+                record_id=record_id,
+                run_id=run_id,
+                job_id=job_id,
+                total_tokens=16,
+            ),
+        )
+    with pytest.raises(LeaseTokenMismatchError):
+        await runtime.transition(
+            job_id=job_id,
+            target_status=STATUS_PAUSED,
+            lease_token=original.lease_token,
+            pause_owner="system",
+            rationale_code="model_execution_capture_conflict",
+            failure_class="model_execution",
+            failure_code="capture_envelope_conflict",
+        )
+
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_CLAIMED
+    assert row["lease_token"] == resumed.claim.lease_token
+    assert row["lease_owner"] == "new-owner"
+
+
+async def test_capture_conflict_does_not_wait_on_locked_reader_job(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="conflict-lock-order",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="lock-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=True,
+    )
+    journal = ModelExecutionJournalService(job_runtime_env)
+
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            await conn.fetchrow(
+                "SELECT id FROM reader_jobs WHERE id = $1 FOR UPDATE",
+                job_id,
+            )
+            with pytest.raises(CaptureEnvelopeConflictError):
+                await asyncio.wait_for(
+                    journal.capture_execution(
+                        identity=identity,
+                        prepared=_journal_capture_payload(
+                            user_id=user_id,
+                            record_id=record_id,
+                            run_id=run_id,
+                            job_id=job_id,
+                            total_tokens=16,
+                        ),
+                    ),
+                    timeout=1,
+                )
 
 
 async def test_stale_recovery_and_materializer_converge_without_deadlock(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from collections.abc import AsyncIterator
@@ -75,11 +76,11 @@ async def journal_pool() -> AsyncIterator[asyncpg.Pool]:
 def _identity() -> ExecutionIdentity:
     job_id = uuid4()
     return ExecutionIdentity(
-        invocation_key=f"reader:grammar_batch:{job_id}:1:0",
+        invocation_key=f"reader:grammar_batch:{job_id}:1:1",
         reader_job_id=None,
         reader_run_id=None,
         attempt_ordinal=1,
-        execution_slot=0,
+        execution_slot=1,
     )
 
 
@@ -150,13 +151,34 @@ async def test_begin_allows_only_the_new_durable_started_receipt(
         reader_job_id=None,
         reader_run_id=None,
         attempt_ordinal=1,
-        execution_slot=1,
+        execution_slot=2,
     )
     with pytest.raises(JournalConflictError, match="execution_identity_conflict"):
         await service.begin_execution(
             identity=conflicting_identity,
             invocation_kind="reader.grammar_batch",
         )
+
+
+async def test_begin_rejects_zero_execution_slot(
+    journal_pool: asyncpg.Pool,
+) -> None:
+    identity = _identity()
+    zero_slot = ExecutionIdentity(
+        invocation_key=f"reader:grammar_batch:{uuid4()}:1:0",
+        reader_job_id=None,
+        reader_run_id=None,
+        attempt_ordinal=1,
+        execution_slot=0,
+    )
+
+    with pytest.raises(ValueError, match="invalid_execution_identity"):
+        await ModelExecutionJournalService(journal_pool).begin_execution(
+            identity=zero_slot,
+            invocation_kind="reader.grammar_batch",
+        )
+
+    assert identity.execution_slot == 1
 
 
 @pytest.mark.parametrize(
@@ -237,6 +259,163 @@ async def test_materializer_reconciles_once_and_never_replays_usage(
     assert row["capture_state"] == "captured"
     assert row["usage_delivery_state"] == "reconciled"
     assert row["ai_usage_event_id"] is not None
+
+
+@pytest.mark.parametrize(
+    ("column", "path", "replacement"),
+    [
+        ("normalized_payload_json", ["outputs", "0", "unit_id"], "unit-2"),
+        ("usage_event_draft_json", ["usage_data", "input_tokens"], 11),
+        ("usage_event_draft_json", ["model_name"], "tampered-model"),
+        ("usage_event_draft_json", ["model_provider"], "tampered-provider"),
+        (
+            "usage_event_draft_json",
+            [],
+            {"usage_scope": "anonymous_trial", "billing_mode": "trial"},
+        ),
+    ],
+    ids=["typed-result", "tokens", "model", "provider", "billing"],
+)
+async def test_materializer_dead_letters_structurally_valid_envelope_tampering(
+    journal_pool: asyncpg.Pool,
+    column: str,
+    path: list[str],
+    replacement: object,
+) -> None:
+    service = ModelExecutionJournalService(journal_pool)
+    identity = _identity()
+    await service.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await service.capture_execution(identity=identity, prepared=_prepared())
+    async with journal_pool.acquire() as conn:
+        if path:
+            await conn.execute(
+                f"""
+                UPDATE ai_model_execution_journal
+                SET {column} = jsonb_set({column}, $2::text[], $3::jsonb)
+                WHERE invocation_key = $1
+                """,
+                identity.invocation_key,
+                path,
+                json.dumps(replacement),
+            )
+        else:
+            await conn.execute(
+                f"""
+                UPDATE ai_model_execution_journal
+                SET {column} = {column} || $2::jsonb
+                WHERE invocation_key = $1
+                """,
+                identity.invocation_key,
+                replacement,
+            )
+
+    summary = await service.materialize_pending(limit=1, max_attempts=1)
+
+    assert summary.dead_lettered == 1
+    async with journal_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT usage_delivery_state, delivery_last_error_code
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        event_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert row["usage_delivery_state"] == "dead_letter"
+    assert row["delivery_last_error_code"] == "stored_capture_envelope_mismatch"
+    assert event_count == 0
+
+
+@pytest.mark.parametrize(
+    "byte_column",
+    ["resume_payload_bytes", "usage_event_draft_bytes"],
+)
+async def test_materializer_dead_letters_stored_payload_byte_count_mismatch(
+    journal_pool: asyncpg.Pool,
+    byte_column: str,
+) -> None:
+    service = ModelExecutionJournalService(journal_pool)
+    identity = _identity()
+    await service.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await service.capture_execution(identity=identity, prepared=_prepared())
+    async with journal_pool.acquire() as conn:
+        await conn.execute(
+            f"""
+            UPDATE ai_model_execution_journal
+            SET {byte_column} = {byte_column} + 1
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+
+    summary = await service.materialize_pending(limit=1, max_attempts=1)
+
+    assert summary.dead_lettered == 1
+    async with journal_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT delivery_last_error_code
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        event_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert row["delivery_last_error_code"] == "stored_capture_envelope_mismatch"
+    assert event_count == 0
+
+
+async def test_materializer_dead_letters_unsupported_stored_schema_version(
+    journal_pool: asyncpg.Pool,
+) -> None:
+    service = ModelExecutionJournalService(journal_pool)
+    identity = _identity()
+    await service.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await service.capture_execution(identity=identity, prepared=_prepared())
+    async with journal_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET usage_event_draft_schema_version = 2
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+
+    summary = await service.materialize_pending(limit=1, max_attempts=1)
+
+    assert summary.dead_lettered == 1
+    async with journal_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT delivery_last_error_code
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        event_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert row["delivery_last_error_code"] == "unsupported_usage_event_draft"
+    assert event_count == 0
 
 
 async def test_materializer_dead_letters_strictly_malformed_stored_draft(

@@ -44,6 +44,10 @@ def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
         BASELINE_SQL
     )
     assert (
+        "CONSTRAINT ai_model_execution_journal_execution_slot_check "
+        "CHECK ((execution_slot >= 1))"
+    ) in BASELINE_SQL
+    assert (
         "CREATE UNIQUE INDEX uq_ai_usage_events_legacy_grammar_request_id "
         "ON ai_usage_events USING btree (request_id)"
     ) in BASELINE_SQL
@@ -1514,9 +1518,9 @@ async def test_model_execution_journal_rejects_illegal_state_combinations(
                         execution_slot,
                         capture_state,
                         usage_delivery_state
-                    ) VALUES ($1, 'reader.grammar_batch', 1, 0, $2, $3)
+                    ) VALUES ($1, 'reader.grammar_batch', 1, 1, $2, $3)
                     """,
-                    f"reader:grammar_batch:{uuid4()}:1:0",
+                    f"reader:grammar_batch:{uuid4()}:1:1",
                     capture_state,
                     delivery_state,
                 )
@@ -1549,11 +1553,11 @@ async def test_model_execution_journal_rejects_illegal_state_combinations(
                 resume_payload_bytes, usage_event_draft_bytes, captured_at,
                 ai_usage_event_id, reconciled_at
             ) VALUES (
-                $1, 'reader.grammar_batch', 1, 0, 'captured', 'reconciled',
+                $1, 'reader.grammar_batch', 1, 1, 'captured', 'reconciled',
                 {captured_values_sql}, $2, NOW()
             )
             """,
-            f"reader:grammar_batch:{uuid4()}:1:0",
+            f"reader:grammar_batch:{uuid4()}:1:1",
             usage_event_id,
         )
 
@@ -1569,9 +1573,20 @@ async def test_model_execution_journal_rejects_illegal_state_combinations(
                     capture_envelope_sha256, resume_payload_bytes,
                     usage_event_draft_bytes, captured_at
                 ) VALUES (
-                    $1, 'reader.grammar_batch', 1, 0,
+                    $1, 'reader.grammar_batch', 1, 1,
                     'captured', 'reconciled', {captured_values_sql}
                 )
+                """,
+                f"reader:grammar_batch:{uuid4()}:1:1",
+            )
+
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                """
+                INSERT INTO ai_model_execution_journal (
+                    invocation_key, invocation_kind, attempt_ordinal,
+                    execution_slot
+                ) VALUES ($1, 'reader.grammar_batch', 1, 0)
                 """,
                 f"reader:grammar_batch:{uuid4()}:1:0",
             )

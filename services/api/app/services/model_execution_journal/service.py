@@ -57,7 +57,7 @@ class ModelExecutionJournalService:
         identity: ExecutionIdentity,
         invocation_kind: str,
     ) -> BeginDisposition:
-        if identity.attempt_ordinal < 1 or identity.execution_slot < 0:
+        if identity.attempt_ordinal < 1 or identity.execution_slot < 1:
             raise ValueError("invalid_execution_identity")
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
@@ -101,8 +101,7 @@ class ModelExecutionJournalService:
         identity: ExecutionIdentity,
         prepared: PreparedCaptureEnvelope,
     ) -> CapturedReceipt:
-        conflict = False
-        receipt: CapturedReceipt | None = None
+        prepared = self._validate_prepared_capture(identity, prepared)
         async with self.get_pool().acquire() as conn:
             async with conn.transaction():
                 row = await conn.fetchrow(
@@ -117,17 +116,17 @@ class ModelExecutionJournalService:
                     raise LookupError("model_execution_not_started")
                 self._assert_identity(row, identity, prepared.invocation_kind)
                 if row["capture_state"] == "captured":
-                    conflict = (
+                    if (
                         row["capture_envelope_sha256"]
                         != prepared.capture_envelope_sha256
-                    )
-                    if conflict:
-                        await self._pause_owning_job_for_conflict(conn, row)
-                    else:
-                        receipt = self._receipt_from_row(
-                            row,
-                            idempotent_replay=True,
+                    ):
+                        raise CaptureEnvelopeConflictError(
+                            "capture_envelope_conflict"
                         )
+                    return self._receipt_from_row(
+                        row,
+                        idempotent_replay=True,
+                    )
                 elif row["capture_state"] != "started":
                     raise JournalConflictError(
                         "ambiguous_execution_requires_verified_receipt"
@@ -161,12 +160,7 @@ class ModelExecutionJournalService:
                         prepared.resume_payload_bytes,
                         prepared.usage_event_draft_bytes,
                     )
-                    receipt = self._receipt_from_row(captured)
-        if conflict:
-            raise CaptureEnvelopeConflictError("capture_envelope_conflict")
-        if receipt is None:
-            raise RuntimeError("capture_not_confirmed")
-        return receipt
+                    return self._receipt_from_row(captured)
 
     async def load_captured_receipt(
         self,
@@ -252,13 +246,12 @@ class ModelExecutionJournalService:
                     scanned += 1
                     try:
                         async with conn.transaction():
+                            receipt = self._receipt_from_row(row)
                             draft = decode_usage_event_draft(
-                                schema_version=row[
-                                    "usage_event_draft_schema_version"
-                                ],
-                                payload=_json_object(
-                                    row["usage_event_draft_json"]
+                                schema_version=(
+                                    receipt.usage_event_draft_schema_version
                                 ),
+                                payload=receipt.usage_event_draft,
                             )
                             event = AIUsageEventCreate(
                                 **draft.model_dump(mode="python")
@@ -310,7 +303,11 @@ class ModelExecutionJournalService:
                             "dead_letter" if terminal else "pending",
                             attempts,
                             timedelta(seconds=min(300, 2**attempts)),
-                            type(exc).__name__[:100],
+                            (
+                                str(exc)[:100]
+                                if isinstance(exc, PayloadContractError)
+                                else type(exc).__name__[:100]
+                            ),
                             "usage materialization failed",
                         )
                         dead_lettered += int(terminal)
@@ -338,50 +335,46 @@ class ModelExecutionJournalService:
             raise JournalConflictError("execution_identity_conflict")
 
     @staticmethod
-    async def _pause_owning_job_for_conflict(
-        conn: asyncpg.Connection,
-        row: asyncpg.Record,
-    ) -> None:
-        job_id = row["reader_job_id"]
-        if job_id is None:
-            return
-        updated = await conn.fetchrow(
-            """
-            UPDATE reader_jobs
-            SET status = 'paused', pause_owner = 'system',
-                lease_owner = NULL, lease_token = NULL,
-                lease_expires_at = NULL, claimed_at = NULL,
-                rationale_code = 'model_execution_capture_conflict',
-                failure_class = 'model_execution',
-                failure_code = 'capture_envelope_conflict',
-                failure_message = NULL,
-                updated_at = NOW()
-            WHERE id = $1
-              AND status NOT IN (
-                  'skipped', 'succeeded', 'failed_terminal',
-                  'cancelled', 'superseded'
-              )
-            RETURNING reading_record_id, run_id
-            """,
-            job_id,
+    def _validate_prepared_capture(
+        identity: ExecutionIdentity,
+        prepared: PreparedCaptureEnvelope,
+    ) -> PreparedCaptureEnvelope:
+        validated = prepare_capture_envelope(
+            invocation_kind=prepared.invocation_kind,
+            resume_payload_kind=prepared.resume_payload_kind,
+            resume_payload_schema_version=prepared.resume_payload_schema_version,
+            usage_event_draft_schema_version=(
+                prepared.usage_event_draft_schema_version
+            ),
+            normalized_payload=prepared.normalized_payload,
+            usage_event_draft=prepared.usage_event_draft,
         )
-        if updated is not None:
-            await conn.execute(
-                """
-                INSERT INTO reader_job_events (
-                    reading_record_id, run_id, job_id,
-                    event_type, payload_json
-                ) VALUES ($1, $2, $3, 'job_action_required', $4::jsonb)
-                """,
-                updated["reading_record_id"],
-                updated["run_id"],
-                job_id,
-                jsonb_param(
-                    {
-                        "rationale_code": "model_execution_capture_conflict",
-                        "failure_code": "capture_envelope_conflict",
-                    }
-                ),
+        if validated != prepared:
+            raise PayloadContractError("prepared_capture_envelope_mismatch")
+        ModelExecutionJournalService._assert_usage_draft_identity(
+            identity,
+            validated,
+        )
+        return validated
+
+    @staticmethod
+    def _assert_usage_draft_identity(
+        identity: ExecutionIdentity,
+        prepared: PreparedCaptureEnvelope,
+    ) -> None:
+        draft = decode_usage_event_draft(
+            schema_version=prepared.usage_event_draft_schema_version,
+            payload=prepared.usage_event_draft,
+        )
+        if (
+            identity.reader_job_id is not None
+            and draft.reader_job_id != identity.reader_job_id
+        ) or (
+            identity.reader_run_id is not None
+            and draft.reader_run_id != identity.reader_run_id
+        ):
+            raise PayloadContractError(
+                "usage_draft_execution_identity_mismatch"
             )
 
     @staticmethod
@@ -392,7 +385,14 @@ class ModelExecutionJournalService:
     ) -> CapturedReceipt:
         normalized_payload = _json_object(row["normalized_payload_json"])
         usage_event_draft = _json_object(row["usage_event_draft_json"])
-        prepared = prepare_capture_envelope(
+        identity = ExecutionIdentity(
+            invocation_key=row["invocation_key"],
+            reader_job_id=row["reader_job_id"],
+            reader_run_id=row["reader_run_id"],
+            attempt_ordinal=int(row["attempt_ordinal"]),
+            execution_slot=int(row["execution_slot"]),
+        )
+        stored = PreparedCaptureEnvelope(
             invocation_kind=row["invocation_kind"],
             resume_payload_kind=row["resume_payload_kind"],
             resume_payload_schema_version=int(
@@ -403,14 +403,22 @@ class ModelExecutionJournalService:
             ),
             normalized_payload=normalized_payload,
             usage_event_draft=usage_event_draft,
+            capture_envelope_sha256=row["capture_envelope_sha256"],
+            resume_payload_bytes=int(row["resume_payload_bytes"]),
+            usage_event_draft_bytes=int(row["usage_event_draft_bytes"]),
         )
-        if (
-            prepared.capture_envelope_sha256
-            != row["capture_envelope_sha256"]
-            or prepared.resume_payload_bytes != row["resume_payload_bytes"]
-            or prepared.usage_event_draft_bytes
-            != row["usage_event_draft_bytes"]
-        ):
+        try:
+            prepared = ModelExecutionJournalService._validate_prepared_capture(
+                identity,
+                stored,
+            )
+        except PayloadContractError as exc:
+            if str(exc) == "prepared_capture_envelope_mismatch":
+                raise PayloadContractError(
+                    "stored_capture_envelope_mismatch"
+                ) from exc
+            raise
+        if prepared != stored:
             raise PayloadContractError("stored_capture_envelope_mismatch")
         decode_resume_payload(
             kind=prepared.resume_payload_kind,
@@ -419,13 +427,7 @@ class ModelExecutionJournalService:
         )
         return CapturedReceipt(
             journal_id=row["id"],
-            identity=ExecutionIdentity(
-                invocation_key=row["invocation_key"],
-                reader_job_id=row["reader_job_id"],
-                reader_run_id=row["reader_run_id"],
-                attempt_ordinal=int(row["attempt_ordinal"]),
-                execution_slot=int(row["execution_slot"]),
-            ),
+            identity=identity,
             invocation_kind=row["invocation_kind"],
             resume_payload_kind=prepared.resume_payload_kind,
             resume_payload_schema_version=(
