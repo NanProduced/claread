@@ -77,6 +77,76 @@ def test_grammar_batch_v1_payload_round_trips_strictly() -> None:
     ("invocation_kind", "resume_payload_kind", "payload"),
     [
         (
+            "reader.grammar_unit",
+            "reader.grammar_unit.result",
+            {
+                "output": {
+                    "schema_version": 1,
+                    "grammar_notes": [],
+                    "sentence_analyses": [],
+                },
+                "diagnostics": None,
+            },
+        ),
+        (
+            "reader.grammar_window",
+            "reader.grammar_window.result",
+            {
+                "candidates": [
+                    {
+                        "item_type": "grammar_note",
+                        "anchor_segment_id": "s1",
+                        "spans": [{"anchor_segment_id": "s1"}],
+                        "semantic_dedup_key": "grammar:s1",
+                        "pattern_key": "pattern:s1",
+                        "quality_score": 4,
+                        "reading_blocker": False,
+                        "dedup_hint": "grammar:s1",
+                        "grammar_point": "inversion",
+                        "pattern": "not only ... but also",
+                        "note": "A focused note.",
+                        "label": "",
+                        "analysis": "",
+                        "chunks": [],
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_grammar_unit_and_window_payloads_round_trip_strictly(
+    invocation_kind: str,
+    resume_payload_kind: str,
+    payload: dict[str, object],
+) -> None:
+    prepared = prepare_capture_envelope(
+        invocation_kind=invocation_kind,
+        resume_payload_kind=resume_payload_kind,
+        resume_payload_schema_version=1,
+        usage_event_draft_schema_version=1,
+        normalized_payload=payload,
+        usage_event_draft=_usage_draft(),
+    )
+
+    decoded = decode_resume_payload(
+        kind=prepared.resume_payload_kind,
+        schema_version=prepared.resume_payload_schema_version,
+        payload=prepared.normalized_payload,
+    )
+
+    assert decoded.model_dump(mode="json") == payload
+    with pytest.raises(PayloadContractError, match="invalid_resume_payload"):
+        decode_resume_payload(
+            kind=resume_payload_kind,
+            schema_version=1,
+            payload={**payload, "unexpected": True},
+        )
+
+
+@pytest.mark.parametrize(
+    ("invocation_kind", "resume_payload_kind", "payload"),
+    [
+        (
             "reader.display_title",
             "reader.display_title.result",
             {"title_zh": "城市补贴政策争议"},

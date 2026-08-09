@@ -14,6 +14,7 @@ import pytest
 from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 from app.schemas.reader_orchestration import (
     GrammarBundleOutput,
     GrammarNoteItem,
@@ -73,6 +74,9 @@ from app.services.reader_orchestration.job_runtime import (
 from app.services.reader_orchestration.reading_strategy import (
     resolve_reader_variant_strategy,
 )
+from app.services.reader_orchestration.usage_attribution import (
+    ReaderUsageAttributionService,
+)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -111,6 +115,50 @@ class _StaticGrammarExecutor:
             model_provider="fake-provider",
             model_name="fake-grammar-model",
         )
+
+
+class _JournalOrderGrammarExecutor(_StaticGrammarExecutor):
+    def __init__(self, pool: asyncpg.Pool, output_builder) -> None:
+        super().__init__(output_builder)
+        self._pool = pool
+
+    async def generate(self, context: GrammarJobContext) -> GrammarExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().generate(context)
+
+
+class _JournalOrderGrammarPublisher:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self.calls = 0
+
+    async def publish_unit_grammar_bundle(self, **kwargs) -> object:
+        self.calls += 1
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                kwargs["job_id"],
+            )
+        assert row is not None
+        assert row["capture_state"] == "captured"
+        assert row["execution_slot"] == 1
+        raise RuntimeError("stop after durable grammar unit capture")
 
 
 class _FailingGrammarExecutor:
@@ -493,7 +541,11 @@ async def test_worker_process_publishes_both_grammar_layers_and_records_single_u
     assert usage_row["model_name"] == "fake-grammar-model"
     assert usage_row["reader_run_id"] == result.claim.run_id
     assert usage_row["reader_job_id"] == result.claim.job_id
-    assert usage_row["enhancement_layer_id"] is None
+    assert result.published_bundle.grammar_note_layer is not None
+    assert (
+        usage_row["enhancement_layer_id"]
+        == result.published_bundle.grammar_note_layer.layer_id
+    )
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
@@ -503,6 +555,347 @@ async def test_worker_process_publishes_both_grammar_layers_and_records_single_u
         "sentence_analysis",
     ]
     assert usage_row["metadata_json"]["no_op"] is False
+
+
+async def test_grammar_unit_journals_started_then_captured_before_publish(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderGrammarPublisher(grammar_worker_env)
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_JournalOrderGrammarExecutor(
+            grammar_worker_env,
+            _sample_grammar_bundle_output,
+        ),
+        layer_publisher=publisher,
+    )
+
+    result = await worker.process_next_grammar_job(
+        lease_owner="grammar-unit-journal-order",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert publisher.calls == 1
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_grammar_unit_captured_restart_is_provider_free_and_delivery_orthogonal(
+    grammar_worker_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    paused = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+        layer_publisher=_JournalOrderGrammarPublisher(grammar_worker_env),
+    ).process_next_grammar_job(
+        lease_owner="grammar-unit-before-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+
+    async with grammar_worker_env.acquire() as conn:
+        paused_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET usage_delivery_state = $2,
+                ai_usage_event_id = CASE WHEN $2 = 'reconciled'
+                                         THEN ai_usage_event_id ELSE NULL END,
+                delivery_next_attempt_at = NULL,
+                reconciled_at = CASE WHEN $2 = 'reconciled' THEN NOW() ELSE NULL END,
+                dead_lettered_at = CASE WHEN $2 = 'dead_letter' THEN NOW() ELSE NULL END
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            delivery_state,
+        )
+
+    forbidden = _StaticGrammarExecutor(_sample_grammar_bundle_output)
+    resumed = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=forbidden,
+    ).process_next_grammar_job(
+        lease_owner="grammar-unit-after-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None and resumed.status == "succeeded"
+    assert forbidden.calls == []
+    async with grammar_worker_env.acquire() as conn:
+        final_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            resumed.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            resumed.claim.job_id,
+        )
+    assert final_attempt == paused_attempt
+    assert usage_count == 1
+
+
+@pytest.mark.parametrize("failure_kind", ["error", "conflict"])
+async def test_grammar_unit_capture_failure_pauses_without_publish(
+    grammar_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderGrammarPublisher(grammar_worker_env)
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+        layer_publisher=publisher,
+    )
+
+    async def _fail_capture(**kwargs) -> None:
+        if failure_kind == "conflict":
+            raise CaptureEnvelopeConflictError("conflicting grammar capture")
+        raise RuntimeError("grammar capture unavailable")
+
+    monkeypatch.setattr(worker._journal_service, "capture_execution", _fail_capture)
+    result = await worker.process_next_grammar_job(
+        lease_owner="grammar-unit-capture-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert publisher.calls == 0
+    async with grammar_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+    assert row is not None
+    assert row["rationale_code"] == (
+        "model_execution_capture_conflict"
+        if failure_kind == "conflict"
+        else "model_execution_ambiguous"
+    )
+
+
+async def test_grammar_unit_begin_failure_never_calls_provider(
+    grammar_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    executor = _StaticGrammarExecutor(_sample_grammar_bundle_output)
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=executor,
+    )
+
+    async def _fail_begin(**kwargs) -> None:
+        raise RuntimeError("grammar journal begin unavailable")
+
+    monkeypatch.setattr(worker._journal_service, "begin_execution", _fail_begin)
+    result = await worker.process_next_grammar_job(
+        lease_owner="grammar-unit-begin-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert executor.calls == []
+    async with grammar_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+    assert row is not None
+    assert row["rationale_code"] == "model_execution_begin_unconfirmed"
+    assert row["failure_code"] == "journal_begin_failed"
+
+
+async def test_grammar_unit_lease_loss_after_capture_never_publishes(
+    grammar_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderGrammarPublisher(grammar_worker_env)
+    worker = GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+        layer_publisher=publisher,
+    )
+    capture = worker._journal_service.capture_execution
+
+    async def _capture_then_expire(**kwargs):
+        receipt = await capture(**kwargs)
+        async with grammar_worker_env.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_jobs
+                SET lease_expires_at = NOW() - INTERVAL '1 second'
+                WHERE id = $1
+                """,
+                kwargs["identity"].reader_job_id,
+            )
+        return receipt
+
+    monkeypatch.setattr(
+        worker._journal_service,
+        "capture_execution",
+        _capture_then_expire,
+    )
+    result = await worker.process_next_grammar_job(
+        lease_owner="grammar-unit-expired-after-capture",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "retry_later"
+    assert publisher.calls == 0
+    async with grammar_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT job.status, journal.capture_state
+            FROM reader_jobs job
+            JOIN ai_model_execution_journal journal
+              ON journal.reader_job_id = job.id
+            WHERE job.id = $1
+            """,
+            result.claim.job_id,
+        )
+        layer_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM enhancement_layers WHERE source_job_id = $1",
+            result.claim.job_id,
+        )
+    assert row is not None and row["status"] == "claimed"
+    assert row["capture_state"] == "captured"
+    assert layer_count == 0
+
+
+async def test_grammar_unit_materializer_failure_does_not_block_publish(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    journal = _FailingMaterializerJournal(grammar_worker_env)
+
+    result = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        journal_service=journal,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+    ).process_next_grammar_job(
+        lease_owner="grammar-unit-materializer-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    async with grammar_worker_env.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert before == 0
+    materializer = ModelExecutionJournalService(pool=grammar_worker_env)
+    attribution = ReaderUsageAttributionService(journal_service=materializer)
+    await attribution.materialize_and_reconcile()
+    await attribution.materialize_and_reconcile()
+    async with grammar_worker_env.acquire() as conn:
+        usage_row = await conn.fetchrow(
+            """
+            SELECT enhancement_layer_id
+            FROM ai_usage_events
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+    assert usage_row is not None
+    assert usage_row["enhancement_layer_id"] == (
+        result.published_bundle.grammar_note_layer.layer_id
+    )
+
+
+async def test_grammar_unit_tampered_receipt_fails_closed_without_provider_recall(
+    grammar_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    paused = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=_StaticGrammarExecutor(_sample_grammar_bundle_output),
+        layer_publisher=_JournalOrderGrammarPublisher(grammar_worker_env),
+    ).process_next_grammar_job(
+        lease_owner="grammar-unit-before-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    async with grammar_worker_env.acquire() as conn:
+        payload = dict(
+            await conn.fetchval(
+                """
+                SELECT normalized_payload_json
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                paused.claim.job_id,
+            )
+        )
+        payload["output"]["grammar_notes"] = []
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = $2::jsonb
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            jsonb_param(payload),
+        )
+    forbidden = _StaticGrammarExecutor(_sample_grammar_bundle_output)
+
+    resumed = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=forbidden,
+    ).process_next_grammar_job(
+        lease_owner="grammar-unit-after-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is None
+    assert forbidden.calls == []
+    async with grammar_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_receipt_invalid"
+    assert row["failure_code"] == "receipt_payload_invalid"
 
 
 @pytest.mark.anyio
@@ -643,12 +1036,149 @@ async def test_worker_explicit_fake_executor_succeeds_noop_without_layers_or_rea
     assert usage_rows[0]["status"] == "succeeded"
     assert usage_rows[0]["enhancement_layer_id"] is None
     assert usage_rows[0]["metadata_json"]["no_op"] is True
+    assert usage_rows[0]["metadata_json"]["publication_attribution_state"] == (
+        "no_published_layer"
+    )
+    assert usage_rows[0]["metadata_json"]["published_layer_ids"] == []
 
     with pytest.raises(ValueError, match="no unprocessed grammar reading unit is available"):
         await bootstrap.bootstrap_grammar_run(
             record_id=article.record_id,
             user_id=user_id,
         )
+
+
+@pytest.mark.parametrize("delivery_state", ["pending", "reconciled", "dead_letter"])
+@pytest.mark.parametrize("has_published_layer", [True, False], ids=["layer", "no-layer"])
+async def test_reader_usage_attribution_reconciles_all_delivery_states_and_outcomes(
+    grammar_worker_env: asyncpg.Pool,
+    delivery_state: str,
+    has_published_layer: bool,
+) -> None:
+    user_id = await insert_user(grammar_worker_env)
+    article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
+    await GrammarJobBootstrapService(
+        pool=grammar_worker_env
+    ).bootstrap_grammar_run(record_id=article.record_id, user_id=user_id)
+    executor = _StaticGrammarExecutor(
+        _sample_grammar_bundle_output
+        if has_published_layer
+        else lambda _context: GrammarBundleOutput()
+    )
+    result = await GrammarBundleWorkerService(
+        pool=grammar_worker_env,
+        executor=executor,
+    ).process_next_grammar_job(
+        lease_owner=f"grammar-attribution-{delivery_state}-{has_published_layer}",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    assert result.published_bundle is not None
+    expected_layer_id = (
+        result.published_bundle.grammar_note_layer.layer_id
+        if has_published_layer
+        and result.published_bundle.grammar_note_layer is not None
+        else None
+    )
+    async with grammar_worker_env.acquire() as conn:
+        journal_row = await conn.fetchrow(
+            """
+            SELECT invocation_key, ai_usage_event_id
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        assert journal_row is not None
+        original_event_id = journal_row["ai_usage_event_id"]
+        assert original_event_id is not None
+        await conn.execute(
+            """
+            UPDATE ai_usage_events
+            SET enhancement_layer_id = NULL,
+                metadata_json = metadata_json
+                    - 'publication_attribution_state'
+                    - 'published_layer_ids'
+                    - 'published_layer_types'
+            WHERE id = $1
+            """,
+            original_event_id,
+        )
+        if delivery_state != "reconciled":
+            await conn.execute(
+                """
+                UPDATE ai_model_execution_journal
+                SET usage_delivery_state = $2,
+                    ai_usage_event_id = NULL,
+                    delivery_next_attempt_at = CASE
+                        WHEN $2 = 'pending' THEN NOW() ELSE NULL END,
+                    reconciled_at = NULL,
+                    dead_lettered_at = CASE
+                        WHEN $2 = 'dead_letter' THEN NOW() ELSE NULL END
+                WHERE invocation_key = $1
+                """,
+                journal_row["invocation_key"],
+                delivery_state,
+            )
+            await conn.execute(
+                "DELETE FROM ai_usage_events WHERE id = $1",
+                original_event_id,
+            )
+
+    journal = ModelExecutionJournalService(pool=grammar_worker_env)
+    if delivery_state == "dead_letter":
+        assert await journal.repair_dead_letter(
+            invocation_key=journal_row["invocation_key"]
+        )
+    summary = await ReaderUsageAttributionService(
+        journal_service=journal
+    ).materialize_and_reconcile(
+        invocation_key=journal_row["invocation_key"]
+    )
+
+    async with grammar_worker_env.acquire() as conn:
+        usage_rows = await conn.fetch(
+            """
+            SELECT id, enhancement_layer_id, metadata_json
+            FROM ai_usage_events
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        final_journal = await conn.fetchrow(
+            """
+            SELECT usage_delivery_state, ai_usage_event_id
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            journal_row["invocation_key"],
+        )
+
+    assert summary.reconciled == 1
+    assert len(usage_rows) == 1
+    usage_row = usage_rows[0]
+    assert usage_row["enhancement_layer_id"] == expected_layer_id
+    assert usage_row["metadata_json"]["publication_attribution_state"] == (
+        "published_layer_reconciled" if has_published_layer else "no_published_layer"
+    )
+    assert usage_row["metadata_json"]["published_layer_ids"] == (
+        [
+            str(result.published_bundle.grammar_note_layer.layer_id),
+            str(result.published_bundle.sentence_analysis_layer.layer_id),
+        ]
+        if has_published_layer
+        and result.published_bundle.grammar_note_layer is not None
+        and result.published_bundle.sentence_analysis_layer is not None
+        else []
+    )
+    assert usage_row["metadata_json"]["no_op"] is (not has_published_layer)
+    assert final_journal is not None
+    assert final_journal["usage_delivery_state"] == "reconciled"
+    assert final_journal["ai_usage_event_id"] == usage_row["id"]
+    if delivery_state == "reconciled":
+        assert usage_row["id"] == original_event_id
+    assert len(executor.calls) == 1
 
 
 @pytest.mark.anyio
@@ -4627,11 +5157,7 @@ async def _fetch_grammar_usage_rows(pool: asyncpg.Pool, job_id: UUID) -> list[as
 async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """Grammar per-unit publish-fence baseline: provider returned
-    usage_data, the publish fence fails after the model execution. Exactly
-    one failed usage event carries the consumed tokens, the model identity
-    and the run/job identity; the job still ends superseded. This is the
-    reference semantics the translation/vocabulary fence paths align with."""
+    """A publish fence cannot erase or duplicate the captured invocation."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4670,7 +5196,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert run_row is not None and run_row["status"] == "superseded"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_grammar_bundle"
     assert usage_row["usage_scope"] == "system_internal"
     assert usage_row["billing_mode"] == "internal_only"
@@ -4684,15 +5210,13 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "publish_fence_failed"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_retryable_failure_after_provider_call_records_failed_usage_with_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """Retryable post-execution failure: provider returned usage_data, a
-    retryable failure follows. The failed usage event must keep the consumed
-    tokens and the model identity; the job still ends retry_later."""
+    """A typed publish failure keeps the captured result resumable."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4719,12 +5243,12 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_grammar_usage_rows(grammar_worker_env, result.claim.job_id)
     async with grammar_worker_env.acquire() as conn:
         job_row = await conn.fetchrow(
-            "SELECT status FROM reader_jobs WHERE id = $1",
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
             result.claim.job_id,
         )
         run_row = await conn.fetchrow(
@@ -4732,12 +5256,14 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "retry_later"
-    assert run_row is not None and run_row["status"] == "failed_retryable"
+    assert job_row is not None and job_row["status"] == "paused"
+    assert job_row["rationale_code"] == "model_execution_captured_resume_required"
+    assert job_row["failure_code"] == "post_provider_resume_required"
+    assert run_row is not None and run_row["status"] == "running"
     assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_grammar_bundle"
     assert usage_row["model_route"] == "reader_layer_grammar_bundle"
     assert usage_row["model_profile_id"] == "fake-grammar-profile"
@@ -4748,7 +5274,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "post_provider_retryable"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_terminal_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -4810,9 +5336,7 @@ async def test_worker_terminal_failure_after_provider_call_records_failed_usage_
 async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """Executor returned without a reliable usage payload. The failed event
-    keeps the confirmed no-token semantics: tokens stay 0 and no zero
-    snapshot is fabricated into metadata."""
+    """A captured invocation without provider usage never fabricates tokens."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4841,12 +5365,12 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_grammar_usage_rows(grammar_worker_env, result.claim.job_id)
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["input_tokens"] == 0
     assert usage_row["output_tokens"] == 0
     assert usage_row["total_tokens"] == 0
@@ -4856,9 +5380,7 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
 async def test_worker_generic_failure_after_provider_call_records_failed_usage_with_tokens(
     grammar_worker_env: asyncpg.Pool,
 ) -> None:
-    """Generic post-execution failure: provider returned usage_data, an
-    untyped exception follows. The failed usage event must keep the consumed
-    tokens and the model identity; the job still ends failed_terminal."""
+    """An untyped publish failure keeps the captured result resumable."""
     user_id = await insert_user(grammar_worker_env)
     article = await _submit_grammar_article(grammar_worker_env, user_id=user_id)
     await GrammarJobBootstrapService(pool=grammar_worker_env).bootstrap_grammar_run(
@@ -4879,12 +5401,12 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     )
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_grammar_usage_rows(grammar_worker_env, result.claim.job_id)
     async with grammar_worker_env.acquire() as conn:
         job_row = await conn.fetchrow(
-            "SELECT status FROM reader_jobs WHERE id = $1",
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
             result.claim.job_id,
         )
         run_row = await conn.fetchrow(
@@ -4892,12 +5414,14 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "failed_terminal"
-    assert run_row is not None and run_row["status"] == "failed_terminal"
-    assert run_row["finished_at"] is not None
+    assert job_row is not None and job_row["status"] == "paused"
+    assert job_row["rationale_code"] == "model_execution_captured_resume_required"
+    assert job_row["failure_code"] == "post_provider_resume_required"
+    assert run_row is not None and run_row["status"] == "running"
+    assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_grammar_bundle"
     assert usage_row["model_route"] == "reader_layer_grammar_bundle"
     assert usage_row["model_profile_id"] == "fake-grammar-profile"
@@ -4908,4 +5432,4 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "RuntimeError"
+    assert usage_row["error_code"] is None

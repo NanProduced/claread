@@ -10,6 +10,8 @@ from pydantic import BaseModel, ValidationError
 from app.services.model_execution_journal.models import (
     DisplayTitleResumePayloadV1,
     GrammarBatchResumePayloadV1,
+    GrammarUnitResumePayloadV1,
+    GrammarWindowResumePayloadV1,
     PayloadContractError,
     PreparedCaptureEnvelope,
     SemanticOutlineResumePayloadV1,
@@ -27,6 +29,8 @@ MAX_CAPTURE_PAYLOAD_BYTES = 1_114_112
 _RESUME_MODELS: dict[tuple[str, int], type[BaseModel]] = {
     ("reader.display_title.result", 1): DisplayTitleResumePayloadV1,
     ("reader.grammar_batch.result", 1): GrammarBatchResumePayloadV1,
+    ("reader.grammar_unit.result", 1): GrammarUnitResumePayloadV1,
+    ("reader.grammar_window.result", 1): GrammarWindowResumePayloadV1,
     ("reader.semantic_outline.result", 1): SemanticOutlineResumePayloadV1,
     ("reader.translation_unit.result", 1): TranslationUnitResumePayloadV1,
     ("reader.translation_batch.result", 1): TranslationBatchResumePayloadV1,
@@ -36,6 +40,8 @@ _RESUME_MODELS: dict[tuple[str, int], type[BaseModel]] = {
 _INVOCATION_RESUME_KIND = {
     "reader.display_title": "reader.display_title.result",
     "reader.grammar_batch": "reader.grammar_batch.result",
+    "reader.grammar_unit": "reader.grammar_unit.result",
+    "reader.grammar_window": "reader.grammar_window.result",
     "reader.semantic_outline": "reader.semantic_outline.result",
     "reader.translation_unit": "reader.translation_unit.result",
     "reader.translation_batch": "reader.translation_batch.result",

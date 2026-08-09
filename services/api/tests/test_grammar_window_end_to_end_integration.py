@@ -44,6 +44,7 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import (
     compute_text_range_hash,
     slice_by_utf16_offsets,
@@ -82,6 +83,9 @@ from tests.reader_orchestration_test_support import (
     submit_article_ready,
 )
 from tests.test_reader_orchestration_pipeline_runner import (
+    _StaticBatchTranslator,
+    _StaticBatchVocabularyExecutor,
+    _StaticGrammarBatchExecutor,
     _StaticGrammarExecutor,
     _StaticTitleGenerator,
     _StaticTranslator,
@@ -93,8 +97,7 @@ pytestmark = pytest.mark.anyio
 
 LEASE_DURATION = timedelta(seconds=30)
 
-# 3-4 paragraphs of ~200-400 chars each → 3-4 units, 1-2 windows.
-GRAMMAR_WINDOW_E2E_ARTICLE_TEXT = (
+_GRAMMAR_WINDOW_E2E_BASE_TEXT = (
     "The committee, which had spent six months reviewing export data, "
     "labor surveys, and municipal tax receipts that rarely lined up neatly, "
     "claimed that the recovery was broad enough to justify ending the emergency "
@@ -110,6 +113,9 @@ GRAMMAR_WINDOW_E2E_ARTICLE_TEXT = (
     "described a chain of causes rather than a single crisis, and families were "
     "willing to spend only after confirming that rent and medicine expenses "
     "were already covered."
+)
+GRAMMAR_WINDOW_E2E_ARTICLE_TEXT = "\n\n".join(
+    [_GRAMMAR_WINDOW_E2E_BASE_TEXT] * 15
 )
 
 
@@ -240,7 +246,6 @@ class _RealisticMockExecutor:
         # PATTERN_DENSE gates do not fire.
         for anchor in target_anchors[:grammar_budget]:
             anchor_id = str(anchor["anchor_segment_id"])
-            unit_id = str(anchor["unit_id"])
             dedup_key = f"grammar:{anchor_id}"
 
             # Build proper ReaderTextRangeAnchor for the WindowCandidateContent.
@@ -432,6 +437,7 @@ def _make_grammar_window_runner(
         pool=pool,
         layer_publisher=CompatTranslationLayerPublisher(pool=pool),
         translator=_StaticTranslator(),
+        batch_translator=_StaticBatchTranslator(),
     )
     orchestrator = ReaderOrchestrator(
         pool=pool,
@@ -440,10 +446,12 @@ def _make_grammar_window_runner(
     vocabulary_worker = VocabularyWorkerService(
         pool=pool,
         executor=_StaticVocabularyExecutor(),
+        batch_executor=_StaticBatchVocabularyExecutor(),
     )
     grammar_worker = GrammarBundleWorkerService(
         pool=pool,
         executor=_StaticGrammarExecutor(),
+        batch_executor=_StaticGrammarBatchExecutor(),
     )
     display_title_worker = DisplayTitleWorkerService(
         pool=pool,
@@ -469,10 +477,15 @@ def _make_grammar_window_runner(
         pool=pool,
         display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
+        translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
         grammar_window_publisher=publisher,  # type: ignore[arg-type]
+        settings=Settings(
+            semantic_outline_generation_enabled=False,
+            reader_semantic_outline_model_profile="",
+        ),
     )
 
 
@@ -613,10 +626,6 @@ async def test_grammar_window_end_to_end_no_precreated_plan(
         grammar_note_layers = [
             layer for layer in layers if layer["layer_type"] == "grammar_note"
         ]
-        sentence_analysis_layers = [
-            layer for layer in layers
-            if layer["layer_type"] == "sentence_analysis"
-        ]
 
         # grammar_note layers should exist (executor produces them).
         assert len(grammar_note_layers) > 0, (
@@ -754,7 +763,7 @@ async def test_grammar_window_end_to_end_no_precreated_plan(
         )
 
         # Every grammar-window layer_published event should carry the contract fields.
-        for ev, payload in grammar_window_events:
+        for _ev, payload in grammar_window_events:
             assert "layer_id" in payload, (
                 "layer_published event payload missing layer_id"
             )

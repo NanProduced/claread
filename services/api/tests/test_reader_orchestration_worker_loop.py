@@ -752,8 +752,18 @@ async def test_scan_eligible_records_requires_active_base_status_and_presence(
     assert missing_base.record_id not in candidate_ids
 
 
-async def test_scan_selects_system_paused_captured_grammar_batch(
+@pytest.mark.parametrize(
+    ("job_type", "target_type"),
+    [
+        ("build_grammar_bundle", "unit_range"),
+        ("generate_display_title_zh", "record"),
+        ("translate_unit", "unit"),
+    ],
+)
+async def test_scan_selects_any_owned_system_paused_captured_job(
     worker_loop_env: asyncpg.Pool,
+    job_type: str,
+    target_type: str,
 ) -> None:
     user_id = await insert_user(worker_loop_env)
     article = await submit_article_ready(
@@ -790,6 +800,8 @@ async def test_scan_selects_system_paused_captured_grammar_batch(
             UPDATE reader_jobs
             SET status = 'paused',
                 attempt_count = 1,
+                job_type = $2,
+                target_type = $3,
                 pause_owner = 'system',
                 rationale_code = 'model_execution_captured_resume_required',
                 failure_class = 'model_execution',
@@ -797,6 +809,8 @@ async def test_scan_selects_system_paused_captured_grammar_batch(
             WHERE id = $1
             """,
             job["id"],
+            job_type,
+            target_type,
         )
 
     identity = ExecutionIdentity(
@@ -844,6 +858,16 @@ async def test_scan_selects_system_paused_captured_grammar_batch(
         item for item in candidates if item.record_id == article.record_id
     )
     assert candidate.runnable_job_count == 1
+
+
+async def test_scan_selects_system_paused_captured_grammar_batch(
+    worker_loop_env: asyncpg.Pool,
+) -> None:
+    await test_scan_selects_any_owned_system_paused_captured_job(
+        worker_loop_env,
+        "build_grammar_bundle",
+        "unit_range",
+    )
 
 
 async def test_process_candidate_skips_when_record_lock_is_unavailable(

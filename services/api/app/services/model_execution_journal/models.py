@@ -65,6 +65,38 @@ class GrammarBatchResumePayloadV1(BaseModel):
     diagnostics: dict[str, JsonValue] | None = None
 
 
+class GrammarUnitResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output: GrammarBundleOutput
+    diagnostics: dict[str, JsonValue] | None = None
+
+
+class GrammarWindowCandidateResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_type: Literal["grammar_note", "sentence_analysis"]
+    anchor_segment_id: str = Field(min_length=1)
+    spans: list[dict[str, JsonValue]]
+    semantic_dedup_key: str = Field(min_length=1)
+    pattern_key: str | None = None
+    quality_score: int = Field(strict=True, ge=1, le=5)
+    reading_blocker: bool = Field(strict=True)
+    dedup_hint: str = Field(min_length=1, max_length=120)
+    grammar_point: str = ""
+    pattern: str | None = None
+    note: str = ""
+    label: str = ""
+    analysis: str = ""
+    chunks: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class GrammarWindowResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[GrammarWindowCandidateResultV1]
+
+
 class DisplayTitleResumePayloadV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

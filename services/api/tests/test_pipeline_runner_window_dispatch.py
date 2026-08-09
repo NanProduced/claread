@@ -28,6 +28,9 @@ import asyncpg
 import pytest
 
 from app.database import connection as db_connection
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GrammarWindowBootstrapService,
+)
 from app.services.reader_orchestration.job_bootstrap import (
     EnhancementBootstrapJobCounts,
     EnhancementBootstrapSummary,
@@ -35,9 +38,6 @@ from app.services.reader_orchestration.job_bootstrap import (
 )
 from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
-)
-from app.services.reader_orchestration.grammar_window_bootstrap import (
-    GrammarWindowBootstrapService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -579,15 +579,7 @@ async def test_pipeline_runner_window_value_error_transitions_job_to_failed_term
 async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
     test_db_pool_with_window_job_only: tuple[asyncpg.Pool, UUID, UUID, UUID],
 ) -> None:
-    """When publisher raises ValueError after candidates_ready, the
-    analysis_window is marked ``failed`` (not stuck in ``running``).
-
-    Verifies the ``window_id`` propagation path: ``process_window_job``
-    succeeds with ``candidates_ready``, then ``publish_window_grammar_bundle``
-    raises ValueError (P2-1 fail-closed inside publisher). The runner must
-    look up the window_id from the job's input_json and mark
-    ``analysis_windows.status = 'failed'``.
-    """
+    """A deterministic publish contract error pauses the captured result."""
     pool, record_id, user_id, base_id = test_db_pool_with_window_job_only
     runner = _make_runner(pool, record_id, base_id)
 
@@ -597,7 +589,23 @@ async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
     async def _candidates_ready_process(*, claim: Any) -> dict[str, Any]:
         captured_job_id.append(claim.job_id)
         captured_run_id.append(claim.run_id)
-        return {"status": "candidates_ready", "candidates": []}
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE analysis_windows
+                SET status = 'running', job_id = $1, started_at = NOW()
+                WHERE id = (
+                    SELECT (input_json->>'window_id')::uuid
+                    FROM reader_jobs WHERE id = $1
+                )
+                """,
+                claim.job_id,
+            )
+        return {
+            "status": "candidates_ready",
+            "candidates": [],
+            "execution_captured": True,
+        }
 
     async def _failing_publish(**kwargs: Any) -> None:
         raise ValueError(
@@ -608,6 +616,33 @@ async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
     mock_worker.process_window_job = AsyncMock(
         side_effect=_candidates_ready_process
     )
+
+    async def _pause_captured_claim(
+        claim: Any,
+        exc: Exception,
+        *,
+        invalid_receipt: bool = False,
+    ) -> None:
+        del exc
+        await runner._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=(
+                "receipt_payload_invalid"
+                if invalid_receipt
+                else "post_provider_resume_required"
+            ),
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid_receipt
+                else "model_execution_captured_resume_required"
+            ),
+        )
+
+    mock_worker.pause_captured_claim = AsyncMock(side_effect=_pause_captured_claim)
     mock_publisher = AsyncMock()
     mock_publisher.publish_window_grammar_bundle = AsyncMock(
         side_effect=_failing_publish
@@ -627,44 +662,14 @@ async def test_pipeline_runner_window_publisher_value_error_marks_window_failed(
 
     assert captured_job_id, "window worker must have been called at least once"
     job_status = await _query_job_status(pool, captured_job_id[0])
-    assert job_status == "failed_terminal", (
-        f"publisher ValueError must transition job to failed_terminal; "
-        f"got {job_status!r}"
-    )
+    assert job_status == "paused"
     window_status = await _query_window_status(pool, captured_job_id[0])
-    assert window_status == "failed", (
-        f"analysis_windows.status must be 'failed' after publisher failure; "
-        f"got {window_status!r}"
-    )
-
-    # T3.4a (P2): failure diagnostics must be persisted to both
-    # reader_jobs.output_ref_json.diagnostics (queryable from job side) and
-    # analysis_windows.coverage.diagnostics (queryable without job join).
-    job_diag = await _query_job_diagnostics(pool, captured_job_id[0])
-    assert job_diag is not None, (
-        "publisher ValueError must write output_ref_json.diagnostics"
-    )
-    assert job_diag["no_op_cause"] == "execution_failed", (
-        f"expected no_op_cause='execution_failed'; got {job_diag.get('no_op_cause')!r}"
-    )
-    assert job_diag["failure"]["failure_class"] == "grammar_window_contract_violation", (
-        f"expected failure_class='grammar_window_contract_violation'; "
-        f"got {job_diag['failure'].get('failure_class')!r}"
-    )
-    assert job_diag["failure"]["failure_code"] == "publisher_fail_closed", (
-        f"expected failure_code='publisher_fail_closed'; "
-        f"got {job_diag['failure'].get('failure_code')!r}"
-    )
+    assert window_status == "running"
+    assert await _query_job_diagnostics(pool, captured_job_id[0]) is None
     window_id = await _resolve_window_id_from_job(pool, captured_job_id[0])
     assert window_id is not None
     coverage_diag = await _query_window_coverage_diagnostics(pool, window_id)
-    assert coverage_diag is not None, (
-        "publisher ValueError must write coverage.diagnostics for failed window"
-    )
-    assert coverage_diag["no_op_cause"] == "execution_failed", (
-        f"coverage.diagnostics.no_op_cause must be 'execution_failed'; "
-        f"got {coverage_diag.get('no_op_cause')!r}"
-    )
+    assert coverage_diag is None
 
 
 # ---------------------------------------------------------------------------

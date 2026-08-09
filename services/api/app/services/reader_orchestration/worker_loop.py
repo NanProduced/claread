@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import asyncpg
 
 from app.database import connection as db_connection
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 
 from .completion_finalizer import (
     CompletionFinalizationResult,
@@ -37,6 +38,7 @@ from .span_recorder import (
     STATUS_SUCCEEDED,
     get_default_recorder,
 )
+from .usage_attribution import ReaderUsageAttributionService
 
 logger = logging.getLogger(__name__)
 
@@ -130,12 +132,17 @@ class ReaderEnhancementWorkerLoopService:
         repository: ReaderOrchestrationRepository | None = None,
         event_runtime: ReaderEventRuntime | None = None,
         completion_finalizer: CompletionFinalizer | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         self._pipeline_runner = pipeline_runner or ReaderEnhancementPipelineRunner(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._repository = repository or ReaderOrchestrationRepository(pool=pool)
         self._event_runtime = event_runtime or ReaderEventRuntime(pool=pool)
+        self._journal_service = journal_service or ModelExecutionJournalService(pool=pool)
+        self._usage_attribution_service = ReaderUsageAttributionService(
+            journal_service=self._journal_service
+        )
         # T3.5: completion finalizer advances ``readiness_state`` to
         # ``coverage_complete`` once all enhancement jobs and analysis
         # windows reach a terminal status. Defaults to a finalizer that
@@ -191,8 +198,6 @@ class ReaderEnhancementWorkerLoopService:
                                    )
                                    OR (
                                        job.status = 'paused'
-                                       AND job.job_type = 'build_grammar_bundle'
-                                       AND job.target_type = 'unit_range'
                                        AND job.pause_owner = 'system'
                                        AND job.rationale_code =
                                            'model_execution_captured_resume_required'
@@ -527,6 +532,13 @@ class ReaderEnhancementWorkerLoopService:
     ) -> ReaderEnhancementWorkerLoopCycleSummary:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        try:
+            await self._usage_attribution_service.materialize_and_reconcile()
+        except Exception as exc:
+            logger.warning(
+                "reader_usage_reconciliation_deferred: phase=before_cycle error=%s",
+                type(exc).__name__,
+            )
         recovered_stale_leases = await self._job_runtime.recover_stale_leases(
             batch_size=batch_size,
         )
@@ -547,6 +559,13 @@ class ReaderEnhancementWorkerLoopService:
         lock_skipped_count = sum(
             1 for result in results if result.outcome == "lock_unavailable"
         )
+        try:
+            await self._usage_attribution_service.materialize_and_reconcile()
+        except Exception as exc:
+            logger.warning(
+                "reader_usage_reconciliation_deferred: phase=after_cycle error=%s",
+                type(exc).__name__,
+            )
         return ReaderEnhancementWorkerLoopCycleSummary(
             recovered_stale_leases=recovered_stale_leases,
             scanned_candidate_count=len(candidates),

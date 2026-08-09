@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -41,6 +42,22 @@ from app.llm.routes import MODEL_ROUTE_READER_LAYER_GRAMMAR_BUNDLE
 from app.schemas.reader_orchestration import (
     ReaderTextRangeAnchor,
 )
+from app.services.ai_usage import (
+    BILLING_MODE_INTERNAL_ONLY,
+    CAPABILITY_READER_GRAMMAR_BUNDLE,
+    STATUS_SUCCEEDED,
+    USAGE_SCOPE_SYSTEM_INTERNAL,
+)
+from app.services.model_execution_journal import (
+    CapturedReceipt,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    PayloadContractError,
+    decode_resume_payload,
+    decode_usage_event_draft,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -59,11 +76,16 @@ from app.services.reader_orchestration.grammar_worker import (
     FAKE_GRAMMAR_MODEL_PROVIDER,
     FAKE_GRAMMAR_PROMPT_VERSION,
     GRAMMAR_PROMPT_AGENT_NAME,
+    GRAMMAR_WORKFLOW_VERSION,
     MAX_GRAMMAR_DEDUP_HINT_LENGTH,
 )
 from app.services.reader_orchestration.job_runtime import (
+    CapturedResumeClaim,
     ClaimResult,
+    FenceViolationError,
     IllegalTransitionError,
+    LeaseExpiredError,
+    LeaseTokenMismatchError,
     ReaderJobRuntime,
 )
 from app.services.reader_orchestration.lease_heartbeat import LeaseHeartbeat
@@ -71,7 +93,12 @@ from app.services.reader_orchestration.reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
 )
+from app.services.reader_orchestration.usage_attribution import (
+    ReaderUsageAttributionService,
+)
 from app.services.reader_orchestration.window_selector import CandidateItem
+
+logger = logging.getLogger(__name__)
 
 # Strategy metadata keys written by grammar_window_bootstrap into reader_jobs.input_json
 # (via _build_strategy_metadata). _load_window_context reads them back and
@@ -977,6 +1004,7 @@ class GrammarWindowWorkerService:
         lease_duration: timedelta = timedelta(seconds=120),
         heartbeat_interval: timedelta = timedelta(seconds=30),
         executor: GrammarWindowExecutorProtocol | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
@@ -984,6 +1012,9 @@ class GrammarWindowWorkerService:
         self._heartbeat_interval = heartbeat_interval
         self._executor: GrammarWindowExecutorProtocol = (
             executor or UnconfiguredGrammarWindowExecutor()
+        )
+        self._journal_service = journal_service or ModelExecutionJournalService(
+            pool=pool
         )
 
     def get_pool(self) -> asyncpg.Pool:
@@ -1091,24 +1122,7 @@ class GrammarWindowWorkerService:
         *,
         claim: ClaimResult,
     ) -> dict[str, Any]:
-        """Run window preflight + LLM (no publish).
-
-        Correlation scope is owned by
-        ``ReaderEnhancementPipelineRunner._run_grammar_window_attempt`` so
-        process + publish + usage event + span share one ``execution_id``.
-        Do not re-bind execution correlation here (would mint a second id).
-
-        Steps:
-          1. ``preflight_window_job`` — §8.2 state transition. Short-circuits
-             on ``ALREADY_TERMINAL``.
-          2. ``_load_window_context`` — load target anchors + source text.
-          3. ``_call_llm`` — delegates to the injected executor. Heartbeat
-             task renews the lease every ~30s while the LLM call is in flight.
-          4. Return ``candidates_ready`` with the candidate list. The
-             pipeline runner (``_run_grammar_window_attempt``) hands off to
-             ``GrammarWindowPublisher.publish_window_grammar_bundle``.
-        """
-        # 1. preflight
+        """Run preflight and one journaled provider invocation (no publish)."""
         preflight = await self.preflight_window_job(
             job_id=claim.job_id,
             lease_token=claim.lease_token,
@@ -1117,33 +1131,11 @@ class GrammarWindowWorkerService:
         if preflight == PreflightResult.ALREADY_TERMINAL:
             return {"status": "already_terminal"}
 
-        # 2. load window context (target anchors + source text + semantic fence)
         try:
             context = await self._load_window_context(claim.job_id)
         except GrammarWindowExecutionError as exc:
             if is_semantic_fence_failure_code(exc.failure_code):
-                await self._job_runtime.transition(
-                    job_id=claim.job_id,
-                    target_status="superseded",
-                    lease_token=claim.lease_token,
-                    rationale_code=exc.failure_code,
-                )
-                # Mirror other workers: mark the parent run superseded.
-                async with self.get_pool().acquire() as conn:
-                    await conn.execute(
-                        """
-                        UPDATE reader_runs
-                        SET status = 'superseded',
-                            failure_class = $2,
-                            failure_code = $3,
-                            finished_at = $4
-                        WHERE id = $1
-                        """,
-                        claim.run_id,
-                        exc.failure_class,
-                        exc.failure_code,
-                        datetime.now(UTC),
-                    )
+                await self._mark_semantic_fence_superseded(claim, exc)
                 return {
                     "status": "superseded",
                     "failure_code": exc.failure_code,
@@ -1151,12 +1143,37 @@ class GrammarWindowWorkerService:
                 }
             raise
 
-        # 3. LLM call with heartbeat (§8.6). R7-3: the renewal loop is
-        # the shared LeaseHeartbeat implementation (same manager as the
-        # grammar batch path). If a renewal fails during the LLM call
-        # (lease expired / token mismatch / job no longer claimed), the
-        # failure is captured + logged and re-raised after cleanup so
-        # this attempt fails instead of publishing on a dead lease.
+        identity = self._execution_identity(claim)
+        try:
+            begin = await self._journal_service.begin_execution(
+                identity=identity,
+                invocation_kind="reader.grammar_window",
+            )
+        except Exception as exc:
+            await self._pause_model_execution_claim(
+                claim,
+                rationale_code="model_execution_begin_unconfirmed",
+                failure_code="journal_begin_failed",
+                failure_message=str(exc),
+            )
+            return {"status": "paused"}
+        if not begin.provider_call_allowed:
+            captured = begin.capture_state == "captured"
+            await self._pause_model_execution_claim(
+                claim,
+                rationale_code=(
+                    "model_execution_captured_resume_required"
+                    if captured
+                    else "model_execution_ambiguous"
+                ),
+                failure_code=(
+                    "post_provider_resume_required"
+                    if captured
+                    else "provider_outcome_ambiguous"
+                ),
+            )
+            return {"status": "paused"}
+
         heartbeat = LeaseHeartbeat(
             job_runtime=self._job_runtime,
             job_id=claim.job_id,
@@ -1167,16 +1184,266 @@ class GrammarWindowWorkerService:
         await heartbeat.start()
         try:
             execution = await self._call_llm(context)
+            try:
+                event_id = await self._capture_execution(
+                    identity=identity,
+                    claim=claim,
+                    context=context,
+                    execution=execution,
+                )
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return {"status": "paused"}
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return {"status": "paused"}
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return {"status": "retry_later"}
         finally:
             await heartbeat.stop()
-        heartbeat.assert_ownership()
+        return self._candidates_ready_result(execution, event_id)
 
-        # 4. Return candidates_ready. The pipeline runner wires the publisher
-        # after this return (see ``_run_grammar_window_attempt``).
-        # candidates 携带 content_* 字段，publisher 据此构建合法 layer output。
-        # execution (GrammarWindowExecutionResult) carries usage_data +
-        # prompt_version + model metadata for ai_usage_events recording
-        # and worker_tick span ending (requirement 6).
+    async def process_captured_window_job(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> dict[str, Any]:
+        """Return captured candidates without granting provider capability."""
+        claim = resume.claim
+        preflight = await self.preflight_window_job(
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=self._lease_duration,
+        )
+        if preflight == PreflightResult.ALREADY_TERMINAL:
+            return {"status": "already_terminal"}
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("grammar_window_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution = self._execution_from_captured_receipt(receipt)
+            await self._load_window_context(claim.job_id)
+        except GrammarWindowExecutionError as exc:
+            if is_semantic_fence_failure_code(exc.failure_code):
+                await self._mark_semantic_fence_superseded(claim, exc)
+                return {"status": "superseded", "failure_code": exc.failure_code}
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return {"status": "paused"}
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return {"status": "paused"}
+
+        event_id = await self._materialize_captured_usage(receipt)
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=self._lease_duration,
+            heartbeat_interval=self._heartbeat_interval,
+        )
+        await heartbeat.start()
+        try:
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return {"status": "retry_later"}
+        finally:
+            await heartbeat.stop()
+        return self._candidates_ready_result(execution, event_id)
+
+    @staticmethod
+    def _execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_GRAMMAR_BUNDLE}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        claim: ClaimResult,
+        context: dict[str, Any],
+        execution: GrammarWindowExecutionResult,
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.grammar_window",
+            resume_payload_kind="reader.grammar_window.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "candidates": [
+                    self._candidate_payload(candidate)
+                    for candidate in execution.candidates
+                ]
+            },
+            usage_event_draft={
+                "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+                "capability_code": CAPABILITY_READER_GRAMMAR_BUNDLE,
+                "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+                "status": STATUS_SUCCEEDED,
+                "user_id": claim.user_id,
+                "reading_record_id": claim.reading_record_id,
+                "reader_run_id": claim.run_id,
+                "reader_job_id": claim.job_id,
+                "workflow_name": "reader_orchestration",
+                "workflow_version": GRAMMAR_WORKFLOW_VERSION,
+                "prompt_version": execution.prompt_version,
+                "model_route": execution.model_route,
+                "model_profile_id": execution.model_profile,
+                "model_profile": execution.model_profile,
+                "model_provider": execution.model_provider,
+                "model_name": execution.model_name,
+                "planner_kind": "llm_worker",
+                "usage_data": execution.usage_data,
+                "operation_fingerprint": claim.operation_fingerprint.split(":", 1)[0],
+                "metadata_json": {
+                    "plan_id": str(context["plan_id"]),
+                    "window_id": str(context["window_id"]),
+                    "window_index": context["window_index"],
+                    "target_unit_ids": context["target_unit_ids"],
+                    "target_anchor_ids": context["target_anchor_ids"],
+                    "candidate_count": len(execution.candidates),
+                    "pre_publish_no_candidates": not execution.candidates,
+                    "invocation_key": identity.invocation_key,
+                    "attempt_ordinal": identity.attempt_ordinal,
+                    "execution_slot": identity.execution_slot,
+                },
+            },
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_captured_usage(receipt)
+
+    @staticmethod
+    def _candidate_payload(candidate: CandidateItem) -> dict[str, Any]:
+        return {
+            "item_type": candidate.item_type,
+            "anchor_segment_id": candidate.anchor_segment_id,
+            "spans": candidate.spans,
+            "semantic_dedup_key": candidate.semantic_dedup_key,
+            "pattern_key": candidate.pattern_key,
+            "quality_score": candidate.quality_score,
+            "reading_blocker": candidate.reading_blocker,
+            "dedup_hint": candidate.dedup_hint,
+            "grammar_point": candidate.grammar_point,
+            "pattern": candidate.pattern,
+            "note": candidate.note,
+            "label": candidate.label,
+            "analysis": candidate.analysis,
+            "chunks": candidate.chunks,
+        }
+
+    @staticmethod
+    def _execution_from_captured_receipt(
+        receipt: CapturedReceipt,
+    ) -> GrammarWindowExecutionResult:
+        if receipt.invocation_kind != "reader.grammar_window":
+            raise PayloadContractError("grammar_window_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return GrammarWindowExecutionResult(
+            candidates=[
+                CandidateItem(**candidate.model_dump(mode="python"))
+                for candidate in payload.candidates
+            ],
+            usage_data=usage.usage_data,
+            prompt_version=usage.prompt_version,
+            model_route=usage.model_route,
+            model_profile=usage.model_profile,
+            model_provider=usage.model_provider,
+            model_name=usage.model_name,
+        )
+
+    async def _materialize_captured_usage(
+        self,
+        receipt: CapturedReceipt,
+    ) -> UUID | None:
+        return await self._reconcile_captured_usage(
+            invocation_key=receipt.identity.invocation_key,
+            fallback_event_id=receipt.ai_usage_event_id,
+        )
+
+    async def reconcile_published_usage(
+        self,
+        *,
+        claim: ClaimResult,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        return await self._reconcile_captured_usage(
+            invocation_key=self._execution_identity(claim).invocation_key,
+            fallback_event_id=fallback_event_id,
+        )
+
+    async def _reconcile_captured_usage(
+        self,
+        *,
+        invocation_key: str,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=invocation_key
+            )
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "grammar_window_usage_delivery_deferred: invocation_key=%s error=%s",
+                invocation_key,
+                type(exc).__name__,
+            )
+            return fallback_event_id
+        return receipt.ai_usage_event_id or fallback_event_id
+
+    @staticmethod
+    def _candidates_ready_result(
+        execution: GrammarWindowExecutionResult,
+        event_id: UUID | None,
+    ) -> dict[str, Any]:
         return {
             "status": "candidates_ready",
             "candidates": execution.candidates,
@@ -1186,7 +1453,96 @@ class GrammarWindowWorkerService:
             "model_profile": execution.model_profile,
             "model_provider": execution.model_provider,
             "model_name": execution.model_name,
+            "ai_usage_event_id": event_id,
+            "execution_captured": True,
         }
+
+    async def _pause_invalid_or_incomplete_resume(
+        self,
+        claim: ClaimResult,
+        exc: Exception,
+    ) -> None:
+        invalid = isinstance(exc, PayloadContractError)
+        await self._pause_model_execution_claim(
+            claim,
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid
+                else "model_execution_captured_resume_required"
+            ),
+            failure_code=(
+                "receipt_payload_invalid" if invalid else "post_provider_resume_required"
+            ),
+            failure_message=str(exc),
+        )
+
+    async def pause_captured_claim(
+        self,
+        claim: ClaimResult,
+        exc: Exception,
+        *,
+        invalid_receipt: bool = False,
+    ) -> None:
+        await self._pause_model_execution_claim(
+            claim,
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid_receipt
+                else "model_execution_captured_resume_required"
+            ),
+            failure_code=(
+                "receipt_payload_invalid"
+                if invalid_receipt
+                else "post_provider_resume_required"
+            ),
+            failure_message=str(exc),
+        )
+
+    async def _pause_model_execution_claim(
+        self,
+        claim: ClaimResult,
+        *,
+        rationale_code: str,
+        failure_code: str,
+        failure_message: str | None = None,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
+
+    async def _mark_semantic_fence_superseded(
+        self,
+        claim: ClaimResult,
+        exc: GrammarWindowExecutionError,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="superseded",
+            lease_token=claim.lease_token,
+            rationale_code=exc.failure_code,
+        )
+        async with self.get_pool().acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_runs
+                SET status = 'superseded',
+                    failure_class = $2,
+                    failure_code = $3,
+                    finished_at = $4
+                WHERE id = $1
+                """,
+                claim.run_id,
+                exc.failure_class,
+                exc.failure_code,
+                datetime.now(UTC),
+            )
 
     # ------------------------------------------------------------------
     # §8.6 heartbeat loop
