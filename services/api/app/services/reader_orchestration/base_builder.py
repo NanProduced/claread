@@ -455,7 +455,7 @@ def _build_reading_base_core(
         language=language,
     )
 
-    # A5: every supplied annotation passes through the single analyzer
+    # Every supplied annotation passes through the single analyzer
     # module BEFORE any filtering. It owns range validity, duplicate
     # judgement, inline mark validation, diagnostics, and per-unit
     # structural policy override attribution. Only its accepted

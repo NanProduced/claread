@@ -292,4 +292,3 @@ Your finished HTML should look something like this:
 You can also find this code on GitHub at [simple-table.html](https://github.com/mdn/learning-area/blob/main/html/tables/basic/simple-table.html) ([see it running live also](https://mdn.github.io/learning-area/html/tables/basic/simple-table.html)).
 
 </details>
-

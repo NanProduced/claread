@@ -1257,7 +1257,7 @@ class ReaderOrchestrationRepository:
             record_id,
             record_generation,
         )
-        # R1 reload re-join: persisted block rows re-enter the single
+        # Persisted block rows re-enter the single
         # analyzer (no silent range skipping anywhere). Accepted
         # annotations carry analyzer-validated inline marks, so reload
         # projects exactly the same mark semantics as the build path.

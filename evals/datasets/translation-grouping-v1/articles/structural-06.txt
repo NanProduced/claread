@@ -163,4 +163,3 @@ and the :setting:`SECRET_KEY` setting.
     Finally, the size of a cookie can have an impact on the speed of your site.
 
 .. _`replay attacks`: https://en.wikipedia.org/wiki/Replay_attack
-
