@@ -61,6 +61,33 @@ class GrammarBatchResumePayloadV1(BaseModel):
     diagnostics: dict[str, JsonValue] | None = None
 
 
+class DisplayTitleResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title_zh: str = Field(min_length=1, max_length=32)
+
+
+class SemanticOutlineCandidateResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ref: str = Field(min_length=1)
+    parent_candidate_ref: str | None = None
+    depth: int = Field(ge=1)
+    title: str = Field(min_length=1)
+    start_unit_id: str = Field(min_length=1)
+    end_unit_id: str = Field(min_length=1)
+    start_anchor_segment_id: str | None = None
+    end_anchor_segment_id: str | None = None
+
+
+class SemanticOutlineResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[SemanticOutlineCandidateResultV1]
+    worker_failure: bool
+    model: str | None = None
+
+
 class UsageEventDraftV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

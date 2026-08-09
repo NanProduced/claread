@@ -698,6 +698,54 @@ class ReaderJobRuntime:
     # Heartbeat
     # ------------------------------------------------------------------
 
+    async def find_captured_resume_job_id(
+        self,
+        *,
+        job_type: str,
+        target_type: str,
+        operation_fingerprint: str | None = None,
+        reading_record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> UUID | None:
+        """Locate one job eligible for the private captured-resume claim seam."""
+        async with self.get_pool().acquire() as conn:
+            return await conn.fetchval(
+                """
+                SELECT job.id
+                FROM reader_jobs job
+                WHERE job.job_type = $1
+                  AND job.target_type = $2
+                  AND ($3::text IS NULL
+                       OR job.operation_fingerprint = $3
+                       OR starts_with(job.operation_fingerprint, $3 || ':'))
+                  AND ($4::uuid IS NULL OR job.reading_record_id = $4)
+                  AND ($5::uuid IS NULL OR job.base_id = $5)
+                  AND ($6::integer IS NULL OR job.expected_generation = $6)
+                  AND job.status = 'paused'
+                  AND job.pause_owner = 'system'
+                  AND job.rationale_code =
+                      'model_execution_captured_resume_required'
+                  AND job.failure_class = 'model_execution'
+                  AND job.failure_code = 'post_provider_resume_required'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM ai_model_execution_journal journal
+                      WHERE journal.reader_job_id = job.id
+                        AND journal.attempt_ordinal = job.attempt_count
+                        AND journal.capture_state = 'captured'
+                  )
+                ORDER BY job.created_at ASC, job.id ASC
+                LIMIT 1
+                """,
+                job_type,
+                target_type,
+                operation_fingerprint,
+                reading_record_id,
+                base_id,
+                expected_generation,
+            )
+
     async def claim_captured_resume(
         self,
         *,

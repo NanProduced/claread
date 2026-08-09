@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -28,6 +29,16 @@ from app.services.ai_usage import (
     record_ai_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
+from app.services.model_execution_journal import (
+    CapturedReceipt,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    PayloadContractError,
+    decode_resume_payload,
+    decode_usage_event_draft,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -43,6 +54,7 @@ from .job_bootstrap import (
 from .job_runtime import (
     STATUS_CLAIMED,
     STATUS_RETRY_LATER,
+    CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
@@ -58,6 +70,8 @@ from .span_recorder import (
     end_worker_span_generic_exception,
     end_worker_span_success,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DISPLAY_TITLE_RETRY_DELAY = timedelta(minutes=5)
 DEFAULT_DISPLAY_TITLE_FAILURE_MESSAGE = "display title generation failed"
@@ -275,10 +289,12 @@ class DisplayTitleWorkerService:
         pool: asyncpg.Pool | None = None,
         job_runtime: ReaderJobRuntime | None = None,
         generator: DisplayTitleGenerator | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._generator = generator or PydanticAIDisplayTitleGenerator()
+        self._journal_service = journal_service or ModelExecutionJournalService(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -337,6 +353,12 @@ class DisplayTitleWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
     ) -> DisplayTitleJobProcessResult | None:
+        resume = await self._claim_captured_display_title_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_display_title_resume(resume=resume)
         claim = await self.claim_display_title_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
@@ -358,6 +380,15 @@ class DisplayTitleWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
     ) -> DisplayTitleJobProcessResult | None:
+        resume = await self._claim_captured_display_title_resume(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_display_title_resume(resume=resume)
         claim = await self.claim_display_title_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -380,20 +411,86 @@ class DisplayTitleWorkerService:
         retry_delay: timedelta = DEFAULT_DISPLAY_TITLE_RETRY_DELAY,
     ) -> DisplayTitleJobProcessResult:
         context: DisplayTitleJobContext | None = None
+        execution_captured = False
         try:
             context = await self._load_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.display_title",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return DisplayTitleJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return DisplayTitleJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._generator.generate(context)
             title_zh = normalize_generated_title_zh(execution.title_zh)
+            try:
+                event_id = await self._capture_execution_usage(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    title_zh=title_zh,
+                )
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return DisplayTitleJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return DisplayTitleJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._complete_title_job_success(
                 claim=claim,
                 context=context,
                 execution=execution,
                 title_zh=title_zh,
-            )
-            event_id = await self._record_usage_event(
-                context=context,
-                execution=execution,
-                status=STATUS_SUCCEEDED,
             )
             await end_worker_span_success(
                 ai_usage_event_id=event_id,
@@ -456,6 +553,18 @@ class DisplayTitleWorkerService:
                 status="retry_later",
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return DisplayTitleJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             failure_code = type(exc).__name__
             failure_message = f"reader_title_generation failed unexpectedly: {exc}"
             try:
@@ -487,6 +596,235 @@ class DisplayTitleWorkerService:
                 status="retry_later",
             )
 
+    async def _claim_captured_display_title_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        job_id = await self._job_runtime.find_captured_resume_job_id(
+            job_type=DISPLAY_TITLE_JOB_TYPE,
+            target_type=DISPLAY_TITLE_TARGET_SCOPE,
+            operation_fingerprint=DISPLAY_TITLE_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if job_id is None:
+            return None
+        resume = await self._job_runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            await self._mark_run_running(resume.claim.run_id)
+            await self._mark_record_title_pending(resume.claim)
+        return resume
+
+    async def _process_captured_display_title_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> DisplayTitleJobProcessResult:
+        claim = resume.claim
+        context: DisplayTitleJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("display_title_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, title_zh = self._execution_from_captured_receipt(receipt)
+            context = await self._load_job_context(claim.job_id)
+            await self._complete_title_job_success(
+                claim=claim,
+                context=context,
+                execution=execution,
+                title_zh=title_zh,
+            )
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(
+                claim,
+                rationale_code="publish_fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await self._pause_model_execution_claim(
+                claim,
+                rationale_code=(
+                    "model_execution_receipt_invalid"
+                    if isinstance(exc, PayloadContractError)
+                    else "model_execution_captured_resume_required"
+                ),
+                failure_code=(
+                    "receipt_payload_invalid"
+                    if isinstance(exc, PayloadContractError)
+                    else "post_provider_resume_required"
+                ),
+                failure_message=str(exc),
+            )
+            return DisplayTitleJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+
+        usage_event_id = receipt.ai_usage_event_id
+        try:
+            await self._journal_service.materialize_pending()
+            materialized = await self._journal_service.load_captured_receipt(
+                invocation_key=receipt.identity.invocation_key
+            )
+            usage_event_id = materialized.ai_usage_event_id
+        except Exception as exc:
+            logger.warning(
+                "display_title_usage_delivery_deferred: invocation_key=%s error=%s",
+                receipt.identity.invocation_key,
+                type(exc).__name__,
+            )
+        await end_worker_span_success(
+            ai_usage_event_id=usage_event_id,
+            usage_data=execution.usage_data,
+            model_route=execution.model_route,
+            model_name=execution.model_name,
+            model_provider=execution.model_provider,
+            capability_code=CAPABILITY_READER_TITLE_GENERATION,
+        )
+        return DisplayTitleJobProcessResult(
+            claim=claim,
+            context=context,
+            status="succeeded",
+            title_zh=title_zh,
+            usage_data=execution.usage_data,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+        )
+
+    @staticmethod
+    def _execution_from_captured_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[DisplayTitleExecutionResult, str]:
+        if receipt.invocation_kind != "reader.display_title":
+            raise PayloadContractError("display_title_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return (
+            DisplayTitleExecutionResult(
+                title_zh=payload.title_zh,
+                usage_data=usage.usage_data,
+                prompt_version=usage.prompt_version,
+                model_route=usage.model_route,
+                model_profile=usage.model_profile,
+                model_provider=usage.model_provider,
+                model_name=usage.model_name,
+            ),
+            payload.title_zh,
+        )
+
+    @staticmethod
+    def _execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_TITLE_GENERATION}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_execution_usage(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: DisplayTitleJobContext,
+        execution: DisplayTitleExecutionResult,
+        title_zh: str,
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.display_title",
+            resume_payload_kind="reader.display_title.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={"title_zh": title_zh},
+            usage_event_draft={
+                "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+                "capability_code": CAPABILITY_READER_TITLE_GENERATION,
+                "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+                "status": STATUS_SUCCEEDED,
+                "user_id": context.user_id,
+                "reading_record_id": context.reading_record_id,
+                "reader_run_id": context.run_id,
+                "reader_job_id": context.job_id,
+                "workflow_name": "reader_orchestration",
+                "workflow_version": DISPLAY_TITLE_WORKER_VERSION,
+                "prompt_version": execution.prompt_version,
+                "model_route": execution.model_route,
+                "model_profile_id": execution.model_profile,
+                "model_profile": execution.model_profile,
+                "model_provider": execution.model_provider,
+                "model_name": execution.model_name,
+                "planner_kind": "llm_worker",
+                "usage_data": execution.usage_data,
+                "operation_fingerprint": context.operation_fingerprint,
+                "metadata_json": {
+                    **_usage_metadata(context),
+                    "invocation_key": identity.invocation_key,
+                    "attempt_ordinal": identity.attempt_ordinal,
+                    "execution_slot": identity.execution_slot,
+                },
+            },
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        try:
+            await self._journal_service.materialize_pending()
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=receipt.identity.invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "display_title_usage_delivery_deferred: invocation_key=%s error=%s",
+                receipt.identity.invocation_key,
+                type(exc).__name__,
+            )
+        return receipt.ai_usage_event_id
+
+    async def _pause_model_execution_claim(
+        self,
+        claim: ClaimResult,
+        *,
+        rationale_code: str,
+        failure_code: str,
+        failure_message: str | None = None,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
     async def _load_job_context(self, job_id: UUID) -> DisplayTitleJobContext:
         async with self.get_pool().acquire() as conn:
             row = await conn.fetchrow(

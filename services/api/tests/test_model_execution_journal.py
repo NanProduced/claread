@@ -73,6 +73,65 @@ def test_grammar_batch_v1_payload_round_trips_strictly() -> None:
     assert len(prepared.capture_envelope_sha256) == 64
 
 
+@pytest.mark.parametrize(
+    ("invocation_kind", "resume_payload_kind", "payload"),
+    [
+        (
+            "reader.display_title",
+            "reader.display_title.result",
+            {"title_zh": "城市补贴政策争议"},
+        ),
+        (
+            "reader.semantic_outline",
+            "reader.semantic_outline.result",
+            {
+                "candidates": [
+                    {
+                        "candidate_ref": "root",
+                        "parent_candidate_ref": None,
+                        "depth": 1,
+                        "title": "Root",
+                        "start_unit_id": "u1",
+                        "end_unit_id": "u1",
+                        "start_anchor_segment_id": None,
+                        "end_anchor_segment_id": None,
+                    }
+                ],
+                "worker_failure": False,
+                "model": "fake-outline",
+            },
+        ),
+    ],
+)
+def test_reader_wave_one_payloads_round_trip_strictly(
+    invocation_kind: str,
+    resume_payload_kind: str,
+    payload: dict[str, object],
+) -> None:
+    prepared = prepare_capture_envelope(
+        invocation_kind=invocation_kind,
+        resume_payload_kind=resume_payload_kind,
+        resume_payload_schema_version=1,
+        usage_event_draft_schema_version=1,
+        normalized_payload=payload,
+        usage_event_draft=_usage_draft(),
+    )
+
+    decoded = decode_resume_payload(
+        kind=prepared.resume_payload_kind,
+        schema_version=prepared.resume_payload_schema_version,
+        payload=prepared.normalized_payload,
+    )
+
+    assert decoded.model_dump(mode="json") == payload
+    with pytest.raises(PayloadContractError, match="invalid_resume_payload"):
+        decode_resume_payload(
+            kind=resume_payload_kind,
+            schema_version=1,
+            payload={**payload, "unexpected": True},
+        )
+
+
 def test_capture_hash_uses_canonical_json_key_order() -> None:
     usage_draft = _usage_draft()
     reversed_usage_draft = dict(reversed(list(usage_draft.items())))
@@ -104,6 +163,9 @@ def test_journal_service_does_not_own_reader_job_state() -> None:
 
     assert "reader_jobs" not in source
     assert "reader_job_events" not in source
+    assert "enhancement_layers" not in source
+    assert "analysis_windows" not in source
+    assert "reader." not in source
     assert "_pause_owning_job_for_conflict" not in source
 
 

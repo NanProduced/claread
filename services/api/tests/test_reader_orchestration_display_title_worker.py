@@ -11,6 +11,8 @@ from app.config.settings import Settings
 from app.database import connection as db_connection
 from app.llm.registry import build_model_registry
 from app.llm.routes import MODEL_ROUTE_READER_TITLE_GENERATION
+from app.services.model_execution_journal import CaptureEnvelopeConflictError
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -29,6 +31,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     DisplayTitleJobBootstrapService,
     _fingerprint_matches_base,
 )
+from app.services.reader_orchestration.job_runtime import FenceViolationError
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -63,6 +66,28 @@ class _StaticTitleGenerator:
         )
 
 
+class _JournalInspectingTitleGenerator(_StaticTitleGenerator):
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        super().__init__()
+        self._pool = pool
+
+    async def generate(self, context):
+        async with self._pool.acquire() as conn:
+            journal_row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert journal_row is not None
+        assert journal_row["capture_state"] == "started"
+        assert journal_row["usage_delivery_state"] == "not_ready"
+        assert journal_row["execution_slot"] == 1
+        return await super().generate(context)
+
+
 class _FailingTitleGenerator:
     def __init__(self, error: DisplayTitleGenerationError) -> None:
         self.error = error
@@ -71,6 +96,59 @@ class _FailingTitleGenerator:
     async def generate(self, context):
         self.calls.append(context)
         raise self.error
+
+
+class _FailIfTitleProviderCalled:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def generate(self, context):
+        self.calls.append(context)
+        raise AssertionError("captured resume must not call the title provider")
+
+
+class _CrashAfterTitleCaptureWorker(DisplayTitleWorkerService):
+    async def _complete_title_job_success(self, **kwargs) -> None:
+        del kwargs
+        raise RuntimeError("crash after title capture before publish")
+
+
+class _StaleFenceTitleWorker(DisplayTitleWorkerService):
+    async def _complete_title_job_success(self, **kwargs) -> None:
+        del kwargs
+        raise FenceViolationError("stale title publication fence")
+
+
+class _CaptureFailingJournal:
+    def __init__(self, pool: asyncpg.Pool, error: Exception) -> None:
+        self._delegate = ModelExecutionJournalService(pool=pool)
+        self._error = error
+        self.capture_calls = 0
+
+    async def begin_execution(self, **kwargs):
+        return await self._delegate.begin_execution(**kwargs)
+
+    async def capture_execution(self, **kwargs):
+        del kwargs
+        self.capture_calls += 1
+        raise self._error
+
+
+class _MaterializerFailingJournal:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._delegate = ModelExecutionJournalService(pool=pool)
+
+    async def begin_execution(self, **kwargs):
+        return await self._delegate.begin_execution(**kwargs)
+
+    async def capture_execution(self, **kwargs):
+        return await self._delegate.capture_execution(**kwargs)
+
+    async def materialize_pending(self):
+        raise RuntimeError("materializer unavailable")
+
+    async def load_captured_receipt(self, **kwargs):
+        return await self._delegate.load_captured_receipt(**kwargs)
 
 
 @pytest.fixture
@@ -130,7 +208,7 @@ async def test_display_title_worker_generates_chinese_title_and_snapshot_field(
         record_id=article.record_id,
         user_id=user_id,
     )
-    generator = _StaticTitleGenerator()
+    generator = _JournalInspectingTitleGenerator(display_title_worker_env)
     worker = DisplayTitleWorkerService(
         pool=display_title_worker_env,
         generator=generator,
@@ -168,6 +246,15 @@ async def test_display_title_worker_generates_chinese_title_and_snapshot_field(
             """,
             result.claim.job_id,
         )
+        journal_row = await conn.fetchrow(
+            """
+            SELECT invocation_key, invocation_kind, capture_state,
+                   usage_delivery_state, capture_envelope_sha256
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
 
     assert record_row["generated_title_zh"] == "城市补贴政策争议"
     assert record_row["title_generation_status"] == "succeeded"
@@ -179,6 +266,13 @@ async def test_display_title_worker_generates_chinese_title_and_snapshot_field(
     assert usage_row["capability_code"] == "reader_title_generation"
     assert usage_row["model_route"] == "reader_title_generation"
     assert usage_row["model_profile_id"] == "fake-title-profile"
+    assert journal_row["invocation_key"] == (
+        f"reader:reader_title_generation:{result.claim.job_id}:1:1"
+    )
+    assert journal_row["invocation_kind"] == "reader.display_title"
+    assert journal_row["capture_state"] == "captured"
+    assert journal_row["usage_delivery_state"] == "reconciled"
+    assert len(journal_row["capture_envelope_sha256"]) == 64
 
     snapshot = await ArticleReadyPersistenceService(
         pool=display_title_worker_env
@@ -186,6 +280,324 @@ async def test_display_title_worker_generates_chinese_title_and_snapshot_field(
     assert snapshot.record.display_title_zh == "城市补贴政策争议"
     assert snapshot.record.title_generation_status == "succeeded"
     assert snapshot.record.title_generation_error_code is None
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_display_title_captured_restart_resumes_without_provider_recall(
+    display_title_worker_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    user_id = await insert_user(display_title_worker_env)
+    article = await submit_article_ready(
+        display_title_worker_env,
+        user_id=user_id,
+        plain_text="A durable title must survive a crash before publication.",
+        title="Durable title",
+    )
+    await _bootstrap_title_job(
+        display_title_worker_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    first_generator = _StaticTitleGenerator("崩溃后仍可恢复的标题")
+    first_worker = _CrashAfterTitleCaptureWorker(
+        pool=display_title_worker_env,
+        generator=first_generator,
+    )
+
+    crashed = await first_worker.process_next_display_title_job(
+        lease_owner="title-worker-before-crash",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert crashed is not None
+    assert crashed.status == "paused"
+    assert len(first_generator.calls) == 1
+
+    async with display_title_worker_env.acquire() as conn:
+        if delivery_state != "reconciled":
+            await conn.execute(
+                """
+                UPDATE ai_model_execution_journal
+                SET usage_delivery_state = $2,
+                    ai_usage_event_id = NULL,
+                    reconciled_at = NULL,
+                    dead_lettered_at = CASE
+                        WHEN $2 = 'dead_letter' THEN NOW()
+                        ELSE NULL
+                    END
+                WHERE reader_job_id = $1
+                """,
+                crashed.claim.job_id,
+                delivery_state,
+            )
+
+    fail_if_called = _FailIfTitleProviderCalled()
+    resumed = await DisplayTitleWorkerService(
+        pool=display_title_worker_env,
+        generator=fail_if_called,
+    ).process_next_display_title_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="title-worker-recovery",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None
+    assert resumed.status == "succeeded"
+    assert resumed.title_zh == "崩溃后仍可恢复的标题"
+    assert fail_if_called.calls == []
+    async with display_title_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, attempt_count FROM reader_jobs WHERE id = $1",
+            crashed.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            crashed.claim.job_id,
+        )
+    assert job_row["status"] == "succeeded"
+    assert job_row["attempt_count"] == 1
+    assert usage_count == 1
+
+
+@pytest.mark.parametrize(
+    ("capture_error", "expected_rationale", "expected_failure"),
+    [
+        (
+            RuntimeError("capture unavailable"),
+            "model_execution_ambiguous",
+            "provider_outcome_ambiguous",
+        ),
+        (
+            CaptureEnvelopeConflictError("capture conflict"),
+            "model_execution_capture_conflict",
+            "capture_envelope_conflict",
+        ),
+    ],
+)
+async def test_display_title_capture_failure_pauses_without_publish(
+    display_title_worker_env: asyncpg.Pool,
+    capture_error: Exception,
+    expected_rationale: str,
+    expected_failure: str,
+) -> None:
+    user_id = await insert_user(display_title_worker_env)
+    article = await submit_article_ready(
+        display_title_worker_env,
+        user_id=user_id,
+        plain_text="Capture must complete before title publication.",
+    )
+    await _bootstrap_title_job(
+        display_title_worker_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    journal = _CaptureFailingJournal(display_title_worker_env, capture_error)
+    result = await DisplayTitleWorkerService(
+        pool=display_title_worker_env,
+        generator=_StaticTitleGenerator(),
+        journal_service=journal,
+    ).process_next_display_title_job(
+        lease_owner="title-capture-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert journal.capture_calls == 1
+    async with display_title_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            SELECT status, pause_owner, rationale_code, failure_code
+            FROM reader_jobs WHERE id = $1
+            """,
+            result.claim.job_id,
+        )
+        record_title = await conn.fetchval(
+            "SELECT generated_title_zh FROM reading_records WHERE id = $1",
+            article.record_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert dict(job_row) == {
+        "status": "paused",
+        "pause_owner": "system",
+        "rationale_code": expected_rationale,
+        "failure_code": expected_failure,
+    }
+    assert record_title is None
+    assert usage_count == 0
+
+
+async def test_display_title_materializer_failure_does_not_block_publish(
+    display_title_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(display_title_worker_env)
+    article = await submit_article_ready(
+        display_title_worker_env,
+        user_id=user_id,
+        plain_text="Usage delivery is independent from title publication.",
+    )
+    await _bootstrap_title_job(
+        display_title_worker_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    result = await DisplayTitleWorkerService(
+        pool=display_title_worker_env,
+        generator=_StaticTitleGenerator(),
+        journal_service=_MaterializerFailingJournal(display_title_worker_env),
+    ).process_next_display_title_job(
+        lease_owner="title-materializer-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    journal_service = ModelExecutionJournalService(pool=display_title_worker_env)
+    await journal_service.materialize_pending()
+    await journal_service.materialize_pending()
+    async with display_title_worker_env.acquire() as conn:
+        journal_state = await conn.fetchval(
+            """
+            SELECT usage_delivery_state FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert journal_state == "reconciled"
+    assert usage_count == 1
+
+
+async def test_display_title_tampered_receipt_fails_closed_without_provider_recall(
+    display_title_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(display_title_worker_env)
+    article = await submit_article_ready(
+        display_title_worker_env,
+        user_id=user_id,
+        plain_text="Tampered title receipts must never be published.",
+    )
+    await _bootstrap_title_job(
+        display_title_worker_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    crashed = await _CrashAfterTitleCaptureWorker(
+        pool=display_title_worker_env,
+        generator=_StaticTitleGenerator(),
+    ).process_next_display_title_job(
+        lease_owner="title-before-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert crashed is not None
+    assert crashed.status == "paused"
+    async with display_title_worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = jsonb_build_object(
+                    'title_zh', '被篡改的标题'
+                )
+            WHERE reader_job_id = $1
+            """,
+            crashed.claim.job_id,
+        )
+
+    fail_if_called = _FailIfTitleProviderCalled()
+    resumed = await DisplayTitleWorkerService(
+        pool=display_title_worker_env,
+        generator=fail_if_called,
+    ).process_next_display_title_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="title-after-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is None
+    assert fail_if_called.calls == []
+    async with display_title_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            SELECT status, pause_owner, rationale_code, failure_code
+            FROM reader_jobs WHERE id = $1
+            """,
+            crashed.claim.job_id,
+        )
+        record_title = await conn.fetchval(
+            "SELECT generated_title_zh FROM reading_records WHERE id = $1",
+            article.record_id,
+        )
+    assert dict(job_row) == {
+        "status": "paused",
+        "pause_owner": "system",
+        "rationale_code": "model_execution_receipt_invalid",
+        "failure_code": "receipt_payload_invalid",
+    }
+    assert record_title is None
+
+
+async def test_display_title_stale_fence_does_not_publish_captured_result(
+    display_title_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(display_title_worker_env)
+    article = await submit_article_ready(
+        display_title_worker_env,
+        user_id=user_id,
+        plain_text="A stale generation must reject title publication.",
+    )
+    await _bootstrap_title_job(
+        display_title_worker_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    with pytest.raises(FenceViolationError):
+        await _StaleFenceTitleWorker(
+            pool=display_title_worker_env,
+            generator=_StaticTitleGenerator(),
+        ).process_next_display_title_job(
+            lease_owner="title-stale-fence",
+            lease_duration=timedelta(seconds=30),
+        )
+
+    async with display_title_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT job.status, record.generated_title_zh, journal.capture_state,
+                   journal.usage_delivery_state
+            FROM reader_jobs job
+            JOIN reading_records record ON record.id = job.reading_record_id
+            JOIN ai_model_execution_journal journal ON journal.reader_job_id = job.id
+            WHERE job.job_type = 'generate_display_title_zh'
+            ORDER BY job.created_at DESC
+            LIMIT 1
+            """
+        )
+        usage_count = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM ai_usage_events usage
+            JOIN reader_jobs job ON job.id = usage.reader_job_id
+            WHERE job.job_type = 'generate_display_title_zh'
+            """
+        )
+    assert row["status"] == "superseded"
+    assert row["generated_title_zh"] is None
+    assert row["capture_state"] == "captured"
+    assert row["usage_delivery_state"] == "reconciled"
+    assert usage_count == 1
 
 
 async def test_display_title_worker_failure_enters_retryable_state(
@@ -240,6 +652,13 @@ async def test_display_title_worker_failure_enters_retryable_state(
             """,
             result.claim.job_id,
         )
+        journal_state = await conn.fetchval(
+            """
+            SELECT capture_state FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
 
     assert record_row["generated_title_zh"] is None
     assert record_row["title_generation_status"] == "failed_retryable"
@@ -252,6 +671,7 @@ async def test_display_title_worker_failure_enters_retryable_state(
     assert job_row["failure_code"] == "provider_timeout"
     assert job_row["rationale_code"] == "display_title_generation_failed"
     assert job_row["available_at"] > result.claim.lease_expires_at
+    assert journal_state == "started"
 
     snapshot = await ArticleReadyPersistenceService(
         pool=display_title_worker_env
