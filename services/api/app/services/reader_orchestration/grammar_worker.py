@@ -785,6 +785,37 @@ class FakeGrammarBatchExecutor:
         return GrammarBatchExecutionResult(outputs=outputs)
 
 
+def _failed_grammar_usage_attrs(
+    execution: GrammarExecutionResult | None,
+    error: GrammarExecutionError | None = None,
+) -> dict[str, Any]:
+    """Extract the invocation's usage attributes for a failed usage event.
+
+    When the executor already returned (provider called and usage_data may
+    be present) the event carries the real usage payload and the model
+    identity; otherwise the typed error's model identity is used when
+    available and no tokens are fabricated.
+    """
+    if execution is not None:
+        return {
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "usage_data": execution.usage_data,
+        }
+    if error is not None:
+        return {
+            "prompt_version": error.prompt_version,
+            "model_route": error.model_route,
+            "model_profile": error.model_profile,
+            "model_provider": error.model_provider,
+            "model_name": error.model_name,
+        }
+    return {}
+
+
 class GrammarBundleWorkerService:
     def __init__(
         self,
@@ -1126,11 +1157,7 @@ class GrammarBundleWorkerService:
                     context=context,
                     error_code=exc.failure_code,
                     error_message=str(exc),
-                    prompt_version=exc.prompt_version,
-                    model_route=exc.model_route,
-                    model_profile=exc.model_profile,
-                    model_provider=exc.model_provider,
-                    model_name=exc.model_name,
+                    **_failed_grammar_usage_attrs(execution, exc),
                 )
                 await end_worker_span_execution_error(
                     failure_class=exc.failure_class,
@@ -1162,11 +1189,7 @@ class GrammarBundleWorkerService:
                 context=context,
                 error_code=exc.failure_code,
                 error_message=str(exc),
-                prompt_version=exc.prompt_version,
-                model_route=exc.model_route,
-                model_profile=exc.model_profile,
-                model_provider=exc.model_provider,
-                model_name=exc.model_name,
+                **_failed_grammar_usage_attrs(execution, exc),
             )
             await end_worker_span_execution_error(
                 failure_class=exc.failure_class,
@@ -1198,6 +1221,7 @@ class GrammarBundleWorkerService:
                 context=context,
                 error_code=type(exc).__name__,
                 error_message=str(exc),
+                **_failed_grammar_usage_attrs(execution),
             )
             await end_worker_span_generic_exception(layer="grammar_bundle", exc=exc)
             return GrammarJobProcessResult(
