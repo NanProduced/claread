@@ -24,7 +24,6 @@ function addParagraph(
   }
   p.textContent = opts?.text ?? `unit ${unitId}`;
   p.scrollIntoView = vi.fn();
-  p.focus = vi.fn();
   parent.appendChild(p);
   return p;
 }
@@ -34,7 +33,6 @@ function addAnchor(parent: HTMLElement, segmentId: string): HTMLElement {
   span.setAttribute("data-anchor-segment-id", segmentId);
   span.textContent = `seg ${segmentId}`;
   span.scrollIntoView = vi.fn();
-  span.focus = vi.fn();
   parent.appendChild(span);
   return span;
 }
@@ -163,6 +161,78 @@ describe("reader-dom-navigation-adapter (public resolveAndScroll only)", () => {
     ]);
     expect(hit).toBeNull();
     expect(s1.scrollIntoView).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("unit mode moves real focus to the navigable block", () => {
+    const plate = mountPlateBody();
+    const start = addParagraph(plate, "u1", { unitStart: true });
+
+    const adapter = createReaderDomNavigationAdapter(document);
+    const hit = adapter.resolveAndScroll([{ mode: "unit", targetId: "u1" }]);
+
+    expect(hit).toEqual({ mode: "unit", targetId: "u1" });
+    expect(start.scrollIntoView).toHaveBeenCalledTimes(1);
+    // jsdom only moves document.activeElement for elements that can take
+    // focus — a plain paragraph needs the adapter's tabindex="-1" stamping.
+    expect(document.activeElement).toBe(start);
+    expect(start.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("anchor mode scrolls the precise segment but focuses its navigable block", () => {
+    const plate = mountPlateBody();
+    const para = addParagraph(plate, "u1", { unitStart: true, text: "" });
+    const anchor = addAnchor(para, "s-in-para");
+
+    const adapter = createReaderDomNavigationAdapter(document);
+    const hit = adapter.resolveAndScroll([
+      { mode: "anchor_segment", targetId: "s-in-para" },
+    ]);
+
+    expect(hit).toEqual({ mode: "anchor_segment", targetId: "s-in-para" });
+    expect(anchor.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(para);
+    expect(anchor.getAttribute("tabindex")).toBeNull();
+  });
+
+  it("focuses the hit element itself when no navigable block wraps it", () => {
+    const plate = mountPlateBody();
+    const orphan = addAnchor(plate, "s-orphan");
+
+    const adapter = createReaderDomNavigationAdapter(document);
+    adapter.resolveAndScroll([{ mode: "anchor_segment", targetId: "s-orphan" }]);
+
+    expect(document.activeElement).toBe(orphan);
+    expect(orphan.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("does not stamp tabindex on natively focusable focus owners", () => {
+    const plate = mountPlateBody();
+    const button = document.createElement("button");
+    button.setAttribute("data-reader-record-node", "paragraph");
+    button.setAttribute("data-unit-id", "u1");
+    button.setAttribute("data-reader-record-unit-start", "true");
+    button.scrollIntoView = vi.fn();
+    plate.appendChild(button);
+
+    const adapter = createReaderDomNavigationAdapter(document);
+    adapter.resolveAndScroll([{ mode: "unit", targetId: "u1" }]);
+
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("re-navigation after the first focus still moves focus to the new target", () => {
+    const plate = mountPlateBody();
+    const first = addParagraph(plate, "u1", { unitStart: true });
+    const second = addParagraph(plate, "u2", { unitStart: true });
+
+    const adapter = createReaderDomNavigationAdapter(document);
+    adapter.resolveAndScroll([{ mode: "unit", targetId: "u1" }]);
+    expect(document.activeElement).toBe(first);
+
+    adapter.resolveAndScroll([{ mode: "unit", targetId: "u2" }]);
+    expect(document.activeElement).toBe(second);
   });
 
   it("SSR/Node: adapter with no Document fail-closes without throw", () => {

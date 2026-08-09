@@ -1221,10 +1221,14 @@ export function AiWorkspacePanel({
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
   // One in-flight citation navigation at a time; the pending pair also
   // drives the per-citation loading state so double-clicks cannot resubmit.
+  // The ref mirror is the synchronous fence: React state only applies after
+  // the next render, so two activations in the same event-loop turn would
+  // both pass a state-only check.
   const [pendingCitationNavigation, setPendingCitationNavigation] = useState<{
     messageId: string;
     citationId: string;
   } | null>(null);
+  const pendingCitationNavigationRef = useRef(false);
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
 
@@ -1235,9 +1239,13 @@ export function AiWorkspacePanel({
   // base, generation, or stable-document field ever leaves this handler.
   const handleLocateCitationSource = useCallback(
     async (messageId: string, citationId: string) => {
-      if (!onNavigateToArticleLocation || pendingCitationNavigation) {
+      if (
+        !onNavigateToArticleLocation ||
+        pendingCitationNavigationRef.current
+      ) {
         return;
       }
+      pendingCitationNavigationRef.current = true;
       setPendingCitationNavigation({ messageId, citationId });
       try {
         let result: SourceNavigationResult;
@@ -1283,10 +1291,11 @@ export function AiWorkspacePanel({
         }
         setLiveAnnouncement(formatSourceNavigationFeedback(result));
       } finally {
+        pendingCitationNavigationRef.current = false;
         setPendingCitationNavigation(null);
       }
     },
-    [onNavigateToArticleLocation, pendingCitationNavigation, recordId],
+    [onNavigateToArticleLocation, recordId],
   );
 
   const [threads, setThreads] = useState<ReaderAskThreadSummaryDto[]>([]);

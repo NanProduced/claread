@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderAskAttachment, ReaderAskPageIdentity } from "@/lib/reader-plate";
@@ -7797,5 +7797,80 @@ describe("AiWorkspacePanel article citation source navigation", () => {
       ).toBe("已定位到文章中的相关位置");
     });
     expect(navigateRequestCount).toBe(1);
+  });
+
+  it("fences duplicate activations fired in the same event-loop turn", async () => {
+    let releaseNavigate: (() => void) | null = null;
+    mockThreadMessages([
+      articleCitationMessage([{ citationId: "cite-1", snippet: "引用片段一。" }]),
+    ]);
+    const base = vi.mocked(global.fetch).getMockImplementation()!;
+    let navigateRequestCount = 0;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/navigate")) {
+        navigateRequestCount += 1;
+        await new Promise<void>((resolve) => {
+          releaseNavigate = resolve;
+        });
+        return jsonResponse({
+          status: "ok",
+          location: { unit_id: "unit-1", anchor_segment_id: null },
+        });
+      }
+      return base(input, init);
+    });
+    renderPanel({ onNavigateToArticleLocation: navigatedHostCallback() });
+
+    await openCitationCard("cite-1");
+    const button = screen.getByTestId("locate-citation-cite-1");
+    // Native clicks dispatched inside one act() block run before React
+    // flushes the pending-state render, so only the synchronous ref fence
+    // can stop the second activation.
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(navigateRequestCount).toBe(1);
+    releaseNavigate!();
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("ai-workspace-live-announcement").textContent,
+      ).toBe("已定位到文章中的相关位置");
+    });
+    expect(navigateRequestCount).toBe(1);
+  });
+
+  it("triggers navigation from keyboard activation of the locate action", async () => {
+    const user = userEvent.setup();
+    mockThreadWithNavigate({
+      messages: [
+        articleCitationMessage([{ citationId: "cite-1", snippet: "引用片段一。" }]),
+      ],
+      navigatePayload: {
+        status: "ok",
+        location: { unit_id: "unit-1", anchor_segment_id: "anchor-1" },
+      },
+    });
+    const onNavigateToArticleLocation = navigatedHostCallback();
+    renderPanel({ onNavigateToArticleLocation });
+
+    await openCitationCard("cite-1");
+    const button = screen.getByTestId("locate-citation-cite-1");
+    button.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(onNavigateToArticleLocation).toHaveBeenCalledTimes(1);
+    });
+    expect(onNavigateToArticleLocation).toHaveBeenCalledWith({
+      unitId: "unit-1",
+      anchorSegmentId: "anchor-1",
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("ai-workspace-live-announcement").textContent,
+      ).toBe("已定位到文章中的相关位置");
+    });
   });
 });

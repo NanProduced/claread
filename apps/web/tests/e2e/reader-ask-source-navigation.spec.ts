@@ -301,6 +301,31 @@ async function clickLocateSource(page: Page, citationId: string): Promise<void> 
   await locateButton.click();
 }
 
+/**
+ * Assert the real browser focus landed on the navigable Reader block that
+ * owns the navigation target. Paragraph/heading blocks are not natively
+ * focusable, so this proves the programmatic focus contract end to end.
+ */
+async function expectReaderBlockFocused(page: Page, targetSelector: string): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((sel) => {
+          const active = document.activeElement as HTMLElement | null;
+          if (!active || active === document.body) return "no-focus";
+          const target = document.querySelector(sel);
+          const isBlock = active.matches(
+            "[data-reader-record-node][data-unit-id]",
+          );
+          const ownsTarget =
+            target !== null && (active === target || active.contains(target));
+          return isBlock && ownsTarget ? "focused" : "wrong-focus";
+        }, targetSelector),
+      { timeout: 15_000, intervals: [200, 500, 1_000] },
+    )
+    .toBe("focused");
+}
+
 /** Assert the target Reader DOM node is inside the viewport (polled). */
 async function expectNodeInViewport(page: Page, selector: string): Promise<void> {
   await expect
@@ -391,6 +416,7 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
       ? `[data-anchor-segment-id="${anchorSegmentId}"]`
       : `[data-reader-record-node][data-unit-id="${unitId}"]`;
     await expectNodeInViewport(page, targetSelector);
+    await expectReaderBlockFocused(page, targetSelector);
     await expect(page.getByTestId("ai-workspace-live-announcement")).toHaveText(
       "已定位到文章中的相关位置",
     );
@@ -416,10 +442,23 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
         response.request().method() === "POST" &&
         new URL(response.url()).pathname.endsWith("/navigate"),
     );
-    await clickLocateSource(page, citationId);
+    // Keyboard activation: focus the locate action and press Enter instead
+    // of a pointer click.
+    const reloadTrigger = page
+      .getByRole("button", { name: /查看来源 .*详情/ })
+      .first();
+    await reloadTrigger.hover();
+    await expect(
+      page.locator('[data-slot="inline-citation-card-body"]'),
+    ).toBeVisible();
+    const reloadLocateButton = page.getByTestId(`locate-citation-${citationId}`);
+    await expect(reloadLocateButton).toBeVisible();
+    await reloadLocateButton.focus();
+    await page.keyboard.press("Enter");
     const reloadNavigate = await reloadNavigatePromise;
     expect(reloadNavigate.status(), "reload navigate BFF status").toBe(200);
     await expectNodeInViewport(page, targetSelector);
+    await expectReaderBlockFocused(page, targetSelector);
     await expect(page.getByTestId("ai-workspace-live-announcement")).toHaveText(
       "已定位到文章中的相关位置",
     );
@@ -488,6 +527,7 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
       ? `[data-anchor-segment-id="${anchorSegmentId}"]`
       : `[data-reader-record-node][data-unit-id="${unitId}"]`;
     await expectNodeInViewport(page, targetSelector);
+    await expectReaderBlockFocused(page, targetSelector);
     await expect(page.getByTestId("ai-workspace-live-announcement")).toHaveText(
       "已定位到文章中的相关位置",
     );
