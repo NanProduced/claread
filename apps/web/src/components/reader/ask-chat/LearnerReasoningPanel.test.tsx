@@ -51,6 +51,31 @@ describe("LearnerReasoningPanel", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("does not reopen or auto-close after the user changes the disclosure", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <LearnerReasoningPanel text="正在梳理问题要点" status="streaming" />
+    );
+    const trigger = screen.getByTestId("ask-learner-reasoning-trigger");
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    rerender(
+      <LearnerReasoningPanel text="正在梳理问题要点" status="completed" />
+    );
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("does not introduce a scroll owner", () => {
     const { container } = render(
       <LearnerReasoningPanel text="结合证据核对结论" status="completed" />

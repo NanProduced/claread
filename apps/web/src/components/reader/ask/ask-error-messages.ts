@@ -51,6 +51,32 @@ export const INTERRUPTED_BUBBLE_FALLBACK_MESSAGE = "输出中断，可重新生�
  */
 export const OPTIONAL_TOOL_WARNING_MESSAGE = "部分可选能力暂不可用，回答已正常生成。";
 
+/** Fixed quiet explanations for failed/degraded public process steps. */
+export const PROCESS_STEP_ISSUE_MESSAGES: Readonly<
+  Record<string, Readonly<{ failed: string; degraded: string }>>
+> = {
+  analysis: {
+    failed: "问题分析未完成。",
+    degraded: "问题分析仅部分完成。",
+  },
+  "article-evidence": {
+    failed: "文章依据查找未完成。",
+    degraded: "部分文章依据暂不可用。",
+  },
+  "web-evidence": {
+    failed: "联网信息查询未完成。",
+    degraded: "部分联网信息暂不可用。",
+  },
+  answering: {
+    failed: "回答生成未完成。",
+    degraded: "回答仅部分生成。",
+  },
+  "citation-check": {
+    failed: "引用检查未通过，本轮回答未完成。",
+    degraded: "部分引用未通过检查。",
+  },
+};
+
 /** A clarification action no longer has the user turn it must replay. */
 export const CLARIFICATION_CONTEXT_MISSING_MESSAGE =
   "没有找到这轮澄清对应的原始问题，暂时无法继续当前讨论。";

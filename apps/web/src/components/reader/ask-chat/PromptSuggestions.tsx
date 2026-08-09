@@ -8,14 +8,11 @@ import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ClareadAiMark } from "@/components/brand/ClareadAiMark";
 import type { ReaderAskEntryActionDto } from "@/types/api/reader-ask";
 import type { WebSearchModeDto } from "@/types/api/reader-ask";
-import { cn } from "@/lib/cn";
 
 type PromptSuggestionItem = {
   prompt: string;
   entryAction: ReaderAskEntryActionDto;
   icon: LucideIcon;
-  iconClassName: string;
-  badgeClassName: string;
   /**
    * R2.1 — when present, the host should enable web search for this single
    * send (used by the "查询相关资料" suggestion). Absent on article-only
@@ -33,8 +30,6 @@ type PromptSuggestionsProps = {
     entryAction: ReaderAskEntryActionDto,
     webSearchOverride?: WebSearchModeDto,
   ) => void;
-  contextLabel?: string | null;
-  contextPreview?: string | null;
 };
 
 export function PromptSuggestions({
@@ -42,8 +37,6 @@ export function PromptSuggestions({
   description,
   suggestions,
   onPickPrompt,
-  contextLabel,
-  contextPreview,
 }: PromptSuggestionsProps) {
   return (
     <ConversationEmptyState className="h-full overflow-y-auto items-stretch justify-end px-4 pb-5 pt-8 sm:px-5">
@@ -64,15 +57,6 @@ export function PromptSuggestions({
           </div>
         </div>
 
-        {contextPreview ? (
-          <span className="mt-4 inline-flex max-w-full items-center rounded-md border border-border/65 bg-muted/25 px-2.5 py-1.5 text-xs leading-4 text-muted-foreground">
-            <span className="truncate">
-              {contextLabel ? `${contextLabel} · ` : ""}
-              {contextPreview}
-            </span>
-          </span>
-        ) : null}
-
         <Suggestions className="mt-5 w-full flex-col gap-1">
           {suggestions.map((suggestion) => (
             <Suggestion
@@ -88,13 +72,8 @@ export function PromptSuggestions({
               }
             >
               <span className="inline-flex items-start gap-2">
-                <span
-                  className={cn(
-                    "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
-                    suggestion.badgeClassName,
-                  )}
-                >
-                  <suggestion.icon className={cn("h-3.5 w-3.5", suggestion.iconClassName)} aria-hidden="true" />
+                <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+                  <suggestion.icon className="size-3.5" aria-hidden="true" />
                 </span>
                 <span>{suggestion.prompt}</span>
               </span>

@@ -2,7 +2,6 @@
 
 import {
   Check,
-  ChevronDown,
   Copy,
   FileText,
   GitBranch,
@@ -193,6 +192,20 @@ function isAbortError(error: unknown): boolean {
 }
 
 const COMPOSER_PLACEHOLDER = "继续问这篇文章…";
+const ASK_ANSWER_MARKDOWN_CLASSNAME = cn(
+  "ask-message-response border-0 bg-transparent p-0 text-[13.5px] leading-[1.75] text-reader-reading-ink shadow-none",
+  "[&_a]:text-lens-blue [&_a]:underline [&_a]:decoration-lens-blue/40 [&_a]:underline-offset-2",
+  "[&_blockquote]:my-2 [&_blockquote]:border-hairline [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted",
+  "[&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px]",
+  "[&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0",
+  "[&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0",
+  "[&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2",
+  "[&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[13.5px] [&_ol]:leading-[1.75] [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted",
+  "[&_p]:my-0 [&_p]:text-[13.5px] [&_p]:leading-[1.75] [&_p]:text-reader-reading-ink [&_p+p]:mt-3",
+  "[&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-hairline [&_pre]:bg-muted/40 [&_pre]:p-3",
+  "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-hairline [&_td]:p-2 [&_th]:border [&_th]:border-hairline [&_th]:bg-muted/40 [&_th]:p-2 [&_th]:text-left",
+  "[&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[13.5px] [&_ul]:leading-[1.75] [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted",
+);
 const workspaceLauncherClassName = cn(
   readerCommandControl,
   "group fixed bottom-[5.25rem] right-4 z-[var(--reader-z-floating-ask)] h-14 w-14 rounded-full border border-hairline/85",
@@ -500,87 +513,16 @@ export function truncateAtWordBoundary(value: string, max: number): string {
   return `${visible}…`;
 }
 
-function truncateProvenanceDetail(value: string, max = 80): string {
-  return truncateAtWordBoundary(value, max);
-}
-
-function AskProvenanceLine({
-  summary,
-  details,
-}: {
-  summary: string;
-  details: Array<{ label: string; value: string }>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetails = details.length > 0;
-  // ASK-UX-HISTORY-COT-R2 P0-2: render nothing when there is no explicit
-  // context (no selection, no notes). The current article is implicit
-  // and must not surface as a default provenance row.
-  if (!summary && !hasDetails) {
-    return null;
-  }
-  const summaryClassName =
-    "inline-flex max-w-full items-center gap-1 text-[11px] leading-4 text-muted-foreground";
-
-  return (
-    <div className="px-4 pt-1.5">
-      {hasDetails ? (
-        <button
-          type="button"
-          onClick={() => {
-            setExpanded((prev) => !prev);
-          }}
-          aria-expanded={expanded}
-          className={cn(
-            summaryClassName,
-            "transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20",
-          )}
-        >
-          <span className="truncate">{summary}</span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-180")}
-          />
-        </button>
-      ) : (
-        <p className={summaryClassName}>{summary}</p>
-      )}
-      {expanded && hasDetails ? (
-        <ul className="mt-1 space-y-0.5 text-[11px] leading-4 text-muted-foreground">
-          {details.map((detail, index) => (
-            <li key={`${detail.label}-${index}`} className="flex gap-1">
-              <span className="shrink-0 text-ink/60">{detail.label}：</span>
-              <span className="truncate">{detail.value}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-async function copyMessageText(text: string) {
+async function copyMessageText(text: string): Promise<boolean> {
   if (!text.trim() || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    return;
+    return false;
   }
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     // Ignore clipboard failures; the UI action remains best-effort only.
+    return false;
   }
 }
 
@@ -687,7 +629,7 @@ function AgenticAnswerBlocks({
         return (
           <div key={`block-${idx}`} data-testid={`agentic-answer-block-${idx}`}>
             <MessageResponse
-              className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-reader-reading-ink shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-reader-reading-ink [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-reader-reading-ink [&_p+p]:mt-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-reader-reading-ink"
+              className={ASK_ANSWER_MARKDOWN_CLASSNAME}
             >
               {block.text}
             </MessageResponse>
@@ -876,6 +818,26 @@ function MessageBubble({
     onLocateCitationSource != null &&
     isAssistant &&
     isPersistedAssistantMessageId(message.id);
+  const [copied, setCopied] = useState(false);
+  const copiedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedResetTimerRef.current) {
+        clearTimeout(copiedResetTimerRef.current);
+      }
+    },
+    [],
+  );
+  const handleCopy = useCallback(async () => {
+    if (!(await copyMessageText(message.content_md ?? ""))) {
+      return;
+    }
+    setCopied(true);
+    if (copiedResetTimerRef.current) {
+      clearTimeout(copiedResetTimerRef.current);
+    }
+    copiedResetTimerRef.current = setTimeout(() => setCopied(false), 1_200);
+  }, [message.content_md]);
   return (
     <div
       data-testid={isAssistant ? "ask-assistant-message" : "ask-user-message"}
@@ -951,7 +913,7 @@ function MessageBubble({
                           />
                         ) : hasAnswerContent ? (
                           <MessageResponse
-                            className="ask-message-response border-0 bg-transparent p-0 text-[14.5px] leading-[1.82] text-reader-reading-ink shadow-none [&_blockquote]:my-2 [&_blockquote]:text-[13px] [&_blockquote]:leading-[1.7] [&_blockquote]:text-reader-reading-muted [&_h2]:mt-6 [&_h2]:text-[1rem] [&_h2]:font-semibold [&_h2]:leading-7 [&_h2]:tracking-[-0.02em] [&_h2]:text-reader-reading-ink-strong [&_h2:first-child]:mt-0 [&_h3]:mt-4 [&_h3]:text-[0.95rem] [&_h3]:font-semibold [&_h3]:leading-6 [&_h3]:text-reader-reading-ink-strong [&_h3:first-child]:mt-0 [&_li]:[&_p+p]:mt-1.5 [&_li]:[&_ul]:mt-2 [&_li]:[&_ol]:mt-2 [&_ol]:my-2.5 [&_ol]:space-y-2.5 [&_ol]:pl-4 [&_ol]:text-[14.5px] [&_ol]:leading-[1.72] [&_ol]:text-reader-reading-ink [&_ol]:marker:font-medium [&_ol]:marker:text-reader-reading-muted [&_p]:my-0 [&_p]:text-[14.5px] [&_p]:leading-[1.82] [&_p]:text-reader-reading-ink [&_p+p]:mt-3 [&_table]:my-3 [&_ul]:my-2.5 [&_ul]:space-y-2.5 [&_ul]:pl-4 [&_ul]:text-[14.5px] [&_ul]:leading-[1.72] [&_ul]:text-reader-reading-ink [&_ul]:marker:text-[0.9em] [&_ul]:marker:text-reader-reading-muted"
+                            className={ASK_ANSWER_MARKDOWN_CLASSNAME}
                           >
                             {/* ASK-TURN-LIFECYCLE R2 — render provisional
                              * preview while streaming, canonical content_md
@@ -967,7 +929,8 @@ function MessageBubble({
                           // typed notice can be reconstructed.
                           <div data-testid="ask-turn-notice" className="space-y-1">
                             <SystemMessage
-                              variant={turnNotice.severity}
+                              variant="quiet"
+                              severity={turnNotice.severity}
                               cta={
                                 turnNotice.cta
                                   ? {
@@ -982,27 +945,24 @@ function MessageBubble({
                                           onResend(message.id);
                                         }
                                       },
+                                      variant: "ghost",
+                                    }
+                                  : undefined
+                              }
+                              dismiss={
+                                turnNotice.dismissible && onDismissTurnNotice
+                                  ? {
+                                      label: "关闭提示",
+                                      onClick: () => onDismissTurnNotice(message.id),
                                     }
                                   : undefined
                               }
                             >
                               {turnNotice.message}
                             </SystemMessage>
-                            {turnNotice.dismissible && onDismissTurnNotice ? (
-                              <div className="flex justify-end">
-                                <button
-                                  type="button"
-                                  onClick={() => onDismissTurnNotice(message.id)}
-                                  aria-label="关闭提示"
-                                  className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
-                                >
-                                  <X aria-hidden="true" className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ) : null}
                           </div>
                         ) : message.status === "interrupted" ? (
-                          <SystemMessage variant="warning">
+                          <SystemMessage variant="quiet" severity="warning">
                             {interruptedBubbleMessage(message.final_status)}
                           </SystemMessage>
                         ) : null}
@@ -1024,12 +984,14 @@ function MessageBubble({
                           {message.status !== "failed" ? (
                             <MessageAction
                               label="复制内容"
-                              title="复制内容"
-                              onClick={() => {
-                                void copyMessageText(message.content_md ?? "");
-                              }}
+                              tooltip={copied ? "已复制" : "复制内容"}
+                              onClick={() => void handleCopy()}
                             >
-                              <Copy className="h-3.5 w-3.5" />
+                              {copied ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
                             </MessageAction>
                           ) : null}
                           {isPersistedAssistantMessageId(message.id) &&
@@ -1038,7 +1000,7 @@ function MessageBubble({
                             "pending_submission" ? (
                             <MessageAction
                               label="重新生成"
-                              title="重新生成"
+                              tooltip="重新生成"
                               onClick={() => onRetry(message.id)}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -1050,7 +1012,7 @@ function MessageBubble({
                           onResend ? (
                             <MessageAction
                               label="重新发送"
-                              title="重新发送"
+                              tooltip="重新发送"
                               onClick={() => onResend(message.id)}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -1067,9 +1029,9 @@ function MessageBubble({
           })}
         </div>
         ) : (
-          <AiMessage from={message.role} className="w-full max-w-[31rem]">
-            <MessageContent className="text-[14.5px] px-3.5 py-2.5">
-              <MessageResponse className="ask-message-response whitespace-pre-wrap text-[14.5px] leading-[1.7]">
+          <AiMessage from={message.role} className="w-full max-w-[85%]">
+            <MessageContent className="bg-muted/60 px-3.5 py-2.5 text-[13.5px]">
+              <MessageResponse className="ask-message-response whitespace-pre-wrap text-[13.5px] leading-[1.75]">
                 {message.content_md}
               </MessageResponse>
             </MessageContent>
@@ -1116,18 +1078,6 @@ function StarterState({
     return "record";
   })();
   const starterContent = STARTER_CONTENT[starterMode];
-  const contextAttachment = attachments.find(
-    (attachment) =>
-      attachment.kind === "text_selection" ||
-      (attachment.kind === "analysis_ref" && Boolean(attachment.selectedText?.trim())),
-  );
-  const contextLabel =
-    starterMode === "sentence"
-      ? "当前句子"
-      : starterMode === "selection"
-        ? "当前选区"
-        : null;
-  const contextPreview = contextAttachment?.selectedText?.trim() ?? null;
   // R2.1 — article-oriented suggestions. The 4th slot is conditionally
   // swapped: "查询相关资料" appears only when the selected model's provider
   // declares web search capability. Otherwise the exercise prompt stays.
@@ -1137,22 +1087,16 @@ function StarterState({
       prompt: starterContent.prompts[0],
       entryAction: "ask_about_this" as const,
       icon: MessageSquare,
-      iconClassName: "text-grammar-violet",
-      badgeClassName: "bg-grammar-violet/12",
     },
     {
       prompt: starterContent.prompts[1],
       entryAction: starterMode === "sentence" ? ("why_here" as const) : ("ask_about_this" as const),
       icon: Search,
-      iconClassName: "text-context-blue",
-      badgeClassName: "bg-context-blue/12",
     },
     {
       prompt: starterContent.prompts[2],
       entryAction: "ask_about_this" as const,
       icon: GitBranch,
-      iconClassName: "text-structure-green",
-      badgeClassName: "bg-structure-green/12",
     },
   ];
   const suggestions = webSearchCapable
@@ -1162,8 +1106,6 @@ function StarterState({
           prompt: "查询这篇文章相关的其他资料。",
           entryAction: "ask_about_this" as const,
           icon: Globe,
-          iconClassName: "text-context-blue",
-          badgeClassName: "bg-context-blue/12",
           // R2.1 — signals the host to enable web search for this send.
           webSearchOverride: "allowed" as const,
         },
@@ -1174,8 +1116,6 @@ function StarterState({
           prompt: starterContent.prompts[3],
           entryAction: "ask_about_this" as const,
           icon: PencilLine,
-          iconClassName: "text-vocab-amber",
-          badgeClassName: "bg-vocab-amber/14",
         },
       ];
 
@@ -1183,8 +1123,6 @@ function StarterState({
     <PromptSuggestions
       title={starterContent.title}
       description={starterContent.description}
-      contextLabel={contextLabel}
-      contextPreview={contextPreview}
       suggestions={suggestions}
       onPickPrompt={onPickPrompt}
     />
@@ -1364,7 +1302,6 @@ export function AiWorkspacePanel({
   const hydrationRef = useRef(0);
   const initInProgressRef = useRef(false);
   const sseAbortRef = useRef<AbortController | null>(null);
-  const provenanceSignatureRef = useRef<string | null>(null);
   // Active streaming assistant id — used to attach activity UI only to the
   // current turn and avoid stale indicators on older messages.
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -1511,71 +1448,6 @@ export function AiWorkspacePanel({
   // defensive fallback). Never the thread title.
   const currentArticleChipTitle =
     recordTitle?.trim() || pageIdentity.recordTitle?.trim() || "当前文章";
-
-  // R3 P1 — Reading Record selection slots (auto 0/1 + manual ≤3) ride along
-  // on send as explicit focus context. The Web Reader has one Ask contract
-  // and one selection lane.
-  const selectionSlotAttachments = [
-    ...(autoSelectionAttachment ? [autoSelectionAttachment] : []),
-    ...(manualSelectionAttachments ?? []),
-  ];
-
-  // ASK-UX-HISTORY-COT-R2 P0-2: the current article is fixed implicit
-  // context — it must NOT produce a default "基于：当前文章" provenance
-  // row. Only explicit selections / attachments / other articles surface
-  // in provenance. When nothing is explicit, the provenance line does
-  // not render at all (no "仅按你的问题回答" noise). The page identity
-  // title remains the single source of truth for the reader header; it
-  // is never echoed here as an attachment label.
-  const provenanceNoteCount = visibleContextAttachments.length;
-  const provenanceParts: string[] = [];
-  // R3 P1 — explicit RR selections (auto/manual slots) surface in
-  // provenance; the implicit current article never does.
-  if (selectionSlotAttachments.length > 0) {
-    provenanceParts.push(
-      selectionSlotAttachments.length === 1
-        ? "选中段"
-        : `${selectionSlotAttachments.length} 处选区`,
-    );
-  }
-  if (provenanceNoteCount > 0) {
-    provenanceParts.push(`${provenanceNoteCount} 条笔记`);
-  }
-  const provenanceJoinedParts = provenanceParts.join(" · ");
-  const provenanceSummary =
-    provenanceParts.length > 0 ? `基于：${provenanceJoinedParts}` : "";
-  const provenanceDetails: Array<{ label: string; value: string }> = [];
-  selectionSlotAttachments.forEach((attachment, index) => {
-    const selectionText = attachment.selectedText?.trim();
-    provenanceDetails.push({
-      label: selectionSlotAttachments.length === 1 ? "选中段" : `选区 ${index + 1}`,
-      value: truncateProvenanceDetail(selectionText || askAttachmentLabel(attachment)),
-    });
-  });
-  visibleContextAttachments.forEach((attachment, index) => {
-    provenanceDetails.push({
-      label: `笔记 ${index + 1}`,
-      value: truncateProvenanceDetail(askAttachmentLabel(attachment)),
-    });
-  });
-  const provenanceSignature = [
-    pageIdentity.recordId ?? "",
-    ...provenanceDetails.map((detail) => `${detail.label}:${detail.value}`),
-  ].join("\u001f");
-  useEffect(() => {
-    if (provenanceSignatureRef.current === null) {
-      provenanceSignatureRef.current = provenanceSignature;
-      return;
-    }
-    if (provenanceSignatureRef.current !== provenanceSignature) {
-      provenanceSignatureRef.current = provenanceSignature;
-      if (provenanceJoinedParts.length > 0) {
-        window.setTimeout(() => {
-          setLiveAnnouncement(`Ask Claread 上下文已更新：${provenanceJoinedParts}`);
-        }, 0);
-      }
-    }
-  }, [provenanceSignature, provenanceJoinedParts]);
 
   // ASK-WEB-G1-R2: reset the user-visible web search toggle to
   // ``"disabled"`` when the currently selected model option does not
@@ -2879,7 +2751,7 @@ export function AiWorkspacePanel({
           <div className="flex min-w-0 items-center gap-2">
             <ClareadAiMark size="sm" className="shadow-none" badgeClassName="shadow-none" />
             <div className="min-w-0">
-              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink outline-none">Ask Claread</h2>
+              <h2 ref={panelHeadingRef} id="ask-claread-panel-heading" tabIndex={-1} className="truncate text-[13px] font-medium text-ink outline-none">Ask Claread</h2>
               <div aria-live="polite" role="status" className="sr-only" data-testid="ai-workspace-live-announcement">{liveAnnouncement}</div>
             </div>
           </div>
@@ -2889,7 +2761,7 @@ export function AiWorkspacePanel({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="ai-workspace-panel__surface-trigger inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted/10 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
+                    className="ai-workspace-panel__surface-trigger inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20"
                     aria-label="选择 Ask Claread 面板形式"
                     title="选择面板形式"
                   >
@@ -2898,8 +2770,6 @@ export function AiWorkspacePanel({
                     ) : (
                       <PanelRightOpen aria-hidden="true" className="h-3.5 w-3.5" />
                     )}
-                    <span>{isFloatingSurface ? "浮窗" : "侧边栏"}</span>
-                    <ChevronDown aria-hidden="true" className="h-3 w-3 opacity-70" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={6} className="min-w-36">
@@ -2928,16 +2798,16 @@ export function AiWorkspacePanel({
             ) : onChangeSurface && !hasSidecarCapacity ? (
               <span
                 aria-label="当前以浮窗展示 Ask Claread"
-                className="inline-flex h-7 cursor-default items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground/70"
+                className="inline-flex h-7 w-7 cursor-default items-center justify-center rounded-md text-muted-foreground/70"
                 title="当前阅读区较窄，仅支持浮窗形式"
               >
                 <PictureInPicture2 aria-hidden="true" className="h-3.5 w-3.5" />
-                <span>浮窗</span>
               </span>
             ) : null}
             <IconButton
               variant="quiet"
               size="sm"
+              className="h-7 w-7"
               onClick={() => {
                 void handleResetConversation();
               }}
@@ -2949,6 +2819,7 @@ export function AiWorkspacePanel({
             <IconButton
               variant="quiet"
               size="sm"
+              className="h-7 w-7"
               onClick={onToggle}
               aria-label={isFloatingSurface ? "关闭 Ask Claread" : "收起 Ask Claread"}
             >
@@ -3065,8 +2936,6 @@ export function AiWorkspacePanel({
           </ConversationShell>
         )}
       </div>
-
-      <AskProvenanceLine summary={provenanceSummary} details={provenanceDetails} />
 
       <AskComposer
         onSubmit={handleSend}

@@ -714,6 +714,38 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
   });
 
+  it("shows a check for 1.2 seconds after copying a completed answer", async () => {
+    const originalClipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      mockThreadMessages([
+        createAssistantMessage({ content_md: "可复制的回答。" }),
+      ]);
+      renderPanel();
+
+      const copyButton = await screen.findByRole("button", { name: "复制内容" });
+      await act(async () => {
+        fireEvent.click(copyButton);
+      });
+      expect(writeText).toHaveBeenCalledWith("可复制的回答。");
+      expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
+
+      await waitFor(
+        () => expect(copyButton.querySelector(".lucide-copy")).not.toBeNull(),
+        { timeout: 1_500 },
+      );
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
+
   it("current record is implicit and cross-record search is absent in v2", async () => {
     render(
       <AiWorkspacePanel
@@ -2334,7 +2366,7 @@ describe("AiWorkspacePanel", () => {
     // Article RAG citation list renders.
     expect(screen.getByText("文章引用")).not.toBeNull();
     expect(screen.getByText("引用 1")).not.toBeNull();
-    // Ordinary ReaderAsk citations still render via CitationList.
+    // Ordinary ReaderAsk citations still render through their owning answer surface.
     expect(screen.getByText("第3句")).not.toBeNull();
   });
 
@@ -2383,7 +2415,7 @@ describe("AiWorkspacePanel", () => {
     expect(source).not.toContain("setMessages(detail.messages)");
   });
 
-  describe("AskProvenanceLine and capacity downgrade notice", () => {
+  describe("composer context ownership and capacity downgrade notice", () => {
     const noteAttachment: ReaderAskAttachment = {
       kind: "text_selection",
       subtype: "reader_note",
@@ -2417,7 +2449,7 @@ describe("AiWorkspacePanel", () => {
       expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
+    it("keeps explicit context only in composer chips without a duplicate provenance row", async () => {
       renderPanel({
         recordTitle: "Test Reader",
         composer: createTestComposer({
@@ -2430,11 +2462,8 @@ describe("AiWorkspacePanel", () => {
         expect(global.fetch).toHaveBeenCalled();
       });
 
-      const summary = screen.getByText(/基于：/);
-      // The current article must NOT appear — only explicit context.
-      expect(summary.textContent).not.toContain("当前文章");
-      expect(summary.textContent).toContain("选中段");
-      expect(summary.textContent).toContain("1 条笔记");
+      expect(screen.queryByText(/基于：/)).toBeNull();
+      expect(document.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
     });
 
     it("no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
@@ -5918,9 +5947,11 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
     ).toBeNull();
     // No menuitems should be in the document at all.
     expect(screen.queryByRole("menuitem", { name: "侧边栏" })).toBeNull();
-    // The static 浮窗 label is visible (non-interactive span with a title).
+    // Capacity state remains available to assistive tech without adding
+    // another text label to the icon-only header cluster.
     const staticLabel = screen.getByTitle("当前阅读区较窄，仅支持浮窗形式");
-    expect(staticLabel.textContent).toContain("浮窗");
+    expect(staticLabel.getAttribute("aria-label")).toContain("浮窗");
+    expect(staticLabel.textContent).toBe("");
   });
 
   it("shows the surface menu with both options when hasSidecarCapacity=true", async () => {
@@ -7352,7 +7383,7 @@ describe("RR composer selection slots", () => {
     ).toEqual(["seg-quick", "seg-auto"]);
   });
 
-  it("surfaces explicit selections in provenance but never the implicit article", async () => {
+  it("surfaces explicit selections only in composer chips", async () => {
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const { container } = renderPanel({
       composer: createTestComposer({
@@ -7360,9 +7391,9 @@ describe("RR composer selection slots", () => {
       }),
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("基于：选中段");
+      expect(container.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
     });
-    expect(container.textContent).not.toContain("基于：当前文章");
+    expect(container.textContent).not.toContain("基于：");
   });
 });
 

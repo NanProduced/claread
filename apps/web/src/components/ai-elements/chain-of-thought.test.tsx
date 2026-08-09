@@ -114,7 +114,7 @@ describe("ChainOfThought", () => {
     expect(getTrigger().getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("auto-closes once when streaming ends (one-shot, mirrors Reasoning)", () => {
+  it("keeps a disclosure open after the user expands it during streaming", () => {
     vi.useFakeTimers();
     try {
       const { rerender } = render(
@@ -129,7 +129,7 @@ describe("ChainOfThought", () => {
       });
       expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true");
 
-      // Stream settles → one-shot auto-close after the delay.
+      // Stream settles, but the user's explicit review state must win.
       rerender(
         <ChainOfThought isStreaming={false} data-testid="cot-root">
           <ChainOfThoughtHeader>处理过程</ChainOfThoughtHeader>
@@ -139,12 +139,8 @@ describe("ChainOfThought", () => {
       act(() => {
         vi.advanceTimersByTime(1100);
       });
-      expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("false");
+      expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true");
 
-      // Re-opening sticks: the auto-close never fires a second time.
-      act(() => {
-        fireEvent.click(screen.getByRole("button"));
-      });
       act(() => {
         vi.advanceTimersByTime(5000);
       });

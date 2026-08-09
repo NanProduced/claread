@@ -11,11 +11,9 @@
  * - Generic only: no business copy, no markdown rendering, no navigation.
  *   Ask Claread semantics (labels, reasoning text, domain chips) are
  *   composed above this family in `reader/ask-chat/turn-process.tsx`.
- * - Collapsed by default, always. There is deliberately NO auto-open —
- *   the disclosure stays collapsed while streaming until the user opens
- *   it. There IS a one-shot auto-close: if the user expanded during the
- *   stream, the disclosure re-collapses once ~1s after the turn settles;
- *   the user may expand again afterwards and it will not re-force-close.
+ * - Collapsed by default, always. There is deliberately NO auto-open. A
+ *   programmatically opened disclosure may auto-close once after settling,
+ *   but any explicit user interaction owns the state from then on.
  * - `ChainOfThoughtContent` is plain document flow. It never sets
  *   `overflow-y` — the surrounding conversation owns scrolling, and this
  *   component must not create a second scroll owner.
@@ -47,6 +45,7 @@ import {
   memo,
   useContext,
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -79,6 +78,9 @@ const ChainOfThoughtContext = createContext<ChainOfThoughtContextValue | null>(
 );
 
 const AUTO_CLOSE_DELAY = 1000;
+
+export const chainDisclosureTriggerClassName =
+  "flex min-h-7 w-full items-center gap-1.5 text-[13px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground motion-reduce:transition-none";
 
 export const useChainOfThought = () => {
   const context = useContext(ChainOfThoughtContext);
@@ -121,6 +123,7 @@ export const ChainOfThought = memo(
     });
 
     const hasEverStreamedRef = useRef(isStreaming);
+    const userInteractedRef = useRef(false);
     const [hasAutoClosed, setHasAutoClosed] = useState(false);
 
     useEffect(() => {
@@ -136,7 +139,13 @@ export const ChainOfThought = memo(
     // deliberately NO auto-open: collapsed-by-default is a hard product
     // requirement even while streaming.
     useEffect(() => {
-      if (hasEverStreamedRef.current && !isStreaming && isOpen && !hasAutoClosed) {
+      if (
+        hasEverStreamedRef.current &&
+        !isStreaming &&
+        isOpen &&
+        !hasAutoClosed &&
+        !userInteractedRef.current
+      ) {
         const timer = setTimeout(() => {
           setIsOpen(false);
           setHasAutoClosed(true);
@@ -144,6 +153,14 @@ export const ChainOfThought = memo(
         return () => clearTimeout(timer);
       }
     }, [isStreaming, isOpen, hasAutoClosed, setIsOpen]);
+
+    const handleOpenChange = useCallback(
+      (nextOpen: boolean) => {
+        userInteractedRef.current = true;
+        setIsOpen(nextOpen);
+      },
+      [setIsOpen],
+    );
 
     const contextValue = useMemo(
       () => ({ isStreaming, isOpen }),
@@ -154,7 +171,7 @@ export const ChainOfThought = memo(
       <ChainOfThoughtContext.Provider value={contextValue}>
         <Collapsible
           className={cn("not-prose", className)}
-          onOpenChange={setIsOpen}
+          onOpenChange={handleOpenChange}
           open={isOpen}
           data-slot="chain-of-thought"
           {...props}
@@ -184,7 +201,7 @@ export const ChainOfThoughtHeader = memo(
     return (
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+          chainDisclosureTriggerClassName,
           className,
         )}
         data-slot="chain-of-thought-trigger"
@@ -194,7 +211,7 @@ export const ChainOfThoughtHeader = memo(
         <span className="min-w-0 flex-1 truncate text-left">{children}</span>
         <ChevronDownIcon
           className={cn(
-            "size-4 shrink-0 transition-transform",
+            "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
             isOpen ? "rotate-180" : "rotate-0",
           )}
           aria-hidden="true"
@@ -216,8 +233,8 @@ export const ChainOfThoughtContent = memo(
     return (
       <CollapsibleContent
         className={cn(
-          "mt-2 text-sm",
-          "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+          "mt-2 text-[13px] leading-relaxed",
+          "text-muted-foreground outline-none motion-safe:data-[state=closed]:animate-out motion-safe:data-[state=closed]:fade-out-0 motion-safe:data-[state=closed]:slide-out-to-top-2 motion-safe:data-[state=open]:animate-in motion-safe:data-[state=open]:slide-in-from-top-2 motion-safe:duration-150 motion-reduce:animate-none motion-reduce:transform-none",
           // Plain flow only — never overflow-y: the conversation scroll
           // owner must remain the single scrollable ancestor.
           className,

@@ -330,4 +330,51 @@ describe("TurnProcessDisclosure — Answer Process surface", () => {
         .querySelector("[data-step-accessible-status]")?.textContent,
     ).toBe("已中断");
   });
+
+  it("summarizes settled duration and web source count in the collapsed header", () => {
+    const completed = reduceAgenticActivityEvent(
+      activity([
+        progress(1, "searching_web", "PRIVATE", {
+          activity: "completed",
+          status: "ok",
+          outcome: "success",
+          elapsed_ms: 8_200,
+          tool_name: "search_web",
+          activity_id: "web_search",
+        }),
+      ]),
+      { type: "completed" },
+    );
+
+    render(
+      <TurnProcessDisclosure
+        activity={completed}
+        citations={[
+          webCitation("https://example.com/a", "c1"),
+          webCitation("https://example.org/b", "c2"),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("button").textContent).toContain(
+      "回答过程· 已完成· 8s· 2 个来源",
+    );
+  });
+
+  it("shows the typed citation-check failure explanation", async () => {
+    const failed = reduceAgenticActivityEvent(
+      activity([
+        progress(1, "validating_evidence", "PRIVATE", {
+          activity: "failed",
+          status: "failed",
+          outcome: "failed",
+        }),
+      ]),
+      { type: "terminal", finalStatus: "failed" },
+    );
+    const user = userEvent.setup();
+    render(<TurnProcessDisclosure activity={failed} />);
+    await user.click(screen.getByRole("button"));
+    expect(screen.getByText("引用检查未通过，本轮回答未完成。")).not.toBeNull();
+  });
 });

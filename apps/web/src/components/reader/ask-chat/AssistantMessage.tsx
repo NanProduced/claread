@@ -42,7 +42,12 @@ export function AssistantMessage({
         </div>
       ) : null}
       {footer ? (
-        <MessageToolbar className={cn(contentColumnClassName, "mt-1 justify-start")}>
+        <MessageToolbar
+          className={cn(
+            contentColumnClassName,
+            "mt-1 justify-start opacity-60 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none",
+          )}
+        >
           <div className="shrink-0">{footer}</div>
         </MessageToolbar>
       ) : null}
