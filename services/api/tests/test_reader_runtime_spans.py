@@ -14,8 +14,9 @@ and P3 (LangSmith run_id backfill):
 - ``LangSmithIdBridgeProcessor.on_end`` extracts
   ``langsmith.trace.id`` / ``langsmith.span.id`` from a fake span and
   stores them in the ContextVar
-- ``end_span`` auto-backfills ``langsmith_run_id`` from the ContextVar
-  when the caller does not pass an explicit value (and explicit wins)
+- Single-owner LangSmith identity: ``end_span`` does NOT auto-consume the
+  ContextVar; the owning worker_tick passes ``langsmith_run_id`` explicitly
+  (and an explicit value always wins)
 """
 
 from __future__ import annotations
@@ -33,9 +34,9 @@ import pytest
 
 from app.contracts.annotation import utf16_code_unit_length
 from app.observability.langsmith_span_processor import (
+    _CURRENT_LANGSMITH_IDS,
     LangSmithIdBridgeProcessor,
     LangSmithIds,
-    _CURRENT_LANGSMITH_IDS,
     clear_langsmith_ids,
     get_current_langsmith_ids,
 )
@@ -512,17 +513,17 @@ def test_langsmith_id_bridge_processor_ignores_non_langsmith_spans() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: end_span auto-backfills langsmith_run_id from ContextVar
+# Direct recorder calls never consume worker-owned LangSmith identity
 # ---------------------------------------------------------------------------
 
 
-async def test_end_span_auto_backfills_langsmith_run_id(
+async def test_end_span_does_not_auto_backfill_langsmith_run_id(
     span_recorder_env: tuple[asyncpg.Pool, ReaderSpanRecorder],
 ) -> None:
     pool, recorder = span_recorder_env
 
-    # Simulate that a LangSmith-managed LLM span just ended in this
-    # async context (set by LangSmithIdBridgeProcessor.on_end).
+    # Simulate that a LangSmith-managed LLM span ended earlier in this async
+    # context (set by LangSmithIdBridgeProcessor.on_end) and was NOT consumed.
     _CURRENT_LANGSMITH_IDS.set(
         LangSmithIds(trace_id="trace-t", span_id="span-s")
     )
@@ -531,11 +532,13 @@ async def test_end_span_auto_backfills_langsmith_run_id(
         trace_id=uuid4(),
         span_kind=SPAN_KIND_PIPELINE_ROOT,
     )
-    # Caller does NOT pass langsmith_run_id; end_span should auto-backfill.
+    # Caller does NOT pass langsmith_run_id. Under the single-owner contract
+    # end_span must not auto-consume the ContextVar, so the stale id cannot
+    # leak into this span.
     await recorder.end_span(span, status=STATUS_SUCCEEDED)
 
     row = await _fetch_span_row(pool, span.span_id)
-    assert row["langsmith_run_id"] == "trace-t/span-s"
+    assert row["langsmith_run_id"] is None
 
 
 # ---------------------------------------------------------------------------
