@@ -33,8 +33,8 @@ export function AssistantMessage({
 
   return (
     <Message from="assistant" className={cn("max-w-full gap-2", className)}>
-      {reasoning ? <div className={contentColumnClassName}>{reasoning}</div> : null}
-      {process ? <div className={cn(contentColumnClassName, "mb-1")}>{process}</div> : null}
+      {reasoning}
+      {process}
       {answer ? <MessageContent className={contentColumnClassName}>{answer}</MessageContent> : null}
       {children ? (
         <div className={cn(contentColumnClassName, "min-w-0 space-y-3")}>
@@ -42,7 +42,12 @@ export function AssistantMessage({
         </div>
       ) : null}
       {footer ? (
-        <MessageToolbar className={cn(contentColumnClassName, "mt-1 justify-start")}>
+        <MessageToolbar
+          className={cn(
+            contentColumnClassName,
+            "mt-1 justify-start opacity-60 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none",
+          )}
+        >
           <div className="shrink-0">{footer}</div>
         </MessageToolbar>
       ) : null}

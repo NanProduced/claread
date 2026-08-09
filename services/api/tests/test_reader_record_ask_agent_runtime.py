@@ -45,6 +45,7 @@ from app.services.reader_record_ask.read_range_executor import (
     execute_read_range,
 )
 from app.services.reader_record_ask.runtime import run_reading_record_ask
+from app.services.reader_record_ask.runtime_deps import RuntimeObservation
 from app.services.reader_record_ask.runtime_events import (
     FinalAnswerEvent,
     ToolCallEvent,
@@ -989,6 +990,7 @@ async def test_structured_output_success_still_runs_evidence_finalizer() -> None
     a draft citing a real initial_anchor handle passes the output_validator,
     then the finalizer runs and accepts it.
     """
+    observation = RuntimeObservation()
     result = await run_reading_record_ask(
         user_message="Cite the selection.",
         envelope=_envelope(),
@@ -998,7 +1000,12 @@ async def test_structured_output_success_still_runs_evidence_finalizer() -> None
             use_initial_anchor_from_prompt=True,
         ),
         article_rag=None,
+        observation=observation,
     )
+    assert observation.output_validation_final_attempts == 1
+    assert observation.output_validation_retry_requests == 0
+    assert observation.validated_artifacts_published == 1
+    assert observation.validated_artifacts_consumed == 1
     assert result.final_text == "Looks fine and grounded."
     assert result.finalized is not None
     assert result.finalized.status == "ok"
@@ -1126,16 +1133,22 @@ async def test_grounding_validator_retry_then_success_via_real_seam() -> None:
             ]
         )
 
+    observation = RuntimeObservation()
     result = await run_reading_record_ask(
         user_message="Summarize the selection.",
         envelope=_envelope(),
         document_access=_access(),
         model=FunctionModel(model_fn),
         article_rag=None,
+        observation=observation,
     )
     # Exactly 2 model calls: initial attempt (grounding-invalid) + 1 repair
     # (grounding-valid). Proves the retry came from the output validator.
     assert calls["n"] == 2
+    assert observation.output_validation_final_attempts == 2
+    assert observation.output_validation_retry_requests == 1
+    assert observation.validated_artifacts_published == 1
+    assert observation.validated_artifacts_consumed == 1
     assert result.final_text == "第二次回答已引用证据"
     assert result.finalized is not None
     assert result.finalized.status == "ok"
@@ -1205,6 +1218,7 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
             ]
         )
 
+    observation = RuntimeObservation()
     with pytest.raises(UnexpectedModelBehavior) as ei:
         await run_reading_record_ask(
             user_message="Summarize.",
@@ -1212,9 +1226,18 @@ async def test_grounding_validator_retry_budget_exhausted_via_real_seam() -> Non
             document_access=_access(),
             model=FunctionModel(model_fn),
             article_rag=None,
+            observation=observation,
         )
     # Exact budget: initial attempt + DEFAULT_OUTPUT_RETRIES repairs.
     assert calls["n"] == DEFAULT_OUTPUT_RETRIES + 1
+    assert observation.output_validation_final_attempts == (
+        DEFAULT_OUTPUT_RETRIES + 1
+    )
+    assert observation.output_validation_retry_requests == (
+        DEFAULT_OUTPUT_RETRIES + 1
+    )
+    assert observation.validated_artifacts_published == 0
+    assert observation.validated_artifacts_consumed == 0
     # Hard ceiling against infinite retry.
     assert calls["n"] <= DEFAULT_OUTPUT_RETRIES + 2
     # Must NOT be a usage-limit failure (no usage_limits configured on

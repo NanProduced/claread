@@ -341,22 +341,21 @@ describe("Answer Process projection", () => {
     });
   });
 
-  it("hides citation-check when the backend only starts validation", () => {
+  it("shows citation-check while typed validation is running", () => {
     const state = reduce([
       progress(1, "validating_evidence", "PRIVATE VALIDATION", {
         activity: "started",
         status: "running",
       }),
     ]);
-    expect(
-      projectTurnProcess({
-        activity: state,
-        citations: [webCitation("https://example.com")],
-      }).steps,
-    ).toEqual([]);
+    const view = projectTurnProcess({ activity: state, isStreaming: true });
+    expect(stepById(view, "citation-check")).toMatchObject({
+      label: "检查引用",
+      status: "active",
+    });
   });
 
-  it("shows citation-check only after a real completed validation result", () => {
+  it("shows citation-check after a real completed result without citation heuristics", () => {
     const state = reduce([
       progress(1, "validating_evidence", "PRIVATE VALIDATION", {
         activity: "completed",
@@ -364,14 +363,31 @@ describe("Answer Process projection", () => {
         duration_ms: 40,
       }),
     ]);
-    const view = projectTurnProcess({
-      activity: state,
-      citations: [webCitation("https://example.com")],
-    });
+    const view = projectTurnProcess({ activity: state });
     expect(stepById(view, "citation-check")).toMatchObject({
       label: "检查引用",
       status: "complete",
       outcome: "success",
+    });
+  });
+
+  it("shows a typed failed citation-check as failed", () => {
+    const state = reduce([
+      progress(1, "validating_evidence", "PRIVATE VALIDATION", {
+        activity: "started",
+        status: "running",
+      }),
+      progress(2, "validating_evidence", "PRIVATE VALIDATION", {
+        activity: "failed",
+        status: "failed",
+        outcome: "failed",
+      }),
+    ]);
+    const view = projectTurnProcess({ activity: state });
+    expect(stepById(view, "citation-check")).toMatchObject({
+      label: "检查引用",
+      status: "failed",
+      outcome: "failed",
     });
   });
 

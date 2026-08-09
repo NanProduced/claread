@@ -16,6 +16,7 @@ import { makeLogicalTerminalResult } from "./ask/turn-lifecycle";
 import {
   AiWorkspacePanel,
   formatSourceNavigationFeedback,
+  truncateAtWordBoundary,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
 import type { AskComposerContext } from "./ask/composer-context";
@@ -70,6 +71,18 @@ const pageIdentity: ReaderAskPageIdentity = {
   hasAnnotations: true,
   hasReaderNotes: true,
 };
+
+describe("truncateAtWordBoundary", () => {
+  it("keeps whole words or punctuation before the hard-cut fallback", () => {
+    expect(truncateAtWordBoundary("Climate change presents an existential challenge", 36)).toBe(
+      "Climate change presents an…",
+    );
+    expect(truncateAtWordBoundary("第一部分说明背景，第二部分解释结论", 10)).toBe(
+      "第一部分说明背景，…",
+    );
+    expect(truncateAtWordBoundary("supercalifragilistic", 10)).toBe("supercali…");
+  });
+});
 
 const attachment: ReaderAskAttachment = {
   kind: "record_ref",
@@ -545,6 +558,98 @@ describe("AiWorkspacePanel", () => {
     expect(onClearAttachments).toHaveBeenCalledTimes(1);
   });
 
+  it("maps web_search_unavailable and resends the same submission with web search disabled", async () => {
+    const fallbackFetch = mockFetch();
+    let streamAttempts = 0;
+    const fetchWithUnavailable = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const requestUrl = new URL(String(input), "http://localhost");
+        if (
+          requestUrl.pathname ===
+          "/api/web/reader/records/record-1/ask/model-options"
+        ) {
+          return jsonResponse({
+            default_key: "ask-clarity",
+            items: [
+              {
+                key: "ask-clarity",
+                label: "Qwen 3.7 Max",
+                description: "Web capable",
+                model_name: "qwen3.7-max",
+                replan_model_name: "qwen3.7-max",
+                price_multiplier: 1,
+                is_default: true,
+                web_search_capability: "available",
+              },
+            ],
+          });
+        }
+        if (requestUrl.pathname.endsWith("/messages/stream")) {
+          streamAttempts += 1;
+          if (streamAttempts === 1) {
+            return new Response(
+              'event: error\ndata: {"code":"web_search_unavailable","detail":"PRIVATE_PROVIDER_DETAIL"}\n\n',
+              {
+                status: 503,
+                headers: { "content-type": "text/event-stream" },
+              },
+            );
+          }
+        }
+        return fallbackFetch(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchWithUnavailable);
+    vi.mocked(consumeReaderAskSse).mockImplementationOnce(async (_response, onEvent) => {
+      onEvent({
+        event: "message.started",
+        data: { message_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
+      });
+      onEvent({ event: "message.completed", data: completedPayload });
+      return makeLogicalTerminalResult("completed", { finalStatus: "ok" });
+    });
+    renderPanel();
+
+    const webToggle = await screen.findByRole("button", {
+      name: "联网搜索已关闭",
+    });
+    fireEvent.click(webToggle);
+    fireEvent.change(screen.getByPlaceholderText("继续问这篇文章…"), {
+      target: { value: "查一下最新资料" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(
+      await screen.findByText("当前模型暂不支持联网搜索。"),
+    ).not.toBeNull();
+    expect(screen.queryByText(/PRIVATE_PROVIDER_DETAIL/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "关闭联网并重新发送" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        fetchWithUnavailable.mock.calls.filter(([url]) =>
+          String(url).includes("/messages/stream"),
+        ),
+      ).toHaveLength(2);
+    });
+    const streamCalls = fetchWithUnavailable.mock.calls.filter(([url]) =>
+      String(url).includes("/messages/stream"),
+    );
+    const firstBody = JSON.parse(String(streamCalls[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    const secondBody = JSON.parse(String(streamCalls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(firstBody.web_search_mode).toBe("allowed");
+    expect(secondBody.web_search_mode).toBe("disabled");
+    expect(secondBody.client_submission_id).toBe(firstBody.client_submission_id);
+  });
+
   it("serializes page identity from current reader facts instead of hardcoded capability flags", async () => {
     render(
       <AiWorkspacePanel
@@ -699,6 +804,38 @@ describe("AiWorkspacePanel", () => {
     expect(screen.queryByText("上下文策略")).toBeNull();
     expect(screen.queryByRole("button", { name: /运行轨迹/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /当前文章上下文/i })).toBeNull();
+  });
+
+  it("shows a check for 1.2 seconds after copying a completed answer", async () => {
+    const originalClipboard = navigator.clipboard;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      mockThreadMessages([
+        createAssistantMessage({ content_md: "可复制的回答。" }),
+      ]);
+      renderPanel();
+
+      const copyButton = await screen.findByRole("button", { name: "复制内容" });
+      await act(async () => {
+        fireEvent.click(copyButton);
+      });
+      expect(writeText).toHaveBeenCalledWith("可复制的回答。");
+      expect(copyButton.querySelector(".lucide-check")).not.toBeNull();
+
+      await waitFor(
+        () => expect(copyButton.querySelector(".lucide-copy")).not.toBeNull(),
+        { timeout: 1_500 },
+      );
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
   });
 
   it("current record is implicit and cross-record search is absent in v2", async () => {
@@ -1566,7 +1703,9 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("Here is the answer.")).not.toBeNull();
     });
 
-    expect(screen.getByLabelText("查看来源 cite-1 详情")).not.toBeNull();
+    const citation = screen.getByLabelText("查看来源 cite-1 详情");
+    expect(citation.textContent).toBe("[1]");
+    expect(screen.queryByText("cite-1")).toBeNull();
   });
 
   it("does not render context anchor cards above user messages", async () => {
@@ -2319,7 +2458,7 @@ describe("AiWorkspacePanel", () => {
     // Article RAG citation list renders.
     expect(screen.getByText("文章引用")).not.toBeNull();
     expect(screen.getByText("引用 1")).not.toBeNull();
-    // Ordinary ReaderAsk citations still render via CitationList.
+    // Ordinary ReaderAsk citations still render through their owning answer surface.
     expect(screen.getByText("第3句")).not.toBeNull();
   });
 
@@ -2368,7 +2507,7 @@ describe("AiWorkspacePanel", () => {
     expect(source).not.toContain("setMessages(detail.messages)");
   });
 
-  describe("AskProvenanceLine and capacity downgrade notice", () => {
+  describe("composer context ownership and capacity downgrade notice", () => {
     const noteAttachment: ReaderAskAttachment = {
       kind: "text_selection",
       subtype: "reader_note",
@@ -2402,7 +2541,7 @@ describe("AiWorkspacePanel", () => {
       expect(screen.queryByText(/基于：/)).toBeNull();
     });
 
-    it("provenance shows only explicit selection and notes (no 当前文章) when live selection and attachments exist", async () => {
+    it("keeps explicit context only in composer chips without a duplicate provenance row", async () => {
       renderPanel({
         recordTitle: "Test Reader",
         composer: createTestComposer({
@@ -2415,11 +2554,8 @@ describe("AiWorkspacePanel", () => {
         expect(global.fetch).toHaveBeenCalled();
       });
 
-      const summary = screen.getByText(/基于：/);
-      // The current article must NOT appear — only explicit context.
-      expect(summary.textContent).not.toContain("当前文章");
-      expect(summary.textContent).toContain("选中段");
-      expect(summary.textContent).toContain("1 条笔记");
+      expect(screen.queryByText(/基于：/)).toBeNull();
+      expect(document.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
     });
 
     it("no provenance and no CurrentRecordChip when nothing is present (no noise)", async () => {
@@ -5555,6 +5691,7 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
         final_status: "ok",
         agentic_answer_blocks: [
           { text: "Answer stays.", citation_ids: ["c1", "c2"] },
+          { text: "The first source is cited again.", citation_ids: ["c1"] },
         ],
         agentic_citations: [
           {
@@ -5583,7 +5720,9 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
     expect(screen.queryByText("跳转到原文")).toBeNull();
     expect(screen.queryByText("已定位到文章中的相关位置")).toBeNull();
 
-    const trigger = screen.getByRole("button", { name: /查看来源/ });
+    const triggers = screen.getAllByRole("button", { name: /查看来源/ });
+    expect(triggers.map((item) => item.textContent)).toEqual(["[1,2]", "[1]"]);
+    const trigger = triggers[0];
     fireEvent.mouseEnter(trigger);
     fireEvent.click(trigger);
     await waitFor(() => {
@@ -5900,9 +6039,11 @@ describe("AiWorkspacePanel – surface capacity gating", () => {
     ).toBeNull();
     // No menuitems should be in the document at all.
     expect(screen.queryByRole("menuitem", { name: "侧边栏" })).toBeNull();
-    // The static 浮窗 label is visible (non-interactive span with a title).
+    // Capacity state remains available to assistive tech without adding
+    // another text label to the icon-only header cluster.
     const staticLabel = screen.getByTitle("当前阅读区较窄，仅支持浮窗形式");
-    expect(staticLabel.textContent).toContain("浮窗");
+    expect(staticLabel.getAttribute("aria-label")).toContain("浮窗");
+    expect(staticLabel.textContent).toBe("");
   });
 
   it("shows the surface menu with both options when hasSidecarCapacity=true", async () => {
@@ -7334,7 +7475,7 @@ describe("RR composer selection slots", () => {
     ).toEqual(["seg-quick", "seg-auto"]);
   });
 
-  it("surfaces explicit selections in provenance but never the implicit article", async () => {
+  it("surfaces explicit selections only in composer chips", async () => {
     const auto = rrSelectionAttachment("auto", [0, 6], "自动选区文本");
     const { container } = renderPanel({
       composer: createTestComposer({
@@ -7342,9 +7483,9 @@ describe("RR composer selection slots", () => {
       }),
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("基于：选中段");
+      expect(container.querySelector('[data-ask-selection-slot="auto"]')).not.toBeNull();
     });
-    expect(container.textContent).not.toContain("基于：当前文章");
+    expect(container.textContent).not.toContain("基于：");
   });
 });
 
@@ -7762,7 +7903,10 @@ describe("AiWorkspacePanel article citation source navigation", () => {
   it("ignores a second click while a navigation is still in flight", async () => {
     let releaseNavigate: (() => void) | null = null;
     mockThreadMessages([
-      articleCitationMessage([{ citationId: "cite-1", snippet: "引用片段一。" }]),
+      articleCitationMessage([
+        { citationId: "cite-1", snippet: "引用片段一。" },
+        { citationId: "cite-2", snippet: "引用片段二。" },
+      ]),
     ]);
     const base = vi.mocked(global.fetch).getMockImplementation()!;
     let navigateRequestCount = 0;
@@ -7782,12 +7926,16 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     });
     renderPanel({ onNavigateToArticleLocation: navigatedHostCallback() });
 
-    await openCitationCard("cite-1");
+    await openCitationCard("cite-1", 1);
     const button = screen.getByTestId("locate-citation-cite-1");
     fireEvent.click(button);
     await waitFor(() => {
       expect(navigateRequestCount).toBe(1);
     });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(
+      screen.getByTestId("locate-citation-cite-2").hasAttribute("disabled"),
+    ).toBe(true);
     fireEvent.click(screen.getByTestId("locate-citation-cite-1"));
     expect(navigateRequestCount).toBe(1);
     releaseNavigate!();

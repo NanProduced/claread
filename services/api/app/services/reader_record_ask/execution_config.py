@@ -71,6 +71,7 @@ from app.llm.provider_factory import ModelProviderError
 from app.llm.router import ModelSelectionError, build_model_for_route
 from app.llm.routes import MODEL_ROUTE_READER_ASK
 from app.llm.types import ResolvedModelConfig, RunModelSettings
+from app.services.reader_record_ask import web_search_common
 from app.services.reader_record_ask.model_options import (
     ReaderAskRuntimeBudgetConfig,
     ResolvedReaderAskModelOption,
@@ -78,7 +79,6 @@ from app.services.reader_record_ask.model_options import (
 from app.services.reader_record_ask.web_search_adapter_registry import (
     WEB_SEARCH_CAPABILITY_POLICY_VERSION as _REGISTRY_POLICY_VERSION,
 )
-from app.services.reader_record_ask.web_search_common import resolve_web_search_binding
 from app.services.reader_record_ask.web_search_contracts import (
     ResolvedWebSearchCapability,
     WebSearchMode,
@@ -403,7 +403,7 @@ def resolve_web_search_capability(
     # global provider string is no longer consulted, and there is no
     # second registry instance constructed here.
     _ = settings or get_settings()  # may be used for future readiness flags
-    binding = resolve_web_search_binding(model_config)
+    binding = web_search_common.resolve_web_search_binding(model_config)
     return binding.capability
 
 
@@ -493,7 +493,7 @@ def resolve_reader_record_ask_execution(
         web_search_capability: ResolvedWebSearchCapability | None = None
         web_search_backend: WebSearchBackend | None = None
     else:
-        binding = resolve_web_search_binding(model_config)
+        binding = web_search_common.resolve_web_search_binding(model_config)
         web_search_capability = binding.capability
         web_search_backend = binding.backend
 

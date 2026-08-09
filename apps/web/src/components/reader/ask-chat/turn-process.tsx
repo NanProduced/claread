@@ -40,6 +40,7 @@ import {
   type TurnProcessProjectionInput,
   type TurnProcessStepId,
 } from "../ask/agentic-process-projection";
+import { PROCESS_STEP_ISSUE_MESSAGES } from "../ask/ask-error-messages";
 
 export type TurnProcessDisclosureProps = TurnProcessProjectionInput & {
   className?: string;
@@ -96,6 +97,10 @@ function TurnProcessStepGlyph({ step }: { step: ProcessStepView }) {
 }
 
 function stepMetadata(step: ProcessStepView) {
+  const issue =
+    step.status === "failed" || step.status === "degraded"
+      ? PROCESS_STEP_ISSUE_MESSAGES[step.id]?.[step.status]
+      : null;
   const detail =
     step.detail === "no_results"
       ? step.id === "article-evidence"
@@ -121,8 +126,8 @@ function stepMetadata(step: ProcessStepView) {
       <span className="sr-only" data-step-accessible-status="true">
         {status}
       </span>
-      {detail ? <span>{detail}</span> : null}
-      {detail && step.attempts ? <span aria-hidden="true">·</span> : null}
+      {issue ?? detail ? <span>{issue ?? detail}</span> : null}
+      {(issue ?? detail) && step.attempts ? <span aria-hidden="true">·</span> : null}
       {step.attempts ? <span>{step.attempts}</span> : null}
     </span>
   );
@@ -170,7 +175,7 @@ export function TurnProcessDisclosure({
       data-turn-process-state={view.header.state}
     >
       <ChainOfThoughtHeader
-        className="min-h-11 gap-1.5 text-xs font-medium text-muted-foreground sm:min-h-0"
+        className="gap-1.5"
         glyph={isRunning ? <RunningPulseGlyph /> : settledGlyph}
         aria-label={view.ariaLabel || undefined}
         {...(isRunning
@@ -193,7 +198,15 @@ export function TurnProcessDisclosure({
               {`· ${view.header.liveSummary}`}
             </Shimmer>
           ) : !isRunning && view.header.settledCopy ? (
-            <span className="truncate">· {view.header.settledCopy}</span>
+            <>
+              <span className="truncate">· {view.header.settledCopy}</span>
+              {sourceStatus === "completed" && view.header.durationS ? (
+                <span className="shrink-0">· {view.header.durationS}s</span>
+              ) : null}
+              {sourceStatus === "completed" && view.webSourceCount > 0 ? (
+                <span className="shrink-0">· {view.webSourceCount} 个来源</span>
+              ) : null}
+            </>
           ) : null}
         </span>
       </ChainOfThoughtHeader>

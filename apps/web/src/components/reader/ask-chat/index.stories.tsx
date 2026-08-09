@@ -2,7 +2,6 @@ import type { Meta } from "@ladle/react";
 import { GitBranch, MessageSquare, PencilLine, Search } from "lucide-react";
 import { AskComposer } from "./AskComposer";
 import { AssistantMessage } from "./AssistantMessage";
-import { CitationList } from "./CitationList";
 import { ConversationShell } from "./ConversationShell";
 import { FollowUpSuggestionChips } from "./FollowUpSuggestionChips";
 import { PromptSuggestions } from "./PromptSuggestions";
@@ -19,29 +18,21 @@ const starterSuggestions = [
     prompt: "概括这篇文章的核心观点。",
     entryAction: "ask_about_this" as const,
     icon: MessageSquare,
-    iconClassName: "text-grammar-violet",
-    badgeClassName: "bg-[rgba(116,102,148,0.12)]",
   },
   {
     prompt: "作者最想说明什么？",
     entryAction: "ask_about_this" as const,
     icon: Search,
-    iconClassName: "text-context-blue",
-    badgeClassName: "bg-[rgba(76,145,194,0.12)]",
   },
   {
     prompt: "这篇文章是怎么展开论证的？",
     entryAction: "ask_about_this" as const,
     icon: GitBranch,
-    iconClassName: "text-structure-green",
-    badgeClassName: "bg-[rgba(60,140,104,0.12)]",
   },
   {
     prompt: "基于这篇文章出一道小练习。",
     entryAction: "ask_about_this" as const,
     icon: PencilLine,
-    iconClassName: "text-vocab-amber",
-    badgeClassName: "bg-[rgba(228,176,0,0.14)]",
   },
 ];
 
@@ -51,8 +42,6 @@ export const EmptyState = () => (
       <PromptSuggestions
         title="从这篇文章开始问"
         description="当前文章默认在场，可以直接问核心观点、结构关系或作者意图。"
-        contextLabel="当前句子"
-        contextPreview="For almost a decade, I told everyone I encountered that they should pursue their passion."
         suggestions={starterSuggestions}
         onPickPrompt={() => {}}
       />
@@ -159,21 +148,6 @@ export const ToolChipRowStory = () => (
           { tool_name: "get_record_insights", status: "completed", next_actions: [], artifacts: [], metadata_json: {} },
           { tool_name: "get_user_vocabulary_book", status: "started", next_actions: [], artifacts: [], metadata_json: {} },
           { tool_name: "resolve_known_reference", status: "failed", next_actions: [], artifacts: [], metadata_json: {} },
-        ]}
-      />
-    </div>
-  </div>
-);
-
-export const CitationListStory = () => (
-  <div className="min-h-screen bg-[linear-gradient(180deg,rgba(248,246,240,1),rgba(255,255,255,1))] p-6">
-    <div className="mx-auto max-w-[42rem] rounded-[32px] border border-hairline/80 bg-[radial-gradient(circle_at_top,rgba(31,94,255,0.06),transparent_30%),linear-gradient(180deg,rgba(250,249,245,0.98),rgba(255,255,255,0.98))] p-5 shadow-[0_30px_84px_rgba(17,17,17,0.14)]">
-      <CitationList
-        citations={[
-          { citation_id: "c1", kind: "anchor", label: "第 3 段", metadata_json: {} },
-          { citation_id: "c2", kind: "vocabulary", label: "passion principle", metadata_json: {} },
-          { citation_id: "c3", kind: "dictionary_entry", label: "inequality", source_article_title: "牛津高阶", metadata_json: {} },
-          { citation_id: "c4", kind: "dictionary_ai", label: "overwork", metadata_json: {} },
         ]}
       />
     </div>

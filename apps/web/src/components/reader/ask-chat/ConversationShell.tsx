@@ -107,7 +107,7 @@ export function ConversationShell({
   return (
     <Conversation
       className={cn(
-        "ask-conversation relative h-full min-h-0 flex-1 overflow-hidden",
+        "ask-conversation relative h-full min-h-0 flex-1 overflow-hidden motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-150 motion-reduce:animate-none",
         className,
       )}
       initial="smooth"

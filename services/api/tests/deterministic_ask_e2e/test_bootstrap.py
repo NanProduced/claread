@@ -230,3 +230,42 @@ def test_test_only_app_entry_installs_overlays_in_isolated_process():
         "ask_history": True,
         "root": True,
     }
+
+
+def test_test_only_app_entry_owns_its_model_catalog_configuration():
+    code = (
+        "import json\n"
+        "import deterministic_ask_e2e.app\n"
+        "from app.config.settings import get_settings\n"
+        "from app.services.reader_record_ask.model_options import "
+        "resolve_default_reader_ask_model_option\n"
+        "settings = get_settings()\n"
+        "option = resolve_default_reader_ask_model_option(settings)\n"
+        "print(json.dumps({\n"
+        "    'option_key': option.key,\n"
+        "    'main_model_name': option.main_model_name,\n"
+        "    'replan_model_name': option.replan_model_name,\n"
+        "    'profiles_are_inline': settings.model_profiles_json.startswith('{'),\n"
+        "}))\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(API_ROOT / "tests")
+    env["MODEL_PROFILES_JSON"] = "config/private-model-profiles.json"
+    env["MODEL_PRESETS_JSON"] = "config/private-model-presets.json"
+    env["READER_ASK_MODEL_OPTIONS_JSON"] = "config/private-reader-options.json"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(API_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout.strip().splitlines()[-1])
+    assert report == {
+        "option_key": "deterministic-e2e-r0",
+        "main_model_name": "deterministic-e2e-model",
+        "replan_model_name": "deterministic-e2e-model",
+        "profiles_are_inline": True,
+    }

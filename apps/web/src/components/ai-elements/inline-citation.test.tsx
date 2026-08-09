@@ -14,6 +14,8 @@ import {
   InlineCitationCarouselItem,
   InlineCitationCarouselNext,
   InlineCitationCarouselPrev,
+  InlineCitationQuote,
+  InlineCitationSource,
 } from "./inline-citation";
 
 describe("InlineCitation", () => {
@@ -55,5 +57,30 @@ describe("InlineCitation", () => {
     expect(screen.getByText("2/6")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "上一条来源" }));
     expect(screen.getByText("1/6")).not.toBeNull();
+  });
+
+  it("shows one evidence title and expands a clamped quote accessibly", () => {
+    render(
+      <InlineCitation defaultOpen>
+        <InlineCitationCard>
+          <InlineCitationCardTrigger>[1]</InlineCitationCardTrigger>
+          <InlineCitationCardBody>
+            <InlineCitationSource>
+              <InlineCitationQuote>
+                This is a deliberately long evidence excerpt that needs a compact preview before the reader chooses to expand the complete source passage.
+              </InlineCitationQuote>
+            </InlineCitationSource>
+          </InlineCitationCardBody>
+        </InlineCitationCard>
+      </InlineCitation>,
+    );
+
+    expect(screen.getAllByText("文章依据")).toHaveLength(1);
+    expect(screen.queryByText("文章内依据")).toBeNull();
+    const toggle = screen.getByRole("button", { name: "展开完整证据片段" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "收起完整证据片段" })).not.toBeNull();
   });
 });

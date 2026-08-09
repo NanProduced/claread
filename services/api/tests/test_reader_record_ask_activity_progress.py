@@ -7,6 +7,7 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -211,6 +212,31 @@ def _function_model(answer: str = "ok answer", handles: list[str] | None = None)
     return FunctionModel(model_fn)
 
 
+def _non_grounded_model(response_kind: str):
+    async def model_fn(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="final_result",
+                    args=json.dumps(
+                        {
+                            "response_kind": response_kind,
+                            "clarification_text": (
+                                "请说明你想了解哪一部分。"
+                                if response_kind == "clarification"
+                                else None
+                            ),
+                            "answer_blocks": [],
+                        }
+                    ),
+                    tool_call_id="final-1",
+                )
+            ]
+        )
+
+    return FunctionModel(model_fn)
+
+
 # ---------------------------------------------------------------------------
 # Projector unit tests
 # ---------------------------------------------------------------------------
@@ -240,7 +266,8 @@ def test_progress_projector_sequence_and_mapping() -> None:
             duration_ms=12,
         ),
         ComposingAnswerEvent(),
-        ValidatingEvidenceEvent(),
+        ValidatingEvidenceEvent(activity="started"),
+        ValidatingEvidenceEvent(activity="completed", outcome="ok"),
         FinalAnswerEvent(text="answer with REASONING_CONTENT_SECRET"),
         RunFinishedEvent(
             read_range_calls=1,
@@ -259,10 +286,9 @@ def test_progress_projector_sequence_and_mapping() -> None:
     assert activities[:2] == ["started", "completed"]
     assert ("reading_context", "started") in phase_activities
     assert ("reading_context", "completed") in phase_activities
-    assert all(
-        p.phase not in {"composing_answer", "validating_evidence"}
-        for p in projected
-    )
+    assert all(p.phase != "composing_answer" for p in projected)
+    assert ("validating_evidence", "started") in phase_activities
+    assert ("validating_evidence", "completed") in phase_activities
     sequences = [p.sequence for p in projected]
     assert sequences == list(range(1, len(sequences) + 1))
     assert all(p.elapsed_ms >= 0 for p in projected)
@@ -351,12 +377,36 @@ def test_article_tools_share_one_public_article_evidence_activity() -> None:
         assert secret not in blob
 
 
-def test_late_internal_composing_and_unclosed_validation_are_not_public_steps() -> None:
+def test_validation_lifecycle_projects_one_public_citation_check_step() -> None:
     import time
 
     projector = _ProgressProjector(started_at=time.perf_counter())
     assert projector.project(ComposingAnswerEvent()) == []
-    assert projector.project(ValidatingEvidenceEvent()) == []
+    projected = [
+        *projector.project(ValidatingEvidenceEvent(activity="started")),
+        *projector.project(
+            ValidatingEvidenceEvent(activity="completed", outcome="ok")
+        ),
+    ]
+    assert [
+        (item.phase, item.activity, item.status, item.outcome)
+        for item in projected
+    ] == [
+        ("validating_evidence", "started", "running", None),
+        ("validating_evidence", "completed", "ok", "success"),
+    ]
+
+
+def test_validation_lifecycle_rejects_inconsistent_activity_outcomes() -> None:
+    for kwargs in (
+        {"activity": "started", "outcome": "ok"},
+        {"activity": "completed", "outcome": None},
+        {"activity": "completed", "outcome": "invalid_citations"},
+        {"activity": "failed", "outcome": None},
+        {"activity": "failed", "outcome": "ok"},
+    ):
+        with pytest.raises(ValidationError):
+            ValidatingEvidenceEvent(**kwargs)
 
 
 def test_progress_projector_unknown_status_fail_closed() -> None:
@@ -557,9 +607,28 @@ def test_progress_projector_unknown_tool_is_generic() -> None:
     )
 
 
+def test_progress_projector_records_only_ordered_public_tool_names() -> None:
+    import time
+
+    projector = _ProgressProjector(started_at=time.perf_counter())
+    for event in (
+        ToolCallEvent(tool_name="read_range", args={}),
+        ToolCallEvent(tool_name="secret_internal_tool", args={"query": "SECRET"}),
+        ToolCallEvent(tool_name="search_current_article", args={}),
+        WebSearchCallEvent(call_sequence=1, attempt_count=None),
+    ):
+        projector.project(event)
+
+    assert projector.tool_call_sequence == [
+        "read_range",
+        "search_current_article",
+        "search_web",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_validating_progress_arrives_before_finalizer_returns() -> None:
-    """Citation-check stays hidden until a real public completion exists."""
+    """Grounded answers expose the complete typed citation-check lifecycle."""
     repo = _FakeRepo()
     chunks = [
         c
@@ -580,7 +649,11 @@ async def test_validating_progress_arrives_before_finalizer_returns() -> None:
     progress = [p for n, p in events if n == EVENT_AGENTIC_PROGRESS]
     phases = [(p["phase"], p["activity"]) for p in progress]
     assert ("composing_answer", "started") not in phases
-    assert ("validating_evidence", "started") not in phases
+    assert ("validating_evidence", "started") in phases
+    assert ("validating_evidence", "completed") in phases
+    assert phases.index(("validating_evidence", "started")) < phases.index(
+        ("validating_evidence", "completed")
+    )
     assert EVENT_MESSAGE_COMPLETED in [n for n, _ in events]
 
 
@@ -601,7 +674,8 @@ async def test_runtime_event_order_composing_validating_final() -> None:
         return result
 
     def tracking_sink(event):
-        order.append(event.type)
+        suffix = f":{event.activity}" if isinstance(event, ValidatingEvidenceEvent) else ""
+        order.append(f"{event.type}{suffix}")
 
     with patch.object(runtime_mod, "finalize_agent_answer", side_effect=tracking_finalize):
         result = await run_reading_record_ask(
@@ -615,14 +689,118 @@ async def test_runtime_event_order_composing_validating_final() -> None:
 
     assert result.final_text == "ok"
     assert "composing_answer" in order
-    assert "validating_evidence" in order
+    assert "validating_evidence:started" in order
+    assert "validating_evidence:completed" in order
     assert "finalize_enter" in order
     assert "finalize_exit" in order
     assert "final_answer" in order
-    assert order.index("composing_answer") < order.index("validating_evidence")
-    assert order.index("validating_evidence") < order.index("finalize_enter")
-    assert order.index("finalize_exit") < order.index("final_answer")
+    assert order.index("composing_answer") < order.index("validating_evidence:started")
+    assert order.index("validating_evidence:started") < order.index("finalize_enter")
+    assert order.index("finalize_exit") < order.index("validating_evidence:completed")
+    assert order.index("validating_evidence:completed") < order.index("final_answer")
     assert order.index("final_answer") < order.index("run_finished")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "expected_activity"),
+    [
+        ("ok", "completed"),
+        ("invalid_citations", "failed"),
+        ("context_stale", "failed"),
+        ("unavailable", "failed"),
+    ],
+)
+async def test_runtime_projects_exact_finalizer_status(
+    status: str,
+    expected_activity: str,
+) -> None:
+    from unittest.mock import patch
+
+    from app.services.reader_record_ask import runtime as runtime_mod
+
+    async def finalize(**kwargs):
+        return FinalizedAskResult(
+            status=status,
+            answer_text="ok" if status == "ok" else None,
+            reason=None if status == "ok" else status,
+            envelope_fingerprint=kwargs["envelope"].envelope_fingerprint,
+        )
+
+    with patch.object(runtime_mod, "finalize_agent_answer", side_effect=finalize):
+        result = await run_reading_record_ask(
+            user_message="hello",
+            envelope=_envelope(),
+            document_access=_access(),
+            model=_function_model("ok"),
+            article_rag=None,
+        )
+
+    validation = [
+        event for event in result.events if isinstance(event, ValidatingEvidenceEvent)
+    ]
+    assert [(event.activity, event.outcome) for event in validation] == [
+        ("started", None),
+        (expected_activity, status),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_kind", ["clarification", "source_unavailable"])
+async def test_non_grounded_responses_do_not_emit_validation_lifecycle(
+    response_kind: str,
+) -> None:
+    result = await run_reading_record_ask(
+        user_message="hello",
+        envelope=_envelope(),
+        document_access=_access(),
+        model=_non_grounded_model(response_kind),
+        article_rag=None,
+    )
+
+    assert not any(
+        isinstance(event, ValidatingEvidenceEvent) for event in result.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_closes_a_running_validation_step_after_finalizer_exception() -> None:
+    async def run_with_finalizer_exception(**kwargs):
+        sink = kwargs.get("event_sink")
+        if sink is not None:
+            sink(ValidatingEvidenceEvent(activity="started"))
+        raise RuntimeError("EXCEPTION_MESSAGE_SECRET")
+
+    chunks = [
+        chunk
+        async for chunk in stream_agentic_thread_message(
+            user_id=_USER,
+            reading_record_id=_RECORD,
+            thread_id=_THREAD,
+            content="q",
+            facts=_fake_facts(),
+            request_anchor=None,
+            repository=_FakeRepo(),  # type: ignore[arg-type]
+            document_access=_access(),
+            model="unused",
+            run_fn=run_with_finalizer_exception,
+            auto_wire_dependencies=False,
+        )
+    ]
+
+    events = _parse_sse(chunks)
+    validation = [
+        payload
+        for name, payload in events
+        if name == EVENT_AGENTIC_PROGRESS
+        and payload["phase"] == "validating_evidence"
+    ]
+    assert [(item["activity"], item["status"]) for item in validation] == [
+        ("started", "running"),
+        ("failed", "failed"),
+    ]
+    assert events[-1][0] == EVENT_AGENTIC_TERMINAL
+    assert "EXCEPTION_MESSAGE_SECRET" not in json.dumps(events)
 
 
 # ---------------------------------------------------------------------------
@@ -830,7 +1008,13 @@ async def test_zero_tool_progress_sequence() -> None:
     assert "reading_context" not in phases
     assert "searching_article" not in phases
     assert "composing_answer" not in phases
-    assert "validating_evidence" not in phases
+    validation = [
+        (payload["activity"], payload["status"])
+        for name, payload in events
+        if name == EVENT_AGENTIC_PROGRESS
+        and payload["phase"] == "validating_evidence"
+    ]
+    assert validation == [("started", "running"), ("completed", "ok")]
     assert EVENT_MESSAGE_COMPLETED in [n for n, _ in events]
     sequences = [p["sequence"] for p in progress]
     assert sequences == sorted(sequences)

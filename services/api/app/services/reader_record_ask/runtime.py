@@ -376,18 +376,30 @@ async def run_reading_record_ask(
         observation.execution_stage = "agent_run_completed"
     agent_output = streamed.output
     if not isinstance(agent_output, AgentAnswerDraftOutput):
-        raise TypeError("agent returned an invalid structured answer output")
-    validated_answer_blocks = agent_output.validated_answer_blocks
+        error = TypeError("agent returned an invalid structured answer output")
+        error.reader_ask_raise_site = "runtime_type"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = type(agent_output).__name__  # type: ignore[attr-defined]
+        raise error
+    validated_answer_blocks = deps.consume_validated_answer_blocks()
     if (
         agent_output.response_kind == "grounded_answer"
         and validated_answer_blocks is None
     ):
-        raise TypeError("grounded answer did not pass block validation")
+        error = TypeError("grounded answer did not pass block validation")
+        error.reader_ask_raise_site = "runtime_blocks"  # type: ignore[attr-defined]
+        error.reader_ask_final_output_type = type(agent_output).__name__  # type: ignore[attr-defined]
+        raise error
+    if (
+        validated_answer_blocks is not None
+        and agent_output.validated_answer_blocks is None
+    ):
+        agent_output.bind_validated_answer_blocks(validated_answer_blocks)
 
     finalizer_kind: ResponseKind = agent_output.response_kind  # type: ignore[assignment]
 
     deps.emit_event(ComposingAnswerEvent())
-    deps.emit_event(ValidatingEvidenceEvent())
+    if finalizer_kind == "grounded_answer":
+        deps.emit_event(ValidatingEvidenceEvent(activity="started"))
 
     if observation is not None:
         observation.execution_stage = "finalizer"
@@ -406,6 +418,13 @@ async def run_reading_record_ask(
         web_evidence_registry=coordinator.web_evidence_registry,
         web_search_outcome=coordinator.web_search_outcome,
     )
+    if finalizer_kind == "grounded_answer":
+        deps.emit_event(
+            ValidatingEvidenceEvent(
+                activity="completed" if finalized.status == "ok" else "failed",
+                outcome=finalized.status,
+            )
+        )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
     cited_web_citations = [

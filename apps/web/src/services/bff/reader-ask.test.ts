@@ -206,4 +206,45 @@ describe("reader-ask BFF RR cutover", () => {
       controller.signal,
     );
   });
+
+  it("preserves the safe web_search_unavailable code through the non-ok SSE response", async () => {
+    vi.mocked(createUpstreamReadingRecordAskStream).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: "web_search_unavailable",
+            message: "provider-private detail",
+          },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await createReaderAskStreamForWeb(
+      "reading-record-1",
+      "thread-rr-1",
+      {
+        content: "Search the web",
+        entry_action: "ask_about_this",
+        page_identity: {
+          record_id: "reading-record-1",
+          title: "Reading Record",
+          surface: "reader",
+          source: "reader_2_0",
+          available_context_capabilities: [],
+          has_article_overview: false,
+          has_sentence_entries: true,
+          has_annotations: false,
+          has_reader_notes: false,
+        },
+        attachments: [],
+        web_search_mode: "allowed",
+      },
+    );
+
+    const body = await result.text();
+    expect(result.status).toBe(503);
+    expect(body).toContain('"code":"web_search_unavailable"');
+    expect(body).not.toContain("provider-private detail");
+  });
 });

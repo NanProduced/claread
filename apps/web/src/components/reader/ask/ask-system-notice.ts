@@ -25,6 +25,7 @@
 import {
   FINAL_STATUS_MESSAGES,
   TERMINAL_REASON_MESSAGES,
+  WEB_SEARCH_UNAVAILABLE_MESSAGE,
   formatAgenticTerminalMessage,
 } from "./ask-error-messages";
 
@@ -35,7 +36,12 @@ export type AskSystemNoticeScope = "turn" | "panel" | "composer";
 export type AskSystemNoticeSeverity = "action" | "warning" | "error";
 
 /** CTA intent — the UI layer maps each value to a concrete handler. */
-export type AskSystemNoticeCtaAction = "retry" | "resend" | "reload" | "dismiss";
+export type AskSystemNoticeCtaAction =
+  | "retry"
+  | "resend"
+  | "disable_web_resend"
+  | "reload"
+  | "dismiss";
 
 export interface AskSystemNoticeCta {
   label: string;
@@ -185,6 +191,24 @@ export function projectSendFailureNotice(args: {
     relatedMessageId: args.messageId,
     dismissible: false,
     cta: isPending ? RESEND_CTA : RETRY_CTA,
+  };
+}
+
+/** Typed pre-stream Web Search capability failure with a safe recovery CTA. */
+export function projectWebSearchUnavailableNotice(args: {
+  messageId: string;
+}): AskSystemNotice {
+  return {
+    id: `turn:web-search-unavailable:${args.messageId}`,
+    scope: "turn",
+    severity: "action",
+    message: WEB_SEARCH_UNAVAILABLE_MESSAGE,
+    relatedMessageId: args.messageId,
+    dismissible: false,
+    cta: {
+      label: "关闭联网并重新发送",
+      action: "disable_web_resend",
+    },
   };
 }
 

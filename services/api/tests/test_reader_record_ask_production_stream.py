@@ -101,10 +101,10 @@ def _make_execution_config(
     ``web_search_capability``. Tests that need to verify backend
     forwarding into the production stream pass a sentinel object here.
     """
-    from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
     from app.services.reader_record_ask.execution_config import (
         ReaderRecordAskExecutionConfig,
     )
+    from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
 
     return ReaderRecordAskExecutionConfig(
         option_key=option_key,
@@ -1292,6 +1292,9 @@ async def test_generic_exception_does_not_complete_or_leak_as_answer(
     log_blob = "\n".join(r.getMessage() for r in caplog.records)
     assert "model_route=" in log_blob
     assert "RuntimeError" in log_blob
+    assert "raise_site=transport" in log_blob
+    assert "final_output_type=unavailable" in log_blob
+    assert "tool_sequence=none" in log_blob
     assert sensitive not in log_blob
     assert "provider boom" not in log_blob
     assert "XYZ" not in log_blob
@@ -3664,10 +3667,10 @@ async def test_retry_propagates_web_search_backend_to_retry_agentic() -> None:
     The retry generator must receive the executable backend so the
     agent runtime can mount ``search_web`` against the real provider.
     """
-    from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
     from app.services.reader_record_ask.execution_config import (
         ReaderRecordAskExecutionConfig,
     )
+    from app.services.reader_record_ask.model_options import ReaderAskRuntimeBudgetConfig
     from app.services.reader_record_ask.service import (
         prepare_reading_record_ask_retry,
         retry_reading_record_ask_message,

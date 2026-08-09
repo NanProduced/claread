@@ -240,17 +240,6 @@ function webAttemptHint(fold: StepFold): string | null {
   return null;
 }
 
-function hasArticleOrWebCitation(
-  citations: readonly AgenticCitationDisplayItem[] | null | undefined,
-): boolean {
-  return Boolean(
-    citations?.some(
-      (citation) =>
-        citation.sourceKind === "article" || citation.sourceKind === "web",
-    ),
-  );
-}
-
 function outcomeFromWebSummary(
   summary: ReaderAskWebSearchSummaryDto | null | undefined,
 ): TurnProcessStepOutcome | null {
@@ -406,14 +395,7 @@ function projectSteps(
       : null;
   const domains =
     source.status === "completed" ? extractWebDomains(citations) : [];
-  const hasCitations = hasArticleOrWebCitation(citations);
-
   return folds.flatMap((fold) => {
-    // No current backend event proves citation-check completion. Keep this
-    // branch for a future typed result, but hide started-only validation.
-    if (fold.id === "citation-check" && (!hasCitations || fold.rawStatus !== "ok")) {
-      return [];
-    }
     const resolved = resolveFold(
       fold,
       source,

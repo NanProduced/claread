@@ -10,18 +10,16 @@ import {
   PromptInputFooter,
   PromptInputHeader,
   PromptInputProvider,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { SystemMessage } from "@/components/ui/system-message";
 import { userFacingErrorMessage } from "../ask/ask-error-messages";
 import { cn } from "@/lib/cn";
@@ -32,6 +30,7 @@ type AskComposerProps = {
   sending: boolean;
   placeholder: string;
   errorMessage?: string | null;
+  onErrorRetry?: () => void;
   contextStrip?: React.ReactNode;
   actionMenu?: React.ReactNode;
   actionMenuOpen?: boolean;
@@ -110,7 +109,7 @@ function AskComposerSurface({
 
       <PromptInputTextarea
         placeholder={placeholder}
-        className="min-h-[4rem] bg-transparent text-[15px] leading-6 placeholder:text-muted-foreground"
+        className="min-h-[4rem] bg-transparent text-[14px] leading-6 placeholder:text-muted-foreground"
         disabled={sending}
         onFocus={onTextareaFocus}
         onBlur={onTextareaBlur}
@@ -169,36 +168,39 @@ function AskComposerSurface({
               )}
             >
               <Globe aria-hidden="true" />
-              <span>联网搜索 · {webSearchEnabled ? "开" : "关"}</span>
+              <span>联网 · {webSearchEnabled ? "开" : "关"}</span>
             </button>
           ) : null}
         </PromptInputTools>
         <PromptInputTools className="justify-end">
           {modelOptions?.length ? (
-            <Select
+            <PromptInputSelect
               value={selectedModelKey ?? undefined}
               onValueChange={(value) => onModelChange?.(value || null)}
               disabled={modelSelectDisabled}
             >
-              <SelectTrigger
+              <PromptInputSelectTrigger
                 aria-label="切换 Ask Claread 模型"
-                className="h-7 rounded-md border-transparent bg-transparent px-1.5 text-xs font-normal text-muted-foreground/70 shadow-none transition-colors hover:bg-muted/60 hover:text-foreground focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3 [&_svg]:opacity-0 hover:[&_svg]:opacity-50"
+                className="h-7 max-w-[9rem] truncate rounded-md px-1.5 text-xs font-normal text-muted-foreground shadow-none focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus-visible:outline-none [&_svg]:ml-0.5 [&_svg]:size-3"
               >
-                <SelectValue placeholder={modelPlaceholder ?? "选择模型"} />
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end" className="mb-1">
+                <PromptInputSelectValue
+                  className="truncate"
+                  placeholder={modelPlaceholder ?? "选择模型"}
+                />
+              </PromptInputSelectTrigger>
+              <PromptInputSelectContent position="popper" side="top" align="end" className="mb-1">
                 {modelOptions.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
+                  <PromptInputSelectItem key={item.value} value={item.value}>
                     {item.label}
-                  </SelectItem>
+                  </PromptInputSelectItem>
                 ))}
-              </SelectContent>
-            </Select>
+              </PromptInputSelectContent>
+            </PromptInputSelect>
           ) : null}
           <PromptInputSubmit
             aria-label={sending ? "停止生成" : "发送"}
             className="rounded-full"
-            status={sending ? "submitted" : "ready"}
+            status={sending ? "streaming" : "ready"}
             disabled={submitDisabled}
             onStop={sending ? onStop : undefined}
           />
@@ -213,6 +215,7 @@ export function AskComposer({
   sending,
   placeholder,
   errorMessage,
+  onErrorRetry,
   contextStrip,
   actionMenu,
   actionMenuOpen,
@@ -231,16 +234,21 @@ export function AskComposer({
   const displayErrorMessage = errorMessage ? userFacingErrorMessage(errorMessage) : null;
 
   return (
-    <div className="shrink-0 bg-background px-4 pb-3 pt-1.5">
+    <div className="shrink-0 border-t border-border/60 bg-background px-4 pb-3 pt-1.5">
       {displayErrorMessage ? (
         // R2.4 — composer banner errors are recoverable (network/retry/
         // capability). Use warning+fill for a low-disturbance amber surface
         // instead of a full red border. Only unrecoverable validation
         // errors (not currently surfaced here) would use variant="error".
         <SystemMessage
-          className="mb-2.5 rounded-md px-3 py-2 text-xs leading-5"
-          variant="warning"
-          fill
+          className="mb-2.5"
+          variant="quiet"
+          severity="warning"
+          cta={
+            onErrorRetry
+              ? { label: "重试", onClick: onErrorRetry, variant: "ghost" }
+              : undefined
+          }
         >
           {displayErrorMessage}
         </SystemMessage>

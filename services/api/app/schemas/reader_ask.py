@@ -686,7 +686,7 @@ class ReaderAskSelectedModel(BaseModel):
     price_multiplier: float = 1.0
     # ASK-WEB-G1-R2: server-declared Web Search capability for this model
     # option. ``"available"`` only when a real provider is wired via
-    # ``settings.reader_record_ask_web_search_provider`` — never inferred
+    # the current ResolvedModelConfig binding — never inferred
     # from the request toggle or scope. The frontend gates Search toggle
     # visibility/enablement on this signal (in addition to the page
     # scope), so the user cannot request a capability the host has not

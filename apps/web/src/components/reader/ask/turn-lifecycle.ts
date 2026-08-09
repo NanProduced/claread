@@ -259,9 +259,9 @@ export function parseSubmissionReconcilePayload(
  *   ``last - first`` is the answer streaming duration.
  * - ``validation_done`` — signal that the host has reached the
  *   validation/finalization phase. On the frontend this is approximated
- *   by the first ``agentic.progress`` event whose phase is
+ *   by the first non-started ``agentic.progress`` event whose phase is
  *   ``validating_evidence`` OR the first ``message.completed`` frame,
- *   whichever fires first. ``null`` if the turn failed before reaching
+ *   whichever fires first. ``null`` if the turn failed before finishing
  *   validation.
  * - ``persistence_done`` — successful commit timestamp. On the
  *   frontend this is approximated by the ``message.completed`` arrival

@@ -1,7 +1,7 @@
 # Snapshot Representation Event Contract
 
 > 状态：`已接受设计；O4-R2 A+B+C + O4-R2-D 已完成；PUX-R4 / SSE 仍未实施；T5.1 L0/L1 为 accepted-snapshot 本地投影；T5.3 semantic_outline durable layer 已发布 `layer_published` 但不进 snapshot`
-> 最后更新：2026-07-17（T5.3b：补 semantic outline durable / snapshot 边界；不扩 transport）
+> 最后更新：2026-08-09（补 Ask ephemeral progress 与 durable representation event 的边界；不扩 transport）
 > 范围：会改变 Reader Plate snapshot 可观察表示的写入，及其 `reader_events` 合同。
 
 ## 目标与边界
@@ -120,6 +120,22 @@ Reader Record Plate Surface 对 `snapshot_id` 与上次 targeted apply 相同的
 ### 未批准的传输改造
 
 本节不批准 SSE、WebSocket、JSON Patch、ETag/304、压缩或通用 tree diff。accepted/rejected 判定仍基于 polling/page seam 的 full snapshot reload 合同；PUX-R4 interaction-stable incremental projection 与 semantic fragment transport 仍属未实施范畴。L0/L1 与 T5.3 outline durable 的落地 **均不**构成对上述传输改造的批准。
+
+## Ask runtime progress boundary（不属于 `reader_events`）
+
+Ask 的 `agentic.progress` 是 turn-local、ephemeral 的 UI 投影，不是本合同
+定义的 durable representation event，不分配 record sequence，也不进入
+snapshot replay。其 `validating_evidence` phase 只允许以下 typed lifecycle：
+
+| activity | outcome | 含义 |
+|---|---|---|
+| `started` | `null` | grounded answer 已进入最终引用校验。 |
+| `completed` | `ok` | 引用校验完成。 |
+| `failed` | `context_stale` / `invalid_citations` / `unavailable` | typed finalizer outcome；不得携带 answer、query、URL 或内部诊断。 |
+
+`composing_answer` 不公开；回答生成由首个 identity-valid `message.delta`
+拥有。`FinalAnswerEvent` 只承载最终答案，不复制 validation outcome。该边界
+不批准新的 `reader_events` 类型、历史步骤持久化或 snapshot 字段。
 
 ## O4-R2 实施门槛
 

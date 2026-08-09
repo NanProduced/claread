@@ -313,6 +313,7 @@ async def grounding_validator(
     previous_execution_stage = None
     if observation is not None:
         observation.output_validation_final_attempts += 1
+        observation.output_validation_object_ids.append(id(draft))
         previous_execution_stage = observation.execution_stage
         observation.execution_stage = "output_validation"
 
@@ -381,5 +382,8 @@ async def _grounding_validator_final_body(
         raise ModelRetry(str(exc)) from None
 
     draft.bind_validated_answer_blocks(validated)
+    if ctx.deps.observation is not None:
+        ctx.deps.observation.validated_artifact_object_ids.append(id(validated))
+    ctx.deps.publish_validated_answer_blocks(validated)
 
     return draft

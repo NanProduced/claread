@@ -118,6 +118,10 @@ describe("ConversationShell", () => {
     );
 
     expect(screen.getByTestId("message").textContent).toBe("hello");
+    const root = screen.getByTestId("conversation-root");
+    expect(root.className).toContain("motion-safe:animate-in");
+    expect(root.className).toContain("motion-reduce:animate-none");
+    expect(root.className).not.toContain("rgba(");
   });
 
   it("renders emptyState when hasMessages is false", () => {

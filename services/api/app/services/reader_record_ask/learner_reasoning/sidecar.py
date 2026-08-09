@@ -145,7 +145,7 @@ class LearnerReasoningSidecar:
         )
         if enabled and route is None and run_fn is None and model is None:
             self._enabled = False
-            logger.info(
+            logger.warning(
                 "reader_record_ask learner_reasoning disabled detail=route_missing"
             )
 

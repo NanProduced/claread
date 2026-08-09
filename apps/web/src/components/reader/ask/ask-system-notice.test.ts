@@ -19,6 +19,7 @@ import {
   projectSendFailureNotice,
   projectSupplementFailureNotice,
   projectTurnTerminalNotice,
+  projectWebSearchUnavailableNotice,
 } from "./ask-system-notice";
 
 describe("projectTurnTerminalNotice", () => {
@@ -119,6 +120,24 @@ describe("projectSendFailureNotice", () => {
     });
     expect(notice.severity).toBe("action");
     expect(notice.cta).toEqual({ label: "重新发送", action: "resend" });
+  });
+});
+
+describe("projectWebSearchUnavailableNotice", () => {
+  it("offers a typed close-web-and-resend action without raw upstream copy", () => {
+    const notice = projectWebSearchUnavailableNotice({
+      messageId: "local-assistant-web",
+    });
+    expect(notice).toMatchObject({
+      scope: "turn",
+      severity: "action",
+      dismissible: false,
+      message: "当前模型暂不支持联网搜索。",
+      cta: {
+        label: "关闭联网并重新发送",
+        action: "disable_web_resend",
+      },
+    });
   });
 });
 
