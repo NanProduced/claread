@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -35,6 +36,16 @@ from app.services.ai_usage import (
     record_ai_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
+from app.services.model_execution_journal import (
+    CapturedReceipt,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    PayloadContractError,
+    decode_resume_payload,
+    decode_usage_event_draft,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -54,6 +65,7 @@ from .job_bootstrap import (
     _fingerprint_matches_base,
 )
 from .job_runtime import (
+    CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
@@ -75,6 +87,7 @@ from .span_recorder import (
     end_worker_span_generic_exception,
     end_worker_span_success,
 )
+from .usage_attribution import ReaderUsageAttributionService
 
 DEFAULT_VOCABULARY_RETRY_DELAY = timedelta(minutes=5)
 VOCABULARY_WORKFLOW_VERSION = "d5-v3-vocabulary-worker"
@@ -83,6 +96,8 @@ FAKE_VOCABULARY_PROMPT_VERSION = "fake-vocabulary-worker-v1"
 FAKE_VOCABULARY_MODEL_PROFILE = "fake-reader-layer-vocabulary"
 FAKE_VOCABULARY_MODEL_PROVIDER = "fake-provider"
 FAKE_VOCABULARY_MODEL_NAME = "fake-vocabulary-model"
+
+logger = logging.getLogger(__name__)
 MAX_VOCABULARY_ITEMS = 5
 # T3.2 P1-1: The LLM candidate schema allows more candidates than the
 # published cap (MAX_VOCABULARY_ITEMS) so duplicates / grounding failures
@@ -1146,12 +1161,14 @@ class VocabularyWorkerService:
         layer_publisher: VocabularyLayerPublisher | None = None,
         executor: VocabularyExecutor | None = None,
         batch_executor: VocabularyBatchExecutor | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or VocabularyLayerPublisher(pool=pool)
         self._executor = executor or PydanticAIVocabularyExecutor()
         self._batch_executor = batch_executor or PydanticAIVocabularyBatchExecutor()
+        self._journal_service = journal_service or ModelExecutionJournalService(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -1243,6 +1260,12 @@ class VocabularyWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
     ) -> VocabularyJobProcessResult | None:
+        resume = await self._claim_captured_vocabulary_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_vocabulary_resume(resume=resume)
         claim = await self.claim_vocabulary_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
@@ -1264,6 +1287,15 @@ class VocabularyWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
     ) -> VocabularyJobProcessResult | None:
+        resume = await self._claim_captured_vocabulary_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if resume is not None:
+            return await self._process_captured_vocabulary_resume(resume=resume)
         claim = await self.claim_vocabulary_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -1287,22 +1319,91 @@ class VocabularyWorkerService:
     ) -> VocabularyJobProcessResult:
         context: VocabularyJobContext | None = None
         execution: VocabularyExecutionResult | None = None
+        execution_captured = False
 
         try:
             context = await self._load_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.vocabulary_unit",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._executor.generate(context)
             output = VocabularyLayerOutput.model_validate(execution.output)
+            try:
+                event_id = await self._capture_vocabulary_execution(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    output=output,
+                )
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             published_layer = await self._layer_publisher.publish_unit_vocabulary(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
                 output=output,
                 quality_json=_build_quality_json(output, execution),
             )
-            event_id = await self._record_usage_event(
-                context=context,
-                execution=execution,
-                published_layer=published_layer,
-                status=STATUS_SUCCEEDED,
+            event_id = await self._reconcile_captured_usage(
+                invocation_key=identity.invocation_key,
+                fallback_event_id=event_id,
             )
             await end_worker_span_success(
                 ai_usage_event_id=event_id,
@@ -1327,16 +1428,6 @@ class VocabularyWorkerService:
             )
         except FenceViolationError:
             await end_worker_span_fence_violation()
-            # The model call completed (tokens spent) but the publish fence
-            # failed — record the invocation's usage so the usage table
-            # reflects real model consumption. Mirrors the grammar per-unit
-            # fence path; the failed event never carries a layer id.
-            await self._record_failed_usage_event(
-                context=context,
-                error_code="publish_fence_failed",
-                error_message="vocabulary unit publish fence failed",
-                **_failed_vocabulary_usage_attrs(execution),
-            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1352,6 +1443,18 @@ class VocabularyWorkerService:
             )
             raise
         except VocabularyExecutionError as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if is_semantic_fence_failure_code(exc.failure_code):
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -1439,6 +1542,18 @@ class VocabularyWorkerService:
                 status="failed_terminal",
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1516,6 +1631,15 @@ class VocabularyWorkerService:
         retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
     ) -> VocabularyBatchJobProcessResult | None:
         """Claim and process the next vocabulary batch job for the record."""
+        resume = await self._claim_captured_vocabulary_batch_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if resume is not None:
+            return await self._process_captured_vocabulary_batch_resume(resume=resume)
         claim = await self.claim_vocabulary_batch_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -1547,14 +1671,86 @@ class VocabularyWorkerService:
         """
         context: VocabularyBatchJobContext | None = None
         execution: VocabularyBatchExecutionResult | None = None
+        execution_captured = False
 
         try:
             context = await self._load_batch_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.vocabulary_batch",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._batch_executor.generate_batch(context)
             outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
                 context=context,
                 candidate_output=execution.output,
             )
+            try:
+                event_id = await self._capture_vocabulary_batch_execution(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    outputs=outputs,
+                    batch_diagnostics=batch_diagnostics,
+                )
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             published_batch = await self._layer_publisher.publish_article_vocabulary_batch(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
@@ -1565,11 +1761,9 @@ class VocabularyWorkerService:
                     batch_diagnostics=batch_diagnostics,
                 ),
             )
-            event_id = await self._record_batch_usage_event(
-                context=context,
-                execution=execution,
-                published_batch=published_batch,
-                status=STATUS_SUCCEEDED,
+            event_id = await self._reconcile_captured_usage(
+                invocation_key=identity.invocation_key,
+                fallback_event_id=event_id,
             )
             await end_worker_span_success(
                 ai_usage_event_id=event_id,
@@ -1592,16 +1786,6 @@ class VocabularyWorkerService:
                 model_name=execution.model_name,
             )
         except FenceViolationError:
-            # The model call completed (tokens spent) but the publish fence
-            # failed — record the invocation's usage so the usage table
-            # reflects real model consumption. Mirrors the grammar per-unit
-            # fence path; the failed event never carries a layer id.
-            await self._record_batch_failed_usage_event(
-                context=context,
-                error_code="publish_fence_failed",
-                error_message="vocabulary batch publish fence failed",
-                **_failed_vocabulary_usage_attrs(execution),
-            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1617,6 +1801,18 @@ class VocabularyWorkerService:
             )
             raise
         except VocabularyExecutionError as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if is_semantic_fence_failure_code(exc.failure_code):
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -1704,6 +1900,18 @@ class VocabularyWorkerService:
                 status="failed_terminal",
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1732,6 +1940,489 @@ class VocabularyWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+
+    async def _claim_captured_vocabulary_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        return await self._claim_captured_resume(
+            job_type=VOCABULARY_JOB_TYPE,
+            target_type=VOCABULARY_TARGET_SCOPE,
+            operation_fingerprint=VOCABULARY_OPERATION_FINGERPRINT,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+
+    async def _claim_captured_vocabulary_batch_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        return await self._claim_captured_resume(
+            job_type=VOCABULARY_BATCH_JOB_TYPE,
+            target_type=VOCABULARY_BATCH_TARGET_SCOPE,
+            operation_fingerprint=None,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+
+    async def _claim_captured_resume(
+        self,
+        *,
+        job_type: str,
+        target_type: str,
+        operation_fingerprint: str | None,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None,
+        base_id: UUID | None,
+        expected_generation: int | None,
+    ) -> CapturedResumeClaim | None:
+        job_id = await self._job_runtime.find_captured_resume_job_id(
+            job_type=job_type,
+            target_type=target_type,
+            operation_fingerprint=operation_fingerprint,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if job_id is None:
+            return None
+        resume = await self._job_runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            await self._mark_run_running(resume.claim.run_id)
+        return resume
+
+    async def _process_captured_vocabulary_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> VocabularyJobProcessResult:
+        claim = resume.claim
+        context: VocabularyJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("vocabulary_unit_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, output = self._vocabulary_execution_from_receipt(receipt)
+            context = await self._load_job_context(claim.job_id)
+            published_layer = await self._layer_publisher.publish_unit_vocabulary(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                output=output,
+                quality_json=_build_quality_json(output, execution),
+            )
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(claim)
+            raise
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return VocabularyJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+        event_id = await self._materialize_captured_usage(receipt)
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data=execution.usage_data,
+            model_route=execution.model_route,
+            model_name=execution.model_name,
+            model_provider=execution.model_provider,
+            capability_code=CAPABILITY_READER_VOCABULARY,
+        )
+        return VocabularyJobProcessResult(
+            claim=claim,
+            context=context,
+            status="succeeded",
+            output=output,
+            published_layer=published_layer,
+            usage_data=execution.usage_data,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+        )
+
+    async def _process_captured_vocabulary_batch_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> VocabularyBatchJobProcessResult:
+        claim = resume.claim
+        context: VocabularyBatchJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("vocabulary_batch_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, outputs, batch_diagnostics = (
+                self._vocabulary_batch_execution_from_receipt(receipt)
+            )
+            context = await self._load_batch_job_context(claim.job_id)
+            published_batch = await self._layer_publisher.publish_article_vocabulary_batch(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                outputs=outputs,
+                quality_json=_build_vocabulary_batch_quality_json(
+                    execution,
+                    unit_count=len(context.units),
+                    batch_diagnostics=batch_diagnostics,
+                ),
+            )
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(claim)
+            raise
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return VocabularyBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+        event_id = await self._materialize_captured_usage(receipt)
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data=execution.usage_data,
+            model_route=execution.model_route,
+            model_name=execution.model_name,
+            model_provider=execution.model_provider,
+            capability_code=CAPABILITY_READER_VOCABULARY,
+        )
+        return VocabularyBatchJobProcessResult(
+            claim=claim,
+            context=context,
+            status="succeeded",
+            published_batch=published_batch,
+            usage_data=execution.usage_data,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+        )
+
+    @staticmethod
+    def _vocabulary_execution_from_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[VocabularyExecutionResult, VocabularyLayerOutput]:
+        if receipt.invocation_kind != "reader.vocabulary_unit":
+            raise PayloadContractError("vocabulary_unit_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return (
+            VocabularyExecutionResult(
+                output=payload.output,
+                usage_data=usage.usage_data,
+                prompt_version=usage.prompt_version,
+                model_route=usage.model_route,
+                model_profile=usage.model_profile,
+                model_provider=usage.model_provider,
+                model_name=usage.model_name,
+                diagnostics=payload.diagnostics,
+            ),
+            payload.output,
+        )
+
+    @staticmethod
+    def _vocabulary_batch_execution_from_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[
+        VocabularyBatchExecutionResult,
+        list[tuple[str, VocabularyLayerOutput]],
+        list[dict[str, Any]],
+    ]:
+        if receipt.invocation_kind != "reader.vocabulary_batch":
+            raise PayloadContractError("vocabulary_batch_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return (
+            VocabularyBatchExecutionResult(
+                output=VocabularyBatchCandidateOutput.model_construct(
+                    schema_version=1,
+                    units=[],
+                ),
+                usage_data=usage.usage_data,
+                prompt_version=usage.prompt_version,
+                model_route=usage.model_route,
+                model_profile=usage.model_profile,
+                model_provider=usage.model_provider,
+                model_name=usage.model_name,
+            ),
+            [(item.unit_id, item.output) for item in payload.outputs],
+            payload.batch_diagnostics,
+        )
+
+    @staticmethod
+    def _execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_VOCABULARY}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_vocabulary_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: VocabularyJobContext,
+        execution: VocabularyExecutionResult,
+        output: VocabularyLayerOutput,
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.vocabulary_unit",
+            resume_payload_kind="reader.vocabulary_unit.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "output": output.model_dump(mode="json"),
+                "diagnostics": execution.diagnostics,
+            },
+            usage_event_draft=self._vocabulary_usage_draft(
+                identity=identity,
+                context=context,
+                execution=execution,
+            ),
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_captured_usage(receipt)
+
+    async def _capture_vocabulary_batch_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: VocabularyBatchJobContext,
+        execution: VocabularyBatchExecutionResult,
+        outputs: list[tuple[str, VocabularyLayerOutput]],
+        batch_diagnostics: list[dict[str, Any]],
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.vocabulary_batch",
+            resume_payload_kind="reader.vocabulary_batch.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "outputs": [
+                    {"unit_id": unit_id, "output": output.model_dump(mode="json")}
+                    for unit_id, output in outputs
+                ],
+                "batch_diagnostics": batch_diagnostics,
+            },
+            usage_event_draft=self._vocabulary_batch_usage_draft(
+                identity=identity,
+                context=context,
+                execution=execution,
+            ),
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_captured_usage(receipt)
+
+    @staticmethod
+    def _vocabulary_usage_draft(
+        *,
+        identity: ExecutionIdentity,
+        context: VocabularyJobContext,
+        execution: VocabularyExecutionResult,
+    ) -> dict[str, Any]:
+        return {
+            "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+            "capability_code": CAPABILITY_READER_VOCABULARY,
+            "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+            "status": STATUS_SUCCEEDED,
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": VOCABULARY_WORKFLOW_VERSION,
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "unit_id": context.unit_id,
+                "source_language": context.source_language,
+                "anchor_segment_count": len(context.anchor_segments),
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        }
+
+    @staticmethod
+    def _vocabulary_batch_usage_draft(
+        *,
+        identity: ExecutionIdentity,
+        context: VocabularyBatchJobContext,
+        execution: VocabularyBatchExecutionResult,
+    ) -> dict[str, Any]:
+        return {
+            "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+            "capability_code": CAPABILITY_READER_VOCABULARY,
+            "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+            "status": STATUS_SUCCEEDED,
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": "t1-1-vocabulary-batch-worker",
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "target_unit_ids": list(context.target_unit_ids),
+                "unit_count": len(context.units),
+                "source_language": context.source_language,
+                "batch": True,
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        }
+
+    async def _materialize_captured_usage(self, receipt: CapturedReceipt) -> UUID | None:
+        return await self._reconcile_captured_usage(
+            invocation_key=receipt.identity.invocation_key,
+            fallback_event_id=receipt.ai_usage_event_id,
+        )
+
+    async def _reconcile_captured_usage(
+        self,
+        *,
+        invocation_key: str,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=invocation_key
+            )
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "vocabulary_usage_delivery_deferred: invocation_key=%s error=%s",
+                invocation_key,
+                type(exc).__name__,
+            )
+            return fallback_event_id
+        return receipt.ai_usage_event_id or fallback_event_id
+
+    async def _pause_invalid_or_incomplete_resume(
+        self,
+        claim: ClaimResult,
+        exc: Exception,
+    ) -> None:
+        invalid = isinstance(exc, PayloadContractError)
+        await self._pause_model_execution_claim(
+            claim,
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid
+                else "model_execution_captured_resume_required"
+            ),
+            failure_code=(
+                "receipt_payload_invalid" if invalid else "post_provider_resume_required"
+            ),
+            failure_message=str(exc),
+        )
+
+    async def _mark_claimed_job_superseded(self, claim: ClaimResult) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="superseded",
+            lease_token=claim.lease_token,
+            rationale_code="publish_fence_failed",
+        )
+        await self._mark_run_status(
+            claim.run_id,
+            status="superseded",
+            failure_class="publish_guard",
+            failure_code="publish_fence_failed",
+            finished_at=datetime.now(UTC),
+        )
+
+    async def _pause_model_execution_claim(
+        self,
+        claim: ClaimResult,
+        *,
+        rationale_code: str,
+        failure_code: str,
+        failure_message: str | None = None,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
 
     async def _load_batch_job_context(
         self,

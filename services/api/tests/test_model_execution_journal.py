@@ -132,6 +132,98 @@ def test_reader_wave_one_payloads_round_trip_strictly(
         )
 
 
+@pytest.mark.parametrize(
+    ("invocation_kind", "resume_payload_kind", "payload"),
+    [
+        (
+            "reader.translation_unit",
+            "reader.translation_unit.result",
+            {
+                "output": {
+                    "groups": [
+                        {
+                            "group_id": "u1_g1_1",
+                            "anchor_segment_ids": ["s1"],
+                            "source_text_hash": "1234abcd",
+                            "translated_text": "单元译文",
+                        }
+                    ]
+                }
+            },
+        ),
+        (
+            "reader.translation_batch",
+            "reader.translation_batch.result",
+            {
+                "outputs": [
+                    {
+                        "unit_id": "u1",
+                        "output": {
+                            "groups": [
+                                {
+                                    "group_id": "u1_g1_1",
+                                    "anchor_segment_ids": ["s1"],
+                                    "source_text_hash": "1234abcd",
+                                    "translated_text": "批量译文",
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        ),
+        (
+            "reader.vocabulary_unit",
+            "reader.vocabulary_unit.result",
+            {
+                "output": {"schema_version": 1, "items": []},
+                "diagnostics": {"skipped": 0},
+            },
+        ),
+        (
+            "reader.vocabulary_batch",
+            "reader.vocabulary_batch.result",
+            {
+                "outputs": [
+                    {
+                        "unit_id": "u1",
+                        "output": {"schema_version": 1, "items": []},
+                    }
+                ],
+                "batch_diagnostics": [],
+            },
+        ),
+    ],
+)
+def test_translation_and_vocabulary_payloads_round_trip_strictly(
+    invocation_kind: str,
+    resume_payload_kind: str,
+    payload: dict[str, object],
+) -> None:
+    prepared = prepare_capture_envelope(
+        invocation_kind=invocation_kind,
+        resume_payload_kind=resume_payload_kind,
+        resume_payload_schema_version=1,
+        usage_event_draft_schema_version=1,
+        normalized_payload=payload,
+        usage_event_draft=_usage_draft(),
+    )
+
+    decoded = decode_resume_payload(
+        kind=prepared.resume_payload_kind,
+        schema_version=prepared.resume_payload_schema_version,
+        payload=prepared.normalized_payload,
+    )
+
+    assert decoded.model_dump(mode="json") == payload
+    with pytest.raises(PayloadContractError, match="invalid_resume_payload"):
+        decode_resume_payload(
+            kind=resume_payload_kind,
+            schema_version=1,
+            payload={**payload, "unexpected": True},
+        )
+
+
 def test_capture_hash_uses_canonical_json_key_order() -> None:
     usage_draft = _usage_draft()
     reversed_usage_draft = dict(reversed(list(usage_draft.items())))

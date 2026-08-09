@@ -38,6 +38,8 @@ from app.schemas.reader_orchestration import (
     TranslationLayerGenerationOutput,
     TranslationLayerOutput,
 )
+from app.services.model_execution_journal import CaptureEnvelopeConflictError
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.prompting.prompt_loader import load_agent_instructions
 from app.services.reader_orchestration import translation_worker as translation_worker_module
 from app.services.reader_orchestration.article_ready_service import (
@@ -77,6 +79,9 @@ from app.services.reader_orchestration.translation_worker import (
     hydrate_translation_batch_output,
     hydrate_translation_layer_output,
     plan_translation_groups,
+)
+from app.services.reader_orchestration.usage_attribution import (
+    ReaderUsageAttributionService,
 )
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
@@ -156,6 +161,82 @@ class _CapturingPublisher:
                 event_type="layer_published",
             ),
         )
+
+
+class _JournalOrderTranslationPublisher:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self.calls = 0
+
+    async def _assert_captured(self, job_id: UUID) -> None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "captured"
+        assert row["execution_slot"] == 1
+
+    async def publish_unit_translation(self, **kwargs) -> PublishedTranslationLayer:
+        self.calls += 1
+        await self._assert_captured(kwargs["job_id"])
+        raise RuntimeError("stop after durable translation capture")
+
+    async def publish_article_translation_batch(self, **kwargs) -> object:
+        self.calls += 1
+        await self._assert_captured(kwargs["job_id"])
+        raise RuntimeError("stop after durable translation batch capture")
+
+
+class _JournalOrderTranslator(_StaticTranslator):
+    def __init__(self, pool: asyncpg.Pool, output) -> None:
+        super().__init__(output)
+        self._pool = pool
+
+    async def translate(self, context) -> TranslationExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().translate(context)
+
+
+class _JournalOrderBatchTranslator(DevFakeTranslationBatchExecutor):
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def translate_batch(
+        self,
+        context: TranslationBatchJobContext,
+    ) -> TranslationBatchExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().translate_batch(context)
 
 class _FakeRunUsage:
     def __init__(self, *, input_tokens: int, output_tokens: int) -> None:
@@ -569,6 +650,490 @@ async def test_worker_process_hydrates_generation_output_and_passes_durable_outp
     }
 
 
+async def test_translation_unit_journals_started_then_captured_before_publish(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderTranslationPublisher(translation_worker_env)
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=_JournalOrderTranslator(
+            translation_worker_env,
+            _translation_generation_output(),
+        ),
+        layer_publisher=publisher,
+    )
+
+    result = await worker.process_next_translation_job(
+        lease_owner="translation-journal-order",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert publisher.calls == 1
+
+
+async def test_translation_batch_journals_started_then_captured_before_publish(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    bootstrap_result = await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    await _tamper_unit_job_into_batch(
+        translation_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="translate_article",
+    )
+    async with translation_worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET operation_fingerprint = regexp_replace(
+                operation_fingerprint,
+                '^translation_unit',
+                'translation_article_v1'
+            )
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+        )
+    publisher = _JournalOrderTranslationPublisher(translation_worker_env)
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        batch_translator=_JournalOrderBatchTranslator(translation_worker_env),
+        layer_publisher=publisher,
+    )
+
+    result = await worker.process_next_translation_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="translation-batch-journal-order",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert publisher.calls == 1
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_translation_unit_captured_restart_is_provider_free_and_delivery_orthogonal(
+    translation_worker_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    first_translator = _StaticTranslator(
+        lambda context: _translation_generation_output(
+            "可恢复译文",
+            [context.anchor_segments[0].anchor_segment_id],
+        )
+    )
+    first = TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=first_translator,
+        layer_publisher=_JournalOrderTranslationPublisher(translation_worker_env),
+    )
+
+    paused = await first.process_next_translation_job(
+        lease_owner="translation-before-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    async with translation_worker_env.acquire() as conn:
+        paused_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET usage_delivery_state = $2,
+                ai_usage_event_id = CASE WHEN $2 = 'reconciled'
+                                         THEN ai_usage_event_id ELSE NULL END,
+                delivery_next_attempt_at = NULL,
+                reconciled_at = CASE WHEN $2 = 'reconciled' THEN NOW() ELSE NULL END,
+                dead_lettered_at = CASE WHEN $2 = 'dead_letter' THEN NOW() ELSE NULL END
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            delivery_state,
+        )
+
+    forbidden_translator = _StaticTranslator(_translation_generation_output("不应调用"))
+    resumed = await TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=forbidden_translator,
+    ).process_next_translation_job(
+        lease_owner="translation-after-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    async with translation_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, failure_code, failure_message FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert resumed is not None and resumed.status == "succeeded", job_row
+    assert resumed.output is not None
+    assert resumed.output.groups[0].translated_text == "可恢复译文"
+    assert forbidden_translator.calls == []
+    async with translation_worker_env.acquire() as conn:
+        final_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            resumed.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            resumed.claim.job_id,
+        )
+    assert final_attempt == paused_attempt
+    assert usage_count == 1
+
+
+async def test_translation_batch_captured_restart_is_provider_free(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    bootstrap_result = await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    await _tamper_unit_job_into_batch(
+        translation_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="translate_article",
+    )
+    async with translation_worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET operation_fingerprint = regexp_replace(
+                operation_fingerprint,
+                '^translation_unit',
+                'translation_article_v1'
+            )
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+        )
+    first = TranslationWorkerService(
+        pool=translation_worker_env,
+        batch_translator=_JournalOrderBatchTranslator(translation_worker_env),
+        layer_publisher=_JournalOrderTranslationPublisher(translation_worker_env),
+    )
+    paused = await first.process_next_translation_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="translation-batch-before-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    forbidden = _JournalOrderBatchTranslator(translation_worker_env)
+
+    resumed = await TranslationWorkerService(
+        pool=translation_worker_env,
+        batch_translator=forbidden,
+    ).process_next_translation_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="translation-batch-after-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    async with translation_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, failure_code, failure_message FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert resumed is not None and resumed.status == "succeeded", job_row
+    assert resumed.published_batch is not None
+
+
+@pytest.mark.parametrize("failure_kind", ["error", "conflict"])
+async def test_translation_capture_failure_pauses_without_publish(
+    translation_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    publisher = _CapturingPublisher()
+    worker = TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=_StaticTranslator(
+            lambda context: _translation_generation_output(
+                "捕获前结果",
+                [context.anchor_segments[0].anchor_segment_id],
+            )
+        ),
+        layer_publisher=publisher,
+    )
+
+    async def _fail_capture(**kwargs) -> None:
+        if failure_kind == "conflict":
+            raise CaptureEnvelopeConflictError("conflicting translation capture")
+        raise RuntimeError("translation capture unavailable")
+
+    monkeypatch.setattr(worker._journal_service, "capture_execution", _fail_capture)
+    result = await worker.process_next_translation_job(
+        lease_owner="translation-capture-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert publisher.calls == []
+    async with translation_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+    assert row is not None
+    assert row["rationale_code"] == (
+        "model_execution_capture_conflict"
+        if failure_kind == "conflict"
+        else "model_execution_ambiguous"
+    )
+
+
+async def test_translation_materializer_failure_does_not_block_publish_and_reconciles_once(
+    translation_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    journal = ModelExecutionJournalService(pool=translation_worker_env)
+
+    async def _fail_materializer(**kwargs) -> None:
+        raise RuntimeError("usage sink unavailable")
+
+    monkeypatch.setattr(journal, "materialize_pending", _fail_materializer)
+    result = await TranslationWorkerService(
+        pool=translation_worker_env,
+        journal_service=journal,
+        translator=_StaticTranslator(
+            lambda context: _translation_generation_output(
+                "延迟记账译文",
+                [context.anchor_segments[0].anchor_segment_id],
+            )
+        ),
+    ).process_next_translation_job(
+        lease_owner="translation-materializer-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    async with translation_worker_env.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert before == 0
+    materializer = ModelExecutionJournalService(pool=translation_worker_env)
+    attribution = ReaderUsageAttributionService(journal_service=materializer)
+    await attribution.materialize_and_reconcile()
+    await attribution.materialize_and_reconcile()
+    async with translation_worker_env.acquire() as conn:
+        usage_row = await conn.fetchrow(
+            """
+            SELECT id, enhancement_layer_id
+            FROM ai_usage_events
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+    assert usage_row is not None
+    assert usage_row["enhancement_layer_id"] == result.published_layer.layer_id
+
+
+async def test_translation_dead_letter_repair_keeps_published_layer_attribution(
+    translation_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    journal = ModelExecutionJournalService(pool=translation_worker_env)
+    materialize_pending = journal.materialize_pending
+
+    async def _dead_letter_on_first_failure(**kwargs):
+        kwargs["max_attempts"] = 1
+        return await materialize_pending(**kwargs)
+
+    monkeypatch.setattr(journal, "materialize_pending", _dead_letter_on_first_failure)
+    async with translation_worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE FUNCTION reject_translation_usage_insert() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'test usage insert failure';
+            END;
+            $$
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TRIGGER reject_translation_usage_insert
+            BEFORE INSERT ON ai_usage_events
+            FOR EACH ROW EXECUTE FUNCTION reject_translation_usage_insert()
+            """
+        )
+
+    result = await TranslationWorkerService(
+        pool=translation_worker_env,
+        journal_service=journal,
+        translator=_StaticTranslator(
+            lambda context: _translation_generation_output(
+                "死信修复后归因译文",
+                [context.anchor_segments[0].anchor_segment_id],
+            )
+        ),
+    ).process_next_translation_job(
+        lease_owner="translation-dead-letter-repair",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    assert result.published_layer is not None
+    async with translation_worker_env.acquire() as conn:
+        journal_row = await conn.fetchrow(
+            """
+            SELECT invocation_key, usage_delivery_state
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        await conn.execute(
+            "DROP TRIGGER reject_translation_usage_insert ON ai_usage_events"
+        )
+        await conn.execute("DROP FUNCTION reject_translation_usage_insert()")
+    assert journal_row is not None
+    assert journal_row["usage_delivery_state"] == "dead_letter"
+
+    repaired_journal = ModelExecutionJournalService(pool=translation_worker_env)
+    assert await repaired_journal.repair_dead_letter(
+        invocation_key=journal_row["invocation_key"]
+    )
+    await ReaderUsageAttributionService(
+        journal_service=repaired_journal
+    ).materialize_and_reconcile()
+
+    async with translation_worker_env.acquire() as conn:
+        usage_row = await conn.fetchrow(
+            """
+            SELECT enhancement_layer_id
+            FROM ai_usage_events
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        delivery_state = await conn.fetchval(
+            """
+            SELECT usage_delivery_state
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            journal_row["invocation_key"],
+        )
+    assert delivery_state == "reconciled"
+    assert usage_row is not None
+    assert usage_row["enhancement_layer_id"] == result.published_layer.layer_id
+
+
+async def test_translation_tampered_receipt_fails_closed_without_provider_recall(
+    translation_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(translation_worker_env)
+    article = await submit_article_ready(translation_worker_env, user_id=user_id)
+    await TranslationJobBootstrapService(
+        pool=translation_worker_env
+    ).bootstrap_translation_run(record_id=article.record_id, user_id=user_id)
+    first = TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=_StaticTranslator(
+            lambda context: _translation_generation_output(
+                "原始译文",
+                [context.anchor_segments[0].anchor_segment_id],
+            )
+        ),
+        layer_publisher=_JournalOrderTranslationPublisher(translation_worker_env),
+    )
+    paused = await first.process_next_translation_job(
+        lease_owner="translation-before-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    async with translation_worker_env.acquire() as conn:
+        payload = dict(
+            await conn.fetchval(
+                """
+                SELECT normalized_payload_json
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                paused.claim.job_id,
+            )
+        )
+        payload["output"]["groups"][0]["translated_text"] = "篡改译文"
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = $2::jsonb
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            jsonb_param(payload),
+        )
+    forbidden = _StaticTranslator(_translation_generation_output("不应调用"))
+
+    resumed = await TranslationWorkerService(
+        pool=translation_worker_env,
+        translator=forbidden,
+    ).process_next_translation_job(
+        lease_owner="translation-after-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is None
+    assert forbidden.calls == []
+    async with translation_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_receipt_invalid"
+    assert row["failure_code"] == "receipt_payload_invalid"
+
+
 async def test_worker_retryable_failure_moves_job_to_retry_later_and_run_failed_retryable(
     translation_worker_env: asyncpg.Pool,
 ) -> None:
@@ -670,7 +1235,6 @@ async def test_worker_claim_filters_out_non_translation_jobs_in_mixed_queue(
 
 async def test_worker_retry_later_then_success_can_reprocess_same_job(
     translation_worker_env: asyncpg.Pool,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
@@ -699,40 +1263,39 @@ async def test_worker_retry_later_then_success_can_reprocess_same_job(
     assert retry_result.status == "retry_later"
 
     publisher = _CapturingPublisher()
+    success_translator = _StaticTranslator(
+        _translation_generation_output("恢复后的译文")
+    )
     success_worker = TranslationWorkerService(
         pool=translation_worker_env,
-        translator=_StaticTranslator(_translation_generation_output("恢复后的译文")),
+        translator=success_translator,
         layer_publisher=publisher,
     )
-    async def _noop_record_usage_event(**kwargs) -> None:
-        return None
-
-    monkeypatch.setattr(success_worker, "_record_usage_event", _noop_record_usage_event)
 
     success_result = await success_worker.process_next_translation_job(
         lease_owner="worker-retry-then-success",
         lease_duration=timedelta(seconds=30),
     )
 
-    assert success_result is not None
-    assert success_result.status == "succeeded"
-    assert len(publisher.calls) == 1
-    published_output = publisher.calls[0]["output"]
-    assert isinstance(published_output, TranslationLayerOutput)
-    assert published_output.groups[0].translated_text == "恢复后的译文"
+    assert success_result is None
+    assert success_translator.calls == []
+    assert publisher.calls == []
 
     async with translation_worker_env.acquire() as conn:
-        failed_usage_count = await conn.fetchval(
+        job_row = await conn.fetchrow(
             """
-            SELECT COUNT(*)
-            FROM ai_usage_events
-            WHERE reader_job_id = $1
-              AND status = 'failed'
+            SELECT status, rationale_code, failure_code
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'translate_unit'
             """,
-            success_result.claim.job_id,
+            article.record_id,
         )
 
-    assert failed_usage_count == 1
+    assert job_row is not None
+    assert job_row["status"] == "paused"
+    assert job_row["rationale_code"] == "model_execution_ambiguous"
+    assert job_row["failure_code"] == "provider_outcome_ambiguous"
 
 
 async def test_worker_terminal_failure_moves_job_to_failed_terminal_and_run_failed_terminal(
@@ -3471,7 +4034,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert run_row is not None and run_row["status"] == "superseded"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_translation"
     assert usage_row["usage_scope"] == "system_internal"
     assert usage_row["billing_mode"] == "internal_only"
@@ -3485,7 +4048,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "publish_fence_failed"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_retryable_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -3520,7 +4083,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_translation_usage_rows(
         translation_worker_env, result.claim.job_id
@@ -3535,12 +4098,12 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "retry_later"
-    assert run_row is not None and run_row["status"] == "failed_retryable"
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
     assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_translation"
     assert usage_row["model_route"] == "reader_layer_translation"
     assert usage_row["model_profile_id"] == "fake-profile"
@@ -3551,7 +4114,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "post_provider_retryable"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_terminal_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -3672,7 +4235,7 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
     assert run_row is not None and run_row["status"] == "superseded"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_translation"
     assert usage_row["usage_scope"] == "system_internal"
     assert usage_row["billing_mode"] == "internal_only"
@@ -3686,7 +4249,7 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
     assert usage_row["input_tokens"] == 1
     assert usage_row["output_tokens"] == 1
     assert usage_row["total_tokens"] == 2
-    assert usage_row["error_code"] == "publish_fence_failed"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
@@ -3723,14 +4286,14 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_translation_usage_rows(
         translation_worker_env, result.claim.job_id
     )
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["input_tokens"] == 0
     assert usage_row["output_tokens"] == 0
     assert usage_row["total_tokens"] == 0
@@ -3763,7 +4326,7 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     )
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_translation_usage_rows(
         translation_worker_env, result.claim.job_id
@@ -3778,12 +4341,12 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "failed_terminal"
-    assert run_row is not None and run_row["status"] == "failed_terminal"
-    assert run_row["finished_at"] is not None
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
+    assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_translation"
     assert usage_row["model_route"] == "reader_layer_translation"
     assert usage_row["model_profile_id"] == "fake-profile"
@@ -3794,7 +4357,7 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     assert usage_row["input_tokens"] == 12
     assert usage_row["output_tokens"] == 18
     assert usage_row["total_tokens"] == 30
-    assert usage_row["error_code"] == "RuntimeError"
+    assert usage_row["error_code"] is None
 
 
 async def test_batch_worker_typed_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -3905,7 +4468,7 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
     result = await worker.process_claimed_translation_batch_job(claim=claim)
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_translation_usage_rows(
         translation_worker_env, claim.job_id
@@ -3920,11 +4483,11 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
             claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "failed_terminal"
-    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_translation"
     assert usage_row["model_route"] == "reader_layer_translation"
     assert usage_row["model_profile_id"] == "reader_smoke_fake_translation_batch"
@@ -3935,4 +4498,4 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
     assert usage_row["input_tokens"] == 1
     assert usage_row["output_tokens"] == 1
     assert usage_row["total_tokens"] == 2
-    assert usage_row["error_code"] == "RuntimeError"
+    assert usage_row["error_code"] is None

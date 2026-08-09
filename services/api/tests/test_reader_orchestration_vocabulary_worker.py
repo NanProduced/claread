@@ -20,6 +20,8 @@ from app.schemas.reader_orchestration import (
     VocabularyLayerOutput,
     VocabularyPhraseGlossItem,
 )
+from app.services.model_execution_journal import CaptureEnvelopeConflictError
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.reader_orchestration import vocabulary_worker as vocabulary_worker_module
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
@@ -35,6 +37,9 @@ from app.services.reader_orchestration.reading_strategy import (
 )
 from app.services.reader_orchestration.smoke_harness import (
     DevFakeVocabularyBatchExecutor,
+)
+from app.services.reader_orchestration.usage_attribution import (
+    ReaderUsageAttributionService,
 )
 from app.services.reader_orchestration.vocabulary_worker import (
     FakeVocabularyExecutor,
@@ -102,6 +107,82 @@ class _StaticVocabularyExecutor:
             model_provider="fake-provider",
             model_name="fake-vocabulary-model",
         )
+
+
+class _JournalOrderVocabularyExecutor(_StaticVocabularyExecutor):
+    def __init__(self, pool: asyncpg.Pool, output_builder) -> None:
+        super().__init__(output_builder)
+        self._pool = pool
+
+    async def generate(self, context: VocabularyJobContext) -> VocabularyExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().generate(context)
+
+
+class _JournalOrderVocabularyBatchExecutor(DevFakeVocabularyBatchExecutor):
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def generate_batch(
+        self,
+        context: VocabularyBatchJobContext,
+    ) -> VocabularyBatchExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().generate_batch(context)
+
+
+class _JournalOrderVocabularyPublisher:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self.calls = 0
+
+    async def _assert_captured(self, job_id: UUID) -> None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                job_id,
+            )
+        assert row is not None
+        assert row["capture_state"] == "captured"
+        assert row["execution_slot"] == 1
+
+    async def publish_unit_vocabulary(self, **kwargs) -> object:
+        self.calls += 1
+        await self._assert_captured(kwargs["job_id"])
+        raise RuntimeError("stop after durable vocabulary capture")
+
+    async def publish_article_vocabulary_batch(self, **kwargs) -> object:
+        self.calls += 1
+        await self._assert_captured(kwargs["job_id"])
+        raise RuntimeError("stop after durable vocabulary batch capture")
 
 
 class _FailingVocabularyExecutor:
@@ -475,6 +556,346 @@ async def test_worker_process_publishes_vocabulary_layer_and_snapshot_reload_exp
         "phrase_gloss",
         "context_gloss",
     }
+
+
+async def test_vocabulary_unit_journals_started_then_captured_before_publish(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderVocabularyPublisher(vocabulary_worker_env)
+    worker = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=_JournalOrderVocabularyExecutor(
+            vocabulary_worker_env,
+            _sample_vocabulary_output,
+        ),
+        layer_publisher=publisher,
+    )
+
+    result = await worker.process_next_vocabulary_job(
+        lease_owner="vocabulary-journal-order",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert publisher.calls == 1
+
+
+async def test_vocabulary_batch_journals_started_then_captured_before_publish(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    bootstrap_result = await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    await _tamper_unit_job_into_batch(
+        vocabulary_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="build_vocabulary_layer_article",
+    )
+    publisher = _JournalOrderVocabularyPublisher(vocabulary_worker_env)
+    worker = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        batch_executor=_JournalOrderVocabularyBatchExecutor(vocabulary_worker_env),
+        layer_publisher=publisher,
+    )
+
+    result = await worker.process_next_vocabulary_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="vocabulary-batch-journal-order",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert publisher.calls == 1
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_vocabulary_unit_captured_restart_is_provider_free_and_delivery_orthogonal(
+    vocabulary_worker_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    first = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=_StaticVocabularyExecutor(_sample_vocabulary_output),
+        layer_publisher=_JournalOrderVocabularyPublisher(vocabulary_worker_env),
+    )
+
+    paused = await first.process_next_vocabulary_job(
+        lease_owner="vocabulary-before-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    async with vocabulary_worker_env.acquire() as conn:
+        paused_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET usage_delivery_state = $2,
+                ai_usage_event_id = CASE WHEN $2 = 'reconciled'
+                                         THEN ai_usage_event_id ELSE NULL END,
+                delivery_next_attempt_at = NULL,
+                reconciled_at = CASE WHEN $2 = 'reconciled' THEN NOW() ELSE NULL END,
+                dead_lettered_at = CASE WHEN $2 = 'dead_letter' THEN NOW() ELSE NULL END
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            delivery_state,
+        )
+
+    forbidden = _StaticVocabularyExecutor(_sample_vocabulary_output)
+    resumed = await VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=forbidden,
+    ).process_next_vocabulary_job(
+        lease_owner="vocabulary-after-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None and resumed.status == "succeeded"
+    assert forbidden.calls == []
+    async with vocabulary_worker_env.acquire() as conn:
+        final_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            resumed.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            resumed.claim.job_id,
+        )
+    assert final_attempt == paused_attempt
+    assert usage_count == 1
+
+
+async def test_vocabulary_batch_captured_restart_is_provider_free(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    bootstrap_result = await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    await _tamper_unit_job_into_batch(
+        vocabulary_worker_env,
+        job_id=bootstrap_result.job_id,
+        unit_id=bootstrap_result.unit_id,
+        job_type="build_vocabulary_layer_article",
+    )
+    async with vocabulary_worker_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET operation_fingerprint = regexp_replace(
+                operation_fingerprint,
+                '^vocabulary_unit_v1',
+                'vocabulary_article_v1'
+            )
+            WHERE id = $1
+            """,
+            bootstrap_result.job_id,
+        )
+    first = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        batch_executor=_JournalOrderVocabularyBatchExecutor(vocabulary_worker_env),
+        layer_publisher=_JournalOrderVocabularyPublisher(vocabulary_worker_env),
+    )
+    paused = await first.process_next_vocabulary_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="vocabulary-batch-before-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    forbidden = _JournalOrderVocabularyBatchExecutor(vocabulary_worker_env)
+
+    resumed = await VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        batch_executor=forbidden,
+    ).process_next_vocabulary_batch_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="vocabulary-batch-after-restart",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    async with vocabulary_worker_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, failure_code, failure_message FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert resumed is not None and resumed.status == "succeeded", job_row
+    assert resumed.published_batch is not None
+
+
+@pytest.mark.parametrize("failure_kind", ["error", "conflict"])
+async def test_vocabulary_capture_failure_pauses_without_publish(
+    vocabulary_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    publisher = _JournalOrderVocabularyPublisher(vocabulary_worker_env)
+    worker = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=_StaticVocabularyExecutor(_sample_vocabulary_output),
+        layer_publisher=publisher,
+    )
+
+    async def _fail_capture(**kwargs) -> None:
+        if failure_kind == "conflict":
+            raise CaptureEnvelopeConflictError("conflicting vocabulary capture")
+        raise RuntimeError("vocabulary capture unavailable")
+
+    monkeypatch.setattr(worker._journal_service, "capture_execution", _fail_capture)
+    result = await worker.process_next_vocabulary_job(
+        lease_owner="vocabulary-capture-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "paused"
+    assert publisher.calls == 0
+    async with vocabulary_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            result.claim.job_id,
+        )
+    assert row is not None
+    assert row["rationale_code"] == (
+        "model_execution_capture_conflict"
+        if failure_kind == "conflict"
+        else "model_execution_ambiguous"
+    )
+
+
+async def test_vocabulary_materializer_failure_does_not_block_publish_and_reconciles_once(
+    vocabulary_worker_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    journal = ModelExecutionJournalService(pool=vocabulary_worker_env)
+
+    async def _fail_materializer(**kwargs) -> None:
+        raise RuntimeError("usage sink unavailable")
+
+    monkeypatch.setattr(journal, "materialize_pending", _fail_materializer)
+    result = await VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        journal_service=journal,
+        executor=_StaticVocabularyExecutor(_sample_vocabulary_output),
+    ).process_next_vocabulary_job(
+        lease_owner="vocabulary-materializer-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None and result.status == "succeeded"
+    async with vocabulary_worker_env.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert before == 0
+    materializer = ModelExecutionJournalService(pool=vocabulary_worker_env)
+    attribution = ReaderUsageAttributionService(journal_service=materializer)
+    await attribution.materialize_and_reconcile()
+    await attribution.materialize_and_reconcile()
+    async with vocabulary_worker_env.acquire() as conn:
+        after = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert after == 1
+
+
+async def test_vocabulary_tampered_receipt_fails_closed_without_provider_recall(
+    vocabulary_worker_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(vocabulary_worker_env)
+    article = await _submit_vocabulary_article(vocabulary_worker_env, user_id=user_id)
+    await VocabularyJobBootstrapService(
+        pool=vocabulary_worker_env
+    ).bootstrap_vocabulary_run(record_id=article.record_id, user_id=user_id)
+    first = VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=_StaticVocabularyExecutor(_sample_vocabulary_output),
+        layer_publisher=_JournalOrderVocabularyPublisher(vocabulary_worker_env),
+    )
+    paused = await first.process_next_vocabulary_job(
+        lease_owner="vocabulary-before-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert paused is not None and paused.status == "paused"
+    async with vocabulary_worker_env.acquire() as conn:
+        payload = dict(
+            await conn.fetchval(
+                """
+                SELECT normalized_payload_json
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                paused.claim.job_id,
+            )
+        )
+        payload["output"]["items"] = []
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = $2::jsonb
+            WHERE reader_job_id = $1
+            """,
+            paused.claim.job_id,
+            jsonb_param(payload),
+        )
+    forbidden = _StaticVocabularyExecutor(_sample_vocabulary_output)
+
+    resumed = await VocabularyWorkerService(
+        pool=vocabulary_worker_env,
+        executor=forbidden,
+    ).process_next_vocabulary_job(
+        lease_owner="vocabulary-after-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is None
+    assert forbidden.calls == []
+    async with vocabulary_worker_env.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            paused.claim.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_receipt_invalid"
+    assert row["failure_code"] == "receipt_payload_invalid"
 
 
 async def test_real_executor_path_publishes_vocabulary_layer_and_snapshot_marks(
@@ -4096,7 +4517,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert run_row is not None and run_row["status"] == "superseded"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["usage_scope"] == "system_internal"
     assert usage_row["billing_mode"] == "internal_only"
@@ -4110,7 +4531,7 @@ async def test_worker_publish_fence_records_failed_usage_with_consumed_tokens(
     assert usage_row["input_tokens"] == 9
     assert usage_row["output_tokens"] == 14
     assert usage_row["total_tokens"] == 23
-    assert usage_row["error_code"] == "publish_fence_failed"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_retryable_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -4145,7 +4566,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_vocabulary_usage_rows(
         vocabulary_worker_env, result.claim.job_id
@@ -4160,12 +4581,12 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "retry_later"
-    assert run_row is not None and run_row["status"] == "failed_retryable"
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
     assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["model_route"] == "reader_layer_vocabulary"
     assert usage_row["model_profile_id"] == "fake-vocabulary-profile"
@@ -4176,7 +4597,7 @@ async def test_worker_retryable_failure_after_provider_call_records_failed_usage
     assert usage_row["input_tokens"] == 9
     assert usage_row["output_tokens"] == 14
     assert usage_row["total_tokens"] == 23
-    assert usage_row["error_code"] == "post_provider_retryable"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_terminal_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -4295,7 +4716,7 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
     assert run_row is not None and run_row["status"] == "superseded"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["usage_scope"] == "system_internal"
     assert usage_row["billing_mode"] == "internal_only"
@@ -4309,7 +4730,7 @@ async def test_batch_worker_publish_fence_records_failed_usage_with_consumed_tok
     assert usage_row["input_tokens"] == 1
     assert usage_row["output_tokens"] == 1
     assert usage_row["total_tokens"] == 2
-    assert usage_row["error_code"] == "publish_fence_failed"
+    assert usage_row["error_code"] is None
 
 
 async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
@@ -4346,14 +4767,14 @@ async def test_worker_failure_without_usage_payload_does_not_fabricate_tokens(
     )
 
     assert result is not None
-    assert result.status == "retry_later"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_vocabulary_usage_rows(
         vocabulary_worker_env, result.claim.job_id
     )
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["input_tokens"] == 0
     assert usage_row["output_tokens"] == 0
     assert usage_row["total_tokens"] == 0
@@ -4386,7 +4807,7 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     )
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_vocabulary_usage_rows(
         vocabulary_worker_env, result.claim.job_id
@@ -4401,12 +4822,12 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
             result.claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "failed_terminal"
-    assert run_row is not None and run_row["status"] == "failed_terminal"
-    assert run_row["finished_at"] is not None
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
+    assert run_row["finished_at"] is None
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["model_route"] == "reader_layer_vocabulary"
     assert usage_row["model_profile_id"] == "fake-vocabulary-profile"
@@ -4417,7 +4838,7 @@ async def test_worker_generic_failure_after_provider_call_records_failed_usage_w
     assert usage_row["input_tokens"] == 9
     assert usage_row["output_tokens"] == 14
     assert usage_row["total_tokens"] == 23
-    assert usage_row["error_code"] == "RuntimeError"
+    assert usage_row["error_code"] is None
 
 
 async def test_batch_worker_typed_failure_after_provider_call_records_failed_usage_with_tokens(
@@ -4528,7 +4949,7 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
     result = await worker.process_claimed_vocabulary_batch_job(claim=claim)
 
     assert result is not None
-    assert result.status == "failed_terminal"
+    assert result.status == "paused"
 
     usage_rows = await _fetch_vocabulary_usage_rows(
         vocabulary_worker_env, claim.job_id
@@ -4543,11 +4964,11 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
             claim.run_id,
         )
 
-    assert job_row is not None and job_row["status"] == "failed_terminal"
-    assert run_row is not None and run_row["status"] == "failed_terminal"
+    assert job_row is not None and job_row["status"] == "paused"
+    assert run_row is not None and run_row["status"] == "running"
     assert len(usage_rows) == 1
     usage_row = usage_rows[0]
-    assert usage_row["status"] == "failed"
+    assert usage_row["status"] == "succeeded"
     assert usage_row["capability_code"] == "reader_vocabulary"
     assert usage_row["model_route"] == "reader_layer_vocabulary"
     assert usage_row["model_profile_id"] == "reader_smoke_fake_vocabulary_batch"
@@ -4558,4 +4979,4 @@ async def test_batch_worker_generic_failure_after_provider_call_records_failed_u
     assert usage_row["input_tokens"] == 1
     assert usage_row["output_tokens"] == 1
     assert usage_row["total_tokens"] == 2
-    assert usage_row["error_code"] == "RuntimeError"
+    assert usage_row["error_code"] is None

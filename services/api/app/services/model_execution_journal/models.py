@@ -7,7 +7,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from app.schemas.reader_orchestration import GrammarBundleOutput
+from app.schemas.reader_orchestration import (
+    GrammarBundleOutput,
+    TranslationLayerOutput,
+    VocabularyLayerOutput,
+)
 
 CaptureState = Literal["started", "captured", "ambiguous"]
 UsageDeliveryState = Literal[
@@ -86,6 +90,46 @@ class SemanticOutlineResumePayloadV1(BaseModel):
     candidates: list[SemanticOutlineCandidateResultV1]
     worker_failure: bool
     model: str | None = None
+
+
+class TranslationUnitResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output: TranslationLayerOutput
+
+
+class TranslationBatchUnitResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str = Field(min_length=1)
+    output: TranslationLayerOutput
+
+
+class TranslationBatchResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outputs: list[TranslationBatchUnitResultV1]
+
+
+class VocabularyUnitResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output: VocabularyLayerOutput
+    diagnostics: dict[str, JsonValue] | None = None
+
+
+class VocabularyBatchUnitResultV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: str = Field(min_length=1)
+    output: VocabularyLayerOutput
+
+
+class VocabularyBatchResumePayloadV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outputs: list[VocabularyBatchUnitResultV1]
+    batch_diagnostics: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 
 class UsageEventDraftV1(BaseModel):
