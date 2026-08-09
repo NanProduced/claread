@@ -26,7 +26,7 @@ The module is imported one-way by ``base_builder`` and
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Final
 
 from .source_link_policy import is_safe_source_link
@@ -126,6 +126,86 @@ class StableAnnotationAnalysis:
 def empty_diagnostics_payload() -> dict[str, Any]:
     """Canonical empty payload — the versioned object, never a bare ``[]``."""
     return {"version": DIAGNOSTICS_VERSION, "items": []}
+
+
+# Readback status vocabulary for the persisted diagnostics audit artifact.
+DIAGNOSTICS_READBACK_MATCH: Final[str] = "match"
+DIAGNOSTICS_READBACK_MISMATCH: Final[str] = "mismatch"
+DIAGNOSTICS_READBACK_MALFORMED: Final[str] = "malformed"
+
+_DIAGNOSTIC_ITEM_KEYS: Final[frozenset[str]] = frozenset(
+    item.name for item in fields(StableAnnotationDiagnostic)
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotationDiagnosticsReadback:
+    """Typed internal readback of ``reading_bases.diagnostics_json``.
+
+    The persisted payload is a versioned audit/readback artifact, never a
+    second source of truth: the analyzer's recomputed diagnostics own
+    behavior on reload. ``persisted`` is None when the stored payload is
+    malformed (wrong version, non-object items, missing keys, …).
+    """
+
+    status: str
+    persisted: tuple[StableAnnotationDiagnostic, ...] | None
+    recomputed: tuple[StableAnnotationDiagnostic, ...]
+
+
+def parse_diagnostics_payload(
+    raw: Any,
+) -> tuple[StableAnnotationDiagnostic, ...] | None:
+    """Parse the versioned diagnostics payload; None when malformed.
+
+    Strict inverse of ``StableAnnotationAnalysis.diagnostics_payload`` —
+    the key mapping lives ONLY here, next to the writer, so readback can
+    never drift into a second contract.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("version") != DIAGNOSTICS_VERSION:
+        return None
+    items = raw.get("items")
+    if not isinstance(items, list):
+        return None
+    parsed: list[StableAnnotationDiagnostic] = []
+    for entry in items:
+        if not isinstance(entry, dict) or set(entry.keys()) != _DIAGNOSTIC_ITEM_KEYS:
+            return None
+        if not all(isinstance(entry[key], str) for key in _DIAGNOSTIC_ITEM_KEYS):
+            return None
+        parsed.append(StableAnnotationDiagnostic(**entry))
+    return tuple(parsed)
+
+
+def readback_persisted_diagnostics(
+    raw: Any,
+    *,
+    recomputed: StableAnnotationAnalysis,
+) -> AnnotationDiagnosticsReadback:
+    """Compare the persisted diagnostics payload against the recomputation.
+
+    Observation only: mismatch or malformed payloads never alter behavior —
+    the recomputed analysis stays the owner either way.
+    """
+    persisted = parse_diagnostics_payload(raw)
+    if persisted is None:
+        return AnnotationDiagnosticsReadback(
+            status=DIAGNOSTICS_READBACK_MALFORMED,
+            persisted=None,
+            recomputed=recomputed.diagnostics,
+        )
+    status = (
+        DIAGNOSTICS_READBACK_MATCH
+        if persisted == recomputed.diagnostics
+        else DIAGNOSTICS_READBACK_MISMATCH
+    )
+    return AnnotationDiagnosticsReadback(
+        status=status,
+        persisted=persisted,
+        recomputed=recomputed.diagnostics,
+    )
 
 
 def _is_native_int(value: Any) -> bool:

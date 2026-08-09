@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -63,13 +64,18 @@ from .base_builder import (
 )
 from .span_recorder import parse_trace_id_from_envelope
 from .stable_annotation_analysis import (
+    DIAGNOSTICS_READBACK_MATCH,
     AcceptedStableBlockAnnotation,
+    AnnotationDiagnosticsReadback,
     StableAnnotationPolicyOverride,
     StableBlockAnnotation,
     StableUnitRange,
     analyze_stable_annotations,
     empty_diagnostics_payload,
+    readback_persisted_diagnostics,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _unit_metadata_json(
@@ -110,6 +116,11 @@ class LoadedReaderSnapshotFacts:
     enhancement_layers: tuple[ReaderSnapshotLayer, ...]
     enhancement_progress: ReaderEnhancementProgress
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
+    # Typed internal readback of the persisted annotation diagnostics
+    # artifact. Observation only — behavior is owned by the analyzer's
+    # recomputation inside build_result, and this never reaches the
+    # public snapshot DTO.
+    annotation_diagnostics_readback: AnnotationDiagnosticsReadback
     user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
     ask_supplements: tuple[ReaderSnapshotAskSupplement, ...] = ()
 
@@ -1283,6 +1294,28 @@ class ReaderOrchestrationRepository:
                 for row in unit_rows
             ],
         )
+        # Persisted diagnostics readback: ``reading_bases.diagnostics_json``
+        # is a versioned audit artifact. The recomputed analysis above owns
+        # behavior; this only observes whether the persisted payload still
+        # matches it. Mismatch/malformed never re-opens closed units, never
+        # changes policy, and never leaks into the public snapshot DTO.
+        annotation_diagnostics_readback = readback_persisted_diagnostics(
+            ensure_json_object(record_row["diagnostics_json"]),
+            recomputed=reload_analysis,
+        )
+        if annotation_diagnostics_readback.status != DIAGNOSTICS_READBACK_MATCH:
+            logger.warning(
+                "persisted annotation diagnostics readback is %s for record %s "
+                "(persisted=%d recomputed=%d); recomputed analysis owns behavior",
+                annotation_diagnostics_readback.status,
+                record_id,
+                (
+                    len(annotation_diagnostics_readback.persisted)
+                    if annotation_diagnostics_readback.persisted is not None
+                    else -1
+                ),
+                len(annotation_diagnostics_readback.recomputed),
+            )
         accepted_by_range: dict[tuple[int, int], AcceptedStableBlockAnnotation] = {
             (
                 accepted.annotation.start_utf16,
@@ -1645,6 +1678,7 @@ class ReaderOrchestrationRepository:
             record=snapshot_record,
             last_event_sequence=last_event_sequence,
             snapshot_taken_at=latest_event_row["created_at"],
+            annotation_diagnostics_readback=annotation_diagnostics_readback,
             enhancement_layers=snapshot_layers,
             enhancement_progress=_build_enhancement_progress(
                 product_state=snapshot_record.product_state,

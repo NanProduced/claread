@@ -24,6 +24,10 @@ from app.services.reader_orchestration import (
     build_low_impact_reading_base,
     build_reader_plate_snapshot,
 )
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    DIAGNOSTICS_READBACK_MATCH,
+    AnnotationDiagnosticsReadback,
+)
 from tests.test_reader_orchestration_schema_baseline import BASELINE_SQL, DATABASE_URL
 
 pytestmark = pytest.mark.anyio
@@ -386,6 +390,11 @@ async def test_load_snapshot_uses_repeatable_read_readonly_transaction() -> None
         record=snapshot_record,
         last_event_sequence=1,
         snapshot_taken_at=snapshot_taken_at,
+        annotation_diagnostics_readback=AnnotationDiagnosticsReadback(
+            status=DIAGNOSTICS_READBACK_MATCH,
+            persisted=(),
+            recomputed=(),
+        ),
         enhancement_layers=(),
         enhancement_progress=build_reader_plate_snapshot(
             build_result,
