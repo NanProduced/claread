@@ -1293,7 +1293,7 @@ function ReaderStableMarkdownBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+      className={`reader-record-plate-markdown-blockquote text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       {...readerRecordNavigableNodeAttrs({
@@ -1636,7 +1636,7 @@ function ReaderMarkdownBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+      className={`reader-record-plate-markdown-blockquote text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       data-reader-record-markdown-node="blockquote"
