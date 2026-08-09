@@ -955,6 +955,74 @@ async def test_answer_text_chunks_stream_as_answer_delta_events():
 
 
 @pytest.mark.asyncio
+async def test_production_agent_streamed_prompted_output_keeps_validated_artifact():
+    """Production factory + DeepSeek-style TextPart preserves validation."""
+    from app.llm.deepseek_direct import deepseek_v4_openai_profile
+    from app.services.reader_record_ask.agent import (
+        create_reading_record_ask_agent,
+    )
+    from app.services.reader_record_ask.runtime_deps import RuntimeObservation
+    from app.services.reader_record_ask.thinking_transport import (
+        run_agent_with_thinking_transport,
+    )
+
+    async def stream_fn(messages, info):
+        del messages, info
+        yield {0: DeltaThinkingPart(content="private reasoning")}
+        for chunk in _ANSWER_JSON_CHUNKS:
+            yield chunk
+
+    model = FunctionModel(
+        stream_function=stream_fn,
+        profile=deepseek_v4_openai_profile(),
+    )
+    agent = create_reading_record_ask_agent(
+        model,
+        web_search_enabled=False,
+        expand_evidence_enabled=False,
+        search_current_article_enabled=False,
+    )
+    observation = RuntimeObservation()
+    deps = _transport_deps()
+    deps.observation = observation
+
+    outcome = await run_agent_with_thinking_transport(
+        agent=agent,
+        prompt="question",
+        deps=deps,
+        model=model,
+    )
+
+    assert observation.output_validation_final_attempts == 1
+    assert observation.output_validation_retry_requests == 0
+    assert observation.validated_artifacts_published == 1
+    assert observation.validated_artifacts_consumed == 0
+    assert observation.agent_event_topology == [
+        "PartStartEvent",
+        "PartEndEvent",
+        "PartStartEvent",
+        "FinalResultEvent",
+        "PartDeltaEvent",
+        "PartDeltaEvent",
+        "PartDeltaEvent",
+        "PartDeltaEvent",
+        "PartEndEvent",
+        "AgentRunResultEvent",
+    ]
+    assert observation.output_validation_object_ids == [
+        observation.transport_final_output_object_id
+    ]
+    assert len(observation.validated_artifact_object_ids) == 1
+    assert outcome.output.validated_answer_blocks is not None
+    assert id(outcome.output.validated_answer_blocks) == (
+        observation.validated_artifact_object_ids[0]
+    )
+    assert [
+        block.text for block in outcome.output.validated_answer_blocks.blocks
+    ] == ["Hello world"]
+
+
+@pytest.mark.asyncio
 async def test_clarification_text_streams_without_answer_blocks():
     """Clarification uses its independent text field and carries no blocks."""
     from pydantic_ai import Agent

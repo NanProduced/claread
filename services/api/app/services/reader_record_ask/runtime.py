@@ -377,12 +377,17 @@ async def run_reading_record_ask(
     agent_output = streamed.output
     if not isinstance(agent_output, AgentAnswerDraftOutput):
         raise TypeError("agent returned an invalid structured answer output")
-    validated_answer_blocks = agent_output.validated_answer_blocks
+    validated_answer_blocks = deps.consume_validated_answer_blocks()
     if (
         agent_output.response_kind == "grounded_answer"
         and validated_answer_blocks is None
     ):
         raise TypeError("grounded answer did not pass block validation")
+    if (
+        validated_answer_blocks is not None
+        and agent_output.validated_answer_blocks is None
+    ):
+        agent_output.bind_validated_answer_blocks(validated_answer_blocks)
 
     finalizer_kind: ResponseKind = agent_output.response_kind  # type: ignore[assignment]
 

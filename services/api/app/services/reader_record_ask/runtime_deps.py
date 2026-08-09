@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from app.services.reader_record_ask.answer_block_provenance import ArticleScope
+from app.services.reader_record_ask.answer_block_provenance import (
+    ArticleScope,
+    ValidatedAnswerBlocks,
+)
 from app.services.reader_record_ask.article_rag_port import ArticleRagSearchPort
 from app.services.reader_record_ask.context_envelope import (
     ReadingRecordAskContextEnvelope,
@@ -187,6 +190,12 @@ class RuntimeObservation:
     baseline_context: BaselineAgentContext | None = None
     output_validation_final_attempts: int = 0
     output_validation_retry_requests: int = 0
+    validated_artifacts_published: int = 0
+    validated_artifacts_consumed: int = 0
+    agent_event_topology: list[str] = field(default_factory=list)
+    output_validation_object_ids: list[int] = field(default_factory=list)
+    validated_artifact_object_ids: list[int] = field(default_factory=list)
+    transport_final_output_object_id: int | None = None
     # R4-A4-2R5R3 Issue #1: typed execution-stage evidence. Written by
     # the runtime at each transition point (see class docstring). Read
     # by the harness classifier on the exception path. ``None`` means
@@ -243,6 +252,32 @@ class ReaderRecordAskDeps:
     web_evidence_registry: WebEvidenceRegistry | None = None
     web_search_calls: int = 0
     max_web_search_calls: int = WEB_MAX_CALLS_PER_TURN
+    _validated_answer_blocks: ValidatedAnswerBlocks | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def publish_validated_answer_blocks(
+        self,
+        validated: ValidatedAnswerBlocks,
+    ) -> None:
+        """Publish the single accepted grounding artifact for this run."""
+
+        if self._validated_answer_blocks is not None:
+            raise RuntimeError("grounding validation artifact already published")
+        self._validated_answer_blocks = validated
+        if self.observation is not None:
+            self.observation.validated_artifacts_published += 1
+
+    def consume_validated_answer_blocks(self) -> ValidatedAnswerBlocks | None:
+        """Consume the accepted grounding artifact at most once."""
+
+        validated = self._validated_answer_blocks
+        self._validated_answer_blocks = None
+        if validated is not None and self.observation is not None:
+            self.observation.validated_artifacts_consumed += 1
+        return validated
 
     def emit_event(self, event: RuntimeEvent) -> None:
         """Append an internal event and optionally notify a live sink.

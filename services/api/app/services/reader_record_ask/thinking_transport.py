@@ -502,6 +502,10 @@ async def run_agent_with_thinking_transport(
         ) as stream:
             async for event in stream:
                 event_kind = getattr(event, "event_kind", None)
+                if deps.observation is not None:
+                    deps.observation.agent_event_topology.append(
+                        type(event).__name__
+                    )
 
                 if event_kind == "agent_run_result":
                     run_result = getattr(event, "result", None)
@@ -732,6 +736,9 @@ async def run_agent_with_thinking_transport(
 
     if final_output is None:
         raise RuntimeError("agent run produced no final output")
+
+    if deps.observation is not None:
+        deps.observation.transport_final_output_object_id = id(final_output)
 
     if not isinstance(final_output, AgentAnswerDraftOutput):
         raise TypeError("agent transport received an invalid structured output")
