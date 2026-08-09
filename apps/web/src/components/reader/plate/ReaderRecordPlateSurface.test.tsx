@@ -1417,6 +1417,22 @@ describe("ReaderRecordPlateSurface", () => {
     );
   });
 
+  it("keeps light note-card fills quiet without changing dark mode", () => {
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
+    );
+    expect(globalsSource).toMatch(
+      /(?:^|\n)\.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 40%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 40%, var\(--surface\)\)/,
+    );
+    expect(globalsSource).toMatch(
+      /\.dark \.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 36%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 36%, var\(--surface\)\)/,
+    );
+    expect(globalsSource).toMatch(
+      /--reader-record-note-fill-supplement:\s*var\(--reader-record-note-fill-grammar\)/,
+    );
+  });
+
   it("sanitizes copied grammar content without callout chrome text", async () => {
     const { container } = render(<ReaderRecordPlateSurface snapshot={makeSnapshot()} />);
     const grammarCallout = container.querySelector<HTMLElement>(

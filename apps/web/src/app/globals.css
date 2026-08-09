@@ -1862,8 +1862,8 @@ select {
   --reader-record-inline-code-size: 0.9em;
   --reader-record-note-padding-block: 0.75rem;
   --reader-record-note-padding-inline: 1rem;
-  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 55%, var(--surface));
-  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 55%, var(--surface));
+  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 40%, var(--surface));
+  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 40%, var(--surface));
   --reader-record-note-fill-supplement: var(--reader-record-note-fill-grammar);
   --reader-record-source-paragraph-gap: 0.86rem;
   --reader-record-source-translation-gap: 0.38rem;
