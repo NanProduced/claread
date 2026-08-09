@@ -13,10 +13,12 @@
 import * as React from "react";
 import { createContext, useContext } from "react";
 import {
+  BookOpenText,
   ChevronDown,
-  ChevronUp,
   Flag,
   MessageCircleQuestion,
+  MessageSquareQuote,
+  TextSearch,
   WandSparkles,
 } from "lucide-react";
 import {
@@ -319,7 +321,7 @@ function sentenceChunkDomId(chunk: {
 }
 
 function calloutTypeLabel(variant: ReaderCalloutElement["variant"]): string {
-  return variant === "grammar" ? "语法解析" : "补充说明";
+  return variant === "grammar" ? "语法解析" : "Ask 补充";
 }
 
 function domIdFromBlockId(prefix: string, id: string): string {
@@ -598,7 +600,7 @@ function ReaderCalloutGroupComponent({
           aria-hidden="true"
           {...copyExcludeProps}
         >
-          <WandSparkles size={15} strokeWidth={1.8} />
+          <WandSparkles size={16} strokeWidth={1.8} />
         </span>
         <span className="reader-record-plate-callout-group-label">
           语法解析 · {calloutCount} 条
@@ -627,7 +629,6 @@ function ReaderCalloutComponent({
   const node = element as unknown as ReaderCalloutElement;
   const data = node.data;
   const variant = node.variant;
-  const icon = node.icon;
   const {
     activeGrammarItemId,
     expandGrammarItemRequest,
@@ -650,24 +651,23 @@ function ReaderCalloutComponent({
   const grammarActive =
     isGrammar && grammarItemId ? activeGrammarItemId === grammarItemId : false;
   const label = calloutTypeLabel(variant);
+  // Unified filled-card family: visual values live in semantic classes
+  // (globals.css), never inline. Group rows stay flat inside the group
+  // card; standalone grammar/supplement cards get the family fill.
   const containerClass = [
-    "reader-record-plate-callout rounded-[8px] border font-sans text-ink-soft shadow-none",
+    "reader-record-plate-callout font-sans text-ink-soft",
     isGroupedGrammar
       ? "reader-record-plate-callout--grammar-row"
       : isGrammar
-      ? "reader-record-plate-callout--grammar border-grammar-violet/18 bg-ink/[0.035]"
+      ? "reader-record-plate-callout--grammar"
       : "",
     grammarActive ? "reader-record-plate-callout--grammar-active" : "",
-    isSupplement
-      ? "reader-record-plate-callout--supplement border-vocab-amber/18 bg-vocab-amber/[0.045]"
-      : "",
+    isSupplement ? "reader-record-plate-callout--supplement" : "",
     attributes?.className ?? "",
   ]
     .filter(Boolean)
     .join(" ");
-  const eyebrowClass = isGrammar
-    ? "text-grammar-violet/80"
-    : "text-vocab-amber/90";
+  const eyebrowClass = "text-grammar-violet/80";
   const title = isGrammar
     ? data?.grammarPoint ?? ""
     : data?.supplementTitle ?? "";
@@ -799,7 +799,11 @@ function ReaderCalloutComponent({
             aria-hidden="true"
             {...copyExcludeProps}
           >
-            {icon}
+            {isGrammar ? (
+              <BookOpenText size={16} strokeWidth={1.8} />
+            ) : (
+              <MessageSquareQuote size={16} strokeWidth={1.8} />
+            )}
           </span>
           <div className="reader-record-plate-callout-heading min-w-0">
             <div className={`reader-record-plate-label ${eyebrowClass}`}>
@@ -847,11 +851,12 @@ function ReaderCalloutComponent({
                   toggleExpanded();
                 }}
               >
-                {expanded ? (
-                  <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
-                ) : (
-                  <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
-                )}
+                <ChevronDown
+                  aria-hidden="true"
+                  size={15}
+                  strokeWidth={1.9}
+                  className="reader-record-plate-callout-toggle-icon"
+                />
               </button>
               {actionTarget ? (
                 <ReaderCalloutActionButtons
@@ -931,7 +936,7 @@ function ReaderSentenceAnalysisComponent({
   return (
     <section
       {...attributes}
-      className={`reader-record-plate-sentence-analysis reader-record-plate-callout--analysis rounded-[8px] border border-context-blue/20 bg-context-blue/[0.04] font-sans text-ink-soft shadow-none ${
+      className={`reader-record-plate-sentence-analysis font-sans text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       role="note"
@@ -957,7 +962,7 @@ function ReaderSentenceAnalysisComponent({
                 aria-hidden="true"
                 {...copyExcludeProps}
               >
-                {node.icon}
+                <TextSearch size={16} strokeWidth={1.8} />
               </span>
               <span>长句拆析</span>
             </div>
@@ -992,11 +997,12 @@ function ReaderSentenceAnalysisComponent({
                 toggleExpanded();
               }}
             >
-              {expanded ? (
-                <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
-              ) : (
-                <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
-              )}
+              <ChevronDown
+                aria-hidden="true"
+                size={15}
+                strokeWidth={1.9}
+                className="reader-record-plate-callout-toggle-icon"
+              />
             </button>
             <ReaderCalloutActionButtons
               target={actionTarget}

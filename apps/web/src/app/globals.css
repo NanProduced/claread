@@ -539,8 +539,6 @@ body {
   --reader-entry-focus-shadow: rgba(28, 24, 18, 0.06);
   --reader-entry-active-grammar-border: rgba(116, 102, 148, 0.28);
   --reader-entry-active-analysis-border: rgba(39, 108, 77, 0.26);
-  --reader-sentence-analysis-surface: rgba(60, 140, 104, 0.05);
-  --reader-sentence-analysis-outline: rgba(60, 140, 104, 0.12);
   --reader-entry-chip-border: color-mix(in srgb, var(--hairline) 86%, transparent);
   --reader-entry-chip-hover-border: color-mix(in srgb, var(--app-muted) 38%, var(--hairline));
   --reader-entry-chip-surface: color-mix(in srgb, var(--surface) 82%, transparent);
@@ -649,6 +647,11 @@ body {
   --brand-aperture-shell-border: rgba(217, 209, 195, 0.7);
   --brand-aperture-shell-shadow: 0 8px 18px rgba(17, 17, 17, 0.08);
   --brand-aperture-mark-filter: none;
+}
+
+.dark .reader-record-plate-document {
+  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 36%, var(--surface));
+  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 36%, var(--surface));
 }
 
 .dark {
@@ -1857,8 +1860,11 @@ select {
   --reader-record-chunk-kind-size: 0.68rem;
   --reader-record-chunk-body-size: 0.84rem;
   --reader-record-inline-code-size: 0.9em;
-  --reader-record-note-padding-block: 0.92rem;
-  --reader-record-note-padding-inline: 1.02rem;
+  --reader-record-note-padding-block: 0.75rem;
+  --reader-record-note-padding-inline: 1rem;
+  --reader-record-note-fill-grammar: color-mix(in srgb, var(--grammar-violet) 55%, var(--surface));
+  --reader-record-note-fill-analysis: color-mix(in srgb, var(--context-blue) 55%, var(--surface));
+  --reader-record-note-fill-supplement: var(--reader-record-note-fill-grammar);
   --reader-record-source-paragraph-gap: 0.86rem;
   --reader-record-source-translation-gap: 0.38rem;
   --reader-record-source-analysis-gap: 0.88rem;
@@ -2436,11 +2442,30 @@ select {
   line-height: 1.55;
 }
 
+.reader-record-plate-markdown table {
+  margin-block: 0.5rem 0;
+  border-collapse: collapse;
+  font-size: calc(var(--reader-record-note-body-size) * 0.94);
+  line-height: 1.6;
+}
+
+.reader-record-plate-markdown th,
+.reader-record-plate-markdown td {
+  border-block-end: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  padding: 0.28rem 0.6rem;
+  text-align: start;
+  vertical-align: top;
+}
+
+.reader-record-plate-markdown th {
+  font-weight: 620;
+}
+
 .reader-record-plate-inline-code {
   box-decoration-break: clone;
   border-radius: 0.22em;
-  background-color: color-mix(in srgb, var(--ink) 4.6%, transparent);
-  color: color-mix(in srgb, var(--ink) 84%, var(--grammar-violet) 16%);
+  background-color: color-mix(in srgb, var(--ink) 8%, var(--surface));
+  color: color-mix(in srgb, var(--ink) 88%, var(--grammar-violet) 12%);
   padding: 0.045em 0.26em;
   font-family: inherit;
   font-size: var(--reader-record-inline-code-size);
@@ -2643,17 +2668,32 @@ select {
   background-color: var(--reader-mark-context-fill-quiet, rgba(165, 208, 239, 0.28));
 }
 
+.reader-record-plate-callout--grammar {
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--reader-record-note-fill-grammar);
+}
+
+.reader-record-plate-callout--supplement {
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--reader-record-note-fill-supplement);
+}
+
 .reader-record-plate-callout--grammar-active {
-  background-color: color-mix(in srgb, var(--grammar-violet) 7%, var(--surface));
+  background-color: color-mix(
+    in srgb,
+    var(--grammar-violet) 62%,
+    var(--surface)
+  );
 }
 
 .reader-record-plate-callout-group {
   margin-block: 0.62rem 0.82rem;
-  border-block: 1px solid color-mix(in srgb, var(--hairline) 62%, transparent);
-  border-inline: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0.34rem 0 0.22rem;
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--reader-record-note-fill-grammar);
+  padding: 0.75rem 1rem;
 }
 
 .reader-record-plate-callout-group-header {
@@ -2661,7 +2701,7 @@ select {
   min-height: 1.82rem;
   align-items: center;
   gap: 0.42rem;
-  color: color-mix(in srgb, var(--grammar-violet) 58%, var(--ink) 42%);
+  color: color-mix(in srgb, var(--ink) 62%, var(--grammar-violet) 38%);
   font-size: var(--reader-record-label-size);
   font-weight: 650;
   line-height: 1.2;
@@ -2674,7 +2714,7 @@ select {
 .reader-record-plate-callout-group-icon {
   display: inline-flex;
   align-items: center;
-  color: color-mix(in srgb, var(--grammar-violet) 58%, var(--ink) 42%);
+  color: color-mix(in srgb, var(--ink) 58%, var(--grammar-violet) 42%);
 }
 
 .reader-record-plate-callout-group-rows {
@@ -2705,8 +2745,8 @@ select {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background-color: color-mix(in srgb, var(--grammar-violet) 4%, transparent);
-  color: color-mix(in srgb, var(--grammar-violet) 46%, var(--ink) 54%);
+  background-color: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: color-mix(in srgb, var(--ink) 72%, var(--grammar-violet) 28%);
   font-size: 0.68rem;
   font-weight: 660;
   line-height: 1;
@@ -2723,39 +2763,26 @@ select {
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-row
   + .reader-record-plate-callout--grammar-row {
-  border-top: 1px solid color-mix(in srgb, var(--hairline) 58%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--surface) 46%, transparent);
 }
 
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-active {
-  background-color: color-mix(in srgb, var(--grammar-violet) 2.2%, transparent);
+  background-color: color-mix(in srgb, var(--surface) 26%, transparent);
 }
 
 .reader-record-plate-callout-group
   .reader-record-plate-callout--grammar-row:hover {
-  background-color: color-mix(in srgb, var(--grammar-violet) 1.6%, transparent);
+  background-color: color-mix(in srgb, var(--surface) 18%, transparent);
 }
 
 .reader-record-plate-callout-group:has(+ .reader-record-plate-sentence-analysis) {
   margin-block-end: 0.54rem;
-  border-bottom-color: color-mix(in srgb, var(--hairline) 56%, transparent);
-  padding-bottom: 0.18rem;
 }
 
 .reader-record-plate-callout-group
   + .reader-record-plate-sentence-analysis {
   margin-block-start: 0.46rem;
-}
-
-.reader-record-plate-callout-group
-  + .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="true"] {
-  border-top-color: color-mix(in srgb, var(--context-blue) 12%, var(--hairline));
-  padding-block-start: 0.54rem;
-}
-
-.reader-record-plate-callout-group
-  + .reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="false"] {
-  margin-block-start: 0.58rem;
 }
 
 .reader-record-plate-callout-group
@@ -2786,8 +2813,8 @@ select {
   max-width: min(100%, 26rem);
   align-items: center;
   border-radius: 0.26rem;
-  background-color: color-mix(in srgb, var(--grammar-violet) 3.4%, transparent);
-  color: color-mix(in srgb, var(--grammar-violet) 42%, var(--ink-soft) 58%);
+  background-color: color-mix(in srgb, var(--surface) 62%, transparent);
+  color: color-mix(in srgb, var(--ink) 68%, var(--grammar-violet) 32%);
   padding: 0.045rem 0.3rem;
   font-size: 0.7rem;
   font-weight: 580;
@@ -2811,7 +2838,7 @@ select {
 .reader-record-plate-callout--grammar-row[data-reader-record-callout-collapsed="false"]
   [data-reader-record-markdown-content="plate"] {
   margin-top: 0.46rem;
-  border-top: 1px solid color-mix(in srgb, var(--grammar-violet) 12%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--surface) 46%, transparent);
   background-color: transparent;
   padding: 0.5rem 0 0.04rem;
 }
@@ -2920,6 +2947,15 @@ select {
   outline-offset: 2px;
 }
 
+.reader-record-plate-callout-toggle-icon {
+  transition: transform 160ms ease;
+}
+
+.reader-record-plate-callout-toggle[aria-expanded="true"]
+  .reader-record-plate-callout-toggle-icon {
+  transform: rotate(180deg);
+}
+
 .reader-record-plate-callout-preview {
   margin-top: 0.35rem;
   color: color-mix(in srgb, var(--ink-soft) 82%, transparent);
@@ -2930,26 +2966,9 @@ select {
 }
 
 .reader-record-plate-sentence-analysis {
-  border-color: color-mix(in srgb, var(--context-blue) 12%, var(--hairline));
-  background-color: color-mix(in srgb, var(--context-blue) 1.4%, transparent);
-}
-
-.reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="true"] {
-  border-right-color: transparent;
-  border-left-color: transparent;
-  border-radius: 0;
-  background-color: color-mix(in srgb, var(--context-blue) 1.2%, transparent);
-  padding-block: 0.62rem;
-  padding-inline: 0;
-}
-
-.reader-record-plate-sentence-analysis[data-reader-record-sentence-analysis-collapsed="false"] {
-  border-right-color: transparent;
-  border-left-color: transparent;
-  border-radius: 0;
-  background-color: color-mix(in srgb, var(--context-blue) 1.4%, transparent);
-  padding-block: 0.72rem 0.84rem;
-  padding-inline: 0;
+  border: 0;
+  border-radius: 8px;
+  background-color: var(--reader-record-note-fill-analysis);
 }
 
 .reader-record-plate-sentence-analysis-header {
