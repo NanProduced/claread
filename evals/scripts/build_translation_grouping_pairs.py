@@ -28,7 +28,10 @@ def fmt_grouping(groups: list[dict]) -> str:
     for index, group in enumerate(groups, start=1):
         ns = group["sentence_ns"]
         span = f"{ns[0]}" if len(ns) == 1 else f"{ns[0]}–{ns[-1]}"
-        lines.append(f"  G{index}: sentences {span} ({len(ns)} sentence{'s' if len(ns) > 1 else ''})")
+        lines.append(
+            f"  G{index}: sentences {span} "
+            f"({len(ns)} sentence{'s' if len(ns) > 1 else ''})"
+        )
     return "\n".join(lines)
 
 

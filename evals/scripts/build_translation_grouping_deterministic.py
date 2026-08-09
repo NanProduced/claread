@@ -86,7 +86,11 @@ def build_article_groups(article_id: str, text: str) -> dict:
             ]
             groups.append(
                 {
-                    "group_id": f"{unit.unit_id}_g{first}_{last}" if len(plan.anchor_segment_ids) > 1 else f"{unit.unit_id}_g{first}",
+                    "group_id": (
+                        f"{unit.unit_id}_g{first}_{last}"
+                        if len(plan.anchor_segment_ids) > 1
+                        else f"{unit.unit_id}_g{first}"
+                    ),
                     "sentence_ns": group_sentences,
                     "text": " ".join(
                         s["text"] for s in sentences if s["n"] in group_sentences
