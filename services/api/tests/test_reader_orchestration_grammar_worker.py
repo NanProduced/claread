@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from datetime import UTC, datetime, timedelta
@@ -55,7 +56,10 @@ from app.services.reader_orchestration.job_bootstrap import (
     GrammarJobBootstrapService,
     _fingerprint_matches_base,
 )
-from app.services.reader_orchestration.job_runtime import FenceViolationError
+from app.services.reader_orchestration.job_runtime import (
+    FenceViolationError,
+    ReaderJobRuntime,
+)
 from app.services.reader_orchestration.reading_strategy import (
     resolve_reader_variant_strategy,
 )
@@ -2711,6 +2715,132 @@ async def test_batch_worker_publishes_grammar_and_sentence_layers(
     # Job and run transitions
     assert job_row is not None and job_row["status"] == "succeeded"
     assert run_row is not None and run_row["status"] == "completed"
+
+
+async def test_batch_restart_resumes_receipt_without_second_provider_call(
+    grammar_batch_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(grammar_batch_env)
+    submit_result = await ArticleReadyPersistenceService(
+        pool=grammar_batch_env
+    ).submit_plain_text(
+        PlainTextArticleReadySubmitRequest(
+            user_id=user_id,
+            plain_text=_BATCH_ARTICLE_TEXT,
+            title="Durable Grammar Batch",
+            language="en",
+            reading_goal="daily_reading",
+            reading_variant="intermediate_reading",
+        )
+    )
+    await EnhancementJobBootstrapService(
+        pool=grammar_batch_env
+    ).bootstrap_missing_jobs(
+        record_id=submit_result.record_id,
+        user_id=user_id,
+    )
+
+    class _CrashBeforePublish:
+        calls = 0
+
+        async def publish_article_grammar_batch(self, **kwargs):
+            self.calls += 1
+            raise asyncio.CancelledError
+
+    first_executor = _StaticGrammarBatchExecutor()
+    crash_publisher = _CrashBeforePublish()
+    first_worker = GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=first_executor,
+        layer_publisher=crash_publisher,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await first_worker.process_next_grammar_batch_job_for_record(
+            record_id=submit_result.record_id,
+            base_id=submit_result.base_id,
+            expected_generation=1,
+            lease_owner="grammar-batch-first",
+            lease_duration=timedelta(seconds=30),
+        )
+    assert len(first_executor.calls) == 1
+    assert crash_publisher.calls == 1
+
+    async with grammar_batch_env.acquire() as conn:
+        job_before = await conn.fetchrow(
+            """
+            SELECT id, status, attempt_count, lease_token
+            FROM reader_jobs
+            WHERE reading_record_id = $1
+              AND job_type = 'build_grammar_bundle'
+              AND target_type = 'unit_range'
+            """,
+            submit_result.record_id,
+        )
+        assert job_before is not None
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_before["id"],
+        )
+    runtime = ReaderJobRuntime(pool=grammar_batch_env)
+    assert await runtime.recover_stale_leases() == 1
+
+    class _FailIfProviderCalled:
+        calls = 0
+
+        async def generate_batch(self, context):
+            self.calls += 1
+            raise AssertionError("provider must not be called during resume")
+
+    resume_executor = _FailIfProviderCalled()
+    resumed = await GrammarBundleWorkerService(
+        pool=grammar_batch_env,
+        batch_executor=resume_executor,
+    ).process_next_grammar_batch_job_for_record(
+        record_id=submit_result.record_id,
+        base_id=submit_result.base_id,
+        expected_generation=1,
+        lease_owner="grammar-batch-resume",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None and resumed.status == "succeeded"
+    assert resume_executor.calls == 0
+    async with grammar_batch_env.acquire() as conn:
+        job_after = await conn.fetchrow(
+            """
+            SELECT status, attempt_count, lease_token
+            FROM reader_jobs WHERE id = $1
+            """,
+            job_before["id"],
+        )
+        journal_row = await conn.fetchrow(
+            """
+            SELECT capture_state, usage_delivery_state, invocation_key,
+                   ai_usage_event_id
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            job_before["id"],
+        )
+        usage_count = await conn.fetchval(
+            """
+            SELECT count(*) FROM ai_usage_events
+            WHERE invocation_key = $1
+            """,
+            journal_row["invocation_key"] if journal_row else None,
+        )
+
+    assert job_after["status"] == "succeeded"
+    assert job_after["attempt_count"] == job_before["attempt_count"] == 1
+    assert job_after["lease_token"] is None
+    assert journal_row["capture_state"] == "captured"
+    assert journal_row["usage_delivery_state"] == "reconciled"
+    assert journal_row["ai_usage_event_id"] is not None
+    assert usage_count == 1
 
 
 @pytest.mark.anyio

@@ -35,6 +35,7 @@ Expiry-aware runtime (real lease_expires_at + publisher fence):
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -47,6 +48,10 @@ import app.services.reader_orchestration.grammar_worker as grammar_worker_module
 import app.services.reader_orchestration.lease_heartbeat as lease_heartbeat_module
 from app.schemas.reader_orchestration import GrammarBundleOutput
 from app.services.ai_usage.service import AIUsageEventCreate
+from app.services.model_execution_journal import (
+    BeginDisposition,
+    CapturedReceipt,
+)
 from app.services.reader_orchestration.grammar_worker import (
     GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED,
     GRAMMAR_USAGE_STATUS_OWNERSHIP_LOST,
@@ -284,6 +289,76 @@ class InMemoryUsageStore:
         return True
 
 
+class InMemoryJournal:
+    """Hermetic journal/outbox fake backed by the existing usage store."""
+
+    def __init__(self, usage_store: InMemoryUsageStore) -> None:
+        self.usage_store = usage_store
+        self.started: dict[str, object] = {}
+        self.receipts: dict[str, CapturedReceipt] = {}
+
+    async def begin_execution(self, *, identity, invocation_kind):
+        existing = identity.invocation_key in self.started
+        self.started.setdefault(identity.invocation_key, (identity, invocation_kind))
+        receipt = self.receipts.get(identity.invocation_key)
+        return BeginDisposition(
+            journal_id=receipt.journal_id if receipt else uuid4(),
+            invocation_key=identity.invocation_key,
+            capture_state="captured" if receipt else "started",
+            provider_call_allowed=not existing,
+        )
+
+    async def capture_execution(self, *, identity, prepared):
+        existing = self.receipts.get(identity.invocation_key)
+        if existing is not None:
+            return replace(existing, idempotent_replay=True)
+        receipt = CapturedReceipt(
+            journal_id=uuid4(),
+            identity=identity,
+            invocation_kind=prepared.invocation_kind,
+            resume_payload_kind=prepared.resume_payload_kind,
+            resume_payload_schema_version=prepared.resume_payload_schema_version,
+            usage_event_draft_schema_version=(
+                prepared.usage_event_draft_schema_version
+            ),
+            normalized_payload=prepared.normalized_payload,
+            usage_event_draft=prepared.usage_event_draft,
+            capture_envelope_sha256=prepared.capture_envelope_sha256,
+            captured_at=datetime.now(UTC),
+            usage_delivery_state="pending",
+            ai_usage_event_id=None,
+        )
+        self.receipts[identity.invocation_key] = receipt
+        return receipt
+
+    async def materialize_pending(self, **kwargs):
+        reconciled = 0
+        for invocation_key, receipt in list(self.receipts.items()):
+            if receipt.usage_delivery_state != "pending":
+                continue
+            event = replace(
+                AIUsageEventCreate(**receipt.usage_event_draft),
+                request_id=invocation_key,
+            )
+            event_id = await self.usage_store.record(event)
+            if event_id is None:
+                continue
+            self.receipts[invocation_key] = replace(
+                receipt,
+                usage_delivery_state="reconciled",
+                ai_usage_event_id=event_id,
+            )
+            reconciled += 1
+        return SimpleNamespace(
+            scanned=len(self.receipts),
+            reconciled=reconciled,
+            dead_lettered=0,
+        )
+
+    async def load_captured_receipt(self, *, invocation_key):
+        return self.receipts[invocation_key]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -345,8 +420,8 @@ def usage_store(monkeypatch) -> InMemoryUsageStore:
     store = InMemoryUsageStore()
     monkeypatch.setattr(
         grammar_worker_module,
-        "record_model_invocation_usage_event",
-        store.record,
+        "ModelExecutionJournalService",
+        lambda *, pool=None: InMemoryJournal(store),
     )
     monkeypatch.setattr(
         grammar_worker_module, "update_ai_usage_event_outcome", store.update
@@ -409,7 +484,7 @@ def _lingering_heartbeat_tasks() -> list[asyncio.Task]:
 
 
 def _expected_invocation_key(claim: ClaimResult) -> str:
-    return f"reader_grammar_batch:{claim.job_id}:{claim.lease_token}"
+    return f"reader:reader_grammar_bundle:{claim.job_id}:{claim.attempt_count}:0"
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +646,8 @@ async def test_usage_persisted_immediately_and_outcome_updates_same_row(
     assert row["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
     assert row["usage_data"] == REAL_USAGE
     assert row["metadata"]["model_call_completed"] is True
-    assert row["metadata"]["attempt_lease_token"] == str(claim.lease_token)
+    assert row["metadata"]["attempt_ordinal"] == claim.attempt_count
+    assert row["metadata"]["execution_slot"] == 0
     assert [u["status"] for u in usage_store.updates] == [
         GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
     ]
@@ -843,7 +919,7 @@ async def test_cancellation_during_initial_usage_persistence_still_records_once(
 
 
 @pytest.mark.anyio
-async def test_persistence_failure_is_retried_idempotently_to_one_row(
+async def test_materialization_failure_pauses_before_publish_then_reconciles_once(
     usage_store: InMemoryUsageStore, silent_spans, monkeypatch
 ) -> None:
     runtime = FakeJobRuntime()
@@ -851,21 +927,82 @@ async def test_persistence_failure_is_retried_idempotently_to_one_row(
     publisher = FakePublisher()
     service = _build_service(runtime, executor, publisher)
     _patch_worker_db(monkeypatch, service)
-    # First persistence attempt "fails" (returns None) → must NOT be
-    # treated as recorded; the retry succeeds and the outcome update
-    # still lands on the single row.
+    # A DB-to-DB materialization failure cannot authorize publication.
+    # The captured receipt stays pending for a later provider-free pass.
     usage_store.fail_next_records = 1
 
     result = await service.process_claimed_grammar_batch_job(
         claim=_make_claim(), lease_duration=timedelta(seconds=120)
     )
 
-    assert result.status == "succeeded"
-    assert usage_store.record_attempts == 2  # failure + successful retry
+    assert result.status == "paused"
+    assert publisher.calls == []
+    assert [call["target_status"] for call in runtime.transitions] == ["paused"]
+    assert usage_store.record_attempts == 1
+    assert usage_store.insert_count == 0
+    journal = service._journal_service
+    receipt = next(iter(journal.receipts.values()))
+    assert receipt.usage_delivery_state == "pending"
+
+    await journal.materialize_pending()
+    assert usage_store.record_attempts == 2
     assert usage_store.insert_count == 1
     assert len(usage_store.rows) == 1
     row = next(iter(usage_store.rows.values()))
-    assert row["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
+    assert row["status"] == "model_call_completed"
+
+
+@pytest.mark.anyio
+async def test_journal_begin_failure_pauses_before_provider(
+    usage_store: InMemoryUsageStore, silent_spans, monkeypatch
+) -> None:
+    runtime = FakeJobRuntime()
+    executor = FakeBatchExecutor()
+    publisher = FakePublisher()
+    service = _build_service(runtime, executor, publisher)
+    _patch_worker_db(monkeypatch, service)
+
+    class _BeginFailureJournal(InMemoryJournal):
+        async def begin_execution(self, **kwargs):
+            raise RuntimeError("journal unavailable")
+
+    service._journal_service = _BeginFailureJournal(usage_store)
+    result = await service.process_claimed_grammar_batch_job(
+        claim=_make_claim(), lease_duration=timedelta(seconds=120)
+    )
+
+    assert result.status == "paused"
+    assert executor.calls == 0
+    assert publisher.calls == []
+    assert runtime.transitions[0]["pause_owner"] == "system"
+    assert runtime.transitions[0]["failure_code"] == "journal_begin_failed"
+
+
+@pytest.mark.anyio
+async def test_capture_failure_pauses_after_provider_before_publish(
+    usage_store: InMemoryUsageStore, silent_spans, monkeypatch
+) -> None:
+    runtime = FakeJobRuntime()
+    executor = FakeBatchExecutor()
+    publisher = FakePublisher()
+    service = _build_service(runtime, executor, publisher)
+    _patch_worker_db(monkeypatch, service)
+
+    class _CaptureFailureJournal(InMemoryJournal):
+        async def capture_execution(self, **kwargs):
+            raise RuntimeError("capture unavailable")
+
+    service._journal_service = _CaptureFailureJournal(usage_store)
+    result = await service.process_claimed_grammar_batch_job(
+        claim=_make_claim(), lease_duration=timedelta(seconds=120)
+    )
+
+    assert result.status == "paused"
+    assert executor.calls == 1
+    assert publisher.calls == []
+    assert runtime.transitions[0]["pause_owner"] == "system"
+    assert runtime.transitions[0]["rationale_code"] == "model_execution_ambiguous"
+    assert runtime.transitions[0]["failure_code"] == "provider_outcome_ambiguous"
 
 
 @pytest.mark.anyio
