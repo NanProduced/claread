@@ -33,6 +33,29 @@ BASELINE_SQL = re.sub(
 )
 
 
+def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
+    schema_check_sql = (
+        REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "CREATE TABLE ai_model_execution_journal (" in BASELINE_SQL
+    assert "invocation_key text" in BASELINE_SQL
+    assert "CONSTRAINT ai_model_execution_journal_state_matrix_check" in (
+        BASELINE_SQL
+    )
+    assert (
+        "CREATE UNIQUE INDEX uq_ai_usage_events_legacy_grammar_request_id "
+        "ON ai_usage_events USING btree (request_id)"
+    ) in BASELINE_SQL
+    assert (
+        "CREATE UNIQUE INDEX uq_ai_usage_events_invocation_key "
+        "ON ai_usage_events USING btree (invocation_key) "
+        "WHERE (invocation_key IS NOT NULL);"
+    ) in BASELINE_SQL
+    assert "ai_model_execution_journal_state_matrix_check" in schema_check_sql
+    assert "uq_ai_usage_events_legacy_grammar_request_id" in schema_check_sql
+
+
 def _load_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
     if database_url:
@@ -1374,3 +1397,207 @@ async def test_migration_0016_adds_grammar_bundle_window_worker_type() -> None:
             f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'
         )
         await admin_conn.close()
+
+
+async def test_model_execution_journal_schema_has_exact_orthogonal_contract(
+    reader_schema: str,
+) -> None:
+    conn = await _connect(reader_schema)
+    try:
+        columns = {
+            row["column_name"]
+            for row in await conn.fetch(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = $1
+                  AND table_name = 'ai_model_execution_journal'
+                """,
+                reader_schema,
+            )
+        }
+        assert {
+            "invocation_key",
+            "invocation_kind",
+            "reader_job_id",
+            "reader_run_id",
+            "attempt_ordinal",
+            "execution_slot",
+            "capture_state",
+            "usage_delivery_state",
+            "resume_payload_kind",
+            "resume_payload_schema_version",
+            "usage_event_draft_schema_version",
+            "normalized_payload_json",
+            "usage_event_draft_json",
+            "capture_envelope_sha256",
+            "resume_payload_bytes",
+            "usage_event_draft_bytes",
+            "ai_usage_event_id",
+            "delivery_attempt_count",
+            "delivery_next_attempt_at",
+            "delivery_last_error_code",
+            "delivery_last_error_message",
+            "started_at",
+            "captured_at",
+            "ambiguous_at",
+            "reconciled_at",
+            "dead_lettered_at",
+            "payload_purged_at",
+            "business_terminal_at",
+        } <= columns
+
+        constraints = {
+            row["conname"]: row["definition"]
+            for row in await conn.fetch(
+                """
+                SELECT conname, pg_get_constraintdef(oid) AS definition
+                FROM pg_constraint
+                WHERE conrelid = 'ai_model_execution_journal'::regclass
+                """
+            )
+        }
+        assert "ai_model_execution_journal_capture_state_check" in constraints
+        assert "ai_model_execution_journal_delivery_state_check" in constraints
+        assert "ai_model_execution_journal_state_matrix_check" in constraints
+        assert "ai_model_execution_journal_usage_event_link_check" in constraints
+
+        indexes = {
+            row["indexname"]: row["indexdef"]
+            for row in await conn.fetch(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = $1
+                  AND tablename IN (
+                      'ai_usage_events',
+                      'ai_model_execution_journal'
+                  )
+                """,
+                reader_schema,
+            )
+        }
+        assert "uq_ai_usage_events_legacy_grammar_request_id" in indexes
+        assert "request_id" in indexes[
+            "uq_ai_usage_events_legacy_grammar_request_id"
+        ]
+        assert "uq_ai_usage_events_invocation_key" in indexes
+        assert "invocation_key" in indexes[
+            "uq_ai_usage_events_invocation_key"
+        ]
+        assert "uq_ai_model_execution_journal_invocation_key" in indexes
+    finally:
+        await conn.close()
+
+
+async def test_model_execution_journal_rejects_illegal_state_combinations(
+    reader_schema: str,
+) -> None:
+    conn = await _connect(reader_schema)
+    try:
+        for capture_state, delivery_state in (
+            ("started", "pending"),
+            ("started", "reconciled"),
+            ("started", "dead_letter"),
+            ("ambiguous", "pending"),
+            ("ambiguous", "reconciled"),
+            ("ambiguous", "dead_letter"),
+            ("captured", "not_ready"),
+        ):
+            with pytest.raises(asyncpg.CheckViolationError):
+                await conn.execute(
+                    """
+                    INSERT INTO ai_model_execution_journal (
+                        invocation_key,
+                        invocation_kind,
+                        attempt_ordinal,
+                        execution_slot,
+                        capture_state,
+                        usage_delivery_state
+                    ) VALUES ($1, 'reader.grammar_batch', 1, 0, $2, $3)
+                    """,
+                    f"reader:grammar_batch:{uuid4()}:1:0",
+                    capture_state,
+                    delivery_state,
+                )
+
+        usage_event_id = await conn.fetchval(
+            """
+            INSERT INTO ai_usage_events (
+                usage_scope,
+                capability_code,
+                billing_mode,
+                status
+            ) VALUES ('system_internal', 'reader_grammar_bundle',
+                      'internal_only', 'model_call_completed')
+            RETURNING id
+            """
+        )
+        captured_values_sql = """
+            'reader.grammar_batch.result', 1, 1,
+            '{}'::jsonb, '{}'::jsonb,
+            repeat('a', 64), 2, 2, NOW()
+        """
+        await conn.execute(
+            f"""
+            INSERT INTO ai_model_execution_journal (
+                invocation_key, invocation_kind, attempt_ordinal,
+                execution_slot, capture_state, usage_delivery_state,
+                resume_payload_kind, resume_payload_schema_version,
+                usage_event_draft_schema_version, normalized_payload_json,
+                usage_event_draft_json, capture_envelope_sha256,
+                resume_payload_bytes, usage_event_draft_bytes, captured_at,
+                ai_usage_event_id, reconciled_at
+            ) VALUES (
+                $1, 'reader.grammar_batch', 1, 0, 'captured', 'reconciled',
+                {captured_values_sql}, $2, NOW()
+            )
+            """,
+            f"reader:grammar_batch:{uuid4()}:1:0",
+            usage_event_id,
+        )
+
+        with pytest.raises(asyncpg.CheckViolationError):
+            await conn.execute(
+                f"""
+                INSERT INTO ai_model_execution_journal (
+                    invocation_key, invocation_kind, attempt_ordinal,
+                    execution_slot, capture_state, usage_delivery_state,
+                    resume_payload_kind, resume_payload_schema_version,
+                    usage_event_draft_schema_version,
+                    normalized_payload_json, usage_event_draft_json,
+                    capture_envelope_sha256, resume_payload_bytes,
+                    usage_event_draft_bytes, captured_at
+                ) VALUES (
+                    $1, 'reader.grammar_batch', 1, 0,
+                    'captured', 'reconciled', {captured_values_sql}
+                )
+                """,
+                f"reader:grammar_batch:{uuid4()}:1:0",
+            )
+
+        await conn.execute(
+            """
+            INSERT INTO ai_usage_events (
+                usage_scope, capability_code, billing_mode, status,
+                invocation_key
+            ) VALUES (
+                'system_internal', 'reader_grammar_bundle',
+                'internal_only', 'succeeded', 'global:test:1'
+            )
+            """
+        )
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await conn.execute(
+                """
+                INSERT INTO ai_usage_events (
+                    usage_scope, capability_code, billing_mode, status,
+                    invocation_key
+                ) VALUES (
+                    'system_internal', 'reader_grammar_bundle',
+                    'internal_only', 'succeeded', 'global:test:1'
+                )
+                """
+            )
+    finally:
+        await conn.close()

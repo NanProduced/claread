@@ -89,6 +89,7 @@ CREATE TABLE ai_usage_events (
     daily_reader_article_id text,
     client_platform text,
     request_id text,
+    invocation_key text,
     workflow_name text,
     workflow_version text,
     schema_version text,
@@ -1182,6 +1183,50 @@ CREATE TABLE reader_jobs (
     CONSTRAINT reader_jobs_transient_attempt_count_check CHECK ((transient_attempt_count >= 0))
 );
 
+CREATE TABLE ai_model_execution_journal (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    invocation_key text NOT NULL,
+    invocation_kind text NOT NULL,
+    reader_job_id uuid,
+    reader_run_id uuid,
+    attempt_ordinal integer NOT NULL,
+    execution_slot integer NOT NULL,
+    capture_state text DEFAULT 'started'::text NOT NULL,
+    usage_delivery_state text DEFAULT 'not_ready'::text NOT NULL,
+    resume_payload_kind text,
+    resume_payload_schema_version integer,
+    usage_event_draft_schema_version integer,
+    normalized_payload_json jsonb,
+    usage_event_draft_json jsonb,
+    capture_envelope_sha256 text,
+    resume_payload_bytes integer,
+    usage_event_draft_bytes integer,
+    ai_usage_event_id uuid,
+    delivery_attempt_count integer DEFAULT 0 NOT NULL,
+    delivery_next_attempt_at timestamp with time zone,
+    delivery_last_error_code text,
+    delivery_last_error_message text,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    captured_at timestamp with time zone,
+    ambiguous_at timestamp with time zone,
+    reconciled_at timestamp with time zone,
+    dead_lettered_at timestamp with time zone,
+    payload_purged_at timestamp with time zone,
+    business_terminal_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ai_model_execution_journal_attempt_ordinal_check CHECK ((attempt_ordinal >= 1)),
+    CONSTRAINT ai_model_execution_journal_capture_state_check CHECK ((capture_state = ANY (ARRAY['started'::text, 'captured'::text, 'ambiguous'::text]))),
+    CONSTRAINT ai_model_execution_journal_delivery_attempt_count_check CHECK ((delivery_attempt_count >= 0)),
+    CONSTRAINT ai_model_execution_journal_delivery_state_check CHECK ((usage_delivery_state = ANY (ARRAY['not_ready'::text, 'pending'::text, 'reconciled'::text, 'dead_letter'::text]))),
+    CONSTRAINT ai_model_execution_journal_execution_slot_check CHECK ((execution_slot >= 0)),
+    CONSTRAINT ai_model_execution_journal_payload_size_check CHECK (((resume_payload_bytes IS NULL) OR ((resume_payload_bytes >= 0) AND (resume_payload_bytes <= 1048576))) AND ((usage_event_draft_bytes IS NULL) OR ((usage_event_draft_bytes >= 0) AND (usage_event_draft_bytes <= 65536))) AND (((resume_payload_bytes IS NULL) OR (usage_event_draft_bytes IS NULL)) OR ((resume_payload_bytes + usage_event_draft_bytes) <= 1114112))),
+    CONSTRAINT ai_model_execution_journal_capture_payload_check CHECK ((((capture_state = ANY (ARRAY['started'::text, 'ambiguous'::text])) AND (resume_payload_kind IS NULL) AND (resume_payload_schema_version IS NULL) AND (usage_event_draft_schema_version IS NULL) AND (normalized_payload_json IS NULL) AND (usage_event_draft_json IS NULL) AND (capture_envelope_sha256 IS NULL) AND (resume_payload_bytes IS NULL) AND (usage_event_draft_bytes IS NULL) AND (captured_at IS NULL) AND (payload_purged_at IS NULL)) OR ((capture_state = 'captured'::text) AND (resume_payload_kind IS NOT NULL) AND (resume_payload_schema_version >= 1) AND (usage_event_draft_schema_version >= 1) AND ((normalized_payload_json IS NOT NULL) OR ((payload_purged_at IS NOT NULL) AND (usage_delivery_state = 'reconciled'::text))) AND (usage_event_draft_json IS NOT NULL) AND (capture_envelope_sha256 ~ '^[0-9a-f]{64}$'::text) AND (resume_payload_bytes IS NOT NULL) AND (usage_event_draft_bytes IS NOT NULL) AND (captured_at IS NOT NULL)))),
+    CONSTRAINT ai_model_execution_journal_state_matrix_check CHECK ((((capture_state = ANY (ARRAY['started'::text, 'ambiguous'::text])) AND (usage_delivery_state = 'not_ready'::text)) OR ((capture_state = 'captured'::text) AND (usage_delivery_state = ANY (ARRAY['pending'::text, 'reconciled'::text, 'dead_letter'::text]))))),
+    CONSTRAINT ai_model_execution_journal_state_timestamps_check CHECK ((((capture_state = 'ambiguous'::text) AND (ambiguous_at IS NOT NULL)) OR ((capture_state <> 'ambiguous'::text) AND (ambiguous_at IS NULL))) AND (((usage_delivery_state = 'reconciled'::text) AND (reconciled_at IS NOT NULL)) OR ((usage_delivery_state <> 'reconciled'::text) AND (reconciled_at IS NULL))) AND (((usage_delivery_state = 'dead_letter'::text) AND (dead_lettered_at IS NOT NULL)) OR ((usage_delivery_state <> 'dead_letter'::text) AND (dead_lettered_at IS NULL)))),
+    CONSTRAINT ai_model_execution_journal_usage_event_link_check CHECK ((((usage_delivery_state = 'reconciled'::text) AND (ai_usage_event_id IS NOT NULL)) OR ((usage_delivery_state <> 'reconciled'::text) AND (ai_usage_event_id IS NULL))))
+);
+
 CREATE TABLE reader_notes (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -1793,6 +1838,9 @@ $dict$;
 ALTER TABLE ONLY ai_usage_events
     ADD CONSTRAINT ai_usage_events_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY ai_model_execution_journal
+    ADD CONSTRAINT ai_model_execution_journal_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY analysis_windows
     ADD CONSTRAINT analysis_windows_pkey PRIMARY KEY (id);
 
@@ -2317,7 +2365,15 @@ CREATE INDEX ix_reader_runtime_spans_trace_id ON reader_runtime_spans USING btre
 
 CREATE INDEX ix_reader_runtime_spans_worker_type ON reader_runtime_spans USING btree (worker_type);
 
-CREATE UNIQUE INDEX uq_ai_usage_events_invocation_key ON ai_usage_events USING btree (request_id) WHERE (request_id ~~ 'reader_grammar_batch:%'::text);
+CREATE UNIQUE INDEX uq_ai_usage_events_legacy_grammar_request_id ON ai_usage_events USING btree (request_id) WHERE (request_id ~~ 'reader_grammar_batch:%'::text);
+
+CREATE UNIQUE INDEX uq_ai_usage_events_invocation_key ON ai_usage_events USING btree (invocation_key) WHERE (invocation_key IS NOT NULL);
+
+CREATE UNIQUE INDEX uq_ai_model_execution_journal_invocation_key ON ai_model_execution_journal USING btree (invocation_key);
+
+CREATE INDEX idx_ai_model_execution_journal_pending_delivery ON ai_model_execution_journal USING btree (delivery_next_attempt_at, created_at, id) WHERE ((capture_state = 'captured'::text) AND (usage_delivery_state = 'pending'::text));
+
+CREATE INDEX idx_ai_model_execution_journal_reader_attempt ON ai_model_execution_journal USING btree (reader_job_id, attempt_ordinal, execution_slot) WHERE (reader_job_id IS NOT NULL);
 
 CREATE UNIQUE INDEX uq_enhancement_layers_active_published ON enhancement_layers USING btree (reading_record_id, base_id, layer_type, target_scope, target_key) WHERE (status = 'published'::text);
 
@@ -2388,6 +2444,15 @@ CREATE TRIGGER trg_vocabulary_book_set_updated_at BEFORE UPDATE ON vocabulary_bo
 
 ALTER TABLE ONLY ai_usage_events
     ADD CONSTRAINT ai_usage_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY ai_model_execution_journal
+    ADD CONSTRAINT ai_model_execution_journal_ai_usage_event_id_fkey FOREIGN KEY (ai_usage_event_id) REFERENCES ai_usage_events(id);
+
+ALTER TABLE ONLY ai_model_execution_journal
+    ADD CONSTRAINT ai_model_execution_journal_reader_job_id_fkey FOREIGN KEY (reader_job_id) REFERENCES reader_jobs(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY ai_model_execution_journal
+    ADD CONSTRAINT ai_model_execution_journal_reader_run_id_fkey FOREIGN KEY (reader_run_id) REFERENCES reader_runs(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY analysis_windows
     ADD CONSTRAINT analysis_windows_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES layer_analysis_plans(id) ON DELETE CASCADE;

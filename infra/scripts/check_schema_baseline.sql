@@ -168,9 +168,72 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_indexes
         WHERE schemaname = 'public'
+          AND indexname = 'uq_ai_usage_events_legacy_grammar_request_id'
+          AND indexdef LIKE '%(request_id)%reader_grammar_batch:%'
+    ) THEN
+        RAISE EXCEPTION 'missing legacy Grammar request_id uniqueness index';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
           AND indexname = 'uq_ai_usage_events_invocation_key'
+          AND indexdef LIKE '%(request_id)%'
+    ) THEN
+        RAISE EXCEPTION 'uq_ai_usage_events_invocation_key must not use request_id';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'uq_ai_usage_events_invocation_key'
+          AND indexdef LIKE '%(invocation_key)%WHERE (invocation_key IS NOT NULL)%'
     ) THEN
         RAISE EXCEPTION 'missing uq_ai_usage_events_invocation_key index';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'ai_usage_events'
+          AND column_name = 'invocation_key'
+          AND data_type = 'text'
+          AND is_nullable = 'YES'
+    ) THEN
+        RAISE EXCEPTION 'ai_usage_events.invocation_key must be nullable text';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'uq_ai_model_execution_journal_invocation_key'
+          AND indexdef LIKE '%(invocation_key)%'
+    ) THEN
+        RAISE EXCEPTION 'missing journal global invocation_key uniqueness';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ai_model_execution_journal_state_matrix_check'
+          AND pg_get_constraintdef(oid) LIKE '%started%ambiguous%not_ready%captured%pending%reconciled%dead_letter%'
+    ) THEN
+        RAISE EXCEPTION 'journal orthogonal state matrix check is missing';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ai_model_execution_journal_usage_event_link_check'
+          AND pg_get_constraintdef(oid) LIKE '%reconciled%ai_usage_event_id IS NOT NULL%'
+    ) THEN
+        RAISE EXCEPTION 'journal usage event link check is missing';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'reader_jobs_pause_owner_check'
+          AND pg_get_constraintdef(oid) LIKE '%user%quota%system%policy%'
+    ) THEN
+        RAISE EXCEPTION 'reader_jobs pause_owner contract changed';
     END IF;
 
     IF NOT EXISTS (
