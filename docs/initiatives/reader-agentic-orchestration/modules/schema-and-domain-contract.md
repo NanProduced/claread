@@ -1547,3 +1547,18 @@ Cutover:
 - Ask write gate still requires user confirmation;
 - usage/ledger attribution works with new fields;
 - no new Web Reader path reads `render_scene_json`.
+
+
+## Grammar 内容 Ownership（冻结）
+
+- **enhancement layer item = grammar 批注正文的唯一持久 owner**：`grammar_point /
+  pattern / note` 以 layer item 为准。
+- snapshot / Plate mark 是同源派生副本：snapshot 构建时按 span 全量携带
+  （`snapshot.py` 每 span mark 携带 grammar_point/pattern/note，sub-leaf 浅拷贝，
+  span×leaf 份同源冗余）；前端 callout 全部取自 mark，靠 `show_note_chip` +
+  item_id 去重。
+- 前端不得编辑、持久化或二次分发 mark 内容。
+
+已登记技术债（不在当前范围）：mark 内容冗余（span×leaf 同源重复）、
+snake_case / camelCase 命名混用；“mark 瘦身为 id/range”是独立的 schema
+清理任务，需单独排期。

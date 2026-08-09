@@ -163,6 +163,18 @@ group-native payload。
 不得用“后端预设 group”为理由退化成 one-unit-one-group。Publisher 负责验证合同，
 不负责猜测或重写 group 粒度。
 
+当前 deterministic planner 的分组边界为 900（target max chars）/ 1400（safety
+max chars）/ 3（max sentences per group）：典型 1-3 个短句合并为一个阅读组，
+短句新闻行必须合并为 2-3 句阅读组，不得退化为逐句碎组。这三项是 planner 侧
+边界，不是 publisher 合同本身；未来引入 LLM planner 时保留为校验边界并补
+`planner_version`。
+
+24 篇盲评（`evals/datasets/translation-grouping-v1`，deterministic planner vs
+盲化语义分组，独立盲评）显示语义分组 overall 胜率 19/24（Wilson 95%
+[0.595, 0.908]），结构复杂文档 8/8、长文 7/8、短新闻持平——语义分组对
+deterministic planner 的初步显著收益成立；两阶段（LLM planner 出 anchor ranges
+→ 既有校验冻结 → translator 只回 `group_id + translated_text`）为后续实施候选。
+
 D5 vocabulary layer 保留旧 AI Workflow 的三类词汇批注语义，但它们是同一个 `vocabulary` layer 内的 `item_type`，不是三个顶层 layer type：
 
 | `item_type` | 说明 | Projection 形态 |
