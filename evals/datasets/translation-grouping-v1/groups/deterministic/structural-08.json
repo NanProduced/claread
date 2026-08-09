@@ -1,0 +1,821 @@
+{
+  "id": "structural-08",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "9."
+    },
+    {
+      "n": 2,
+      "unit_id": "u1",
+      "anchor_segment_id": "s2",
+      "text": "Methods"
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "9.1."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "Overview"
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "The request method token is the primary source of request semantics;\n   it indicates the purpose for which the client has made this request\n   and what is expected by the client as a successful result."
+    },
+    {
+      "n": 6,
+      "unit_id": "u4",
+      "anchor_segment_id": "s6",
+      "text": "The request method's semantics might be further specialized by the\n   semantics of some header fields when present in a request if those\n   additional semantics do not conflict with the method."
+    },
+    {
+      "n": 7,
+      "unit_id": "u4",
+      "anchor_segment_id": "s7",
+      "text": "For example, a\n   client can send conditional request header fields (Section 13.1) to\n   make the requested action conditional on the current state of the\n   target resource."
+    },
+    {
+      "n": 8,
+      "unit_id": "u5",
+      "anchor_segment_id": "s8",
+      "text": "HTTP is designed to be usable as an interface to distributed object\n   systems."
+    },
+    {
+      "n": 9,
+      "unit_id": "u5",
+      "anchor_segment_id": "s9",
+      "text": "The request method invokes an action to be applied to a\n   target resource in much the same way that a remote method invocation\n   can be sent to an identified object."
+    },
+    {
+      "n": 10,
+      "unit_id": "u6",
+      "anchor_segment_id": "s10",
+      "text": "method = token"
+    },
+    {
+      "n": 11,
+      "unit_id": "u7",
+      "anchor_segment_id": "s11",
+      "text": "The method token is case-sensitive because it might be used as a\n   gateway to object-based systems with case-sensitive method names."
+    },
+    {
+      "n": 12,
+      "unit_id": "u7",
+      "anchor_segment_id": "s12",
+      "text": "By\n   convention, standardized methods are defined in all-uppercase US-\n   ASCII letters."
+    },
+    {
+      "n": 13,
+      "unit_id": "u8",
+      "anchor_segment_id": "s13",
+      "text": "Unlike distributed objects, the standardized request methods in HTTP\n   are not resource-specific, since uniform interfaces provide for\n   better visibility and reuse in network-based systems [REST]."
+    },
+    {
+      "n": 14,
+      "unit_id": "u8",
+      "anchor_segment_id": "s14",
+      "text": "Once\n   defined, a standardized method ought to have the same semantics when\n   applied to any resource, though each resource determines for itself\n   whether those semantics are implemented or allowed."
+    },
+    {
+      "n": 15,
+      "unit_id": "u9",
+      "anchor_segment_id": "s15",
+      "text": "This specification defines a number of standardized methods that are\n   commonly used in HTTP, as outlined by the following table."
+    },
+    {
+      "n": 16,
+      "unit_id": "u10",
+      "anchor_segment_id": "s16",
+      "text": "+=========+============================================+=========+\n   | Method  | Description                                | Section |\n   | Name    |                                            |         |\n   +=========+============================================+=========+\n   | GET     | Transfer a current representation of the   | 9.3.1   |\n   |         | target resource."
+    },
+    {
+      "n": 17,
+      "unit_id": "u10",
+      "anchor_segment_id": "s17",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | HEAD    | Same as GET, but do not transfer the       | 9.3.2   |\n   |"
+    },
+    {
+      "n": 18,
+      "unit_id": "u10",
+      "anchor_segment_id": "s18",
+      "text": "| response content."
+    },
+    {
+      "n": 19,
+      "unit_id": "u10",
+      "anchor_segment_id": "s19",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | POST    | Perform resource-specific processing on    | 9.3.3   |\n   |         | the request content."
+    },
+    {
+      "n": 20,
+      "unit_id": "u10",
+      "anchor_segment_id": "s20",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | PUT     | Replace all current representations of the | 9.3.4   |\n   |         | target resource with the request content."
+    },
+    {
+      "n": 21,
+      "unit_id": "u10",
+      "anchor_segment_id": "s21",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | DELETE  | Remove all current representations of the  | 9.3.5   |\n   |         | target resource."
+    },
+    {
+      "n": 22,
+      "unit_id": "u10",
+      "anchor_segment_id": "s22",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | CONNECT"
+    },
+    {
+      "n": 23,
+      "unit_id": "u10",
+      "anchor_segment_id": "s23",
+      "text": "| Establish a tunnel to the server           | 9.3.6   |"
+    },
+    {
+      "n": 24,
+      "unit_id": "u10",
+      "anchor_segment_id": "s24",
+      "text": "|         | identified by the target resource."
+    },
+    {
+      "n": 25,
+      "unit_id": "u10",
+      "anchor_segment_id": "s25",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | OPTIONS | Describe the communication options for the | 9.3.7   |\n   |         | target resource."
+    },
+    {
+      "n": 26,
+      "unit_id": "u10",
+      "anchor_segment_id": "s26",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | TRACE   | Perform a message loop-back test along the | 9.3.8   |\n   |         | path to the target resource."
+    },
+    {
+      "n": 27,
+      "unit_id": "u10",
+      "anchor_segment_id": "s27",
+      "text": "|         |\n   +---------+--------------------------------------------+---------+"
+    },
+    {
+      "n": 28,
+      "unit_id": "u11",
+      "anchor_segment_id": "s28",
+      "text": "Table 4"
+    },
+    {
+      "n": 29,
+      "unit_id": "u12",
+      "anchor_segment_id": "s29",
+      "text": "All general-purpose servers MUST support the methods GET and HEAD."
+    },
+    {
+      "n": 30,
+      "unit_id": "u12",
+      "anchor_segment_id": "s30",
+      "text": "All other methods are OPTIONAL."
+    },
+    {
+      "n": 31,
+      "unit_id": "u13",
+      "anchor_segment_id": "s31",
+      "text": "The set of methods allowed by a target resource can be listed in an\n   Allow header field (Section 10.2.1)."
+    },
+    {
+      "n": 32,
+      "unit_id": "u13",
+      "anchor_segment_id": "s32",
+      "text": "However, the set of allowed\n   methods can change dynamically."
+    },
+    {
+      "n": 33,
+      "unit_id": "u13",
+      "anchor_segment_id": "s33",
+      "text": "An origin server that receives a\n   request method that is unrecognized or not implemented SHOULD respond\n   with the 501 (Not Implemented) status code."
+    },
+    {
+      "n": 34,
+      "unit_id": "u13",
+      "anchor_segment_id": "s34",
+      "text": "An origin server that\n   receives a request method that is recognized and implemented, but not\n   allowed for the target resource, SHOULD respond with the 405 (Method\n   Not Allowed) status code."
+    },
+    {
+      "n": 35,
+      "unit_id": "u14",
+      "anchor_segment_id": "s35",
+      "text": "Additional methods, outside the scope of this specification, have\n   been specified for use in HTTP."
+    },
+    {
+      "n": 36,
+      "unit_id": "u14",
+      "anchor_segment_id": "s36",
+      "text": "All such methods ought to be\n   registered within the \"Hypertext Transfer Protocol (HTTP) Method\n   Registry\", as described in Section 16.1."
+    },
+    {
+      "n": 37,
+      "unit_id": "u15",
+      "anchor_segment_id": "s37",
+      "text": "9.2."
+    },
+    {
+      "n": 38,
+      "unit_id": "u15",
+      "anchor_segment_id": "s38",
+      "text": "Common Method Properties"
+    },
+    {
+      "n": 39,
+      "unit_id": "u16",
+      "anchor_segment_id": "s39",
+      "text": "9.2.1."
+    },
+    {
+      "n": 40,
+      "unit_id": "u16",
+      "anchor_segment_id": "s40",
+      "text": "Safe Methods"
+    },
+    {
+      "n": 41,
+      "unit_id": "u17",
+      "anchor_segment_id": "s41",
+      "text": "Request methods are considered \"safe\" if their defined semantics are\n   essentially read-only; i.e., the client does not request, and does\n   not expect, any state change on the origin server as a result of\n   applying a safe method to a target resource."
+    },
+    {
+      "n": 42,
+      "unit_id": "u17",
+      "anchor_segment_id": "s42",
+      "text": "Likewise, reasonable\n   use of a safe method is not expected to cause any harm, loss of\n   property, or unusual burden on the origin server."
+    },
+    {
+      "n": 43,
+      "unit_id": "u18",
+      "anchor_segment_id": "s43",
+      "text": "This definition of safe methods does not prevent an implementation\n   from including behavior that is potentially harmful, that is not\n   entirely read-only, or that causes side effects while invoking a safe\n   method."
+    },
+    {
+      "n": 44,
+      "unit_id": "u18",
+      "anchor_segment_id": "s44",
+      "text": "What is important, however, is that the client did not\n   request that additional behavior and cannot be held accountable for\n   it."
+    },
+    {
+      "n": 45,
+      "unit_id": "u18",
+      "anchor_segment_id": "s45",
+      "text": "For example, most servers append request information to access\n   log files at the completion of every response, regardless of the\n   method, and that is considered safe even though the log storage might\n   become full and cause the server to fail."
+    },
+    {
+      "n": 46,
+      "unit_id": "u18",
+      "anchor_segment_id": "s46",
+      "text": "Likewise, a safe request\n   initiated by selecting an advertisement on the Web will often have\n   the side effect of charging an advertising account."
+    },
+    {
+      "n": 47,
+      "unit_id": "u19",
+      "anchor_segment_id": "s47",
+      "text": "Of the request methods defined by this specification, the GET, HEAD,\n   OPTIONS, and TRACE methods are defined to be safe."
+    },
+    {
+      "n": 48,
+      "unit_id": "u20",
+      "anchor_segment_id": "s48",
+      "text": "The purpose of distinguishing between safe and unsafe methods is to\n   allow automated retrieval processes (spiders) and cache performance\n   optimization (pre-fetching) to work without fear of causing harm."
+    },
+    {
+      "n": 49,
+      "unit_id": "u20",
+      "anchor_segment_id": "s49",
+      "text": "In\n   addition, it allows a user agent to apply appropriate constraints on\n   the automated use of unsafe methods when processing potentially\n   untrusted content."
+    },
+    {
+      "n": 50,
+      "unit_id": "u21",
+      "anchor_segment_id": "s50",
+      "text": "A user agent SHOULD distinguish between safe and unsafe methods when\n   presenting potential actions to a user, such that the user can be\n   made aware of an unsafe action before it is requested."
+    },
+    {
+      "n": 51,
+      "unit_id": "u22",
+      "anchor_segment_id": "s51",
+      "text": "When a resource is constructed such that parameters within the target\n   URI have the effect of selecting an action, it is the resource\n   owner's responsibility to ensure that the action is consistent with\n   the request method semantics."
+    },
+    {
+      "n": 52,
+      "unit_id": "u22",
+      "anchor_segment_id": "s52",
+      "text": "For example, it is common for Web-\n   based content editing software to use actions within query\n   parameters, such as \"page?do=delete\"."
+    },
+    {
+      "n": 53,
+      "unit_id": "u22",
+      "anchor_segment_id": "s53",
+      "text": "If the purpose of such a\n   resource is to perform an unsafe action, then the resource owner MUST\n   disable or disallow that action when it is accessed using a safe\n   request method."
+    },
+    {
+      "n": 54,
+      "unit_id": "u22",
+      "anchor_segment_id": "s54",
+      "text": "Failure to do so will result in unfortunate side\n   effects when automated processes perform a GET on every URI reference\n   for the sake of link maintenance, pre-fetching, building a search\n   index, etc."
+    },
+    {
+      "n": 55,
+      "unit_id": "u23",
+      "anchor_segment_id": "s55",
+      "text": "9.2.2."
+    },
+    {
+      "n": 56,
+      "unit_id": "u23",
+      "anchor_segment_id": "s56",
+      "text": "Idempotent Methods"
+    },
+    {
+      "n": 57,
+      "unit_id": "u24",
+      "anchor_segment_id": "s57",
+      "text": "A request method is considered \"idempotent\" if the intended effect on\n   the server of multiple identical requests with that method is the\n   same as the effect for a single such request."
+    },
+    {
+      "n": 58,
+      "unit_id": "u24",
+      "anchor_segment_id": "s58",
+      "text": "Of the request methods\n   defined by this specification, PUT, DELETE, and safe request methods\n   are idempotent."
+    },
+    {
+      "n": 59,
+      "unit_id": "u25",
+      "anchor_segment_id": "s59",
+      "text": "Like the definition of safe, the idempotent property only applies to\n   what has been requested by the user; a server is free to log each\n   request separately, retain a revision control history, or implement\n   other non-idempotent side effects for each idempotent request."
+    },
+    {
+      "n": 60,
+      "unit_id": "u26",
+      "anchor_segment_id": "s60",
+      "text": "Idempotent methods are distinguished because the request can be\n   repeated automatically if a communication failure occurs before the\n   client is able to read the server's response."
+    },
+    {
+      "n": 61,
+      "unit_id": "u26",
+      "anchor_segment_id": "s61",
+      "text": "For example, if a\n   client sends a PUT request and the underlying connection is closed\n   before any response is received, then the client can establish a new\n   connection and retry the idempotent request."
+    },
+    {
+      "n": 62,
+      "unit_id": "u26",
+      "anchor_segment_id": "s62",
+      "text": "It knows that repeating\n   the request will have the same intended effect, even if the original\n   request succeeded, though the response might differ."
+    },
+    {
+      "n": 63,
+      "unit_id": "u27",
+      "anchor_segment_id": "s63",
+      "text": "A client SHOULD NOT automatically retry a request with a non-\n   idempotent method unless it has some means to know that the request\n   semantics are actually idempotent, regardless of the method, or some\n   means to detect that the original request was never applied."
+    },
+    {
+      "n": 64,
+      "unit_id": "u28",
+      "anchor_segment_id": "s64",
+      "text": "For example, a user agent can repeat a POST request automatically if\n   it knows (through design or configuration) that the request is safe\n   for that resource."
+    },
+    {
+      "n": 65,
+      "unit_id": "u28",
+      "anchor_segment_id": "s65",
+      "text": "Likewise, a user agent designed specifically to\n   operate on a version control repository might be able to recover from\n   partial failure conditions by checking the target resource\n   revision(s) after a failed connection, reverting or fixing any\n   changes that were partially applied, and then automatically retrying\n   the requests that failed."
+    },
+    {
+      "n": 66,
+      "unit_id": "u29",
+      "anchor_segment_id": "s66",
+      "text": "Some clients take a riskier approach and attempt to guess when an\n   automatic retry is possible."
+    },
+    {
+      "n": 67,
+      "unit_id": "u29",
+      "anchor_segment_id": "s67",
+      "text": "For example, a client might\n   automatically retry a POST request if the underlying transport\n   connection closed before any part of a response is received,\n   particularly if an idle persistent connection was used."
+    },
+    {
+      "n": 68,
+      "unit_id": "u30",
+      "anchor_segment_id": "s68",
+      "text": "A proxy MUST NOT automatically retry non-idempotent requests."
+    },
+    {
+      "n": 69,
+      "unit_id": "u30",
+      "anchor_segment_id": "s69",
+      "text": "A\n   client SHOULD NOT automatically retry a failed automatic retry."
+    },
+    {
+      "n": 70,
+      "unit_id": "u31",
+      "anchor_segment_id": "s70",
+      "text": "9.2.3."
+    },
+    {
+      "n": 71,
+      "unit_id": "u31",
+      "anchor_segment_id": "s71",
+      "text": "Methods and Caching"
+    },
+    {
+      "n": 72,
+      "unit_id": "u32",
+      "anchor_segment_id": "s72",
+      "text": "For a cache to store and use a response, the associated method needs\n   to explicitly allow caching and to detail under what conditions a\n   response can be used to satisfy subsequent requests; a method\n   definition that does not do so cannot be cached."
+    },
+    {
+      "n": 73,
+      "unit_id": "u32",
+      "anchor_segment_id": "s73",
+      "text": "For additional\n   requirements see [CACHING]."
+    },
+    {
+      "n": 74,
+      "unit_id": "u33",
+      "anchor_segment_id": "s74",
+      "text": "This specification defines caching semantics for GET, HEAD, and POST,\n   although the overwhelming majority of cache implementations only\n   support GET and HEAD."
+    },
+    {
+      "n": 75,
+      "unit_id": "u34",
+      "anchor_segment_id": "s75",
+      "text": "9.3."
+    },
+    {
+      "n": 76,
+      "unit_id": "u34",
+      "anchor_segment_id": "s76",
+      "text": "Method Definitions"
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1_s2",
+      "sentence_ns": [
+        1,
+        2
+      ],
+      "text": "9. Methods",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs3_s4",
+      "sentence_ns": [
+        3,
+        4
+      ],
+      "text": "9.1. Overview",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs5",
+      "sentence_ns": [
+        5
+      ],
+      "text": "The request method token is the primary source of request semantics;\n   it indicates the purpose for which the client has made this request\n   and what is expected by the client as a successful result.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs6_s7",
+      "sentence_ns": [
+        6,
+        7
+      ],
+      "text": "The request method's semantics might be further specialized by the\n   semantics of some header fields when present in a request if those\n   additional semantics do not conflict with the method. For example, a\n   client can send conditional request header fields (Section 13.1) to\n   make the requested action conditional on the current state of the\n   target resource.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs8_s9",
+      "sentence_ns": [
+        8,
+        9
+      ],
+      "text": "HTTP is designed to be usable as an interface to distributed object\n   systems. The request method invokes an action to be applied to a\n   target resource in much the same way that a remote method invocation\n   can be sent to an identified object.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs10",
+      "sentence_ns": [
+        10
+      ],
+      "text": "method = token",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs11_s12",
+      "sentence_ns": [
+        11,
+        12
+      ],
+      "text": "The method token is case-sensitive because it might be used as a\n   gateway to object-based systems with case-sensitive method names. By\n   convention, standardized methods are defined in all-uppercase US-\n   ASCII letters.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u8_gs13_s14",
+      "sentence_ns": [
+        13,
+        14
+      ],
+      "text": "Unlike distributed objects, the standardized request methods in HTTP\n   are not resource-specific, since uniform interfaces provide for\n   better visibility and reuse in network-based systems [REST]. Once\n   defined, a standardized method ought to have the same semantics when\n   applied to any resource, though each resource determines for itself\n   whether those semantics are implemented or allowed.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs15",
+      "sentence_ns": [
+        15
+      ],
+      "text": "This specification defines a number of standardized methods that are\n   commonly used in HTTP, as outlined by the following table.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u10_gs16_s18",
+      "sentence_ns": [
+        16,
+        17,
+        18
+      ],
+      "text": "+=========+============================================+=========+\n   | Method  | Description                                | Section |\n   | Name    |                                            |         |\n   +=========+============================================+=========+\n   | GET     | Transfer a current representation of the   | 9.3.1   |\n   |         | target resource. |         |\n   +---------+--------------------------------------------+---------+\n   | HEAD    | Same as GET, but do not transfer the       | 9.3.2   |\n   | | response content.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u10_gs19_s21",
+      "sentence_ns": [
+        19,
+        20,
+        21
+      ],
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | POST    | Perform resource-specific processing on    | 9.3.3   |\n   |         | the request content. |         |\n   +---------+--------------------------------------------+---------+\n   | PUT     | Replace all current representations of the | 9.3.4   |\n   |         | target resource with the request content. |         |\n   +---------+--------------------------------------------+---------+\n   | DELETE  | Remove all current representations of the  | 9.3.5   |\n   |         | target resource.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u10_gs22_s24",
+      "sentence_ns": [
+        22,
+        23,
+        24
+      ],
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | CONNECT | Establish a tunnel to the server           | 9.3.6   | |         | identified by the target resource.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u10_gs25_s27",
+      "sentence_ns": [
+        25,
+        26,
+        27
+      ],
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | OPTIONS | Describe the communication options for the | 9.3.7   |\n   |         | target resource. |         |\n   +---------+--------------------------------------------+---------+\n   | TRACE   | Perform a message loop-back test along the | 9.3.8   |\n   |         | path to the target resource. |         |\n   +---------+--------------------------------------------+---------+",
+      "order_index": 4
+    },
+    {
+      "group_id": "u11_gs28",
+      "sentence_ns": [
+        28
+      ],
+      "text": "Table 4",
+      "order_index": 1
+    },
+    {
+      "group_id": "u12_gs29_s30",
+      "sentence_ns": [
+        29,
+        30
+      ],
+      "text": "All general-purpose servers MUST support the methods GET and HEAD. All other methods are OPTIONAL.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs31_s33",
+      "sentence_ns": [
+        31,
+        32,
+        33
+      ],
+      "text": "The set of methods allowed by a target resource can be listed in an\n   Allow header field (Section 10.2.1). However, the set of allowed\n   methods can change dynamically. An origin server that receives a\n   request method that is unrecognized or not implemented SHOULD respond\n   with the 501 (Not Implemented) status code.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs34",
+      "sentence_ns": [
+        34
+      ],
+      "text": "An origin server that\n   receives a request method that is recognized and implemented, but not\n   allowed for the target resource, SHOULD respond with the 405 (Method\n   Not Allowed) status code.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u14_gs35_s36",
+      "sentence_ns": [
+        35,
+        36
+      ],
+      "text": "Additional methods, outside the scope of this specification, have\n   been specified for use in HTTP. All such methods ought to be\n   registered within the \"Hypertext Transfer Protocol (HTTP) Method\n   Registry\", as described in Section 16.1.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs37_s38",
+      "sentence_ns": [
+        37,
+        38
+      ],
+      "text": "9.2. Common Method Properties",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs39_s40",
+      "sentence_ns": [
+        39,
+        40
+      ],
+      "text": "9.2.1. Safe Methods",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs41_s42",
+      "sentence_ns": [
+        41,
+        42
+      ],
+      "text": "Request methods are considered \"safe\" if their defined semantics are\n   essentially read-only; i.e., the client does not request, and does\n   not expect, any state change on the origin server as a result of\n   applying a safe method to a target resource. Likewise, reasonable\n   use of a safe method is not expected to cause any harm, loss of\n   property, or unusual burden on the origin server.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs43_s45",
+      "sentence_ns": [
+        43,
+        44,
+        45
+      ],
+      "text": "This definition of safe methods does not prevent an implementation\n   from including behavior that is potentially harmful, that is not\n   entirely read-only, or that causes side effects while invoking a safe\n   method. What is important, however, is that the client did not\n   request that additional behavior and cannot be held accountable for\n   it. For example, most servers append request information to access\n   log files at the completion of every response, regardless of the\n   method, and that is considered safe even though the log storage might\n   become full and cause the server to fail.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs46",
+      "sentence_ns": [
+        46
+      ],
+      "text": "Likewise, a safe request\n   initiated by selecting an advertisement on the Web will often have\n   the side effect of charging an advertising account.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u19_gs47",
+      "sentence_ns": [
+        47
+      ],
+      "text": "Of the request methods defined by this specification, the GET, HEAD,\n   OPTIONS, and TRACE methods are defined to be safe.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u20_gs48_s49",
+      "sentence_ns": [
+        48,
+        49
+      ],
+      "text": "The purpose of distinguishing between safe and unsafe methods is to\n   allow automated retrieval processes (spiders) and cache performance\n   optimization (pre-fetching) to work without fear of causing harm. In\n   addition, it allows a user agent to apply appropriate constraints on\n   the automated use of unsafe methods when processing potentially\n   untrusted content.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u21_gs50",
+      "sentence_ns": [
+        50
+      ],
+      "text": "A user agent SHOULD distinguish between safe and unsafe methods when\n   presenting potential actions to a user, such that the user can be\n   made aware of an unsafe action before it is requested.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs51_s53",
+      "sentence_ns": [
+        51,
+        52,
+        53
+      ],
+      "text": "When a resource is constructed such that parameters within the target\n   URI have the effect of selecting an action, it is the resource\n   owner's responsibility to ensure that the action is consistent with\n   the request method semantics. For example, it is common for Web-\n   based content editing software to use actions within query\n   parameters, such as \"page?do=delete\". If the purpose of such a\n   resource is to perform an unsafe action, then the resource owner MUST\n   disable or disallow that action when it is accessed using a safe\n   request method.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs54",
+      "sentence_ns": [
+        54
+      ],
+      "text": "Failure to do so will result in unfortunate side\n   effects when automated processes perform a GET on every URI reference\n   for the sake of link maintenance, pre-fetching, building a search\n   index, etc.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u23_gs55_s56",
+      "sentence_ns": [
+        55,
+        56
+      ],
+      "text": "9.2.2. Idempotent Methods",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs57_s58",
+      "sentence_ns": [
+        57,
+        58
+      ],
+      "text": "A request method is considered \"idempotent\" if the intended effect on\n   the server of multiple identical requests with that method is the\n   same as the effect for a single such request. Of the request methods\n   defined by this specification, PUT, DELETE, and safe request methods\n   are idempotent.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u25_gs59",
+      "sentence_ns": [
+        59
+      ],
+      "text": "Like the definition of safe, the idempotent property only applies to\n   what has been requested by the user; a server is free to log each\n   request separately, retain a revision control history, or implement\n   other non-idempotent side effects for each idempotent request.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs60_s62",
+      "sentence_ns": [
+        60,
+        61,
+        62
+      ],
+      "text": "Idempotent methods are distinguished because the request can be\n   repeated automatically if a communication failure occurs before the\n   client is able to read the server's response. For example, if a\n   client sends a PUT request and the underlying connection is closed\n   before any response is received, then the client can establish a new\n   connection and retry the idempotent request. It knows that repeating\n   the request will have the same intended effect, even if the original\n   request succeeded, though the response might differ.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u27_gs63",
+      "sentence_ns": [
+        63
+      ],
+      "text": "A client SHOULD NOT automatically retry a request with a non-\n   idempotent method unless it has some means to know that the request\n   semantics are actually idempotent, regardless of the method, or some\n   means to detect that the original request was never applied.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u28_gs64_s65",
+      "sentence_ns": [
+        64,
+        65
+      ],
+      "text": "For example, a user agent can repeat a POST request automatically if\n   it knows (through design or configuration) that the request is safe\n   for that resource. Likewise, a user agent designed specifically to\n   operate on a version control repository might be able to recover from\n   partial failure conditions by checking the target resource\n   revision(s) after a failed connection, reverting or fixing any\n   changes that were partially applied, and then automatically retrying\n   the requests that failed.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u29_gs66_s67",
+      "sentence_ns": [
+        66,
+        67
+      ],
+      "text": "Some clients take a riskier approach and attempt to guess when an\n   automatic retry is possible. For example, a client might\n   automatically retry a POST request if the underlying transport\n   connection closed before any part of a response is received,\n   particularly if an idle persistent connection was used.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u30_gs68_s69",
+      "sentence_ns": [
+        68,
+        69
+      ],
+      "text": "A proxy MUST NOT automatically retry non-idempotent requests. A\n   client SHOULD NOT automatically retry a failed automatic retry.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u31_gs70_s71",
+      "sentence_ns": [
+        70,
+        71
+      ],
+      "text": "9.2.3. Methods and Caching",
+      "order_index": 1
+    },
+    {
+      "group_id": "u32_gs72_s73",
+      "sentence_ns": [
+        72,
+        73
+      ],
+      "text": "For a cache to store and use a response, the associated method needs\n   to explicitly allow caching and to detail under what conditions a\n   response can be used to satisfy subsequent requests; a method\n   definition that does not do so cannot be cached. For additional\n   requirements see [CACHING].",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs74",
+      "sentence_ns": [
+        74
+      ],
+      "text": "This specification defines caching semantics for GET, HEAD, and POST,\n   although the overwhelming majority of cache implementations only\n   support GET and HEAD.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u34_gs75_s76",
+      "sentence_ns": [
+        75,
+        76
+      ],
+      "text": "9.3. Method Definitions",
+      "order_index": 1
+    }
+  ],
+  "category": "structural"
+}

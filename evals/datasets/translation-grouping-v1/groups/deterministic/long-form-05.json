@@ -1,0 +1,688 @@
+{
+  "id": "long-form-05",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Coffee is a beverage brewed from roasted ground coffee beans."
+    },
+    {
+      "n": 2,
+      "unit_id": "u1",
+      "anchor_segment_id": "s2",
+      "text": "Darkly colored and bitter, coffee has a stimulating effect on humans due to its caffeine content, but decaffeinated coffee is also commercially available."
+    },
+    {
+      "n": 3,
+      "unit_id": "u1",
+      "anchor_segment_id": "s3",
+      "text": "There are also various coffee substitutes."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "Coffee production begins when the seeds from coffee cherries, the Coffea plant's fruits, are separated to produce unroasted green coffee beans."
+    },
+    {
+      "n": 5,
+      "unit_id": "u2",
+      "anchor_segment_id": "s5",
+      "text": "The \"beans\" are roasted and then ground into fine particles."
+    },
+    {
+      "n": 6,
+      "unit_id": "u2",
+      "anchor_segment_id": "s6",
+      "text": "Coffee is brewed from the ground roasted beans, which are typically steeped in hot water before being filtered out."
+    },
+    {
+      "n": 7,
+      "unit_id": "u2",
+      "anchor_segment_id": "s7",
+      "text": "It is usually served hot, although chilled or iced coffee is common."
+    },
+    {
+      "n": 8,
+      "unit_id": "u2",
+      "anchor_segment_id": "s8",
+      "text": "Coffee can be prepared and presented in a variety of ways, e.g., espresso, French press, caffè latte, or already-brewed canned coffee."
+    },
+    {
+      "n": 9,
+      "unit_id": "u2",
+      "anchor_segment_id": "s9",
+      "text": "Sugar, sugar substitutes, milk, and cream are often added to mask the bitter taste or enhance the flavor."
+    },
+    {
+      "n": 10,
+      "unit_id": "u3",
+      "anchor_segment_id": "s10",
+      "text": "Though coffee has become a global commodity, it has a history tied to food traditions around the Red Sea."
+    },
+    {
+      "n": 11,
+      "unit_id": "u3",
+      "anchor_segment_id": "s11",
+      "text": "The earliest reports of coffee drinking pertain to the plant's use among the Sufis of Yemen in southern Arabia in the middle of the 15th century."
+    },
+    {
+      "n": 12,
+      "unit_id": "u3",
+      "anchor_segment_id": "s12",
+      "text": "Up to the end of the 17th century, most of the world's coffee was imported from Yemen."
+    },
+    {
+      "n": 13,
+      "unit_id": "u3",
+      "anchor_segment_id": "s13",
+      "text": "As it gained in popularity, coffee started to be cultivated in Java in the 17th century and the Americas from the 18th century."
+    },
+    {
+      "n": 14,
+      "unit_id": "u4",
+      "anchor_segment_id": "s14",
+      "text": "The two most commonly grown coffee bean types are C. arabica and C. robusta."
+    },
+    {
+      "n": 15,
+      "unit_id": "u4",
+      "anchor_segment_id": "s15",
+      "text": "Coffee plants are cultivated in over 70 countries, primarily in the equatorial regions of the Americas, Southeast Asia, the Indian subcontinent, and Africa."
+    },
+    {
+      "n": 16,
+      "unit_id": "u4",
+      "anchor_segment_id": "s16",
+      "text": "Green, unroasted coffee is traded as an agricultural commodity."
+    },
+    {
+      "n": 17,
+      "unit_id": "u4",
+      "anchor_segment_id": "s17",
+      "text": "The global coffee industry was worth $495.50 billion in 2023."
+    },
+    {
+      "n": 18,
+      "unit_id": "u4",
+      "anchor_segment_id": "s18",
+      "text": "In 2023, Brazil was the leading grower of coffee beans, producing 31% of the world's total, followed by Vietnam."
+    },
+    {
+      "n": 19,
+      "unit_id": "u4",
+      "anchor_segment_id": "s19",
+      "text": "While coffee sales reach billions of dollars annually worldwide, coffee farmers disproportionately live in poverty."
+    },
+    {
+      "n": 20,
+      "unit_id": "u4",
+      "anchor_segment_id": "s20",
+      "text": "Critics of the coffee industry have pointed to its negative impact on the environment, including clearing of land for coffee growing and water use."
+    },
+    {
+      "n": 21,
+      "unit_id": "u5",
+      "anchor_segment_id": "s21",
+      "text": "== Etymology =="
+    },
+    {
+      "n": 22,
+      "unit_id": "u6",
+      "anchor_segment_id": "s22",
+      "text": "The word coffee entered the English language in 1582 via the Dutch koffie, borrowed from the Ottoman Turkish kahve (قهوه), borrowed from the Arabic qahwah (قَهْوَة)."
+    },
+    {
+      "n": 23,
+      "unit_id": "u6",
+      "anchor_segment_id": "s23",
+      "text": "Medieval Arabic lexicons traditionally held that the etymology of qahwah meant 'wine', given its distinctly dark color, and was derived from the verb qahiya (قَهِيَ), 'to have no appetite'."
+    },
+    {
+      "n": 24,
+      "unit_id": "u6",
+      "anchor_segment_id": "s24",
+      "text": "The word qahwah most likely meant 'the dark one', referring to the brew or the bean."
+    },
+    {
+      "n": 25,
+      "unit_id": "u6",
+      "anchor_segment_id": "s25",
+      "text": "qahwah is not the name of the bean, which are known in Arabic as bunn and in Cushitic languages as būn."
+    },
+    {
+      "n": 26,
+      "unit_id": "u6",
+      "anchor_segment_id": "s26",
+      "text": "Semitic languages have the root qhh, 'dark color', which became a natural designation for the beverage."
+    },
+    {
+      "n": 27,
+      "unit_id": "u6",
+      "anchor_segment_id": "s27",
+      "text": "Its cognates include the Hebrew qehe(h) 'dulling' and the Aramaic qahey ('give acrid taste to')."
+    },
+    {
+      "n": 28,
+      "unit_id": "u6",
+      "anchor_segment_id": "s28",
+      "text": "Although etymologists have connected it with a word meaning 'wine', it is also thought to be from the Kaffa region of Ethiopia."
+    },
+    {
+      "n": 29,
+      "unit_id": "u7",
+      "anchor_segment_id": "s29",
+      "text": "The terms coffee pot and coffee break originated in 1705 and 1952, respectively."
+    },
+    {
+      "n": 30,
+      "unit_id": "u8",
+      "anchor_segment_id": "s30",
+      "text": "== History =="
+    },
+    {
+      "n": 31,
+      "unit_id": "u9",
+      "anchor_segment_id": "s31",
+      "text": "=== Legendary accounts and myths ===\nThere are multiple anecdotal origin stories which lack evidence."
+    },
+    {
+      "n": 32,
+      "unit_id": "u9",
+      "anchor_segment_id": "s32",
+      "text": "Ralph S. Hattox records traditions in which the Islamic prophet Muhammad is said to have been introduced to a stimulating beverage by the Angel Gabriel, who recommended it for its restorative qualities."
+    },
+    {
+      "n": 33,
+      "unit_id": "u9",
+      "anchor_segment_id": "s33",
+      "text": "In another commonly repeated legend, Kaldi, a 9th-century Ethiopian or Arab goatherd, first observed the coffee plant after seeing his flock energized by chewing on the plant."
+    },
+    {
+      "n": 34,
+      "unit_id": "u9",
+      "anchor_segment_id": "s34",
+      "text": "This legend does not appear before 1671, indicating the story is likely apocryphal, first being related by Antoine Faustus Nairon, a Maronite professor of Oriental languages and author of one of the first printed treatises devoted to coffee, De Saluberrima potione Cahue seu Cafe nuncupata Discurscus (Rome, 1671), which describes a camel or goat herder in the Kingdom of Ayaman, Arabia Felix."
+    },
+    {
+      "n": 35,
+      "unit_id": "u9",
+      "anchor_segment_id": "s35",
+      "text": "The herder is unnamed in the earliest account and the name Kaldi appears to be a later invention from the twentieth century."
+    },
+    {
+      "n": 36,
+      "unit_id": "u9",
+      "anchor_segment_id": "s36",
+      "text": "Another legend attributes the discovery of coffee to a Sheikh Omar."
+    },
+    {
+      "n": 37,
+      "unit_id": "u9",
+      "anchor_segment_id": "s37",
+      "text": "Starving after being exiled from Mokha, Omar found berries."
+    },
+    {
+      "n": 38,
+      "unit_id": "u9",
+      "anchor_segment_id": "s38",
+      "text": "After attempting to chew and roast them, Omar boiled them, which yielded a liquid that revitalized and sustained him."
+    },
+    {
+      "n": 39,
+      "unit_id": "u10",
+      "anchor_segment_id": "s39",
+      "text": "=== Historical transmission ==="
+    },
+    {
+      "n": 40,
+      "unit_id": "u11",
+      "anchor_segment_id": "s40",
+      "text": "The earliest possible references to the coffee bean and its qualities appear in al-Razi's 10th-century al-Hawi and in Avicenna's 11th-century The Canon of Medicine both which describe a plant component called bunchum as hot and dry—with al-Razi reporting beneficial effects for the stomach and Ibn Sina also adding claims for the skin and body odor."
+    },
+    {
+      "n": 41,
+      "unit_id": "u11",
+      "anchor_segment_id": "s41",
+      "text": "According to later accounts, bunchum was made from a root rather than from coffee beans."
+    },
+    {
+      "n": 42,
+      "unit_id": "u11",
+      "anchor_segment_id": "s42",
+      "text": "There is no confirmed evidence, either historical or archaeological, of coffee as a drink being consumed before the 15th century."
+    },
+    {
+      "n": 43,
+      "unit_id": "u11",
+      "anchor_segment_id": "s43",
+      "text": "The drink appears to be a relatively recent development."
+    },
+    {
+      "n": 44,
+      "unit_id": "u11",
+      "anchor_segment_id": "s44",
+      "text": "By the late 15th century, coffee drinking was well established among Sufi communities in Yemen."
+    },
+    {
+      "n": 45,
+      "unit_id": "u12",
+      "anchor_segment_id": "s45",
+      "text": "An early writer on coffee was Abd al-Qadir al-Jaziri of Ottoman Iraq, who in 1587 compiled a work tracing the history and legal controversies of coffee in his ʿUmdat al-ṣafwa fī ḥill al-qahwa (عمدة الصفوة"
+    },
+    {
+      "n": 46,
+      "unit_id": "u12",
+      "anchor_segment_id": "s46",
+      "text": "في حل القهوة), in which he claims that the coffee bean originated in the \"land of Sa'ad ad-Din, and the country of Abyssinia, and of the Jabart, and other places of the land of ‘Ajam, but the time of its first use is unknown, nor do we know the reason.\""
+    },
+    {
+      "n": 47,
+      "unit_id": "u12",
+      "anchor_segment_id": "s47",
+      "text": "Al-Jazīrī asserts that coffee was introduced to Cairo at the start of the 16th century by Sufi devotees."
+    },
+    {
+      "n": 48,
+      "unit_id": "u13",
+      "anchor_segment_id": "s48",
+      "text": "Coffee appears to have been likely collected from wild, with some indications that its use expanded from the 14th century among certain Islamized groups in southeastern Ethiopia, though direct evidence for early consumption remains scarce."
+    },
+    {
+      "n": 49,
+      "unit_id": "u13",
+      "anchor_segment_id": "s49",
+      "text": "The use of coffee is believed to have spread across the Red Sea to the Rasulid sultanate of Yemen, who maintained cultural and commercial ties with the Adal Sultanate."
+    },
+    {
+      "n": 50,
+      "unit_id": "u13",
+      "anchor_segment_id": "s50",
+      "text": "Its consumption first appears in Yemen, particularly in regions such as Aden, Mocha and Zabid during the 15th century."
+    },
+    {
+      "n": 51,
+      "unit_id": "u13",
+      "anchor_segment_id": "s51",
+      "text": "The 16th-century scholar Ibn Hajar al-Haytami writes about the plant's development from a tree in the Zeila region."
+    },
+    {
+      "n": 52,
+      "unit_id": "u13",
+      "anchor_segment_id": "s52",
+      "text": "In 1542, a Portuguese crew met with a ship from Zeila transporting clarified butter and coffee to Al-Shihr in Yemen."
+    },
+    {
+      "n": 53,
+      "unit_id": "u14",
+      "anchor_segment_id": "s53",
+      "text": "Other sources of coffee drinking or knowledge of the coffee tree appear in the middle of the 15th century in the accounts of Ahmed al-Ghaffar in Yemen, where coffee seeds were first roasted and brewed in a similar way to how it is prepared now."
+    },
+    {
+      "n": 54,
+      "unit_id": "u14",
+      "anchor_segment_id": "s54",
+      "text": "Coffee was used by Sufi circles to stay awake for their religious rituals."
+    },
+    {
+      "n": 55,
+      "unit_id": "u14",
+      "anchor_segment_id": "s55",
+      "text": "Accounts differ on the origin of the coffee plant before its appearance in Yemen."
+    },
+    {
+      "n": 56,
+      "unit_id": "u14",
+      "anchor_segment_id": "s56",
+      "text": "Coffee may have been introduced to Yemen from Ethiopia via the Red Sea trade."
+    },
+    {
+      "n": 57,
+      "unit_id": "u14",
+      "anchor_segment_id": "s57",
+      "text": "One account credits Muhammad Ibn Sa'd al-Dhabḥani for bringing coffee to Aden from the Somali coast, other early accounts say Ali ben Omar of the Shadhili Sufi order was the first to introduce coffee to Arabia."
+    },
+    {
+      "n": 58,
+      "unit_id": "u14",
+      "anchor_segment_id": "s58",
+      "text": "By the 16th century, coffee had reached the rest of the Middle East and North Africa."
+    },
+    {
+      "n": 59,
+      "unit_id": "u15",
+      "anchor_segment_id": "s59",
+      "text": "In 1583, Leonhard Rauwolf, a German physician, gave this description of coffee after returning from a ten-year trip to the Near East:"
+    },
+    {
+      "n": 60,
+      "unit_id": "u16",
+      "anchor_segment_id": "s60",
+      "text": "A beverage as black as ink, useful against numerous illnesses, particularly those of the stomach."
+    },
+    {
+      "n": 61,
+      "unit_id": "u16",
+      "anchor_segment_id": "s61",
+      "text": "Its consumers take it in the morning, quite frankly, in a porcelain cup passed around and from which each one drinks a cupful."
+    },
+    {
+      "n": 62,
+      "unit_id": "u16",
+      "anchor_segment_id": "s62",
+      "text": "It is composed of water and the fruit from a bush called bunnu."
+    },
+    {
+      "n": 63,
+      "unit_id": "u17",
+      "anchor_segment_id": "s63",
+      "text": "Within the Ottoman Empire, the first coffeehouse opened in 1555 in Tahtakale, Istanbul."
+    },
+    {
+      "n": 64,
+      "unit_id": "u17",
+      "anchor_segment_id": "s64",
+      "text": "Since Tahtakale is to the West of the Bosporus, this would likely have been the first coffee house in Europe."
+    },
+    {
+      "n": 65,
+      "unit_id": "u17",
+      "anchor_segment_id": "s65",
+      "text": "Thriving trade brought many goods, including coffee, from the Ottoman Empire to Venice."
+    },
+    {
+      "n": 66,
+      "unit_id": "u17",
+      "anchor_segment_id": "s66",
+      "text": "Coffee became more widely accepted in Europe after Pope Clement VIII declared it a Christian beverage in 1600, despite appeals to ban the \"Muslim drink\"."
+    },
+    {
+      "n": 67,
+      "unit_id": "u17",
+      "anchor_segment_id": "s67",
+      "text": "Coffee had spread to Italy by 1600 and then to the rest of Europe, Indonesia, and the Americas."
+    },
+    {
+      "n": 68,
+      "unit_id": "u17",
+      "anchor_segment_id": "s68",
+      "text": "The first European coffeehouse outside of the Ottoman Empire opened in Venice in 1647."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1_s3",
+      "sentence_ns": [
+        1,
+        2,
+        3
+      ],
+      "text": "Coffee is a beverage brewed from roasted ground coffee beans. Darkly colored and bitter, coffee has a stimulating effect on humans due to its caffeine content, but decaffeinated coffee is also commercially available. There are also various coffee substitutes.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs4_s6",
+      "sentence_ns": [
+        4,
+        5,
+        6
+      ],
+      "text": "Coffee production begins when the seeds from coffee cherries, the Coffea plant's fruits, are separated to produce unroasted green coffee beans. The \"beans\" are roasted and then ground into fine particles. Coffee is brewed from the ground roasted beans, which are typically steeped in hot water before being filtered out.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs7_s9",
+      "sentence_ns": [
+        7,
+        8,
+        9
+      ],
+      "text": "It is usually served hot, although chilled or iced coffee is common. Coffee can be prepared and presented in a variety of ways, e.g., espresso, French press, caffè latte, or already-brewed canned coffee. Sugar, sugar substitutes, milk, and cream are often added to mask the bitter taste or enhance the flavor.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u3_gs10_s12",
+      "sentence_ns": [
+        10,
+        11,
+        12
+      ],
+      "text": "Though coffee has become a global commodity, it has a history tied to food traditions around the Red Sea. The earliest reports of coffee drinking pertain to the plant's use among the Sufis of Yemen in southern Arabia in the middle of the 15th century. Up to the end of the 17th century, most of the world's coffee was imported from Yemen.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs13",
+      "sentence_ns": [
+        13
+      ],
+      "text": "As it gained in popularity, coffee started to be cultivated in Java in the 17th century and the Americas from the 18th century.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u4_gs14_s16",
+      "sentence_ns": [
+        14,
+        15,
+        16
+      ],
+      "text": "The two most commonly grown coffee bean types are C. arabica and C. robusta. Coffee plants are cultivated in over 70 countries, primarily in the equatorial regions of the Americas, Southeast Asia, the Indian subcontinent, and Africa. Green, unroasted coffee is traded as an agricultural commodity.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs17_s19",
+      "sentence_ns": [
+        17,
+        18,
+        19
+      ],
+      "text": "The global coffee industry was worth $495.50 billion in 2023. In 2023, Brazil was the leading grower of coffee beans, producing 31% of the world's total, followed by Vietnam. While coffee sales reach billions of dollars annually worldwide, coffee farmers disproportionately live in poverty.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u4_gs20",
+      "sentence_ns": [
+        20
+      ],
+      "text": "Critics of the coffee industry have pointed to its negative impact on the environment, including clearing of land for coffee growing and water use.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u5_gs21",
+      "sentence_ns": [
+        21
+      ],
+      "text": "== Etymology ==",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs22_s24",
+      "sentence_ns": [
+        22,
+        23,
+        24
+      ],
+      "text": "The word coffee entered the English language in 1582 via the Dutch koffie, borrowed from the Ottoman Turkish kahve (قهوه), borrowed from the Arabic qahwah (قَهْوَة). Medieval Arabic lexicons traditionally held that the etymology of qahwah meant 'wine', given its distinctly dark color, and was derived from the verb qahiya (قَهِيَ), 'to have no appetite'. The word qahwah most likely meant 'the dark one', referring to the brew or the bean.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs25_s27",
+      "sentence_ns": [
+        25,
+        26,
+        27
+      ],
+      "text": "qahwah is not the name of the bean, which are known in Arabic as bunn and in Cushitic languages as būn. Semitic languages have the root qhh, 'dark color', which became a natural designation for the beverage. Its cognates include the Hebrew qehe(h) 'dulling' and the Aramaic qahey ('give acrid taste to').",
+      "order_index": 2
+    },
+    {
+      "group_id": "u6_gs28",
+      "sentence_ns": [
+        28
+      ],
+      "text": "Although etymologists have connected it with a word meaning 'wine', it is also thought to be from the Kaffa region of Ethiopia.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u7_gs29",
+      "sentence_ns": [
+        29
+      ],
+      "text": "The terms coffee pot and coffee break originated in 1705 and 1952, respectively.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u8_gs30",
+      "sentence_ns": [
+        30
+      ],
+      "text": "== History ==",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs31_s33",
+      "sentence_ns": [
+        31,
+        32,
+        33
+      ],
+      "text": "=== Legendary accounts and myths ===\nThere are multiple anecdotal origin stories which lack evidence. Ralph S. Hattox records traditions in which the Islamic prophet Muhammad is said to have been introduced to a stimulating beverage by the Angel Gabriel, who recommended it for its restorative qualities. In another commonly repeated legend, Kaldi, a 9th-century Ethiopian or Arab goatherd, first observed the coffee plant after seeing his flock energized by chewing on the plant.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs34_s36",
+      "sentence_ns": [
+        34,
+        35,
+        36
+      ],
+      "text": "This legend does not appear before 1671, indicating the story is likely apocryphal, first being related by Antoine Faustus Nairon, a Maronite professor of Oriental languages and author of one of the first printed treatises devoted to coffee, De Saluberrima potione Cahue seu Cafe nuncupata Discurscus (Rome, 1671), which describes a camel or goat herder in the Kingdom of Ayaman, Arabia Felix. The herder is unnamed in the earliest account and the name Kaldi appears to be a later invention from the twentieth century. Another legend attributes the discovery of coffee to a Sheikh Omar.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u9_gs37_s38",
+      "sentence_ns": [
+        37,
+        38
+      ],
+      "text": "Starving after being exiled from Mokha, Omar found berries. After attempting to chew and roast them, Omar boiled them, which yielded a liquid that revitalized and sustained him.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u10_gs39",
+      "sentence_ns": [
+        39
+      ],
+      "text": "=== Historical transmission ===",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs40_s42",
+      "sentence_ns": [
+        40,
+        41,
+        42
+      ],
+      "text": "The earliest possible references to the coffee bean and its qualities appear in al-Razi's 10th-century al-Hawi and in Avicenna's 11th-century The Canon of Medicine both which describe a plant component called bunchum as hot and dry—with al-Razi reporting beneficial effects for the stomach and Ibn Sina also adding claims for the skin and body odor. According to later accounts, bunchum was made from a root rather than from coffee beans. There is no confirmed evidence, either historical or archaeological, of coffee as a drink being consumed before the 15th century.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs43_s44",
+      "sentence_ns": [
+        43,
+        44
+      ],
+      "text": "The drink appears to be a relatively recent development. By the late 15th century, coffee drinking was well established among Sufi communities in Yemen.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u12_gs45_s47",
+      "sentence_ns": [
+        45,
+        46,
+        47
+      ],
+      "text": "An early writer on coffee was Abd al-Qadir al-Jaziri of Ottoman Iraq, who in 1587 compiled a work tracing the history and legal controversies of coffee in his ʿUmdat al-ṣafwa fī ḥill al-qahwa (عمدة الصفوة في حل القهوة), in which he claims that the coffee bean originated in the \"land of Sa'ad ad-Din, and the country of Abyssinia, and of the Jabart, and other places of the land of ‘Ajam, but the time of its first use is unknown, nor do we know the reason.\" Al-Jazīrī asserts that coffee was introduced to Cairo at the start of the 16th century by Sufi devotees.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs48_s50",
+      "sentence_ns": [
+        48,
+        49,
+        50
+      ],
+      "text": "Coffee appears to have been likely collected from wild, with some indications that its use expanded from the 14th century among certain Islamized groups in southeastern Ethiopia, though direct evidence for early consumption remains scarce. The use of coffee is believed to have spread across the Red Sea to the Rasulid sultanate of Yemen, who maintained cultural and commercial ties with the Adal Sultanate. Its consumption first appears in Yemen, particularly in regions such as Aden, Mocha and Zabid during the 15th century.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs51_s52",
+      "sentence_ns": [
+        51,
+        52
+      ],
+      "text": "The 16th-century scholar Ibn Hajar al-Haytami writes about the plant's development from a tree in the Zeila region. In 1542, a Portuguese crew met with a ship from Zeila transporting clarified butter and coffee to Al-Shihr in Yemen.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u14_gs53_s55",
+      "sentence_ns": [
+        53,
+        54,
+        55
+      ],
+      "text": "Other sources of coffee drinking or knowledge of the coffee tree appear in the middle of the 15th century in the accounts of Ahmed al-Ghaffar in Yemen, where coffee seeds were first roasted and brewed in a similar way to how it is prepared now. Coffee was used by Sufi circles to stay awake for their religious rituals. Accounts differ on the origin of the coffee plant before its appearance in Yemen.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u14_gs56_s58",
+      "sentence_ns": [
+        56,
+        57,
+        58
+      ],
+      "text": "Coffee may have been introduced to Yemen from Ethiopia via the Red Sea trade. One account credits Muhammad Ibn Sa'd al-Dhabḥani for bringing coffee to Aden from the Somali coast, other early accounts say Ali ben Omar of the Shadhili Sufi order was the first to introduce coffee to Arabia. By the 16th century, coffee had reached the rest of the Middle East and North Africa.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u15_gs59",
+      "sentence_ns": [
+        59
+      ],
+      "text": "In 1583, Leonhard Rauwolf, a German physician, gave this description of coffee after returning from a ten-year trip to the Near East:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs60_s62",
+      "sentence_ns": [
+        60,
+        61,
+        62
+      ],
+      "text": "A beverage as black as ink, useful against numerous illnesses, particularly those of the stomach. Its consumers take it in the morning, quite frankly, in a porcelain cup passed around and from which each one drinks a cupful. It is composed of water and the fruit from a bush called bunnu.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs63_s65",
+      "sentence_ns": [
+        63,
+        64,
+        65
+      ],
+      "text": "Within the Ottoman Empire, the first coffeehouse opened in 1555 in Tahtakale, Istanbul. Since Tahtakale is to the West of the Bosporus, this would likely have been the first coffee house in Europe. Thriving trade brought many goods, including coffee, from the Ottoman Empire to Venice.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs66_s68",
+      "sentence_ns": [
+        66,
+        67,
+        68
+      ],
+      "text": "Coffee became more widely accepted in Europe after Pope Clement VIII declared it a Christian beverage in 1600, despite appeals to ban the \"Muslim drink\". Coffee had spread to Italy by 1600 and then to the rest of Europe, Indonesia, and the Americas. The first European coffeehouse outside of the Ottoman Empire opened in Venice in 1647.",
+      "order_index": 2
+    }
+  ],
+  "category": "long-form"
+}

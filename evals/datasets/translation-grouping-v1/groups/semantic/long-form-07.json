@@ -1,0 +1,101 @@
+{
+  "id": "long-form-07",
+  "groups": [
+    {
+      "sentence_ns": [1, 2],
+      "reason": "lead intro of subject and stature"
+    },
+    {
+      "sentence_ns": [3, 4, 5],
+      "reason": "child prodigy early training travels"
+    },
+    {
+      "sentence_ns": [6, 7, 8],
+      "reason": "Salzburg court years and works"
+    },
+    {
+      "sentence_ns": [9, 10],
+      "reason": "dismissal and settling in Vienna"
+    },
+    {
+      "sentence_ns": [11, 12],
+      "reason": "notable works of early Vienna"
+    },
+    {
+      "sentence_ns": [13, 14],
+      "reason": "final years works and Requiem"
+    },
+    {
+      "sentence_ns": [15],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [16],
+      "reason": "heading with lead-in sentence"
+    },
+    {
+      "sentence_ns": [17, 18],
+      "reason": "letters and early biography sources"
+    },
+    {
+      "sentence_ns": [19, 20],
+      "reason": "documents and surviving manuscripts sources"
+    },
+    {
+      "sentence_ns": [21, 22],
+      "reason": "biographer disagreements and source credibility"
+    },
+    {
+      "sentence_ns": [23, 24],
+      "reason": "Rochlitz example and historiography trend"
+    },
+    {
+      "sentence_ns": [25],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [26],
+      "reason": "subsection heading standalone"
+    },
+    {
+      "sentence_ns": [27, 28],
+      "reason": "birth and Salzburg historical context"
+    },
+    {
+      "sentence_ns": [29, 30],
+      "reason": "siblings and sister Nannerl"
+    },
+    {
+      "sentence_ns": [31, 32, 33],
+      "reason": "baptism and name variants"
+    },
+    {
+      "sentence_ns": [34, 35],
+      "reason": "father Leopold background and appointment"
+    },
+    {
+      "sentence_ns": [36, 37, 38],
+      "reason": "Leopold career milestones and textbook"
+    },
+    {
+      "sentence_ns": [39, 40],
+      "reason": "Nannerl lessons and reminiscence intro"
+    },
+    {
+      "sentence_ns": [41, 42, 43],
+      "reason": "single continuous blockquote from Nannerl"
+    },
+    {
+      "sentence_ns": [44, 45],
+      "reason": "earliest compositions and Notenbuch"
+    },
+    {
+      "sentence_ns": [46, 47],
+      "reason": "Leopold as sole teacher"
+    },
+    {
+      "sentence_ns": [48, 49],
+      "reason": "Mozart self-driven talent and miracle quote"
+    }
+  ]
+}

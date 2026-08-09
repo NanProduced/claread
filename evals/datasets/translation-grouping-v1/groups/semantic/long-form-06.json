@@ -1,0 +1,20 @@
+{
+  "id": "long-form-06",
+  "groups": [
+    { "sentence_ns": [1, 2, 3], "reason": "definition of evolution, one thought" },
+    { "sentence_ns": [4, 5], "reason": "Darwin-Wallace theory origin" },
+    { "sentence_ns": [6, 7], "reason": "natural selection mechanism explained" },
+    { "sentence_ns": [8, 9, 10], "reason": "modern synthesis and DNA" },
+    { "sentence_ns": [11, 12, 13], "reason": "history of life overview" },
+    { "sentence_ns": [14], "reason": "single complete thought" },
+    { "sentence_ns": [15, 16], "reason": "ongoing research and impact" },
+    { "sentence_ns": [17], "reason": "section heading standalone" },
+    { "sentence_ns": [18, 19], "reason": "heritable traits with example" },
+    { "sentence_ns": [20, 21, 22], "reason": "genotype and phenotype definitions" },
+    { "sentence_ns": [23, 24, 25, 26], "reason": "suntan example, tightly coupled" },
+    { "sentence_ns": [27, 28, 29], "reason": "DNA structure and information" },
+    { "sentence_ns": [30], "reason": "single complete thought" },
+    { "sentence_ns": [31, 32, 33, 34], "reason": "gene-locus-allele terminology ladder" },
+    { "sentence_ns": [35, 36, 37], "reason": "mutation effects and caveat" }
+  ]
+}

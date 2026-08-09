@@ -1,0 +1,513 @@
+{
+  "id": "structural-06",
+  "sentences": [
+    {
+      "n": 1,
+      "text": "===================\nHow to use sessions\n==================="
+    },
+    {
+      "n": 2,
+      "text": ".. module:: django.contrib.sessions\n   :synopsis: Provides session management for Django projects."
+    },
+    {
+      "n": 3,
+      "text": "Django provides full support for anonymous sessions."
+    },
+    {
+      "n": 4,
+      "text": "The session framework\nlets you store and retrieve arbitrary data on a per-site-visitor basis."
+    },
+    {
+      "n": 5,
+      "text": "It\nstores data on the server side and abstracts the sending and receiving of\ncookies."
+    },
+    {
+      "n": 6,
+      "text": "Cookies contain a session ID -- not the data itself (unless you're\nusing the :ref:`cookie based backend<cookie-session-backend>`)."
+    },
+    {
+      "n": 7,
+      "text": "Enabling sessions\n================="
+    },
+    {
+      "n": 8,
+      "text": "Sessions are implemented via a piece of :doc:`middleware </ref/middleware>`."
+    },
+    {
+      "n": 9,
+      "text": "To enable session functionality, do the following:"
+    },
+    {
+      "n": 10,
+      "text": "* Edit the :setting:`MIDDLEWARE` setting and make sure it contains\n  ``'django.contrib.sessions.middleware."
+    },
+    {
+      "n": 11,
+      "text": "SessionMiddleware'``."
+    },
+    {
+      "n": 12,
+      "text": "The default\n  ``settings.py`` created by ``django-admin startproject`` has\n  ``SessionMiddleware`` activated."
+    },
+    {
+      "n": 13,
+      "text": "If you don't want to use sessions, you might as well remove the\n``SessionMiddleware`` line from :setting:`MIDDLEWARE` and\n``'django.contrib.sessions'`` from your :setting:`INSTALLED_APPS`."
+    },
+    {
+      "n": 14,
+      "text": "It'll save you a small bit of overhead."
+    },
+    {
+      "n": 15,
+      "text": ".. _configuring-sessions:"
+    },
+    {
+      "n": 16,
+      "text": "Configuring the session engine\n=============================="
+    },
+    {
+      "n": 17,
+      "text": "By default, Django stores sessions in your database (using the model\n``django.contrib.sessions.models."
+    },
+    {
+      "n": 18,
+      "text": "Session``)."
+    },
+    {
+      "n": 19,
+      "text": "Though this is convenient, in\nsome setups it's faster to store session data elsewhere, so Django can be\nconfigured to store session data on your filesystem or in your cache."
+    },
+    {
+      "n": 20,
+      "text": "Using database-backed sessions\n--"
+    },
+    {
+      "n": 21,
+      "text": "--"
+    },
+    {
+      "n": 22,
+      "text": "--"
+    },
+    {
+      "n": 23,
+      "text": "--"
+    },
+    {
+      "n": 24,
+      "text": "--"
+    },
+    {
+      "n": 25,
+      "text": "--"
+    },
+    {
+      "n": 26,
+      "text": "--"
+    },
+    {
+      "n": 27,
+      "text": "--"
+    },
+    {
+      "n": 28,
+      "text": "--"
+    },
+    {
+      "n": 29,
+      "text": "--"
+    },
+    {
+      "n": 30,
+      "text": "--"
+    },
+    {
+      "n": 31,
+      "text": "--"
+    },
+    {
+      "n": 32,
+      "text": "--"
+    },
+    {
+      "n": 33,
+      "text": "--"
+    },
+    {
+      "n": 34,
+      "text": "--"
+    },
+    {
+      "n": 35,
+      "text": "If you want to use a database-backed session, you need to add\n``'django.contrib.sessions'`` to your :setting:`INSTALLED_APPS` setting."
+    },
+    {
+      "n": 36,
+      "text": "Once you have configured your installation, run ``manage.py migrate``\nto install the single database table that stores session data."
+    },
+    {
+      "n": 37,
+      "text": ".. _cached-sessions-backend:"
+    },
+    {
+      "n": 38,
+      "text": "Using cached sessions\n--"
+    },
+    {
+      "n": 39,
+      "text": "--"
+    },
+    {
+      "n": 40,
+      "text": "--"
+    },
+    {
+      "n": 41,
+      "text": "--"
+    },
+    {
+      "n": 42,
+      "text": "--"
+    },
+    {
+      "n": 43,
+      "text": "--"
+    },
+    {
+      "n": 44,
+      "text": "--"
+    },
+    {
+      "n": 45,
+      "text": "--"
+    },
+    {
+      "n": 46,
+      "text": "--"
+    },
+    {
+      "n": 47,
+      "text": "--"
+    },
+    {
+      "n": 48,
+      "text": "-"
+    },
+    {
+      "n": 49,
+      "text": "For better performance, you may want to use a cache-based session backend."
+    },
+    {
+      "n": 50,
+      "text": "To store session data using Django's cache system, you'll first need to make\nsure you've configured your cache; see the :doc:`cache documentation\n</topics/cache>` for details."
+    },
+    {
+      "n": 51,
+      "text": ".. warning:"
+    },
+    {
+      "n": 52,
+      "text": ":"
+    },
+    {
+      "n": 53,
+      "text": "You should only use cache-based sessions if you're using the Memcached or\n    Redis cache backend."
+    },
+    {
+      "n": 54,
+      "text": "The local-memory cache backend doesn't retain data\n    long enough to be a good choice, and it'll be faster to use file or\n    database sessions directly instead of sending everything through the file\n    or database cache backends."
+    },
+    {
+      "n": 55,
+      "text": "Additionally, the local-memory cache backend is\n    NOT multi-process safe, therefore probably not a good choice for production\n    environments."
+    },
+    {
+      "n": 56,
+      "text": "If you have multiple caches defined in :setting:`CACHES`, Django will use the\ndefault cache."
+    },
+    {
+      "n": 57,
+      "text": "To use another cache, set :setting:`SESSION_CACHE_ALIAS` to the\nname of that cache."
+    },
+    {
+      "n": 58,
+      "text": "Once your cache is configured, you have to choose between a database-backed\ncache or a non-persistent cache."
+    },
+    {
+      "n": 59,
+      "text": "The cached database backend (``cached_db``) uses a write-through cache --\nsession writes are applied to both the database and cache, in that order."
+    },
+    {
+      "n": 60,
+      "text": "If\nwriting to the cache (or deleting from it) fails, the exception is handled and\nlogged via the :ref:`sessions logger <django-contrib-sessions-logger>`, to\navoid failing an otherwise successful write or delete operation."
+    },
+    {
+      "n": 61,
+      "text": "Session reads use the cache, or the database if the data has been evicted from\nthe cache."
+    },
+    {
+      "n": 62,
+      "text": "To use this backend, set :setting:`SESSION_ENGINE` to\n``\"django.contrib.sessions.backends.cached_db\"``, and follow the configuration\ninstructions for the `using database-backed sessions`_."
+    },
+    {
+      "n": 63,
+      "text": "The cache backend (``cache``) stores session data only in your cache."
+    },
+    {
+      "n": 64,
+      "text": "This is\nfaster because it avoids database persistence, but you will have to consider\nwhat happens when cache data is evicted."
+    },
+    {
+      "n": 65,
+      "text": "Eviction can occur if the cache fills\nup or the cache server is restarted, and it will mean session data is lost,\nincluding logging out users."
+    },
+    {
+      "n": 66,
+      "text": "To use this backend, set :setting:`SESSION_ENGINE`\nto ``\"django.contrib.sessions.backends.cache\"``."
+    },
+    {
+      "n": 67,
+      "text": "The cache backend can be made persistent by using a persistent cache, such as\nRedis with appropriate configuration."
+    },
+    {
+      "n": 68,
+      "text": "But unless your cache is definitely\nconfigured for sufficient persistence, opt for the cached database backend."
+    },
+    {
+      "n": 69,
+      "text": "This avoids edge cases caused by unreliable data storage in production."
+    },
+    {
+      "n": 70,
+      "text": ".. versionchanged:"
+    },
+    {
+      "n": 71,
+      "text": ":"
+    },
+    {
+      "n": 72,
+      "text": "6.2"
+    },
+    {
+      "n": 73,
+      "text": "In earlier versions, only failed writes were caught and logged rather than\n  failed deletes."
+    },
+    {
+      "n": 74,
+      "text": "Using file-based sessions\n--"
+    },
+    {
+      "n": 75,
+      "text": "--"
+    },
+    {
+      "n": 76,
+      "text": "--"
+    },
+    {
+      "n": 77,
+      "text": "--"
+    },
+    {
+      "n": 78,
+      "text": "--"
+    },
+    {
+      "n": 79,
+      "text": "--"
+    },
+    {
+      "n": 80,
+      "text": "--"
+    },
+    {
+      "n": 81,
+      "text": "--"
+    },
+    {
+      "n": 82,
+      "text": "--"
+    },
+    {
+      "n": 83,
+      "text": "--"
+    },
+    {
+      "n": 84,
+      "text": "--"
+    },
+    {
+      "n": 85,
+      "text": "--"
+    },
+    {
+      "n": 86,
+      "text": "-"
+    },
+    {
+      "n": 87,
+      "text": "To use file-based sessions, set the :setting:`SESSION_ENGINE` setting to\n``\"django.contrib.sessions.backends.file\"``."
+    },
+    {
+      "n": 88,
+      "text": "You might also want to set the :setting:`SESSION_FILE_PATH` setting (which\ndefaults to output from ``tempfile.gettempdir()``, most likely ``/tmp``) to\ncontrol where Django stores session files."
+    },
+    {
+      "n": 89,
+      "text": "Be sure to check that your web\nserver has permissions to read and write to this location."
+    },
+    {
+      "n": 90,
+      "text": ".. _cookie-session-backend:"
+    },
+    {
+      "n": 91,
+      "text": "Using cookie-based sessions\n--"
+    },
+    {
+      "n": 92,
+      "text": "--"
+    },
+    {
+      "n": 93,
+      "text": "--"
+    },
+    {
+      "n": 94,
+      "text": "--"
+    },
+    {
+      "n": 95,
+      "text": "--"
+    },
+    {
+      "n": 96,
+      "text": "--"
+    },
+    {
+      "n": 97,
+      "text": "--"
+    },
+    {
+      "n": 98,
+      "text": "--"
+    },
+    {
+      "n": 99,
+      "text": "--"
+    },
+    {
+      "n": 100,
+      "text": "--"
+    },
+    {
+      "n": 101,
+      "text": "--"
+    },
+    {
+      "n": 102,
+      "text": "--"
+    },
+    {
+      "n": 103,
+      "text": "--"
+    },
+    {
+      "n": 104,
+      "text": "-"
+    },
+    {
+      "n": 105,
+      "text": "To use cookies-based sessions, set the :setting:`SESSION_ENGINE` setting to\n``\"django.contrib.sessions.backends.signed_cookies\"``."
+    },
+    {
+      "n": 106,
+      "text": "The session data will be\nstored using Django's tools for :doc:`cryptographic signing </topics/signing>`\nand the :setting:`SECRET_KEY` setting."
+    },
+    {
+      "n": 107,
+      "text": ".. note:"
+    },
+    {
+      "n": 108,
+      "text": ":"
+    },
+    {
+      "n": 109,
+      "text": "It's recommended to leave the :setting:`SESSION_COOKIE_HTTPONLY` setting\n    on ``True`` to prevent access to the stored data from JavaScript."
+    },
+    {
+      "n": 110,
+      "text": ".. warning:"
+    },
+    {
+      "n": 111,
+      "text": ":"
+    },
+    {
+      "n": 112,
+      "text": "**The session data is signed but not encrypted**"
+    },
+    {
+      "n": 113,
+      "text": "When using the cookies backend the session data can be read by the client."
+    },
+    {
+      "n": 114,
+      "text": "A MAC (Message Authentication Code) is used to protect the data against\n    changes by the client, so that the session data will be invalidated when\n    being tampered with."
+    },
+    {
+      "n": 115,
+      "text": "The same invalidation happens if the client storing\n    the cookie (e.g. your user's browser) can't store all of the session cookie\n    and drops data."
+    },
+    {
+      "n": 116,
+      "text": "Even though Django compresses the data, it's still entirely\n    possible to exceed the :rfc:`common limit of 4096 bytes <2965#section-5.3>`\n    per cookie."
+    },
+    {
+      "n": 117,
+      "text": "**No freshness guarantee**"
+    },
+    {
+      "n": 118,
+      "text": "Note also that while the MAC can guarantee the authenticity of the data\n    (that it was generated by your site, and not someone else), and the\n    integrity of the data (that it is all there and correct), it cannot\n    guarantee freshness i.e. that you are being sent back the last thing you\n    sent to the client."
+    },
+    {
+      "n": 119,
+      "text": "This means that for some uses of session data, the\n    cookie backend might open you up to `replay attacks`_."
+    },
+    {
+      "n": 120,
+      "text": "Unlike other session\n    backends which keep a server-side record of each session and invalidate it\n    when a user logs out, cookie-based sessions are not invalidated when a user\n    logs out."
+    },
+    {
+      "n": 121,
+      "text": "Thus if an attacker steals a user's cookie, they can use that\n    cookie to login as that user even if the user logs out."
+    },
+    {
+      "n": 122,
+      "text": "Cookies will only\n    be detected as 'stale' if they are older than your\n    :setting:`SESSION_COOKIE_AGE`."
+    },
+    {
+      "n": 123,
+      "text": "**Performance**"
+    },
+    {
+      "n": 124,
+      "text": "Finally, the size of a cookie can have an impact on the speed of your site."
+    },
+    {
+      "n": 125,
+      "text": ".. _`replay attacks`:"
+    },
+    {
+      "n": 126,
+      "text": "https:"
+    },
+    {
+      "n": 127,
+      "text": "//en.wikipedia.org/wiki/Replay_attack"
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+[
+  {
+    "id": "short-news-01",
+    "category": "short-news",
+    "title": "Pope Leo XIV visits four nations in Africa",
+    "source_url": "https://en.wikinews.org/wiki/Pope_Leo_XIV_visits_four_nations_in_Africa",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 309,
+    "notes": "Multi-country itinerary, dated April 2026"
+  },
+  {
+    "id": "short-news-02",
+    "category": "short-news",
+    "title": "United States announces blockade on the Strait of Hormuz",
+    "source_url": "https://en.wikinews.org/wiki/United_States_announces_blockade_on_the_Strait_of_Hormuz",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 218,
+    "notes": "Geopolitical breaking news"
+  },
+  {
+    "id": "short-news-03",
+    "category": "short-news",
+    "title": "South Korean military halts small firearms drills after stray bullet strikes young girl on playground",
+    "source_url": "https://en.wikinews.org/wiki/South_Korean_military_halts_small_firearms_drills_after_stray_bullet_strikes_young_girl_on_playground",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 183,
+    "notes": "Incident report, quotes officials"
+  },
+  {
+    "id": "short-news-04",
+    "category": "short-news",
+    "title": "Australian Minister for Energy lowers fuel standards for 60 days amid rising oil prices, panic buying",
+    "source_url": "https://en.wikinews.org/wiki/Australian_Minister_for_Energy_lowers_fuel_standards_for_60_days_amid_rising_oil_prices,_panic_buying",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 315,
+    "notes": "Policy/economics, 15 sentences"
+  },
+  {
+    "id": "short-news-05",
+    "category": "short-news",
+    "title": "Australia grants refuge to five Iranian women's national soccer team players",
+    "source_url": "https://en.wikinews.org/wiki/Australia_grants_refuge_to_five_Iranian_women%27s_national_soccer_team_players",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 214,
+    "notes": "Sports + asylum story"
+  },
+  {
+    "id": "short-news-06",
+    "category": "short-news",
+    "title": "Moreton Bay illegally evicted homeless campers, Queensland Supreme Court rules",
+    "source_url": "https://en.wikinews.org/wiki/Moreton_Bay_illegally_evicted_homeless_campers,_Queensland_Supreme_Court_rules",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 289,
+    "notes": "Court ruling, legal detail"
+  },
+  {
+    "id": "short-news-07",
+    "category": "short-news",
+    "title": "NSW government proposes rezoning to create residences midway between Sydney and Parramatta",
+    "source_url": "https://en.wikinews.org/wiki/NSW_government_proposes_rezoning_to_create_residences_midway_between_Sydney_and_Parramatta",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 172,
+    "notes": "Local-government housing policy"
+  },
+  {
+    "id": "short-news-08",
+    "category": "short-news",
+    "title": "PM of Australia sends E-7A Wedgetail and air-to-air missiles to UAE",
+    "source_url": "https://en.wikinews.org/wiki/PM_of_Australia_sends_E-7A_Wedgetail_and_air-to-air_missiles_to_UAE",
+    "license": "CC-BY 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 184,
+    "notes": "Defense deployment, cites ABC correspondent"
+  },
+  {
+    "id": "long-form-01",
+    "category": "long-form",
+    "title": "Vincent van Gogh",
+    "source_url": "https://en.wikipedia.org/wiki/Vincent_van_Gogh",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1004,
+    "notes": "Lead + Life/Letters sections, 46 sentences"
+  },
+  {
+    "id": "long-form-02",
+    "category": "long-form",
+    "title": "Cleopatra",
+    "source_url": "https://en.wikipedia.org/wiki/Cleopatra",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 980,
+    "notes": "Lead + Etymology/Background, Greek script in lead"
+  },
+  {
+    "id": "long-form-03",
+    "category": "long-form",
+    "title": "Plate tectonics",
+    "source_url": "https://en.wikipedia.org/wiki/Plate_tectonics",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1055,
+    "notes": "Lead + Key principles, scientific vocabulary"
+  },
+  {
+    "id": "long-form-04",
+    "category": "long-form",
+    "title": "Moon",
+    "source_url": "https://en.wikipedia.org/wiki/Moon",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1011,
+    "notes": "Lead + Names/Classification, contains measurements"
+  },
+  {
+    "id": "long-form-05",
+    "category": "long-form",
+    "title": "Coffee",
+    "source_url": "https://en.wikipedia.org/wiki/Coffee",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1356,
+    "notes": "Lead + Etymology/History, 4 subheadings, 65 sentences"
+  },
+  {
+    "id": "long-form-06",
+    "category": "long-form",
+    "title": "Evolution",
+    "source_url": "https://en.wikipedia.org/wiki/Evolution",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 811,
+    "notes": "Lead + Heredity, shortest item in category"
+  },
+  {
+    "id": "long-form-07",
+    "category": "long-form",
+    "title": "Wolfgang Amadeus Mozart",
+    "source_url": "https://en.wikipedia.org/wiki/Wolfgang_Amadeus_Mozart",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 970,
+    "notes": "Lead + Life and career (4 subheadings)"
+  },
+  {
+    "id": "long-form-08",
+    "category": "long-form",
+    "title": "RMS Titanic",
+    "source_url": "https://en.wikipedia.org/wiki/Titanic",
+    "license": "CC-BY-SA 4.0",
+    "retrieved_at": "2026-08-08",
+    "word_count": 982,
+    "notes": "Lead + Background, numbers/dates heavy"
+  },
+  {
+    "id": "structural-01",
+    "category": "structural",
+    "title": "HTML table basics",
+    "source_url": "https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Structuring_content/HTML_table_basics",
+    "license": "CC-BY-SA 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1472,
+    "notes": "Contains HTML table markup + 12 code fences + headings"
+  },
+  {
+    "id": "structural-02",
+    "category": "structural",
+    "title": "Flexbox",
+    "source_url": "https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/CSS_layout/Flexbox",
+    "license": "CC-BY-SA 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1480,
+    "notes": "Contains bullet lists + blockquote notes + 22 code fences + headings"
+  },
+  {
+    "id": "structural-03",
+    "category": "structural",
+    "title": "Using the Fetch API",
+    "source_url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+    "license": "CC-BY-SA 2.5",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1342,
+    "notes": "Contains 7 headings + ~20 bullet items + 16 code fences"
+  },
+  {
+    "id": "structural-04",
+    "category": "structural",
+    "title": "More Control Flow Tools (Python tutorial, sections 4.1-4.4)",
+    "source_url": "https://docs.python.org/3/tutorial/controlflow.html",
+    "license": "PSF (Python documentation license)",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1228,
+    "notes": "Contains RST headings + 17+ literal code blocks"
+  },
+  {
+    "id": "structural-05",
+    "category": "structural",
+    "title": "Data Structures (Python tutorial: lists, stacks, queues, comprehensions)",
+    "source_url": "https://docs.python.org/3/tutorial/datastructures.html",
+    "license": "PSF (Python documentation license)",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1323,
+    "notes": "Contains RST headings + 42 doctest-style code blocks"
+  },
+  {
+    "id": "structural-06",
+    "category": "structural",
+    "title": "How to use sessions (Django docs)",
+    "source_url": "https://docs.djangoproject.com/en/stable/topics/http/sessions/",
+    "license": "BSD (Django documentation license)",
+    "retrieved_at": "2026-08-08",
+    "word_count": 975,
+    "notes": "Contains 8 RST headings + code blocks + admonitions"
+  },
+  {
+    "id": "structural-07",
+    "category": "structural",
+    "title": "Making queries (Django docs)",
+    "source_url": "https://docs.djangoproject.com/en/stable/topics/db/queries/",
+    "license": "BSD (Django documentation license)",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1164,
+    "notes": "Contains RST headings + 18 doctest blocks + admonitions"
+  },
+  {
+    "id": "structural-08",
+    "category": "structural",
+    "title": "HTTP Semantics sections 9.1-9.2 (RFC 9110)",
+    "source_url": "https://www.rfc-editor.org/rfc/rfc9110.txt",
+    "license": "RFC, freely distributable (IETF Trust legal provisions)",
+    "retrieved_at": "2026-08-08",
+    "word_count": 1404,
+    "notes": "Contains numbered section headings + ASCII table of HTTP methods + definition blocks"
+  }
+]

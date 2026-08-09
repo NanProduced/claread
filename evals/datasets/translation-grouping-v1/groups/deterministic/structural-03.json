@@ -1,0 +1,1374 @@
+{
+  "id": "structural-03",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "## Making a request"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "To make a request, call `fetch()`, passing in:"
+    },
+    {
+      "n": 3,
+      "unit_id": "u3",
+      "anchor_segment_id": "s3",
+      "text": "1. a definition of the resource to fetch."
+    },
+    {
+      "n": 4,
+      "unit_id": "u3",
+      "anchor_segment_id": "s4",
+      "text": "This can be any one of:\n   - a string containing the URL\n   - an object, such as an instance of {{domxref(\"URL\")}}, which has a {{glossary(\"stringifier\")}} that produces a string containing the URL\n   - a {{domxref(\"Request\")}} instance\n2."
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "optionally, an object containing options to configure the request."
+    },
+    {
+      "n": 6,
+      "unit_id": "u4",
+      "anchor_segment_id": "s6",
+      "text": "In this section we'll look at some of the most commonly-used options."
+    },
+    {
+      "n": 7,
+      "unit_id": "u4",
+      "anchor_segment_id": "s7",
+      "text": "To read about all the options that can be given, see the [`fetch()`](/en-US/docs/Web/API/Window/fetch) reference page."
+    },
+    {
+      "n": 8,
+      "unit_id": "u5",
+      "anchor_segment_id": "s8",
+      "text": "### Setting the method"
+    },
+    {
+      "n": 9,
+      "unit_id": "u6",
+      "anchor_segment_id": "s9",
+      "text": "By default, `fetch()` makes a {{httpmethod(\"GET\")}} request,"
+    },
+    {
+      "n": 10,
+      "unit_id": "u6",
+      "anchor_segment_id": "s10",
+      "text": "but you can use the `method` option to use a different [request method](/en-US/docs/Web/HTTP/Reference/Methods):"
+    },
+    {
+      "n": 11,
+      "unit_id": "u7",
+      "anchor_segment_id": "s11",
+      "text": "```js\nconst response = await fetch(\"https:"
+    },
+    {
+      "n": 12,
+      "unit_id": "u7",
+      "anchor_segment_id": "s12",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 13,
+      "unit_id": "u7",
+      "anchor_segment_id": "s13",
+      "text": "\"POST\",\n  // …\n});"
+    },
+    {
+      "n": 14,
+      "unit_id": "u7",
+      "anchor_segment_id": "s14",
+      "text": "```"
+    },
+    {
+      "n": 15,
+      "unit_id": "u8",
+      "anchor_segment_id": "s15",
+      "text": "If the `mode` option is set to `no-cors`, then `method` must be one of `GET`, `POST` or `HEAD`."
+    },
+    {
+      "n": 16,
+      "unit_id": "u9",
+      "anchor_segment_id": "s16",
+      "text": "### Setting a body"
+    },
+    {
+      "n": 17,
+      "unit_id": "u10",
+      "anchor_segment_id": "s17",
+      "text": "The request body is the payload of the request: it's the thing the client is sending to the server."
+    },
+    {
+      "n": 18,
+      "unit_id": "u10",
+      "anchor_segment_id": "s18",
+      "text": "You cannot include a body with `GET` requests, but it's useful for requests that send content to the server, such as {{httpmethod(\"POST\")}} or {{httpmethod(\"PUT\")}} requests."
+    },
+    {
+      "n": 19,
+      "unit_id": "u10",
+      "anchor_segment_id": "s19",
+      "text": "For example, if you want to upload a file to the server, you might make a `POST` request and include the file as the request body."
+    },
+    {
+      "n": 20,
+      "unit_id": "u11",
+      "anchor_segment_id": "s20",
+      "text": "To set a request body, pass it as the `body` option:"
+    },
+    {
+      "n": 21,
+      "unit_id": "u12",
+      "anchor_segment_id": "s21",
+      "text": "```js\nconst response = await fetch(\"https:"
+    },
+    {
+      "n": 22,
+      "unit_id": "u12",
+      "anchor_segment_id": "s22",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 23,
+      "unit_id": "u12",
+      "anchor_segment_id": "s23",
+      "text": "\"POST\",\n  body:"
+    },
+    {
+      "n": 24,
+      "unit_id": "u12",
+      "anchor_segment_id": "s24",
+      "text": "JSON.stringify({ username:"
+    },
+    {
+      "n": 25,
+      "unit_id": "u12",
+      "anchor_segment_id": "s25",
+      "text": "\"example\" }),\n  // …\n});"
+    },
+    {
+      "n": 26,
+      "unit_id": "u12",
+      "anchor_segment_id": "s26",
+      "text": "```"
+    },
+    {
+      "n": 27,
+      "unit_id": "u13",
+      "anchor_segment_id": "s27",
+      "text": "You can supply the body as an instance of any of the following types:"
+    },
+    {
+      "n": 28,
+      "unit_id": "u14",
+      "anchor_segment_id": "s28",
+      "text": "- a string\n- {{jsxref(\"ArrayBuffer\")}}\n- {{jsxref(\"TypedArray\")}}\n- {{jsxref(\"DataView\")}}\n- {{domxref(\"Blob\")}}\n- {{domxref(\"File\")}}\n- {{domxref(\"URLSearchParams\")}}\n- {{domxref(\"FormData\")}}\n- {{domxref(\"ReadableStream\")}}"
+    },
+    {
+      "n": 29,
+      "unit_id": "u15",
+      "anchor_segment_id": "s29",
+      "text": "Other objects are converted to strings using their `toString()` method."
+    },
+    {
+      "n": 30,
+      "unit_id": "u15",
+      "anchor_segment_id": "s30",
+      "text": "For example, you can use a {{domxref(\"URLSearchParams\")}} object to encode form data (see [setting headers](#setting_headers) for more information):"
+    },
+    {
+      "n": 31,
+      "unit_id": "u16",
+      "anchor_segment_id": "s31",
+      "text": "```js\nconst response = await fetch(\"https:"
+    },
+    {
+      "n": 32,
+      "unit_id": "u16",
+      "anchor_segment_id": "s32",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 33,
+      "unit_id": "u16",
+      "anchor_segment_id": "s33",
+      "text": "\"POST\",\n  headers:"
+    },
+    {
+      "n": 34,
+      "unit_id": "u16",
+      "anchor_segment_id": "s34",
+      "text": "{\n    \"Content-Type\":"
+    },
+    {
+      "n": 35,
+      "unit_id": "u16",
+      "anchor_segment_id": "s35",
+      "text": "\"application/x-www-form-urlencoded\",\n  },\n  // Automatically converted to \"username=example&password=password\"\n  body:"
+    },
+    {
+      "n": 36,
+      "unit_id": "u16",
+      "anchor_segment_id": "s36",
+      "text": "new URLSearchParams({ username:"
+    },
+    {
+      "n": 37,
+      "unit_id": "u16",
+      "anchor_segment_id": "s37",
+      "text": "\"example\", password:"
+    },
+    {
+      "n": 38,
+      "unit_id": "u16",
+      "anchor_segment_id": "s38",
+      "text": "\"password\" }),\n  // …\n});"
+    },
+    {
+      "n": 39,
+      "unit_id": "u16",
+      "anchor_segment_id": "s39",
+      "text": "```"
+    },
+    {
+      "n": 40,
+      "unit_id": "u17",
+      "anchor_segment_id": "s40",
+      "text": "Note that just like response bodies, request bodies are streams,"
+    },
+    {
+      "n": 41,
+      "unit_id": "u17",
+      "anchor_segment_id": "s41",
+      "text": "and making the request reads the stream,"
+    },
+    {
+      "n": 42,
+      "unit_id": "u17",
+      "anchor_segment_id": "s42",
+      "text": "so if a request contains a body, you can't make it twice:"
+    },
+    {
+      "n": 43,
+      "unit_id": "u18",
+      "anchor_segment_id": "s43",
+      "text": "```js example-bad\nconst request = new Request(\"https:"
+    },
+    {
+      "n": 44,
+      "unit_id": "u18",
+      "anchor_segment_id": "s44",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 45,
+      "unit_id": "u18",
+      "anchor_segment_id": "s45",
+      "text": "\"POST\",\n  body:"
+    },
+    {
+      "n": 46,
+      "unit_id": "u18",
+      "anchor_segment_id": "s46",
+      "text": "JSON.stringify({ username:"
+    },
+    {
+      "n": 47,
+      "unit_id": "u18",
+      "anchor_segment_id": "s47",
+      "text": "\"example\" }),\n});"
+    },
+    {
+      "n": 48,
+      "unit_id": "u19",
+      "anchor_segment_id": "s48",
+      "text": "const response1 = await fetch(request);"
+    },
+    {
+      "n": 49,
+      "unit_id": "u19",
+      "anchor_segment_id": "s49",
+      "text": "console.log(response1.status);"
+    },
+    {
+      "n": 50,
+      "unit_id": "u20",
+      "anchor_segment_id": "s50",
+      "text": "// Will throw: \"Body has already been consumed."
+    },
+    {
+      "n": 51,
+      "unit_id": "u20",
+      "anchor_segment_id": "s51",
+      "text": "\"\nconst response2 = await fetch(request);\nconsole.log(response2.status);\n```"
+    },
+    {
+      "n": 52,
+      "unit_id": "u21",
+      "anchor_segment_id": "s52",
+      "text": "Instead, you would need to {{domxref(\"Request.clone()\", \"create a clone\", \"\", \"nocode\")}} of the request before sending it:"
+    },
+    {
+      "n": 53,
+      "unit_id": "u22",
+      "anchor_segment_id": "s53",
+      "text": "```js\nconst request1 = new Request(\"https:"
+    },
+    {
+      "n": 54,
+      "unit_id": "u22",
+      "anchor_segment_id": "s54",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 55,
+      "unit_id": "u22",
+      "anchor_segment_id": "s55",
+      "text": "\"POST\",\n  body:"
+    },
+    {
+      "n": 56,
+      "unit_id": "u22",
+      "anchor_segment_id": "s56",
+      "text": "JSON.stringify({ username:"
+    },
+    {
+      "n": 57,
+      "unit_id": "u22",
+      "anchor_segment_id": "s57",
+      "text": "\"example\" }),\n});"
+    },
+    {
+      "n": 58,
+      "unit_id": "u23",
+      "anchor_segment_id": "s58",
+      "text": "const request2 = request1.clone();"
+    },
+    {
+      "n": 59,
+      "unit_id": "u24",
+      "anchor_segment_id": "s59",
+      "text": "const response1 = await fetch(request1);"
+    },
+    {
+      "n": 60,
+      "unit_id": "u24",
+      "anchor_segment_id": "s60",
+      "text": "console.log(response1.status);"
+    },
+    {
+      "n": 61,
+      "unit_id": "u25",
+      "anchor_segment_id": "s61",
+      "text": "const response2 = await fetch(request2);"
+    },
+    {
+      "n": 62,
+      "unit_id": "u25",
+      "anchor_segment_id": "s62",
+      "text": "console.log(response2.status);"
+    },
+    {
+      "n": 63,
+      "unit_id": "u25",
+      "anchor_segment_id": "s63",
+      "text": "```"
+    },
+    {
+      "n": 64,
+      "unit_id": "u26",
+      "anchor_segment_id": "s64",
+      "text": "See [Locked and disturbed streams](#locked_and_disturbed_streams) for more information."
+    },
+    {
+      "n": 65,
+      "unit_id": "u27",
+      "anchor_segment_id": "s65",
+      "text": "### Setting headers"
+    },
+    {
+      "n": 66,
+      "unit_id": "u28",
+      "anchor_segment_id": "s66",
+      "text": "Request headers give the server information about the request: for example, in a `POST` request, the {{httpheader(\"Content-Type\")}} header tells the server the format of the request's body."
+    },
+    {
+      "n": 67,
+      "unit_id": "u29",
+      "anchor_segment_id": "s67",
+      "text": "To set request headers, assign them to the `headers` option."
+    },
+    {
+      "n": 68,
+      "unit_id": "u30",
+      "anchor_segment_id": "s68",
+      "text": "You can pass an object literal here containing `header-name:"
+    },
+    {
+      "n": 69,
+      "unit_id": "u30",
+      "anchor_segment_id": "s69",
+      "text": "header-value` properties:"
+    },
+    {
+      "n": 70,
+      "unit_id": "u31",
+      "anchor_segment_id": "s70",
+      "text": "```js\nconst response = await fetch(\"https:"
+    },
+    {
+      "n": 71,
+      "unit_id": "u31",
+      "anchor_segment_id": "s71",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 72,
+      "unit_id": "u31",
+      "anchor_segment_id": "s72",
+      "text": "\"POST\",\n  headers:"
+    },
+    {
+      "n": 73,
+      "unit_id": "u31",
+      "anchor_segment_id": "s73",
+      "text": "{\n    \"Content-Type\":"
+    },
+    {
+      "n": 74,
+      "unit_id": "u31",
+      "anchor_segment_id": "s74",
+      "text": "\"application/json\",\n  },\n  body:"
+    },
+    {
+      "n": 75,
+      "unit_id": "u31",
+      "anchor_segment_id": "s75",
+      "text": "JSON.stringify({ username:"
+    },
+    {
+      "n": 76,
+      "unit_id": "u31",
+      "anchor_segment_id": "s76",
+      "text": "\"example\" }),\n  // …\n});"
+    },
+    {
+      "n": 77,
+      "unit_id": "u31",
+      "anchor_segment_id": "s77",
+      "text": "```"
+    },
+    {
+      "n": 78,
+      "unit_id": "u32",
+      "anchor_segment_id": "s78",
+      "text": "Alternatively, you can construct a {{domxref(\"Headers\")}} object, add headers to that object using {{domxref(\"Headers.append()\")}}, then assign the `Headers` object to the `headers` option:"
+    },
+    {
+      "n": 79,
+      "unit_id": "u33",
+      "anchor_segment_id": "s79",
+      "text": "```js\nconst myHeaders = new Headers();"
+    },
+    {
+      "n": 80,
+      "unit_id": "u33",
+      "anchor_segment_id": "s80",
+      "text": "myHeaders.append(\"Content-Type\", \"application/json\");"
+    },
+    {
+      "n": 81,
+      "unit_id": "u34",
+      "anchor_segment_id": "s81",
+      "text": "const response = await fetch(\"https:"
+    },
+    {
+      "n": 82,
+      "unit_id": "u34",
+      "anchor_segment_id": "s82",
+      "text": "//example.org/post\", {\n  method:"
+    },
+    {
+      "n": 83,
+      "unit_id": "u34",
+      "anchor_segment_id": "s83",
+      "text": "\"POST\",\n  headers:"
+    },
+    {
+      "n": 84,
+      "unit_id": "u34",
+      "anchor_segment_id": "s84",
+      "text": "myHeaders,\n  body:"
+    },
+    {
+      "n": 85,
+      "unit_id": "u34",
+      "anchor_segment_id": "s85",
+      "text": "JSON.stringify({ username:"
+    },
+    {
+      "n": 86,
+      "unit_id": "u34",
+      "anchor_segment_id": "s86",
+      "text": "\"example\" }),\n  // …\n});"
+    },
+    {
+      "n": 87,
+      "unit_id": "u34",
+      "anchor_segment_id": "s87",
+      "text": "```"
+    },
+    {
+      "n": 88,
+      "unit_id": "u35",
+      "anchor_segment_id": "s88",
+      "text": "Compared to using plain objects, the `Headers` object provides some additional input sanitization."
+    },
+    {
+      "n": 89,
+      "unit_id": "u35",
+      "anchor_segment_id": "s89",
+      "text": "For example, it normalizes header names to lowercase, strips leading and trailing whitespace from header values, and prevents certain headers from being set."
+    },
+    {
+      "n": 90,
+      "unit_id": "u35",
+      "anchor_segment_id": "s90",
+      "text": "Many headers are set automatically by the browser and can't be set by a script: these are called {{glossary(\"Forbidden request header\", \"Forbidden request headers\")}}."
+    },
+    {
+      "n": 91,
+      "unit_id": "u35",
+      "anchor_segment_id": "s91",
+      "text": "If the {{domxref(\"Request.mode\", \"mode\")}} option is set to `no-cors`, then the set of permitted headers is further restricted."
+    },
+    {
+      "n": 92,
+      "unit_id": "u36",
+      "anchor_segment_id": "s92",
+      "text": "### Sending data in a GET request"
+    },
+    {
+      "n": 93,
+      "unit_id": "u37",
+      "anchor_segment_id": "s93",
+      "text": "`GET` requests don't have a body, but you can still send data to the server by appending it to the URL as a query string."
+    },
+    {
+      "n": 94,
+      "unit_id": "u37",
+      "anchor_segment_id": "s94",
+      "text": "This is a common way to send form data to the server."
+    },
+    {
+      "n": 95,
+      "unit_id": "u37",
+      "anchor_segment_id": "s95",
+      "text": "You can do this by using {{domxref(\"URLSearchParams\")}} to encode the data, and then appending it to the URL:"
+    },
+    {
+      "n": 96,
+      "unit_id": "u38",
+      "anchor_segment_id": "s96",
+      "text": "```js\nconst params = new URLSearchParams();"
+    },
+    {
+      "n": 97,
+      "unit_id": "u38",
+      "anchor_segment_id": "s97",
+      "text": "params.append(\"username\", \"example\");"
+    },
+    {
+      "n": 98,
+      "unit_id": "u39",
+      "anchor_segment_id": "s98",
+      "text": "// GET request sent to https:"
+    },
+    {
+      "n": 99,
+      "unit_id": "u39",
+      "anchor_segment_id": "s99",
+      "text": "//example.org/login?username=example\nconst response = await fetch(`https:"
+    },
+    {
+      "n": 100,
+      "unit_id": "u39",
+      "anchor_segment_id": "s100",
+      "text": "//example.org/login?${params}`);"
+    },
+    {
+      "n": 101,
+      "unit_id": "u39",
+      "anchor_segment_id": "s101",
+      "text": "```"
+    },
+    {
+      "n": 102,
+      "unit_id": "u40",
+      "anchor_segment_id": "s102",
+      "text": "### Making cross-origin requests"
+    },
+    {
+      "n": 103,
+      "unit_id": "u41",
+      "anchor_segment_id": "s103",
+      "text": "Whether a request can be made cross-origin or not is determined by the value of the {{domxref(\"RequestInit\", \"\", \"mode\")}} option."
+    },
+    {
+      "n": 104,
+      "unit_id": "u41",
+      "anchor_segment_id": "s104",
+      "text": "This may take one of three values: `cors`, `same-origin`, or `no-cors`."
+    },
+    {
+      "n": 105,
+      "unit_id": "u42",
+      "anchor_segment_id": "s105",
+      "text": "- For fetch requests the default value of `mode` is `cors`, meaning that if the request is cross-origin then it will use the [Cross-Origin Resource Sharing (CORS)](/en-US/docs/Web/HTTP/Guides/CORS) mechanism."
+    },
+    {
+      "n": 106,
+      "unit_id": "u42",
+      "anchor_segment_id": "s106",
+      "text": "This means that:\n  - if the request is a [simple request](/en-US/docs/Web/HTTP/Guides/CORS#simple_requests), then the request will always be sent, but the server must respond with the correct {{httpheader(\"Access-Control-Allow-Origin\")}} header or the browser will not share the response with the caller.\n  - if the request is not a simple request, then the browser will send a [preflighted request](/en-US/docs/Web/HTTP/Guides/CORS#preflighted_requests) to check that the server understands CORS and allows the request, and the real request will not be sent unless the server responds to the preflighted request with the appropriate CORS headers."
+    },
+    {
+      "n": 107,
+      "unit_id": "u43",
+      "anchor_segment_id": "s107",
+      "text": "- Setting `mode` to `same-origin` disallows cross-origin requests completely."
+    },
+    {
+      "n": 108,
+      "unit_id": "u44",
+      "anchor_segment_id": "s108",
+      "text": "- Setting `mode` to `no-cors` disables CORS for cross-origin requests."
+    },
+    {
+      "n": 109,
+      "unit_id": "u44",
+      "anchor_segment_id": "s109",
+      "text": "This restricts the headers that may be set, and restricts methods to GET, HEAD, and POST."
+    },
+    {
+      "n": 110,
+      "unit_id": "u44",
+      "anchor_segment_id": "s110",
+      "text": "The response is _opaque_, meaning that its headers and body are not available to JavaScript."
+    },
+    {
+      "n": 111,
+      "unit_id": "u44",
+      "anchor_segment_id": "s111",
+      "text": "Most of the time a website should not use `no-cors`: the main application of it is for certain service worker use cases."
+    },
+    {
+      "n": 112,
+      "unit_id": "u45",
+      "anchor_segment_id": "s112",
+      "text": "See the reference documentation for {{domxref(\"RequestInit\", \"\", \"mode\")}} for more details."
+    },
+    {
+      "n": 113,
+      "unit_id": "u46",
+      "anchor_segment_id": "s113",
+      "text": "### Including credentials"
+    },
+    {
+      "n": 114,
+      "unit_id": "u47",
+      "anchor_segment_id": "s114",
+      "text": "In the context of the Fetch API, a credential is an extra piece of data sent along with the request that the server may use to authenticate the user."
+    },
+    {
+      "n": 115,
+      "unit_id": "u47",
+      "anchor_segment_id": "s115",
+      "text": "All the following items are considered to be credentials:"
+    },
+    {
+      "n": 116,
+      "unit_id": "u48",
+      "anchor_segment_id": "s116",
+      "text": "- HTTP cookies\n- {{glossary(\"TLS\")}} client certificates\n- The {{httpheader(\"Authorization\")}} and {{httpheader(\"Proxy-Authorization\")}} headers."
+    },
+    {
+      "n": 117,
+      "unit_id": "u49",
+      "anchor_segment_id": "s117",
+      "text": "By default, credentials are only included in same-origin requests."
+    },
+    {
+      "n": 118,
+      "unit_id": "u49",
+      "anchor_segment_id": "s118",
+      "text": "To customize this behavior, as well as to control whether the browser respects any **`Set-Cookie`** response headers, set the [`credentials`](/en-US/docs/Web/API/RequestInit#credentials) option, which can take one of the following three values:"
+    },
+    {
+      "n": 119,
+      "unit_id": "u50",
+      "anchor_segment_id": "s119",
+      "text": "- `omit`: never send credentials in the request or include credentials in the response.\n- `same-origin` (the default): only send and include credentials for same-origin requests.\n- `include`: always include credentials, even cross-origin."
+    },
+    {
+      "n": 120,
+      "unit_id": "u51",
+      "anchor_segment_id": "s120",
+      "text": "Note that if a cookie's [`SameSite`](/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#samesitesamesite-value) attribute is set to `Strict` or `Lax`, then the cookie will not be sent cross-site, even if `credentials` is set to `include`."
+    },
+    {
+      "n": 121,
+      "unit_id": "u52",
+      "anchor_segment_id": "s121",
+      "text": "Including credentials in cross-origin requests can make a site vulnerable to {{glossary(\"CSRF\")}} attacks, so even if `credentials` is set to `include`, the server must also agree to their inclusion by including the {{httpheader(\"Access-Control-Allow-Credentials\")}} header in its response."
+    },
+    {
+      "n": 122,
+      "unit_id": "u52",
+      "anchor_segment_id": "s122",
+      "text": "Additionally, in this situation the server must explicitly specify the client's origin in the {{httpheader(\"Access-Control-Allow-Origin\")}} response header (that is, `*` is not allowed)."
+    },
+    {
+      "n": 123,
+      "unit_id": "u53",
+      "anchor_segment_id": "s123",
+      "text": "This means that if `credentials` is set to `include` and the request is cross-origin, then:"
+    },
+    {
+      "n": 124,
+      "unit_id": "u54",
+      "anchor_segment_id": "s124",
+      "text": "- If the request is a [simple request](/en-US/docs/Web/HTTP/Guides/CORS#simple_requests), then the request will be sent with credentials, but the server must set the {{httpheader(\"Access-Control-Allow-Credentials\")}} and {{httpheader(\"Access-Control-Allow-Origin\")}} response headers, or the browser will return a network error to the caller."
+    },
+    {
+      "n": 125,
+      "unit_id": "u54",
+      "anchor_segment_id": "s125",
+      "text": "If the server does set the correct headers, then the response, including credentials, will be delivered to the caller."
+    },
+    {
+      "n": 126,
+      "unit_id": "u55",
+      "anchor_segment_id": "s126",
+      "text": "- If the request is not a simple request, then the browser will send a [preflighted request](/en-US/docs/Web/HTTP/Guides/CORS#preflighted_requests) without credentials, and the server must set the {{httpheader(\"Access-Control-Allow-Credentials\")}} and {{httpheader(\"Access-Control-Allow-Origin\")}} response headers, or the browser will return a network error to the caller."
+    },
+    {
+      "n": 127,
+      "unit_id": "u55",
+      "anchor_segment_id": "s127",
+      "text": "If the server does set the correct headers, then the browser will follow up with the real request, including credentials, and will deliver the real response, including credentials, to the caller."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "## Making a request",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2",
+      "sentence_ns": [
+        2
+      ],
+      "text": "To make a request, call `fetch()`, passing in:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs3_s5",
+      "sentence_ns": [
+        3,
+        4,
+        5
+      ],
+      "text": "1. a definition of the resource to fetch. This can be any one of:\n   - a string containing the URL\n   - an object, such as an instance of {{domxref(\"URL\")}}, which has a {{glossary(\"stringifier\")}} that produces a string containing the URL\n   - a {{domxref(\"Request\")}} instance\n2. optionally, an object containing options to configure the request.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs6_s7",
+      "sentence_ns": [
+        6,
+        7
+      ],
+      "text": "In this section we'll look at some of the most commonly-used options. To read about all the options that can be given, see the [`fetch()`](/en-US/docs/Web/API/Window/fetch) reference page.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs8",
+      "sentence_ns": [
+        8
+      ],
+      "text": "### Setting the method",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs9_s10",
+      "sentence_ns": [
+        9,
+        10
+      ],
+      "text": "By default, `fetch()` makes a {{httpmethod(\"GET\")}} request, but you can use the `method` option to use a different [request method](/en-US/docs/Web/HTTP/Reference/Methods):",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs11_s13",
+      "sentence_ns": [
+        11,
+        12,
+        13
+      ],
+      "text": "```js\nconst response = await fetch(\"https: //example.org/post\", {\n  method: \"POST\",\n  // …\n});",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs14",
+      "sentence_ns": [
+        14
+      ],
+      "text": "```",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs15",
+      "sentence_ns": [
+        15
+      ],
+      "text": "If the `mode` option is set to `no-cors`, then `method` must be one of `GET`, `POST` or `HEAD`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs16",
+      "sentence_ns": [
+        16
+      ],
+      "text": "### Setting a body",
+      "order_index": 1
+    },
+    {
+      "group_id": "u10_gs17_s19",
+      "sentence_ns": [
+        17,
+        18,
+        19
+      ],
+      "text": "The request body is the payload of the request: it's the thing the client is sending to the server. You cannot include a body with `GET` requests, but it's useful for requests that send content to the server, such as {{httpmethod(\"POST\")}} or {{httpmethod(\"PUT\")}} requests. For example, if you want to upload a file to the server, you might make a `POST` request and include the file as the request body.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs20",
+      "sentence_ns": [
+        20
+      ],
+      "text": "To set a request body, pass it as the `body` option:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u12_gs21_s23",
+      "sentence_ns": [
+        21,
+        22,
+        23
+      ],
+      "text": "```js\nconst response = await fetch(\"https: //example.org/post\", {\n  method: \"POST\",\n  body:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u12_gs24_s26",
+      "sentence_ns": [
+        24,
+        25,
+        26
+      ],
+      "text": "JSON.stringify({ username: \"example\" }),\n  // …\n}); ```",
+      "order_index": 2
+    },
+    {
+      "group_id": "u13_gs27",
+      "sentence_ns": [
+        27
+      ],
+      "text": "You can supply the body as an instance of any of the following types:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u14_gs28",
+      "sentence_ns": [
+        28
+      ],
+      "text": "- a string\n- {{jsxref(\"ArrayBuffer\")}}\n- {{jsxref(\"TypedArray\")}}\n- {{jsxref(\"DataView\")}}\n- {{domxref(\"Blob\")}}\n- {{domxref(\"File\")}}\n- {{domxref(\"URLSearchParams\")}}\n- {{domxref(\"FormData\")}}\n- {{domxref(\"ReadableStream\")}}",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs29_s30",
+      "sentence_ns": [
+        29,
+        30
+      ],
+      "text": "Other objects are converted to strings using their `toString()` method. For example, you can use a {{domxref(\"URLSearchParams\")}} object to encode form data (see [setting headers](#setting_headers) for more information):",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs31_s33",
+      "sentence_ns": [
+        31,
+        32,
+        33
+      ],
+      "text": "```js\nconst response = await fetch(\"https: //example.org/post\", {\n  method: \"POST\",\n  headers:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs34_s36",
+      "sentence_ns": [
+        34,
+        35,
+        36
+      ],
+      "text": "{\n    \"Content-Type\": \"application/x-www-form-urlencoded\",\n  },\n  // Automatically converted to \"username=example&password=password\"\n  body: new URLSearchParams({ username:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u16_gs37_s39",
+      "sentence_ns": [
+        37,
+        38,
+        39
+      ],
+      "text": "\"example\", password: \"password\" }),\n  // …\n}); ```",
+      "order_index": 3
+    },
+    {
+      "group_id": "u17_gs40_s42",
+      "sentence_ns": [
+        40,
+        41,
+        42
+      ],
+      "text": "Note that just like response bodies, request bodies are streams, and making the request reads the stream, so if a request contains a body, you can't make it twice:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs43_s45",
+      "sentence_ns": [
+        43,
+        44,
+        45
+      ],
+      "text": "```js example-bad\nconst request = new Request(\"https: //example.org/post\", {\n  method: \"POST\",\n  body:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs46_s47",
+      "sentence_ns": [
+        46,
+        47
+      ],
+      "text": "JSON.stringify({ username: \"example\" }),\n});",
+      "order_index": 2
+    },
+    {
+      "group_id": "u19_gs48_s49",
+      "sentence_ns": [
+        48,
+        49
+      ],
+      "text": "const response1 = await fetch(request); console.log(response1.status);",
+      "order_index": 1
+    },
+    {
+      "group_id": "u20_gs50_s51",
+      "sentence_ns": [
+        50,
+        51
+      ],
+      "text": "// Will throw: \"Body has already been consumed. \"\nconst response2 = await fetch(request);\nconsole.log(response2.status);\n```",
+      "order_index": 1
+    },
+    {
+      "group_id": "u21_gs52",
+      "sentence_ns": [
+        52
+      ],
+      "text": "Instead, you would need to {{domxref(\"Request.clone()\", \"create a clone\", \"\", \"nocode\")}} of the request before sending it:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs53_s55",
+      "sentence_ns": [
+        53,
+        54,
+        55
+      ],
+      "text": "```js\nconst request1 = new Request(\"https: //example.org/post\", {\n  method: \"POST\",\n  body:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs56_s57",
+      "sentence_ns": [
+        56,
+        57
+      ],
+      "text": "JSON.stringify({ username: \"example\" }),\n});",
+      "order_index": 2
+    },
+    {
+      "group_id": "u23_gs58",
+      "sentence_ns": [
+        58
+      ],
+      "text": "const request2 = request1.clone();",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs59_s60",
+      "sentence_ns": [
+        59,
+        60
+      ],
+      "text": "const response1 = await fetch(request1); console.log(response1.status);",
+      "order_index": 1
+    },
+    {
+      "group_id": "u25_gs61_s63",
+      "sentence_ns": [
+        61,
+        62,
+        63
+      ],
+      "text": "const response2 = await fetch(request2); console.log(response2.status); ```",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs64",
+      "sentence_ns": [
+        64
+      ],
+      "text": "See [Locked and disturbed streams](#locked_and_disturbed_streams) for more information.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u27_gs65",
+      "sentence_ns": [
+        65
+      ],
+      "text": "### Setting headers",
+      "order_index": 1
+    },
+    {
+      "group_id": "u28_gs66",
+      "sentence_ns": [
+        66
+      ],
+      "text": "Request headers give the server information about the request: for example, in a `POST` request, the {{httpheader(\"Content-Type\")}} header tells the server the format of the request's body.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u29_gs67",
+      "sentence_ns": [
+        67
+      ],
+      "text": "To set request headers, assign them to the `headers` option.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u30_gs68_s69",
+      "sentence_ns": [
+        68,
+        69
+      ],
+      "text": "You can pass an object literal here containing `header-name: header-value` properties:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u31_gs70_s72",
+      "sentence_ns": [
+        70,
+        71,
+        72
+      ],
+      "text": "```js\nconst response = await fetch(\"https: //example.org/post\", {\n  method: \"POST\",\n  headers:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u31_gs73_s75",
+      "sentence_ns": [
+        73,
+        74,
+        75
+      ],
+      "text": "{\n    \"Content-Type\": \"application/json\",\n  },\n  body: JSON.stringify({ username:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u31_gs76_s77",
+      "sentence_ns": [
+        76,
+        77
+      ],
+      "text": "\"example\" }),\n  // …\n}); ```",
+      "order_index": 3
+    },
+    {
+      "group_id": "u32_gs78",
+      "sentence_ns": [
+        78
+      ],
+      "text": "Alternatively, you can construct a {{domxref(\"Headers\")}} object, add headers to that object using {{domxref(\"Headers.append()\")}}, then assign the `Headers` object to the `headers` option:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs79_s80",
+      "sentence_ns": [
+        79,
+        80
+      ],
+      "text": "```js\nconst myHeaders = new Headers(); myHeaders.append(\"Content-Type\", \"application/json\");",
+      "order_index": 1
+    },
+    {
+      "group_id": "u34_gs81_s83",
+      "sentence_ns": [
+        81,
+        82,
+        83
+      ],
+      "text": "const response = await fetch(\"https: //example.org/post\", {\n  method: \"POST\",\n  headers:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u34_gs84_s86",
+      "sentence_ns": [
+        84,
+        85,
+        86
+      ],
+      "text": "myHeaders,\n  body: JSON.stringify({ username: \"example\" }),\n  // …\n});",
+      "order_index": 2
+    },
+    {
+      "group_id": "u34_gs87",
+      "sentence_ns": [
+        87
+      ],
+      "text": "```",
+      "order_index": 3
+    },
+    {
+      "group_id": "u35_gs88_s90",
+      "sentence_ns": [
+        88,
+        89,
+        90
+      ],
+      "text": "Compared to using plain objects, the `Headers` object provides some additional input sanitization. For example, it normalizes header names to lowercase, strips leading and trailing whitespace from header values, and prevents certain headers from being set. Many headers are set automatically by the browser and can't be set by a script: these are called {{glossary(\"Forbidden request header\", \"Forbidden request headers\")}}.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u35_gs91",
+      "sentence_ns": [
+        91
+      ],
+      "text": "If the {{domxref(\"Request.mode\", \"mode\")}} option is set to `no-cors`, then the set of permitted headers is further restricted.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u36_gs92",
+      "sentence_ns": [
+        92
+      ],
+      "text": "### Sending data in a GET request",
+      "order_index": 1
+    },
+    {
+      "group_id": "u37_gs93_s95",
+      "sentence_ns": [
+        93,
+        94,
+        95
+      ],
+      "text": "`GET` requests don't have a body, but you can still send data to the server by appending it to the URL as a query string. This is a common way to send form data to the server. You can do this by using {{domxref(\"URLSearchParams\")}} to encode the data, and then appending it to the URL:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u38_gs96_s97",
+      "sentence_ns": [
+        96,
+        97
+      ],
+      "text": "```js\nconst params = new URLSearchParams(); params.append(\"username\", \"example\");",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs98_s100",
+      "sentence_ns": [
+        98,
+        99,
+        100
+      ],
+      "text": "// GET request sent to https: //example.org/login?username=example\nconst response = await fetch(`https: //example.org/login?${params}`);",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs101",
+      "sentence_ns": [
+        101
+      ],
+      "text": "```",
+      "order_index": 2
+    },
+    {
+      "group_id": "u40_gs102",
+      "sentence_ns": [
+        102
+      ],
+      "text": "### Making cross-origin requests",
+      "order_index": 1
+    },
+    {
+      "group_id": "u41_gs103_s104",
+      "sentence_ns": [
+        103,
+        104
+      ],
+      "text": "Whether a request can be made cross-origin or not is determined by the value of the {{domxref(\"RequestInit\", \"\", \"mode\")}} option. This may take one of three values: `cors`, `same-origin`, or `no-cors`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u42_gs105_s106",
+      "sentence_ns": [
+        105,
+        106
+      ],
+      "text": "- For fetch requests the default value of `mode` is `cors`, meaning that if the request is cross-origin then it will use the [Cross-Origin Resource Sharing (CORS)](/en-US/docs/Web/HTTP/Guides/CORS) mechanism. This means that:\n  - if the request is a [simple request](/en-US/docs/Web/HTTP/Guides/CORS#simple_requests), then the request will always be sent, but the server must respond with the correct {{httpheader(\"Access-Control-Allow-Origin\")}} header or the browser will not share the response with the caller.\n  - if the request is not a simple request, then the browser will send a [preflighted request](/en-US/docs/Web/HTTP/Guides/CORS#preflighted_requests) to check that the server understands CORS and allows the request, and the real request will not be sent unless the server responds to the preflighted request with the appropriate CORS headers.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u43_gs107",
+      "sentence_ns": [
+        107
+      ],
+      "text": "- Setting `mode` to `same-origin` disallows cross-origin requests completely.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u44_gs108_s110",
+      "sentence_ns": [
+        108,
+        109,
+        110
+      ],
+      "text": "- Setting `mode` to `no-cors` disables CORS for cross-origin requests. This restricts the headers that may be set, and restricts methods to GET, HEAD, and POST. The response is _opaque_, meaning that its headers and body are not available to JavaScript.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u44_gs111",
+      "sentence_ns": [
+        111
+      ],
+      "text": "Most of the time a website should not use `no-cors`: the main application of it is for certain service worker use cases.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u45_gs112",
+      "sentence_ns": [
+        112
+      ],
+      "text": "See the reference documentation for {{domxref(\"RequestInit\", \"\", \"mode\")}} for more details.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u46_gs113",
+      "sentence_ns": [
+        113
+      ],
+      "text": "### Including credentials",
+      "order_index": 1
+    },
+    {
+      "group_id": "u47_gs114_s115",
+      "sentence_ns": [
+        114,
+        115
+      ],
+      "text": "In the context of the Fetch API, a credential is an extra piece of data sent along with the request that the server may use to authenticate the user. All the following items are considered to be credentials:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u48_gs116",
+      "sentence_ns": [
+        116
+      ],
+      "text": "- HTTP cookies\n- {{glossary(\"TLS\")}} client certificates\n- The {{httpheader(\"Authorization\")}} and {{httpheader(\"Proxy-Authorization\")}} headers.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u49_gs117_s118",
+      "sentence_ns": [
+        117,
+        118
+      ],
+      "text": "By default, credentials are only included in same-origin requests. To customize this behavior, as well as to control whether the browser respects any **`Set-Cookie`** response headers, set the [`credentials`](/en-US/docs/Web/API/RequestInit#credentials) option, which can take one of the following three values:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u50_gs119",
+      "sentence_ns": [
+        119
+      ],
+      "text": "- `omit`: never send credentials in the request or include credentials in the response.\n- `same-origin` (the default): only send and include credentials for same-origin requests.\n- `include`: always include credentials, even cross-origin.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u51_gs120",
+      "sentence_ns": [
+        120
+      ],
+      "text": "Note that if a cookie's [`SameSite`](/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#samesitesamesite-value) attribute is set to `Strict` or `Lax`, then the cookie will not be sent cross-site, even if `credentials` is set to `include`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u52_gs121_s122",
+      "sentence_ns": [
+        121,
+        122
+      ],
+      "text": "Including credentials in cross-origin requests can make a site vulnerable to {{glossary(\"CSRF\")}} attacks, so even if `credentials` is set to `include`, the server must also agree to their inclusion by including the {{httpheader(\"Access-Control-Allow-Credentials\")}} header in its response. Additionally, in this situation the server must explicitly specify the client's origin in the {{httpheader(\"Access-Control-Allow-Origin\")}} response header (that is, `*` is not allowed).",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs123",
+      "sentence_ns": [
+        123
+      ],
+      "text": "This means that if `credentials` is set to `include` and the request is cross-origin, then:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u54_gs124_s125",
+      "sentence_ns": [
+        124,
+        125
+      ],
+      "text": "- If the request is a [simple request](/en-US/docs/Web/HTTP/Guides/CORS#simple_requests), then the request will be sent with credentials, but the server must set the {{httpheader(\"Access-Control-Allow-Credentials\")}} and {{httpheader(\"Access-Control-Allow-Origin\")}} response headers, or the browser will return a network error to the caller. If the server does set the correct headers, then the response, including credentials, will be delivered to the caller.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u55_gs126_s127",
+      "sentence_ns": [
+        126,
+        127
+      ],
+      "text": "- If the request is not a simple request, then the browser will send a [preflighted request](/en-US/docs/Web/HTTP/Guides/CORS#preflighted_requests) without credentials, and the server must set the {{httpheader(\"Access-Control-Allow-Credentials\")}} and {{httpheader(\"Access-Control-Allow-Origin\")}} response headers, or the browser will return a network error to the caller. If the server does set the correct headers, then the browser will follow up with the real request, including credentials, and will deliver the real response, including credentials, to the caller.",
+      "order_index": 1
+    }
+  ],
+  "category": "structural"
+}

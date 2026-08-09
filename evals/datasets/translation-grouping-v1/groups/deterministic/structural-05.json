@@ -1,0 +1,1871 @@
+{
+  "id": "structural-05",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": ".. _tut-structures:"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "***************\nData Structures\n***************"
+    },
+    {
+      "n": 3,
+      "unit_id": "u3",
+      "anchor_segment_id": "s3",
+      "text": "This chapter describes some things you've learned about already in more detail,\nand adds some new things as well."
+    },
+    {
+      "n": 4,
+      "unit_id": "u4",
+      "anchor_segment_id": "s4",
+      "text": ".. _tut-morelists:"
+    },
+    {
+      "n": 5,
+      "unit_id": "u5",
+      "anchor_segment_id": "s5",
+      "text": "More on Lists\n============="
+    },
+    {
+      "n": 6,
+      "unit_id": "u6",
+      "anchor_segment_id": "s6",
+      "text": "The :ref:`list <typesseq-list>` data type has some more methods."
+    },
+    {
+      "n": 7,
+      "unit_id": "u6",
+      "anchor_segment_id": "s7",
+      "text": "Here are all\nof the methods of list objects:"
+    },
+    {
+      "n": 8,
+      "unit_id": "u7",
+      "anchor_segment_id": "s8",
+      "text": ".. method:"
+    },
+    {
+      "n": 9,
+      "unit_id": "u7",
+      "anchor_segment_id": "s9",
+      "text": ":"
+    },
+    {
+      "n": 10,
+      "unit_id": "u7",
+      "anchor_segment_id": "s10",
+      "text": "list.append(value, /)\n   :"
+    },
+    {
+      "n": 11,
+      "unit_id": "u7",
+      "anchor_segment_id": "s11",
+      "text": "noindex:"
+    },
+    {
+      "n": 12,
+      "unit_id": "u8",
+      "anchor_segment_id": "s12",
+      "text": "Add an item to the end of the list."
+    },
+    {
+      "n": 13,
+      "unit_id": "u8",
+      "anchor_segment_id": "s13",
+      "text": "Similar to ``a[len(a):]"
+    },
+    {
+      "n": 14,
+      "unit_id": "u8",
+      "anchor_segment_id": "s14",
+      "text": "= [x]``."
+    },
+    {
+      "n": 15,
+      "unit_id": "u9",
+      "anchor_segment_id": "s15",
+      "text": ".. method:"
+    },
+    {
+      "n": 16,
+      "unit_id": "u9",
+      "anchor_segment_id": "s16",
+      "text": ":"
+    },
+    {
+      "n": 17,
+      "unit_id": "u9",
+      "anchor_segment_id": "s17",
+      "text": "list.extend(iterable, /)\n   :"
+    },
+    {
+      "n": 18,
+      "unit_id": "u9",
+      "anchor_segment_id": "s18",
+      "text": "noindex:"
+    },
+    {
+      "n": 19,
+      "unit_id": "u10",
+      "anchor_segment_id": "s19",
+      "text": "Extend the list by appending all the items from the iterable."
+    },
+    {
+      "n": 20,
+      "unit_id": "u10",
+      "anchor_segment_id": "s20",
+      "text": "Similar to\n   ``a[len(a):]"
+    },
+    {
+      "n": 21,
+      "unit_id": "u10",
+      "anchor_segment_id": "s21",
+      "text": "= iterable``."
+    },
+    {
+      "n": 22,
+      "unit_id": "u11",
+      "anchor_segment_id": "s22",
+      "text": ".. method:"
+    },
+    {
+      "n": 23,
+      "unit_id": "u11",
+      "anchor_segment_id": "s23",
+      "text": ":"
+    },
+    {
+      "n": 24,
+      "unit_id": "u11",
+      "anchor_segment_id": "s24",
+      "text": "list.insert(index, value, /)\n   :"
+    },
+    {
+      "n": 25,
+      "unit_id": "u11",
+      "anchor_segment_id": "s25",
+      "text": "noindex:"
+    },
+    {
+      "n": 26,
+      "unit_id": "u12",
+      "anchor_segment_id": "s26",
+      "text": "Insert an item at a given position."
+    },
+    {
+      "n": 27,
+      "unit_id": "u12",
+      "anchor_segment_id": "s27",
+      "text": "The first argument is the index of the\n   element before which to insert, so ``a.insert(0, x)`` inserts at the front of\n   the list, and ``a.insert(len(a), x)`` is equivalent to ``a.append(x)``."
+    },
+    {
+      "n": 28,
+      "unit_id": "u13",
+      "anchor_segment_id": "s28",
+      "text": ".. method:"
+    },
+    {
+      "n": 29,
+      "unit_id": "u13",
+      "anchor_segment_id": "s29",
+      "text": ":"
+    },
+    {
+      "n": 30,
+      "unit_id": "u13",
+      "anchor_segment_id": "s30",
+      "text": "list.remove(value, /)\n   :"
+    },
+    {
+      "n": 31,
+      "unit_id": "u13",
+      "anchor_segment_id": "s31",
+      "text": "noindex:"
+    },
+    {
+      "n": 32,
+      "unit_id": "u14",
+      "anchor_segment_id": "s32",
+      "text": "Remove the first item from the list whose value is equal to *value*."
+    },
+    {
+      "n": 33,
+      "unit_id": "u14",
+      "anchor_segment_id": "s33",
+      "text": "It raises a\n   :exc:`ValueError` if there is no such item."
+    },
+    {
+      "n": 34,
+      "unit_id": "u15",
+      "anchor_segment_id": "s34",
+      "text": ".. method:"
+    },
+    {
+      "n": 35,
+      "unit_id": "u15",
+      "anchor_segment_id": "s35",
+      "text": ":"
+    },
+    {
+      "n": 36,
+      "unit_id": "u15",
+      "anchor_segment_id": "s36",
+      "text": "list.pop(index=-1, /)\n   :"
+    },
+    {
+      "n": 37,
+      "unit_id": "u15",
+      "anchor_segment_id": "s37",
+      "text": "noindex:"
+    },
+    {
+      "n": 38,
+      "unit_id": "u16",
+      "anchor_segment_id": "s38",
+      "text": "Remove the item at the given position in the list, and return it."
+    },
+    {
+      "n": 39,
+      "unit_id": "u16",
+      "anchor_segment_id": "s39",
+      "text": "If no index\n   is specified, ``a.pop()`` removes and returns the last item in the list."
+    },
+    {
+      "n": 40,
+      "unit_id": "u16",
+      "anchor_segment_id": "s40",
+      "text": "It raises an :exc:`IndexError` if the list is empty or the index is\n   outside the list range."
+    },
+    {
+      "n": 41,
+      "unit_id": "u17",
+      "anchor_segment_id": "s41",
+      "text": ".. method:"
+    },
+    {
+      "n": 42,
+      "unit_id": "u17",
+      "anchor_segment_id": "s42",
+      "text": ":"
+    },
+    {
+      "n": 43,
+      "unit_id": "u17",
+      "anchor_segment_id": "s43",
+      "text": "list.clear()\n   :"
+    },
+    {
+      "n": 44,
+      "unit_id": "u17",
+      "anchor_segment_id": "s44",
+      "text": "noindex:"
+    },
+    {
+      "n": 45,
+      "unit_id": "u18",
+      "anchor_segment_id": "s45",
+      "text": "Remove all items from the list."
+    },
+    {
+      "n": 46,
+      "unit_id": "u18",
+      "anchor_segment_id": "s46",
+      "text": "Similar to ``del a[:]``."
+    },
+    {
+      "n": 47,
+      "unit_id": "u19",
+      "anchor_segment_id": "s47",
+      "text": ".. method:"
+    },
+    {
+      "n": 48,
+      "unit_id": "u19",
+      "anchor_segment_id": "s48",
+      "text": ":"
+    },
+    {
+      "n": 49,
+      "unit_id": "u19",
+      "anchor_segment_id": "s49",
+      "text": "list.index(value[, start[, stop]])\n   :"
+    },
+    {
+      "n": 50,
+      "unit_id": "u19",
+      "anchor_segment_id": "s50",
+      "text": "noindex:"
+    },
+    {
+      "n": 51,
+      "unit_id": "u20",
+      "anchor_segment_id": "s51",
+      "text": "Return zero-based index of the first occurrence of *value* in the list."
+    },
+    {
+      "n": 52,
+      "unit_id": "u20",
+      "anchor_segment_id": "s52",
+      "text": "Raises a :exc:`ValueError` if there is no such item."
+    },
+    {
+      "n": 53,
+      "unit_id": "u21",
+      "anchor_segment_id": "s53",
+      "text": "The optional arguments *start* and *end* are interpreted as in the slice\n   notation and are used to limit the search to a particular subsequence of\n   the list."
+    },
+    {
+      "n": 54,
+      "unit_id": "u21",
+      "anchor_segment_id": "s54",
+      "text": "The returned index is computed relative to the beginning of the full\n   sequence rather than the *start* argument."
+    },
+    {
+      "n": 55,
+      "unit_id": "u22",
+      "anchor_segment_id": "s55",
+      "text": ".. method:"
+    },
+    {
+      "n": 56,
+      "unit_id": "u22",
+      "anchor_segment_id": "s56",
+      "text": ":"
+    },
+    {
+      "n": 57,
+      "unit_id": "u22",
+      "anchor_segment_id": "s57",
+      "text": "list.count(value, /)\n   :"
+    },
+    {
+      "n": 58,
+      "unit_id": "u22",
+      "anchor_segment_id": "s58",
+      "text": "noindex:"
+    },
+    {
+      "n": 59,
+      "unit_id": "u23",
+      "anchor_segment_id": "s59",
+      "text": "Return the number of times *value* appears in the list."
+    },
+    {
+      "n": 60,
+      "unit_id": "u24",
+      "anchor_segment_id": "s60",
+      "text": ".. method:"
+    },
+    {
+      "n": 61,
+      "unit_id": "u24",
+      "anchor_segment_id": "s61",
+      "text": ":"
+    },
+    {
+      "n": 62,
+      "unit_id": "u24",
+      "anchor_segment_id": "s62",
+      "text": "list.sort(*, key=None, reverse=False)\n   :"
+    },
+    {
+      "n": 63,
+      "unit_id": "u24",
+      "anchor_segment_id": "s63",
+      "text": "noindex:"
+    },
+    {
+      "n": 64,
+      "unit_id": "u25",
+      "anchor_segment_id": "s64",
+      "text": "Sort the items of the list in place (the arguments can be used for sort\n   customization, see :func:`sorted` for their explanation)."
+    },
+    {
+      "n": 65,
+      "unit_id": "u26",
+      "anchor_segment_id": "s65",
+      "text": ".. method:"
+    },
+    {
+      "n": 66,
+      "unit_id": "u26",
+      "anchor_segment_id": "s66",
+      "text": ":"
+    },
+    {
+      "n": 67,
+      "unit_id": "u26",
+      "anchor_segment_id": "s67",
+      "text": "list.reverse()\n   :"
+    },
+    {
+      "n": 68,
+      "unit_id": "u26",
+      "anchor_segment_id": "s68",
+      "text": "noindex:"
+    },
+    {
+      "n": 69,
+      "unit_id": "u27",
+      "anchor_segment_id": "s69",
+      "text": "Reverse the elements of the list in place."
+    },
+    {
+      "n": 70,
+      "unit_id": "u28",
+      "anchor_segment_id": "s70",
+      "text": ".. method:"
+    },
+    {
+      "n": 71,
+      "unit_id": "u28",
+      "anchor_segment_id": "s71",
+      "text": ":"
+    },
+    {
+      "n": 72,
+      "unit_id": "u28",
+      "anchor_segment_id": "s72",
+      "text": "list.copy()\n   :"
+    },
+    {
+      "n": 73,
+      "unit_id": "u28",
+      "anchor_segment_id": "s73",
+      "text": "noindex:"
+    },
+    {
+      "n": 74,
+      "unit_id": "u29",
+      "anchor_segment_id": "s74",
+      "text": "Return a shallow copy of the list."
+    },
+    {
+      "n": 75,
+      "unit_id": "u29",
+      "anchor_segment_id": "s75",
+      "text": "Similar to ``a[:]``."
+    },
+    {
+      "n": 76,
+      "unit_id": "u30",
+      "anchor_segment_id": "s76",
+      "text": "An example that uses most of the list methods:"
+    },
+    {
+      "n": 77,
+      "unit_id": "u30",
+      "anchor_segment_id": "s77",
+      "text": ":"
+    },
+    {
+      "n": 78,
+      "unit_id": "u31",
+      "anchor_segment_id": "s78",
+      "text": ">>> fruits = ['orange', 'apple', 'pear', 'banana', 'kiwi', 'apple', 'banana']\n    >>> fruits.count('apple')\n    2\n    >>> fruits.count('tangerine')\n    0\n    >>> fruits.index('banana')\n    3\n    >>> fruits.index('banana', 4)  # Find"
+    },
+    {
+      "n": 79,
+      "unit_id": "u31",
+      "anchor_segment_id": "s79",
+      "text": "next banana starting at position 4\n    6\n    >>> fruits.reverse()\n    >>> fruits\n    ['banana', 'apple', 'kiwi', 'banana', 'pear', 'apple', 'orange']\n    >>> fruits.append('grape')\n    >>> fruits\n    ['banana', 'apple',"
+    },
+    {
+      "n": 80,
+      "unit_id": "u31",
+      "anchor_segment_id": "s80",
+      "text": "'kiwi', 'banana', 'pear', 'apple', 'orange', 'grape']\n    >>> fruits.sort()\n    >>> fruits\n    ['apple', 'apple', 'banana', 'banana', 'grape', 'kiwi', 'orange', 'pear']\n    >>> fruits.pop()\n    'pear'"
+    },
+    {
+      "n": 81,
+      "unit_id": "u32",
+      "anchor_segment_id": "s81",
+      "text": "You might have noticed that methods like ``insert``, ``remove`` or ``sort`` that\nonly modify the list have no return value printed -- they return the default\n``None``."
+    },
+    {
+      "n": 82,
+      "unit_id": "u32",
+      "anchor_segment_id": "s82",
+      "text": "[#]_"
+    },
+    {
+      "n": 83,
+      "unit_id": "u32",
+      "anchor_segment_id": "s83",
+      "text": "This is a design principle for all mutable data structures in\nPython."
+    },
+    {
+      "n": 84,
+      "unit_id": "u33",
+      "anchor_segment_id": "s84",
+      "text": "Another thing you might notice is that not all data can be sorted or\ncompared."
+    },
+    {
+      "n": 85,
+      "unit_id": "u33",
+      "anchor_segment_id": "s85",
+      "text": "For instance, ``[None, 'hello', 10]`` doesn't sort because\nintegers can't be compared to strings and ``None`` can't be compared to\nother types."
+    },
+    {
+      "n": 86,
+      "unit_id": "u33",
+      "anchor_segment_id": "s86",
+      "text": "Also, there are some types that don't have a defined\nordering relation."
+    },
+    {
+      "n": 87,
+      "unit_id": "u33",
+      "anchor_segment_id": "s87",
+      "text": "For example, ``3+4j < 5+7j`` isn't a valid\ncomparison."
+    },
+    {
+      "n": 88,
+      "unit_id": "u34",
+      "anchor_segment_id": "s88",
+      "text": ".. _tut-lists-as-stacks:"
+    },
+    {
+      "n": 89,
+      "unit_id": "u35",
+      "anchor_segment_id": "s89",
+      "text": "Using Lists as Stacks\n--"
+    },
+    {
+      "n": 90,
+      "unit_id": "u35",
+      "anchor_segment_id": "s90",
+      "text": "--"
+    },
+    {
+      "n": 91,
+      "unit_id": "u35",
+      "anchor_segment_id": "s91",
+      "text": "--"
+    },
+    {
+      "n": 92,
+      "unit_id": "u35",
+      "anchor_segment_id": "s92",
+      "text": "--"
+    },
+    {
+      "n": 93,
+      "unit_id": "u35",
+      "anchor_segment_id": "s93",
+      "text": "--"
+    },
+    {
+      "n": 94,
+      "unit_id": "u35",
+      "anchor_segment_id": "s94",
+      "text": "--"
+    },
+    {
+      "n": 95,
+      "unit_id": "u35",
+      "anchor_segment_id": "s95",
+      "text": "--"
+    },
+    {
+      "n": 96,
+      "unit_id": "u35",
+      "anchor_segment_id": "s96",
+      "text": "--"
+    },
+    {
+      "n": 97,
+      "unit_id": "u35",
+      "anchor_segment_id": "s97",
+      "text": "--"
+    },
+    {
+      "n": 98,
+      "unit_id": "u35",
+      "anchor_segment_id": "s98",
+      "text": "--"
+    },
+    {
+      "n": 99,
+      "unit_id": "u35",
+      "anchor_segment_id": "s99",
+      "text": "-"
+    },
+    {
+      "n": 100,
+      "unit_id": "u36",
+      "anchor_segment_id": "s100",
+      "text": "The list methods make it very easy to use a list as a stack, where the last\nelement added is the first element retrieved (\"last-in, first-out\")."
+    },
+    {
+      "n": 101,
+      "unit_id": "u36",
+      "anchor_segment_id": "s101",
+      "text": "To add an\nitem to the top of the stack, use :meth:`~list.append`."
+    },
+    {
+      "n": 102,
+      "unit_id": "u36",
+      "anchor_segment_id": "s102",
+      "text": "To retrieve an item from the\ntop of the stack, use :meth:`~list.pop` without an explicit index."
+    },
+    {
+      "n": 103,
+      "unit_id": "u36",
+      "anchor_segment_id": "s103",
+      "text": "For example::"
+    },
+    {
+      "n": 104,
+      "unit_id": "u37",
+      "anchor_segment_id": "s104",
+      "text": ">>> stack = [3, 4, 5]\n   >>> stack.append(6)\n   >>> stack.append(7)\n   >>> stack\n   [3, 4, 5, 6, 7]\n   >>> stack.pop()\n   7\n   >>> stack\n   [3, 4,"
+    },
+    {
+      "n": 105,
+      "unit_id": "u37",
+      "anchor_segment_id": "s105",
+      "text": "5, 6]\n   >>> stack.pop()\n   6\n   >>> stack.pop()\n   5\n   >>> stack\n   [3, 4]"
+    },
+    {
+      "n": 106,
+      "unit_id": "u38",
+      "anchor_segment_id": "s106",
+      "text": ".. _tut-lists-as-queues:"
+    },
+    {
+      "n": 107,
+      "unit_id": "u39",
+      "anchor_segment_id": "s107",
+      "text": "Using Lists as Queues\n--"
+    },
+    {
+      "n": 108,
+      "unit_id": "u39",
+      "anchor_segment_id": "s108",
+      "text": "--"
+    },
+    {
+      "n": 109,
+      "unit_id": "u39",
+      "anchor_segment_id": "s109",
+      "text": "--"
+    },
+    {
+      "n": 110,
+      "unit_id": "u39",
+      "anchor_segment_id": "s110",
+      "text": "--"
+    },
+    {
+      "n": 111,
+      "unit_id": "u39",
+      "anchor_segment_id": "s111",
+      "text": "--"
+    },
+    {
+      "n": 112,
+      "unit_id": "u39",
+      "anchor_segment_id": "s112",
+      "text": "--"
+    },
+    {
+      "n": 113,
+      "unit_id": "u39",
+      "anchor_segment_id": "s113",
+      "text": "--"
+    },
+    {
+      "n": 114,
+      "unit_id": "u39",
+      "anchor_segment_id": "s114",
+      "text": "--"
+    },
+    {
+      "n": 115,
+      "unit_id": "u39",
+      "anchor_segment_id": "s115",
+      "text": "--"
+    },
+    {
+      "n": 116,
+      "unit_id": "u39",
+      "anchor_segment_id": "s116",
+      "text": "--"
+    },
+    {
+      "n": 117,
+      "unit_id": "u39",
+      "anchor_segment_id": "s117",
+      "text": "-"
+    },
+    {
+      "n": 118,
+      "unit_id": "u40",
+      "anchor_segment_id": "s118",
+      "text": "It is also possible to use a list as a queue, where the first element added is\nthe first element retrieved (\"first-in, first-out\"); however, lists are not\nefficient for this purpose."
+    },
+    {
+      "n": 119,
+      "unit_id": "u40",
+      "anchor_segment_id": "s119",
+      "text": "While appends and pops from the end of list are\nfast, doing inserts or pops from the beginning of a list is slow (because all\nof the other elements have to be shifted by one)."
+    },
+    {
+      "n": 120,
+      "unit_id": "u41",
+      "anchor_segment_id": "s120",
+      "text": "To implement a queue, use :class:`collections.deque` which was designed to\nhave fast appends and pops from both ends."
+    },
+    {
+      "n": 121,
+      "unit_id": "u41",
+      "anchor_segment_id": "s121",
+      "text": "For example::"
+    },
+    {
+      "n": 122,
+      "unit_id": "u42",
+      "anchor_segment_id": "s122",
+      "text": ">>> from collections import deque\n   >>> queue = deque([\"Eric\", \"John\", \"Michael\"])\n   >>> queue.append(\"Terry\")           # Terry arrives\n   >>> queue.append(\"Graham\")          # Graham arrives\n   >>> queue.popleft()                 #"
+    },
+    {
+      "n": 123,
+      "unit_id": "u42",
+      "anchor_segment_id": "s123",
+      "text": "The first to arrive now leaves\n   'Eric'\n   >>> queue.popleft()                 # The second to arrive now leaves\n   'John'\n   >>> queue                           # Remaining queue in order"
+    },
+    {
+      "n": 124,
+      "unit_id": "u42",
+      "anchor_segment_id": "s124",
+      "text": "of arrival\n   deque(['Michael', 'Terry', 'Graham'])"
+    },
+    {
+      "n": 125,
+      "unit_id": "u43",
+      "anchor_segment_id": "s125",
+      "text": ".. _tut-listcomps:"
+    },
+    {
+      "n": 126,
+      "unit_id": "u44",
+      "anchor_segment_id": "s126",
+      "text": "List Comprehensions\n--"
+    },
+    {
+      "n": 127,
+      "unit_id": "u44",
+      "anchor_segment_id": "s127",
+      "text": "--"
+    },
+    {
+      "n": 128,
+      "unit_id": "u44",
+      "anchor_segment_id": "s128",
+      "text": "--"
+    },
+    {
+      "n": 129,
+      "unit_id": "u44",
+      "anchor_segment_id": "s129",
+      "text": "--"
+    },
+    {
+      "n": 130,
+      "unit_id": "u44",
+      "anchor_segment_id": "s130",
+      "text": "--"
+    },
+    {
+      "n": 131,
+      "unit_id": "u44",
+      "anchor_segment_id": "s131",
+      "text": "--"
+    },
+    {
+      "n": 132,
+      "unit_id": "u44",
+      "anchor_segment_id": "s132",
+      "text": "--"
+    },
+    {
+      "n": 133,
+      "unit_id": "u44",
+      "anchor_segment_id": "s133",
+      "text": "--"
+    },
+    {
+      "n": 134,
+      "unit_id": "u44",
+      "anchor_segment_id": "s134",
+      "text": "--"
+    },
+    {
+      "n": 135,
+      "unit_id": "u44",
+      "anchor_segment_id": "s135",
+      "text": "-"
+    },
+    {
+      "n": 136,
+      "unit_id": "u45",
+      "anchor_segment_id": "s136",
+      "text": "List comprehensions provide a concise way to create lists."
+    },
+    {
+      "n": 137,
+      "unit_id": "u45",
+      "anchor_segment_id": "s137",
+      "text": "Common applications are to make new lists where each element is the result of\nsome operations applied to each member of another sequence or iterable, or to\ncreate a subsequence of those elements that satisfy a certain condition."
+    },
+    {
+      "n": 138,
+      "unit_id": "u46",
+      "anchor_segment_id": "s138",
+      "text": "For example, assume we want to create a list of squares, like:"
+    },
+    {
+      "n": 139,
+      "unit_id": "u46",
+      "anchor_segment_id": "s139",
+      "text": ":"
+    },
+    {
+      "n": 140,
+      "unit_id": "u47",
+      "anchor_segment_id": "s140",
+      "text": ">>> squares = []\n   >>> for x in range(10):"
+    },
+    {
+      "n": 141,
+      "unit_id": "u47",
+      "anchor_segment_id": "s141",
+      "text": "...     squares.append(x**2)\n   ...\n   >>> squares\n   [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]"
+    },
+    {
+      "n": 142,
+      "unit_id": "u48",
+      "anchor_segment_id": "s142",
+      "text": "Note that this creates (or overwrites) a variable named ``x`` that still exists\nafter the loop completes."
+    },
+    {
+      "n": 143,
+      "unit_id": "u48",
+      "anchor_segment_id": "s143",
+      "text": "We can calculate the list of squares without any\nside effects using::"
+    },
+    {
+      "n": 144,
+      "unit_id": "u49",
+      "anchor_segment_id": "s144",
+      "text": "squares = list(map(lambda x:"
+    },
+    {
+      "n": 145,
+      "unit_id": "u49",
+      "anchor_segment_id": "s145",
+      "text": "x**2, range(10)))"
+    },
+    {
+      "n": 146,
+      "unit_id": "u50",
+      "anchor_segment_id": "s146",
+      "text": "or, equivalently:"
+    },
+    {
+      "n": 147,
+      "unit_id": "u50",
+      "anchor_segment_id": "s147",
+      "text": ":"
+    },
+    {
+      "n": 148,
+      "unit_id": "u51",
+      "anchor_segment_id": "s148",
+      "text": "squares = [x**2 for x in range(10)]"
+    },
+    {
+      "n": 149,
+      "unit_id": "u52",
+      "anchor_segment_id": "s149",
+      "text": "which is more concise and readable."
+    },
+    {
+      "n": 150,
+      "unit_id": "u53",
+      "anchor_segment_id": "s150",
+      "text": "A list comprehension consists of brackets containing an expression followed\nby a :keyword:`!for` clause, then zero or more :keyword:`!for` or :keyword:`!if`\nclauses."
+    },
+    {
+      "n": 151,
+      "unit_id": "u53",
+      "anchor_segment_id": "s151",
+      "text": "The result will be a new list resulting from evaluating the expression\nin the context of the :keyword:`!for` and :keyword:`!if` clauses which follow it."
+    },
+    {
+      "n": 152,
+      "unit_id": "u53",
+      "anchor_segment_id": "s152",
+      "text": "For example, this listcomp combines the elements of two lists if they are not\nequal::"
+    },
+    {
+      "n": 153,
+      "unit_id": "u54",
+      "anchor_segment_id": "s153",
+      "text": ">>> [(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]\n   [(1, 3), (1, 4), (2, 3), (2, 1), (2,"
+    },
+    {
+      "n": 154,
+      "unit_id": "u54",
+      "anchor_segment_id": "s154",
+      "text": "4), (3, 1), (3, 4)]"
+    },
+    {
+      "n": 155,
+      "unit_id": "u55",
+      "anchor_segment_id": "s155",
+      "text": "and it's equivalent to:"
+    },
+    {
+      "n": 156,
+      "unit_id": "u55",
+      "anchor_segment_id": "s156",
+      "text": ":"
+    },
+    {
+      "n": 157,
+      "unit_id": "u56",
+      "anchor_segment_id": "s157",
+      "text": ">>> combs = []\n   >>> for x in [1,2,3]:\n   ...     for y in [3,1,4]:\n   ..."
+    },
+    {
+      "n": 158,
+      "unit_id": "u56",
+      "anchor_segment_id": "s158",
+      "text": "if x != y:\n   ...             combs.append((x, y))\n   ...\n   >>> combs"
+    },
+    {
+      "n": 159,
+      "unit_id": "u56",
+      "anchor_segment_id": "s159",
+      "text": "[(1, 3), (1, 4), (2, 3), (2, 1), (2, 4), (3, 1), (3, 4)]"
+    },
+    {
+      "n": 160,
+      "unit_id": "u57",
+      "anchor_segment_id": "s160",
+      "text": "Note how the order of the :keyword:`for` and :keyword:`if` statements is the\nsame in both these snippets."
+    },
+    {
+      "n": 161,
+      "unit_id": "u58",
+      "anchor_segment_id": "s161",
+      "text": "If the expression is a tuple (e.g. the ``(x, y)`` in the previous example),\nit must be parenthesized."
+    },
+    {
+      "n": 162,
+      "unit_id": "u58",
+      "anchor_segment_id": "s162",
+      "text": "::"
+    },
+    {
+      "n": 163,
+      "unit_id": "u59",
+      "anchor_segment_id": "s163",
+      "text": ">>> vec = [-4, -2, 0, 2, 4]\n   >>> # create a new list with the values doubled\n   >>>"
+    },
+    {
+      "n": 164,
+      "unit_id": "u59",
+      "anchor_segment_id": "s164",
+      "text": "[x*2 for x in vec]\n   [-8, -4, 0, 4, 8]\n   >>> # filter the list to exclude negative numbers\n   >>>"
+    },
+    {
+      "n": 165,
+      "unit_id": "u59",
+      "anchor_segment_id": "s165",
+      "text": "[x for x in vec if x >= 0]\n   [0, 2, 4]\n   >>> # apply a function to all the elements\n   >>>"
+    },
+    {
+      "n": 166,
+      "unit_id": "u59",
+      "anchor_segment_id": "s166",
+      "text": "[abs(x) for x in vec]\n   [4, 2, 0, 2, 4]\n   >>> # call a method on each element\n   >>> freshfruit"
+    },
+    {
+      "n": 167,
+      "unit_id": "u59",
+      "anchor_segment_id": "s167",
+      "text": "= ['  banana', '  loganberry ', 'passion fruit  ']\n   >>>"
+    },
+    {
+      "n": 168,
+      "unit_id": "u59",
+      "anchor_segment_id": "s168",
+      "text": "[weapon.strip() for weapon in freshfruit]\n   ['banana', 'loganberry', 'passion fruit']\n   >>> # create a list of 2-tuples like (number, square)\n   >>>"
+    },
+    {
+      "n": 169,
+      "unit_id": "u59",
+      "anchor_segment_id": "s169",
+      "text": "[(x, x**2) for x in range(6)]"
+    },
+    {
+      "n": 170,
+      "unit_id": "u59",
+      "anchor_segment_id": "s170",
+      "text": "[(0, 0), (1, 1), (2, 4), (3, 9), (4, 16), (5, 25)]\n   >>> #"
+    },
+    {
+      "n": 171,
+      "unit_id": "u59",
+      "anchor_segment_id": "s171",
+      "text": "the tuple must be parenthesized, otherwise an error is raised\n   >>>"
+    },
+    {
+      "n": 172,
+      "unit_id": "u59",
+      "anchor_segment_id": "s172",
+      "text": "[x, x**2 for x in range(6)]\n     File \"<stdin>\", line 1\n       [x, x**2 for x in range(6)]\n        ^^^^^^^"
+    },
+    {
+      "n": 173,
+      "unit_id": "u59",
+      "anchor_segment_id": "s173",
+      "text": "SyntaxError: did you forget parentheses around the comprehension target?"
+    },
+    {
+      "n": 174,
+      "unit_id": "u59",
+      "anchor_segment_id": "s174",
+      "text": ">>> # flatten a list using a listcomp with two 'for'\n   >>> vec = [[1,2,3], [4,5,6], [7,8,9]]\n   >>>"
+    },
+    {
+      "n": 175,
+      "unit_id": "u59",
+      "anchor_segment_id": "s175",
+      "text": "[num for elem in vec for num in elem]"
+    },
+    {
+      "n": 176,
+      "unit_id": "u59",
+      "anchor_segment_id": "s176",
+      "text": "[1, 2, 3, 4, 5, 6, 7, 8, 9]"
+    },
+    {
+      "n": 177,
+      "unit_id": "u60",
+      "anchor_segment_id": "s177",
+      "text": "List comprehensions can contain complex expressions and nested functions:"
+    },
+    {
+      "n": 178,
+      "unit_id": "u60",
+      "anchor_segment_id": "s178",
+      "text": ":"
+    },
+    {
+      "n": 179,
+      "unit_id": "u61",
+      "anchor_segment_id": "s179",
+      "text": ">>> from math import pi\n   >>> [str(round(pi, i)) for i in range(1, 6)]\n   ['3.1', '3.14', '3.142', '3.1416', '3.14159']"
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": ".. _tut-structures:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2",
+      "sentence_ns": [
+        2
+      ],
+      "text": "***************\nData Structures\n***************",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs3",
+      "sentence_ns": [
+        3
+      ],
+      "text": "This chapter describes some things you've learned about already in more detail,\nand adds some new things as well.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs4",
+      "sentence_ns": [
+        4
+      ],
+      "text": ".. _tut-morelists:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs5",
+      "sentence_ns": [
+        5
+      ],
+      "text": "More on Lists\n=============",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs6_s7",
+      "sentence_ns": [
+        6,
+        7
+      ],
+      "text": "The :ref:`list <typesseq-list>` data type has some more methods. Here are all\nof the methods of list objects:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs8_s10",
+      "sentence_ns": [
+        8,
+        9,
+        10
+      ],
+      "text": ".. method: : list.append(value, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs11",
+      "sentence_ns": [
+        11
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs12_s14",
+      "sentence_ns": [
+        12,
+        13,
+        14
+      ],
+      "text": "Add an item to the end of the list. Similar to ``a[len(a):] = [x]``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs15_s17",
+      "sentence_ns": [
+        15,
+        16,
+        17
+      ],
+      "text": ".. method: : list.extend(iterable, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs18",
+      "sentence_ns": [
+        18
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u10_gs19_s21",
+      "sentence_ns": [
+        19,
+        20,
+        21
+      ],
+      "text": "Extend the list by appending all the items from the iterable. Similar to\n   ``a[len(a):] = iterable``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs22_s24",
+      "sentence_ns": [
+        22,
+        23,
+        24
+      ],
+      "text": ".. method: : list.insert(index, value, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs25",
+      "sentence_ns": [
+        25
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u12_gs26_s27",
+      "sentence_ns": [
+        26,
+        27
+      ],
+      "text": "Insert an item at a given position. The first argument is the index of the\n   element before which to insert, so ``a.insert(0, x)`` inserts at the front of\n   the list, and ``a.insert(len(a), x)`` is equivalent to ``a.append(x)``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs28_s30",
+      "sentence_ns": [
+        28,
+        29,
+        30
+      ],
+      "text": ".. method: : list.remove(value, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs31",
+      "sentence_ns": [
+        31
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u14_gs32_s33",
+      "sentence_ns": [
+        32,
+        33
+      ],
+      "text": "Remove the first item from the list whose value is equal to *value*. It raises a\n   :exc:`ValueError` if there is no such item.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs34_s36",
+      "sentence_ns": [
+        34,
+        35,
+        36
+      ],
+      "text": ".. method: : list.pop(index=-1, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs37",
+      "sentence_ns": [
+        37
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u16_gs38_s40",
+      "sentence_ns": [
+        38,
+        39,
+        40
+      ],
+      "text": "Remove the item at the given position in the list, and return it. If no index\n   is specified, ``a.pop()`` removes and returns the last item in the list. It raises an :exc:`IndexError` if the list is empty or the index is\n   outside the list range.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs41_s43",
+      "sentence_ns": [
+        41,
+        42,
+        43
+      ],
+      "text": ".. method: : list.clear()\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs44",
+      "sentence_ns": [
+        44
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u18_gs45_s46",
+      "sentence_ns": [
+        45,
+        46
+      ],
+      "text": "Remove all items from the list. Similar to ``del a[:]``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u19_gs47_s49",
+      "sentence_ns": [
+        47,
+        48,
+        49
+      ],
+      "text": ".. method: : list.index(value[, start[, stop]])\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u19_gs50",
+      "sentence_ns": [
+        50
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u20_gs51_s52",
+      "sentence_ns": [
+        51,
+        52
+      ],
+      "text": "Return zero-based index of the first occurrence of *value* in the list. Raises a :exc:`ValueError` if there is no such item.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u21_gs53_s54",
+      "sentence_ns": [
+        53,
+        54
+      ],
+      "text": "The optional arguments *start* and *end* are interpreted as in the slice\n   notation and are used to limit the search to a particular subsequence of\n   the list. The returned index is computed relative to the beginning of the full\n   sequence rather than the *start* argument.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs55_s57",
+      "sentence_ns": [
+        55,
+        56,
+        57
+      ],
+      "text": ".. method: : list.count(value, /)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs58",
+      "sentence_ns": [
+        58
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u23_gs59",
+      "sentence_ns": [
+        59
+      ],
+      "text": "Return the number of times *value* appears in the list.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs60_s62",
+      "sentence_ns": [
+        60,
+        61,
+        62
+      ],
+      "text": ".. method: : list.sort(*, key=None, reverse=False)\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs63",
+      "sentence_ns": [
+        63
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u25_gs64",
+      "sentence_ns": [
+        64
+      ],
+      "text": "Sort the items of the list in place (the arguments can be used for sort\n   customization, see :func:`sorted` for their explanation).",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs65_s67",
+      "sentence_ns": [
+        65,
+        66,
+        67
+      ],
+      "text": ".. method: : list.reverse()\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs68",
+      "sentence_ns": [
+        68
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u27_gs69",
+      "sentence_ns": [
+        69
+      ],
+      "text": "Reverse the elements of the list in place.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u28_gs70_s72",
+      "sentence_ns": [
+        70,
+        71,
+        72
+      ],
+      "text": ".. method: : list.copy()\n   :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u28_gs73",
+      "sentence_ns": [
+        73
+      ],
+      "text": "noindex:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u29_gs74_s75",
+      "sentence_ns": [
+        74,
+        75
+      ],
+      "text": "Return a shallow copy of the list. Similar to ``a[:]``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u30_gs76_s77",
+      "sentence_ns": [
+        76,
+        77
+      ],
+      "text": "An example that uses most of the list methods: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u31_gs78_s80",
+      "sentence_ns": [
+        78,
+        79,
+        80
+      ],
+      "text": ">>> fruits = ['orange', 'apple', 'pear', 'banana', 'kiwi', 'apple', 'banana']\n    >>> fruits.count('apple')\n    2\n    >>> fruits.count('tangerine')\n    0\n    >>> fruits.index('banana')\n    3\n    >>> fruits.index('banana', 4)  # Find next banana starting at position 4\n    6\n    >>> fruits.reverse()\n    >>> fruits\n    ['banana', 'apple', 'kiwi', 'banana', 'pear', 'apple', 'orange']\n    >>> fruits.append('grape')\n    >>> fruits\n    ['banana', 'apple', 'kiwi', 'banana', 'pear', 'apple', 'orange', 'grape']\n    >>> fruits.sort()\n    >>> fruits\n    ['apple', 'apple', 'banana', 'banana', 'grape', 'kiwi', 'orange', 'pear']\n    >>> fruits.pop()\n    'pear'",
+      "order_index": 1
+    },
+    {
+      "group_id": "u32_gs81_s83",
+      "sentence_ns": [
+        81,
+        82,
+        83
+      ],
+      "text": "You might have noticed that methods like ``insert``, ``remove`` or ``sort`` that\nonly modify the list have no return value printed -- they return the default\n``None``. [#]_ This is a design principle for all mutable data structures in\nPython.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs84_s86",
+      "sentence_ns": [
+        84,
+        85,
+        86
+      ],
+      "text": "Another thing you might notice is that not all data can be sorted or\ncompared. For instance, ``[None, 'hello', 10]`` doesn't sort because\nintegers can't be compared to strings and ``None`` can't be compared to\nother types. Also, there are some types that don't have a defined\nordering relation.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs87",
+      "sentence_ns": [
+        87
+      ],
+      "text": "For example, ``3+4j < 5+7j`` isn't a valid\ncomparison.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u34_gs88",
+      "sentence_ns": [
+        88
+      ],
+      "text": ".. _tut-lists-as-stacks:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u35_gs89_s91",
+      "sentence_ns": [
+        89,
+        90,
+        91
+      ],
+      "text": "Using Lists as Stacks\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u35_gs92_s94",
+      "sentence_ns": [
+        92,
+        93,
+        94
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u35_gs95_s97",
+      "sentence_ns": [
+        95,
+        96,
+        97
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u35_gs98_s99",
+      "sentence_ns": [
+        98,
+        99
+      ],
+      "text": "-- -",
+      "order_index": 4
+    },
+    {
+      "group_id": "u36_gs100_s102",
+      "sentence_ns": [
+        100,
+        101,
+        102
+      ],
+      "text": "The list methods make it very easy to use a list as a stack, where the last\nelement added is the first element retrieved (\"last-in, first-out\"). To add an\nitem to the top of the stack, use :meth:`~list.append`. To retrieve an item from the\ntop of the stack, use :meth:`~list.pop` without an explicit index.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u36_gs103",
+      "sentence_ns": [
+        103
+      ],
+      "text": "For example::",
+      "order_index": 2
+    },
+    {
+      "group_id": "u37_gs104_s105",
+      "sentence_ns": [
+        104,
+        105
+      ],
+      "text": ">>> stack = [3, 4, 5]\n   >>> stack.append(6)\n   >>> stack.append(7)\n   >>> stack\n   [3, 4, 5, 6, 7]\n   >>> stack.pop()\n   7\n   >>> stack\n   [3, 4, 5, 6]\n   >>> stack.pop()\n   6\n   >>> stack.pop()\n   5\n   >>> stack\n   [3, 4]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u38_gs106",
+      "sentence_ns": [
+        106
+      ],
+      "text": ".. _tut-lists-as-queues:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs107_s109",
+      "sentence_ns": [
+        107,
+        108,
+        109
+      ],
+      "text": "Using Lists as Queues\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs110_s112",
+      "sentence_ns": [
+        110,
+        111,
+        112
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u39_gs113_s115",
+      "sentence_ns": [
+        113,
+        114,
+        115
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u39_gs116_s117",
+      "sentence_ns": [
+        116,
+        117
+      ],
+      "text": "-- -",
+      "order_index": 4
+    },
+    {
+      "group_id": "u40_gs118_s119",
+      "sentence_ns": [
+        118,
+        119
+      ],
+      "text": "It is also possible to use a list as a queue, where the first element added is\nthe first element retrieved (\"first-in, first-out\"); however, lists are not\nefficient for this purpose. While appends and pops from the end of list are\nfast, doing inserts or pops from the beginning of a list is slow (because all\nof the other elements have to be shifted by one).",
+      "order_index": 1
+    },
+    {
+      "group_id": "u41_gs120_s121",
+      "sentence_ns": [
+        120,
+        121
+      ],
+      "text": "To implement a queue, use :class:`collections.deque` which was designed to\nhave fast appends and pops from both ends. For example::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u42_gs122_s124",
+      "sentence_ns": [
+        122,
+        123,
+        124
+      ],
+      "text": ">>> from collections import deque\n   >>> queue = deque([\"Eric\", \"John\", \"Michael\"])\n   >>> queue.append(\"Terry\")           # Terry arrives\n   >>> queue.append(\"Graham\")          # Graham arrives\n   >>> queue.popleft()                 # The first to arrive now leaves\n   'Eric'\n   >>> queue.popleft()                 # The second to arrive now leaves\n   'John'\n   >>> queue                           # Remaining queue in order of arrival\n   deque(['Michael', 'Terry', 'Graham'])",
+      "order_index": 1
+    },
+    {
+      "group_id": "u43_gs125",
+      "sentence_ns": [
+        125
+      ],
+      "text": ".. _tut-listcomps:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u44_gs126_s128",
+      "sentence_ns": [
+        126,
+        127,
+        128
+      ],
+      "text": "List Comprehensions\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u44_gs129_s131",
+      "sentence_ns": [
+        129,
+        130,
+        131
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u44_gs132_s134",
+      "sentence_ns": [
+        132,
+        133,
+        134
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u44_gs135",
+      "sentence_ns": [
+        135
+      ],
+      "text": "-",
+      "order_index": 4
+    },
+    {
+      "group_id": "u45_gs136_s137",
+      "sentence_ns": [
+        136,
+        137
+      ],
+      "text": "List comprehensions provide a concise way to create lists. Common applications are to make new lists where each element is the result of\nsome operations applied to each member of another sequence or iterable, or to\ncreate a subsequence of those elements that satisfy a certain condition.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u46_gs138_s139",
+      "sentence_ns": [
+        138,
+        139
+      ],
+      "text": "For example, assume we want to create a list of squares, like: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u47_gs140_s141",
+      "sentence_ns": [
+        140,
+        141
+      ],
+      "text": ">>> squares = []\n   >>> for x in range(10): ...     squares.append(x**2)\n   ...\n   >>> squares\n   [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u48_gs142_s143",
+      "sentence_ns": [
+        142,
+        143
+      ],
+      "text": "Note that this creates (or overwrites) a variable named ``x`` that still exists\nafter the loop completes. We can calculate the list of squares without any\nside effects using::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u49_gs144_s145",
+      "sentence_ns": [
+        144,
+        145
+      ],
+      "text": "squares = list(map(lambda x: x**2, range(10)))",
+      "order_index": 1
+    },
+    {
+      "group_id": "u50_gs146_s147",
+      "sentence_ns": [
+        146,
+        147
+      ],
+      "text": "or, equivalently: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u51_gs148",
+      "sentence_ns": [
+        148
+      ],
+      "text": "squares = [x**2 for x in range(10)]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u52_gs149",
+      "sentence_ns": [
+        149
+      ],
+      "text": "which is more concise and readable.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs150_s152",
+      "sentence_ns": [
+        150,
+        151,
+        152
+      ],
+      "text": "A list comprehension consists of brackets containing an expression followed\nby a :keyword:`!for` clause, then zero or more :keyword:`!for` or :keyword:`!if`\nclauses. The result will be a new list resulting from evaluating the expression\nin the context of the :keyword:`!for` and :keyword:`!if` clauses which follow it. For example, this listcomp combines the elements of two lists if they are not\nequal::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u54_gs153_s154",
+      "sentence_ns": [
+        153,
+        154
+      ],
+      "text": ">>> [(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]\n   [(1, 3), (1, 4), (2, 3), (2, 1), (2, 4), (3, 1), (3, 4)]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u55_gs155_s156",
+      "sentence_ns": [
+        155,
+        156
+      ],
+      "text": "and it's equivalent to: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u56_gs157_s159",
+      "sentence_ns": [
+        157,
+        158,
+        159
+      ],
+      "text": ">>> combs = []\n   >>> for x in [1,2,3]:\n   ...     for y in [3,1,4]:\n   ... if x != y:\n   ...             combs.append((x, y))\n   ...\n   >>> combs [(1, 3), (1, 4), (2, 3), (2, 1), (2, 4), (3, 1), (3, 4)]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u57_gs160",
+      "sentence_ns": [
+        160
+      ],
+      "text": "Note how the order of the :keyword:`for` and :keyword:`if` statements is the\nsame in both these snippets.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u58_gs161_s162",
+      "sentence_ns": [
+        161,
+        162
+      ],
+      "text": "If the expression is a tuple (e.g. the ``(x, y)`` in the previous example),\nit must be parenthesized. ::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u59_gs163_s165",
+      "sentence_ns": [
+        163,
+        164,
+        165
+      ],
+      "text": ">>> vec = [-4, -2, 0, 2, 4]\n   >>> # create a new list with the values doubled\n   >>> [x*2 for x in vec]\n   [-8, -4, 0, 4, 8]\n   >>> # filter the list to exclude negative numbers\n   >>> [x for x in vec if x >= 0]\n   [0, 2, 4]\n   >>> # apply a function to all the elements\n   >>>",
+      "order_index": 1
+    },
+    {
+      "group_id": "u59_gs166_s168",
+      "sentence_ns": [
+        166,
+        167,
+        168
+      ],
+      "text": "[abs(x) for x in vec]\n   [4, 2, 0, 2, 4]\n   >>> # call a method on each element\n   >>> freshfruit = ['  banana', '  loganberry ', 'passion fruit  ']\n   >>> [weapon.strip() for weapon in freshfruit]\n   ['banana', 'loganberry', 'passion fruit']\n   >>> # create a list of 2-tuples like (number, square)\n   >>>",
+      "order_index": 2
+    },
+    {
+      "group_id": "u59_gs169_s171",
+      "sentence_ns": [
+        169,
+        170,
+        171
+      ],
+      "text": "[(x, x**2) for x in range(6)] [(0, 0), (1, 1), (2, 4), (3, 9), (4, 16), (5, 25)]\n   >>> # the tuple must be parenthesized, otherwise an error is raised\n   >>>",
+      "order_index": 3
+    },
+    {
+      "group_id": "u59_gs172_s174",
+      "sentence_ns": [
+        172,
+        173,
+        174
+      ],
+      "text": "[x, x**2 for x in range(6)]\n     File \"<stdin>\", line 1\n       [x, x**2 for x in range(6)]\n        ^^^^^^^ SyntaxError: did you forget parentheses around the comprehension target? >>> # flatten a list using a listcomp with two 'for'\n   >>> vec = [[1,2,3], [4,5,6], [7,8,9]]\n   >>>",
+      "order_index": 4
+    },
+    {
+      "group_id": "u59_gs175_s176",
+      "sentence_ns": [
+        175,
+        176
+      ],
+      "text": "[num for elem in vec for num in elem] [1, 2, 3, 4, 5, 6, 7, 8, 9]",
+      "order_index": 5
+    },
+    {
+      "group_id": "u60_gs177_s178",
+      "sentence_ns": [
+        177,
+        178
+      ],
+      "text": "List comprehensions can contain complex expressions and nested functions: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u61_gs179",
+      "sentence_ns": [
+        179
+      ],
+      "text": ">>> from math import pi\n   >>> [str(round(pi, i)) for i in range(1, 6)]\n   ['3.1', '3.14', '3.142', '3.1416', '3.14159']",
+      "order_index": 1
+    }
+  ],
+  "category": "structural"
+}

@@ -1,0 +1,309 @@
+{
+  "id": "structural-08",
+  "sentences": [
+    {
+      "n": 1,
+      "text": "9."
+    },
+    {
+      "n": 2,
+      "text": "Methods"
+    },
+    {
+      "n": 3,
+      "text": "9.1."
+    },
+    {
+      "n": 4,
+      "text": "Overview"
+    },
+    {
+      "n": 5,
+      "text": "The request method token is the primary source of request semantics;\n   it indicates the purpose for which the client has made this request\n   and what is expected by the client as a successful result."
+    },
+    {
+      "n": 6,
+      "text": "The request method's semantics might be further specialized by the\n   semantics of some header fields when present in a request if those\n   additional semantics do not conflict with the method."
+    },
+    {
+      "n": 7,
+      "text": "For example, a\n   client can send conditional request header fields (Section 13.1) to\n   make the requested action conditional on the current state of the\n   target resource."
+    },
+    {
+      "n": 8,
+      "text": "HTTP is designed to be usable as an interface to distributed object\n   systems."
+    },
+    {
+      "n": 9,
+      "text": "The request method invokes an action to be applied to a\n   target resource in much the same way that a remote method invocation\n   can be sent to an identified object."
+    },
+    {
+      "n": 10,
+      "text": "method = token"
+    },
+    {
+      "n": 11,
+      "text": "The method token is case-sensitive because it might be used as a\n   gateway to object-based systems with case-sensitive method names."
+    },
+    {
+      "n": 12,
+      "text": "By\n   convention, standardized methods are defined in all-uppercase US-\n   ASCII letters."
+    },
+    {
+      "n": 13,
+      "text": "Unlike distributed objects, the standardized request methods in HTTP\n   are not resource-specific, since uniform interfaces provide for\n   better visibility and reuse in network-based systems [REST]."
+    },
+    {
+      "n": 14,
+      "text": "Once\n   defined, a standardized method ought to have the same semantics when\n   applied to any resource, though each resource determines for itself\n   whether those semantics are implemented or allowed."
+    },
+    {
+      "n": 15,
+      "text": "This specification defines a number of standardized methods that are\n   commonly used in HTTP, as outlined by the following table."
+    },
+    {
+      "n": 16,
+      "text": "+=========+============================================+=========+\n   | Method  | Description                                | Section |\n   | Name    |                                            |         |\n   +=========+============================================+=========+\n   | GET     | Transfer a current representation of the   | 9.3.1   |\n   |         | target resource."
+    },
+    {
+      "n": 17,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | HEAD    | Same as GET, but do not transfer the       | 9.3.2   |\n   |"
+    },
+    {
+      "n": 18,
+      "text": "| response content."
+    },
+    {
+      "n": 19,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | POST    | Perform resource-specific processing on    | 9.3.3   |\n   |         | the request content."
+    },
+    {
+      "n": 20,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | PUT     | Replace all current representations of the | 9.3.4   |\n   |         | target resource with the request content."
+    },
+    {
+      "n": 21,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | DELETE  | Remove all current representations of the  | 9.3.5   |\n   |         | target resource."
+    },
+    {
+      "n": 22,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | CONNECT"
+    },
+    {
+      "n": 23,
+      "text": "| Establish a tunnel to the server           | 9.3.6   |"
+    },
+    {
+      "n": 24,
+      "text": "|         | identified by the target resource."
+    },
+    {
+      "n": 25,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | OPTIONS | Describe the communication options for the | 9.3.7   |\n   |         | target resource."
+    },
+    {
+      "n": 26,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+\n   | TRACE   | Perform a message loop-back test along the | 9.3.8   |\n   |         | path to the target resource."
+    },
+    {
+      "n": 27,
+      "text": "|         |\n   +---------+--------------------------------------------+---------+"
+    },
+    {
+      "n": 28,
+      "text": "Table 4"
+    },
+    {
+      "n": 29,
+      "text": "All general-purpose servers MUST support the methods GET and HEAD."
+    },
+    {
+      "n": 30,
+      "text": "All other methods are OPTIONAL."
+    },
+    {
+      "n": 31,
+      "text": "The set of methods allowed by a target resource can be listed in an\n   Allow header field (Section 10.2.1)."
+    },
+    {
+      "n": 32,
+      "text": "However, the set of allowed\n   methods can change dynamically."
+    },
+    {
+      "n": 33,
+      "text": "An origin server that receives a\n   request method that is unrecognized or not implemented SHOULD respond\n   with the 501 (Not Implemented) status code."
+    },
+    {
+      "n": 34,
+      "text": "An origin server that\n   receives a request method that is recognized and implemented, but not\n   allowed for the target resource, SHOULD respond with the 405 (Method\n   Not Allowed) status code."
+    },
+    {
+      "n": 35,
+      "text": "Additional methods, outside the scope of this specification, have\n   been specified for use in HTTP."
+    },
+    {
+      "n": 36,
+      "text": "All such methods ought to be\n   registered within the \"Hypertext Transfer Protocol (HTTP) Method\n   Registry\", as described in Section 16.1."
+    },
+    {
+      "n": 37,
+      "text": "9.2."
+    },
+    {
+      "n": 38,
+      "text": "Common Method Properties"
+    },
+    {
+      "n": 39,
+      "text": "9.2.1."
+    },
+    {
+      "n": 40,
+      "text": "Safe Methods"
+    },
+    {
+      "n": 41,
+      "text": "Request methods are considered \"safe\" if their defined semantics are\n   essentially read-only; i.e., the client does not request, and does\n   not expect, any state change on the origin server as a result of\n   applying a safe method to a target resource."
+    },
+    {
+      "n": 42,
+      "text": "Likewise, reasonable\n   use of a safe method is not expected to cause any harm, loss of\n   property, or unusual burden on the origin server."
+    },
+    {
+      "n": 43,
+      "text": "This definition of safe methods does not prevent an implementation\n   from including behavior that is potentially harmful, that is not\n   entirely read-only, or that causes side effects while invoking a safe\n   method."
+    },
+    {
+      "n": 44,
+      "text": "What is important, however, is that the client did not\n   request that additional behavior and cannot be held accountable for\n   it."
+    },
+    {
+      "n": 45,
+      "text": "For example, most servers append request information to access\n   log files at the completion of every response, regardless of the\n   method, and that is considered safe even though the log storage might\n   become full and cause the server to fail."
+    },
+    {
+      "n": 46,
+      "text": "Likewise, a safe request\n   initiated by selecting an advertisement on the Web will often have\n   the side effect of charging an advertising account."
+    },
+    {
+      "n": 47,
+      "text": "Of the request methods defined by this specification, the GET, HEAD,\n   OPTIONS, and TRACE methods are defined to be safe."
+    },
+    {
+      "n": 48,
+      "text": "The purpose of distinguishing between safe and unsafe methods is to\n   allow automated retrieval processes (spiders) and cache performance\n   optimization (pre-fetching) to work without fear of causing harm."
+    },
+    {
+      "n": 49,
+      "text": "In\n   addition, it allows a user agent to apply appropriate constraints on\n   the automated use of unsafe methods when processing potentially\n   untrusted content."
+    },
+    {
+      "n": 50,
+      "text": "A user agent SHOULD distinguish between safe and unsafe methods when\n   presenting potential actions to a user, such that the user can be\n   made aware of an unsafe action before it is requested."
+    },
+    {
+      "n": 51,
+      "text": "When a resource is constructed such that parameters within the target\n   URI have the effect of selecting an action, it is the resource\n   owner's responsibility to ensure that the action is consistent with\n   the request method semantics."
+    },
+    {
+      "n": 52,
+      "text": "For example, it is common for Web-\n   based content editing software to use actions within query\n   parameters, such as \"page?do=delete\"."
+    },
+    {
+      "n": 53,
+      "text": "If the purpose of such a\n   resource is to perform an unsafe action, then the resource owner MUST\n   disable or disallow that action when it is accessed using a safe\n   request method."
+    },
+    {
+      "n": 54,
+      "text": "Failure to do so will result in unfortunate side\n   effects when automated processes perform a GET on every URI reference\n   for the sake of link maintenance, pre-fetching, building a search\n   index, etc."
+    },
+    {
+      "n": 55,
+      "text": "9.2.2."
+    },
+    {
+      "n": 56,
+      "text": "Idempotent Methods"
+    },
+    {
+      "n": 57,
+      "text": "A request method is considered \"idempotent\" if the intended effect on\n   the server of multiple identical requests with that method is the\n   same as the effect for a single such request."
+    },
+    {
+      "n": 58,
+      "text": "Of the request methods\n   defined by this specification, PUT, DELETE, and safe request methods\n   are idempotent."
+    },
+    {
+      "n": 59,
+      "text": "Like the definition of safe, the idempotent property only applies to\n   what has been requested by the user; a server is free to log each\n   request separately, retain a revision control history, or implement\n   other non-idempotent side effects for each idempotent request."
+    },
+    {
+      "n": 60,
+      "text": "Idempotent methods are distinguished because the request can be\n   repeated automatically if a communication failure occurs before the\n   client is able to read the server's response."
+    },
+    {
+      "n": 61,
+      "text": "For example, if a\n   client sends a PUT request and the underlying connection is closed\n   before any response is received, then the client can establish a new\n   connection and retry the idempotent request."
+    },
+    {
+      "n": 62,
+      "text": "It knows that repeating\n   the request will have the same intended effect, even if the original\n   request succeeded, though the response might differ."
+    },
+    {
+      "n": 63,
+      "text": "A client SHOULD NOT automatically retry a request with a non-\n   idempotent method unless it has some means to know that the request\n   semantics are actually idempotent, regardless of the method, or some\n   means to detect that the original request was never applied."
+    },
+    {
+      "n": 64,
+      "text": "For example, a user agent can repeat a POST request automatically if\n   it knows (through design or configuration) that the request is safe\n   for that resource."
+    },
+    {
+      "n": 65,
+      "text": "Likewise, a user agent designed specifically to\n   operate on a version control repository might be able to recover from\n   partial failure conditions by checking the target resource\n   revision(s) after a failed connection, reverting or fixing any\n   changes that were partially applied, and then automatically retrying\n   the requests that failed."
+    },
+    {
+      "n": 66,
+      "text": "Some clients take a riskier approach and attempt to guess when an\n   automatic retry is possible."
+    },
+    {
+      "n": 67,
+      "text": "For example, a client might\n   automatically retry a POST request if the underlying transport\n   connection closed before any part of a response is received,\n   particularly if an idle persistent connection was used."
+    },
+    {
+      "n": 68,
+      "text": "A proxy MUST NOT automatically retry non-idempotent requests."
+    },
+    {
+      "n": 69,
+      "text": "A\n   client SHOULD NOT automatically retry a failed automatic retry."
+    },
+    {
+      "n": 70,
+      "text": "9.2.3."
+    },
+    {
+      "n": 71,
+      "text": "Methods and Caching"
+    },
+    {
+      "n": 72,
+      "text": "For a cache to store and use a response, the associated method needs\n   to explicitly allow caching and to detail under what conditions a\n   response can be used to satisfy subsequent requests; a method\n   definition that does not do so cannot be cached."
+    },
+    {
+      "n": 73,
+      "text": "For additional\n   requirements see [CACHING]."
+    },
+    {
+      "n": 74,
+      "text": "This specification defines caching semantics for GET, HEAD, and POST,\n   although the overwhelming majority of cache implementations only\n   support GET and HEAD."
+    },
+    {
+      "n": 75,
+      "text": "9.3."
+    },
+    {
+      "n": 76,
+      "text": "Method Definitions"
+    }
+  ]
+}

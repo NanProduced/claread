@@ -1,0 +1,166 @@
+===================
+How to use sessions
+===================
+
+.. module:: django.contrib.sessions
+   :synopsis: Provides session management for Django projects.
+
+Django provides full support for anonymous sessions. The session framework
+lets you store and retrieve arbitrary data on a per-site-visitor basis. It
+stores data on the server side and abstracts the sending and receiving of
+cookies. Cookies contain a session ID -- not the data itself (unless you're
+using the :ref:`cookie based backend<cookie-session-backend>`).
+
+Enabling sessions
+=================
+
+Sessions are implemented via a piece of :doc:`middleware </ref/middleware>`.
+
+To enable session functionality, do the following:
+
+* Edit the :setting:`MIDDLEWARE` setting and make sure it contains
+  ``'django.contrib.sessions.middleware.SessionMiddleware'``. The default
+  ``settings.py`` created by ``django-admin startproject`` has
+  ``SessionMiddleware`` activated.
+
+If you don't want to use sessions, you might as well remove the
+``SessionMiddleware`` line from :setting:`MIDDLEWARE` and
+``'django.contrib.sessions'`` from your :setting:`INSTALLED_APPS`.
+It'll save you a small bit of overhead.
+
+.. _configuring-sessions:
+
+Configuring the session engine
+==============================
+
+By default, Django stores sessions in your database (using the model
+``django.contrib.sessions.models.Session``). Though this is convenient, in
+some setups it's faster to store session data elsewhere, so Django can be
+configured to store session data on your filesystem or in your cache.
+
+Using database-backed sessions
+------------------------------
+
+If you want to use a database-backed session, you need to add
+``'django.contrib.sessions'`` to your :setting:`INSTALLED_APPS` setting.
+
+Once you have configured your installation, run ``manage.py migrate``
+to install the single database table that stores session data.
+
+.. _cached-sessions-backend:
+
+Using cached sessions
+---------------------
+
+For better performance, you may want to use a cache-based session backend.
+
+To store session data using Django's cache system, you'll first need to make
+sure you've configured your cache; see the :doc:`cache documentation
+</topics/cache>` for details.
+
+.. warning::
+
+    You should only use cache-based sessions if you're using the Memcached or
+    Redis cache backend. The local-memory cache backend doesn't retain data
+    long enough to be a good choice, and it'll be faster to use file or
+    database sessions directly instead of sending everything through the file
+    or database cache backends. Additionally, the local-memory cache backend is
+    NOT multi-process safe, therefore probably not a good choice for production
+    environments.
+
+If you have multiple caches defined in :setting:`CACHES`, Django will use the
+default cache. To use another cache, set :setting:`SESSION_CACHE_ALIAS` to the
+name of that cache.
+
+Once your cache is configured, you have to choose between a database-backed
+cache or a non-persistent cache.
+
+The cached database backend (``cached_db``) uses a write-through cache --
+session writes are applied to both the database and cache, in that order. If
+writing to the cache (or deleting from it) fails, the exception is handled and
+logged via the :ref:`sessions logger <django-contrib-sessions-logger>`, to
+avoid failing an otherwise successful write or delete operation.
+
+Session reads use the cache, or the database if the data has been evicted from
+the cache. To use this backend, set :setting:`SESSION_ENGINE` to
+``"django.contrib.sessions.backends.cached_db"``, and follow the configuration
+instructions for the `using database-backed sessions`_.
+
+The cache backend (``cache``) stores session data only in your cache. This is
+faster because it avoids database persistence, but you will have to consider
+what happens when cache data is evicted. Eviction can occur if the cache fills
+up or the cache server is restarted, and it will mean session data is lost,
+including logging out users. To use this backend, set :setting:`SESSION_ENGINE`
+to ``"django.contrib.sessions.backends.cache"``.
+
+The cache backend can be made persistent by using a persistent cache, such as
+Redis with appropriate configuration. But unless your cache is definitely
+configured for sufficient persistence, opt for the cached database backend.
+This avoids edge cases caused by unreliable data storage in production.
+
+.. versionchanged:: 6.2
+
+  In earlier versions, only failed writes were caught and logged rather than
+  failed deletes.
+
+Using file-based sessions
+-------------------------
+
+To use file-based sessions, set the :setting:`SESSION_ENGINE` setting to
+``"django.contrib.sessions.backends.file"``.
+
+You might also want to set the :setting:`SESSION_FILE_PATH` setting (which
+defaults to output from ``tempfile.gettempdir()``, most likely ``/tmp``) to
+control where Django stores session files. Be sure to check that your web
+server has permissions to read and write to this location.
+
+.. _cookie-session-backend:
+
+Using cookie-based sessions
+---------------------------
+
+To use cookies-based sessions, set the :setting:`SESSION_ENGINE` setting to
+``"django.contrib.sessions.backends.signed_cookies"``. The session data will be
+stored using Django's tools for :doc:`cryptographic signing </topics/signing>`
+and the :setting:`SECRET_KEY` setting.
+
+.. note::
+
+    It's recommended to leave the :setting:`SESSION_COOKIE_HTTPONLY` setting
+    on ``True`` to prevent access to the stored data from JavaScript.
+
+.. warning::
+
+    **The session data is signed but not encrypted**
+
+    When using the cookies backend the session data can be read by the client.
+
+    A MAC (Message Authentication Code) is used to protect the data against
+    changes by the client, so that the session data will be invalidated when
+    being tampered with. The same invalidation happens if the client storing
+    the cookie (e.g. your user's browser) can't store all of the session cookie
+    and drops data. Even though Django compresses the data, it's still entirely
+    possible to exceed the :rfc:`common limit of 4096 bytes <2965#section-5.3>`
+    per cookie.
+
+    **No freshness guarantee**
+
+    Note also that while the MAC can guarantee the authenticity of the data
+    (that it was generated by your site, and not someone else), and the
+    integrity of the data (that it is all there and correct), it cannot
+    guarantee freshness i.e. that you are being sent back the last thing you
+    sent to the client. This means that for some uses of session data, the
+    cookie backend might open you up to `replay attacks`_. Unlike other session
+    backends which keep a server-side record of each session and invalidate it
+    when a user logs out, cookie-based sessions are not invalidated when a user
+    logs out. Thus if an attacker steals a user's cookie, they can use that
+    cookie to login as that user even if the user logs out. Cookies will only
+    be detected as 'stale' if they are older than your
+    :setting:`SESSION_COOKIE_AGE`.
+
+    **Performance**
+
+    Finally, the size of a cookie can have an impact on the speed of your site.
+
+.. _`replay attacks`: https://en.wikipedia.org/wiki/Replay_attack
+

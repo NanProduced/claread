@@ -1,0 +1,25 @@
+{
+  "id": "short-news-06",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "standalone date line"
+    },
+    {
+      "sentence_ns": [2, 3],
+      "reason": "lead ruling and legal basis"
+    },
+    {
+      "sentence_ns": [4, 5, 6],
+      "reason": "judgement details and scope"
+    },
+    {
+      "sentence_ns": [7, 8, 9],
+      "reason": "council response and position"
+    },
+    {
+      "sentence_ns": [10, 11, 12],
+      "reason": "closing procedural and background facts"
+    }
+  ]
+}

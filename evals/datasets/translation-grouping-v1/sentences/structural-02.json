@@ -1,0 +1,801 @@
+{
+  "id": "structural-02",
+  "sentences": [
+    {
+      "n": 1,
+      "text": "## Why flexbox?"
+    },
+    {
+      "n": 2,
+      "text": "CSS flexible box layout enables you to:"
+    },
+    {
+      "n": 3,
+      "text": "- Vertically center a block of content inside its parent."
+    },
+    {
+      "n": 4,
+      "text": "- Make all the children of a container take up an equal amount of the available width/height, regardless of how much width/height is available."
+    },
+    {
+      "n": 5,
+      "text": "- Make all columns in a multiple-column layout adopt the same height even if they contain a different amount of content."
+    },
+    {
+      "n": 6,
+      "text": "Flexbox features may be the perfect solution for your one dimensional layout needs."
+    },
+    {
+      "n": 7,
+      "text": "Let's dig in and find out!"
+    },
+    {
+      "n": 8,
+      "text": "> [!NOTE]\n>"
+    },
+    {
+      "n": 9,
+      "text": "Scrimba's introductory [Flexbox](https://scrimba.com/learn-html-and-css-c0p/~017?via=mdn)"
+    },
+    {
+      "n": 10,
+      "text": "<sup>[_MDN learning partner_](/en-US/docs/MDN/Writing_guidelines/Learning_content#partner_links_and_embeds)</sup> scrim provides an interactive guide covering how common flexbox is on the web and therefore why it is so important to learn, and walks you through a typical use case that demonstrates the power of flexbox."
+    },
+    {
+      "n": 11,
+      "text": "## Introducing a simple example"
+    },
+    {
+      "n": 12,
+      "text": "In this article, you'll work through a series of exercises to help you understand how flexbox works."
+    },
+    {
+      "n": 13,
+      "text": "To get started, you should make a local copy of the HTML and CSS."
+    },
+    {
+      "n": 14,
+      "text": "Load it in a modern browser (like Firefox or Chrome) and have a look at the code in your code editor."
+    },
+    {
+      "n": 15,
+      "text": "Alternatively click the \"Play\" button to open it in the playground."
+    },
+    {
+      "n": 16,
+      "text": "```html live-sample___flexbox_0\n<header>\n  <h1>Sample flexbox example</h1>\n</header>\n<section>\n  <article>\n    <h2>First article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Second article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Third article</h2>\n    <p>Content…</p>\n  </article>\n</section>"
+    },
+    {
+      "n": 17,
+      "text": "```"
+    },
+    {
+      "n": 18,
+      "text": "```css live-sample___flexbox_0\nbody {\n  font-family:"
+    },
+    {
+      "n": 19,
+      "text": "sans-serif;"
+    },
+    {
+      "n": 20,
+      "text": "margin:"
+    },
+    {
+      "n": 21,
+      "text": "0;"
+    },
+    {
+      "n": 22,
+      "text": "}\nheader {\n  background:"
+    },
+    {
+      "n": 23,
+      "text": "purple;"
+    },
+    {
+      "n": 24,
+      "text": "height:"
+    },
+    {
+      "n": 25,
+      "text": "100px;"
+    },
+    {
+      "n": 26,
+      "text": "}\nh1 {\n  text-align:"
+    },
+    {
+      "n": 27,
+      "text": "center;"
+    },
+    {
+      "n": 28,
+      "text": "color:"
+    },
+    {
+      "n": 29,
+      "text": "white;"
+    },
+    {
+      "n": 30,
+      "text": "line-height:"
+    },
+    {
+      "n": 31,
+      "text": "100px;"
+    },
+    {
+      "n": 32,
+      "text": "margin:"
+    },
+    {
+      "n": 33,
+      "text": "0;"
+    },
+    {
+      "n": 34,
+      "text": "}\nsection {\n  zoom:"
+    },
+    {
+      "n": 35,
+      "text": "0.8;"
+    },
+    {
+      "n": 36,
+      "text": "}\narticle {\n  padding:"
+    },
+    {
+      "n": 37,
+      "text": "10px;"
+    },
+    {
+      "n": 38,
+      "text": "margin:"
+    },
+    {
+      "n": 39,
+      "text": "10px;"
+    },
+    {
+      "n": 40,
+      "text": "background:"
+    },
+    {
+      "n": 41,
+      "text": "aqua;"
+    },
+    {
+      "n": 42,
+      "text": "}\n/* Add your flexbox CSS below here */\n```"
+    },
+    {
+      "n": 43,
+      "text": "You'll see that we have a {{htmlelement(\"header\")}} element with a top level heading inside it and a {{htmlelement(\"section\")}} element containing three {{htmlelement(\"article\")}}s."
+    },
+    {
+      "n": 44,
+      "text": "We're going to use these to create a fairly standard three column layout."
+    },
+    {
+      "n": 45,
+      "text": "## Specifying what elements to lay out as flexible boxes"
+    },
+    {
+      "n": 46,
+      "text": "To start with, we need to select which elements are to be laid out as flexible boxes."
+    },
+    {
+      "n": 47,
+      "text": "To do this, we set a special value of {{cssxref(\"display\")}} on the parent element of the elements you want to affect."
+    },
+    {
+      "n": 48,
+      "text": "In this case we want to lay out the {{htmlelement(\"article\")}} elements, so we set this on the {{htmlelement(\"section\")}}:"
+    },
+    {
+      "n": 49,
+      "text": "```html hidden live-sample___flexbox_1\n<header>\n  <h1>Sample flexbox example</h1>\n</header>\n<section>\n  <article>\n    <h2>First article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Second article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Third article</h2>\n    <p>Content…</p>\n  </article>"
+    },
+    {
+      "n": 50,
+      "text": "</section>\n```"
+    },
+    {
+      "n": 51,
+      "text": "```css hidden live-sample___flexbox_1\nbody {\n  font-family:"
+    },
+    {
+      "n": 52,
+      "text": "sans-serif;"
+    },
+    {
+      "n": 53,
+      "text": "margin:"
+    },
+    {
+      "n": 54,
+      "text": "0;"
+    },
+    {
+      "n": 55,
+      "text": "}\nheader {\n  background:"
+    },
+    {
+      "n": 56,
+      "text": "purple;"
+    },
+    {
+      "n": 57,
+      "text": "height:"
+    },
+    {
+      "n": 58,
+      "text": "100px;"
+    },
+    {
+      "n": 59,
+      "text": "}\nh1 {\n  text-align:"
+    },
+    {
+      "n": 60,
+      "text": "center;"
+    },
+    {
+      "n": 61,
+      "text": "color:"
+    },
+    {
+      "n": 62,
+      "text": "white;"
+    },
+    {
+      "n": 63,
+      "text": "line-height:"
+    },
+    {
+      "n": 64,
+      "text": "100px;"
+    },
+    {
+      "n": 65,
+      "text": "margin:"
+    },
+    {
+      "n": 66,
+      "text": "0;"
+    },
+    {
+      "n": 67,
+      "text": "}\nsection {\n  zoom:"
+    },
+    {
+      "n": 68,
+      "text": "0.8;"
+    },
+    {
+      "n": 69,
+      "text": "}\narticle {\n  padding:"
+    },
+    {
+      "n": 70,
+      "text": "10px;"
+    },
+    {
+      "n": 71,
+      "text": "margin:"
+    },
+    {
+      "n": 72,
+      "text": "10px;"
+    },
+    {
+      "n": 73,
+      "text": "background:"
+    },
+    {
+      "n": 74,
+      "text": "aqua;"
+    },
+    {
+      "n": 75,
+      "text": "}\n/* Add your flexbox CSS below here */\n```"
+    },
+    {
+      "n": 76,
+      "text": "```css live-sample___flexbox_1\nsection {\n  display:"
+    },
+    {
+      "n": 77,
+      "text": "flex;"
+    },
+    {
+      "n": 78,
+      "text": "}\n```"
+    },
+    {
+      "n": 79,
+      "text": "This causes the `<section>` element to become a **flex container** and its children become **flex items**."
+    },
+    {
+      "n": 80,
+      "text": "This is what it looks like:"
+    },
+    {
+      "n": 81,
+      "text": "This single declaration gives us everything we need."
+    },
+    {
+      "n": 82,
+      "text": "Incredible, right?"
+    },
+    {
+      "n": 83,
+      "text": "We have a multiple column layout with equal-sized columns, and the columns are all the same height."
+    },
+    {
+      "n": 84,
+      "text": "This is because the default values given to flex items (the children of the flex container) are set up to solve common problems such as this."
+    },
+    {
+      "n": 85,
+      "text": "Let's recap what's happening here."
+    },
+    {
+      "n": 86,
+      "text": "Adding a {{cssxref(\"display\")}} value of `flex` to an element makes it a flex container."
+    },
+    {
+      "n": 87,
+      "text": "The container is displayed as [Block-level content](/en-US/docs/Glossary/Block-level_content) in terms of how it interacts with the rest of the page."
+    },
+    {
+      "n": 88,
+      "text": "When the element is converted to a flex container, its children are converted to (and laid out as) flex items."
+    },
+    {
+      "n": 89,
+      "text": "You can make the container inline using an [outside `display` value](/en-US/docs/Web/CSS/Reference/Properties/display#outside) (e.g., `display: inline flex`), which affects how the container itself is laid out in the page."
+    },
+    {
+      "n": 90,
+      "text": "The legacy `inline-flex` display value displays the container as inline as well."
+    },
+    {
+      "n": 91,
+      "text": "We'll focus on how the contents of the container behave in this tutorial, but if you want to see the effect of inline versus block layout, you can have a look at the [value comparison](/en-US/docs/Web/CSS/Reference/Properties/display#display_value_comparison) on the `display` property page."
+    },
+    {
+      "n": 92,
+      "text": "The next sections explain in more detail what flex items are and what happens inside an element when you make it a flex container."
+    },
+    {
+      "n": 93,
+      "text": "## The flex model"
+    },
+    {
+      "n": 94,
+      "text": "When elements are laid out as flex items, they are laid out along two axes:"
+    },
+    {
+      "n": 95,
+      "text": "!"
+    },
+    {
+      "n": 96,
+      "text": "[Three flex items in a left-to-right language are laid out side-by-side in a flex container."
+    },
+    {
+      "n": 97,
+      "text": "The main axis — the axis of the flex container in the direction in which the flex items are laid out — is horizontal."
+    },
+    {
+      "n": 98,
+      "text": "The ends of the axis are main-start and main-end and are on the left and right respectively."
+    },
+    {
+      "n": 99,
+      "text": "The cross axis is vertical; perpendicular to the main axis."
+    },
+    {
+      "n": 100,
+      "text": "The cross-start and cross-end are at the top and bottom respectively."
+    },
+    {
+      "n": 101,
+      "text": "The length of the flex item along the main axis, in this case, the width, is called the main size, and the length of the flex item along the cross axis, in this case, the height, is called the cross size.](flex_terms.png)"
+    },
+    {
+      "n": 102,
+      "text": "- The **main axis** is the axis running in the direction the flex items are laid out in (for example, as a row across the page, or a column down the page.)"
+    },
+    {
+      "n": 103,
+      "text": "The start and end points of this axis are called the **main start** and **main end**."
+    },
+    {
+      "n": 104,
+      "text": "The length of a flex item along the main axis is the **main size**.\n- The **cross axis** is the axis running perpendicular to the direction the flex items are laid out in."
+    },
+    {
+      "n": 105,
+      "text": "The start and end points of this axis are called the **cross start** and **cross end**."
+    },
+    {
+      "n": 106,
+      "text": "The length of a flex item along the cross axis is the **cross size**.\n- The parent element that has `display: flex` set on it (the {{htmlelement(\"section\")}} in our example) is called the **flex container**.\n- The items laid out as flexible boxes inside the flex container are called **flex items** (the {{htmlelement(\"article\")}} elements in our example)."
+    },
+    {
+      "n": 107,
+      "text": "Bear this terminology in mind as you go through subsequent sections."
+    },
+    {
+      "n": 108,
+      "text": "You can always refer back to it if you get confused about any of the terms being used."
+    },
+    {
+      "n": 109,
+      "text": "## Columns or rows?"
+    },
+    {
+      "n": 110,
+      "text": "Flexbox provides a property called {{cssxref(\"flex-direction\")}} that specifies which direction the main axis runs (which direction the flexbox children are laid out in)."
+    },
+    {
+      "n": 111,
+      "text": "By default this is set to `row`, which causes them to be laid out in a row in the direction your browser's default language works in (left to right, in the case of an English browser)."
+    },
+    {
+      "n": 112,
+      "text": "Try adding the following declaration to your {{htmlelement(\"section\")}} rule:"
+    },
+    {
+      "n": 113,
+      "text": "```css\nflex-direction:"
+    },
+    {
+      "n": 114,
+      "text": "column;"
+    },
+    {
+      "n": 115,
+      "text": "```"
+    },
+    {
+      "n": 116,
+      "text": "You'll see that this puts the items back in a column layout, much like they were before we added any CSS."
+    },
+    {
+      "n": 117,
+      "text": "Before you move on, delete this declaration from your example."
+    },
+    {
+      "n": 118,
+      "text": "> [!NOTE]\n>"
+    },
+    {
+      "n": 119,
+      "text": "You can also lay out flex items in a reverse direction using the `row-reverse` and `column-reverse` values."
+    },
+    {
+      "n": 120,
+      "text": "Experiment with these values too!"
+    },
+    {
+      "n": 121,
+      "text": "## Wrapping"
+    },
+    {
+      "n": 122,
+      "text": "One issue that arises when you have a fixed width or height in your layout is that eventually your flexbox children will overflow their container, breaking the layout."
+    },
+    {
+      "n": 123,
+      "text": "In the following example we have 5 {{htmlelement(\"article\")}}s, which don't fit, because they have a `min-width` of `400px`, so there is a horizontal scroll."
+    },
+    {
+      "n": 124,
+      "text": "```html hidden live-sample___flex-wrap_0\n<header>\n  <h1>Sample flexbox example</h1>\n</header>\n<section>\n  <article>\n    <h2>First article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Second article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Third article</h2>\n    <p>Content…</p>\n  </article>"
+    },
+    {
+      "n": 125,
+      "text": "<article>\n    <h2>Fourth article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Fifth article</h2>\n    <p>Content…</p>\n  </article>\n</section>\n```"
+    },
+    {
+      "n": 126,
+      "text": "```css hidden live-sample___flex-wrap_0\nbody {\n  font-family:"
+    },
+    {
+      "n": 127,
+      "text": "sans-serif;"
+    },
+    {
+      "n": 128,
+      "text": "margin:"
+    },
+    {
+      "n": 129,
+      "text": "0;"
+    },
+    {
+      "n": 130,
+      "text": "}\nheader {\n  background:"
+    },
+    {
+      "n": 131,
+      "text": "purple;"
+    },
+    {
+      "n": 132,
+      "text": "height:"
+    },
+    {
+      "n": 133,
+      "text": "100px;"
+    },
+    {
+      "n": 134,
+      "text": "}\nh1 {\n  text-align:"
+    },
+    {
+      "n": 135,
+      "text": "center;"
+    },
+    {
+      "n": 136,
+      "text": "color:"
+    },
+    {
+      "n": 137,
+      "text": "white;"
+    },
+    {
+      "n": 138,
+      "text": "line-height:"
+    },
+    {
+      "n": 139,
+      "text": "100px;"
+    },
+    {
+      "n": 140,
+      "text": "margin:"
+    },
+    {
+      "n": 141,
+      "text": "0;"
+    },
+    {
+      "n": 142,
+      "text": "}\narticle {\n  min-width:"
+    },
+    {
+      "n": 143,
+      "text": "400px;"
+    },
+    {
+      "n": 144,
+      "text": "padding:"
+    },
+    {
+      "n": 145,
+      "text": "10px;"
+    },
+    {
+      "n": 146,
+      "text": "margin:"
+    },
+    {
+      "n": 147,
+      "text": "10px;"
+    },
+    {
+      "n": 148,
+      "text": "background:"
+    },
+    {
+      "n": 149,
+      "text": "aqua;"
+    },
+    {
+      "n": 150,
+      "text": "}\nsection {\n  display:"
+    },
+    {
+      "n": 151,
+      "text": "flex;"
+    },
+    {
+      "n": 152,
+      "text": "flex-direction:"
+    },
+    {
+      "n": 153,
+      "text": "row;"
+    },
+    {
+      "n": 154,
+      "text": "zoom:"
+    },
+    {
+      "n": 155,
+      "text": "0.8;"
+    },
+    {
+      "n": 156,
+      "text": "}\n```"
+    },
+    {
+      "n": 157,
+      "text": "Here we see that the children are indeed breaking out of their container."
+    },
+    {
+      "n": 158,
+      "text": "By default, the browser tries to place all the flex items in a single row if the `flex-direction` is set to `row` or a single column if the `flex-direction` is set to `column`."
+    },
+    {
+      "n": 159,
+      "text": "```html hidden live-sample___flex-wrap_1\n<header>\n  <h1>Sample flexbox example</h1>\n</header>\n<section>\n  <article>\n    <h2>First article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Second article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Third article</h2>\n    <p>Content…</p>\n  </article>"
+    },
+    {
+      "n": 160,
+      "text": "<article>\n    <h2>Fourth article</h2>\n    <p>Content…</p>\n  </article>\n  <article>\n    <h2>Fifth article</h2>\n    <p>Content…</p>\n  </article>\n</section>\n```"
+    },
+    {
+      "n": 161,
+      "text": "```css hidden live-sample___flex-wrap_1\nbody {\n  font-family:"
+    },
+    {
+      "n": 162,
+      "text": "sans-serif;"
+    },
+    {
+      "n": 163,
+      "text": "margin:"
+    },
+    {
+      "n": 164,
+      "text": "0;"
+    },
+    {
+      "n": 165,
+      "text": "}\nheader {\n  background:"
+    },
+    {
+      "n": 166,
+      "text": "purple;"
+    },
+    {
+      "n": 167,
+      "text": "height:"
+    },
+    {
+      "n": 168,
+      "text": "100px;"
+    },
+    {
+      "n": 169,
+      "text": "}\nh1 {\n  text-align:"
+    },
+    {
+      "n": 170,
+      "text": "center;"
+    },
+    {
+      "n": 171,
+      "text": "color:"
+    },
+    {
+      "n": 172,
+      "text": "white;"
+    },
+    {
+      "n": 173,
+      "text": "line-height:"
+    },
+    {
+      "n": 174,
+      "text": "100px;"
+    },
+    {
+      "n": 175,
+      "text": "margin:"
+    },
+    {
+      "n": 176,
+      "text": "0;"
+    },
+    {
+      "n": 177,
+      "text": "}\narticle {\n  min-width:"
+    },
+    {
+      "n": 178,
+      "text": "400px;"
+    },
+    {
+      "n": 179,
+      "text": "padding:"
+    },
+    {
+      "n": 180,
+      "text": "10px;"
+    },
+    {
+      "n": 181,
+      "text": "margin:"
+    },
+    {
+      "n": 182,
+      "text": "10px;"
+    },
+    {
+      "n": 183,
+      "text": "background:"
+    },
+    {
+      "n": 184,
+      "text": "aqua;"
+    },
+    {
+      "n": 185,
+      "text": "}\nsection {\n  display:"
+    },
+    {
+      "n": 186,
+      "text": "flex;"
+    },
+    {
+      "n": 187,
+      "text": "flex-direction:"
+    },
+    {
+      "n": 188,
+      "text": "row;"
+    },
+    {
+      "n": 189,
+      "text": "zoom:"
+    },
+    {
+      "n": 190,
+      "text": "0.8;"
+    },
+    {
+      "n": 191,
+      "text": "}\n```"
+    },
+    {
+      "n": 192,
+      "text": "One way in which you can fix this is to add the following declaration to your {{htmlelement(\"section\")}} rule:"
+    },
+    {
+      "n": 193,
+      "text": "```css live-sample___flex-wrap_1\nsection {\n  flex-wrap:"
+    },
+    {
+      "n": 194,
+      "text": "wrap;"
+    },
+    {
+      "n": 195,
+      "text": "}\n```"
+    },
+    {
+      "n": 196,
+      "text": "You'll see that the layout looks much better with this included:"
+    },
+    {
+      "n": 197,
+      "text": "We now have multiple rows."
+    },
+    {
+      "n": 198,
+      "text": "Each row has as many flexbox children fitted into it as is sensible."
+    },
+    {
+      "n": 199,
+      "text": "Any overflow is moved down to the next line."
+    }
+  ]
+}

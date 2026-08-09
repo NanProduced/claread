@@ -1,0 +1,107 @@
+{
+  "id": "short-news-08",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Thursday, March 12, 2026"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "Prime Minister Anthony Albanese said that, in response to United Arab Emirates call for help, Australia would deploy E-7A Wedgetail, a long-range reconnaissance plane, to help Gulf Arab states defend against attacks from Iran."
+    },
+    {
+      "n": 3,
+      "unit_id": "u3",
+      "anchor_segment_id": "s3",
+      "text": "The Australian Defence Force said the plane is able to survey four million square kilometers with a powerful radar."
+    },
+    {
+      "n": 4,
+      "unit_id": "u3",
+      "anchor_segment_id": "s4",
+      "text": "Government officials said the plane would be manned by around 85 Australian defence force (ADF) personnel."
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "Additionally, Australia would supply middle range air to air missiles, at the request of United Arab Emirates, that could down enemy's drones."
+    },
+    {
+      "n": 6,
+      "unit_id": "u4",
+      "anchor_segment_id": "s6",
+      "text": "Foreign affairs correspondent at ABC News, Stephen Dziedzic, published a piece on Wednesday noting that from a legal perspective, Australia is at war."
+    },
+    {
+      "n": 7,
+      "unit_id": "u4",
+      "anchor_segment_id": "s7",
+      "text": "He stated that not being an attacker, and not entering Iran, did not preclude Australia from joining a war."
+    },
+    {
+      "n": 8,
+      "unit_id": "u4",
+      "anchor_segment_id": "s8",
+      "text": "The correspondent referenced article 51 from United Nations charter about \"collective self-defence\", which could involve, for example, providing support or intelligence to one of the participants of a war."
+    },
+    {
+      "n": 9,
+      "unit_id": "u4",
+      "anchor_segment_id": "s9",
+      "text": "The correspondent raised concern that move could make Australia a potential target for attacks from, for example, Iran."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Thursday, March 12, 2026",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2",
+      "sentence_ns": [
+        2
+      ],
+      "text": "Prime Minister Anthony Albanese said that, in response to United Arab Emirates call for help, Australia would deploy E-7A Wedgetail, a long-range reconnaissance plane, to help Gulf Arab states defend against attacks from Iran.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs3_s5",
+      "sentence_ns": [
+        3,
+        4,
+        5
+      ],
+      "text": "The Australian Defence Force said the plane is able to survey four million square kilometers with a powerful radar. Government officials said the plane would be manned by around 85 Australian defence force (ADF) personnel. Additionally, Australia would supply middle range air to air missiles, at the request of United Arab Emirates, that could down enemy's drones.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs6_s8",
+      "sentence_ns": [
+        6,
+        7,
+        8
+      ],
+      "text": "Foreign affairs correspondent at ABC News, Stephen Dziedzic, published a piece on Wednesday noting that from a legal perspective, Australia is at war. He stated that not being an attacker, and not entering Iran, did not preclude Australia from joining a war. The correspondent referenced article 51 from United Nations charter about \"collective self-defence\", which could involve, for example, providing support or intelligence to one of the participants of a war.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs9",
+      "sentence_ns": [
+        9
+      ],
+      "text": "The correspondent raised concern that move could make Australia a potential target for attacks from, for example, Iran.",
+      "order_index": 2
+    }
+  ],
+  "category": "short-news"
+}

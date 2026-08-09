@@ -1,0 +1,38 @@
+id: translation-grouping-blind-v1
+title: Blind pairwise comparison of translation grouping candidates
+version: 1
+language: en
+purpose: >
+  Decide which of two anonymized partitions of the same article makes the
+  better set of translation groups for an English-to-Chinese reading
+  product. The judgment is about GROUPING ONLY — never about translation
+  quality, wording, or factual accuracy.
+dimensions:
+  coherence:
+    weight: 0.35
+    question: Does every group form one complete thought a translator can render as a unit?
+  boundary_naturalness:
+    weight: 0.30
+    question: Are splits placed where a reader would naturally pause (topic shift, structural edge), not mid-thought?
+  granularity:
+    weight: 0.25
+    question: Is the partition neither fragmented (many one-sentence groups back to back) nor bloated (groups cramming unrelated sentences or exceeding comfortable size)?
+  structural_respect:
+    weight: 0.10
+    question: Are self-contained structures (list items, table rows, code blocks, quotes, headings) kept intact as their own groups?
+scale:
+  per_dimension: integer 1..5 per grouping (5 = fully satisfies the dimension)
+  verdict: one of "X", "Y", "tie"
+rules:
+  - Judge only what the sheet shows; do not infer authorship of either grouping.
+  - A grouping that violates contiguity/coverage is invalid; say so in the rationale and score the affected dimensions 1.
+  - Keep the rationale under 40 words, concrete (cite sentence numbers).
+output:
+  format: json
+  schema:
+    id: string
+    winner: '"X" | "Y" | "tie"'
+    scores:
+      X: {coherence: int, boundary_naturalness: int, granularity: int, structural_respect: int}
+      Y: {coherence: int, boundary_naturalness: int, granularity: int, structural_respect: int}
+    rationale: string (<= 40 words)
