@@ -142,6 +142,7 @@ import {
   ReaderGrammarExpansionControlRef,
   ReaderGrammarExpansionProvider,
   ReaderGrammarInteractionContext,
+  READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX,
   ReaderSentenceAnalysisInteractionContext,
 } from "@/components/editor/plugins/reader-blocks-kit";
 import {
@@ -3125,6 +3126,13 @@ export function ReaderRecordPlateSurface({
                 replacedGrammarItemId,
               );
             }
+            // Sentence-analysis cards share the same keyed expansion
+            // state; the expansion key equals the analysis block id.
+            if (
+              op.blockId.startsWith(READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX)
+            ) {
+              grammarExpansionControlRef.current?.forgetItem(op.blockId);
+            }
             editor.tf.replaceNodes(op.nodes as never[], { at: op.path });
           } else if (op.type === "remove") {
             // T4.2a-PUX-R4-R2.1C: when a grammar callout is removed via
@@ -3135,6 +3143,11 @@ export function ReaderRecordPlateSurface({
               extractGrammarItemIdFromBlockId(op.blockId);
             if (grammarItemId) {
               grammarExpansionControlRef.current?.forgetItem(grammarItemId);
+            }
+            if (
+              op.blockId.startsWith(READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX)
+            ) {
+              grammarExpansionControlRef.current?.forgetItem(op.blockId);
             }
             editor.tf.removeNodes({ at: op.path });
           } else if (op.type === "insert" && op.nodes && op.nodes.length > 0) {
@@ -3332,9 +3345,15 @@ export function ReaderRecordPlateSurface({
           pending.capturedExpandedItemIds.size > 0
         ) {
           for (const itemId of pending.capturedExpandedItemIds) {
-            const el = document.querySelector(
-              `[data-reader-record-grammar-item-id="${itemId}"]`,
-            );
+            const el = itemId.startsWith(
+              READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX,
+            )
+              ? document.querySelector(
+                  `[data-reader-record-sentence-analysis-block="true"][data-analysis-id="${itemId.slice(READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX.length)}"]`,
+                )
+              : document.querySelector(
+                  `[data-reader-record-grammar-item-id="${itemId}"]`,
+                );
             if (!el) {
               grammarExpansionControlRef.current?.forgetItem(itemId);
             }

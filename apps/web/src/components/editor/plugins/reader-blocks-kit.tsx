@@ -158,6 +158,19 @@ export type ReaderGrammarExpansionControlRef = {
   current: ReaderGrammarExpansionControl | null;
 };
 
+/**
+ * Expansion key namespace for sentence-analysis cards inside the shared
+ * keyed expansion state (no second expansion context). The sentence
+ * analysis block id is `sentence_analysis:{analysisId}`, so the expansion
+ * key equals the block id by construction.
+ */
+export const READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX =
+  "sentence_analysis:";
+
+export function sentenceAnalysisExpansionKey(analysisId: string): string {
+  return `${READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX}${analysisId}`;
+}
+
 export function ReaderGrammarExpansionProvider({
   children,
   controlRef,
@@ -880,7 +893,25 @@ function ReaderSentenceAnalysisComponent({
 }: PlateElementProps) {
   const node = element as unknown as ReaderSentenceAnalysisElement;
   const data = node.data;
-  const [expanded, setExpanded] = React.useState(false);
+  // Expansion state lives in the shared keyed expansion context (above
+  // <Plate>), so it survives editor.tf.replaceNodes remounts of this
+  // block. Cards without an analysisId (legacy/edge data) fall back to
+  // local state, mirroring the grammar callout fallback.
+  const expansionContext = useContext(ReaderGrammarExpansionContext);
+  const expansionKey = data?.analysisId
+    ? sentenceAnalysisExpansionKey(data.analysisId)
+    : null;
+  const [localExpanded, setLocalExpanded] = React.useState(false);
+  const expanded = expansionKey
+    ? expansionContext.expandedItemIds.has(expansionKey)
+    : localExpanded;
+  const toggleExpanded = React.useCallback(() => {
+    if (expansionKey) {
+      expansionContext.toggleItem(expansionKey);
+      return;
+    }
+    setLocalExpanded((current) => !current);
+  }, [expansionContext, expansionKey]);
   const contentId = domIdFromBlockId("reader-record-sentence-analysis-content", node.id);
   const chunkCount = data?.chunks?.length ?? 0;
   const summary = chunkCount > 0 ? `${chunkCount} 个片段` : "结构说明";
@@ -958,7 +989,7 @@ function ReaderSentenceAnalysisComponent({
               onMouseDown={stopReaderCalloutControlEvent}
               onClick={(event) => {
                 stopReaderCalloutControlEvent(event);
-                setExpanded((current) => !current);
+                toggleExpanded();
               }}
             >
               {expanded ? (
