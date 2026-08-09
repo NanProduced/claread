@@ -1,8 +1,8 @@
 # Translation grouping blind eval — aggregate report
 
 - Dataset: translation-grouping-v1 (24 articles, 8 per category, real licensed texts, manifest.json)
-- Arms: deterministic = production deterministic planner; semantic = blind sub-agent planner (provider-free proxy for an LLM planner)
-- Judge: 24 independent blind sub-agents (one per article); sides randomized (seed 20260808), key withheld from judges
+- Arms: deterministic = production deterministic planner; semantic = same-family sub-agent grouping proxy (not a production candidate planner)
+- Judge: 24 blind same-family sub-agent judgments (one per article); sides randomized (seed 20260808), assignment withheld during judging
 - Rubric: translation-grouping-blind-v1 (coherence .35 / boundary_naturalness .30 / granularity .25 / structural_respect .10)
 
 ## Results
@@ -13,6 +13,15 @@
 | long-form | 8 | 7 | 1 | 0 | 0.875 [0.529, 0.978] | 3.269 vs 4.487 |
 | structural | 8 | 8 | 0 | 0 | 1.0 [0.676, 1.0] | 2.25 vs 4.138 |
 | overall | 24 | 19 | 5 | 0 | 0.792 [0.595, 0.908] | 3.183 vs 4.244 |
+
+## Interpretation and limitations
+
+- Interpretation: strong exploratory/directional preference signal; this is not unconditional evidence of significant benefit.
+- Same-family limitation: the semantic arm and judges came from the same sub-agent family, so same-family preference may remain.
+- Evaluator limitation: judges were neither human evaluators nor an independent model family.
+- Planner limitation: the semantic arm was an evaluation proxy, not the production candidate planner.
+- Decision: this evidence does not authorize a production two-stage LLM planner.
+- Next comparison: use a production candidate planner, an independent model family or human evaluators, and keep blind side assignment.
 
 ## Per-article outcomes
 

@@ -2,11 +2,35 @@
   "dataset": "translation-grouping-v1",
   "seed": 20260808,
   "rubric": "translation-grouping-blind-v1",
-  "judge": "independent blind sub-agents (one per article, no access to side key)",
+  "judge": "blind same-family sub-agents (one per article, no access to side assignment during judging)",
   "arms": {
     "deterministic": "production deterministic planner",
-    "semantic": "blind sub-agent semantic planner"
+    "semantic": "same-family sub-agent semantic grouping proxy (not a production candidate planner)"
   },
+  "interpretation": {
+    "classification": "strong_exploratory_directional_preference_signal",
+    "summary": "Strong exploratory/directional preference signal, not unconditional evidence of significant benefit.",
+    "production_planner_authorized": false,
+    "next_comparison_requires": [
+      "production candidate planner",
+      "independent model family or human evaluators",
+      "blind side assignment"
+    ]
+  },
+  "limitations": [
+    {
+      "code": "same_family_sub_agents",
+      "detail": "The semantic arm and judges were produced by the same sub-agent family, so same-family preference may remain."
+    },
+    {
+      "code": "non_human_non_independent_evaluators",
+      "detail": "Judges were neither human evaluators nor an independent model family."
+    },
+    {
+      "code": "semantic_arm_not_production_planner",
+      "detail": "The semantic arm was an evaluation proxy, not the production candidate planner."
+    }
+  ],
   "articles": [
     {
       "id": "long-form-01",

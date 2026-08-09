@@ -1,0 +1,37 @@
+{
+  "schema_version": "translation_grouping_post_eval_side_assignment_v1",
+  "dataset": "translation-grouping-v1",
+  "status": "post_eval_unblinded",
+  "seed": 20260808,
+  "purpose": "Tracked after judging only, so the completed aggregate can be reproduced without the private blind-eval key.",
+  "arms": [
+    "deterministic",
+    "semantic"
+  ],
+  "articles": {
+    "short-news-01": {"X": "semantic", "Y": "deterministic"},
+    "short-news-02": {"X": "deterministic", "Y": "semantic"},
+    "short-news-03": {"X": "deterministic", "Y": "semantic"},
+    "short-news-04": {"X": "semantic", "Y": "deterministic"},
+    "short-news-05": {"X": "deterministic", "Y": "semantic"},
+    "short-news-06": {"X": "semantic", "Y": "deterministic"},
+    "short-news-07": {"X": "semantic", "Y": "deterministic"},
+    "short-news-08": {"X": "semantic", "Y": "deterministic"},
+    "long-form-01": {"X": "deterministic", "Y": "semantic"},
+    "long-form-02": {"X": "deterministic", "Y": "semantic"},
+    "long-form-03": {"X": "semantic", "Y": "deterministic"},
+    "long-form-04": {"X": "semantic", "Y": "deterministic"},
+    "long-form-05": {"X": "semantic", "Y": "deterministic"},
+    "long-form-06": {"X": "semantic", "Y": "deterministic"},
+    "long-form-07": {"X": "semantic", "Y": "deterministic"},
+    "long-form-08": {"X": "deterministic", "Y": "semantic"},
+    "structural-01": {"X": "deterministic", "Y": "semantic"},
+    "structural-02": {"X": "semantic", "Y": "deterministic"},
+    "structural-03": {"X": "semantic", "Y": "deterministic"},
+    "structural-04": {"X": "deterministic", "Y": "semantic"},
+    "structural-05": {"X": "semantic", "Y": "deterministic"},
+    "structural-06": {"X": "deterministic", "Y": "semantic"},
+    "structural-07": {"X": "deterministic", "Y": "semantic"},
+    "structural-08": {"X": "semantic", "Y": "deterministic"}
+  }
+}
