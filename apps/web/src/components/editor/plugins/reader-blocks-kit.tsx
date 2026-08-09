@@ -916,7 +916,7 @@ function ReaderSentenceAnalysisComponent({
       return;
     }
     setLocalExpanded((current) => !current);
-  }, [expansionContext, expansionKey]);
+  }, [expansionContext, expansionKey, setLocalExpanded]);
   const contentId = domIdFromBlockId("reader-record-sentence-analysis-content", node.id);
   const chunkCount = data?.chunks?.length ?? 0;
   const summary = chunkCount > 0 ? `${chunkCount} 个片段` : "结构说明";

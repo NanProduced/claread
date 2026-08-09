@@ -2852,12 +2852,6 @@ function isWrapperOverlayBlock(block: ReaderRecordPlateBlock): boolean {
   );
 }
 
-function isListBlock(
-  block: ReaderRecordPlateBlock,
-): block is ReaderRecordPlateListBlock {
-  return block.type === "list";
-}
-
 function isListItemBlock(
   block: ReaderRecordPlateBlock,
 ): block is ReaderRecordPlateListItemBlock {

@@ -33,7 +33,6 @@ import type {
   ReaderRecordPlateDocument,
   ReaderRecordPlateParagraphBlock,
   ReaderRecordPlateSentenceAnalysisBlock,
-  ReaderRecordPlateTextLeaf,
 } from "@/lib/reader-plate/projection/reader-record-plate-document";
 
 const SOURCE_TEXT = "Institutional memory shapes policy choices.";

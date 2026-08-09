@@ -506,7 +506,7 @@ test.describe("Ask article citation source navigation (live deterministic)", () 
     });
 
     await page.getByRole("button", { name: "打开 Ask Claread" }).first().click();
-    const { messageId, citationId } = await sendFixtureQuestion(page);
+    const { citationId } = await sendFixtureQuestion(page);
 
     await scrollReaderToBottom(page);
     const navigateResponsePromise = page.waitForResponse(
