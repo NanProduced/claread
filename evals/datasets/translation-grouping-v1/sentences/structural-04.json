@@ -1,0 +1,597 @@
+{
+  "id": "structural-04",
+  "sentences": [
+    {
+      "n": 1,
+      "text": ".. _tut-morecontrol:"
+    },
+    {
+      "n": 2,
+      "text": "***********************\nMore Control Flow Tools\n***********************"
+    },
+    {
+      "n": 3,
+      "text": "As well as the :keyword:`while` statement just introduced, Python uses a few more\nthat we will encounter in this chapter."
+    },
+    {
+      "n": 4,
+      "text": ".. _tut-if:"
+    },
+    {
+      "n": 5,
+      "text": ":"
+    },
+    {
+      "n": 6,
+      "text": "keyword:"
+    },
+    {
+      "n": 7,
+      "text": "`!if` Statements\n========================="
+    },
+    {
+      "n": 8,
+      "text": "Perhaps the most well-known statement type is the :keyword:`if` statement."
+    },
+    {
+      "n": 9,
+      "text": "For\nexample::"
+    },
+    {
+      "n": 10,
+      "text": ">>> x = int(input(\"Please enter an integer: \"))\n   Please enter an integer: 42\n   >>> if x < 0:\n   ..."
+    },
+    {
+      "n": 11,
+      "text": "x = 0\n   ...     print('Negative changed to zero')\n   ..."
+    },
+    {
+      "n": 12,
+      "text": "elif x == 0:\n   ...     print('Zero')\n   ..."
+    },
+    {
+      "n": 13,
+      "text": "elif x == 1:\n   ...     print('Single')\n   ... else:\n   ...     print('More')\n   ..."
+    },
+    {
+      "n": 14,
+      "text": "More"
+    },
+    {
+      "n": 15,
+      "text": "There can be zero or more :keyword:`elif` parts, and the :keyword:`else` part is\noptional."
+    },
+    {
+      "n": 16,
+      "text": "The keyword ':keyword:`!elif`' is short for 'else if', and is useful\nto avoid excessive indentation."
+    },
+    {
+      "n": 17,
+      "text": "An  :keyword:`!if` ... :keyword:`!elif` ...\n:keyword:`!elif` ... sequence is a substitute for the ``switch`` or\n``case`` statements found in other languages."
+    },
+    {
+      "n": 18,
+      "text": "If you're comparing the same value to several constants, or checking for specific types or\nattributes, you may also find the :keyword:`!match` statement useful."
+    },
+    {
+      "n": 19,
+      "text": "For more\ndetails see :ref:`tut-match`."
+    },
+    {
+      "n": 20,
+      "text": ".. _tut-for:"
+    },
+    {
+      "n": 21,
+      "text": ":"
+    },
+    {
+      "n": 22,
+      "text": "keyword:"
+    },
+    {
+      "n": 23,
+      "text": "`!for` Statements\n=========================="
+    },
+    {
+      "n": 24,
+      "text": ".. index:"
+    },
+    {
+      "n": 25,
+      "text": ":"
+    },
+    {
+      "n": 26,
+      "text": "pair:"
+    },
+    {
+      "n": 27,
+      "text": "statement;"
+    },
+    {
+      "n": 28,
+      "text": "for"
+    },
+    {
+      "n": 29,
+      "text": "The :keyword:`for` statement in Python differs a bit from what you may be used\nto in C or Pascal."
+    },
+    {
+      "n": 30,
+      "text": "Rather than always iterating over an arithmetic progression\nof numbers (like in Pascal), or giving the user the ability to define both the\niteration step and halting condition (as C), Python's :keyword:`!for` statement\niterates over the items of any sequence (a list or a string), in the order that\nthey appear in the sequence."
+    },
+    {
+      "n": 31,
+      "text": "For example (no pun intended):"
+    },
+    {
+      "n": 32,
+      "text": ".."
+    },
+    {
+      "n": 33,
+      "text": "One suggestion was to give a real C example here, but that may only serve to\n   confuse non-C programmers."
+    },
+    {
+      "n": 34,
+      "text": ":"
+    },
+    {
+      "n": 35,
+      "text": ":"
+    },
+    {
+      "n": 36,
+      "text": ">>> #"
+    },
+    {
+      "n": 37,
+      "text": "Measure some strings:\n   >>>"
+    },
+    {
+      "n": 38,
+      "text": "words = ['cat', 'window', 'defenestrate']\n   >>> for w in words:\n   ..."
+    },
+    {
+      "n": 39,
+      "text": "print(w, len(w))\n   ...\n   cat 3\n   window 6\n   defenestrate 12"
+    },
+    {
+      "n": 40,
+      "text": "Code that modifies a collection while iterating over that same collection can\nbe tricky to get right."
+    },
+    {
+      "n": 41,
+      "text": "Instead, it is usually more straight-forward to loop\nover a copy of the collection or to create a new collection::"
+    },
+    {
+      "n": 42,
+      "text": "# Create a sample collection\n    users = {'Hans':"
+    },
+    {
+      "n": 43,
+      "text": "'active', 'Éléonore':"
+    },
+    {
+      "n": 44,
+      "text": "'inactive', '景太郎':"
+    },
+    {
+      "n": 45,
+      "text": "'active'}"
+    },
+    {
+      "n": 46,
+      "text": "# Strategy:"
+    },
+    {
+      "n": 47,
+      "text": "Iterate over a copy\n    for user, status in users.copy().items():"
+    },
+    {
+      "n": 48,
+      "text": "if status == 'inactive':"
+    },
+    {
+      "n": 49,
+      "text": "del users[user]"
+    },
+    {
+      "n": 50,
+      "text": "# Strategy:"
+    },
+    {
+      "n": 51,
+      "text": "Create a new collection\n    active_users = {}\n    for user, status in users.items():"
+    },
+    {
+      "n": 52,
+      "text": "if status == 'active':"
+    },
+    {
+      "n": 53,
+      "text": "active_users[user] = status"
+    },
+    {
+      "n": 54,
+      "text": ".. _tut-range:"
+    },
+    {
+      "n": 55,
+      "text": "The :"
+    },
+    {
+      "n": 56,
+      "text": "func:"
+    },
+    {
+      "n": 57,
+      "text": "`range` Function\n=========================="
+    },
+    {
+      "n": 58,
+      "text": "If you do need to iterate over a sequence of numbers, the built-in function\n:func:`range` comes in handy."
+    },
+    {
+      "n": 59,
+      "text": "It generates arithmetic progressions::"
+    },
+    {
+      "n": 60,
+      "text": ">>> for i in range(5):\n    ...     print(i)\n    ..."
+    },
+    {
+      "n": 61,
+      "text": "0\n    1\n    2\n    3\n    4"
+    },
+    {
+      "n": 62,
+      "text": "The given end point is never part of the generated sequence; ``range(10)`` generates\n10 values, the legal indices for items of a sequence of length 10."
+    },
+    {
+      "n": 63,
+      "text": "It\nis possible to let the range start at another number, or to specify a different\nincrement (even negative; sometimes this is called the 'step')::"
+    },
+    {
+      "n": 64,
+      "text": ">>> list(range(5, 10))\n    [5, 6, 7, 8, 9]"
+    },
+    {
+      "n": 65,
+      "text": ">>> list(range(0, 10, 3))\n    [0, 3, 6, 9]"
+    },
+    {
+      "n": 66,
+      "text": ">>> list(range(-10, -100, -30))\n    [-10, -40, -70]"
+    },
+    {
+      "n": 67,
+      "text": "To iterate over the indices of a sequence, you can combine :"
+    },
+    {
+      "n": 68,
+      "text": "func:"
+    },
+    {
+      "n": 69,
+      "text": "`range` and\n:"
+    },
+    {
+      "n": 70,
+      "text": "func:"
+    },
+    {
+      "n": 71,
+      "text": "`len` as follows:"
+    },
+    {
+      "n": 72,
+      "text": ":"
+    },
+    {
+      "n": 73,
+      "text": ">>> a = ['Mary', 'had', 'a', 'little', 'lamb']\n   >>> for i in range(len(a)):\n   ..."
+    },
+    {
+      "n": 74,
+      "text": "print(i, a[i])\n   ...\n   0"
+    },
+    {
+      "n": 75,
+      "text": "Mary\n   1 had\n   2 a\n   3 little\n   4 lamb"
+    },
+    {
+      "n": 76,
+      "text": "In most such cases, however, it is convenient to use the :func:`enumerate`\nfunction, see :ref:`tut-loopidioms`."
+    },
+    {
+      "n": 77,
+      "text": "A strange thing happens if you just print a range:"
+    },
+    {
+      "n": 78,
+      "text": ":"
+    },
+    {
+      "n": 79,
+      "text": ">>> range(10)\n   range(0, 10)"
+    },
+    {
+      "n": 80,
+      "text": "In many ways the object returned by :func:`range` behaves as if it is a list,\nbut in fact it isn't."
+    },
+    {
+      "n": 81,
+      "text": "It is an object which returns the successive items of\nthe desired sequence when you iterate over it, but it doesn't really make\nthe list, thus saving space."
+    },
+    {
+      "n": 82,
+      "text": "We say such an object is :term:`iterable`, that is, suitable as a target for\nfunctions and constructs that expect something from which they can\nobtain successive items until the supply is exhausted."
+    },
+    {
+      "n": 83,
+      "text": "We have seen that\nthe :keyword:`for` statement is such a construct, while an example of a function\nthat takes an iterable is :func:`sum`::"
+    },
+    {
+      "n": 84,
+      "text": ">>> sum(range(4))  # 0 + 1 + 2 + 3\n    6"
+    },
+    {
+      "n": 85,
+      "text": "Later we will see more functions that return iterables and take iterables as\narguments."
+    },
+    {
+      "n": 86,
+      "text": "In chapter :ref:`tut-structures`, we will discuss :func:`list` in more\ndetail."
+    },
+    {
+      "n": 87,
+      "text": ".. _tut-break:"
+    },
+    {
+      "n": 88,
+      "text": ":"
+    },
+    {
+      "n": 89,
+      "text": "keyword:"
+    },
+    {
+      "n": 90,
+      "text": "`!break` and :"
+    },
+    {
+      "n": 91,
+      "text": "keyword:"
+    },
+    {
+      "n": 92,
+      "text": "`!continue` Statements\n====================================================="
+    },
+    {
+      "n": 93,
+      "text": "The :"
+    },
+    {
+      "n": 94,
+      "text": "keyword:"
+    },
+    {
+      "n": 95,
+      "text": "`break` statement breaks out of the innermost enclosing\n:"
+    },
+    {
+      "n": 96,
+      "text": "keyword:"
+    },
+    {
+      "n": 97,
+      "text": "`for` or :"
+    },
+    {
+      "n": 98,
+      "text": "keyword:"
+    },
+    {
+      "n": 99,
+      "text": "`while` loop:"
+    },
+    {
+      "n": 100,
+      "text": ":"
+    },
+    {
+      "n": 101,
+      "text": ">>> for n in range(2, 10):\n    ...     for x in range(2, n):\n    ..."
+    },
+    {
+      "n": 102,
+      "text": "if n % x"
+    },
+    {
+      "n": 103,
+      "text": "== 0:\n    ...             print(f\"{n} equals {x} * {n//x}\")\n    ..."
+    },
+    {
+      "n": 104,
+      "text": "break\n    ..."
+    },
+    {
+      "n": 105,
+      "text": "4 equals 2 * 2\n    6 equals 2 * 3\n    8 equals 2 * 4\n    9 equals 3 * 3"
+    },
+    {
+      "n": 106,
+      "text": "The :"
+    },
+    {
+      "n": 107,
+      "text": "keyword:"
+    },
+    {
+      "n": 108,
+      "text": "`continue` statement continues with the next\niteration of the loop:"
+    },
+    {
+      "n": 109,
+      "text": ":"
+    },
+    {
+      "n": 110,
+      "text": ">>> for num in range(2, 10):\n    ..."
+    },
+    {
+      "n": 111,
+      "text": "if num % 2 == 0:\n    ...         print(f\"Found an even number {num}\")\n    ...         continue\n    ..."
+    },
+    {
+      "n": 112,
+      "text": "print(f\"Found an odd number {num}\")\n    ...\n    Found an even number 2\n    Found an odd number 3\n    Found an even number 4\n    Found an odd number 5\n    Found an even number 6\n    Found an odd number 7\n    Found an even number 8\n    Found an odd number 9"
+    },
+    {
+      "n": 113,
+      "text": ".. _tut-for-else:\n.."
+    },
+    {
+      "n": 114,
+      "text": "_break-and-continue-statements-and-else-clauses-on-loops:"
+    },
+    {
+      "n": 115,
+      "text": ":"
+    },
+    {
+      "n": 116,
+      "text": "keyword:"
+    },
+    {
+      "n": 117,
+      "text": "`!else` Clauses on Loops\n================================="
+    },
+    {
+      "n": 118,
+      "text": "In a :keyword:`!for` or :keyword:`!while` loop the :keyword:`!break` statement\nmay be paired with an :keyword:`!else` clause."
+    },
+    {
+      "n": 119,
+      "text": "If the loop finishes without\nexecuting the :keyword:`!break`, the :keyword:`!else` clause executes."
+    },
+    {
+      "n": 120,
+      "text": "In a :keyword:`for` loop, the :keyword:`!else` clause is executed\nafter the loop finishes its final iteration, that is, if no break occurred."
+    },
+    {
+      "n": 121,
+      "text": "In a :keyword:`while` loop, it's executed after the loop's condition becomes false."
+    },
+    {
+      "n": 122,
+      "text": "In either kind of loop, the :keyword:`!else` clause is **not** executed if the\nloop was terminated by a :keyword:`break`."
+    },
+    {
+      "n": 123,
+      "text": "Of course, other ways of ending the\nloop early, such as a :keyword:`return` or a raised exception, will also skip\nexecution of the :keyword:`else` clause."
+    },
+    {
+      "n": 124,
+      "text": "This is exemplified in the following :"
+    },
+    {
+      "n": 125,
+      "text": "keyword:"
+    },
+    {
+      "n": 126,
+      "text": "`!for` loop,"
+    },
+    {
+      "n": 127,
+      "text": "which searches for prime numbers:"
+    },
+    {
+      "n": 128,
+      "text": ":"
+    },
+    {
+      "n": 129,
+      "text": ">>> for n in range(2, 10):\n   ...     for x in range(2, n):\n   ..."
+    },
+    {
+      "n": 130,
+      "text": "if n % x"
+    },
+    {
+      "n": 131,
+      "text": "== 0:\n   ..."
+    },
+    {
+      "n": 132,
+      "text": "print(n, 'equals', x, '*', n//x)\n   ..."
+    },
+    {
+      "n": 133,
+      "text": "break\n   ...     else:\n   ...         # loop fell through without finding a factor\n   ..."
+    },
+    {
+      "n": 134,
+      "text": "print(n, 'is a prime number')\n   ...\n   2 is a prime number\n   3 is a prime number\n   4 equals 2 * 2\n   5 is a prime number\n   6 equals 2 * 3\n   7 is a prime number\n   8 equals 2 * 4\n   9 equals 3 * 3"
+    },
+    {
+      "n": 135,
+      "text": "(Yes, this is the correct code."
+    },
+    {
+      "n": 136,
+      "text": "Look closely: the ``else`` clause belongs to\nthe ``for`` loop, **not** the ``if`` statement.)"
+    },
+    {
+      "n": 137,
+      "text": "One way to think of the else clause is to imagine it paired with the ``if``\ninside the loop."
+    },
+    {
+      "n": 138,
+      "text": "As the loop executes, it will run a sequence like\nif/if/if/else."
+    },
+    {
+      "n": 139,
+      "text": "The ``if`` is inside the loop, encountered a number of times."
+    },
+    {
+      "n": 140,
+      "text": "If\nthe condition is ever true, a ``break`` will happen."
+    },
+    {
+      "n": 141,
+      "text": "If the condition is never\ntrue, the ``else`` clause outside the loop will execute."
+    },
+    {
+      "n": 142,
+      "text": "When used with a loop, the ``else`` clause has more in common with the ``else``\nclause of a :keyword:`try` statement than it does with that of ``if``\nstatements: a ``try`` statement's ``else`` clause runs when no exception\noccurs, and a loop's ``else`` clause runs when no ``break`` occurs."
+    },
+    {
+      "n": 143,
+      "text": "For more on\nthe ``try`` statement and exceptions, see :ref:`tut-handling`."
+    },
+    {
+      "n": 144,
+      "text": ".. index:"
+    },
+    {
+      "n": 145,
+      "text": ":"
+    },
+    {
+      "n": 146,
+      "text": "single:"
+    },
+    {
+      "n": 147,
+      "text": "...;"
+    },
+    {
+      "n": 148,
+      "text": "ellipsis literal"
+    }
+  ]
+}

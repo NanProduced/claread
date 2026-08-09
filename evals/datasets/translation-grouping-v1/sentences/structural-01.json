@@ -1,0 +1,373 @@
+{
+  "id": "structural-01",
+  "sentences": [
+    {
+      "n": 1,
+      "text": "This article gets you started with HTML tables, covering the very basics such as rows, cells, headings, making cells span multiple columns and rows, and how to group together all the cells in a column for styling purposes."
+    },
+    {
+      "n": 2,
+      "text": "<table>\n  <tbody>\n    <tr>\n      <th scope=\"row\">Prerequisites:</th>\n      <td>\n        Basic HTML familiarity, as covered in\n        <a href=\"/en-US/docs/Learn_web_development/Core/Structuring_content/Basic_HTML_syntax\"\n          >Basic HTML Syntax</a\n        >."
+    },
+    {
+      "n": 3,
+      "text": "</td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Learning outcomes:</th>\n      <td>\n        <ul>\n          <li>What tables are for — structuring tabular data.</li>\n          <li>"
+    },
+    {
+      "n": 4,
+      "text": "What tables are not for — layout, or <em>anything else</em>.</li>\n          <li>Basic table syntax — <code>&lt;table&gt;</code>, <code>&lt;tr&gt;</code>, and <code>&lt;td&gt;</code>.</li>\n          <li>Defining table headers with <code>&lt;th&gt;</code>.</li>\n          <li>Spanning multiple columns and rows with <code>colspan</code> and <code>rowspan</code>.</li>\n          <li>Grouping columns with <code>&lt;colgroup&gt;</code> and <code>&lt;col&gt;</code>.</li>\n        </ul>\n      </td>\n    </tr>\n  </tbody>\n</table>"
+    },
+    {
+      "n": 5,
+      "text": "##"
+    },
+    {
+      "n": 6,
+      "text": "What is a table?"
+    },
+    {
+      "n": 7,
+      "text": "A table is a structured set of data made up of rows and columns (**tabular data**)."
+    },
+    {
+      "n": 8,
+      "text": "A table allows you to quickly and easily look up values that indicate some kind of connection between different types of data, for example a person and their age, or a day of the week, or the timetable for a local swimming pool."
+    },
+    {
+      "n": 9,
+      "text": "!"
+    },
+    {
+      "n": 10,
+      "text": "[A sample table showing names and ages of some people - Chris 38, Dennis 45, Sarah 29, Karen 47.](numbers-table.png)"
+    },
+    {
+      "n": 11,
+      "text": "!"
+    },
+    {
+      "n": 12,
+      "text": "[A swimming timetable showing a sample data table](swimming-timetable.png)"
+    },
+    {
+      "n": 13,
+      "text": "Tables are very commonly used in human society,"
+    },
+    {
+      "n": 14,
+      "text": "and have been for a long time, as evidenced by this US Census document from 1800:"
+    },
+    {
+      "n": 15,
+      "text": "!"
+    },
+    {
+      "n": 16,
+      "text": "[A very old parchment document; the data is not easily readable, but it clearly shows a data table being used.](1800-census.jpg)"
+    },
+    {
+      "n": 17,
+      "text": "It is therefore no wonder that the creators of HTML provided a means by which to structure and present tabular data on the web."
+    },
+    {
+      "n": 18,
+      "text": "### How does a table work?"
+    },
+    {
+      "n": 19,
+      "text": "The point of a table is that it is rigid."
+    },
+    {
+      "n": 20,
+      "text": "Information is easily interpreted by making visual associations between row and column headers."
+    },
+    {
+      "n": 21,
+      "text": "Look at the table below for example and find a Jovian gas giant with 62 moons."
+    },
+    {
+      "n": 22,
+      "text": "You can find the answer by associating the relevant row and column headers."
+    },
+    {
+      "n": 23,
+      "text": "```html hidden\n<table>\n  <caption>\n    Data about the planets of our solar system (Source:\n    <a href=\"https://nssdc.gsfc.nasa.gov/planetary/factsheet/\"\n      >Nasa's Planetary Fact Sheet - Metric</a\n    >)."
+    },
+    {
+      "n": 24,
+      "text": "</caption>\n  <thead>\n    <tr>\n      <td colspan=\"2\"></td>\n      <th scope=\"col\">Name</th>\n      <th scope=\"col\">Mass (10<sup>24</sup>kg)</th>\n      <th scope=\"col\">Diameter (km)</th>\n      <th scope=\"col\">Density (kg/m<sup>3</sup>)</th>\n      <th scope=\"col\">Gravity (m/s<sup>2</sup>)</th>\n      <th scope=\"col\">Length of day (hours)</th>\n      <th scope=\"col\">Distance from Sun (10<sup>6</sup>km)</th>\n      <th scope=\"col\">Mean temperature (°C)</th>\n      <th scope=\"col\">Number of moons</th>\n      <th scope=\"col\">Notes</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th colspan=\"2\" rowspan=\"4\" scope=\"rowgroup\">Terrestrial planets</th>\n      <th scope=\"row\">Mercury</th>\n      <td>0.330</td>\n      <td>4,879</td>\n      <td>5427</td>\n      <td>3.7</td>\n      <td>4222.6</td>\n      <td>57.9</td>\n      <td>167</td>\n      <td>0</td>\n      <td>Closest to the Sun</td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Venus</th>\n      <td>4.87</td>\n      <td>12,104</td>\n      <td>5243</td>\n      <td>8.9</td>\n      <td>2802.0</td>\n      <td>108.2</td>\n      <td>464</td>\n      <td>0</td>\n      <td></td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Earth</th>\n      <td>5.97</td>\n      <td>12,756</td>\n      <td>5514</td>\n      <td>9.8</td>\n      <td>24.0</td>\n      <td>149.6</td>\n      <td>15</td>\n      <td>1</td>\n      <td>Our world</td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Mars</th>\n      <td>0.642</td>\n      <td>6,792</td>\n      <td>3933</td>\n      <td>3.7</td>\n      <td>24.7</td>\n      <td>227.9</td>\n      <td>-65</td>\n      <td>2</td>\n      <td>The red planet</td>\n    </tr>\n    <tr>\n      <th rowspan=\"4\""
+    },
+    {
+      "n": 25,
+      "text": "scope=\"rowgroup\">Jovian planets</th>\n      <th rowspan=\"2\" scope=\"rowgroup\">Gas giants</th>\n      <th scope=\"row\">Jupiter</th>\n      <td>1898</td>\n      <td>142,984</td>\n      <td>1326</td>\n      <td>23.1</td>\n      <td>9.9</td>\n      <td>778.6</td>\n      <td>-110</td>\n      <td>67</td>\n      <td>The largest planet</td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Saturn</th>\n      <td>568</td>\n      <td>120,536</td>\n      <td>687</td>\n      <td>9.0</td>\n      <td>10.7</td>\n      <td>1433.5</td>\n      <td>-140</td>\n      <td>62</td>\n      <td></td>\n    </tr>\n    <tr>\n      <th rowspan=\"2\" scope=\"rowgroup\">Ice giants</th>\n      <th scope=\"row\">Uranus</th>\n      <td>86.8</td>\n      <td>51,118</td>\n      <td>1271</td>\n      <td>8.7</td>\n      <td>17.2</td>\n      <td>2872.5</td>\n      <td>-195</td>\n      <td>27</td>\n      <td></td>\n    </tr>\n    <tr>\n      <th scope=\"row\">Neptune</th>\n      <td>102</td>\n      <td>49,528</td>\n      <td>1638</td>\n      <td>11.0</td>\n      <td>16.1</td>\n      <td>4495.1</td>\n      <td>-200</td>\n      <td>14</td>\n      <td></td>\n    </tr>\n    <tr>\n      <th colspan=\"2\" scope=\"rowgroup\">Dwarf planets</th>\n      <th scope=\"row\">Pluto</th>\n      <td>0.0146</td>\n      <td>2,370</td>\n      <td>2095</td>\n      <td>0.7</td>\n      <td>153.3</td>\n      <td>5906.4</td>\n      <td>-225</td>\n      <td>5</td>\n      <td>\n        Declassified as a planet in 2006, but this\n        <a\n          href=\"https://www.usatoday.com/story/tech/2014/10/02/pluto-planet-solar-system/16578959/\"\n          >remains controversial</a\n        >."
+    },
+    {
+      "n": 26,
+      "text": "</td>\n    </tr>\n  </tbody>\n</table>\n```"
+    },
+    {
+      "n": 27,
+      "text": "```css hidden\ntable {\n  border-collapse:"
+    },
+    {
+      "n": 28,
+      "text": "collapse;"
+    },
+    {
+      "n": 29,
+      "text": "border:"
+    },
+    {
+      "n": 30,
+      "text": "2px solid black;"
+    },
+    {
+      "n": 31,
+      "text": "}"
+    },
+    {
+      "n": 32,
+      "text": "th,\ntd {\n  padding:"
+    },
+    {
+      "n": 33,
+      "text": "5px;"
+    },
+    {
+      "n": 34,
+      "text": "border:"
+    },
+    {
+      "n": 35,
+      "text": "1px solid black;"
+    },
+    {
+      "n": 36,
+      "text": "}\n```"
+    },
+    {
+      "n": 37,
+      "text": "{{EmbedLiveSample(\"How_does_a_table_work\", 100, 560)}}"
+    },
+    {
+      "n": 38,
+      "text": "When implemented correctly, HTML tables are handled well by accessibility tools such as screen readers, so a successful HTML table should enhance the experience of sighted and visually impaired users alike."
+    },
+    {
+      "n": 39,
+      "text": "### Table styling"
+    },
+    {
+      "n": 40,
+      "text": "You can also have a"
+    },
+    {
+      "n": 41,
+      "text": "[look at the live planets data example](https://mdn.github.io/learning-area/html/tables/assessment-finished/planets-data.html) on GitHub!"
+    },
+    {
+      "n": 42,
+      "text": "One thing you'll notice is that the table does look a bit more readable there — this is because the table you see above on this page has minimal styling, whereas the GitHub version has more significant CSS applied."
+    },
+    {
+      "n": 43,
+      "text": "Be under no illusion; for tables to be effective on the web, you need to provide some styling information with [CSS](/en-US/docs/Learn_web_development/Core/Styling_basics), as well as good solid structure with HTML."
+    },
+    {
+      "n": 44,
+      "text": "In this lesson we are focusing on the HTML part; you'll find out about styling tables later on, in our [Styling tables](/en-US/docs/Learn_web_development/Core/Styling_basics/Tables) lesson."
+    },
+    {
+      "n": 45,
+      "text": "We won't focus on CSS in this module, but we have provided a minimal CSS stylesheet for you to use that will make your tables more readable than the default you get without any styling."
+    },
+    {
+      "n": 46,
+      "text": "You can find the [stylesheet here](https://github.com/mdn/learning-area/blob/main/html/tables/basic/minimal-table.css), and you can also find an [HTML template](https://github.com/mdn/learning-area/blob/main/html/tables/basic/blank-template.html) that applies the stylesheet — these together will give you a good starting point for experimenting with HTML tables."
+    },
+    {
+      "n": 47,
+      "text": "### When should you avoid HTML tables?"
+    },
+    {
+      "n": 48,
+      "text": "HTML tables should be used for tabular data (information that's easy to work with in rows and columns) — this is what they are designed for."
+    },
+    {
+      "n": 49,
+      "text": "Unfortunately, a lot of people used to use HTML tables to lay out web pages, for example one row to contain a page header, a row to contain each content column, one row to contain the footer, etc."
+    },
+    {
+      "n": 50,
+      "text": "This technique was used in the past because CSS support across browsers used to be a lot more limited."
+    },
+    {
+      "n": 51,
+      "text": "Modern browsers have solid CSS support so table-based layouts are no longer needed."
+    },
+    {
+      "n": 52,
+      "text": "Table layouts are now extremely rare, but you might still see them in some corners of the web."
+    },
+    {
+      "n": 53,
+      "text": "In short, using tables for layout rather than [CSS layout techniques](/en-US/docs/Learn_web_development/Core/CSS_layout) is a bad idea."
+    },
+    {
+      "n": 54,
+      "text": "The main reasons are as follows:"
+    },
+    {
+      "n": 55,
+      "text": "1. **Layout tables reduce accessibility for visually impaired users**: [screen readers](/en-US/docs/Learn_web_development/Core/Accessibility/Tooling#screen_readers), used by blind people, interpret the tags that exist in an HTML page and read out the contents to the user."
+    },
+    {
+      "n": 56,
+      "text": "Because tables are not the right tool for layout, and the markup is more complex than with CSS layout techniques, the screen readers' output will be confusing to their users."
+    },
+    {
+      "n": 57,
+      "text": "2. **Tables produce tag soup**: As mentioned above, table layouts generally involve more complex markup structures than proper layout techniques."
+    },
+    {
+      "n": 58,
+      "text": "This can result in the code being harder to write, maintain, and debug."
+    },
+    {
+      "n": 59,
+      "text": "3. **Tables are not automatically responsive**: When you use proper layout containers (such as {{htmlelement(\"header\")}}, {{htmlelement(\"section\")}}, {{htmlelement(\"article\")}}, or {{htmlelement(\"div\")}}), their width defaults to 100% of their parent element."
+    },
+    {
+      "n": 60,
+      "text": "Tables on the other hand are sized according to their content by default, so extra measures are needed to get table layout styling to effectively work across a variety of devices."
+    },
+    {
+      "n": 61,
+      "text": "## Creating your first table"
+    },
+    {
+      "n": 62,
+      "text": "We've talked table theory enough, so, let's dive into a practical example and get you to build up a simple table."
+    },
+    {
+      "n": 63,
+      "text": "1."
+    },
+    {
+      "n": 64,
+      "text": "First of all, make a copy of [blank-template.html](https://github.com/mdn/learning-area/blob/main/html/tables/basic/blank-template.html) and [minimal-table.css](https://github.com/mdn/learning-area/blob/main/html/tables/basic/minimal-table.css) in a new directory on your local machine."
+    },
+    {
+      "n": 65,
+      "text": "The HTML template already contains a `<link>` element to apply the CSS to the HTML, so you don't need to worry about that."
+    },
+    {
+      "n": 66,
+      "text": "2."
+    },
+    {
+      "n": 67,
+      "text": "The content of every table is enclosed by these two tags: **[`<table></table>`](/en-US/docs/Web/HTML/Reference/Elements/table)**."
+    },
+    {
+      "n": 68,
+      "text": "Add these inside the body of your HTML."
+    },
+    {
+      "n": 69,
+      "text": "3."
+    },
+    {
+      "n": 70,
+      "text": "The smallest container inside a table is a table cell, which is created with a **[`<td>`](/en-US/docs/Web/HTML/Reference/Elements/td)** element (\"td\" stands for \"table data\")."
+    },
+    {
+      "n": 71,
+      "text": "Add the following inside your table tags:"
+    },
+    {
+      "n": 72,
+      "text": "```html\n   <td>Hi, I'm your first cell.</td>\n   ```"
+    },
+    {
+      "n": 73,
+      "text": "4."
+    },
+    {
+      "n": 74,
+      "text": "If we want a row of four cells, we need to copy these tags three times."
+    },
+    {
+      "n": 75,
+      "text": "Update the contents of your table to look like so:"
+    },
+    {
+      "n": 76,
+      "text": "```html\n   <td>Hi, I'm your first cell.</td>\n   <td>I'm your second cell.</td>\n   <td>I'm your third cell.</td>\n   <td>I'm your fourth cell.</td>\n   ```"
+    },
+    {
+      "n": 77,
+      "text": "As you will see, the cells are not placed underneath each other, rather they are automatically aligned with each other on the same row."
+    },
+    {
+      "n": 78,
+      "text": "Each `<td>` element creates a single cell and together they make up the first row."
+    },
+    {
+      "n": 79,
+      "text": "Every cell we add makes the row grow longer."
+    },
+    {
+      "n": 80,
+      "text": "To stop this row from growing and start placing subsequent cells on a second row, we need to use the **[`<tr>`](/en-US/docs/Web/HTML/Reference/Elements/tr)** element ('tr' stands for 'table row')."
+    },
+    {
+      "n": 81,
+      "text": "Let's investigate this now."
+    },
+    {
+      "n": 82,
+      "text": "1."
+    },
+    {
+      "n": 83,
+      "text": "Place the four cells you've already created inside `<tr>` tags, like so:"
+    },
+    {
+      "n": 84,
+      "text": "```html\n   <tr>\n     <td>Hi, I'm your first cell.</td>\n     <td>I'm your second cell.</td>\n     <td>I'm your third cell.</td>\n     <td>I'm your fourth cell.</td>\n   </tr>\n   ```"
+    },
+    {
+      "n": 85,
+      "text": "2."
+    },
+    {
+      "n": 86,
+      "text": "Now you've made one row, have a go at making one or two more — each row needs to be wrapped in an additional `<tr>` element, with each cell contained in a `<td>`."
+    },
+    {
+      "n": 87,
+      "text": "<details>\n<summary>Click here to show the solution</summary>"
+    },
+    {
+      "n": 88,
+      "text": "Your finished HTML should look something like this:"
+    },
+    {
+      "n": 89,
+      "text": "```html\n<table>\n  <tr>\n    <td>Hi, I'm your first cell.</td>\n    <td>I'm your second cell.</td>\n    <td>I'm your third cell.</td>\n    <td>I'm your fourth cell.</td>\n  </tr>"
+    },
+    {
+      "n": 90,
+      "text": "<tr>\n    <td>Second row, first cell.</td>\n    <td>Cell 2.</td>\n    <td>Cell 3.</td>\n    <td>Cell 4.</td>\n  </tr>\n</table>\n```"
+    },
+    {
+      "n": 91,
+      "text": "You can also find this code on GitHub at [simple-table.html](https://github.com/mdn/learning-area/blob/main/html/tables/basic/simple-table.html) ([see it running live also](https://mdn.github.io/learning-area/html/tables/basic/simple-table.html))."
+    },
+    {
+      "n": 92,
+      "text": "</details>"
+    }
+  ]
+}

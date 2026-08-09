@@ -989,7 +989,10 @@ describe("ReaderRecordPlateSurface", () => {
     );
     expect(analysisBlock?.classList.contains("reader-record-plate-sentence-analysis")).toBe(true);
     expect(analysisBlock?.className).toContain("font-sans");
-    expect(analysisBlock?.className).toContain("bg-context-blue/[0.04]");
+    // Visuals are owned by the semantic class in globals.css — no inline
+    // border/background utilities on the component anymore.
+    expect(analysisBlock?.className).not.toContain("border");
+    expect(analysisBlock?.className).not.toContain("bg-");
     expect(
       analysisBlock?.dataset.readerRecordSentenceAnalysisBlock,
     ).toBe("true");
@@ -1392,22 +1395,41 @@ describe("ReaderRecordPlateSurface", () => {
       /\.reader-record-plate-callout--grammar-row::before\s*\{[\s\S]*?content:\s*counter\(reader-record-grammar-row\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--grammar-violet\) 1\.6%, transparent\)/,
+      /\.reader-record-plate-callout-group\s*[\s\S]*?\.reader-record-plate-callout--grammar-row:hover\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--surface\) 18%, transparent\)/,
     );
     expect(globalsSource).toMatch(
       /\.reader-record-plate-sentence-analysis-chunks\s*\{[\s\S]*?border-left:\s*1px solid color-mix\(in srgb, var\(--context-blue\) 16%, var\(--hairline\)\)/,
     );
+    // Unified filled-card family: both the grammar group and the sentence
+    // analysis card are borderless 8px-radius fills, and collapse state no
+    // longer restyles the card shell (content hides via `hidden` only).
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group:has\(\+ \.reader-record-plate-sentence-analysis\)\s*\{[\s\S]*?border-bottom-color:\s*color-mix\(in srgb, var\(--hairline\) 56%, transparent\)/,
+      /\.reader-record-plate-callout-group\s*\{[\s\S]*?border-radius:\s*8px[\s\S]*?background-color:\s*var\(--reader-record-note-fill-grammar\)/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-callout-group\s*\+\s*\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-top-color:\s*color-mix\(in srgb, var\(--context-blue\) 12%, var\(--hairline\)\)/,
+      /\.reader-record-plate-sentence-analysis\s*\{[\s\S]*?border-radius:\s*8px[\s\S]*?background-color:\s*var\(--reader-record-note-fill-analysis\)/,
+    );
+    expect(globalsSource).not.toMatch(
+      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?padding-inline:\s*0/,
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="true"\]\s*\{[\s\S]*?border-right-color:\s*transparent[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 1\.2%, transparent\)/,
+      /\.reader-record-plate-callout-toggle\[aria-expanded="true"\]\s*\.reader-record-plate-callout-toggle-icon\s*\{[\s\S]*?transform:\s*rotate\(180deg\)/,
+    );
+  });
+
+  it("keeps light note-card fills quiet without changing dark mode", () => {
+    const globalsSource = readFileSync(
+      resolve(process.cwd(), "src/app/globals.css"),
+      "utf8",
     );
     expect(globalsSource).toMatch(
-      /\.reader-record-plate-sentence-analysis\[data-reader-record-sentence-analysis-collapsed="false"\]\s*\{[\s\S]*?background-color:\s*color-mix\(in srgb, var\(--context-blue\) 1\.4%, transparent\)[\s\S]*?padding-inline:\s*0/,
+      /(?:^|\n)\.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 40%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 40%, var\(--surface\)\)/,
+    );
+    expect(globalsSource).toMatch(
+      /\.dark \.reader-record-plate-document\s*\{[\s\S]*?--reader-record-note-fill-grammar:\s*color-mix\(in srgb, var\(--grammar-violet\) 36%, var\(--surface\)\)[\s\S]*?--reader-record-note-fill-analysis:\s*color-mix\(in srgb, var\(--context-blue\) 36%, var\(--surface\)\)/,
+    );
+    expect(globalsSource).toMatch(
+      /--reader-record-note-fill-supplement:\s*var\(--reader-record-note-fill-grammar\)/,
     );
   });
 

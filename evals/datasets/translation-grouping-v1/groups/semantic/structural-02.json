@@ -1,0 +1,177 @@
+{
+  "id": "structural-02",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [2],
+      "reason": "list intro line"
+    },
+    {
+      "sentence_ns": [3, 4, 5],
+      "reason": "bulleted list items together"
+    },
+    {
+      "sentence_ns": [6, 7],
+      "reason": "single complete thought"
+    },
+    {
+      "sentence_ns": [8, 9, 10],
+      "reason": "note blockquote self-contained"
+    },
+    {
+      "sentence_ns": [11],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [12, 13, 14, 15],
+      "reason": "setup instructions one thought"
+    },
+    {
+      "sentence_ns": [16, 17],
+      "reason": "html code block self-contained"
+    },
+    {
+      "sentence_ns": [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42],
+      "reason": "css code block fragments together"
+    },
+    {
+      "sentence_ns": [43, 44],
+      "reason": "markup explanation one thought"
+    },
+    {
+      "sentence_ns": [45],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [46, 47, 48],
+      "reason": "selecting flex elements explanation"
+    },
+    {
+      "sentence_ns": [49, 50],
+      "reason": "html code block self-contained"
+    },
+    {
+      "sentence_ns": [51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75],
+      "reason": "hidden css code block"
+    },
+    {
+      "sentence_ns": [76, 77, 78],
+      "reason": "css code block self-contained"
+    },
+    {
+      "sentence_ns": [79, 80],
+      "reason": "result explanation with preview"
+    },
+    {
+      "sentence_ns": [81, 82, 83, 84],
+      "reason": "outcome reflection one thought"
+    },
+    {
+      "sentence_ns": [85],
+      "reason": "recap intro line"
+    },
+    {
+      "sentence_ns": [86, 87, 88],
+      "reason": "recap points tightly coupled"
+    },
+    {
+      "sentence_ns": [89, 90],
+      "reason": "inline display values explanation"
+    },
+    {
+      "sentence_ns": [91, 92],
+      "reason": "tutorial focus and transition"
+    },
+    {
+      "sentence_ns": [93],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [94],
+      "reason": "list intro line"
+    },
+    {
+      "sentence_ns": [95, 96, 97, 98, 99, 100, 101],
+      "reason": "image alt text fragments together"
+    },
+    {
+      "sentence_ns": [102, 103],
+      "reason": "main axis definition bullet"
+    },
+    {
+      "sentence_ns": [104, 105, 106],
+      "reason": "cross axis and container bullets"
+    },
+    {
+      "sentence_ns": [107, 108],
+      "reason": "terminology reminder one thought"
+    },
+    {
+      "sentence_ns": [109],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [110, 111],
+      "reason": "flex-direction property introduction"
+    },
+    {
+      "sentence_ns": [112],
+      "reason": "code intro line"
+    },
+    {
+      "sentence_ns": [113, 114, 115],
+      "reason": "css code block self-contained"
+    },
+    {
+      "sentence_ns": [116, 117],
+      "reason": "result and cleanup instruction"
+    },
+    {
+      "sentence_ns": [118, 119, 120],
+      "reason": "note blockquote self-contained"
+    },
+    {
+      "sentence_ns": [121],
+      "reason": "section heading standalone"
+    },
+    {
+      "sentence_ns": [122, 123],
+      "reason": "overflow problem explanation"
+    },
+    {
+      "sentence_ns": [124, 125],
+      "reason": "html code block self-contained"
+    },
+    {
+      "sentence_ns": [126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156],
+      "reason": "hidden css code block"
+    },
+    {
+      "sentence_ns": [157, 158],
+      "reason": "overflow behavior explanation"
+    },
+    {
+      "sentence_ns": [159, 160],
+      "reason": "html code block self-contained"
+    },
+    {
+      "sentence_ns": [161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191],
+      "reason": "hidden css code block"
+    },
+    {
+      "sentence_ns": [192],
+      "reason": "code intro line"
+    },
+    {
+      "sentence_ns": [193, 194, 195],
+      "reason": "css code block self-contained"
+    },
+    {
+      "sentence_ns": [196, 197, 198, 199],
+      "reason": "wrapping result one thought"
+    }
+  ]
+}

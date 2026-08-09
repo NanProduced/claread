@@ -1,0 +1,2683 @@
+{
+  "id": "structural-07",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Retrieving objects\n=================="
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "To retrieve objects from your database, construct a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "QuerySet` via a\n:class:`~django.db.models."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "Manager` on your model class."
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "A :class:`~django.db.models.query."
+    },
+    {
+      "n": 6,
+      "unit_id": "u3",
+      "anchor_segment_id": "s6",
+      "text": "QuerySet` represents a collection of objects\nfrom your database."
+    },
+    {
+      "n": 7,
+      "unit_id": "u3",
+      "anchor_segment_id": "s7",
+      "text": "It can have zero, one or many *filters*."
+    },
+    {
+      "n": 8,
+      "unit_id": "u3",
+      "anchor_segment_id": "s8",
+      "text": "Filters narrow\ndown the query results based on the given parameters."
+    },
+    {
+      "n": 9,
+      "unit_id": "u3",
+      "anchor_segment_id": "s9",
+      "text": "In SQL terms, a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 10,
+      "unit_id": "u3",
+      "anchor_segment_id": "s10",
+      "text": "QuerySet` equates to a ``SELECT`` statement,\nand a filter is a limiting clause such as ``WHERE`` or ``LIMIT``."
+    },
+    {
+      "n": 11,
+      "unit_id": "u4",
+      "anchor_segment_id": "s11",
+      "text": "You get a :class:`~django.db.models.query."
+    },
+    {
+      "n": 12,
+      "unit_id": "u4",
+      "anchor_segment_id": "s12",
+      "text": "QuerySet` by using your model's\n:class:`~django.db.models."
+    },
+    {
+      "n": 13,
+      "unit_id": "u4",
+      "anchor_segment_id": "s13",
+      "text": "Manager`."
+    },
+    {
+      "n": 14,
+      "unit_id": "u4",
+      "anchor_segment_id": "s14",
+      "text": "Each model has at least one\n:class:`~django.db.models."
+    },
+    {
+      "n": 15,
+      "unit_id": "u4",
+      "anchor_segment_id": "s15",
+      "text": "Manager`, and it's called\n:attr:`~django.db.models."
+    },
+    {
+      "n": 16,
+      "unit_id": "u4",
+      "anchor_segment_id": "s16",
+      "text": "Model.objects` by default."
+    },
+    {
+      "n": 17,
+      "unit_id": "u4",
+      "anchor_segment_id": "s17",
+      "text": "Access it directly via the\nmodel class, like so:"
+    },
+    {
+      "n": 18,
+      "unit_id": "u5",
+      "anchor_segment_id": "s18",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 19,
+      "unit_id": "u5",
+      "anchor_segment_id": "s19",
+      "text": ":"
+    },
+    {
+      "n": 20,
+      "unit_id": "u5",
+      "anchor_segment_id": "s20",
+      "text": "pycon"
+    },
+    {
+      "n": 21,
+      "unit_id": "u6",
+      "anchor_segment_id": "s21",
+      "text": ">>> Blog.objects\n    <django.db.models.manager."
+    },
+    {
+      "n": 22,
+      "unit_id": "u6",
+      "anchor_segment_id": "s22",
+      "text": "Manager object at ...>\n    >>> b = Blog(name=\"Foo\", tagline=\"Bar\")\n    >>> b.objects\n    Traceback:\n        ..."
+    },
+    {
+      "n": 23,
+      "unit_id": "u6",
+      "anchor_segment_id": "s23",
+      "text": "AttributeError: \"Manager isn't accessible via Blog instances.\""
+    },
+    {
+      "n": 24,
+      "unit_id": "u7",
+      "anchor_segment_id": "s24",
+      "text": ".. note:"
+    },
+    {
+      "n": 25,
+      "unit_id": "u7",
+      "anchor_segment_id": "s25",
+      "text": ":"
+    },
+    {
+      "n": 26,
+      "unit_id": "u8",
+      "anchor_segment_id": "s26",
+      "text": "A ``Manager`` is accessible only via model classes, rather than from model\n    instances, to enforce a separation between \"table-level\" operations and\n    \"record-level\" operations."
+    },
+    {
+      "n": 27,
+      "unit_id": "u9",
+      "anchor_segment_id": "s27",
+      "text": "The :class:`~django.db.models."
+    },
+    {
+      "n": 28,
+      "unit_id": "u9",
+      "anchor_segment_id": "s28",
+      "text": "Manager` is the main source of querysets for\na model."
+    },
+    {
+      "n": 29,
+      "unit_id": "u9",
+      "anchor_segment_id": "s29",
+      "text": "For example, ``Blog.objects.all()`` returns a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 30,
+      "unit_id": "u9",
+      "anchor_segment_id": "s30",
+      "text": "QuerySet` that contains all ``Blog`` objects in\nthe database."
+    },
+    {
+      "n": 31,
+      "unit_id": "u10",
+      "anchor_segment_id": "s31",
+      "text": "Retrieving all objects\n--"
+    },
+    {
+      "n": 32,
+      "unit_id": "u10",
+      "anchor_segment_id": "s32",
+      "text": "--"
+    },
+    {
+      "n": 33,
+      "unit_id": "u10",
+      "anchor_segment_id": "s33",
+      "text": "--"
+    },
+    {
+      "n": 34,
+      "unit_id": "u10",
+      "anchor_segment_id": "s34",
+      "text": "--"
+    },
+    {
+      "n": 35,
+      "unit_id": "u10",
+      "anchor_segment_id": "s35",
+      "text": "--"
+    },
+    {
+      "n": 36,
+      "unit_id": "u10",
+      "anchor_segment_id": "s36",
+      "text": "--"
+    },
+    {
+      "n": 37,
+      "unit_id": "u10",
+      "anchor_segment_id": "s37",
+      "text": "--"
+    },
+    {
+      "n": 38,
+      "unit_id": "u10",
+      "anchor_segment_id": "s38",
+      "text": "--"
+    },
+    {
+      "n": 39,
+      "unit_id": "u10",
+      "anchor_segment_id": "s39",
+      "text": "--"
+    },
+    {
+      "n": 40,
+      "unit_id": "u10",
+      "anchor_segment_id": "s40",
+      "text": "--"
+    },
+    {
+      "n": 41,
+      "unit_id": "u10",
+      "anchor_segment_id": "s41",
+      "text": "--"
+    },
+    {
+      "n": 42,
+      "unit_id": "u11",
+      "anchor_segment_id": "s42",
+      "text": "The simplest way to retrieve objects from a table is to get all of them."
+    },
+    {
+      "n": 43,
+      "unit_id": "u11",
+      "anchor_segment_id": "s43",
+      "text": "To do\nthis, use the :meth:`~django.db.models.query."
+    },
+    {
+      "n": 44,
+      "unit_id": "u11",
+      "anchor_segment_id": "s44",
+      "text": "QuerySet.all` method on a\n:class:`~django.db.models."
+    },
+    {
+      "n": 45,
+      "unit_id": "u11",
+      "anchor_segment_id": "s45",
+      "text": "Manager`:"
+    },
+    {
+      "n": 46,
+      "unit_id": "u12",
+      "anchor_segment_id": "s46",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 47,
+      "unit_id": "u12",
+      "anchor_segment_id": "s47",
+      "text": ":"
+    },
+    {
+      "n": 48,
+      "unit_id": "u12",
+      "anchor_segment_id": "s48",
+      "text": "pycon"
+    },
+    {
+      "n": 49,
+      "unit_id": "u13",
+      "anchor_segment_id": "s49",
+      "text": ">>> all_entries = Entry.objects.all()"
+    },
+    {
+      "n": 50,
+      "unit_id": "u14",
+      "anchor_segment_id": "s50",
+      "text": "The :meth:`~django.db.models.query."
+    },
+    {
+      "n": 51,
+      "unit_id": "u14",
+      "anchor_segment_id": "s51",
+      "text": "QuerySet.all` method returns a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 52,
+      "unit_id": "u14",
+      "anchor_segment_id": "s52",
+      "text": "QuerySet` of all the objects in the database."
+    },
+    {
+      "n": 53,
+      "unit_id": "u15",
+      "anchor_segment_id": "s53",
+      "text": "Retrieving specific objects with filters\n--"
+    },
+    {
+      "n": 54,
+      "unit_id": "u15",
+      "anchor_segment_id": "s54",
+      "text": "--"
+    },
+    {
+      "n": 55,
+      "unit_id": "u15",
+      "anchor_segment_id": "s55",
+      "text": "--"
+    },
+    {
+      "n": 56,
+      "unit_id": "u15",
+      "anchor_segment_id": "s56",
+      "text": "--"
+    },
+    {
+      "n": 57,
+      "unit_id": "u15",
+      "anchor_segment_id": "s57",
+      "text": "--"
+    },
+    {
+      "n": 58,
+      "unit_id": "u15",
+      "anchor_segment_id": "s58",
+      "text": "--"
+    },
+    {
+      "n": 59,
+      "unit_id": "u15",
+      "anchor_segment_id": "s59",
+      "text": "--"
+    },
+    {
+      "n": 60,
+      "unit_id": "u15",
+      "anchor_segment_id": "s60",
+      "text": "--"
+    },
+    {
+      "n": 61,
+      "unit_id": "u15",
+      "anchor_segment_id": "s61",
+      "text": "--"
+    },
+    {
+      "n": 62,
+      "unit_id": "u15",
+      "anchor_segment_id": "s62",
+      "text": "--"
+    },
+    {
+      "n": 63,
+      "unit_id": "u15",
+      "anchor_segment_id": "s63",
+      "text": "--"
+    },
+    {
+      "n": 64,
+      "unit_id": "u15",
+      "anchor_segment_id": "s64",
+      "text": "--"
+    },
+    {
+      "n": 65,
+      "unit_id": "u15",
+      "anchor_segment_id": "s65",
+      "text": "--"
+    },
+    {
+      "n": 66,
+      "unit_id": "u15",
+      "anchor_segment_id": "s66",
+      "text": "--"
+    },
+    {
+      "n": 67,
+      "unit_id": "u15",
+      "anchor_segment_id": "s67",
+      "text": "--"
+    },
+    {
+      "n": 68,
+      "unit_id": "u15",
+      "anchor_segment_id": "s68",
+      "text": "--"
+    },
+    {
+      "n": 69,
+      "unit_id": "u15",
+      "anchor_segment_id": "s69",
+      "text": "--"
+    },
+    {
+      "n": 70,
+      "unit_id": "u15",
+      "anchor_segment_id": "s70",
+      "text": "--"
+    },
+    {
+      "n": 71,
+      "unit_id": "u15",
+      "anchor_segment_id": "s71",
+      "text": "--"
+    },
+    {
+      "n": 72,
+      "unit_id": "u15",
+      "anchor_segment_id": "s72",
+      "text": "--"
+    },
+    {
+      "n": 73,
+      "unit_id": "u16",
+      "anchor_segment_id": "s73",
+      "text": "The :class:`~django.db.models.query."
+    },
+    {
+      "n": 74,
+      "unit_id": "u16",
+      "anchor_segment_id": "s74",
+      "text": "QuerySet` returned by\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 75,
+      "unit_id": "u16",
+      "anchor_segment_id": "s75",
+      "text": "QuerySet.all` describes all objects in the\ndatabase table."
+    },
+    {
+      "n": 76,
+      "unit_id": "u16",
+      "anchor_segment_id": "s76",
+      "text": "Usually, though, you'll need to select only a subset of the\ncomplete set of objects."
+    },
+    {
+      "n": 77,
+      "unit_id": "u17",
+      "anchor_segment_id": "s77",
+      "text": "To create such a subset, you refine the initial\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 78,
+      "unit_id": "u17",
+      "anchor_segment_id": "s78",
+      "text": "QuerySet`, adding filter conditions."
+    },
+    {
+      "n": 79,
+      "unit_id": "u17",
+      "anchor_segment_id": "s79",
+      "text": "The two\nmost common ways to refine a :class:`~django.db.models.query."
+    },
+    {
+      "n": 80,
+      "unit_id": "u17",
+      "anchor_segment_id": "s80",
+      "text": "QuerySet` are:"
+    },
+    {
+      "n": 81,
+      "unit_id": "u18",
+      "anchor_segment_id": "s81",
+      "text": "``filter(**kwargs)``\n    Returns a new :class:`~django.db.models.query."
+    },
+    {
+      "n": 82,
+      "unit_id": "u18",
+      "anchor_segment_id": "s82",
+      "text": "QuerySet` containing objects\n    that match the given lookup parameters."
+    },
+    {
+      "n": 83,
+      "unit_id": "u19",
+      "anchor_segment_id": "s83",
+      "text": "``exclude(**kwargs)``\n    Returns a new :class:`~django.db.models.query."
+    },
+    {
+      "n": 84,
+      "unit_id": "u19",
+      "anchor_segment_id": "s84",
+      "text": "QuerySet` containing objects\n    that do *not* match the given lookup parameters."
+    },
+    {
+      "n": 85,
+      "unit_id": "u20",
+      "anchor_segment_id": "s85",
+      "text": "The lookup parameters (``**kwargs`` in the above function definitions) should\nbe in the format described in `Field lookups`_ below."
+    },
+    {
+      "n": 86,
+      "unit_id": "u21",
+      "anchor_segment_id": "s86",
+      "text": "For example, to get a :class:`~django.db.models.query."
+    },
+    {
+      "n": 87,
+      "unit_id": "u21",
+      "anchor_segment_id": "s87",
+      "text": "QuerySet` of blog entries\nfrom the year 2006, use :meth:`~django.db.models.query."
+    },
+    {
+      "n": 88,
+      "unit_id": "u21",
+      "anchor_segment_id": "s88",
+      "text": "QuerySet.filter` like\nso::"
+    },
+    {
+      "n": 89,
+      "unit_id": "u22",
+      "anchor_segment_id": "s89",
+      "text": "Entry.objects.filter(pub_date__year=2006)"
+    },
+    {
+      "n": 90,
+      "unit_id": "u23",
+      "anchor_segment_id": "s90",
+      "text": "With the default manager class, it is the same as:"
+    },
+    {
+      "n": 91,
+      "unit_id": "u23",
+      "anchor_segment_id": "s91",
+      "text": ":"
+    },
+    {
+      "n": 92,
+      "unit_id": "u24",
+      "anchor_segment_id": "s92",
+      "text": "Entry.objects.all().filter(pub_date__year=2006)"
+    },
+    {
+      "n": 93,
+      "unit_id": "u25",
+      "anchor_segment_id": "s93",
+      "text": ".. _chaining-filters:"
+    },
+    {
+      "n": 94,
+      "unit_id": "u26",
+      "anchor_segment_id": "s94",
+      "text": "Chaining filters\n~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 95,
+      "unit_id": "u27",
+      "anchor_segment_id": "s95",
+      "text": "The result of refining a :class:`~django.db.models.query."
+    },
+    {
+      "n": 96,
+      "unit_id": "u27",
+      "anchor_segment_id": "s96",
+      "text": "QuerySet` is itself a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 97,
+      "unit_id": "u27",
+      "anchor_segment_id": "s97",
+      "text": "QuerySet`, so it's possible to chain\nrefinements together."
+    },
+    {
+      "n": 98,
+      "unit_id": "u27",
+      "anchor_segment_id": "s98",
+      "text": "For example:"
+    },
+    {
+      "n": 99,
+      "unit_id": "u28",
+      "anchor_segment_id": "s99",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 100,
+      "unit_id": "u28",
+      "anchor_segment_id": "s100",
+      "text": ":"
+    },
+    {
+      "n": 101,
+      "unit_id": "u28",
+      "anchor_segment_id": "s101",
+      "text": "pycon"
+    },
+    {
+      "n": 102,
+      "unit_id": "u29",
+      "anchor_segment_id": "s102",
+      "text": ">>> Entry.objects.filter(headline__startswith=\"What\").exclude(\n    ...     pub_date__gte=datetime.date.today()\n    ... ).filter(pub_date__gte=datetime.date(2005, 1, 30))"
+    },
+    {
+      "n": 103,
+      "unit_id": "u30",
+      "anchor_segment_id": "s103",
+      "text": "This takes the initial :class:`~django.db.models.query."
+    },
+    {
+      "n": 104,
+      "unit_id": "u30",
+      "anchor_segment_id": "s104",
+      "text": "QuerySet` of all entries\nin the database, adds a filter, then an exclusion, then another filter."
+    },
+    {
+      "n": 105,
+      "unit_id": "u30",
+      "anchor_segment_id": "s105",
+      "text": "The\nfinal result is a :class:`~django.db.models.query."
+    },
+    {
+      "n": 106,
+      "unit_id": "u30",
+      "anchor_segment_id": "s106",
+      "text": "QuerySet` containing all\nentries with a headline that starts with \"What\", that were published between\nJanuary 30, 2005, and the current day."
+    },
+    {
+      "n": 107,
+      "unit_id": "u31",
+      "anchor_segment_id": "s107",
+      "text": ".. _filtered-querysets-are-unique:"
+    },
+    {
+      "n": 108,
+      "unit_id": "u32",
+      "anchor_segment_id": "s108",
+      "text": "Filtered ``QuerySet``\\s are unique\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 109,
+      "unit_id": "u33",
+      "anchor_segment_id": "s109",
+      "text": "Each time you refine a :class:`~django.db.models.query."
+    },
+    {
+      "n": 110,
+      "unit_id": "u33",
+      "anchor_segment_id": "s110",
+      "text": "QuerySet`, you get a\nbrand-new :class:`~django.db.models.query."
+    },
+    {
+      "n": 111,
+      "unit_id": "u33",
+      "anchor_segment_id": "s111",
+      "text": "QuerySet` that is in no way bound to\nthe previous :class:`~django.db.models.query."
+    },
+    {
+      "n": 112,
+      "unit_id": "u33",
+      "anchor_segment_id": "s112",
+      "text": "QuerySet`."
+    },
+    {
+      "n": 113,
+      "unit_id": "u33",
+      "anchor_segment_id": "s113",
+      "text": "Each refinement creates\na separate and distinct :class:`~django.db.models.query."
+    },
+    {
+      "n": 114,
+      "unit_id": "u33",
+      "anchor_segment_id": "s114",
+      "text": "QuerySet` that can be\nstored, used and reused."
+    },
+    {
+      "n": 115,
+      "unit_id": "u34",
+      "anchor_segment_id": "s115",
+      "text": "Example:"
+    },
+    {
+      "n": 116,
+      "unit_id": "u35",
+      "anchor_segment_id": "s116",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 117,
+      "unit_id": "u35",
+      "anchor_segment_id": "s117",
+      "text": ":"
+    },
+    {
+      "n": 118,
+      "unit_id": "u35",
+      "anchor_segment_id": "s118",
+      "text": "pycon"
+    },
+    {
+      "n": 119,
+      "unit_id": "u36",
+      "anchor_segment_id": "s119",
+      "text": ">>> q1 = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q2 = q1.exclude(pub_date__gte=datetime.date.today())\n    >>> q3 = q1.filter(pub_date__gte=datetime.date.today())"
+    },
+    {
+      "n": 120,
+      "unit_id": "u37",
+      "anchor_segment_id": "s120",
+      "text": "These three querysets are separate."
+    },
+    {
+      "n": 121,
+      "unit_id": "u37",
+      "anchor_segment_id": "s121",
+      "text": "The first is a base\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 122,
+      "unit_id": "u37",
+      "anchor_segment_id": "s122",
+      "text": "QuerySet` containing all entries that contain a\nheadline starting with \"What\"."
+    },
+    {
+      "n": 123,
+      "unit_id": "u37",
+      "anchor_segment_id": "s123",
+      "text": "The second is a subset of the first, with an\nadditional criteria that excludes records whose ``pub_date`` is today or in the\nfuture."
+    },
+    {
+      "n": 124,
+      "unit_id": "u37",
+      "anchor_segment_id": "s124",
+      "text": "The third is a subset of the first, with an additional criteria that\nselects only the records whose ``pub_date`` is today or in the future."
+    },
+    {
+      "n": 125,
+      "unit_id": "u37",
+      "anchor_segment_id": "s125",
+      "text": "The\ninitial :class:`~django.db.models.query."
+    },
+    {
+      "n": 126,
+      "unit_id": "u37",
+      "anchor_segment_id": "s126",
+      "text": "QuerySet` (``q1``) is unaffected by the\nrefinement process."
+    },
+    {
+      "n": 127,
+      "unit_id": "u38",
+      "anchor_segment_id": "s127",
+      "text": ".. _querysets-are-lazy:"
+    },
+    {
+      "n": 128,
+      "unit_id": "u39",
+      "anchor_segment_id": "s128",
+      "text": "``QuerySet``\\s are lazy\n~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 129,
+      "unit_id": "u40",
+      "anchor_segment_id": "s129",
+      "text": "``QuerySet`` objects are lazy -- the act of creating a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 130,
+      "unit_id": "u40",
+      "anchor_segment_id": "s130",
+      "text": "QuerySet` doesn't involve any database\nactivity."
+    },
+    {
+      "n": 131,
+      "unit_id": "u40",
+      "anchor_segment_id": "s131",
+      "text": "You can stack filters together all day long, and Django won't\nactually run the query until the :class:`~django.db.models.query."
+    },
+    {
+      "n": 132,
+      "unit_id": "u40",
+      "anchor_segment_id": "s132",
+      "text": "QuerySet` is\n*evaluated*."
+    },
+    {
+      "n": 133,
+      "unit_id": "u40",
+      "anchor_segment_id": "s133",
+      "text": "Take a look at this example:"
+    },
+    {
+      "n": 134,
+      "unit_id": "u41",
+      "anchor_segment_id": "s134",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 135,
+      "unit_id": "u41",
+      "anchor_segment_id": "s135",
+      "text": ":"
+    },
+    {
+      "n": 136,
+      "unit_id": "u41",
+      "anchor_segment_id": "s136",
+      "text": "pycon"
+    },
+    {
+      "n": 137,
+      "unit_id": "u42",
+      "anchor_segment_id": "s137",
+      "text": ">>> q = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q = q.filter(pub_date__lte=datetime.date.today())\n    >>> q = q.exclude(body_text__icontains=\"food\")\n    >>> print(q)"
+    },
+    {
+      "n": 138,
+      "unit_id": "u43",
+      "anchor_segment_id": "s138",
+      "text": "Though this looks like three database hits, in fact it hits the database only\nonce, at the last line (``print(q)``)."
+    },
+    {
+      "n": 139,
+      "unit_id": "u43",
+      "anchor_segment_id": "s139",
+      "text": "In general, the results of a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 140,
+      "unit_id": "u43",
+      "anchor_segment_id": "s140",
+      "text": "QuerySet` aren't fetched from the database\nuntil you \"ask\" for them."
+    },
+    {
+      "n": 141,
+      "unit_id": "u43",
+      "anchor_segment_id": "s141",
+      "text": "When you do, the\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 142,
+      "unit_id": "u43",
+      "anchor_segment_id": "s142",
+      "text": "QuerySet` is *evaluated* by accessing the\ndatabase."
+    },
+    {
+      "n": 143,
+      "unit_id": "u43",
+      "anchor_segment_id": "s143",
+      "text": "For more details on exactly when evaluation takes place, see\n:ref:`when-querysets-are-evaluated`."
+    },
+    {
+      "n": 144,
+      "unit_id": "u44",
+      "anchor_segment_id": "s144",
+      "text": ".. _retrieving-single-object-with-get:"
+    },
+    {
+      "n": 145,
+      "unit_id": "u45",
+      "anchor_segment_id": "s145",
+      "text": "Retrieving a single object with ``get()``\n--"
+    },
+    {
+      "n": 146,
+      "unit_id": "u45",
+      "anchor_segment_id": "s146",
+      "text": "--"
+    },
+    {
+      "n": 147,
+      "unit_id": "u45",
+      "anchor_segment_id": "s147",
+      "text": "--"
+    },
+    {
+      "n": 148,
+      "unit_id": "u45",
+      "anchor_segment_id": "s148",
+      "text": "--"
+    },
+    {
+      "n": 149,
+      "unit_id": "u45",
+      "anchor_segment_id": "s149",
+      "text": "--"
+    },
+    {
+      "n": 150,
+      "unit_id": "u45",
+      "anchor_segment_id": "s150",
+      "text": "--"
+    },
+    {
+      "n": 151,
+      "unit_id": "u45",
+      "anchor_segment_id": "s151",
+      "text": "--"
+    },
+    {
+      "n": 152,
+      "unit_id": "u45",
+      "anchor_segment_id": "s152",
+      "text": "--"
+    },
+    {
+      "n": 153,
+      "unit_id": "u45",
+      "anchor_segment_id": "s153",
+      "text": "--"
+    },
+    {
+      "n": 154,
+      "unit_id": "u45",
+      "anchor_segment_id": "s154",
+      "text": "--"
+    },
+    {
+      "n": 155,
+      "unit_id": "u45",
+      "anchor_segment_id": "s155",
+      "text": "--"
+    },
+    {
+      "n": 156,
+      "unit_id": "u45",
+      "anchor_segment_id": "s156",
+      "text": "--"
+    },
+    {
+      "n": 157,
+      "unit_id": "u45",
+      "anchor_segment_id": "s157",
+      "text": "--"
+    },
+    {
+      "n": 158,
+      "unit_id": "u45",
+      "anchor_segment_id": "s158",
+      "text": "--"
+    },
+    {
+      "n": 159,
+      "unit_id": "u45",
+      "anchor_segment_id": "s159",
+      "text": "--"
+    },
+    {
+      "n": 160,
+      "unit_id": "u45",
+      "anchor_segment_id": "s160",
+      "text": "--"
+    },
+    {
+      "n": 161,
+      "unit_id": "u45",
+      "anchor_segment_id": "s161",
+      "text": "--"
+    },
+    {
+      "n": 162,
+      "unit_id": "u45",
+      "anchor_segment_id": "s162",
+      "text": "--"
+    },
+    {
+      "n": 163,
+      "unit_id": "u45",
+      "anchor_segment_id": "s163",
+      "text": "--"
+    },
+    {
+      "n": 164,
+      "unit_id": "u45",
+      "anchor_segment_id": "s164",
+      "text": "--"
+    },
+    {
+      "n": 165,
+      "unit_id": "u45",
+      "anchor_segment_id": "s165",
+      "text": "-"
+    },
+    {
+      "n": 166,
+      "unit_id": "u46",
+      "anchor_segment_id": "s166",
+      "text": ":meth:`~django.db.models.query."
+    },
+    {
+      "n": 167,
+      "unit_id": "u46",
+      "anchor_segment_id": "s167",
+      "text": "QuerySet.filter` will always give you a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 168,
+      "unit_id": "u46",
+      "anchor_segment_id": "s168",
+      "text": "QuerySet`, even if only a single object matches\nthe query - in this case, it will be a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 169,
+      "unit_id": "u46",
+      "anchor_segment_id": "s169",
+      "text": "QuerySet` containing a single element."
+    },
+    {
+      "n": 170,
+      "unit_id": "u47",
+      "anchor_segment_id": "s170",
+      "text": "If you know there is only one object that matches your query, you can use the\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 171,
+      "unit_id": "u47",
+      "anchor_segment_id": "s171",
+      "text": "QuerySet.get` method on a\n:class:`~django.db.models."
+    },
+    {
+      "n": 172,
+      "unit_id": "u47",
+      "anchor_segment_id": "s172",
+      "text": "Manager` which returns the object directly:"
+    },
+    {
+      "n": 173,
+      "unit_id": "u48",
+      "anchor_segment_id": "s173",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 174,
+      "unit_id": "u48",
+      "anchor_segment_id": "s174",
+      "text": ":"
+    },
+    {
+      "n": 175,
+      "unit_id": "u48",
+      "anchor_segment_id": "s175",
+      "text": "pycon"
+    },
+    {
+      "n": 176,
+      "unit_id": "u49",
+      "anchor_segment_id": "s176",
+      "text": ">>> one_entry = Entry.objects.get(pk=1)"
+    },
+    {
+      "n": 177,
+      "unit_id": "u50",
+      "anchor_segment_id": "s177",
+      "text": "You can use any query expression with\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 178,
+      "unit_id": "u50",
+      "anchor_segment_id": "s178",
+      "text": "QuerySet.get`, just like with\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 179,
+      "unit_id": "u50",
+      "anchor_segment_id": "s179",
+      "text": "QuerySet.filter` - again, see `Field lookups`_\nbelow."
+    },
+    {
+      "n": 180,
+      "unit_id": "u51",
+      "anchor_segment_id": "s180",
+      "text": "Note that there is a difference between using\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 181,
+      "unit_id": "u51",
+      "anchor_segment_id": "s181",
+      "text": "QuerySet.get`, and using\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 182,
+      "unit_id": "u51",
+      "anchor_segment_id": "s182",
+      "text": "QuerySet.filter` with a slice of ``[0]``."
+    },
+    {
+      "n": 183,
+      "unit_id": "u51",
+      "anchor_segment_id": "s183",
+      "text": "If\nthere are no results that match the query,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 184,
+      "unit_id": "u51",
+      "anchor_segment_id": "s184",
+      "text": "QuerySet.get` will raise a ``DoesNotExist``\nexception."
+    },
+    {
+      "n": 185,
+      "unit_id": "u51",
+      "anchor_segment_id": "s185",
+      "text": "This exception is an attribute of the model class that the query is\nbeing performed on - so in the code above, if there is no ``Entry`` object with\na primary key of 1, Django will raise ``Entry."
+    },
+    {
+      "n": 186,
+      "unit_id": "u51",
+      "anchor_segment_id": "s186",
+      "text": "DoesNotExist``."
+    },
+    {
+      "n": 187,
+      "unit_id": "u52",
+      "anchor_segment_id": "s187",
+      "text": "Similarly, Django will complain if more than one item matches the\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 188,
+      "unit_id": "u52",
+      "anchor_segment_id": "s188",
+      "text": "QuerySet.get` query."
+    },
+    {
+      "n": 189,
+      "unit_id": "u52",
+      "anchor_segment_id": "s189",
+      "text": "In this case, it will raise\n:exc:`~django.core.exceptions.MultipleObjectsReturned`, which again is an\nattribute of the model class itself."
+    },
+    {
+      "n": 190,
+      "unit_id": "u53",
+      "anchor_segment_id": "s190",
+      "text": "Other ``QuerySet`` methods\n--"
+    },
+    {
+      "n": 191,
+      "unit_id": "u53",
+      "anchor_segment_id": "s191",
+      "text": "--"
+    },
+    {
+      "n": 192,
+      "unit_id": "u53",
+      "anchor_segment_id": "s192",
+      "text": "--"
+    },
+    {
+      "n": 193,
+      "unit_id": "u53",
+      "anchor_segment_id": "s193",
+      "text": "--"
+    },
+    {
+      "n": 194,
+      "unit_id": "u53",
+      "anchor_segment_id": "s194",
+      "text": "--"
+    },
+    {
+      "n": 195,
+      "unit_id": "u53",
+      "anchor_segment_id": "s195",
+      "text": "--"
+    },
+    {
+      "n": 196,
+      "unit_id": "u53",
+      "anchor_segment_id": "s196",
+      "text": "--"
+    },
+    {
+      "n": 197,
+      "unit_id": "u53",
+      "anchor_segment_id": "s197",
+      "text": "--"
+    },
+    {
+      "n": 198,
+      "unit_id": "u53",
+      "anchor_segment_id": "s198",
+      "text": "--"
+    },
+    {
+      "n": 199,
+      "unit_id": "u53",
+      "anchor_segment_id": "s199",
+      "text": "--"
+    },
+    {
+      "n": 200,
+      "unit_id": "u53",
+      "anchor_segment_id": "s200",
+      "text": "--"
+    },
+    {
+      "n": 201,
+      "unit_id": "u53",
+      "anchor_segment_id": "s201",
+      "text": "--"
+    },
+    {
+      "n": 202,
+      "unit_id": "u53",
+      "anchor_segment_id": "s202",
+      "text": "--"
+    },
+    {
+      "n": 203,
+      "unit_id": "u54",
+      "anchor_segment_id": "s203",
+      "text": "Most of the time you'll use :meth:`~django.db.models.query."
+    },
+    {
+      "n": 204,
+      "unit_id": "u54",
+      "anchor_segment_id": "s204",
+      "text": "QuerySet.all`,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 205,
+      "unit_id": "u54",
+      "anchor_segment_id": "s205",
+      "text": "QuerySet.get`,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 206,
+      "unit_id": "u54",
+      "anchor_segment_id": "s206",
+      "text": "QuerySet.filter` and\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 207,
+      "unit_id": "u54",
+      "anchor_segment_id": "s207",
+      "text": "QuerySet.exclude` when you need to look up\nobjects from the database."
+    },
+    {
+      "n": 208,
+      "unit_id": "u54",
+      "anchor_segment_id": "s208",
+      "text": "However, that's far from all there is; see the\n:ref:`QuerySet API Reference <queryset-api>` for a complete list of all the\nvarious :class:`~django.db.models.query."
+    },
+    {
+      "n": 209,
+      "unit_id": "u54",
+      "anchor_segment_id": "s209",
+      "text": "QuerySet` methods."
+    },
+    {
+      "n": 210,
+      "unit_id": "u55",
+      "anchor_segment_id": "s210",
+      "text": ".. _limiting-querysets:"
+    },
+    {
+      "n": 211,
+      "unit_id": "u56",
+      "anchor_segment_id": "s211",
+      "text": "Limiting ``QuerySet``\\s\n--"
+    },
+    {
+      "n": 212,
+      "unit_id": "u56",
+      "anchor_segment_id": "s212",
+      "text": "--"
+    },
+    {
+      "n": 213,
+      "unit_id": "u56",
+      "anchor_segment_id": "s213",
+      "text": "--"
+    },
+    {
+      "n": 214,
+      "unit_id": "u56",
+      "anchor_segment_id": "s214",
+      "text": "--"
+    },
+    {
+      "n": 215,
+      "unit_id": "u56",
+      "anchor_segment_id": "s215",
+      "text": "--"
+    },
+    {
+      "n": 216,
+      "unit_id": "u56",
+      "anchor_segment_id": "s216",
+      "text": "--"
+    },
+    {
+      "n": 217,
+      "unit_id": "u56",
+      "anchor_segment_id": "s217",
+      "text": "--"
+    },
+    {
+      "n": 218,
+      "unit_id": "u56",
+      "anchor_segment_id": "s218",
+      "text": "--"
+    },
+    {
+      "n": 219,
+      "unit_id": "u56",
+      "anchor_segment_id": "s219",
+      "text": "--"
+    },
+    {
+      "n": 220,
+      "unit_id": "u56",
+      "anchor_segment_id": "s220",
+      "text": "--"
+    },
+    {
+      "n": 221,
+      "unit_id": "u56",
+      "anchor_segment_id": "s221",
+      "text": "--"
+    },
+    {
+      "n": 222,
+      "unit_id": "u56",
+      "anchor_segment_id": "s222",
+      "text": "-"
+    },
+    {
+      "n": 223,
+      "unit_id": "u57",
+      "anchor_segment_id": "s223",
+      "text": "Use a subset of Python's array-slicing syntax to limit your\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 224,
+      "unit_id": "u57",
+      "anchor_segment_id": "s224",
+      "text": "QuerySet` to a certain number of results."
+    },
+    {
+      "n": 225,
+      "unit_id": "u57",
+      "anchor_segment_id": "s225",
+      "text": "This\nis the equivalent of SQL's ``LIMIT`` and ``OFFSET`` clauses."
+    },
+    {
+      "n": 226,
+      "unit_id": "u58",
+      "anchor_segment_id": "s226",
+      "text": "For example, this returns the first 5 objects (``LIMIT 5``):"
+    },
+    {
+      "n": 227,
+      "unit_id": "u59",
+      "anchor_segment_id": "s227",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 228,
+      "unit_id": "u59",
+      "anchor_segment_id": "s228",
+      "text": ":"
+    },
+    {
+      "n": 229,
+      "unit_id": "u59",
+      "anchor_segment_id": "s229",
+      "text": "pycon"
+    },
+    {
+      "n": 230,
+      "unit_id": "u60",
+      "anchor_segment_id": "s230",
+      "text": ">>> Entry.objects.all()[:"
+    },
+    {
+      "n": 231,
+      "unit_id": "u60",
+      "anchor_segment_id": "s231",
+      "text": "5]"
+    },
+    {
+      "n": 232,
+      "unit_id": "u61",
+      "anchor_segment_id": "s232",
+      "text": "This returns the sixth through tenth objects (``OFFSET 5 LIMIT 5``):"
+    },
+    {
+      "n": 233,
+      "unit_id": "u62",
+      "anchor_segment_id": "s233",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 234,
+      "unit_id": "u62",
+      "anchor_segment_id": "s234",
+      "text": ":"
+    },
+    {
+      "n": 235,
+      "unit_id": "u62",
+      "anchor_segment_id": "s235",
+      "text": "pycon"
+    },
+    {
+      "n": 236,
+      "unit_id": "u63",
+      "anchor_segment_id": "s236",
+      "text": ">>> Entry.objects.all()[5:"
+    },
+    {
+      "n": 237,
+      "unit_id": "u63",
+      "anchor_segment_id": "s237",
+      "text": "10]"
+    },
+    {
+      "n": 238,
+      "unit_id": "u64",
+      "anchor_segment_id": "s238",
+      "text": "Negative indexing (i.e. ``Entry.objects.all()[-1]``) is not supported."
+    },
+    {
+      "n": 239,
+      "unit_id": "u65",
+      "anchor_segment_id": "s239",
+      "text": "Generally, slicing a :class:`~django.db.models.query."
+    },
+    {
+      "n": 240,
+      "unit_id": "u65",
+      "anchor_segment_id": "s240",
+      "text": "QuerySet` returns a new\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 241,
+      "unit_id": "u65",
+      "anchor_segment_id": "s241",
+      "text": "QuerySet` -- it doesn't evaluate the query."
+    },
+    {
+      "n": 242,
+      "unit_id": "u65",
+      "anchor_segment_id": "s242",
+      "text": "An\nexception is if you use the \"step\" parameter of Python slice syntax."
+    },
+    {
+      "n": 243,
+      "unit_id": "u65",
+      "anchor_segment_id": "s243",
+      "text": "For\nexample, this would actually execute the query in order to return a list of\nevery *second* object of the first 10:"
+    },
+    {
+      "n": 244,
+      "unit_id": "u66",
+      "anchor_segment_id": "s244",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 245,
+      "unit_id": "u66",
+      "anchor_segment_id": "s245",
+      "text": ":"
+    },
+    {
+      "n": 246,
+      "unit_id": "u66",
+      "anchor_segment_id": "s246",
+      "text": "pycon"
+    },
+    {
+      "n": 247,
+      "unit_id": "u67",
+      "anchor_segment_id": "s247",
+      "text": ">>> Entry.objects.all()[:"
+    },
+    {
+      "n": 248,
+      "unit_id": "u67",
+      "anchor_segment_id": "s248",
+      "text": "10:"
+    },
+    {
+      "n": 249,
+      "unit_id": "u67",
+      "anchor_segment_id": "s249",
+      "text": "2]"
+    },
+    {
+      "n": 250,
+      "unit_id": "u68",
+      "anchor_segment_id": "s250",
+      "text": "Further filtering or ordering of a sliced queryset is prohibited due to the\nambiguous nature of how that might work."
+    },
+    {
+      "n": 251,
+      "unit_id": "u69",
+      "anchor_segment_id": "s251",
+      "text": "To retrieve a *single* object rather than a list\n(e.g. ``SELECT foo FROM bar LIMIT 1``), use an index instead of a slice."
+    },
+    {
+      "n": 252,
+      "unit_id": "u69",
+      "anchor_segment_id": "s252",
+      "text": "For\nexample, this returns the first ``Entry`` in the database, after ordering\nentries alphabetically by headline:"
+    },
+    {
+      "n": 253,
+      "unit_id": "u70",
+      "anchor_segment_id": "s253",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 254,
+      "unit_id": "u70",
+      "anchor_segment_id": "s254",
+      "text": ":"
+    },
+    {
+      "n": 255,
+      "unit_id": "u70",
+      "anchor_segment_id": "s255",
+      "text": "pycon"
+    },
+    {
+      "n": 256,
+      "unit_id": "u71",
+      "anchor_segment_id": "s256",
+      "text": ">>> Entry.objects.order_by(\"headline\")[0]"
+    },
+    {
+      "n": 257,
+      "unit_id": "u72",
+      "anchor_segment_id": "s257",
+      "text": "This is roughly equivalent to:"
+    },
+    {
+      "n": 258,
+      "unit_id": "u73",
+      "anchor_segment_id": "s258",
+      "text": ".. code-block:"
+    },
+    {
+      "n": 259,
+      "unit_id": "u73",
+      "anchor_segment_id": "s259",
+      "text": ":"
+    },
+    {
+      "n": 260,
+      "unit_id": "u73",
+      "anchor_segment_id": "s260",
+      "text": "pycon"
+    },
+    {
+      "n": 261,
+      "unit_id": "u74",
+      "anchor_segment_id": "s261",
+      "text": ">>> Entry.objects.order_by(\"headline\")[0:"
+    },
+    {
+      "n": 262,
+      "unit_id": "u74",
+      "anchor_segment_id": "s262",
+      "text": "1].get()"
+    },
+    {
+      "n": 263,
+      "unit_id": "u75",
+      "anchor_segment_id": "s263",
+      "text": "Note, however, that the first of these will raise ``IndexError`` while the\nsecond will raise ``DoesNotExist`` if no objects match the given criteria."
+    },
+    {
+      "n": 264,
+      "unit_id": "u75",
+      "anchor_segment_id": "s264",
+      "text": "See\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 265,
+      "unit_id": "u75",
+      "anchor_segment_id": "s265",
+      "text": "QuerySet.get` for more details."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Retrieving objects\n==================",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2_s4",
+      "sentence_ns": [
+        2,
+        3,
+        4
+      ],
+      "text": "To retrieve objects from your database, construct a\n:class:`~django.db.models.query. QuerySet` via a\n:class:`~django.db.models. Manager` on your model class.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs5_s7",
+      "sentence_ns": [
+        5,
+        6,
+        7
+      ],
+      "text": "A :class:`~django.db.models.query. QuerySet` represents a collection of objects\nfrom your database. It can have zero, one or many *filters*.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs8_s10",
+      "sentence_ns": [
+        8,
+        9,
+        10
+      ],
+      "text": "Filters narrow\ndown the query results based on the given parameters. In SQL terms, a\n:class:`~django.db.models.query. QuerySet` equates to a ``SELECT`` statement,\nand a filter is a limiting clause such as ``WHERE`` or ``LIMIT``.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u4_gs11_s13",
+      "sentence_ns": [
+        11,
+        12,
+        13
+      ],
+      "text": "You get a :class:`~django.db.models.query. QuerySet` by using your model's\n:class:`~django.db.models. Manager`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs14_s16",
+      "sentence_ns": [
+        14,
+        15,
+        16
+      ],
+      "text": "Each model has at least one\n:class:`~django.db.models. Manager`, and it's called\n:attr:`~django.db.models. Model.objects` by default.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u4_gs17",
+      "sentence_ns": [
+        17
+      ],
+      "text": "Access it directly via the\nmodel class, like so:",
+      "order_index": 3
+    },
+    {
+      "group_id": "u5_gs18_s20",
+      "sentence_ns": [
+        18,
+        19,
+        20
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs21_s23",
+      "sentence_ns": [
+        21,
+        22,
+        23
+      ],
+      "text": ">>> Blog.objects\n    <django.db.models.manager. Manager object at ...>\n    >>> b = Blog(name=\"Foo\", tagline=\"Bar\")\n    >>> b.objects\n    Traceback:\n        ... AttributeError: \"Manager isn't accessible via Blog instances.\"",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs24_s25",
+      "sentence_ns": [
+        24,
+        25
+      ],
+      "text": ".. note: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u8_gs26",
+      "sentence_ns": [
+        26
+      ],
+      "text": "A ``Manager`` is accessible only via model classes, rather than from model\n    instances, to enforce a separation between \"table-level\" operations and\n    \"record-level\" operations.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs27_s29",
+      "sentence_ns": [
+        27,
+        28,
+        29
+      ],
+      "text": "The :class:`~django.db.models. Manager` is the main source of querysets for\na model. For example, ``Blog.objects.all()`` returns a\n:class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs30",
+      "sentence_ns": [
+        30
+      ],
+      "text": "QuerySet` that contains all ``Blog`` objects in\nthe database.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u10_gs31_s33",
+      "sentence_ns": [
+        31,
+        32,
+        33
+      ],
+      "text": "Retrieving all objects\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u10_gs34_s36",
+      "sentence_ns": [
+        34,
+        35,
+        36
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u10_gs37_s39",
+      "sentence_ns": [
+        37,
+        38,
+        39
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u10_gs40_s41",
+      "sentence_ns": [
+        40,
+        41
+      ],
+      "text": "-- --",
+      "order_index": 4
+    },
+    {
+      "group_id": "u11_gs42_s44",
+      "sentence_ns": [
+        42,
+        43,
+        44
+      ],
+      "text": "The simplest way to retrieve objects from a table is to get all of them. To do\nthis, use the :meth:`~django.db.models.query. QuerySet.all` method on a\n:class:`~django.db.models.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs45",
+      "sentence_ns": [
+        45
+      ],
+      "text": "Manager`:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u12_gs46_s48",
+      "sentence_ns": [
+        46,
+        47,
+        48
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u13_gs49",
+      "sentence_ns": [
+        49
+      ],
+      "text": ">>> all_entries = Entry.objects.all()",
+      "order_index": 1
+    },
+    {
+      "group_id": "u14_gs50_s52",
+      "sentence_ns": [
+        50,
+        51,
+        52
+      ],
+      "text": "The :meth:`~django.db.models.query. QuerySet.all` method returns a\n:class:`~django.db.models.query. QuerySet` of all the objects in the database.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs53_s55",
+      "sentence_ns": [
+        53,
+        54,
+        55
+      ],
+      "text": "Retrieving specific objects with filters\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs56_s58",
+      "sentence_ns": [
+        56,
+        57,
+        58
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u15_gs59_s61",
+      "sentence_ns": [
+        59,
+        60,
+        61
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u15_gs62_s64",
+      "sentence_ns": [
+        62,
+        63,
+        64
+      ],
+      "text": "-- -- --",
+      "order_index": 4
+    },
+    {
+      "group_id": "u15_gs65_s67",
+      "sentence_ns": [
+        65,
+        66,
+        67
+      ],
+      "text": "-- -- --",
+      "order_index": 5
+    },
+    {
+      "group_id": "u15_gs68_s70",
+      "sentence_ns": [
+        68,
+        69,
+        70
+      ],
+      "text": "-- -- --",
+      "order_index": 6
+    },
+    {
+      "group_id": "u15_gs71_s72",
+      "sentence_ns": [
+        71,
+        72
+      ],
+      "text": "-- --",
+      "order_index": 7
+    },
+    {
+      "group_id": "u16_gs73_s75",
+      "sentence_ns": [
+        73,
+        74,
+        75
+      ],
+      "text": "The :class:`~django.db.models.query. QuerySet` returned by\n:meth:`~django.db.models.query. QuerySet.all` describes all objects in the\ndatabase table.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs76",
+      "sentence_ns": [
+        76
+      ],
+      "text": "Usually, though, you'll need to select only a subset of the\ncomplete set of objects.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u17_gs77_s79",
+      "sentence_ns": [
+        77,
+        78,
+        79
+      ],
+      "text": "To create such a subset, you refine the initial\n:class:`~django.db.models.query. QuerySet`, adding filter conditions. The two\nmost common ways to refine a :class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u17_gs80",
+      "sentence_ns": [
+        80
+      ],
+      "text": "QuerySet` are:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u18_gs81_s82",
+      "sentence_ns": [
+        81,
+        82
+      ],
+      "text": "``filter(**kwargs)``\n    Returns a new :class:`~django.db.models.query. QuerySet` containing objects\n    that match the given lookup parameters.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u19_gs83_s84",
+      "sentence_ns": [
+        83,
+        84
+      ],
+      "text": "``exclude(**kwargs)``\n    Returns a new :class:`~django.db.models.query. QuerySet` containing objects\n    that do *not* match the given lookup parameters.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u20_gs85",
+      "sentence_ns": [
+        85
+      ],
+      "text": "The lookup parameters (``**kwargs`` in the above function definitions) should\nbe in the format described in `Field lookups`_ below.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u21_gs86_s88",
+      "sentence_ns": [
+        86,
+        87,
+        88
+      ],
+      "text": "For example, to get a :class:`~django.db.models.query. QuerySet` of blog entries\nfrom the year 2006, use :meth:`~django.db.models.query. QuerySet.filter` like\nso::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs89",
+      "sentence_ns": [
+        89
+      ],
+      "text": "Entry.objects.filter(pub_date__year=2006)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u23_gs90_s91",
+      "sentence_ns": [
+        90,
+        91
+      ],
+      "text": "With the default manager class, it is the same as: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs92",
+      "sentence_ns": [
+        92
+      ],
+      "text": "Entry.objects.all().filter(pub_date__year=2006)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u25_gs93",
+      "sentence_ns": [
+        93
+      ],
+      "text": ".. _chaining-filters:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs94",
+      "sentence_ns": [
+        94
+      ],
+      "text": "Chaining filters\n~~~~~~~~~~~~~~~~",
+      "order_index": 1
+    },
+    {
+      "group_id": "u27_gs95_s97",
+      "sentence_ns": [
+        95,
+        96,
+        97
+      ],
+      "text": "The result of refining a :class:`~django.db.models.query. QuerySet` is itself a\n:class:`~django.db.models.query. QuerySet`, so it's possible to chain\nrefinements together.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u27_gs98",
+      "sentence_ns": [
+        98
+      ],
+      "text": "For example:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u28_gs99_s101",
+      "sentence_ns": [
+        99,
+        100,
+        101
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u29_gs102",
+      "sentence_ns": [
+        102
+      ],
+      "text": ">>> Entry.objects.filter(headline__startswith=\"What\").exclude(\n    ...     pub_date__gte=datetime.date.today()\n    ... ).filter(pub_date__gte=datetime.date(2005, 1, 30))",
+      "order_index": 1
+    },
+    {
+      "group_id": "u30_gs103_s105",
+      "sentence_ns": [
+        103,
+        104,
+        105
+      ],
+      "text": "This takes the initial :class:`~django.db.models.query. QuerySet` of all entries\nin the database, adds a filter, then an exclusion, then another filter. The\nfinal result is a :class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u30_gs106",
+      "sentence_ns": [
+        106
+      ],
+      "text": "QuerySet` containing all\nentries with a headline that starts with \"What\", that were published between\nJanuary 30, 2005, and the current day.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u31_gs107",
+      "sentence_ns": [
+        107
+      ],
+      "text": ".. _filtered-querysets-are-unique:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u32_gs108",
+      "sentence_ns": [
+        108
+      ],
+      "text": "Filtered ``QuerySet``\\s are unique\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs109_s111",
+      "sentence_ns": [
+        109,
+        110,
+        111
+      ],
+      "text": "Each time you refine a :class:`~django.db.models.query. QuerySet`, you get a\nbrand-new :class:`~django.db.models.query. QuerySet` that is in no way bound to\nthe previous :class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs112_s114",
+      "sentence_ns": [
+        112,
+        113,
+        114
+      ],
+      "text": "QuerySet`. Each refinement creates\na separate and distinct :class:`~django.db.models.query. QuerySet` that can be\nstored, used and reused.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u34_gs115",
+      "sentence_ns": [
+        115
+      ],
+      "text": "Example:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u35_gs116_s118",
+      "sentence_ns": [
+        116,
+        117,
+        118
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u36_gs119",
+      "sentence_ns": [
+        119
+      ],
+      "text": ">>> q1 = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q2 = q1.exclude(pub_date__gte=datetime.date.today())\n    >>> q3 = q1.filter(pub_date__gte=datetime.date.today())",
+      "order_index": 1
+    },
+    {
+      "group_id": "u37_gs120_s122",
+      "sentence_ns": [
+        120,
+        121,
+        122
+      ],
+      "text": "These three querysets are separate. The first is a base\n:class:`~django.db.models.query. QuerySet` containing all entries that contain a\nheadline starting with \"What\".",
+      "order_index": 1
+    },
+    {
+      "group_id": "u37_gs123_s125",
+      "sentence_ns": [
+        123,
+        124,
+        125
+      ],
+      "text": "The second is a subset of the first, with an\nadditional criteria that excludes records whose ``pub_date`` is today or in the\nfuture. The third is a subset of the first, with an additional criteria that\nselects only the records whose ``pub_date`` is today or in the future. The\ninitial :class:`~django.db.models.query.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u37_gs126",
+      "sentence_ns": [
+        126
+      ],
+      "text": "QuerySet` (``q1``) is unaffected by the\nrefinement process.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u38_gs127",
+      "sentence_ns": [
+        127
+      ],
+      "text": ".. _querysets-are-lazy:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs128",
+      "sentence_ns": [
+        128
+      ],
+      "text": "``QuerySet``\\s are lazy\n~~~~~~~~~~~~~~~~~~~~~~~",
+      "order_index": 1
+    },
+    {
+      "group_id": "u40_gs129_s131",
+      "sentence_ns": [
+        129,
+        130,
+        131
+      ],
+      "text": "``QuerySet`` objects are lazy -- the act of creating a\n:class:`~django.db.models.query. QuerySet` doesn't involve any database\nactivity. You can stack filters together all day long, and Django won't\nactually run the query until the :class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u40_gs132_s133",
+      "sentence_ns": [
+        132,
+        133
+      ],
+      "text": "QuerySet` is\n*evaluated*. Take a look at this example:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u41_gs134_s136",
+      "sentence_ns": [
+        134,
+        135,
+        136
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u42_gs137",
+      "sentence_ns": [
+        137
+      ],
+      "text": ">>> q = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q = q.filter(pub_date__lte=datetime.date.today())\n    >>> q = q.exclude(body_text__icontains=\"food\")\n    >>> print(q)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u43_gs138_s140",
+      "sentence_ns": [
+        138,
+        139,
+        140
+      ],
+      "text": "Though this looks like three database hits, in fact it hits the database only\nonce, at the last line (``print(q)``). In general, the results of a\n:class:`~django.db.models.query. QuerySet` aren't fetched from the database\nuntil you \"ask\" for them.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u43_gs141_s143",
+      "sentence_ns": [
+        141,
+        142,
+        143
+      ],
+      "text": "When you do, the\n:class:`~django.db.models.query. QuerySet` is *evaluated* by accessing the\ndatabase. For more details on exactly when evaluation takes place, see\n:ref:`when-querysets-are-evaluated`.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u44_gs144",
+      "sentence_ns": [
+        144
+      ],
+      "text": ".. _retrieving-single-object-with-get:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u45_gs145_s147",
+      "sentence_ns": [
+        145,
+        146,
+        147
+      ],
+      "text": "Retrieving a single object with ``get()``\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u45_gs148_s150",
+      "sentence_ns": [
+        148,
+        149,
+        150
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u45_gs151_s153",
+      "sentence_ns": [
+        151,
+        152,
+        153
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u45_gs154_s156",
+      "sentence_ns": [
+        154,
+        155,
+        156
+      ],
+      "text": "-- -- --",
+      "order_index": 4
+    },
+    {
+      "group_id": "u45_gs157_s159",
+      "sentence_ns": [
+        157,
+        158,
+        159
+      ],
+      "text": "-- -- --",
+      "order_index": 5
+    },
+    {
+      "group_id": "u45_gs160_s162",
+      "sentence_ns": [
+        160,
+        161,
+        162
+      ],
+      "text": "-- -- --",
+      "order_index": 6
+    },
+    {
+      "group_id": "u45_gs163_s165",
+      "sentence_ns": [
+        163,
+        164,
+        165
+      ],
+      "text": "-- -- -",
+      "order_index": 7
+    },
+    {
+      "group_id": "u46_gs166_s168",
+      "sentence_ns": [
+        166,
+        167,
+        168
+      ],
+      "text": ":meth:`~django.db.models.query. QuerySet.filter` will always give you a\n:class:`~django.db.models.query. QuerySet`, even if only a single object matches\nthe query - in this case, it will be a\n:class:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u46_gs169",
+      "sentence_ns": [
+        169
+      ],
+      "text": "QuerySet` containing a single element.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u47_gs170_s172",
+      "sentence_ns": [
+        170,
+        171,
+        172
+      ],
+      "text": "If you know there is only one object that matches your query, you can use the\n:meth:`~django.db.models.query. QuerySet.get` method on a\n:class:`~django.db.models. Manager` which returns the object directly:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u48_gs173_s175",
+      "sentence_ns": [
+        173,
+        174,
+        175
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u49_gs176",
+      "sentence_ns": [
+        176
+      ],
+      "text": ">>> one_entry = Entry.objects.get(pk=1)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u50_gs177_s179",
+      "sentence_ns": [
+        177,
+        178,
+        179
+      ],
+      "text": "You can use any query expression with\n:meth:`~django.db.models.query. QuerySet.get`, just like with\n:meth:`~django.db.models.query. QuerySet.filter` - again, see `Field lookups`_\nbelow.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u51_gs180_s182",
+      "sentence_ns": [
+        180,
+        181,
+        182
+      ],
+      "text": "Note that there is a difference between using\n:meth:`~django.db.models.query. QuerySet.get`, and using\n:meth:`~django.db.models.query. QuerySet.filter` with a slice of ``[0]``.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u51_gs183_s185",
+      "sentence_ns": [
+        183,
+        184,
+        185
+      ],
+      "text": "If\nthere are no results that match the query,\n:meth:`~django.db.models.query. QuerySet.get` will raise a ``DoesNotExist``\nexception. This exception is an attribute of the model class that the query is\nbeing performed on - so in the code above, if there is no ``Entry`` object with\na primary key of 1, Django will raise ``Entry.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u51_gs186",
+      "sentence_ns": [
+        186
+      ],
+      "text": "DoesNotExist``.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u52_gs187_s189",
+      "sentence_ns": [
+        187,
+        188,
+        189
+      ],
+      "text": "Similarly, Django will complain if more than one item matches the\n:meth:`~django.db.models.query. QuerySet.get` query. In this case, it will raise\n:exc:`~django.core.exceptions.MultipleObjectsReturned`, which again is an\nattribute of the model class itself.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs190_s192",
+      "sentence_ns": [
+        190,
+        191,
+        192
+      ],
+      "text": "Other ``QuerySet`` methods\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs193_s195",
+      "sentence_ns": [
+        193,
+        194,
+        195
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u53_gs196_s198",
+      "sentence_ns": [
+        196,
+        197,
+        198
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u53_gs199_s201",
+      "sentence_ns": [
+        199,
+        200,
+        201
+      ],
+      "text": "-- -- --",
+      "order_index": 4
+    },
+    {
+      "group_id": "u53_gs202",
+      "sentence_ns": [
+        202
+      ],
+      "text": "--",
+      "order_index": 5
+    },
+    {
+      "group_id": "u54_gs203_s205",
+      "sentence_ns": [
+        203,
+        204,
+        205
+      ],
+      "text": "Most of the time you'll use :meth:`~django.db.models.query. QuerySet.all`,\n:meth:`~django.db.models.query. QuerySet.get`,\n:meth:`~django.db.models.query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u54_gs206_s208",
+      "sentence_ns": [
+        206,
+        207,
+        208
+      ],
+      "text": "QuerySet.filter` and\n:meth:`~django.db.models.query. QuerySet.exclude` when you need to look up\nobjects from the database. However, that's far from all there is; see the\n:ref:`QuerySet API Reference <queryset-api>` for a complete list of all the\nvarious :class:`~django.db.models.query.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u54_gs209",
+      "sentence_ns": [
+        209
+      ],
+      "text": "QuerySet` methods.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u55_gs210",
+      "sentence_ns": [
+        210
+      ],
+      "text": ".. _limiting-querysets:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u56_gs211_s213",
+      "sentence_ns": [
+        211,
+        212,
+        213
+      ],
+      "text": "Limiting ``QuerySet``\\s\n-- -- --",
+      "order_index": 1
+    },
+    {
+      "group_id": "u56_gs214_s216",
+      "sentence_ns": [
+        214,
+        215,
+        216
+      ],
+      "text": "-- -- --",
+      "order_index": 2
+    },
+    {
+      "group_id": "u56_gs217_s219",
+      "sentence_ns": [
+        217,
+        218,
+        219
+      ],
+      "text": "-- -- --",
+      "order_index": 3
+    },
+    {
+      "group_id": "u56_gs220_s222",
+      "sentence_ns": [
+        220,
+        221,
+        222
+      ],
+      "text": "-- -- -",
+      "order_index": 4
+    },
+    {
+      "group_id": "u57_gs223_s225",
+      "sentence_ns": [
+        223,
+        224,
+        225
+      ],
+      "text": "Use a subset of Python's array-slicing syntax to limit your\n:class:`~django.db.models.query. QuerySet` to a certain number of results. This\nis the equivalent of SQL's ``LIMIT`` and ``OFFSET`` clauses.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u58_gs226",
+      "sentence_ns": [
+        226
+      ],
+      "text": "For example, this returns the first 5 objects (``LIMIT 5``):",
+      "order_index": 1
+    },
+    {
+      "group_id": "u59_gs227_s229",
+      "sentence_ns": [
+        227,
+        228,
+        229
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u60_gs230_s231",
+      "sentence_ns": [
+        230,
+        231
+      ],
+      "text": ">>> Entry.objects.all()[: 5]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u61_gs232",
+      "sentence_ns": [
+        232
+      ],
+      "text": "This returns the sixth through tenth objects (``OFFSET 5 LIMIT 5``):",
+      "order_index": 1
+    },
+    {
+      "group_id": "u62_gs233_s235",
+      "sentence_ns": [
+        233,
+        234,
+        235
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u63_gs236_s237",
+      "sentence_ns": [
+        236,
+        237
+      ],
+      "text": ">>> Entry.objects.all()[5: 10]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u64_gs238",
+      "sentence_ns": [
+        238
+      ],
+      "text": "Negative indexing (i.e. ``Entry.objects.all()[-1]``) is not supported.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u65_gs239_s241",
+      "sentence_ns": [
+        239,
+        240,
+        241
+      ],
+      "text": "Generally, slicing a :class:`~django.db.models.query. QuerySet` returns a new\n:class:`~django.db.models.query. QuerySet` -- it doesn't evaluate the query.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u65_gs242_s243",
+      "sentence_ns": [
+        242,
+        243
+      ],
+      "text": "An\nexception is if you use the \"step\" parameter of Python slice syntax. For\nexample, this would actually execute the query in order to return a list of\nevery *second* object of the first 10:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u66_gs244_s246",
+      "sentence_ns": [
+        244,
+        245,
+        246
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u67_gs247_s249",
+      "sentence_ns": [
+        247,
+        248,
+        249
+      ],
+      "text": ">>> Entry.objects.all()[: 10: 2]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u68_gs250",
+      "sentence_ns": [
+        250
+      ],
+      "text": "Further filtering or ordering of a sliced queryset is prohibited due to the\nambiguous nature of how that might work.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u69_gs251_s252",
+      "sentence_ns": [
+        251,
+        252
+      ],
+      "text": "To retrieve a *single* object rather than a list\n(e.g. ``SELECT foo FROM bar LIMIT 1``), use an index instead of a slice. For\nexample, this returns the first ``Entry`` in the database, after ordering\nentries alphabetically by headline:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u70_gs253_s255",
+      "sentence_ns": [
+        253,
+        254,
+        255
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u71_gs256",
+      "sentence_ns": [
+        256
+      ],
+      "text": ">>> Entry.objects.order_by(\"headline\")[0]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u72_gs257",
+      "sentence_ns": [
+        257
+      ],
+      "text": "This is roughly equivalent to:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u73_gs258_s260",
+      "sentence_ns": [
+        258,
+        259,
+        260
+      ],
+      "text": ".. code-block: : pycon",
+      "order_index": 1
+    },
+    {
+      "group_id": "u74_gs261_s262",
+      "sentence_ns": [
+        261,
+        262
+      ],
+      "text": ">>> Entry.objects.order_by(\"headline\")[0: 1].get()",
+      "order_index": 1
+    },
+    {
+      "group_id": "u75_gs263_s265",
+      "sentence_ns": [
+        263,
+        264,
+        265
+      ],
+      "text": "Note, however, that the first of these will raise ``IndexError`` while the\nsecond will raise ``DoesNotExist`` if no objects match the given criteria. See\n:meth:`~django.db.models.query. QuerySet.get` for more details.",
+      "order_index": 1
+    }
+  ],
+  "category": "structural"
+}

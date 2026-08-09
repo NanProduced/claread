@@ -1,0 +1,387 @@
+{
+  "dataset": "translation-grouping-v1",
+  "seed": 20260808,
+  "rubric": "translation-grouping-blind-v1",
+  "judge": "blind same-family sub-agents (one per article, no access to side assignment during judging)",
+  "arms": {
+    "deterministic": "production deterministic planner",
+    "semantic": "same-family sub-agent semantic grouping proxy (not a production candidate planner)"
+  },
+  "interpretation": {
+    "classification": "strong_exploratory_directional_preference_signal",
+    "summary": "Strong exploratory/directional preference signal, not unconditional evidence of significant benefit.",
+    "production_planner_authorized": false,
+    "next_comparison_requires": [
+      "production candidate planner",
+      "independent model family or human evaluators",
+      "blind side assignment"
+    ]
+  },
+  "limitations": [
+    {
+      "code": "same_family_sub_agents",
+      "detail": "The semantic arm and judges were produced by the same sub-agent family, so same-family preference may remain."
+    },
+    {
+      "code": "non_human_non_independent_evaluators",
+      "detail": "Judges were neither human evaluators nor an independent model family."
+    },
+    {
+      "code": "semantic_arm_not_production_planner",
+      "detail": "The semantic arm was an evaluation proxy, not the production candidate planner."
+    }
+  ],
+  "articles": [
+    {
+      "id": "long-form-01",
+      "category": "long-form",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.8,
+        "semantic": 4.65
+      },
+      "rationale": "X chunks mechanically by threes, isolating 4, 14, 24, 41, 48 mid-paragraph and splitting 45-48 apart. Y follows topic/paragraph boundaries (1-4, 13-14, 42-45, 46-48) with only the heading singleton at 25."
+    },
+    {
+      "id": "long-form-02",
+      "category": "long-form",
+      "x_arm": "deterministic",
+      "verdict": "X",
+      "outcome": "deterministic_win",
+      "weighted_scores": {
+        "deterministic": 4.35,
+        "semantic": 3.7
+      },
+      "rationale": "Y splits 26|27 mid-thought inside the Etymology paragraph (26-28 form one topic); X keeps 26-28 together and isolates heading 31 cleanly. X's uniform 3-sentence narrative beats (5-7, 8-10, 17-19) are coherent; Y's uniform pairs fragment more."
+    },
+    {
+      "id": "long-form-03",
+      "category": "long-form",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.8,
+        "semantic": 4.65
+      },
+      "rationale": "X keeps tight 2-3 sentence topic units (10-12 subduction balance, 31-32 crust-formation pair, 21 heading alone). Y orphans continuations (4, 8, 12, 46), splits the 11-12 surface-balance chain and 31-32 parallel pair, mixes 41-42."
+    },
+    {
+      "id": "long-form-04",
+      "category": "long-form",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.55,
+        "semantic": 4.75
+      },
+      "rationale": "X isolates topic-shift sentences 15 and 20 and pairs related items (27-28, 29-30, 33-34). Y merges origin sentence 15 into surface geology 13-15, and orphans short sentences 30 and 34, fragmenting natural pairs. Headings 25/38 intact in both."
+    },
+    {
+      "id": "long-form-05",
+      "category": "long-form",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.35,
+        "semantic": 4.65
+      },
+      "rationale": "Y splits the Omar legend mid-story (36|37-38), merges heading 31 with content, detaches quote intro 59 from quote 60-62, and strands singletons 13,20,28,29. X keeps headings/quotes intact with clean 2-3 sentence topical groups."
+    },
+    {
+      "id": "long-form-06",
+      "category": "long-form",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.45,
+        "semantic": 4.75
+      },
+      "rationale": "Y splits 6|7 mid-thought (consequence isolated) and 23|24, separating the non-inherited claim from its suntan example; X cuts at topic shifts (4-5, 6-7, 23-26). X's lone sentence-30 group is minor fragmentation; both keep heading 17 intact."
+    },
+    {
+      "id": "long-form-07",
+      "category": "long-form",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.3,
+        "semantic": 5.0
+      },
+      "rationale": "X uses uniform 2-3-sentence topic groups; single-sentence groups only at headings (15,25,26). Y fragments prose: isolated 12, 24, 33, 49 and back-to-back singletons 44,45; splits name topic (31-33) and linked pair 44-45. Both keep quote 41-43 intact."
+    },
+    {
+      "id": "long-form-08",
+      "category": "long-form",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.55,
+        "semantic": 3.75
+      },
+      "rationale": "X groups by topic but splits cost discussion (34/35) and hull numbers (41/42), with six one-sentence groups; Y's uniform pairs keep those together but cram unrelated sentences (3-4, 5-6) and orphan 38. Y's boundaries are cleaner overall."
+    },
+    {
+      "id": "short-news-01",
+      "category": "short-news",
+      "x_arm": "semantic",
+      "verdict": "Y",
+      "outcome": "deterministic_win",
+      "weighted_scores": {
+        "deterministic": 4.1,
+        "semantic": 3.45
+      },
+      "rationale": "X merges sentence 5 (trip's significance) with 6-7 (Catholic demographics), mixing topics and missing the natural pause after 5. Y separates them cleanly; its extra singleton (5) is not back-to-back fragmentation. Date line kept intact by both."
+    },
+    {
+      "id": "short-news-02",
+      "category": "short-news",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.55,
+        "semantic": 4.75
+      },
+      "rationale": "Y unites announcement, timing, background, and Trump quote (2-5) as one coherent block; X fragments them into consecutive one-sentence groups (3-5), splitting 4 mid-flow. Both keep the Ghalibaf quote (7-9) intact."
+    },
+    {
+      "id": "short-news-03",
+      "category": "short-news",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.85,
+        "semantic": 4.35
+      },
+      "rationale": "X isolates sentence 5 as a fragment though it continues sentence 4's victim details; Y pairs related sentences cleanly (2-3, 4-5, 6-7). Y's only weak seam is 8-9 mixing confirmation with historical background. Both keep date standalone."
+    },
+    {
+      "id": "short-news-04",
+      "category": "short-news",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 4.0,
+        "semantic": 4.4
+      },
+      "rationale": "Both contiguous, identical except sentences 9-11. X splits before 11 (new speaker/topic: PM on long-term economics) — natural boundary; Y's 9-11 mixes panic-buying analysis with the PM quote. X costs one extra singleton group, hurting granularity slightly."
+    },
+    {
+      "id": "short-news-05",
+      "category": "short-news",
+      "x_arm": "deterministic",
+      "verdict": "X",
+      "outcome": "deterministic_win",
+      "weighted_scores": {
+        "deterministic": 4.75,
+        "semantic": 4.05
+      },
+      "rationale": "X keeps bus-trip narrative 7-9 intact and isolates background sentence 10 at a natural topic shift. Y splits the bus event mid-thought (8|9) and pairs protest sentence 9 with general police background 10."
+    },
+    {
+      "id": "short-news-06",
+      "category": "short-news",
+      "x_arm": "semantic",
+      "verdict": "Y",
+      "outcome": "deterministic_win",
+      "weighted_scores": {
+        "deterministic": 4.4,
+        "semantic": 2.85
+      },
+      "rationale": "G1-G4 identical. X's G5 crams unrelated sentences 10 (next hearing), 11 (supporting bodies), 12 (ban background) into one incoherent group. Y splits them; each is a complete thought, though three one-sentence groups slightly fragment the tail."
+    },
+    {
+      "id": "short-news-07",
+      "category": "short-news",
+      "x_arm": "semantic",
+      "verdict": "Y",
+      "outcome": "deterministic_win",
+      "weighted_scores": {
+        "deterministic": 4.15,
+        "semantic": 4.0
+      },
+      "rationale": "X pairs loosely related sentences (6+7 station/jobs, 8+9 strategy/contact). Y's 2-4 is one clean announcement unit with natural splits, but five consecutive singletons (5-9) fragment granularity. Y edges ahead on coherence and boundaries."
+    },
+    {
+      "id": "short-news-08",
+      "category": "short-news",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.45,
+        "semantic": 5.0
+      },
+      "rationale": "X splits cleanly at the topic shift (deployment 2-5 vs legal analysis 6-9). Y isolates 2 from its details 3-5 and cuts 9 off mid-argument from 6-8, leaving fragmented one-sentence groups."
+    },
+    {
+      "id": "structural-01",
+      "category": "structural",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.6,
+        "semantic": 3.9
+      },
+      "rationale": "Y keeps CSS code block intact (27-36), respects numbered list items (55-56, 57-58, 59-60), pairs 21-22, joins solution code 89-90; X splits code blocks (23-26, 27-36, 89-90) and mixes list items (55-57)."
+    },
+    {
+      "id": "structural-02",
+      "category": "structural",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 1.6,
+        "semantic": 4.1
+      },
+      "rationale": "X keeps code blocks intact (G9: 18-42, G14: 51-75, G37: 126-156, G40: 161-191) and notes together (8-10, 118-120). Y mechanically chops CSS blocks into 3-sentence fragments ending mid-declaration (e.g. 18-20 ends 'margin:'), destroying structural integrity."
+    },
+    {
+      "id": "structural-03",
+      "category": "structural",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 1.6,
+        "semantic": 4.75
+      },
+      "rationale": "X keeps every code block intact (11-14, 21-26, 31-39, 43-51, 53-63, 70-77, 79-87, 96-101) and splits at headings/lead-ins. Y chops code blocks mid-statement (e.g. 21-23/24-26, 43-45/46-47) and isolates closing fence 14, breaking self-contained structures."
+    },
+    {
+      "id": "structural-04",
+      "category": "structural",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 1.9,
+        "semantic": 4.1
+      },
+      "rationale": "X splits code blocks and mid-thought: 10-14 into G7/G8, 42-45 into G21/G22, 46-49, 93-100 into three groups; 71 groups, many singletons. Y keeps code intact (10-14, 42-45, 101-105, 129-134) and merges directive fragments into complete thoughts (93-100, 67-72)."
+    },
+    {
+      "id": "structural-05",
+      "category": "structural",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.35,
+        "semantic": 4.75
+      },
+      "rationale": "X keeps each method directive intact (G7-G17, sentences 8-75) and heading underlines whole (G23, G28, G33). Y fragments them: isolates 'noindex:' (G8, G11...), splits heading dashes (G47-G50), creating many tiny mid-structure groups."
+    },
+    {
+      "id": "structural-06",
+      "category": "structural",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.35,
+        "semantic": 3.75
+      },
+      "rationale": "X chops heading-underline runs (20-34, 91-104) into meaningless 3-line chunks, splits intro paragraph at 5|6, and has ~20 one-sentence groups. Y keeps full paragraphs (59-62, 63-66) and heading blocks intact; only mildly bloated on underline runs."
+    },
+    {
+      "id": "structural-07",
+      "category": "structural",
+      "x_arm": "deterministic",
+      "verdict": "Y",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 2.25,
+        "semantic": 4.1
+      },
+      "rationale": "X uses mechanical 3-sentence windows, splitting mid-sentence (29/30, 125/126, 131/132, 185/186) and shredding heading underlines into dash-only groups (G14-G17). Y keeps headings, code blocks (18-23), and logical sentences intact."
+    },
+    {
+      "id": "structural-08",
+      "category": "structural",
+      "x_arm": "semantic",
+      "verdict": "X",
+      "outcome": "semantic_win",
+      "weighted_scores": {
+        "deterministic": 3.35,
+        "semantic": 3.65
+      },
+      "rationale": "X keeps prose thoughts whole (5-7, 33-34, 43-44/45-46, 51-54, 63-65); Y splits parallel rules and consequences (33|34, 53|54, 63|64). Y handles the wrap-fragmented table better (16-18, 19-21 vs X's singletons 16/19/20/21/25). Coherence weight favors X."
+    }
+  ],
+  "per_category": {
+    "short-news": {
+      "total": 8,
+      "semantic_wins": 4,
+      "deterministic_wins": 4,
+      "ties": 0,
+      "semantic_win_rate": 0.5,
+      "wilson95": [
+        0.215,
+        0.785
+      ],
+      "mean_weighted_score": {
+        "deterministic": 4.031,
+        "semantic": 4.106
+      }
+    },
+    "long-form": {
+      "total": 8,
+      "semantic_wins": 7,
+      "deterministic_wins": 1,
+      "ties": 0,
+      "semantic_win_rate": 0.875,
+      "wilson95": [
+        0.529,
+        0.978
+      ],
+      "mean_weighted_score": {
+        "deterministic": 3.269,
+        "semantic": 4.487
+      }
+    },
+    "structural": {
+      "total": 8,
+      "semantic_wins": 8,
+      "deterministic_wins": 0,
+      "ties": 0,
+      "semantic_win_rate": 1.0,
+      "wilson95": [
+        0.676,
+        1.0
+      ],
+      "mean_weighted_score": {
+        "deterministic": 2.25,
+        "semantic": 4.138
+      }
+    }
+  },
+  "overall": {
+    "total": 24,
+    "semantic_wins": 19,
+    "deterministic_wins": 5,
+    "ties": 0,
+    "semantic_win_rate": 0.792,
+    "wilson95": [
+      0.595,
+      0.908
+    ],
+    "mean_weighted_score": {
+      "deterministic": 3.183,
+      "semantic": 4.244
+    }
+  },
+  "problems": []
+}

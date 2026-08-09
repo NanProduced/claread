@@ -55,6 +55,9 @@ from app.services.reader_orchestration.document_freeze_persistence import (
 from app.services.reader_orchestration.document_freeze_plan import (
     build_stable_document_freeze_plan,
 )
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    empty_diagnostics_payload,
+)
 
 pytestmark = [
     pytest.mark.chain_reader_parse,
@@ -476,6 +479,18 @@ class TestHappyPath:
             assert "label" in unit
             assert "base_start_utf16" in unit
             assert "base_end_utf16" in unit
+
+    def test_reading_bases_diagnostics_json_uses_versioned_default(self) -> None:
+        conn = FakeConn()
+        conn.queue_fetchrow(None)
+        conn.set_execute_result("UPDATE stable_reading_documents", "UPDATE 0")
+
+        _persist(conn, _build_simple_plan())
+
+        reading_bases_call = next(
+            c for c in conn.execute_calls if "INSERT INTO reading_bases" in c.query
+        )
+        assert reading_bases_call.args[14] == empty_diagnostics_payload()
 
     def test_generation_fence_uses_generation_in_where_clause(self) -> None:
         conn = FakeConn()

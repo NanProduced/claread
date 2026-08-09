@@ -362,3 +362,47 @@ Frontend code must treat any unknown status as a safe unavailable state:
 Do not render raw `failure_code`, `reason_code`, exception text, provider URI,
 tokens, query text, or chunk text from diagnostics. Those fields are for logs
 and developer diagnostics only.
+
+
+## Display Order Contract（Stable Document 展示顺序）
+
+展示顺序职责划分（冻结）：
+
+- 后端 Stable Document / unit / anchor 拥有源结构与规范顺序；snapshot `value`
+  按顺序遍历 unit，合法保留。
+- `mapUnitToBlocks`（Web 投影）是全系统唯一的 anchor 级排序实现：source span、
+  translation group、annotation 的交错次序只由它产出。
+- Web presentation composition seam 只拥有跨集合 overlay 的最终插入位置：
+  wrapper 结构归并（保留 nested list、ordered、callout icon、table row-header
+  alignment 四类结构语义）+ 为满足 wrapper 合法性的受控 overlay 后置。
+  不按 stableBlockId 全局归桶，不重排无关展示块；多 span unit 的每个 source
+  span 留在自身 anchor 位置。
+- 受控 overlay 后置规则：list 的 overlay 置整个 list 之后（anchor 序，item 跨
+  overlay 按 `parentStableBlockId` 归组）；table 的 supplement 卡置整个 table
+  之后（锚点留 cell）；blockquote / source_callout 的译文拆出为 wrapper
+  sibling 置后；其余块型保持原位交错。
+- legacy 快照（无 `stable_document_tree`）走同一保序化 flat 路径；其
+  `ordered:false` 为已知 legacy 限制（flat DTO 不含 list ordered 信息）。
+
+Ask supplement overlay（冻结）：顶层 `ask_supplements` 经前端校验 anchor 建索引，
+按 grammar → analysis → supplement 注入；supplement 是前端 overlay，不进入
+Stable Document 结构。supplement eligibility 由既有 `stableBlockType` 单点派生：
+`code_block` fail-closed，其余按 wrapper 行为矩阵，不新增第二套 block policy。
+
+## DOM Navigation Contract（Reader 原文定位）
+
+Plate/Web 内部 block id（`paragraph:*`、`callout-group:*`）是实现细节，不升格为
+合同。真正的导航合同是 4 个 data attributes：
+
+- `data-reader-record-node`（值为 node kind，如 paragraph / heading）
+- `data-unit-id`
+- `data-reader-record-unit-start`
+- `data-anchor-segment-id`
+
+可导航节点 = `[data-reader-record-node][data-unit-id]` 组合；unit 模式优先
+`unit-start="true"` 节点。写入点集中在 `reader-blocks-kit.tsx`
+（callout-group 不带 unitId、不可导航）。Ask citation 的「定位原文」链路：
+panel 只向 secure navigate BFF 提交 record + message + public citation id，
+server 完成 identity fence 并返回最小 typed location，由 Reader host 的 DOM
+navigation adapter 按上述合同滚动/聚焦；客户端不持有 fence、handle 或
+evidence scope。

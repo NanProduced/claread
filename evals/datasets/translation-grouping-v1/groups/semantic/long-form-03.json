@@ -1,0 +1,97 @@
+{
+  "id": "long-form-03",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "core definition of theory"
+    },
+    {
+      "sentence_ns": [2, 3, 4],
+      "reason": "historical development and terminology"
+    },
+    {
+      "sentence_ns": [5, 6, 7],
+      "reason": "plate count, boundaries, motion rates"
+    },
+    {
+      "sentence_ns": [8, 9],
+      "reason": "fault activity and plate composition"
+    },
+    {
+      "sentence_ns": [10, 11, 12],
+      "reason": "subduction balances surface area"
+    },
+    {
+      "sentence_ns": [13, 14, 15],
+      "reason": "tectonics on other planets"
+    },
+    {
+      "sentence_ns": [16, 17],
+      "reason": "rigid plates over convecting mantle"
+    },
+    {
+      "sentence_ns": [18, 19, 20],
+      "reason": "ridge and subduction driving forces"
+    },
+    {
+      "sentence_ns": [21],
+      "reason": "section heading own group"
+    },
+    {
+      "sentence_ns": [22, 23, 24],
+      "reason": "lithosphere-asthenosphere division explained"
+    },
+    {
+      "sentence_ns": [25, 26],
+      "reason": "heat transfer versus chemical subdivision"
+    },
+    {
+      "sentence_ns": [27, 28],
+      "reason": "key principle and motion rates"
+    },
+    {
+      "sentence_ns": [29, 30],
+      "reason": "crust types and formation basis"
+    },
+    {
+      "sentence_ns": [31, 32],
+      "reason": "how each crust type forms"
+    },
+    {
+      "sentence_ns": [33, 34],
+      "reason": "density contrast and its consequence"
+    },
+    {
+      "sentence_ns": [35, 36, 37],
+      "reason": "oceanic thickness depends on cooling"
+    },
+    {
+      "sentence_ns": [38, 39],
+      "reason": "mantle cooling adds thickness outward"
+    },
+    {
+      "sentence_ns": [40, 41],
+      "reason": "thickness variation with travel distance"
+    },
+    {
+      "sentence_ns": [42],
+      "reason": "continental thickness single complete fact"
+    },
+    {
+      "sentence_ns": [43, 44],
+      "reason": "plate boundary definition and events"
+    },
+    {
+      "sentence_ns": [45, 46],
+      "reason": "volcanoes along and inside plates"
+    },
+    {
+      "sentence_ns": [47, 48],
+      "reason": "mixed crust plates with example"
+    },
+    {
+      "sentence_ns": [49],
+      "reason": "ophiolites single complete thought"
+    }
+  ]
+}

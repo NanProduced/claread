@@ -1,0 +1,24 @@
+{
+  "id": "long-form-01",
+  "groups": [
+    { "sentence_ns": [1, 2, 3, 4], "reason": "lead summary of life and work" },
+    { "sentence_ns": [5, 6, 7], "reason": "early life through religious turn" },
+    { "sentence_ns": [8, 9], "reason": "drifting years and Theo's support" },
+    { "sentence_ns": [10, 11, 12], "reason": "early works and Paris move" },
+    { "sentence_ns": [13, 14], "reason": "Arles style and subject expansion" },
+    { "sentence_ns": [15, 16, 17], "reason": "mental illness and ear incident" },
+    { "sentence_ns": [18, 19, 20], "reason": "final months, suicide and death" },
+    { "sentence_ns": [21, 22], "reason": "lifetime failure, posthumous fame" },
+    { "sentence_ns": [23, 24], "reason": "reputation growth and legacy" },
+    { "sentence_ns": [25], "reason": "section heading standalone" },
+    { "sentence_ns": [26, 27], "reason": "letters as primary source intro" },
+    { "sentence_ns": [28, 29], "reason": "Theo's role and letter keeping" },
+    { "sentence_ns": [30, 31], "reason": "publication of the letters" },
+    { "sentence_ns": [32, 33, 34], "reason": "literary and scholarly significance" },
+    { "sentence_ns": [35, 36, 37], "reason": "letter counts and recipients" },
+    { "sentence_ns": [38, 39], "reason": "dating and transcription problems" },
+    { "sentence_ns": [40, 41], "reason": "Arles output and Paris gap" },
+    { "sentence_ns": [42, 43, 44, 45], "reason": "Breton mentions across letters" },
+    { "sentence_ns": [46, 47, 48], "reason": "failed Breton visit and aftermath" }
+  ]
+}

@@ -1,20 +1,19 @@
 /**
- * Reader-owned deep module: Agentic Ask source navigation.
+ * Reader-owned deep module: Ask article-citation source navigation.
  *
- * Ask-facing seam is only {@link NavigateAgenticSource}. Identity loading,
- * policy, candidate planning, and DOM scroll live behind
- * {@link createNavigateAgenticSource} construction dependencies.
+ * Ownership split (secure citation navigation chain):
+ * - The Ask panel owns the secure endpoint call. It submits only the
+ *   record id + assistant message id + public citation id; the server
+ *   loads the identity fence and returns a minimal typed location.
+ * - This module owns everything after the server-verified typed location
+ *   comes back: candidate order (anchor segment before unit) and DOM
+ *   scroll/focus via the Reader DOM navigation adapter.
  *
- * Product freeze (R3B0 + R3A):
- * - Missing evidenceScope → unavailable.legacy_scope_missing for ALL kinds
- *   that would navigate (including complete search_hit). No ragNavigation-only
- *   shortcut and no current-page identity fallback.
- * - envelope_fingerprint is never used for navigation.
- * - No snippet / body text search.
+ * Ask-facing seam is only {@link NavigateToArticleLocation}. Callers must
+ * never pass Element / Document / page identity here, and never receive
+ * them. No snippet, fingerprint, evidence scope, or client fence fields
+ * cross this boundary.
  */
-
-import type { AgenticEvidenceRagNavigation } from "@/components/reader/ask/agentic-evidence";
-import type { ReaderAskAgenticEvidenceScopeDto } from "@/types/api/reader-ask";
 
 import {
   createReaderDomNavigationAdapter,
@@ -26,24 +25,13 @@ import {
 // Ask-facing types (keep this surface small)
 // ---------------------------------------------------------------------------
 
-export type AgenticSourceKind =
-  | "initial_anchor"
-  | "read_range"
-  | "search_hit"
-  | "observation"
-  | "article_seed";
-
 /**
- * Descriptor passed from Ask UI into the navigator.
- * No snippet, fingerprint, substrate, score, or DOM handles.
+ * Server-verified typed article location, as returned by the secure
+ * citation navigate route. No handles, identity, or raw evidence.
  */
-export type AgenticSourceDescriptor = {
-  handleId: string;
-  kind: AgenticSourceKind;
-  evidenceScope: ReaderAskAgenticEvidenceScopeDto | null;
-  unitId?: string | null;
-  anchorSegmentId?: string | null;
-  ragNavigation: AgenticEvidenceRagNavigation | null;
+export type ArticleNavigationLocation = {
+  unitId: string | null;
+  anchorSegmentId: string | null;
 };
 
 export type SourceNavigationResult =
@@ -76,222 +64,45 @@ export type SourceNavigationResult =
 
 /**
  * Sole Ask-facing navigation callback.
- * Callers must not receive Element / Document / CurrentPageIdentity.
+ * Callers must not receive Element / Document / page identity.
  */
-export type NavigateAgenticSource = (
-  source: AgenticSourceDescriptor,
+export type NavigateToArticleLocation = (
+  location: ArticleNavigationLocation,
 ) => Promise<SourceNavigationResult>;
 
 // ---------------------------------------------------------------------------
-// Reader-owned page identity (construction-time only)
+// Secure-response projection (feedback mapping stays single-owned)
 // ---------------------------------------------------------------------------
-
-export type PageStableDocumentStatus =
-  | "loading"
-  | "ready"
-  | "not_ready"
-  | "stale"
-  | "failed";
-
-export type CurrentPageIdentity = {
-  readingRecordId: string;
-  baseId: string;
-  recordGeneration: number;
-  stableDocument: {
-    status: PageStableDocumentStatus;
-    stableDocumentId: string | null;
-  };
-};
-
-export type LoadCurrentPageIdentity = () =>
-  | CurrentPageIdentity
-  | Promise<CurrentPageIdentity>;
-
-export type NavigateAgenticSourceDependencies = {
-  loadCurrentPageIdentity: LoadCurrentPageIdentity;
-  /**
-   * Defaults to production plate-document adapter when omitted.
-   * Tests inject an in-memory adapter; Ask never sees this type.
-   */
-  domAdapter?: ReaderDomNavigationAdapter;
-};
-
-// ---------------------------------------------------------------------------
-// Internal planning (not part of Ask interface)
-// ---------------------------------------------------------------------------
-
-type NavigationFailure = Extract<
-  SourceNavigationResult,
-  { status: "unavailable" | "identity_mismatch" | "stale_generation" }
->;
-
-type NavigationPlan = {
-  candidates: DomNavigationCandidate[];
-};
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
 
 /**
- * Deduplicate candidates while preserving first-seen order.
+ * Project a secure citation-navigate response that did NOT yield a typed
+ * location into the navigation result union, so user feedback formatting
+ * stays owned by one formatter. `ok` responses with a location are handled
+ * by the caller via {@link NavigateToArticleLocation} and never reach this.
+ * Internal reason codes never surface to the user.
  */
-function dedupeCandidates(
-  items: readonly DomNavigationCandidate[],
-): DomNavigationCandidate[] {
-  const seen = new Set<string>();
-  const out: DomNavigationCandidate[] = [];
-  for (const item of items) {
-    const key = `${item.mode}:${item.targetId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
+export function sourceNavigationResultFromCitationNavigate(response: {
+  status: string;
+  reason?: string | null;
+}): SourceNavigationResult {
+  if (response.status === "identity_mismatch") {
+    const field =
+      response.reason === "base" || response.reason === "stable_document"
+        ? response.reason
+        : "reading_record";
+    return { status: "identity_mismatch", field };
   }
-  return out;
-}
-
-function hasCanonicalRangeOnly(nav: AgenticEvidenceRagNavigation): boolean {
-  const noSeg = nav.anchorSegmentIds.length === 0;
-  const noUnit = nav.unitIds.length === 0;
-  const rangeOk =
-    Number.isFinite(nav.canonicalTextStartUtf16) &&
-    Number.isFinite(nav.canonicalTextEndUtf16) &&
-    nav.canonicalTextEndUtf16 >= nav.canonicalTextStartUtf16;
-  return noSeg && noUnit && rangeOk;
-}
-
-function buildNonRagCandidates(
-  source: AgenticSourceDescriptor,
-): DomNavigationCandidate[] {
-  const items: DomNavigationCandidate[] = [];
-  if (isNonEmptyString(source.anchorSegmentId)) {
-    items.push({ mode: "anchor_segment", targetId: source.anchorSegmentId });
-  }
-  if (isNonEmptyString(source.unitId)) {
-    items.push({ mode: "unit", targetId: source.unitId });
-  }
-  return dedupeCandidates(items);
-}
-
-function buildSearchHitCandidates(
-  nav: AgenticEvidenceRagNavigation,
-): DomNavigationCandidate[] {
-  const items: DomNavigationCandidate[] = [];
-  for (const id of nav.anchorSegmentIds) {
-    if (isNonEmptyString(id)) {
-      items.push({ mode: "anchor_segment", targetId: id });
-    }
-  }
-  for (const id of nav.unitIds) {
-    if (isNonEmptyString(id)) {
-      items.push({ mode: "unit", targetId: id });
-    }
-  }
-  return dedupeCandidates(items);
-}
-
-/**
- * Pure policy: decide whether to navigate and which candidates to try.
- * Does not touch DOM or loaders.
- */
-function planSourceNavigation(
-  source: AgenticSourceDescriptor,
-  page: CurrentPageIdentity,
-): NavigationPlan | NavigationFailure {
-  // 1. observation — always display-only
-  if (source.kind === "observation") {
-    return { status: "unavailable", reason: "observation_only" };
-  }
-
-  // 2. missing scope — no DOM, no page fallback, no rag-only shortcut
-  if (source.evidenceScope == null) {
-    return { status: "unavailable", reason: "legacy_scope_missing" };
-  }
-
-  const scope = source.evidenceScope;
-
-  // 3. locator legality by kind
-  let candidates: DomNavigationCandidate[] = [];
-
-  if (
-    source.kind === "initial_anchor" ||
-    source.kind === "read_range" ||
-    source.kind === "article_seed"
-  ) {
-    candidates = buildNonRagCandidates(source);
-    if (candidates.length === 0) {
-      return { status: "unavailable", reason: "no_locator" };
-    }
-  } else if (source.kind === "search_hit") {
-    if (source.ragNavigation == null) {
-      return { status: "unavailable", reason: "partial_citation" };
-    }
-    const nav = source.ragNavigation;
-    candidates = buildSearchHitCandidates(nav);
-    if (candidates.length === 0) {
-      if (hasCanonicalRangeOnly(nav)) {
-        return { status: "unavailable", reason: "canonical_range_unsupported" };
-      }
-      return { status: "unavailable", reason: "no_locator" };
-    }
-  } else {
-    return { status: "unavailable", reason: "no_locator" };
-  }
-
-  // 4. message scope vs current page (fixed order)
-  if (scope.reading_record_id !== page.readingRecordId) {
-    return { status: "identity_mismatch", field: "reading_record" };
-  }
-  if (scope.base_id !== page.baseId) {
-    return { status: "identity_mismatch", field: "base" };
-  }
-  if (scope.record_generation !== page.recordGeneration) {
+  if (response.status === "stale_generation") {
     return { status: "stale_generation" };
   }
-
-  // 5. search_hit extra fence (after record/base/generation match)
-  if (source.kind === "search_hit") {
-    const nav = source.ragNavigation!;
-    // rag must match message-level scope first
-    if (nav.baseId !== scope.base_id) {
-      return { status: "identity_mismatch", field: "base" };
-    }
-    if (nav.recordGeneration !== scope.record_generation) {
-      return { status: "stale_generation" };
-    }
-    if (scope.stable_document_id == null || scope.stable_document_id.length < 1) {
-      return { status: "unavailable", reason: "page_identity_incomplete" };
-    }
-    if (nav.stableDocumentId !== scope.stable_document_id) {
-      return { status: "identity_mismatch", field: "stable_document" };
-    }
-    if (
-      page.stableDocument.status !== "ready" ||
-      page.stableDocument.stableDocumentId == null ||
-      page.stableDocument.stableDocumentId.length < 1
-    ) {
-      return { status: "unavailable", reason: "page_identity_incomplete" };
-    }
-    if (page.stableDocument.stableDocumentId !== scope.stable_document_id) {
-      return { status: "identity_mismatch", field: "stable_document" };
-    }
-  }
-
-  // non-RAG: stable may be null on both sides; page stable need not be ready
-  return { candidates };
-}
-
-function attemptedModesFromCandidates(
-  candidates: readonly DomNavigationCandidate[],
-): Array<"anchor_segment" | "unit"> {
-  const modes: Array<"anchor_segment" | "unit"> = [];
-  const seen = new Set<string>();
-  for (const c of candidates) {
-    if (seen.has(c.mode)) continue;
-    seen.add(c.mode);
-    modes.push(c.mode);
-  }
-  return modes;
+  const reason =
+    response.reason === "legacy_scope_missing"
+      ? "legacy_scope_missing"
+      : response.reason === "record_fence_unavailable" ||
+          response.reason === "live_stable_document_missing"
+        ? "page_identity_incomplete"
+        : "no_locator";
+  return { status: "unavailable", reason };
 }
 
 // ---------------------------------------------------------------------------
@@ -299,16 +110,15 @@ function attemptedModesFromCandidates(
 // ---------------------------------------------------------------------------
 
 /**
- * Build the Ask-facing `NavigateAgenticSource` callback.
- * Workbench/R3C will call this; R3B does not wire UI.
+ * Build the Ask-facing `NavigateToArticleLocation` callback.
  *
  * Default DOM adapter is **not** created at factory time (SSR-safe). It is
- * lazily constructed on the first navigation attempt that needs the DOM.
- * When `document` is undefined, the adapter fail-closes with no throw.
+ * lazily constructed on the first navigation attempt. When `document` is
+ * undefined, the adapter fail-closes with no throw.
  */
-export function createNavigateAgenticSource(
-  dependencies: NavigateAgenticSourceDependencies,
-): NavigateAgenticSource {
+export function createArticleLocationNavigator(
+  dependencies: { domAdapter?: ReaderDomNavigationAdapter } = {},
+): NavigateToArticleLocation {
   let lazyDefaultAdapter: ReaderDomNavigationAdapter | null = null;
 
   function resolveDomAdapter(): ReaderDomNavigationAdapter {
@@ -323,56 +133,28 @@ export function createNavigateAgenticSource(
     return lazyDefaultAdapter;
   }
 
-  return async function navigateAgenticSource(
-    source: AgenticSourceDescriptor,
+  return async function navigateToArticleLocation(
+    location: ArticleNavigationLocation,
   ): Promise<SourceNavigationResult> {
-    // Early exits that must not load page identity or touch DOM
-    if (source.kind === "observation") {
-      return { status: "unavailable", reason: "observation_only" };
-    }
-    if (source.evidenceScope == null) {
-      return { status: "unavailable", reason: "legacy_scope_missing" };
-    }
-
-    // Pre-check locators without page load when possible (saves loader calls)
-    if (source.kind === "search_hit" && source.ragNavigation == null) {
-      return { status: "unavailable", reason: "partial_citation" };
-    }
-    if (source.kind === "search_hit" && source.ragNavigation != null) {
-      const nav = source.ragNavigation;
-      const cands = buildSearchHitCandidates(nav);
-      if (cands.length === 0 && hasCanonicalRangeOnly(nav)) {
-        return { status: "unavailable", reason: "canonical_range_unsupported" };
-      }
-      if (cands.length === 0) {
-        return { status: "unavailable", reason: "no_locator" };
-      }
-    }
+    // Anchor segment is the finer-grained target; try it before the unit.
+    const candidates: DomNavigationCandidate[] = [];
     if (
-      source.kind === "initial_anchor" ||
-      source.kind === "read_range" ||
-      source.kind === "article_seed"
+      typeof location.anchorSegmentId === "string" &&
+      location.anchorSegmentId.length > 0
     ) {
-      if (buildNonRagCandidates(source).length === 0) {
-        return { status: "unavailable", reason: "no_locator" };
-      }
+      candidates.push({
+        mode: "anchor_segment",
+        targetId: location.anchorSegmentId,
+      });
+    }
+    if (typeof location.unitId === "string" && location.unitId.length > 0) {
+      candidates.push({ mode: "unit", targetId: location.unitId });
+    }
+    if (candidates.length === 0) {
+      return { status: "unavailable", reason: "no_locator" };
     }
 
-    let page: CurrentPageIdentity;
-    try {
-      page = await dependencies.loadCurrentPageIdentity();
-    } catch {
-      // Network / stable-document loader failures → typed result only.
-      // Do not leak exception text; do not call DOM.
-      return { status: "unavailable", reason: "page_identity_incomplete" };
-    }
-
-    const planned = planSourceNavigation(source, page);
-    if (!("candidates" in planned)) {
-      return planned;
-    }
-
-    const hit = resolveDomAdapter().resolveAndScroll(planned.candidates);
+    const hit = resolveDomAdapter().resolveAndScroll(candidates);
     if (hit) {
       return {
         status: "navigated",
@@ -381,9 +163,12 @@ export function createNavigateAgenticSource(
       };
     }
 
-    return {
-      status: "target_not_found",
-      attemptedModes: attemptedModesFromCandidates(planned.candidates),
-    };
+    const attemptedModes: Array<"anchor_segment" | "unit"> = [];
+    for (const candidate of candidates) {
+      if (!attemptedModes.includes(candidate.mode)) {
+        attemptedModes.push(candidate.mode);
+      }
+    }
+    return { status: "target_not_found", attemptedModes };
   };
 }

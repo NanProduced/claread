@@ -1,0 +1,128 @@
+{
+  "id": "short-news-02",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Wednesday, April 15, 2026"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "On Sunday, United States President Donald Trump announced on Truth Social that the US is imposing a blockade on the Strait of Hormuz."
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "According to Trump, the blockade was in effect as of 10:00 a.m. Eastern Time (1400 UTC)."
+    },
+    {
+      "n": 4,
+      "unit_id": "u3",
+      "anchor_segment_id": "s4",
+      "text": "The blockade was imposed following the collapse of talks held in Islamabad between the United States and Iran."
+    },
+    {
+      "n": 5,
+      "unit_id": "u4",
+      "anchor_segment_id": "s5",
+      "text": "\"Effective immediately, the United States Navy, the finest in the world, will be BLOCKADING any and all ships trying to enter, or leave, the Strait of Hormuz,\" Trump declared."
+    },
+    {
+      "n": 6,
+      "unit_id": "u5",
+      "anchor_segment_id": "s6",
+      "text": "According to The Guardian, oil prices briefly rose above US$100 a barrel following news of the blockade, before easing back to just over US$99; gas prices also increased."
+    },
+    {
+      "n": 7,
+      "unit_id": "u6",
+      "anchor_segment_id": "s7",
+      "text": "Iranian parliament speaker Mohammad Bagher Ghalibaf posted on X to \"Enjoy the current pump figures."
+    },
+    {
+      "n": 8,
+      "unit_id": "u6",
+      "anchor_segment_id": "s8",
+      "text": "With the so-called 'blockade', soon you'll be nostalgic for $4–$5 gas.\""
+    },
+    {
+      "n": 9,
+      "unit_id": "u6",
+      "anchor_segment_id": "s9",
+      "text": "He further stated that Iran would respond in kind to both escalation and diplomacy, warning that it would \"fight\" if confronted militarily but would \"deal with logic\" if approached constructively."
+    },
+    {
+      "n": 10,
+      "unit_id": "u7",
+      "anchor_segment_id": "s10",
+      "text": "China's Ministry of Foreign Affairs expressed hope that the ceasefire would remain stable, stating that Beijing is willing to cooperate with all parties to \"guarantee the uninterrupted flow of energy supplies,\" and that stability in the Strait of Hormuz is critically important to China."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Wednesday, April 15, 2026",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2_s3",
+      "sentence_ns": [
+        2,
+        3
+      ],
+      "text": "On Sunday, United States President Donald Trump announced on Truth Social that the US is imposing a blockade on the Strait of Hormuz. According to Trump, the blockade was in effect as of 10:00 a.m. Eastern Time (1400 UTC).",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs4",
+      "sentence_ns": [
+        4
+      ],
+      "text": "The blockade was imposed following the collapse of talks held in Islamabad between the United States and Iran.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs5",
+      "sentence_ns": [
+        5
+      ],
+      "text": "\"Effective immediately, the United States Navy, the finest in the world, will be BLOCKADING any and all ships trying to enter, or leave, the Strait of Hormuz,\" Trump declared.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs6",
+      "sentence_ns": [
+        6
+      ],
+      "text": "According to The Guardian, oil prices briefly rose above US$100 a barrel following news of the blockade, before easing back to just over US$99; gas prices also increased.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs7_s9",
+      "sentence_ns": [
+        7,
+        8,
+        9
+      ],
+      "text": "Iranian parliament speaker Mohammad Bagher Ghalibaf posted on X to \"Enjoy the current pump figures. With the so-called 'blockade', soon you'll be nostalgic for $4–$5 gas.\" He further stated that Iran would respond in kind to both escalation and diplomacy, warning that it would \"fight\" if confronted militarily but would \"deal with logic\" if approached constructively.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs10",
+      "sentence_ns": [
+        10
+      ],
+      "text": "China's Ministry of Foreign Affairs expressed hope that the ceasefire would remain stable, stating that Beijing is willing to cooperate with all parties to \"guarantee the uninterrupted flow of energy supplies,\" and that stability in the Strait of Hormuz is critically important to China.",
+      "order_index": 1
+    }
+  ],
+  "category": "short-news"
+}

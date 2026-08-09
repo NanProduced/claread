@@ -1,0 +1,93 @@
+{
+  "id": "long-form-08",
+  "groups": [
+    {
+      "sentence_ns": [1, 2],
+      "reason": "sinking summary and death toll"
+    },
+    {
+      "sentence_ns": [3, 4],
+      "reason": "passengers aboard and disaster's impact"
+    },
+    {
+      "sentence_ns": [5, 6],
+      "reason": "White Star history and ship standing"
+    },
+    {
+      "sentence_ns": [7, 8],
+      "reason": "builder and its lost architect"
+    },
+    {
+      "sentence_ns": [9, 10],
+      "reason": "captain died, chairman survived"
+    },
+    {
+      "sentence_ns": [11, 12],
+      "reason": "first-class luxury and its amenities"
+    },
+    {
+      "sentence_ns": [13, 14],
+      "reason": "advanced equipment and safety features"
+    },
+    {
+      "sentence_ns": [15, 16],
+      "reason": "davit capacity versus actual boats"
+    },
+    {
+      "sentence_ns": [17, 18],
+      "reason": "lifeboat types and total capacity"
+    },
+    {
+      "sentence_ns": [19, 20, 21],
+      "reason": "regulations, compliance, and actual usage"
+    },
+    {
+      "sentence_ns": [22],
+      "reason": "section heading kept separate"
+    },
+    {
+      "sentence_ns": [23],
+      "reason": "name origin single thought"
+    },
+    {
+      "sentence_ns": [24, 25],
+      "reason": "Olympic-class identity and fleet context"
+    },
+    {
+      "sentence_ns": [26, 27],
+      "reason": "genesis meeting and competitive pressure"
+    },
+    {
+      "sentence_ns": [28, 29],
+      "reason": "Ismay's size-over-speed strategy"
+    },
+    {
+      "sentence_ns": [30, 31],
+      "reason": "replacing older ships on route"
+    },
+    {
+      "sentence_ns": [32, 33],
+      "reason": "Harland and Wolff building relationship"
+    },
+    {
+      "sentence_ns": [34, 35],
+      "reason": "cost approach and agreed price"
+    },
+    {
+      "sentence_ns": [36, 37],
+      "reason": "design team and oversight roles"
+    },
+    {
+      "sentence_ns": [38],
+      "reason": "Carlisle's specific responsibilities"
+    },
+    {
+      "sentence_ns": [39, 40],
+      "reason": "design presentation and approval"
+    },
+    {
+      "sentence_ns": [41, 42],
+      "reason": "hull numbers 400 and 401"
+    }
+  ]
+}

@@ -13,10 +13,12 @@
 import * as React from "react";
 import { createContext, useContext } from "react";
 import {
+  BookOpenText,
   ChevronDown,
-  ChevronUp,
   Flag,
   MessageCircleQuestion,
+  MessageSquareQuote,
+  TextSearch,
   WandSparkles,
 } from "lucide-react";
 import {
@@ -157,6 +159,19 @@ export interface ReaderGrammarExpansionControl {
 export type ReaderGrammarExpansionControlRef = {
   current: ReaderGrammarExpansionControl | null;
 };
+
+/**
+ * Expansion key namespace for sentence-analysis cards inside the shared
+ * keyed expansion state (no second expansion context). The sentence
+ * analysis block id is `sentence_analysis:{analysisId}`, so the expansion
+ * key equals the block id by construction.
+ */
+export const READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX =
+  "sentence_analysis:";
+
+export function sentenceAnalysisExpansionKey(analysisId: string): string {
+  return `${READER_SENTENCE_ANALYSIS_EXPANSION_KEY_PREFIX}${analysisId}`;
+}
 
 export function ReaderGrammarExpansionProvider({
   children,
@@ -306,7 +321,7 @@ function sentenceChunkDomId(chunk: {
 }
 
 function calloutTypeLabel(variant: ReaderCalloutElement["variant"]): string {
-  return variant === "grammar" ? "语法解析" : "补充说明";
+  return variant === "grammar" ? "语法解析" : "Ask 补充";
 }
 
 function domIdFromBlockId(prefix: string, id: string): string {
@@ -585,7 +600,7 @@ function ReaderCalloutGroupComponent({
           aria-hidden="true"
           {...copyExcludeProps}
         >
-          <WandSparkles size={15} strokeWidth={1.8} />
+          <WandSparkles size={16} strokeWidth={1.8} />
         </span>
         <span className="reader-record-plate-callout-group-label">
           语法解析 · {calloutCount} 条
@@ -614,7 +629,6 @@ function ReaderCalloutComponent({
   const node = element as unknown as ReaderCalloutElement;
   const data = node.data;
   const variant = node.variant;
-  const icon = node.icon;
   const {
     activeGrammarItemId,
     expandGrammarItemRequest,
@@ -637,24 +651,23 @@ function ReaderCalloutComponent({
   const grammarActive =
     isGrammar && grammarItemId ? activeGrammarItemId === grammarItemId : false;
   const label = calloutTypeLabel(variant);
+  // Unified filled-card family: visual values live in semantic classes
+  // (globals.css), never inline. Group rows stay flat inside the group
+  // card; standalone grammar/supplement cards get the family fill.
   const containerClass = [
-    "reader-record-plate-callout rounded-[8px] border font-sans text-ink-soft shadow-none",
+    "reader-record-plate-callout font-sans text-ink-soft",
     isGroupedGrammar
       ? "reader-record-plate-callout--grammar-row"
       : isGrammar
-      ? "reader-record-plate-callout--grammar border-grammar-violet/18 bg-ink/[0.035]"
+      ? "reader-record-plate-callout--grammar"
       : "",
     grammarActive ? "reader-record-plate-callout--grammar-active" : "",
-    isSupplement
-      ? "reader-record-plate-callout--supplement border-vocab-amber/18 bg-vocab-amber/[0.045]"
-      : "",
+    isSupplement ? "reader-record-plate-callout--supplement" : "",
     attributes?.className ?? "",
   ]
     .filter(Boolean)
     .join(" ");
-  const eyebrowClass = isGrammar
-    ? "text-grammar-violet/80"
-    : "text-vocab-amber/90";
+  const eyebrowClass = "text-grammar-violet/80";
   const title = isGrammar
     ? data?.grammarPoint ?? ""
     : data?.supplementTitle ?? "";
@@ -786,7 +799,11 @@ function ReaderCalloutComponent({
             aria-hidden="true"
             {...copyExcludeProps}
           >
-            {icon}
+            {isGrammar ? (
+              <BookOpenText size={16} strokeWidth={1.8} />
+            ) : (
+              <MessageSquareQuote size={16} strokeWidth={1.8} />
+            )}
           </span>
           <div className="reader-record-plate-callout-heading min-w-0">
             <div className={`reader-record-plate-label ${eyebrowClass}`}>
@@ -834,11 +851,12 @@ function ReaderCalloutComponent({
                   toggleExpanded();
                 }}
               >
-                {expanded ? (
-                  <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
-                ) : (
-                  <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
-                )}
+                <ChevronDown
+                  aria-hidden="true"
+                  size={15}
+                  strokeWidth={1.9}
+                  className="reader-record-plate-callout-toggle-icon"
+                />
               </button>
               {actionTarget ? (
                 <ReaderCalloutActionButtons
@@ -880,7 +898,25 @@ function ReaderSentenceAnalysisComponent({
 }: PlateElementProps) {
   const node = element as unknown as ReaderSentenceAnalysisElement;
   const data = node.data;
-  const [expanded, setExpanded] = React.useState(false);
+  // Expansion state lives in the shared keyed expansion context (above
+  // <Plate>), so it survives editor.tf.replaceNodes remounts of this
+  // block. Cards without an analysisId (legacy/edge data) fall back to
+  // local state, mirroring the grammar callout fallback.
+  const expansionContext = useContext(ReaderGrammarExpansionContext);
+  const expansionKey = data?.analysisId
+    ? sentenceAnalysisExpansionKey(data.analysisId)
+    : null;
+  const [localExpanded, setLocalExpanded] = React.useState(false);
+  const expanded = expansionKey
+    ? expansionContext.expandedItemIds.has(expansionKey)
+    : localExpanded;
+  const toggleExpanded = React.useCallback(() => {
+    if (expansionKey) {
+      expansionContext.toggleItem(expansionKey);
+      return;
+    }
+    setLocalExpanded((current) => !current);
+  }, [expansionContext, expansionKey, setLocalExpanded]);
   const contentId = domIdFromBlockId("reader-record-sentence-analysis-content", node.id);
   const chunkCount = data?.chunks?.length ?? 0;
   const summary = chunkCount > 0 ? `${chunkCount} 个片段` : "结构说明";
@@ -900,7 +936,7 @@ function ReaderSentenceAnalysisComponent({
   return (
     <section
       {...attributes}
-      className={`reader-record-plate-sentence-analysis reader-record-plate-callout--analysis rounded-[8px] border border-context-blue/20 bg-context-blue/[0.04] font-sans text-ink-soft shadow-none ${
+      className={`reader-record-plate-sentence-analysis font-sans text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       role="note"
@@ -926,7 +962,7 @@ function ReaderSentenceAnalysisComponent({
                 aria-hidden="true"
                 {...copyExcludeProps}
               >
-                {node.icon}
+                <TextSearch size={16} strokeWidth={1.8} />
               </span>
               <span>长句拆析</span>
             </div>
@@ -958,14 +994,15 @@ function ReaderSentenceAnalysisComponent({
               onMouseDown={stopReaderCalloutControlEvent}
               onClick={(event) => {
                 stopReaderCalloutControlEvent(event);
-                setExpanded((current) => !current);
+                toggleExpanded();
               }}
             >
-              {expanded ? (
-                <ChevronUp aria-hidden="true" size={15} strokeWidth={1.9} />
-              ) : (
-                <ChevronDown aria-hidden="true" size={15} strokeWidth={1.9} />
-              )}
+              <ChevronDown
+                aria-hidden="true"
+                size={15}
+                strokeWidth={1.9}
+                className="reader-record-plate-callout-toggle-icon"
+              />
             </button>
             <ReaderCalloutActionButtons
               target={actionTarget}
@@ -1256,7 +1293,7 @@ function ReaderStableMarkdownBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+      className={`reader-record-plate-markdown-blockquote text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       {...readerRecordNavigableNodeAttrs({
@@ -1599,7 +1636,7 @@ function ReaderMarkdownBlockquoteComponent({
   return (
     <blockquote
       {...attributes}
-      className={`reader-record-plate-markdown-blockquote border-l-2 border-current/30 italic text-ink-soft ${
+      className={`reader-record-plate-markdown-blockquote text-ink-soft ${
         attributes?.className ?? ""
       }`.trim()}
       data-reader-record-markdown-node="blockquote"

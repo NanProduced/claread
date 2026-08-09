@@ -1,0 +1,26 @@
+{
+  "id": "long-form-02",
+  "groups": [
+    { "sentence_ns": [1, 2, 3], "reason": "identity, dynasty, and languages" },
+    { "sentence_ns": [4], "reason": "single complete thought" },
+    { "sentence_ns": [5, 6], "reason": "birth and reign start" },
+    { "sentence_ns": [7, 8], "reason": "Pompey flight and killing" },
+    { "sentence_ns": [9, 10], "reason": "palace siege and aftermath" },
+    { "sentence_ns": [11, 12], "reason": "joint rule and Rome visits" },
+    { "sentence_ns": [13, 14], "reason": "post-assassination political realignment" },
+    { "sentence_ns": [15, 16], "reason": "Antony affair and reliance" },
+    { "sentence_ns": [17, 18], "reason": "donations and Octavian reaction" },
+    { "sentence_ns": [19, 20], "reason": "defeat and both suicides" },
+    { "sentence_ns": [21, 22], "reason": "legacy in art and historiography" },
+    { "sentence_ns": [23, 24, 25], "reason": "artistic depictions across eras" },
+    { "sentence_ns": [26], "reason": "section heading with etymology intro" },
+    { "sentence_ns": [27, 28], "reason": "name variants and earlier bearers" },
+    { "sentence_ns": [29, 30], "reason": "dynastic adoption and title meaning" },
+    { "sentence_ns": [31], "reason": "section heading alone" },
+    { "sentence_ns": [32, 33], "reason": "Ptolemaic court culture and language" },
+    { "sentence_ns": [34, 35, 36], "reason": "Cleopatra's languages and their purpose" },
+    { "sentence_ns": [37, 38], "reason": "Roman intervention background intro" },
+    { "sentence_ns": [39, 40], "reason": "arranged marriage and its fallout" },
+    { "sentence_ns": [41, 42], "reason": "Roman claim and realm division" }
+  ]
+}

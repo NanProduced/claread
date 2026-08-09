@@ -1,0 +1,28 @@
+{
+  "id": "long-form-04",
+  "groups": [
+    { "sentence_ns": [1, 2, 3], "reason": "basic identity and orbital facts" },
+    { "sentence_ns": [4, 5, 6], "reason": "gravity and tidal locking chain" },
+    { "sentence_ns": [7, 8], "reason": "classification, mass and size" },
+    { "sentence_ns": [9, 10], "reason": "solar system ranking comparisons" },
+    { "sentence_ns": [11, 12], "reason": "body and surface composition" },
+    { "sentence_ns": [13, 14], "reason": "craters and volcanic maria formation" },
+    { "sentence_ns": [15], "reason": "origin hypothesis, topic shift" },
+    { "sentence_ns": [16, 17], "reason": "phases and eclipse appearance" },
+    { "sentence_ns": [18, 19], "reason": "brightness and visible surface" },
+    { "sentence_ns": [20], "reason": "cultural importance, topic pivot" },
+    { "sentence_ns": [21, 22], "reason": "first robotic and human arrivals" },
+    { "sentence_ns": [23, 24], "reason": "Apollo tally and return plans" },
+    { "sentence_ns": [25], "reason": "section heading with name statement" },
+    { "sentence_ns": [26], "reason": "English etymology, self-contained derivation" },
+    { "sentence_ns": [27, 28], "reason": "Latin name and lunar adjective" },
+    { "sentence_ns": [29, 30], "reason": "Luna usage in science and poetry" },
+    { "sentence_ns": [31, 32], "reason": "Greek selene and selenian" },
+    { "sentence_ns": [33, 34], "reason": "selenic cognate and seleno prefix" },
+    { "sentence_ns": [35, 36], "reason": "Artemis and Diana goddess names" },
+    { "sentence_ns": [37], "reason": "astronomical symbols, self-contained" },
+    { "sentence_ns": [38, 39], "reason": "heading plus IAU capitalization rule" },
+    { "sentence_ns": [40, 41], "reason": "historical classical planet naming" },
+    { "sentence_ns": [42, 43], "reason": "modern classification debate" }
+  ]
+}

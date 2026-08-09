@@ -1,0 +1,1065 @@
+{
+  "id": "structural-07",
+  "sentences": [
+    {
+      "n": 1,
+      "text": "Retrieving objects\n=================="
+    },
+    {
+      "n": 2,
+      "text": "To retrieve objects from your database, construct a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 3,
+      "text": "QuerySet` via a\n:class:`~django.db.models."
+    },
+    {
+      "n": 4,
+      "text": "Manager` on your model class."
+    },
+    {
+      "n": 5,
+      "text": "A :class:`~django.db.models.query."
+    },
+    {
+      "n": 6,
+      "text": "QuerySet` represents a collection of objects\nfrom your database."
+    },
+    {
+      "n": 7,
+      "text": "It can have zero, one or many *filters*."
+    },
+    {
+      "n": 8,
+      "text": "Filters narrow\ndown the query results based on the given parameters."
+    },
+    {
+      "n": 9,
+      "text": "In SQL terms, a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 10,
+      "text": "QuerySet` equates to a ``SELECT`` statement,\nand a filter is a limiting clause such as ``WHERE`` or ``LIMIT``."
+    },
+    {
+      "n": 11,
+      "text": "You get a :class:`~django.db.models.query."
+    },
+    {
+      "n": 12,
+      "text": "QuerySet` by using your model's\n:class:`~django.db.models."
+    },
+    {
+      "n": 13,
+      "text": "Manager`."
+    },
+    {
+      "n": 14,
+      "text": "Each model has at least one\n:class:`~django.db.models."
+    },
+    {
+      "n": 15,
+      "text": "Manager`, and it's called\n:attr:`~django.db.models."
+    },
+    {
+      "n": 16,
+      "text": "Model.objects` by default."
+    },
+    {
+      "n": 17,
+      "text": "Access it directly via the\nmodel class, like so:"
+    },
+    {
+      "n": 18,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 19,
+      "text": ":"
+    },
+    {
+      "n": 20,
+      "text": "pycon"
+    },
+    {
+      "n": 21,
+      "text": ">>> Blog.objects\n    <django.db.models.manager."
+    },
+    {
+      "n": 22,
+      "text": "Manager object at ...>\n    >>> b = Blog(name=\"Foo\", tagline=\"Bar\")\n    >>> b.objects\n    Traceback:\n        ..."
+    },
+    {
+      "n": 23,
+      "text": "AttributeError: \"Manager isn't accessible via Blog instances.\""
+    },
+    {
+      "n": 24,
+      "text": ".. note:"
+    },
+    {
+      "n": 25,
+      "text": ":"
+    },
+    {
+      "n": 26,
+      "text": "A ``Manager`` is accessible only via model classes, rather than from model\n    instances, to enforce a separation between \"table-level\" operations and\n    \"record-level\" operations."
+    },
+    {
+      "n": 27,
+      "text": "The :class:`~django.db.models."
+    },
+    {
+      "n": 28,
+      "text": "Manager` is the main source of querysets for\na model."
+    },
+    {
+      "n": 29,
+      "text": "For example, ``Blog.objects.all()`` returns a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 30,
+      "text": "QuerySet` that contains all ``Blog`` objects in\nthe database."
+    },
+    {
+      "n": 31,
+      "text": "Retrieving all objects\n--"
+    },
+    {
+      "n": 32,
+      "text": "--"
+    },
+    {
+      "n": 33,
+      "text": "--"
+    },
+    {
+      "n": 34,
+      "text": "--"
+    },
+    {
+      "n": 35,
+      "text": "--"
+    },
+    {
+      "n": 36,
+      "text": "--"
+    },
+    {
+      "n": 37,
+      "text": "--"
+    },
+    {
+      "n": 38,
+      "text": "--"
+    },
+    {
+      "n": 39,
+      "text": "--"
+    },
+    {
+      "n": 40,
+      "text": "--"
+    },
+    {
+      "n": 41,
+      "text": "--"
+    },
+    {
+      "n": 42,
+      "text": "The simplest way to retrieve objects from a table is to get all of them."
+    },
+    {
+      "n": 43,
+      "text": "To do\nthis, use the :meth:`~django.db.models.query."
+    },
+    {
+      "n": 44,
+      "text": "QuerySet.all` method on a\n:class:`~django.db.models."
+    },
+    {
+      "n": 45,
+      "text": "Manager`:"
+    },
+    {
+      "n": 46,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 47,
+      "text": ":"
+    },
+    {
+      "n": 48,
+      "text": "pycon"
+    },
+    {
+      "n": 49,
+      "text": ">>> all_entries = Entry.objects.all()"
+    },
+    {
+      "n": 50,
+      "text": "The :meth:`~django.db.models.query."
+    },
+    {
+      "n": 51,
+      "text": "QuerySet.all` method returns a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 52,
+      "text": "QuerySet` of all the objects in the database."
+    },
+    {
+      "n": 53,
+      "text": "Retrieving specific objects with filters\n--"
+    },
+    {
+      "n": 54,
+      "text": "--"
+    },
+    {
+      "n": 55,
+      "text": "--"
+    },
+    {
+      "n": 56,
+      "text": "--"
+    },
+    {
+      "n": 57,
+      "text": "--"
+    },
+    {
+      "n": 58,
+      "text": "--"
+    },
+    {
+      "n": 59,
+      "text": "--"
+    },
+    {
+      "n": 60,
+      "text": "--"
+    },
+    {
+      "n": 61,
+      "text": "--"
+    },
+    {
+      "n": 62,
+      "text": "--"
+    },
+    {
+      "n": 63,
+      "text": "--"
+    },
+    {
+      "n": 64,
+      "text": "--"
+    },
+    {
+      "n": 65,
+      "text": "--"
+    },
+    {
+      "n": 66,
+      "text": "--"
+    },
+    {
+      "n": 67,
+      "text": "--"
+    },
+    {
+      "n": 68,
+      "text": "--"
+    },
+    {
+      "n": 69,
+      "text": "--"
+    },
+    {
+      "n": 70,
+      "text": "--"
+    },
+    {
+      "n": 71,
+      "text": "--"
+    },
+    {
+      "n": 72,
+      "text": "--"
+    },
+    {
+      "n": 73,
+      "text": "The :class:`~django.db.models.query."
+    },
+    {
+      "n": 74,
+      "text": "QuerySet` returned by\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 75,
+      "text": "QuerySet.all` describes all objects in the\ndatabase table."
+    },
+    {
+      "n": 76,
+      "text": "Usually, though, you'll need to select only a subset of the\ncomplete set of objects."
+    },
+    {
+      "n": 77,
+      "text": "To create such a subset, you refine the initial\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 78,
+      "text": "QuerySet`, adding filter conditions."
+    },
+    {
+      "n": 79,
+      "text": "The two\nmost common ways to refine a :class:`~django.db.models.query."
+    },
+    {
+      "n": 80,
+      "text": "QuerySet` are:"
+    },
+    {
+      "n": 81,
+      "text": "``filter(**kwargs)``\n    Returns a new :class:`~django.db.models.query."
+    },
+    {
+      "n": 82,
+      "text": "QuerySet` containing objects\n    that match the given lookup parameters."
+    },
+    {
+      "n": 83,
+      "text": "``exclude(**kwargs)``\n    Returns a new :class:`~django.db.models.query."
+    },
+    {
+      "n": 84,
+      "text": "QuerySet` containing objects\n    that do *not* match the given lookup parameters."
+    },
+    {
+      "n": 85,
+      "text": "The lookup parameters (``**kwargs`` in the above function definitions) should\nbe in the format described in `Field lookups`_ below."
+    },
+    {
+      "n": 86,
+      "text": "For example, to get a :class:`~django.db.models.query."
+    },
+    {
+      "n": 87,
+      "text": "QuerySet` of blog entries\nfrom the year 2006, use :meth:`~django.db.models.query."
+    },
+    {
+      "n": 88,
+      "text": "QuerySet.filter` like\nso::"
+    },
+    {
+      "n": 89,
+      "text": "Entry.objects.filter(pub_date__year=2006)"
+    },
+    {
+      "n": 90,
+      "text": "With the default manager class, it is the same as:"
+    },
+    {
+      "n": 91,
+      "text": ":"
+    },
+    {
+      "n": 92,
+      "text": "Entry.objects.all().filter(pub_date__year=2006)"
+    },
+    {
+      "n": 93,
+      "text": ".. _chaining-filters:"
+    },
+    {
+      "n": 94,
+      "text": "Chaining filters\n~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 95,
+      "text": "The result of refining a :class:`~django.db.models.query."
+    },
+    {
+      "n": 96,
+      "text": "QuerySet` is itself a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 97,
+      "text": "QuerySet`, so it's possible to chain\nrefinements together."
+    },
+    {
+      "n": 98,
+      "text": "For example:"
+    },
+    {
+      "n": 99,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 100,
+      "text": ":"
+    },
+    {
+      "n": 101,
+      "text": "pycon"
+    },
+    {
+      "n": 102,
+      "text": ">>> Entry.objects.filter(headline__startswith=\"What\").exclude(\n    ...     pub_date__gte=datetime.date.today()\n    ... ).filter(pub_date__gte=datetime.date(2005, 1, 30))"
+    },
+    {
+      "n": 103,
+      "text": "This takes the initial :class:`~django.db.models.query."
+    },
+    {
+      "n": 104,
+      "text": "QuerySet` of all entries\nin the database, adds a filter, then an exclusion, then another filter."
+    },
+    {
+      "n": 105,
+      "text": "The\nfinal result is a :class:`~django.db.models.query."
+    },
+    {
+      "n": 106,
+      "text": "QuerySet` containing all\nentries with a headline that starts with \"What\", that were published between\nJanuary 30, 2005, and the current day."
+    },
+    {
+      "n": 107,
+      "text": ".. _filtered-querysets-are-unique:"
+    },
+    {
+      "n": 108,
+      "text": "Filtered ``QuerySet``\\s are unique\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 109,
+      "text": "Each time you refine a :class:`~django.db.models.query."
+    },
+    {
+      "n": 110,
+      "text": "QuerySet`, you get a\nbrand-new :class:`~django.db.models.query."
+    },
+    {
+      "n": 111,
+      "text": "QuerySet` that is in no way bound to\nthe previous :class:`~django.db.models.query."
+    },
+    {
+      "n": 112,
+      "text": "QuerySet`."
+    },
+    {
+      "n": 113,
+      "text": "Each refinement creates\na separate and distinct :class:`~django.db.models.query."
+    },
+    {
+      "n": 114,
+      "text": "QuerySet` that can be\nstored, used and reused."
+    },
+    {
+      "n": 115,
+      "text": "Example:"
+    },
+    {
+      "n": 116,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 117,
+      "text": ":"
+    },
+    {
+      "n": 118,
+      "text": "pycon"
+    },
+    {
+      "n": 119,
+      "text": ">>> q1 = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q2 = q1.exclude(pub_date__gte=datetime.date.today())\n    >>> q3 = q1.filter(pub_date__gte=datetime.date.today())"
+    },
+    {
+      "n": 120,
+      "text": "These three querysets are separate."
+    },
+    {
+      "n": 121,
+      "text": "The first is a base\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 122,
+      "text": "QuerySet` containing all entries that contain a\nheadline starting with \"What\"."
+    },
+    {
+      "n": 123,
+      "text": "The second is a subset of the first, with an\nadditional criteria that excludes records whose ``pub_date`` is today or in the\nfuture."
+    },
+    {
+      "n": 124,
+      "text": "The third is a subset of the first, with an additional criteria that\nselects only the records whose ``pub_date`` is today or in the future."
+    },
+    {
+      "n": 125,
+      "text": "The\ninitial :class:`~django.db.models.query."
+    },
+    {
+      "n": 126,
+      "text": "QuerySet` (``q1``) is unaffected by the\nrefinement process."
+    },
+    {
+      "n": 127,
+      "text": ".. _querysets-are-lazy:"
+    },
+    {
+      "n": 128,
+      "text": "``QuerySet``\\s are lazy\n~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    {
+      "n": 129,
+      "text": "``QuerySet`` objects are lazy -- the act of creating a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 130,
+      "text": "QuerySet` doesn't involve any database\nactivity."
+    },
+    {
+      "n": 131,
+      "text": "You can stack filters together all day long, and Django won't\nactually run the query until the :class:`~django.db.models.query."
+    },
+    {
+      "n": 132,
+      "text": "QuerySet` is\n*evaluated*."
+    },
+    {
+      "n": 133,
+      "text": "Take a look at this example:"
+    },
+    {
+      "n": 134,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 135,
+      "text": ":"
+    },
+    {
+      "n": 136,
+      "text": "pycon"
+    },
+    {
+      "n": 137,
+      "text": ">>> q = Entry.objects.filter(headline__startswith=\"What\")\n    >>> q = q.filter(pub_date__lte=datetime.date.today())\n    >>> q = q.exclude(body_text__icontains=\"food\")\n    >>> print(q)"
+    },
+    {
+      "n": 138,
+      "text": "Though this looks like three database hits, in fact it hits the database only\nonce, at the last line (``print(q)``)."
+    },
+    {
+      "n": 139,
+      "text": "In general, the results of a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 140,
+      "text": "QuerySet` aren't fetched from the database\nuntil you \"ask\" for them."
+    },
+    {
+      "n": 141,
+      "text": "When you do, the\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 142,
+      "text": "QuerySet` is *evaluated* by accessing the\ndatabase."
+    },
+    {
+      "n": 143,
+      "text": "For more details on exactly when evaluation takes place, see\n:ref:`when-querysets-are-evaluated`."
+    },
+    {
+      "n": 144,
+      "text": ".. _retrieving-single-object-with-get:"
+    },
+    {
+      "n": 145,
+      "text": "Retrieving a single object with ``get()``\n--"
+    },
+    {
+      "n": 146,
+      "text": "--"
+    },
+    {
+      "n": 147,
+      "text": "--"
+    },
+    {
+      "n": 148,
+      "text": "--"
+    },
+    {
+      "n": 149,
+      "text": "--"
+    },
+    {
+      "n": 150,
+      "text": "--"
+    },
+    {
+      "n": 151,
+      "text": "--"
+    },
+    {
+      "n": 152,
+      "text": "--"
+    },
+    {
+      "n": 153,
+      "text": "--"
+    },
+    {
+      "n": 154,
+      "text": "--"
+    },
+    {
+      "n": 155,
+      "text": "--"
+    },
+    {
+      "n": 156,
+      "text": "--"
+    },
+    {
+      "n": 157,
+      "text": "--"
+    },
+    {
+      "n": 158,
+      "text": "--"
+    },
+    {
+      "n": 159,
+      "text": "--"
+    },
+    {
+      "n": 160,
+      "text": "--"
+    },
+    {
+      "n": 161,
+      "text": "--"
+    },
+    {
+      "n": 162,
+      "text": "--"
+    },
+    {
+      "n": 163,
+      "text": "--"
+    },
+    {
+      "n": 164,
+      "text": "--"
+    },
+    {
+      "n": 165,
+      "text": "-"
+    },
+    {
+      "n": 166,
+      "text": ":meth:`~django.db.models.query."
+    },
+    {
+      "n": 167,
+      "text": "QuerySet.filter` will always give you a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 168,
+      "text": "QuerySet`, even if only a single object matches\nthe query - in this case, it will be a\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 169,
+      "text": "QuerySet` containing a single element."
+    },
+    {
+      "n": 170,
+      "text": "If you know there is only one object that matches your query, you can use the\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 171,
+      "text": "QuerySet.get` method on a\n:class:`~django.db.models."
+    },
+    {
+      "n": 172,
+      "text": "Manager` which returns the object directly:"
+    },
+    {
+      "n": 173,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 174,
+      "text": ":"
+    },
+    {
+      "n": 175,
+      "text": "pycon"
+    },
+    {
+      "n": 176,
+      "text": ">>> one_entry = Entry.objects.get(pk=1)"
+    },
+    {
+      "n": 177,
+      "text": "You can use any query expression with\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 178,
+      "text": "QuerySet.get`, just like with\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 179,
+      "text": "QuerySet.filter` - again, see `Field lookups`_\nbelow."
+    },
+    {
+      "n": 180,
+      "text": "Note that there is a difference between using\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 181,
+      "text": "QuerySet.get`, and using\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 182,
+      "text": "QuerySet.filter` with a slice of ``[0]``."
+    },
+    {
+      "n": 183,
+      "text": "If\nthere are no results that match the query,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 184,
+      "text": "QuerySet.get` will raise a ``DoesNotExist``\nexception."
+    },
+    {
+      "n": 185,
+      "text": "This exception is an attribute of the model class that the query is\nbeing performed on - so in the code above, if there is no ``Entry`` object with\na primary key of 1, Django will raise ``Entry."
+    },
+    {
+      "n": 186,
+      "text": "DoesNotExist``."
+    },
+    {
+      "n": 187,
+      "text": "Similarly, Django will complain if more than one item matches the\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 188,
+      "text": "QuerySet.get` query."
+    },
+    {
+      "n": 189,
+      "text": "In this case, it will raise\n:exc:`~django.core.exceptions.MultipleObjectsReturned`, which again is an\nattribute of the model class itself."
+    },
+    {
+      "n": 190,
+      "text": "Other ``QuerySet`` methods\n--"
+    },
+    {
+      "n": 191,
+      "text": "--"
+    },
+    {
+      "n": 192,
+      "text": "--"
+    },
+    {
+      "n": 193,
+      "text": "--"
+    },
+    {
+      "n": 194,
+      "text": "--"
+    },
+    {
+      "n": 195,
+      "text": "--"
+    },
+    {
+      "n": 196,
+      "text": "--"
+    },
+    {
+      "n": 197,
+      "text": "--"
+    },
+    {
+      "n": 198,
+      "text": "--"
+    },
+    {
+      "n": 199,
+      "text": "--"
+    },
+    {
+      "n": 200,
+      "text": "--"
+    },
+    {
+      "n": 201,
+      "text": "--"
+    },
+    {
+      "n": 202,
+      "text": "--"
+    },
+    {
+      "n": 203,
+      "text": "Most of the time you'll use :meth:`~django.db.models.query."
+    },
+    {
+      "n": 204,
+      "text": "QuerySet.all`,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 205,
+      "text": "QuerySet.get`,\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 206,
+      "text": "QuerySet.filter` and\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 207,
+      "text": "QuerySet.exclude` when you need to look up\nobjects from the database."
+    },
+    {
+      "n": 208,
+      "text": "However, that's far from all there is; see the\n:ref:`QuerySet API Reference <queryset-api>` for a complete list of all the\nvarious :class:`~django.db.models.query."
+    },
+    {
+      "n": 209,
+      "text": "QuerySet` methods."
+    },
+    {
+      "n": 210,
+      "text": ".. _limiting-querysets:"
+    },
+    {
+      "n": 211,
+      "text": "Limiting ``QuerySet``\\s\n--"
+    },
+    {
+      "n": 212,
+      "text": "--"
+    },
+    {
+      "n": 213,
+      "text": "--"
+    },
+    {
+      "n": 214,
+      "text": "--"
+    },
+    {
+      "n": 215,
+      "text": "--"
+    },
+    {
+      "n": 216,
+      "text": "--"
+    },
+    {
+      "n": 217,
+      "text": "--"
+    },
+    {
+      "n": 218,
+      "text": "--"
+    },
+    {
+      "n": 219,
+      "text": "--"
+    },
+    {
+      "n": 220,
+      "text": "--"
+    },
+    {
+      "n": 221,
+      "text": "--"
+    },
+    {
+      "n": 222,
+      "text": "-"
+    },
+    {
+      "n": 223,
+      "text": "Use a subset of Python's array-slicing syntax to limit your\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 224,
+      "text": "QuerySet` to a certain number of results."
+    },
+    {
+      "n": 225,
+      "text": "This\nis the equivalent of SQL's ``LIMIT`` and ``OFFSET`` clauses."
+    },
+    {
+      "n": 226,
+      "text": "For example, this returns the first 5 objects (``LIMIT 5``):"
+    },
+    {
+      "n": 227,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 228,
+      "text": ":"
+    },
+    {
+      "n": 229,
+      "text": "pycon"
+    },
+    {
+      "n": 230,
+      "text": ">>> Entry.objects.all()[:"
+    },
+    {
+      "n": 231,
+      "text": "5]"
+    },
+    {
+      "n": 232,
+      "text": "This returns the sixth through tenth objects (``OFFSET 5 LIMIT 5``):"
+    },
+    {
+      "n": 233,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 234,
+      "text": ":"
+    },
+    {
+      "n": 235,
+      "text": "pycon"
+    },
+    {
+      "n": 236,
+      "text": ">>> Entry.objects.all()[5:"
+    },
+    {
+      "n": 237,
+      "text": "10]"
+    },
+    {
+      "n": 238,
+      "text": "Negative indexing (i.e. ``Entry.objects.all()[-1]``) is not supported."
+    },
+    {
+      "n": 239,
+      "text": "Generally, slicing a :class:`~django.db.models.query."
+    },
+    {
+      "n": 240,
+      "text": "QuerySet` returns a new\n:class:`~django.db.models.query."
+    },
+    {
+      "n": 241,
+      "text": "QuerySet` -- it doesn't evaluate the query."
+    },
+    {
+      "n": 242,
+      "text": "An\nexception is if you use the \"step\" parameter of Python slice syntax."
+    },
+    {
+      "n": 243,
+      "text": "For\nexample, this would actually execute the query in order to return a list of\nevery *second* object of the first 10:"
+    },
+    {
+      "n": 244,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 245,
+      "text": ":"
+    },
+    {
+      "n": 246,
+      "text": "pycon"
+    },
+    {
+      "n": 247,
+      "text": ">>> Entry.objects.all()[:"
+    },
+    {
+      "n": 248,
+      "text": "10:"
+    },
+    {
+      "n": 249,
+      "text": "2]"
+    },
+    {
+      "n": 250,
+      "text": "Further filtering or ordering of a sliced queryset is prohibited due to the\nambiguous nature of how that might work."
+    },
+    {
+      "n": 251,
+      "text": "To retrieve a *single* object rather than a list\n(e.g. ``SELECT foo FROM bar LIMIT 1``), use an index instead of a slice."
+    },
+    {
+      "n": 252,
+      "text": "For\nexample, this returns the first ``Entry`` in the database, after ordering\nentries alphabetically by headline:"
+    },
+    {
+      "n": 253,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 254,
+      "text": ":"
+    },
+    {
+      "n": 255,
+      "text": "pycon"
+    },
+    {
+      "n": 256,
+      "text": ">>> Entry.objects.order_by(\"headline\")[0]"
+    },
+    {
+      "n": 257,
+      "text": "This is roughly equivalent to:"
+    },
+    {
+      "n": 258,
+      "text": ".. code-block:"
+    },
+    {
+      "n": 259,
+      "text": ":"
+    },
+    {
+      "n": 260,
+      "text": "pycon"
+    },
+    {
+      "n": 261,
+      "text": ">>> Entry.objects.order_by(\"headline\")[0:"
+    },
+    {
+      "n": 262,
+      "text": "1].get()"
+    },
+    {
+      "n": 263,
+      "text": "Note, however, that the first of these will raise ``IndexError`` while the\nsecond will raise ``DoesNotExist`` if no objects match the given criteria."
+    },
+    {
+      "n": 264,
+      "text": "See\n:meth:`~django.db.models.query."
+    },
+    {
+      "n": 265,
+      "text": "QuerySet.get` for more details."
+    }
+  ]
+}

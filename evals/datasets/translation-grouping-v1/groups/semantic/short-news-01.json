@@ -1,0 +1,33 @@
+{
+  "id": "short-news-01",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "standalone date line"
+    },
+    {
+      "sentence_ns": [2, 3, 4],
+      "reason": "opening overview of the visit"
+    },
+    {
+      "sentence_ns": [5, 6, 7],
+      "reason": "context on trip and African Catholicism"
+    },
+    {
+      "sentence_ns": [8, 9],
+      "reason": "Algeria stop as one thought"
+    },
+    {
+      "sentence_ns": [10, 11],
+      "reason": "Cameroon stop as one thought"
+    },
+    {
+      "sentence_ns": [12, 13, 14],
+      "reason": "Angola stop as one thought"
+    },
+    {
+      "sentence_ns": [15],
+      "reason": "final leg topic shift"
+    }
+  ]
+}

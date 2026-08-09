@@ -1,0 +1,25 @@
+{
+  "id": "short-news-02",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "date line, heading-like unit"
+    },
+    {
+      "sentence_ns": [2, 3, 4, 5],
+      "reason": "blockade announcement with direct quote"
+    },
+    {
+      "sentence_ns": [6],
+      "reason": "market reaction topic shift"
+    },
+    {
+      "sentence_ns": [7, 8, 9],
+      "reason": "Iranian response, split quote plus follow-up"
+    },
+    {
+      "sentence_ns": [10],
+      "reason": "China reaction, new actor"
+    }
+  ]
+}

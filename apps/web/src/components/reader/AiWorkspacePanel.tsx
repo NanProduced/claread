@@ -97,10 +97,12 @@ import type {
 import {
   type ReaderAskAgenticAnswerBlockDto,
 } from "@/types/api/reader-ask";
-import type {
-  NavigateAgenticSource,
-  SourceNavigationResult,
+import {
+  sourceNavigationResultFromCitationNavigate,
+  type NavigateToArticleLocation,
+  type SourceNavigationResult,
 } from "@/lib/reader-orchestration/agentic-source-navigation/agentic-source-navigation";
+import type { ReadingRecordAskCitationNavigateResultDto } from "@/services/api/reader-ask";
 import {
   projectAgenticCitationsForDisplay,
   type AgenticCitationDisplayItem,
@@ -560,9 +562,10 @@ async function copyMessageText(text: string) {
 }
 
 /**
- * Safe Chinese feedback for legacy Reader-owned source navigation.
- * Kept exported for unit tests / future typed-location adapter wiring.
- * Must never surface enums or internal ids.
+ * Safe Chinese feedback for article-citation source navigation results.
+ * Sole formatter for both the host callback result and the projected
+ * secure-endpoint failure statuses. Must never surface enums or internal
+ * ids.
  */
 export function formatSourceNavigationFeedback(
   result: SourceNavigationResult,
@@ -589,24 +592,57 @@ export function formatSourceNavigationFeedback(
 }
 
 /**
+ * Keyboard-reachable action inside an article citation detail card that
+ * starts the secure source-navigation chain for one citation. The trigger
+ * keeps its "查看详情" responsibility; locating the source is always a
+ * separate explicit click.
+ */
+function LocateCitationButton({
+  citationId,
+  pending,
+  onLocate,
+}: {
+  citationId: string;
+  pending: boolean;
+  onLocate: (citationId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`locate-citation-${citationId}`}
+      aria-label="定位原文"
+      disabled={pending}
+      onClick={() => onLocate(citationId)}
+      className="mt-2 inline-flex items-center rounded-md border border-border/60 px-2 py-1 text-[12px] leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {pending ? "定位中…" : "定位原文"}
+    </button>
+  );
+}
+
+/**
  * Render agentic answer blocks with Markdown + inline AI Elements citations.
  *
  * Each semantic block reuses MessageResponse (Ask Markdown). Article
  * InlineCitation appears after the block (public citation_id + snippet only).
  * No end-of-answer Article Sources.
  *
- * Jump-to-source is intentionally **not** shown until a Reader typed-location
- * adapter consumes the secure navigate API result (message_id + citation_id →
- * server fence → typed location). Do not announce false "已定位" feedback.
- * Follow-up: Plate integration passes only typed location — never handles,
- * evidence scope, or client fence fields.
+ * When the host wires the typed-location navigation callback, each article
+ * citation detail also shows an explicit「定位原文」action. It submits only
+ * record id + message id + public citation id to the secure navigate route;
+ * the server-fenced typed location is handed to the Reader host callback.
+ * Without the callback, citations stay display-only.
  */
 function AgenticAnswerBlocks({
   blocks,
   citations,
+  onLocateCitation,
+  pendingCitationId,
 }: {
   blocks: ReaderAskAgenticAnswerBlockDto[];
   citations: AgenticCitationDisplayItem[];
+  onLocateCitation?: (citationId: string) => void;
+  pendingCitationId?: string | null;
 }) {
   const citationById = new Map(citations.map((c) => [c.citationId, c]));
 
@@ -644,13 +680,26 @@ function AgenticAnswerBlocks({
                     </InlineCitationCardTrigger>
                     <InlineCitationCardBody>
                       {blockCitations.length === 1 ? (
-                        <InlineCitationSource title={blockCitations[0].title}>
-                          {blockCitations[0].snippet ? (
-                            <InlineCitationQuote>
-                              {blockCitations[0].snippet}
-                            </InlineCitationQuote>
+                        <>
+                          <InlineCitationSource title={blockCitations[0].title}>
+                            {blockCitations[0].snippet ? (
+                              <InlineCitationQuote>
+                                {blockCitations[0].snippet}
+                              </InlineCitationQuote>
+                            ) : null}
+                          </InlineCitationSource>
+                          {onLocateCitation ? (
+                            <div>
+                              <LocateCitationButton
+                                citationId={blockCitations[0].citationId}
+                                pending={
+                                  pendingCitationId === blockCitations[0].citationId
+                                }
+                                onLocate={onLocateCitation}
+                              />
+                            </div>
                           ) : null}
-                        </InlineCitationSource>
+                        </>
                       ) : (
                         <InlineCitationCarousel count={blockCitations.length}>
                           <InlineCitationCarouselHeader>
@@ -670,6 +719,17 @@ function AgenticAnswerBlocks({
                                     </InlineCitationQuote>
                                   ) : null}
                                 </InlineCitationSource>
+                                {onLocateCitation ? (
+                                  <div>
+                                    <LocateCitationButton
+                                      citationId={citation.citationId}
+                                      pending={
+                                        pendingCitationId === citation.citationId
+                                      }
+                                      onLocate={onLocateCitation}
+                                    />
+                                  </div>
+                                ) : null}
                               </InlineCitationCarouselItem>
                             ))}
                           </InlineCitationCarouselContent>
@@ -736,6 +796,8 @@ function MessageBubble({
   agenticActivity,
   turnNotice,
   onDismissTurnNotice,
+  onLocateCitationSource,
+  citationNavigationPending,
 }: {
   item: AskPanelConversationItem;
   onRetry: (messageId: string) => void;
@@ -747,6 +809,15 @@ function MessageBubble({
   agenticActivity?: AgenticActivityState | null;
   turnNotice?: AskSystemNotice | null;
   onDismissTurnNotice?: (messageId: string) => void;
+  /** Secure article-citation navigation; absent keeps citations display-only. */
+  onLocateCitationSource?: (
+    messageId: string,
+    citationId: string,
+  ) => Promise<void>;
+  citationNavigationPending?: {
+    messageId: string;
+    citationId: string;
+  } | null;
 }) {
   const { message, blocks } = item;
   const isAssistant = message.role === "assistant";
@@ -768,6 +839,12 @@ function MessageBubble({
   const agenticCitationItems = hasAgenticAnswerBlocks
     ? projectAgenticCitationsForDisplay(message.agentic_citations ?? [])
     : [];
+  // The secure navigate route resolves a persisted assistant message UUID;
+  // local streaming ids and missing host wiring keep citations display-only.
+  const canLocateCitations =
+    onLocateCitationSource != null &&
+    isAssistant &&
+    isPersistedAssistantMessageId(message.id);
   return (
     <div
       data-testid={isAssistant ? "ask-assistant-message" : "ask-user-message"}
@@ -823,6 +900,21 @@ function MessageBubble({
                           <AgenticAnswerBlocks
                             blocks={message.agentic_answer_blocks ?? []}
                             citations={agenticCitationItems}
+                            onLocateCitation={
+                              canLocateCitations
+                                ? (citationId) => {
+                                    void onLocateCitationSource(
+                                      message.id,
+                                      citationId,
+                                    );
+                                  }
+                                : undefined
+                            }
+                            pendingCitationId={
+                              citationNavigationPending?.messageId === message.id
+                                ? citationNavigationPending.citationId
+                                : null
+                            }
                           />
                         ) : hasAnswerContent ? (
                           <MessageResponse
@@ -1087,11 +1179,12 @@ export interface AiWorkspacePanelProps {
   capacityDowngradeNotice?: string | null;
   onDismissCapacityDowngradeNotice?: () => void;
   /**
-   * Reader-owned NavigateAgenticSource callback (R3C-A). Optional — callers
-   * without wiring keep canonical citations display-only.
-   * Must not pass CurrentPageIdentity / Document / Element here.
+   * Reader-owned typed-location navigation callback. Optional — hosts
+   * without wiring keep article citations display-only.
+   * Receives only the server-verified typed location; the panel never
+   * passes Document / Element / page identity across this seam.
    */
-  onNavigateAgenticSource?: NavigateAgenticSource;
+  onNavigateToArticleLocation?: NavigateToArticleLocation;
   /**
    * ASK-UX-MOBILE — whether the host layout currently has room for the
    * sidecar surface. When false, the surface switch menu is replaced by a
@@ -1115,6 +1208,7 @@ export function AiWorkspacePanel({
   onToggle,
   capacityDowngradeNotice,
   onDismissCapacityDowngradeNotice,
+  onNavigateToArticleLocation,
   hasSidecarCapacity = true,
 }: AiWorkspacePanelProps) {
   const {
@@ -1125,8 +1219,84 @@ export function AiWorkspacePanel({
   } = composer;
   const isFloatingSurface = surface === "floating";
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
+  // One in-flight citation navigation at a time; the pending pair also
+  // drives the per-citation loading state so double-clicks cannot resubmit.
+  // The ref mirror is the synchronous fence: React state only applies after
+  // the next render, so two activations in the same event-loop turn would
+  // both pass a state-only check.
+  const [pendingCitationNavigation, setPendingCitationNavigation] = useState<{
+    messageId: string;
+    citationId: string;
+  } | null>(null);
+  const pendingCitationNavigationRef = useRef(false);
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const explicitSurfaceSwitchRef = useRef<AiWorkspaceSurface | null>(null);
+
+  // Article-citation source navigation. The panel submits only record id +
+  // assistant message id + public citation id to the secure navigate route;
+  // the server owns the identity fence and returns a minimal typed location,
+  // which is handed to the Reader host callback. No client-supplied fence,
+  // base, generation, or stable-document field ever leaves this handler.
+  const handleLocateCitationSource = useCallback(
+    async (messageId: string, citationId: string) => {
+      if (
+        !onNavigateToArticleLocation ||
+        pendingCitationNavigationRef.current
+      ) {
+        return;
+      }
+      pendingCitationNavigationRef.current = true;
+      setPendingCitationNavigation({ messageId, citationId });
+      try {
+        let result: SourceNavigationResult;
+        try {
+          const response = await fetch(
+            `/api/web/reader/records/${encodeURIComponent(recordId)}/ask/messages/${encodeURIComponent(messageId)}/citations/${encodeURIComponent(citationId)}/navigate`,
+            { method: "POST", cache: "no-store" },
+          );
+          if (!response.ok) {
+            result = { status: "unavailable", reason: "no_locator" };
+          } else {
+            const payload =
+              (await response.json()) as ReadingRecordAskCitationNavigateResultDto;
+            const location =
+              payload.status === "ok" ? (payload.location ?? null) : null;
+            const unitId =
+              typeof location?.unit_id === "string" &&
+              location.unit_id.length > 0
+                ? location.unit_id
+                : null;
+            const anchorSegmentId =
+              typeof location?.anchor_segment_id === "string" &&
+              location.anchor_segment_id.length > 0
+                ? location.anchor_segment_id
+                : null;
+            if (
+              payload.status === "ok" &&
+              (unitId !== null || anchorSegmentId !== null)
+            ) {
+              result = await onNavigateToArticleLocation({
+                unitId,
+                anchorSegmentId,
+              });
+            } else if (payload.status === "ok") {
+              result = { status: "unavailable", reason: "no_locator" };
+            } else {
+              result = sourceNavigationResultFromCitationNavigate(payload);
+            }
+          }
+        } catch {
+          // Network / malformed payloads fail closed; never leak error text.
+          result = { status: "unavailable", reason: "no_locator" };
+        }
+        setLiveAnnouncement(formatSourceNavigationFeedback(result));
+      } finally {
+        pendingCitationNavigationRef.current = false;
+        setPendingCitationNavigation(null);
+      }
+    },
+    [onNavigateToArticleLocation, recordId],
+  );
 
   const [threads, setThreads] = useState<ReaderAskThreadSummaryDto[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -2851,6 +3021,12 @@ export function AiWorkspacePanel({
                 }
                 turnNotice={turnNotices[item.id] ?? null}
                 onDismissTurnNotice={handleDismissTurnNotice}
+                onLocateCitationSource={
+                  onNavigateToArticleLocation
+                    ? handleLocateCitationSource
+                    : undefined
+                }
+                citationNavigationPending={pendingCitationNavigation}
               />
             ))}
           </ConversationShell>

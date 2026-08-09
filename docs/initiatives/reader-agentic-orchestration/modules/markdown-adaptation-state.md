@@ -177,3 +177,18 @@
 - R2.1 API：parser/freeze/reload/display-icon/prompt-profile/safe-normalization/job policy focused command 为 328 passed，1 个 `.pytest_cache` ACL warning。真实记录证据包含 Confirmed Source revision 1/frozen、source hash `c25f8640f5685668c85a15d45fab2d3ea6a248390a932a458b1fb031219b8b3e`、Stable 38 blocks、两个 wrapper payload、list/list_item parent chains、`u17–u24` source_callout T-only units、zero icon Unit/Anchor/job target、fresh snapshot == reload snapshot。
 - Gates：任务 allowlist ESLint 通过；Ruff 任务文件结构检查通过。`test_reader_snapshot_stable_block_reload.py` 保留 4 条既有 E501 长文档行，严格未忽略 E501 的全文件 Ruff 会只报告这 4 条，不对其做无关格式化；`git diff --check` 通过，`git diff --cached --name-only` 为空。
 - 混合工作区隔离：Ask Claread/Web Search/RAG diff 原样保留；共享 `ReaderRecordPlateSurface.tsx` 未修改、未格式化、未 stage、未回滚；未运行真实 LLM、未做历史记录批量迁移、未新增 LLM 分类节点。
+
+
+## 10. Wrapper 行为矩阵（冻结）
+
+| block_type | 自动层 | unit/anchor | wrapper / overlay 行为 |
+|---|---|---|---|
+| `table` / `table_row` / `table_cell` | 全关 | 产生 | 不加第二套前端策略；无自动译文/grammar/analysis。Ask supplement 允许：锚点留 cell，卡片只渲染一次、置于整个 table 之后，不进入 table children。 |
+| `code_block` | 全关 | 产生 | 无自动 overlay。Ask supplement fail-closed（经 supplement eligibility 单点派生）。 |
+| `thematic_break` | —（metadata_only） | 不产生 | 无挂载点。 |
+| `heading` / `blockquote` / source_callout 角色 | 仅 translation | 产生 | vocabulary/grammar/analysis 自动关；用户资产与 Ask supplement 允许（同 paragraph）。普通 blockquote / source_callout：wrapper 内只保留原文结构节点，译文拆出为 wrapper sibling 置后；source_callout 重建专用 wrapper。 |
+| `paragraph` / `list_item` / `caption` | 全开 | 产生 | list：overlay 受控后置到整个 list 之后（anchor 序）；wrapper 按 `parentStableBlockId` 跨 overlay 连续归组；nested list、`ordered`（以 tree payload 语义为准）、item 顺序冻结。 |
+
+投影侧顺序合同：stable tree 只提供结构（成员、嵌套、payload），flat
+anchor 级次序唯一由 `mapUnitToBlocks` 拥有；reload 路径 `stable_document_blocks`
+SELECT 必须携带 `order_index`（缺失会退化为 block_id 字典序，已修复并回归锁定）。

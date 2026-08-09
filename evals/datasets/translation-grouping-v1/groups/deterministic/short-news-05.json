@@ -1,0 +1,114 @@
+{
+  "id": "short-news-05",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Tuesday, March 10, 2026"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "Early Tuesday morning, Australia government officials issued humanitarian visas to five members of Iran's national women's football team."
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "The players refused to sing the Iranian anthem while at the Women's Asian Cup last week."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "if the visas had not been granted, the five players potentially faced serious punishment on their return to Iran, as Iranian media has labeled them \"traitors\"."
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "Tony Burke, Minister for Home Affairs of Australia, sent a message on X on Tuesday stating that the five players were \"welcome to stay in Australia, to be safe and have a home here\"."
+    },
+    {
+      "n": 6,
+      "unit_id": "u3",
+      "anchor_segment_id": "s6",
+      "text": "The players are Zahra Ghanbari (captain), Fatemeh Pasandideh, Zahra Sarbali, Atefeh Ramezanizadeh, and Mona Hamoudi."
+    },
+    {
+      "n": 7,
+      "unit_id": "u4",
+      "anchor_segment_id": "s7",
+      "text": "Tuesday afternoon, however, the rest of the Iranian national women's soccer team travelled to Gold Coast airport by bus."
+    },
+    {
+      "n": 8,
+      "unit_id": "u4",
+      "anchor_segment_id": "s8",
+      "text": "As of Tuesday morning, authorities said these remaining Iranian women's soccer team members had not requested asylum, though were welcomed to do so."
+    },
+    {
+      "n": 9,
+      "unit_id": "u4",
+      "anchor_segment_id": "s9",
+      "text": "Protesters surrounded the bus and some were lying on the ground to stop the bus, and had to be moved by police."
+    },
+    {
+      "n": 10,
+      "unit_id": "u4",
+      "anchor_segment_id": "s10",
+      "text": "Due to reported threats from Iranian media and officials, in Australia, local police worked with the authorities and provided a safe place for the players to stay, as well as increased presence when the players were traveling."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Tuesday, March 10, 2026",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2_s4",
+      "sentence_ns": [
+        2,
+        3,
+        4
+      ],
+      "text": "Early Tuesday morning, Australia government officials issued humanitarian visas to five members of Iran's national women's football team. The players refused to sing the Iranian anthem while at the Women's Asian Cup last week. if the visas had not been granted, the five players potentially faced serious punishment on their return to Iran, as Iranian media has labeled them \"traitors\".",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs5_s6",
+      "sentence_ns": [
+        5,
+        6
+      ],
+      "text": "Tony Burke, Minister for Home Affairs of Australia, sent a message on X on Tuesday stating that the five players were \"welcome to stay in Australia, to be safe and have a home here\". The players are Zahra Ghanbari (captain), Fatemeh Pasandideh, Zahra Sarbali, Atefeh Ramezanizadeh, and Mona Hamoudi.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs7_s9",
+      "sentence_ns": [
+        7,
+        8,
+        9
+      ],
+      "text": "Tuesday afternoon, however, the rest of the Iranian national women's soccer team travelled to Gold Coast airport by bus. As of Tuesday morning, authorities said these remaining Iranian women's soccer team members had not requested asylum, though were welcomed to do so. Protesters surrounded the bus and some were lying on the ground to stop the bus, and had to be moved by police.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs10",
+      "sentence_ns": [
+        10
+      ],
+      "text": "Due to reported threats from Iranian media and officials, in Australia, local police worked with the authorities and provided a safe place for the players to stay, as well as increased presence when the players were traveling.",
+      "order_index": 2
+    }
+  ],
+  "category": "short-news"
+}

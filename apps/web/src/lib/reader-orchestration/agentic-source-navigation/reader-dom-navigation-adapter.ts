@@ -107,6 +107,35 @@ function resolveDocumentRef(
   return document;
 }
 
+/**
+ * Focus owner for a navigation hit. Scroll targets the most precise element
+ * (an anchor segment may be an inline span), but keyboard focus lands on the
+ * nearest navigable Reader block so assistive technology sees a meaningful
+ * block, not an anonymous inline node.
+ */
+function resolveFocusOwner(element: HTMLElement): HTMLElement {
+  if (element.matches(READER_RECORD_NAVIGABLE_NODE_SELECTOR)) {
+    return element;
+  }
+  const block = element.closest<HTMLElement>(
+    READER_RECORD_NAVIGABLE_NODE_SELECTOR,
+  );
+  return block ?? element;
+}
+
+/**
+ * Make a Reader block programmatically focusable without joining the tab
+ * order. `tabIndex` reads 0 for natively focusable elements and -1 for the
+ * rest, so only blocks that could not otherwise take focus get the explicit
+ * attribute. `tabindex="-1"` never affects tab order and never renders a
+ * visible control; programmatic focus does not match `:focus-visible`.
+ */
+function ensureProgrammaticallyFocusable(element: HTMLElement): void {
+  if (element.tabIndex < 0 && !element.hasAttribute("tabindex")) {
+    element.setAttribute("tabindex", "-1");
+  }
+}
+
 function scrollAndFocus(
   element: HTMLElement,
   options?: DomNavigationScrollOptions,
@@ -114,11 +143,13 @@ function scrollAndFocus(
   const behavior = options?.behavior ?? "smooth";
   const block = options?.block ?? "center";
   element.scrollIntoView({ behavior, block });
-  if (typeof element.focus === "function") {
+  const focusOwner = resolveFocusOwner(element);
+  ensureProgrammaticallyFocusable(focusOwner);
+  if (typeof focusOwner.focus === "function") {
     try {
-      element.focus({ preventScroll: true });
+      focusOwner.focus({ preventScroll: true });
     } catch {
-      // Some elements are not focusable; ignore.
+      // Focus is best-effort; scroll alone still completes the navigation.
     }
   }
 }

@@ -1,0 +1,13 @@
+{
+  "id": "short-news-04",
+  "groups": [
+    { "sentence_ns": [1], "reason": "dateline heading stands alone" },
+    { "sentence_ns": [2, 3, 4], "reason": "decision, measure and rationale" },
+    { "sentence_ns": [5, 6, 7], "reason": "fuel quality change and response" },
+    { "sentence_ns": [8], "reason": "distinct reserve release announcement" },
+    { "sentence_ns": [9, 10], "reason": "demand surge and panic buying" },
+    { "sentence_ns": [11], "reason": "PM economic comment, topic shift" },
+    { "sentence_ns": [12, 13], "reason": "same speaker, coupled farmer concerns" },
+    { "sentence_ns": [14, 15, 16], "reason": "reserve shortfall and political reaction" }
+  ]
+}

@@ -1,0 +1,422 @@
+{
+  "id": "long-form-02",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Cleopatra VII Thea Philopator (Koine Greek: Κλεοπάτρα Θεά Φιλοπάτωρ, lit. 'Cleopatra father-loving goddess'; 70/69 BC – 10 or 12 August 30 BC) was Queen of the Ptolemaic Kingdom of Egypt from 51 to 30 BC, and the last active Hellenistic pharaoh."
+    },
+    {
+      "n": 2,
+      "unit_id": "u1",
+      "anchor_segment_id": "s2",
+      "text": "A member of the Ptolemaic dynasty, she was a descendant of its founder Ptolemy I Soter, a Macedonian Greek general and companion of Alexander the Great."
+    },
+    {
+      "n": 3,
+      "unit_id": "u1",
+      "anchor_segment_id": "s3",
+      "text": "Her first language was Koine Greek, and she is the only Ptolemaic ruler known to have learned the Egyptian language, among several others."
+    },
+    {
+      "n": 4,
+      "unit_id": "u1",
+      "anchor_segment_id": "s4",
+      "text": "After her death, Egypt became a province of the Roman Empire, marking the end of the Hellenistic period in the Mediterranean, which had begun during the reign of Alexander (336–323 BC)."
+    },
+    {
+      "n": 5,
+      "unit_id": "u2",
+      "anchor_segment_id": "s5",
+      "text": "Born in Alexandria, Cleopatra was the daughter of Ptolemy XII Auletes, who named her his heir before his death in 51 BC."
+    },
+    {
+      "n": 6,
+      "unit_id": "u2",
+      "anchor_segment_id": "s6",
+      "text": "Cleopatra began her reign alongside her brother Ptolemy XIII, but a falling-out between them led to a civil war."
+    },
+    {
+      "n": 7,
+      "unit_id": "u2",
+      "anchor_segment_id": "s7",
+      "text": "Roman statesman Pompey fled to Egypt after losing the 48 BC Battle of Pharsalus against his rival Julius Caesar, the Roman dictator, in Caesar's civil war."
+    },
+    {
+      "n": 8,
+      "unit_id": "u2",
+      "anchor_segment_id": "s8",
+      "text": "Pompey had been a political ally of Ptolemy XII, but Ptolemy XIII had him ambushed and killed before Caesar arrived and occupied Alexandria."
+    },
+    {
+      "n": 9,
+      "unit_id": "u2",
+      "anchor_segment_id": "s9",
+      "text": "Caesar then attempted to reconcile the rival Ptolemaic siblings, but Ptolemy XIII's forces besieged Cleopatra and Caesar at the palace."
+    },
+    {
+      "n": 10,
+      "unit_id": "u2",
+      "anchor_segment_id": "s10",
+      "text": "Shortly after reinforcements lifted the siege, Ptolemy XIII died in the Battle of the Nile."
+    },
+    {
+      "n": 11,
+      "unit_id": "u2",
+      "anchor_segment_id": "s11",
+      "text": "Caesar declared Cleopatra and her brother Ptolemy XIV joint rulers, and maintained a private affair with Cleopatra which produced a son, Caesarion."
+    },
+    {
+      "n": 12,
+      "unit_id": "u2",
+      "anchor_segment_id": "s12",
+      "text": "Cleopatra traveled to Rome as a client queen in 46 and 44 BC, where she stayed at Caesar's villa."
+    },
+    {
+      "n": 13,
+      "unit_id": "u2",
+      "anchor_segment_id": "s13",
+      "text": "After Caesar's assassination, followed shortly afterwards by the sudden death of Ptolemy XIV (possibly murdered on Cleopatra's order), she named Caesarion co-ruler as Ptolemy XV."
+    },
+    {
+      "n": 14,
+      "unit_id": "u3",
+      "anchor_segment_id": "s14",
+      "text": "In the Liberators' civil war of 43–42 BC, Cleopatra sided with the Roman Second Triumvirate formed by Caesar's heir Octavian, Mark Antony, and Marcus Aemilius Lepidus."
+    },
+    {
+      "n": 15,
+      "unit_id": "u3",
+      "anchor_segment_id": "s15",
+      "text": "After their meeting at Tarsos in 41 BC, the queen had an affair with Antony, which produced three children."
+    },
+    {
+      "n": 16,
+      "unit_id": "u3",
+      "anchor_segment_id": "s16",
+      "text": "Antony became increasingly reliant on Cleopatra for both funding and military aid during his invasions of the Parthian Empire and the Kingdom of Armenia."
+    },
+    {
+      "n": 17,
+      "unit_id": "u3",
+      "anchor_segment_id": "s17",
+      "text": "The Donations of Alexandria declared their children rulers over various territories under Antony's authority."
+    },
+    {
+      "n": 18,
+      "unit_id": "u3",
+      "anchor_segment_id": "s18",
+      "text": "Octavian portrayed this event as an act of treason, forced Antony's allies in the Roman Senate to flee Rome in 32 BC, and declared war on Cleopatra."
+    },
+    {
+      "n": 19,
+      "unit_id": "u3",
+      "anchor_segment_id": "s19",
+      "text": "After defeating Antony and Cleopatra's naval fleet at the 31 BC Battle of Actium, Octavian's forces invaded Egypt in 30 BC and defeated Antony, who committed suicide."
+    },
+    {
+      "n": 20,
+      "unit_id": "u3",
+      "anchor_segment_id": "s20",
+      "text": "After his death, Cleopatra reportedly killed herself, probably by poisoning, to avoid being publicly displayed by Octavian in a Roman triumphal procession."
+    },
+    {
+      "n": 21,
+      "unit_id": "u4",
+      "anchor_segment_id": "s21",
+      "text": "Cleopatra's legacy survives in ancient and modern works of art."
+    },
+    {
+      "n": 22,
+      "unit_id": "u4",
+      "anchor_segment_id": "s22",
+      "text": "Roman historiography and Latin poetry produced a generally critical view of the queen that pervaded later Medieval and Renaissance literature."
+    },
+    {
+      "n": 23,
+      "unit_id": "u4",
+      "anchor_segment_id": "s23",
+      "text": "In the visual arts, her ancient depictions include Roman busts, paintings, sculptures, cameo carvings and glass, Ptolemaic and Roman coinage, and reliefs."
+    },
+    {
+      "n": 24,
+      "unit_id": "u4",
+      "anchor_segment_id": "s24",
+      "text": "In Renaissance and Baroque art, she was the subject of many works including operas, paintings, poetry, sculptures, and theatrical dramas."
+    },
+    {
+      "n": 25,
+      "unit_id": "u4",
+      "anchor_segment_id": "s25",
+      "text": "She has become a pop culture icon of Egyptomania since the Victorian era, and in modern times has appeared in the applied and fine arts, burlesque satire, Hollywood films, and brand images for commercial products."
+    },
+    {
+      "n": 26,
+      "unit_id": "u5",
+      "anchor_segment_id": "s26",
+      "text": "== Etymology ==\nThe Latinized form Cleopatra comes from the Ancient Greek Kleopátra (Κλεοπάτρα), meaning 'glory of her father', from κλέος (kléos, 'glory') and πατήρ (patḗr, 'father')."
+    },
+    {
+      "n": 27,
+      "unit_id": "u5",
+      "anchor_segment_id": "s27",
+      "text": "The masculine form would have been written either as Kleópatros (Κλεόπατρος) or Pátroklos (Πάτροκλος)."
+    },
+    {
+      "n": 28,
+      "unit_id": "u5",
+      "anchor_segment_id": "s28",
+      "text": "Cleopatra was the name of Alexander the Great's sister Cleopatra of Macedonia, as well as the wife of Meleager in Greek mythology, Cleopatra."
+    },
+    {
+      "n": 29,
+      "unit_id": "u5",
+      "anchor_segment_id": "s29",
+      "text": "Through the marriage of Ptolemy V Epiphanes and Cleopatra I Syra (a Seleucid princess), the name entered the Ptolemaic dynasty."
+    },
+    {
+      "n": 30,
+      "unit_id": "u5",
+      "anchor_segment_id": "s30",
+      "text": "Cleopatra's adopted title Theā́ Philopátōra (Θεᾱ́ Φιλοπάτωρα) means 'goddess who loves her father'."
+    },
+    {
+      "n": 31,
+      "unit_id": "u6",
+      "anchor_segment_id": "s31",
+      "text": "== Background =="
+    },
+    {
+      "n": 32,
+      "unit_id": "u7",
+      "anchor_segment_id": "s32",
+      "text": "Ptolemaic pharaohs were crowned by the Egyptian high priest of Ptah at Memphis, but resided in the multicultural and largely Greek city of Alexandria, established by Alexander the Great."
+    },
+    {
+      "n": 33,
+      "unit_id": "u7",
+      "anchor_segment_id": "s33",
+      "text": "They spoke Greek and governed Egypt as Hellenistic Greek monarchs, refusing to learn the native Egyptian language."
+    },
+    {
+      "n": 34,
+      "unit_id": "u7",
+      "anchor_segment_id": "s34",
+      "text": "In contrast, Cleopatra could speak multiple languages by adulthood and was the first Ptolemaic ruler known to have learned the Egyptian language."
+    },
+    {
+      "n": 35,
+      "unit_id": "u7",
+      "anchor_segment_id": "s35",
+      "text": "Plutarch implies that she also spoke Ethiopian, the language of the \"Troglodytes\", Hebrew (or Aramaic), Arabic, the \"Syrian language\" (perhaps Syriac), Median, and Parthian, and she could apparently also speak Latin, although her Roman contemporaries would have preferred to speak with her in her native Koine Greek."
+    },
+    {
+      "n": 36,
+      "unit_id": "u7",
+      "anchor_segment_id": "s36",
+      "text": "Aside from Greek, Egyptian, and Latin, these languages reflected Cleopatra's desire to restore North African and West Asian territories that once belonged to the Ptolemaic Kingdom."
+    },
+    {
+      "n": 37,
+      "unit_id": "u8",
+      "anchor_segment_id": "s37",
+      "text": "Roman interventionism in Egypt predated the reign of Cleopatra."
+    },
+    {
+      "n": 38,
+      "unit_id": "u8",
+      "anchor_segment_id": "s38",
+      "text": "When her grandfather Ptolemy IX Lathyros died in late 81 BC, he was succeeded by his daughter Berenice III."
+    },
+    {
+      "n": 39,
+      "unit_id": "u8",
+      "anchor_segment_id": "s39",
+      "text": "With opposition building at the royal court against the idea of a sole reigning female monarch, the Roman dictator Sulla arranged Berenice III's marriage to Ptolemy XI Alexander II, the son of her late husband Ptolemy X Alexander I from a previous marriage."
+    },
+    {
+      "n": 40,
+      "unit_id": "u8",
+      "anchor_segment_id": "s40",
+      "text": "Ptolemy XI had his wife killed shortly after their marriage in 80 BC, and was lynched soon after in the resulting riot over the assassination."
+    },
+    {
+      "n": 41,
+      "unit_id": "u8",
+      "anchor_segment_id": "s41",
+      "text": "Ptolemy XI, and perhaps Ptolemy IX or Ptolemy X, willed the Ptolemaic Kingdom to Rome as collateral for loans, giving the Romans legal grounds to take over Egypt, their client state, after the assassination of Ptolemy XI."
+    },
+    {
+      "n": 42,
+      "unit_id": "u8",
+      "anchor_segment_id": "s42",
+      "text": "The Romans chose instead to divide the Ptolemaic realm among the illegitimate sons of Ptolemy IX, bestowing Egypt on Ptolemy XII Auletes and Cyprus on Ptolemy of Cyprus."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1_s3",
+      "sentence_ns": [
+        1,
+        2,
+        3
+      ],
+      "text": "Cleopatra VII Thea Philopator (Koine Greek: Κλεοπάτρα Θεά Φιλοπάτωρ, lit. 'Cleopatra father-loving goddess'; 70/69 BC – 10 or 12 August 30 BC) was Queen of the Ptolemaic Kingdom of Egypt from 51 to 30 BC, and the last active Hellenistic pharaoh. A member of the Ptolemaic dynasty, she was a descendant of its founder Ptolemy I Soter, a Macedonian Greek general and companion of Alexander the Great. Her first language was Koine Greek, and she is the only Ptolemaic ruler known to have learned the Egyptian language, among several others.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u1_gs4",
+      "sentence_ns": [
+        4
+      ],
+      "text": "After her death, Egypt became a province of the Roman Empire, marking the end of the Hellenistic period in the Mediterranean, which had begun during the reign of Alexander (336–323 BC).",
+      "order_index": 2
+    },
+    {
+      "group_id": "u2_gs5_s7",
+      "sentence_ns": [
+        5,
+        6,
+        7
+      ],
+      "text": "Born in Alexandria, Cleopatra was the daughter of Ptolemy XII Auletes, who named her his heir before his death in 51 BC. Cleopatra began her reign alongside her brother Ptolemy XIII, but a falling-out between them led to a civil war. Roman statesman Pompey fled to Egypt after losing the 48 BC Battle of Pharsalus against his rival Julius Caesar, the Roman dictator, in Caesar's civil war.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs8_s10",
+      "sentence_ns": [
+        8,
+        9,
+        10
+      ],
+      "text": "Pompey had been a political ally of Ptolemy XII, but Ptolemy XIII had him ambushed and killed before Caesar arrived and occupied Alexandria. Caesar then attempted to reconcile the rival Ptolemaic siblings, but Ptolemy XIII's forces besieged Cleopatra and Caesar at the palace. Shortly after reinforcements lifted the siege, Ptolemy XIII died in the Battle of the Nile.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u2_gs11_s13",
+      "sentence_ns": [
+        11,
+        12,
+        13
+      ],
+      "text": "Caesar declared Cleopatra and her brother Ptolemy XIV joint rulers, and maintained a private affair with Cleopatra which produced a son, Caesarion. Cleopatra traveled to Rome as a client queen in 46 and 44 BC, where she stayed at Caesar's villa. After Caesar's assassination, followed shortly afterwards by the sudden death of Ptolemy XIV (possibly murdered on Cleopatra's order), she named Caesarion co-ruler as Ptolemy XV.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u3_gs14_s16",
+      "sentence_ns": [
+        14,
+        15,
+        16
+      ],
+      "text": "In the Liberators' civil war of 43–42 BC, Cleopatra sided with the Roman Second Triumvirate formed by Caesar's heir Octavian, Mark Antony, and Marcus Aemilius Lepidus. After their meeting at Tarsos in 41 BC, the queen had an affair with Antony, which produced three children. Antony became increasingly reliant on Cleopatra for both funding and military aid during his invasions of the Parthian Empire and the Kingdom of Armenia.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs17_s19",
+      "sentence_ns": [
+        17,
+        18,
+        19
+      ],
+      "text": "The Donations of Alexandria declared their children rulers over various territories under Antony's authority. Octavian portrayed this event as an act of treason, forced Antony's allies in the Roman Senate to flee Rome in 32 BC, and declared war on Cleopatra. After defeating Antony and Cleopatra's naval fleet at the 31 BC Battle of Actium, Octavian's forces invaded Egypt in 30 BC and defeated Antony, who committed suicide.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u3_gs20",
+      "sentence_ns": [
+        20
+      ],
+      "text": "After his death, Cleopatra reportedly killed herself, probably by poisoning, to avoid being publicly displayed by Octavian in a Roman triumphal procession.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u4_gs21_s23",
+      "sentence_ns": [
+        21,
+        22,
+        23
+      ],
+      "text": "Cleopatra's legacy survives in ancient and modern works of art. Roman historiography and Latin poetry produced a generally critical view of the queen that pervaded later Medieval and Renaissance literature. In the visual arts, her ancient depictions include Roman busts, paintings, sculptures, cameo carvings and glass, Ptolemaic and Roman coinage, and reliefs.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs24_s25",
+      "sentence_ns": [
+        24,
+        25
+      ],
+      "text": "In Renaissance and Baroque art, she was the subject of many works including operas, paintings, poetry, sculptures, and theatrical dramas. She has become a pop culture icon of Egyptomania since the Victorian era, and in modern times has appeared in the applied and fine arts, burlesque satire, Hollywood films, and brand images for commercial products.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u5_gs26_s28",
+      "sentence_ns": [
+        26,
+        27,
+        28
+      ],
+      "text": "== Etymology ==\nThe Latinized form Cleopatra comes from the Ancient Greek Kleopátra (Κλεοπάτρα), meaning 'glory of her father', from κλέος (kléos, 'glory') and πατήρ (patḗr, 'father'). The masculine form would have been written either as Kleópatros (Κλεόπατρος) or Pátroklos (Πάτροκλος). Cleopatra was the name of Alexander the Great's sister Cleopatra of Macedonia, as well as the wife of Meleager in Greek mythology, Cleopatra.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs29_s30",
+      "sentence_ns": [
+        29,
+        30
+      ],
+      "text": "Through the marriage of Ptolemy V Epiphanes and Cleopatra I Syra (a Seleucid princess), the name entered the Ptolemaic dynasty. Cleopatra's adopted title Theā́ Philopátōra (Θεᾱ́ Φιλοπάτωρα) means 'goddess who loves her father'.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u6_gs31",
+      "sentence_ns": [
+        31
+      ],
+      "text": "== Background ==",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs32_s34",
+      "sentence_ns": [
+        32,
+        33,
+        34
+      ],
+      "text": "Ptolemaic pharaohs were crowned by the Egyptian high priest of Ptah at Memphis, but resided in the multicultural and largely Greek city of Alexandria, established by Alexander the Great. They spoke Greek and governed Egypt as Hellenistic Greek monarchs, refusing to learn the native Egyptian language. In contrast, Cleopatra could speak multiple languages by adulthood and was the first Ptolemaic ruler known to have learned the Egyptian language.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs35_s36",
+      "sentence_ns": [
+        35,
+        36
+      ],
+      "text": "Plutarch implies that she also spoke Ethiopian, the language of the \"Troglodytes\", Hebrew (or Aramaic), Arabic, the \"Syrian language\" (perhaps Syriac), Median, and Parthian, and she could apparently also speak Latin, although her Roman contemporaries would have preferred to speak with her in her native Koine Greek. Aside from Greek, Egyptian, and Latin, these languages reflected Cleopatra's desire to restore North African and West Asian territories that once belonged to the Ptolemaic Kingdom.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs37_s39",
+      "sentence_ns": [
+        37,
+        38,
+        39
+      ],
+      "text": "Roman interventionism in Egypt predated the reign of Cleopatra. When her grandfather Ptolemy IX Lathyros died in late 81 BC, he was succeeded by his daughter Berenice III. With opposition building at the royal court against the idea of a sole reigning female monarch, the Roman dictator Sulla arranged Berenice III's marriage to Ptolemy XI Alexander II, the son of her late husband Ptolemy X Alexander I from a previous marriage.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u8_gs40_s42",
+      "sentence_ns": [
+        40,
+        41,
+        42
+      ],
+      "text": "Ptolemy XI had his wife killed shortly after their marriage in 80 BC, and was lynched soon after in the resulting riot over the assassination. Ptolemy XI, and perhaps Ptolemy IX or Ptolemy X, willed the Ptolemaic Kingdom to Rome as collateral for loans, giving the Romans legal grounds to take over Egypt, their client state, after the assassination of Ptolemy XI. The Romans chose instead to divide the Ptolemaic realm among the illegitimate sons of Ptolemy IX, bestowing Egypt on Ptolemy XII Auletes and Cyprus on Ptolemy of Cyprus.",
+      "order_index": 2
+    }
+  ],
+  "category": "long-form"
+}

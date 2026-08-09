@@ -1,0 +1,25 @@
+{
+  "id": "short-news-07",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "standalone date header line"
+    },
+    {
+      "sentence_ns": [2, 3],
+      "reason": "rezoning announcement and plan contents"
+    },
+    {
+      "sentence_ns": [4, 5],
+      "reason": "hub positioning and housing requirements"
+    },
+    {
+      "sentence_ns": [6, 7],
+      "reason": "station benefits and job creation"
+    },
+    {
+      "sentence_ns": [8, 9],
+      "reason": "strategy context and inquiry contact"
+    }
+  ]
+}

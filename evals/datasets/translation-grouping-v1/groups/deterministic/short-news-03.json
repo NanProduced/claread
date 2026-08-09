@@ -1,0 +1,107 @@
+{
+  "id": "short-news-03",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Sunday, March 22, 2026"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "On Tuesday, officials for the South Korean Army said at a press conference that they were suspending all scheduled drills involving smaller firearms such as rifles and handguns."
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "The decision was made in response to an incident earlier in the week on Monday that resulted in a young girl at a children playground in Daegu being injured near the neck by an alleged stray bullet from a military drill at nearby military facility."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "Her injuries were not life-threatening and she was released from the hospital."
+    },
+    {
+      "n": 5,
+      "unit_id": "u2",
+      "anchor_segment_id": "s5",
+      "text": "Her name was not released to the general public."
+    },
+    {
+      "n": 6,
+      "unit_id": "u3",
+      "anchor_segment_id": "s6",
+      "text": "Investigations into the circumstances leading up the incident were said to be underway."
+    },
+    {
+      "n": 7,
+      "unit_id": "u3",
+      "anchor_segment_id": "s7",
+      "text": "The incident raised questions regarding the military's practice of conducting shooting drills in close proximity to civilian territory."
+    },
+    {
+      "n": 8,
+      "unit_id": "u3",
+      "anchor_segment_id": "s8",
+      "text": "A spokesperson for the army confirmed that a firearms drill had indeed been taking place at the same time the girl reported being struck."
+    },
+    {
+      "n": 9,
+      "unit_id": "u3",
+      "anchor_segment_id": "s9",
+      "text": "The incident came a year after the South Korean Army accidentally bombed a small village near the North Korean border, injuring 30 civilians, while conducting a drill with US forces."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Sunday, March 22, 2026",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2_s4",
+      "sentence_ns": [
+        2,
+        3,
+        4
+      ],
+      "text": "On Tuesday, officials for the South Korean Army said at a press conference that they were suspending all scheduled drills involving smaller firearms such as rifles and handguns. The decision was made in response to an incident earlier in the week on Monday that resulted in a young girl at a children playground in Daegu being injured near the neck by an alleged stray bullet from a military drill at nearby military facility. Her injuries were not life-threatening and she was released from the hospital.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs5",
+      "sentence_ns": [
+        5
+      ],
+      "text": "Her name was not released to the general public.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u3_gs6_s8",
+      "sentence_ns": [
+        6,
+        7,
+        8
+      ],
+      "text": "Investigations into the circumstances leading up the incident were said to be underway. The incident raised questions regarding the military's practice of conducting shooting drills in close proximity to civilian territory. A spokesperson for the army confirmed that a firearms drill had indeed been taking place at the same time the girl reported being struck.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs9",
+      "sentence_ns": [
+        9
+      ],
+      "text": "The incident came a year after the South Korean Army accidentally bombed a small village near the North Korean border, injuring 30 civilians, while conducting a drill with US forces.",
+      "order_index": 2
+    }
+  ],
+  "category": "short-news"
+}

@@ -38,13 +38,15 @@ from .base_builder import (
     LowImpactReadingBaseBuildInput,
     NavigationUnitFact,
     ReadingBaseBuildResult,
-    StableBlockAnnotation,
     StableReadingBase,
     build_low_impact_reading_base,
     build_reading_base_from_canonical_text,
     canonicalize_low_impact_text,
     result_length_utf16,
     validate_reading_base_build_result,
+)
+from .stable_annotation_analysis import (
+    StableBlockAnnotation,
 )
 from .job_bootstrap import (
     DisplayTitleBootstrapResult,

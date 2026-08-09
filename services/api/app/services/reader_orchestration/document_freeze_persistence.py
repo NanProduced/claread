@@ -92,16 +92,21 @@ from app.schemas.reader_documents import StableDocumentBlock
 from app.services.reader_orchestration.automatic_layer_policy import (
     AutomaticLayerPolicy,
     build_reading_unit_metadata_json,
+    build_semantic_integrity_override,
 )
 from app.services.reader_orchestration.base_builder import (
     BuiltAnchorSegment,
     BuiltReadingUnit,
     ReadingBaseBuildResult,
-    StableBlockAnnotation,
     build_reading_base_from_canonical_text,
 )
 from app.services.reader_orchestration.document_freeze_plan import (
     StableDocumentFreezePlan,
+)
+from app.services.reader_orchestration.stable_annotation_analysis import (
+    StableAnnotationPolicyOverride,
+    StableBlockAnnotation,
+    empty_diagnostics_payload,
 )
 
 
@@ -473,11 +478,15 @@ async def persist_stable_document_freeze_plan(
             language,
             title_snapshot,
             navigation_json,
+            diagnostics_json,
             status,
             frozen_at,
             created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, 'active', $14, $14)
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+            $13::jsonb, $15::jsonb, 'active', $14, $14
+        )
         """,
         base_id,
         reading_record_id,
@@ -498,6 +507,11 @@ async def persist_stable_document_freeze_plan(
         stable_doc.title,
         jsonb_param(navigation_json),
         frozen_at,
+        jsonb_param(
+            build_result.annotation_analysis.diagnostics_payload()
+            if build_result.annotation_analysis is not None
+            else empty_diagnostics_payload()
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -506,12 +520,21 @@ async def persist_stable_document_freeze_plan(
     # Order matters: anchor_segments have a FK to reading_units, so
     # units must be inserted first.
     # ------------------------------------------------------------------
+    overrides_by_unit = (
+        {
+            override.unit_id: override
+            for override in build_result.annotation_analysis.policy_overrides
+        }
+        if build_result.annotation_analysis is not None
+        else {}
+    )
     for unit in build_result.units:
         await _insert_reading_unit(
             conn,
             reading_record_id=reading_record_id,
             base_id=base_id,
             unit=unit,
+            override=overrides_by_unit.get(unit.unit_id),
         )
 
     # ------------------------------------------------------------------
@@ -1014,7 +1037,8 @@ def _stable_block_annotations_from_plan(
     ``StableBlockAnnotation``. Blocks without canonical-text offsets
     (table / table_row wrappers, image / image_ocr blocks, etc.) are
     skipped — they carry no unit-level text and so cannot match a
-    built unit's UTF-16 range.
+    built unit's UTF-16 range. Ranges are forwarded verbatim — the
+    analyzer module owns all validity judgement.
 
     The annotation's ``payload_json`` is the block's ``payload_json``
     verbatim (carries ``level`` for headings, ``inline_marks`` for
@@ -1029,12 +1053,9 @@ def _stable_block_annotations_from_plan(
         end = block.canonical_text_end_utf16
         if start is None or end is None:
             continue
-        if end <= start:
-            # Defensive: a non-positive-length range cannot match any
-            # unit (units always have base_end_utf16 > base_start_utf16).
-            # Skip silently rather than failing the whole freeze — the
-            # freeze plan is responsible for emitting valid ranges.
-            continue
+        # No range filtering here: valid AND invalid (empty / reversed /
+        # out-of-bounds) ranges all enter the analyzer module, which owns
+        # every exclusion decision plus its diagnostic.
         annotations.append(
             StableBlockAnnotation(
                 start_utf16=start,
@@ -1054,6 +1075,7 @@ async def _insert_reading_unit(
     reading_record_id: UUID,
     base_id: UUID,
     unit: BuiltReadingUnit,
+    override: StableAnnotationPolicyOverride | None = None,
 ) -> None:
     """Insert one ``reading_units`` row.
 
@@ -1088,24 +1110,37 @@ async def _insert_reading_unit(
         unit.base_start_utf16,
         unit.base_end_utf16,
         unit.text_hash,
-        jsonb_param(_unit_metadata_json(unit)),
+        jsonb_param(_unit_metadata_json(unit, override)),
     )
 
 
-def _unit_metadata_json(unit: BuiltReadingUnit) -> dict[str, Any]:
-    """Persist sentence_provider + versioned automatic-layer semantic policy."""
+def _unit_metadata_json(
+    unit: BuiltReadingUnit,
+    override: StableAnnotationPolicyOverride | None = None,
+) -> dict[str, Any]:
+    """Persist sentence_provider + versioned automatic-layer semantic policy.
+
+    A structural integrity override (analyzer-attributed) is written as a
+    top-level ``semantic_integrity_override`` object alongside — never
+    inside the ``semantic`` subtree — in the same transaction.
+    """
     policy = (
         AutomaticLayerPolicy.from_mapping(unit.automatic_layer_policy)
         if unit.automatic_layer_policy is not None
         else None
     )
-    return build_reading_unit_metadata_json(
+    meta = build_reading_unit_metadata_json(
         sentence_provider=unit.sentence_provider,
         contract_version=unit.semantic_contract_version,
         content_role=unit.content_role,
         automatic_layer_policy=policy,
         resolver_version=unit.automatic_layer_policy_resolver_version,
     )
+    if override is not None:
+        meta["semantic_integrity_override"] = build_semantic_integrity_override(
+            reason_code=override.reason_code,
+        )
+    return meta
 
 
 async def _insert_anchor_segment(

@@ -1,0 +1,17 @@
+{
+  "id": "short-news-08",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "date line stands alone"
+    },
+    {
+      "sentence_ns": [2, 3, 4, 5],
+      "reason": "Australia's military deployment and aid"
+    },
+    {
+      "sentence_ns": [6, 7, 8, 9],
+      "reason": "correspondent's legal analysis and concern"
+    }
+  ]
+}

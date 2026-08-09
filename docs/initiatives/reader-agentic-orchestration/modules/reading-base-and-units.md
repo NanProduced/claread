@@ -241,3 +241,45 @@ D2-S1 已验证：
 - 旧 `prepare_input` 可拆件复用，但不能原样作为 Stable Reading Document builder。
 
 详细结果（DOC-TRUTH-LIFECYCLE-R2 前 `archive/spikes/D2-S1-reading-unit-builder-result.md`，已删除）spike verdict `accepted_with_changes` 已压缩进本节上方要点；已删除文件可通过 Git history 回看。
+
+
+## Annotation Diagnostics 与结构完整性 Override（冻结）
+
+Stable block annotation（stable block → unit 的区间标注）统一经深 Module
+`stable_annotation_analysis.py` 的 `analyze_stable_annotations(
+raw_annotations, base_utf16_length, unit_ranges)` 处理，在任何 filtering
+之前接收原始输入。Module 拥有：半开区间求交、越界裁剪（仅用于归属判定）、
+一致/冲突重复判定（first-wins）、inline mark 校验与丢弃、policy override 归属与
+primary reason precedence（`annotation_conflicting_duplicate` >
+`annotation_range_out_of_bounds` > `annotation_multi_unit_overlap` >
+`annotation_range_mismatch`）、确定性排序。输出三段式：
+`accepted_annotations` / `diagnostics` / `policy_overrides`。inline mark 损坏只
+丢坏 mark + 留原文 + diagnostic，不触发 unit all-off；mark 合法类型精确为
+strong / em / strikethrough / inline_code / link，嵌套重叠合法，link 复用共享
+source-link 安全规则（parser 与 analyzer 唯一共享 owner）。
+
+持久化合同：
+
+- `reading_bases.diagnostics_json`（NOT NULL，默认
+  `{"version": "stable_annotation_diagnostics_v1", "items": []}`）——版本化对象，
+  不是裸数组；条目 `{code, severity, scope, ref_id, detail}` 确定性排序。
+- 结构完整性 override 写在 `reading_units.metadata_json` 顶层独立键
+  `semantic_integrity_override`（不进入 `semantic` 子树、不经 contract_version
+  门）：
+
+  ```json
+  {
+    "override_version": "structural_integrity_override_v1",
+    "policy": {"translation": false, "vocabulary": false, "grammar_note": false, "sentence_analysis": false},
+    "reason_code": "<diagnostics code 词表>"
+  }
+  ```
+
+  `policy` 的持久键精确等于 `AutomaticLayerPolicy` 四字段；写入与 well-formed
+  校验复用同一 Interface（`as_dict` / strict `from_mapping`——四键恰好、原生
+  bool，字符串/0/1/缺键/额外键均判 malformed），与 unit INSERT 同事务。
+- 读取优先级：`policy_from_unit_metadata` 最先读 override——well-formed 即返回
+  recorded all-off；畸形或缺席落回既有 semantic / legacy 路径（legacy 缺失
+  semantic 仍 fail-open all-on）。
+- reload 经同一 Module 重分析（无 silent range skip），diagnostics round-trip
+  与持久值逐等（回归锁定）。

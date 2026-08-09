@@ -1,0 +1,1542 @@
+{
+  "id": "structural-04",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1+regex_v2_block_fallback",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": ".. _tut-morecontrol:"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "***********************\nMore Control Flow Tools\n***********************"
+    },
+    {
+      "n": 3,
+      "unit_id": "u3",
+      "anchor_segment_id": "s3",
+      "text": "As well as the :keyword:`while` statement just introduced, Python uses a few more\nthat we will encounter in this chapter."
+    },
+    {
+      "n": 4,
+      "unit_id": "u4",
+      "anchor_segment_id": "s4",
+      "text": ".. _tut-if:"
+    },
+    {
+      "n": 5,
+      "unit_id": "u5",
+      "anchor_segment_id": "s5",
+      "text": ":"
+    },
+    {
+      "n": 6,
+      "unit_id": "u5",
+      "anchor_segment_id": "s6",
+      "text": "keyword:"
+    },
+    {
+      "n": 7,
+      "unit_id": "u5",
+      "anchor_segment_id": "s7",
+      "text": "`!if` Statements\n========================="
+    },
+    {
+      "n": 8,
+      "unit_id": "u6",
+      "anchor_segment_id": "s8",
+      "text": "Perhaps the most well-known statement type is the :keyword:`if` statement."
+    },
+    {
+      "n": 9,
+      "unit_id": "u6",
+      "anchor_segment_id": "s9",
+      "text": "For\nexample::"
+    },
+    {
+      "n": 10,
+      "unit_id": "u7",
+      "anchor_segment_id": "s10",
+      "text": ">>> x = int(input(\"Please enter an integer: \"))\n   Please enter an integer: 42\n   >>> if x < 0:\n   ..."
+    },
+    {
+      "n": 11,
+      "unit_id": "u7",
+      "anchor_segment_id": "s11",
+      "text": "x = 0\n   ...     print('Negative changed to zero')\n   ..."
+    },
+    {
+      "n": 12,
+      "unit_id": "u7",
+      "anchor_segment_id": "s12",
+      "text": "elif x == 0:\n   ...     print('Zero')\n   ..."
+    },
+    {
+      "n": 13,
+      "unit_id": "u7",
+      "anchor_segment_id": "s13",
+      "text": "elif x == 1:\n   ...     print('Single')\n   ... else:\n   ...     print('More')\n   ..."
+    },
+    {
+      "n": 14,
+      "unit_id": "u7",
+      "anchor_segment_id": "s14",
+      "text": "More"
+    },
+    {
+      "n": 15,
+      "unit_id": "u8",
+      "anchor_segment_id": "s15",
+      "text": "There can be zero or more :keyword:`elif` parts, and the :keyword:`else` part is\noptional."
+    },
+    {
+      "n": 16,
+      "unit_id": "u8",
+      "anchor_segment_id": "s16",
+      "text": "The keyword ':keyword:`!elif`' is short for 'else if', and is useful\nto avoid excessive indentation."
+    },
+    {
+      "n": 17,
+      "unit_id": "u8",
+      "anchor_segment_id": "s17",
+      "text": "An  :keyword:`!if` ... :keyword:`!elif` ...\n:keyword:`!elif` ... sequence is a substitute for the ``switch`` or\n``case`` statements found in other languages."
+    },
+    {
+      "n": 18,
+      "unit_id": "u9",
+      "anchor_segment_id": "s18",
+      "text": "If you're comparing the same value to several constants, or checking for specific types or\nattributes, you may also find the :keyword:`!match` statement useful."
+    },
+    {
+      "n": 19,
+      "unit_id": "u9",
+      "anchor_segment_id": "s19",
+      "text": "For more\ndetails see :ref:`tut-match`."
+    },
+    {
+      "n": 20,
+      "unit_id": "u10",
+      "anchor_segment_id": "s20",
+      "text": ".. _tut-for:"
+    },
+    {
+      "n": 21,
+      "unit_id": "u11",
+      "anchor_segment_id": "s21",
+      "text": ":"
+    },
+    {
+      "n": 22,
+      "unit_id": "u11",
+      "anchor_segment_id": "s22",
+      "text": "keyword:"
+    },
+    {
+      "n": 23,
+      "unit_id": "u11",
+      "anchor_segment_id": "s23",
+      "text": "`!for` Statements\n=========================="
+    },
+    {
+      "n": 24,
+      "unit_id": "u12",
+      "anchor_segment_id": "s24",
+      "text": ".. index:"
+    },
+    {
+      "n": 25,
+      "unit_id": "u12",
+      "anchor_segment_id": "s25",
+      "text": ":"
+    },
+    {
+      "n": 26,
+      "unit_id": "u12",
+      "anchor_segment_id": "s26",
+      "text": "pair:"
+    },
+    {
+      "n": 27,
+      "unit_id": "u12",
+      "anchor_segment_id": "s27",
+      "text": "statement;"
+    },
+    {
+      "n": 28,
+      "unit_id": "u12",
+      "anchor_segment_id": "s28",
+      "text": "for"
+    },
+    {
+      "n": 29,
+      "unit_id": "u13",
+      "anchor_segment_id": "s29",
+      "text": "The :keyword:`for` statement in Python differs a bit from what you may be used\nto in C or Pascal."
+    },
+    {
+      "n": 30,
+      "unit_id": "u13",
+      "anchor_segment_id": "s30",
+      "text": "Rather than always iterating over an arithmetic progression\nof numbers (like in Pascal), or giving the user the ability to define both the\niteration step and halting condition (as C), Python's :keyword:`!for` statement\niterates over the items of any sequence (a list or a string), in the order that\nthey appear in the sequence."
+    },
+    {
+      "n": 31,
+      "unit_id": "u13",
+      "anchor_segment_id": "s31",
+      "text": "For example (no pun intended):"
+    },
+    {
+      "n": 32,
+      "unit_id": "u14",
+      "anchor_segment_id": "s32",
+      "text": ".."
+    },
+    {
+      "n": 33,
+      "unit_id": "u14",
+      "anchor_segment_id": "s33",
+      "text": "One suggestion was to give a real C example here, but that may only serve to\n   confuse non-C programmers."
+    },
+    {
+      "n": 34,
+      "unit_id": "u15",
+      "anchor_segment_id": "s34",
+      "text": ":"
+    },
+    {
+      "n": 35,
+      "unit_id": "u15",
+      "anchor_segment_id": "s35",
+      "text": ":"
+    },
+    {
+      "n": 36,
+      "unit_id": "u16",
+      "anchor_segment_id": "s36",
+      "text": ">>> #"
+    },
+    {
+      "n": 37,
+      "unit_id": "u16",
+      "anchor_segment_id": "s37",
+      "text": "Measure some strings:\n   >>>"
+    },
+    {
+      "n": 38,
+      "unit_id": "u16",
+      "anchor_segment_id": "s38",
+      "text": "words = ['cat', 'window', 'defenestrate']\n   >>> for w in words:\n   ..."
+    },
+    {
+      "n": 39,
+      "unit_id": "u16",
+      "anchor_segment_id": "s39",
+      "text": "print(w, len(w))\n   ...\n   cat 3\n   window 6\n   defenestrate 12"
+    },
+    {
+      "n": 40,
+      "unit_id": "u17",
+      "anchor_segment_id": "s40",
+      "text": "Code that modifies a collection while iterating over that same collection can\nbe tricky to get right."
+    },
+    {
+      "n": 41,
+      "unit_id": "u17",
+      "anchor_segment_id": "s41",
+      "text": "Instead, it is usually more straight-forward to loop\nover a copy of the collection or to create a new collection::"
+    },
+    {
+      "n": 42,
+      "unit_id": "u18",
+      "anchor_segment_id": "s42",
+      "text": "# Create a sample collection\n    users = {'Hans':"
+    },
+    {
+      "n": 43,
+      "unit_id": "u18",
+      "anchor_segment_id": "s43",
+      "text": "'active', 'Éléonore':"
+    },
+    {
+      "n": 44,
+      "unit_id": "u18",
+      "anchor_segment_id": "s44",
+      "text": "'inactive', '景太郎':"
+    },
+    {
+      "n": 45,
+      "unit_id": "u18",
+      "anchor_segment_id": "s45",
+      "text": "'active'}"
+    },
+    {
+      "n": 46,
+      "unit_id": "u19",
+      "anchor_segment_id": "s46",
+      "text": "# Strategy:"
+    },
+    {
+      "n": 47,
+      "unit_id": "u19",
+      "anchor_segment_id": "s47",
+      "text": "Iterate over a copy\n    for user, status in users.copy().items():"
+    },
+    {
+      "n": 48,
+      "unit_id": "u19",
+      "anchor_segment_id": "s48",
+      "text": "if status == 'inactive':"
+    },
+    {
+      "n": 49,
+      "unit_id": "u19",
+      "anchor_segment_id": "s49",
+      "text": "del users[user]"
+    },
+    {
+      "n": 50,
+      "unit_id": "u20",
+      "anchor_segment_id": "s50",
+      "text": "# Strategy:"
+    },
+    {
+      "n": 51,
+      "unit_id": "u20",
+      "anchor_segment_id": "s51",
+      "text": "Create a new collection\n    active_users = {}\n    for user, status in users.items():"
+    },
+    {
+      "n": 52,
+      "unit_id": "u20",
+      "anchor_segment_id": "s52",
+      "text": "if status == 'active':"
+    },
+    {
+      "n": 53,
+      "unit_id": "u20",
+      "anchor_segment_id": "s53",
+      "text": "active_users[user] = status"
+    },
+    {
+      "n": 54,
+      "unit_id": "u21",
+      "anchor_segment_id": "s54",
+      "text": ".. _tut-range:"
+    },
+    {
+      "n": 55,
+      "unit_id": "u22",
+      "anchor_segment_id": "s55",
+      "text": "The :"
+    },
+    {
+      "n": 56,
+      "unit_id": "u22",
+      "anchor_segment_id": "s56",
+      "text": "func:"
+    },
+    {
+      "n": 57,
+      "unit_id": "u22",
+      "anchor_segment_id": "s57",
+      "text": "`range` Function\n=========================="
+    },
+    {
+      "n": 58,
+      "unit_id": "u23",
+      "anchor_segment_id": "s58",
+      "text": "If you do need to iterate over a sequence of numbers, the built-in function\n:func:`range` comes in handy."
+    },
+    {
+      "n": 59,
+      "unit_id": "u23",
+      "anchor_segment_id": "s59",
+      "text": "It generates arithmetic progressions::"
+    },
+    {
+      "n": 60,
+      "unit_id": "u24",
+      "anchor_segment_id": "s60",
+      "text": ">>> for i in range(5):\n    ...     print(i)\n    ..."
+    },
+    {
+      "n": 61,
+      "unit_id": "u24",
+      "anchor_segment_id": "s61",
+      "text": "0\n    1\n    2\n    3\n    4"
+    },
+    {
+      "n": 62,
+      "unit_id": "u25",
+      "anchor_segment_id": "s62",
+      "text": "The given end point is never part of the generated sequence; ``range(10)`` generates\n10 values, the legal indices for items of a sequence of length 10."
+    },
+    {
+      "n": 63,
+      "unit_id": "u25",
+      "anchor_segment_id": "s63",
+      "text": "It\nis possible to let the range start at another number, or to specify a different\nincrement (even negative; sometimes this is called the 'step')::"
+    },
+    {
+      "n": 64,
+      "unit_id": "u26",
+      "anchor_segment_id": "s64",
+      "text": ">>> list(range(5, 10))\n    [5, 6, 7, 8, 9]"
+    },
+    {
+      "n": 65,
+      "unit_id": "u27",
+      "anchor_segment_id": "s65",
+      "text": ">>> list(range(0, 10, 3))\n    [0, 3, 6, 9]"
+    },
+    {
+      "n": 66,
+      "unit_id": "u28",
+      "anchor_segment_id": "s66",
+      "text": ">>> list(range(-10, -100, -30))\n    [-10, -40, -70]"
+    },
+    {
+      "n": 67,
+      "unit_id": "u29",
+      "anchor_segment_id": "s67",
+      "text": "To iterate over the indices of a sequence, you can combine :"
+    },
+    {
+      "n": 68,
+      "unit_id": "u29",
+      "anchor_segment_id": "s68",
+      "text": "func:"
+    },
+    {
+      "n": 69,
+      "unit_id": "u29",
+      "anchor_segment_id": "s69",
+      "text": "`range` and\n:"
+    },
+    {
+      "n": 70,
+      "unit_id": "u29",
+      "anchor_segment_id": "s70",
+      "text": "func:"
+    },
+    {
+      "n": 71,
+      "unit_id": "u29",
+      "anchor_segment_id": "s71",
+      "text": "`len` as follows:"
+    },
+    {
+      "n": 72,
+      "unit_id": "u29",
+      "anchor_segment_id": "s72",
+      "text": ":"
+    },
+    {
+      "n": 73,
+      "unit_id": "u30",
+      "anchor_segment_id": "s73",
+      "text": ">>> a = ['Mary', 'had', 'a', 'little', 'lamb']\n   >>> for i in range(len(a)):\n   ..."
+    },
+    {
+      "n": 74,
+      "unit_id": "u30",
+      "anchor_segment_id": "s74",
+      "text": "print(i, a[i])\n   ...\n   0"
+    },
+    {
+      "n": 75,
+      "unit_id": "u30",
+      "anchor_segment_id": "s75",
+      "text": "Mary\n   1 had\n   2 a\n   3 little\n   4 lamb"
+    },
+    {
+      "n": 76,
+      "unit_id": "u31",
+      "anchor_segment_id": "s76",
+      "text": "In most such cases, however, it is convenient to use the :func:`enumerate`\nfunction, see :ref:`tut-loopidioms`."
+    },
+    {
+      "n": 77,
+      "unit_id": "u32",
+      "anchor_segment_id": "s77",
+      "text": "A strange thing happens if you just print a range:"
+    },
+    {
+      "n": 78,
+      "unit_id": "u32",
+      "anchor_segment_id": "s78",
+      "text": ":"
+    },
+    {
+      "n": 79,
+      "unit_id": "u33",
+      "anchor_segment_id": "s79",
+      "text": ">>> range(10)\n   range(0, 10)"
+    },
+    {
+      "n": 80,
+      "unit_id": "u34",
+      "anchor_segment_id": "s80",
+      "text": "In many ways the object returned by :func:`range` behaves as if it is a list,\nbut in fact it isn't."
+    },
+    {
+      "n": 81,
+      "unit_id": "u34",
+      "anchor_segment_id": "s81",
+      "text": "It is an object which returns the successive items of\nthe desired sequence when you iterate over it, but it doesn't really make\nthe list, thus saving space."
+    },
+    {
+      "n": 82,
+      "unit_id": "u35",
+      "anchor_segment_id": "s82",
+      "text": "We say such an object is :term:`iterable`, that is, suitable as a target for\nfunctions and constructs that expect something from which they can\nobtain successive items until the supply is exhausted."
+    },
+    {
+      "n": 83,
+      "unit_id": "u35",
+      "anchor_segment_id": "s83",
+      "text": "We have seen that\nthe :keyword:`for` statement is such a construct, while an example of a function\nthat takes an iterable is :func:`sum`::"
+    },
+    {
+      "n": 84,
+      "unit_id": "u36",
+      "anchor_segment_id": "s84",
+      "text": ">>> sum(range(4))  # 0 + 1 + 2 + 3\n    6"
+    },
+    {
+      "n": 85,
+      "unit_id": "u37",
+      "anchor_segment_id": "s85",
+      "text": "Later we will see more functions that return iterables and take iterables as\narguments."
+    },
+    {
+      "n": 86,
+      "unit_id": "u37",
+      "anchor_segment_id": "s86",
+      "text": "In chapter :ref:`tut-structures`, we will discuss :func:`list` in more\ndetail."
+    },
+    {
+      "n": 87,
+      "unit_id": "u38",
+      "anchor_segment_id": "s87",
+      "text": ".. _tut-break:"
+    },
+    {
+      "n": 88,
+      "unit_id": "u39",
+      "anchor_segment_id": "s88",
+      "text": ":"
+    },
+    {
+      "n": 89,
+      "unit_id": "u39",
+      "anchor_segment_id": "s89",
+      "text": "keyword:"
+    },
+    {
+      "n": 90,
+      "unit_id": "u39",
+      "anchor_segment_id": "s90",
+      "text": "`!break` and :"
+    },
+    {
+      "n": 91,
+      "unit_id": "u39",
+      "anchor_segment_id": "s91",
+      "text": "keyword:"
+    },
+    {
+      "n": 92,
+      "unit_id": "u39",
+      "anchor_segment_id": "s92",
+      "text": "`!continue` Statements\n====================================================="
+    },
+    {
+      "n": 93,
+      "unit_id": "u40",
+      "anchor_segment_id": "s93",
+      "text": "The :"
+    },
+    {
+      "n": 94,
+      "unit_id": "u40",
+      "anchor_segment_id": "s94",
+      "text": "keyword:"
+    },
+    {
+      "n": 95,
+      "unit_id": "u40",
+      "anchor_segment_id": "s95",
+      "text": "`break` statement breaks out of the innermost enclosing\n:"
+    },
+    {
+      "n": 96,
+      "unit_id": "u40",
+      "anchor_segment_id": "s96",
+      "text": "keyword:"
+    },
+    {
+      "n": 97,
+      "unit_id": "u40",
+      "anchor_segment_id": "s97",
+      "text": "`for` or :"
+    },
+    {
+      "n": 98,
+      "unit_id": "u40",
+      "anchor_segment_id": "s98",
+      "text": "keyword:"
+    },
+    {
+      "n": 99,
+      "unit_id": "u40",
+      "anchor_segment_id": "s99",
+      "text": "`while` loop:"
+    },
+    {
+      "n": 100,
+      "unit_id": "u40",
+      "anchor_segment_id": "s100",
+      "text": ":"
+    },
+    {
+      "n": 101,
+      "unit_id": "u41",
+      "anchor_segment_id": "s101",
+      "text": ">>> for n in range(2, 10):\n    ...     for x in range(2, n):\n    ..."
+    },
+    {
+      "n": 102,
+      "unit_id": "u41",
+      "anchor_segment_id": "s102",
+      "text": "if n % x"
+    },
+    {
+      "n": 103,
+      "unit_id": "u41",
+      "anchor_segment_id": "s103",
+      "text": "== 0:\n    ...             print(f\"{n} equals {x} * {n//x}\")\n    ..."
+    },
+    {
+      "n": 104,
+      "unit_id": "u41",
+      "anchor_segment_id": "s104",
+      "text": "break\n    ..."
+    },
+    {
+      "n": 105,
+      "unit_id": "u41",
+      "anchor_segment_id": "s105",
+      "text": "4 equals 2 * 2\n    6 equals 2 * 3\n    8 equals 2 * 4\n    9 equals 3 * 3"
+    },
+    {
+      "n": 106,
+      "unit_id": "u42",
+      "anchor_segment_id": "s106",
+      "text": "The :"
+    },
+    {
+      "n": 107,
+      "unit_id": "u42",
+      "anchor_segment_id": "s107",
+      "text": "keyword:"
+    },
+    {
+      "n": 108,
+      "unit_id": "u42",
+      "anchor_segment_id": "s108",
+      "text": "`continue` statement continues with the next\niteration of the loop:"
+    },
+    {
+      "n": 109,
+      "unit_id": "u42",
+      "anchor_segment_id": "s109",
+      "text": ":"
+    },
+    {
+      "n": 110,
+      "unit_id": "u43",
+      "anchor_segment_id": "s110",
+      "text": ">>> for num in range(2, 10):\n    ..."
+    },
+    {
+      "n": 111,
+      "unit_id": "u43",
+      "anchor_segment_id": "s111",
+      "text": "if num % 2 == 0:\n    ...         print(f\"Found an even number {num}\")\n    ...         continue\n    ..."
+    },
+    {
+      "n": 112,
+      "unit_id": "u43",
+      "anchor_segment_id": "s112",
+      "text": "print(f\"Found an odd number {num}\")\n    ...\n    Found an even number 2\n    Found an odd number 3\n    Found an even number 4\n    Found an odd number 5\n    Found an even number 6\n    Found an odd number 7\n    Found an even number 8\n    Found an odd number 9"
+    },
+    {
+      "n": 113,
+      "unit_id": "u44",
+      "anchor_segment_id": "s113",
+      "text": ".. _tut-for-else:\n.."
+    },
+    {
+      "n": 114,
+      "unit_id": "u44",
+      "anchor_segment_id": "s114",
+      "text": "_break-and-continue-statements-and-else-clauses-on-loops:"
+    },
+    {
+      "n": 115,
+      "unit_id": "u45",
+      "anchor_segment_id": "s115",
+      "text": ":"
+    },
+    {
+      "n": 116,
+      "unit_id": "u45",
+      "anchor_segment_id": "s116",
+      "text": "keyword:"
+    },
+    {
+      "n": 117,
+      "unit_id": "u45",
+      "anchor_segment_id": "s117",
+      "text": "`!else` Clauses on Loops\n================================="
+    },
+    {
+      "n": 118,
+      "unit_id": "u46",
+      "anchor_segment_id": "s118",
+      "text": "In a :keyword:`!for` or :keyword:`!while` loop the :keyword:`!break` statement\nmay be paired with an :keyword:`!else` clause."
+    },
+    {
+      "n": 119,
+      "unit_id": "u46",
+      "anchor_segment_id": "s119",
+      "text": "If the loop finishes without\nexecuting the :keyword:`!break`, the :keyword:`!else` clause executes."
+    },
+    {
+      "n": 120,
+      "unit_id": "u47",
+      "anchor_segment_id": "s120",
+      "text": "In a :keyword:`for` loop, the :keyword:`!else` clause is executed\nafter the loop finishes its final iteration, that is, if no break occurred."
+    },
+    {
+      "n": 121,
+      "unit_id": "u48",
+      "anchor_segment_id": "s121",
+      "text": "In a :keyword:`while` loop, it's executed after the loop's condition becomes false."
+    },
+    {
+      "n": 122,
+      "unit_id": "u49",
+      "anchor_segment_id": "s122",
+      "text": "In either kind of loop, the :keyword:`!else` clause is **not** executed if the\nloop was terminated by a :keyword:`break`."
+    },
+    {
+      "n": 123,
+      "unit_id": "u49",
+      "anchor_segment_id": "s123",
+      "text": "Of course, other ways of ending the\nloop early, such as a :keyword:`return` or a raised exception, will also skip\nexecution of the :keyword:`else` clause."
+    },
+    {
+      "n": 124,
+      "unit_id": "u50",
+      "anchor_segment_id": "s124",
+      "text": "This is exemplified in the following :"
+    },
+    {
+      "n": 125,
+      "unit_id": "u50",
+      "anchor_segment_id": "s125",
+      "text": "keyword:"
+    },
+    {
+      "n": 126,
+      "unit_id": "u50",
+      "anchor_segment_id": "s126",
+      "text": "`!for` loop,"
+    },
+    {
+      "n": 127,
+      "unit_id": "u50",
+      "anchor_segment_id": "s127",
+      "text": "which searches for prime numbers:"
+    },
+    {
+      "n": 128,
+      "unit_id": "u50",
+      "anchor_segment_id": "s128",
+      "text": ":"
+    },
+    {
+      "n": 129,
+      "unit_id": "u51",
+      "anchor_segment_id": "s129",
+      "text": ">>> for n in range(2, 10):\n   ...     for x in range(2, n):\n   ..."
+    },
+    {
+      "n": 130,
+      "unit_id": "u51",
+      "anchor_segment_id": "s130",
+      "text": "if n % x"
+    },
+    {
+      "n": 131,
+      "unit_id": "u51",
+      "anchor_segment_id": "s131",
+      "text": "== 0:\n   ..."
+    },
+    {
+      "n": 132,
+      "unit_id": "u51",
+      "anchor_segment_id": "s132",
+      "text": "print(n, 'equals', x, '*', n//x)\n   ..."
+    },
+    {
+      "n": 133,
+      "unit_id": "u51",
+      "anchor_segment_id": "s133",
+      "text": "break\n   ...     else:\n   ...         # loop fell through without finding a factor\n   ..."
+    },
+    {
+      "n": 134,
+      "unit_id": "u51",
+      "anchor_segment_id": "s134",
+      "text": "print(n, 'is a prime number')\n   ...\n   2 is a prime number\n   3 is a prime number\n   4 equals 2 * 2\n   5 is a prime number\n   6 equals 2 * 3\n   7 is a prime number\n   8 equals 2 * 4\n   9 equals 3 * 3"
+    },
+    {
+      "n": 135,
+      "unit_id": "u52",
+      "anchor_segment_id": "s135",
+      "text": "(Yes, this is the correct code."
+    },
+    {
+      "n": 136,
+      "unit_id": "u52",
+      "anchor_segment_id": "s136",
+      "text": "Look closely: the ``else`` clause belongs to\nthe ``for`` loop, **not** the ``if`` statement.)"
+    },
+    {
+      "n": 137,
+      "unit_id": "u53",
+      "anchor_segment_id": "s137",
+      "text": "One way to think of the else clause is to imagine it paired with the ``if``\ninside the loop."
+    },
+    {
+      "n": 138,
+      "unit_id": "u53",
+      "anchor_segment_id": "s138",
+      "text": "As the loop executes, it will run a sequence like\nif/if/if/else."
+    },
+    {
+      "n": 139,
+      "unit_id": "u53",
+      "anchor_segment_id": "s139",
+      "text": "The ``if`` is inside the loop, encountered a number of times."
+    },
+    {
+      "n": 140,
+      "unit_id": "u53",
+      "anchor_segment_id": "s140",
+      "text": "If\nthe condition is ever true, a ``break`` will happen."
+    },
+    {
+      "n": 141,
+      "unit_id": "u53",
+      "anchor_segment_id": "s141",
+      "text": "If the condition is never\ntrue, the ``else`` clause outside the loop will execute."
+    },
+    {
+      "n": 142,
+      "unit_id": "u54",
+      "anchor_segment_id": "s142",
+      "text": "When used with a loop, the ``else`` clause has more in common with the ``else``\nclause of a :keyword:`try` statement than it does with that of ``if``\nstatements: a ``try`` statement's ``else`` clause runs when no exception\noccurs, and a loop's ``else`` clause runs when no ``break`` occurs."
+    },
+    {
+      "n": 143,
+      "unit_id": "u54",
+      "anchor_segment_id": "s143",
+      "text": "For more on\nthe ``try`` statement and exceptions, see :ref:`tut-handling`."
+    },
+    {
+      "n": 144,
+      "unit_id": "u55",
+      "anchor_segment_id": "s144",
+      "text": ".. index:"
+    },
+    {
+      "n": 145,
+      "unit_id": "u55",
+      "anchor_segment_id": "s145",
+      "text": ":"
+    },
+    {
+      "n": 146,
+      "unit_id": "u55",
+      "anchor_segment_id": "s146",
+      "text": "single:"
+    },
+    {
+      "n": 147,
+      "unit_id": "u55",
+      "anchor_segment_id": "s147",
+      "text": "...;"
+    },
+    {
+      "n": 148,
+      "unit_id": "u55",
+      "anchor_segment_id": "s148",
+      "text": "ellipsis literal"
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": ".. _tut-morecontrol:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2",
+      "sentence_ns": [
+        2
+      ],
+      "text": "***********************\nMore Control Flow Tools\n***********************",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs3",
+      "sentence_ns": [
+        3
+      ],
+      "text": "As well as the :keyword:`while` statement just introduced, Python uses a few more\nthat we will encounter in this chapter.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs4",
+      "sentence_ns": [
+        4
+      ],
+      "text": ".. _tut-if:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs5_s7",
+      "sentence_ns": [
+        5,
+        6,
+        7
+      ],
+      "text": ": keyword: `!if` Statements\n=========================",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs8_s9",
+      "sentence_ns": [
+        8,
+        9
+      ],
+      "text": "Perhaps the most well-known statement type is the :keyword:`if` statement. For\nexample::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs10_s12",
+      "sentence_ns": [
+        10,
+        11,
+        12
+      ],
+      "text": ">>> x = int(input(\"Please enter an integer: \"))\n   Please enter an integer: 42\n   >>> if x < 0:\n   ... x = 0\n   ...     print('Negative changed to zero')\n   ... elif x == 0:\n   ...     print('Zero')\n   ...",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs13_s14",
+      "sentence_ns": [
+        13,
+        14
+      ],
+      "text": "elif x == 1:\n   ...     print('Single')\n   ... else:\n   ...     print('More')\n   ... More",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs15_s17",
+      "sentence_ns": [
+        15,
+        16,
+        17
+      ],
+      "text": "There can be zero or more :keyword:`elif` parts, and the :keyword:`else` part is\noptional. The keyword ':keyword:`!elif`' is short for 'else if', and is useful\nto avoid excessive indentation. An  :keyword:`!if` ... :keyword:`!elif` ...\n:keyword:`!elif` ... sequence is a substitute for the ``switch`` or\n``case`` statements found in other languages.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs18_s19",
+      "sentence_ns": [
+        18,
+        19
+      ],
+      "text": "If you're comparing the same value to several constants, or checking for specific types or\nattributes, you may also find the :keyword:`!match` statement useful. For more\ndetails see :ref:`tut-match`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u10_gs20",
+      "sentence_ns": [
+        20
+      ],
+      "text": ".. _tut-for:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u11_gs21_s23",
+      "sentence_ns": [
+        21,
+        22,
+        23
+      ],
+      "text": ": keyword: `!for` Statements\n==========================",
+      "order_index": 1
+    },
+    {
+      "group_id": "u12_gs24_s26",
+      "sentence_ns": [
+        24,
+        25,
+        26
+      ],
+      "text": ".. index: : pair:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u12_gs27_s28",
+      "sentence_ns": [
+        27,
+        28
+      ],
+      "text": "statement; for",
+      "order_index": 2
+    },
+    {
+      "group_id": "u13_gs29_s31",
+      "sentence_ns": [
+        29,
+        30,
+        31
+      ],
+      "text": "The :keyword:`for` statement in Python differs a bit from what you may be used\nto in C or Pascal. Rather than always iterating over an arithmetic progression\nof numbers (like in Pascal), or giving the user the ability to define both the\niteration step and halting condition (as C), Python's :keyword:`!for` statement\niterates over the items of any sequence (a list or a string), in the order that\nthey appear in the sequence. For example (no pun intended):",
+      "order_index": 1
+    },
+    {
+      "group_id": "u14_gs32_s33",
+      "sentence_ns": [
+        32,
+        33
+      ],
+      "text": ".. One suggestion was to give a real C example here, but that may only serve to\n   confuse non-C programmers.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u15_gs34_s35",
+      "sentence_ns": [
+        34,
+        35
+      ],
+      "text": ": :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs36_s38",
+      "sentence_ns": [
+        36,
+        37,
+        38
+      ],
+      "text": ">>> # Measure some strings:\n   >>> words = ['cat', 'window', 'defenestrate']\n   >>> for w in words:\n   ...",
+      "order_index": 1
+    },
+    {
+      "group_id": "u16_gs39",
+      "sentence_ns": [
+        39
+      ],
+      "text": "print(w, len(w))\n   ...\n   cat 3\n   window 6\n   defenestrate 12",
+      "order_index": 2
+    },
+    {
+      "group_id": "u17_gs40_s41",
+      "sentence_ns": [
+        40,
+        41
+      ],
+      "text": "Code that modifies a collection while iterating over that same collection can\nbe tricky to get right. Instead, it is usually more straight-forward to loop\nover a copy of the collection or to create a new collection::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs42_s44",
+      "sentence_ns": [
+        42,
+        43,
+        44
+      ],
+      "text": "# Create a sample collection\n    users = {'Hans': 'active', 'Éléonore': 'inactive', '景太郎':",
+      "order_index": 1
+    },
+    {
+      "group_id": "u18_gs45",
+      "sentence_ns": [
+        45
+      ],
+      "text": "'active'}",
+      "order_index": 2
+    },
+    {
+      "group_id": "u19_gs46_s48",
+      "sentence_ns": [
+        46,
+        47,
+        48
+      ],
+      "text": "# Strategy: Iterate over a copy\n    for user, status in users.copy().items(): if status == 'inactive':",
+      "order_index": 1
+    },
+    {
+      "group_id": "u19_gs49",
+      "sentence_ns": [
+        49
+      ],
+      "text": "del users[user]",
+      "order_index": 2
+    },
+    {
+      "group_id": "u20_gs50_s52",
+      "sentence_ns": [
+        50,
+        51,
+        52
+      ],
+      "text": "# Strategy: Create a new collection\n    active_users = {}\n    for user, status in users.items(): if status == 'active':",
+      "order_index": 1
+    },
+    {
+      "group_id": "u20_gs53",
+      "sentence_ns": [
+        53
+      ],
+      "text": "active_users[user] = status",
+      "order_index": 2
+    },
+    {
+      "group_id": "u21_gs54",
+      "sentence_ns": [
+        54
+      ],
+      "text": ".. _tut-range:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u22_gs55_s57",
+      "sentence_ns": [
+        55,
+        56,
+        57
+      ],
+      "text": "The : func: `range` Function\n==========================",
+      "order_index": 1
+    },
+    {
+      "group_id": "u23_gs58_s59",
+      "sentence_ns": [
+        58,
+        59
+      ],
+      "text": "If you do need to iterate over a sequence of numbers, the built-in function\n:func:`range` comes in handy. It generates arithmetic progressions::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u24_gs60_s61",
+      "sentence_ns": [
+        60,
+        61
+      ],
+      "text": ">>> for i in range(5):\n    ...     print(i)\n    ... 0\n    1\n    2\n    3\n    4",
+      "order_index": 1
+    },
+    {
+      "group_id": "u25_gs62_s63",
+      "sentence_ns": [
+        62,
+        63
+      ],
+      "text": "The given end point is never part of the generated sequence; ``range(10)`` generates\n10 values, the legal indices for items of a sequence of length 10. It\nis possible to let the range start at another number, or to specify a different\nincrement (even negative; sometimes this is called the 'step')::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u26_gs64",
+      "sentence_ns": [
+        64
+      ],
+      "text": ">>> list(range(5, 10))\n    [5, 6, 7, 8, 9]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u27_gs65",
+      "sentence_ns": [
+        65
+      ],
+      "text": ">>> list(range(0, 10, 3))\n    [0, 3, 6, 9]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u28_gs66",
+      "sentence_ns": [
+        66
+      ],
+      "text": ">>> list(range(-10, -100, -30))\n    [-10, -40, -70]",
+      "order_index": 1
+    },
+    {
+      "group_id": "u29_gs67_s69",
+      "sentence_ns": [
+        67,
+        68,
+        69
+      ],
+      "text": "To iterate over the indices of a sequence, you can combine : func: `range` and\n:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u29_gs70_s72",
+      "sentence_ns": [
+        70,
+        71,
+        72
+      ],
+      "text": "func: `len` as follows: :",
+      "order_index": 2
+    },
+    {
+      "group_id": "u30_gs73_s75",
+      "sentence_ns": [
+        73,
+        74,
+        75
+      ],
+      "text": ">>> a = ['Mary', 'had', 'a', 'little', 'lamb']\n   >>> for i in range(len(a)):\n   ... print(i, a[i])\n   ...\n   0 Mary\n   1 had\n   2 a\n   3 little\n   4 lamb",
+      "order_index": 1
+    },
+    {
+      "group_id": "u31_gs76",
+      "sentence_ns": [
+        76
+      ],
+      "text": "In most such cases, however, it is convenient to use the :func:`enumerate`\nfunction, see :ref:`tut-loopidioms`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u32_gs77_s78",
+      "sentence_ns": [
+        77,
+        78
+      ],
+      "text": "A strange thing happens if you just print a range: :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u33_gs79",
+      "sentence_ns": [
+        79
+      ],
+      "text": ">>> range(10)\n   range(0, 10)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u34_gs80_s81",
+      "sentence_ns": [
+        80,
+        81
+      ],
+      "text": "In many ways the object returned by :func:`range` behaves as if it is a list,\nbut in fact it isn't. It is an object which returns the successive items of\nthe desired sequence when you iterate over it, but it doesn't really make\nthe list, thus saving space.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u35_gs82_s83",
+      "sentence_ns": [
+        82,
+        83
+      ],
+      "text": "We say such an object is :term:`iterable`, that is, suitable as a target for\nfunctions and constructs that expect something from which they can\nobtain successive items until the supply is exhausted. We have seen that\nthe :keyword:`for` statement is such a construct, while an example of a function\nthat takes an iterable is :func:`sum`::",
+      "order_index": 1
+    },
+    {
+      "group_id": "u36_gs84",
+      "sentence_ns": [
+        84
+      ],
+      "text": ">>> sum(range(4))  # 0 + 1 + 2 + 3\n    6",
+      "order_index": 1
+    },
+    {
+      "group_id": "u37_gs85_s86",
+      "sentence_ns": [
+        85,
+        86
+      ],
+      "text": "Later we will see more functions that return iterables and take iterables as\narguments. In chapter :ref:`tut-structures`, we will discuss :func:`list` in more\ndetail.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u38_gs87",
+      "sentence_ns": [
+        87
+      ],
+      "text": ".. _tut-break:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs88_s90",
+      "sentence_ns": [
+        88,
+        89,
+        90
+      ],
+      "text": ": keyword: `!break` and :",
+      "order_index": 1
+    },
+    {
+      "group_id": "u39_gs91_s92",
+      "sentence_ns": [
+        91,
+        92
+      ],
+      "text": "keyword: `!continue` Statements\n=====================================================",
+      "order_index": 2
+    },
+    {
+      "group_id": "u40_gs93_s95",
+      "sentence_ns": [
+        93,
+        94,
+        95
+      ],
+      "text": "The : keyword: `break` statement breaks out of the innermost enclosing\n:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u40_gs96_s98",
+      "sentence_ns": [
+        96,
+        97,
+        98
+      ],
+      "text": "keyword: `for` or : keyword:",
+      "order_index": 2
+    },
+    {
+      "group_id": "u40_gs99_s100",
+      "sentence_ns": [
+        99,
+        100
+      ],
+      "text": "`while` loop: :",
+      "order_index": 3
+    },
+    {
+      "group_id": "u41_gs101_s103",
+      "sentence_ns": [
+        101,
+        102,
+        103
+      ],
+      "text": ">>> for n in range(2, 10):\n    ...     for x in range(2, n):\n    ... if n % x == 0:\n    ...             print(f\"{n} equals {x} * {n//x}\")\n    ...",
+      "order_index": 1
+    },
+    {
+      "group_id": "u41_gs104_s105",
+      "sentence_ns": [
+        104,
+        105
+      ],
+      "text": "break\n    ... 4 equals 2 * 2\n    6 equals 2 * 3\n    8 equals 2 * 4\n    9 equals 3 * 3",
+      "order_index": 2
+    },
+    {
+      "group_id": "u42_gs106_s108",
+      "sentence_ns": [
+        106,
+        107,
+        108
+      ],
+      "text": "The : keyword: `continue` statement continues with the next\niteration of the loop:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u42_gs109",
+      "sentence_ns": [
+        109
+      ],
+      "text": ":",
+      "order_index": 2
+    },
+    {
+      "group_id": "u43_gs110_s112",
+      "sentence_ns": [
+        110,
+        111,
+        112
+      ],
+      "text": ">>> for num in range(2, 10):\n    ... if num % 2 == 0:\n    ...         print(f\"Found an even number {num}\")\n    ...         continue\n    ... print(f\"Found an odd number {num}\")\n    ...\n    Found an even number 2\n    Found an odd number 3\n    Found an even number 4\n    Found an odd number 5\n    Found an even number 6\n    Found an odd number 7\n    Found an even number 8\n    Found an odd number 9",
+      "order_index": 1
+    },
+    {
+      "group_id": "u44_gs113_s114",
+      "sentence_ns": [
+        113,
+        114
+      ],
+      "text": ".. _tut-for-else:\n.. _break-and-continue-statements-and-else-clauses-on-loops:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u45_gs115_s117",
+      "sentence_ns": [
+        115,
+        116,
+        117
+      ],
+      "text": ": keyword: `!else` Clauses on Loops\n=================================",
+      "order_index": 1
+    },
+    {
+      "group_id": "u46_gs118_s119",
+      "sentence_ns": [
+        118,
+        119
+      ],
+      "text": "In a :keyword:`!for` or :keyword:`!while` loop the :keyword:`!break` statement\nmay be paired with an :keyword:`!else` clause. If the loop finishes without\nexecuting the :keyword:`!break`, the :keyword:`!else` clause executes.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u47_gs120",
+      "sentence_ns": [
+        120
+      ],
+      "text": "In a :keyword:`for` loop, the :keyword:`!else` clause is executed\nafter the loop finishes its final iteration, that is, if no break occurred.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u48_gs121",
+      "sentence_ns": [
+        121
+      ],
+      "text": "In a :keyword:`while` loop, it's executed after the loop's condition becomes false.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u49_gs122_s123",
+      "sentence_ns": [
+        122,
+        123
+      ],
+      "text": "In either kind of loop, the :keyword:`!else` clause is **not** executed if the\nloop was terminated by a :keyword:`break`. Of course, other ways of ending the\nloop early, such as a :keyword:`return` or a raised exception, will also skip\nexecution of the :keyword:`else` clause.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u50_gs124_s126",
+      "sentence_ns": [
+        124,
+        125,
+        126
+      ],
+      "text": "This is exemplified in the following : keyword: `!for` loop,",
+      "order_index": 1
+    },
+    {
+      "group_id": "u50_gs127_s128",
+      "sentence_ns": [
+        127,
+        128
+      ],
+      "text": "which searches for prime numbers: :",
+      "order_index": 2
+    },
+    {
+      "group_id": "u51_gs129_s131",
+      "sentence_ns": [
+        129,
+        130,
+        131
+      ],
+      "text": ">>> for n in range(2, 10):\n   ...     for x in range(2, n):\n   ... if n % x == 0:\n   ...",
+      "order_index": 1
+    },
+    {
+      "group_id": "u51_gs132_s134",
+      "sentence_ns": [
+        132,
+        133,
+        134
+      ],
+      "text": "print(n, 'equals', x, '*', n//x)\n   ... break\n   ...     else:\n   ...         # loop fell through without finding a factor\n   ... print(n, 'is a prime number')\n   ...\n   2 is a prime number\n   3 is a prime number\n   4 equals 2 * 2\n   5 is a prime number\n   6 equals 2 * 3\n   7 is a prime number\n   8 equals 2 * 4\n   9 equals 3 * 3",
+      "order_index": 2
+    },
+    {
+      "group_id": "u52_gs135_s136",
+      "sentence_ns": [
+        135,
+        136
+      ],
+      "text": "(Yes, this is the correct code. Look closely: the ``else`` clause belongs to\nthe ``for`` loop, **not** the ``if`` statement.)",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs137_s139",
+      "sentence_ns": [
+        137,
+        138,
+        139
+      ],
+      "text": "One way to think of the else clause is to imagine it paired with the ``if``\ninside the loop. As the loop executes, it will run a sequence like\nif/if/if/else. The ``if`` is inside the loop, encountered a number of times.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u53_gs140_s141",
+      "sentence_ns": [
+        140,
+        141
+      ],
+      "text": "If\nthe condition is ever true, a ``break`` will happen. If the condition is never\ntrue, the ``else`` clause outside the loop will execute.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u54_gs142_s143",
+      "sentence_ns": [
+        142,
+        143
+      ],
+      "text": "When used with a loop, the ``else`` clause has more in common with the ``else``\nclause of a :keyword:`try` statement than it does with that of ``if``\nstatements: a ``try`` statement's ``else`` clause runs when no exception\noccurs, and a loop's ``else`` clause runs when no ``break`` occurs. For more on\nthe ``try`` statement and exceptions, see :ref:`tut-handling`.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u55_gs144_s146",
+      "sentence_ns": [
+        144,
+        145,
+        146
+      ],
+      "text": ".. index: : single:",
+      "order_index": 1
+    },
+    {
+      "group_id": "u55_gs147_s148",
+      "sentence_ns": [
+        147,
+        148
+      ],
+      "text": "...; ellipsis literal",
+      "order_index": 2
+    }
+  ],
+  "category": "structural"
+}

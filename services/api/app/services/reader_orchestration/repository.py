@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,6 +41,7 @@ from ._text import sanitize_failure_message
 from .automatic_layer_policy import (
     AutomaticLayerPolicy,
     build_reading_unit_metadata_json,
+    build_semantic_integrity_override,
 )
 from .base_builder import (
     BuiltAnchorSegment,
@@ -57,27 +59,52 @@ from .base_builder import (
     _extract_code_language,
     _extract_header_rows,
     _extract_heading_level,
-    _extract_inline_marks,
     _extract_is_header,
     validate_reading_base_build_result,
 )
 from .span_recorder import parse_trace_id_from_envelope
+from .stable_annotation_analysis import (
+    DIAGNOSTICS_READBACK_MATCH,
+    AcceptedStableBlockAnnotation,
+    AnnotationDiagnosticsReadback,
+    StableAnnotationPolicyOverride,
+    StableBlockAnnotation,
+    StableUnitRange,
+    analyze_stable_annotations,
+    empty_diagnostics_payload,
+    readback_persisted_diagnostics,
+)
+
+logger = logging.getLogger(__name__)
 
 
-def _unit_metadata_json(unit: BuiltReadingUnit) -> dict[str, Any]:
-    """Persist sentence_provider + versioned automatic-layer semantic policy."""
+def _unit_metadata_json(
+    unit: BuiltReadingUnit,
+    override: StableAnnotationPolicyOverride | None = None,
+) -> dict[str, Any]:
+    """Persist sentence_provider + versioned automatic-layer semantic policy.
+
+    A structural integrity override (analyzer-attributed) is written as a
+    top-level ``semantic_integrity_override`` object alongside — never
+    inside the ``semantic`` subtree — in the same transaction.
+    """
     policy = (
         AutomaticLayerPolicy.from_mapping(unit.automatic_layer_policy)
         if unit.automatic_layer_policy is not None
         else None
     )
-    return build_reading_unit_metadata_json(
+    meta = build_reading_unit_metadata_json(
         sentence_provider=unit.sentence_provider,
         contract_version=unit.semantic_contract_version,
         content_role=unit.content_role,
         automatic_layer_policy=policy,
         resolver_version=unit.automatic_layer_policy_resolver_version,
     )
+    if override is not None:
+        meta["semantic_integrity_override"] = build_semantic_integrity_override(
+            reason_code=override.reason_code,
+        )
+    return meta
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +116,11 @@ class LoadedReaderSnapshotFacts:
     enhancement_layers: tuple[ReaderSnapshotLayer, ...]
     enhancement_progress: ReaderEnhancementProgress
     parsed_decisions: tuple[ReaderSnapshotParsedDecision, ...]
+    # Typed internal readback of the persisted annotation diagnostics
+    # artifact. Observation only — behavior is owned by the analyzer's
+    # recomputation inside build_result, and this never reaches the
+    # public snapshot DTO.
+    annotation_diagnostics_readback: AnnotationDiagnosticsReadback
     user_assets: tuple[ReaderSnapshotUserAsset, ...] = ()
     ask_supplements: tuple[ReaderSnapshotAskSupplement, ...] = ()
 
@@ -306,6 +338,7 @@ class ReaderOrchestrationRepository:
                 language,
                 title_snapshot,
                 navigation_json,
+                diagnostics_json,
                 status,
                 frozen_at,
                 created_at
@@ -324,6 +357,7 @@ class ReaderOrchestrationRepository:
                 $9,
                 $10,
                 $11::jsonb,
+                $13::jsonb,
                 'active',
                 $12,
                 $12
@@ -341,6 +375,11 @@ class ReaderOrchestrationRepository:
             build_result.base.title_snapshot,
             jsonb_param(_navigation_json_from_build_result(build_result)),
             created_at,
+            jsonb_param(
+                build_result.annotation_analysis.diagnostics_payload()
+                if build_result.annotation_analysis is not None
+                else empty_diagnostics_payload()
+            ),
         )
 
     async def insert_reading_units(
@@ -350,7 +389,9 @@ class ReaderOrchestrationRepository:
         record_id: UUID,
         base_id: UUID,
         units: tuple[BuiltReadingUnit, ...],
+        policy_overrides: tuple[StableAnnotationPolicyOverride, ...] = (),
     ) -> None:
+        overrides_by_unit = {override.unit_id: override for override in policy_overrides}
         for unit in units:
             await conn.execute(
                 """
@@ -388,7 +429,9 @@ class ReaderOrchestrationRepository:
                 unit.base_start_utf16,
                 unit.base_end_utf16,
                 unit.text_hash,
-                jsonb_param(_unit_metadata_json(unit)),
+                jsonb_param(
+                    _unit_metadata_json(unit, overrides_by_unit.get(unit.unit_id))
+                ),
             )
 
     async def insert_anchor_segments(
@@ -1061,6 +1104,7 @@ class ReaderOrchestrationRepository:
                 b.language AS base_language,
                 b.title_snapshot,
                 b.navigation_json,
+                b.diagnostics_json,
                 b.status AS base_status,
                 b.created_at AS base_created_at,
                 seq.next_sequence
@@ -1197,6 +1241,7 @@ class ReaderOrchestrationRepository:
         stable_block_rows = await conn.fetch(
             """
             SELECT b.block_id, b.parent_block_id, b.block_type,
+                   b.order_index,
                    b.text_content, b.payload_json, b.source_refs_json,
                    b.quality_json, b.interpretation_policy_json,
                    b.canonical_text_start_utf16 AS block_start_utf16,
@@ -1212,23 +1257,72 @@ class ReaderOrchestrationRepository:
             record_id,
             record_generation,
         )
-        stable_annotations_by_range: dict[tuple[int, int], Any] = {}
+        # Persisted block rows re-enter the single
+        # analyzer (no silent range skipping anywhere). Accepted
+        # annotations carry analyzer-validated inline marks, so reload
+        # projects exactly the same mark semantics as the build path.
+        reload_annotations: list[StableBlockAnnotation] = []
         for block_row in stable_block_rows:
             if (
                 block_row["block_start_utf16"] is None
                 or block_row["block_end_utf16"] is None
             ):
                 continue
-            block_start = int(block_row["block_start_utf16"])
-            block_end = int(block_row["block_end_utf16"])
-            if block_start >= block_end:
-                # Invalid range can never match a unit (units always have
-                # base_end > base_start); skip silently, matching the build
-                # path's defensive skip.
-                continue
-            stable_annotations_by_range.setdefault(
-                (block_start, block_end), block_row
+            reload_annotations.append(
+                StableBlockAnnotation(
+                    start_utf16=int(block_row["block_start_utf16"]),
+                    end_utf16=int(block_row["block_end_utf16"]),
+                    block_type=str(block_row["block_type"]),
+                    block_id=str(block_row["block_id"]),
+                    parent_block_id=(
+                        str(block_row["parent_block_id"])
+                        if block_row["parent_block_id"] is not None
+                        else None
+                    ),
+                    payload_json=ensure_json_object(block_row["payload_json"]),
+                )
             )
+        reload_analysis = analyze_stable_annotations(
+            raw_annotations=reload_annotations,
+            base_utf16_length=int(record_row["content_utf16_length"]),
+            unit_ranges=[
+                StableUnitRange(
+                    unit_id=str(row["unit_id"]),
+                    start_utf16=int(row["base_start_utf16"]),
+                    end_utf16=int(row["base_end_utf16"]),
+                )
+                for row in unit_rows
+            ],
+        )
+        # Persisted diagnostics readback: ``reading_bases.diagnostics_json``
+        # is a versioned audit artifact. The recomputed analysis above owns
+        # behavior; this only observes whether the persisted payload still
+        # matches it. Mismatch/malformed never re-opens closed units, never
+        # changes policy, and never leaks into the public snapshot DTO.
+        annotation_diagnostics_readback = readback_persisted_diagnostics(
+            ensure_json_object(record_row["diagnostics_json"]),
+            recomputed=reload_analysis,
+        )
+        if annotation_diagnostics_readback.status != DIAGNOSTICS_READBACK_MATCH:
+            logger.warning(
+                "persisted annotation diagnostics readback is %s for record %s "
+                "(persisted=%d recomputed=%d); recomputed analysis owns behavior",
+                annotation_diagnostics_readback.status,
+                record_id,
+                (
+                    len(annotation_diagnostics_readback.persisted)
+                    if annotation_diagnostics_readback.persisted is not None
+                    else -1
+                ),
+                len(annotation_diagnostics_readback.recomputed),
+            )
+        accepted_by_range: dict[tuple[int, int], AcceptedStableBlockAnnotation] = {
+            (
+                accepted.annotation.start_utf16,
+                accepted.annotation.end_utf16,
+            ): accepted
+            for accepted in reload_analysis.accepted_annotations
+        }
 
         units: list[BuiltReadingUnit] = []
         navigation_units: list[NavigationUnitFact] = []
@@ -1266,8 +1360,11 @@ class ReaderOrchestrationRepository:
             # Range mismatch / duplicate / invalid range fail-open: the
             # unit keeps its persisted metadata_json semantic policy and
             # does NOT invent all-false automatic layers.
-            matched_block = stable_annotations_by_range.get(
+            matched_accepted = accepted_by_range.get(
                 (int(row["base_start_utf16"]), int(row["base_end_utf16"]))
+            )
+            matched_block = (
+                matched_accepted.annotation if matched_accepted is not None else None
             )
             stable_block_type: str | None = None
             stable_block_id: str | None = None
@@ -1282,15 +1379,14 @@ class ReaderOrchestrationRepository:
             table_header_rows: int | None = None
             block_payload: dict[str, Any] = {}
             if matched_block is not None:
-                stable_block_type = str(matched_block["block_type"])
-                stable_block_id = str(matched_block["block_id"])
-                parent_block_id = matched_block["parent_block_id"]
-                parent_stable_block_id = (
-                    str(parent_block_id) if parent_block_id is not None else None
-                )
-                block_payload = ensure_json_object(matched_block["payload_json"])
+                stable_block_type = matched_block.block_type
+                stable_block_id = matched_block.block_id
+                parent_stable_block_id = matched_block.parent_block_id
+                block_payload = matched_block.payload_json
                 heading_level = _extract_heading_level(block_payload)
-                inline_marks = _extract_inline_marks(block_payload)
+                inline_marks = (
+                    matched_accepted.inline_marks if matched_accepted else ()
+                )
                 table_role = _derive_table_role(stable_block_type)
                 # L1: code language + table header/alignment metadata,
                 # same projection helpers as the build path.
@@ -1438,6 +1534,7 @@ class ReaderOrchestrationRepository:
             anchor_segments=tuple(anchor_segments),
             navigation_units=tuple(navigation_units),
             stable_document_blocks=tuple(dict(row) for row in stable_block_rows),
+            annotation_analysis=reload_analysis,
         )
         validate_reading_base_build_result(build_result)
 
@@ -1581,6 +1678,7 @@ class ReaderOrchestrationRepository:
             record=snapshot_record,
             last_event_sequence=last_event_sequence,
             snapshot_taken_at=latest_event_row["created_at"],
+            annotation_diagnostics_readback=annotation_diagnostics_readback,
             enhancement_layers=snapshot_layers,
             enhancement_progress=_build_enhancement_progress(
                 product_state=snapshot_record.product_state,

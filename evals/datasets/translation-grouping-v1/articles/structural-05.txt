@@ -1,0 +1,277 @@
+.. _tut-structures:
+
+***************
+Data Structures
+***************
+
+This chapter describes some things you've learned about already in more detail,
+and adds some new things as well.
+
+.. _tut-morelists:
+
+More on Lists
+=============
+
+The :ref:`list <typesseq-list>` data type has some more methods. Here are all
+of the methods of list objects:
+
+.. method:: list.append(value, /)
+   :noindex:
+
+   Add an item to the end of the list.  Similar to ``a[len(a):] = [x]``.
+
+
+.. method:: list.extend(iterable, /)
+   :noindex:
+
+   Extend the list by appending all the items from the iterable.  Similar to
+   ``a[len(a):] = iterable``.
+
+
+.. method:: list.insert(index, value, /)
+   :noindex:
+
+   Insert an item at a given position.  The first argument is the index of the
+   element before which to insert, so ``a.insert(0, x)`` inserts at the front of
+   the list, and ``a.insert(len(a), x)`` is equivalent to ``a.append(x)``.
+
+
+.. method:: list.remove(value, /)
+   :noindex:
+
+   Remove the first item from the list whose value is equal to *value*.  It raises a
+   :exc:`ValueError` if there is no such item.
+
+
+.. method:: list.pop(index=-1, /)
+   :noindex:
+
+   Remove the item at the given position in the list, and return it.  If no index
+   is specified, ``a.pop()`` removes and returns the last item in the list.
+   It raises an :exc:`IndexError` if the list is empty or the index is
+   outside the list range.
+
+
+.. method:: list.clear()
+   :noindex:
+
+   Remove all items from the list.  Similar to ``del a[:]``.
+
+
+.. method:: list.index(value[, start[, stop]])
+   :noindex:
+
+   Return zero-based index of the first occurrence of *value* in the list.
+   Raises a :exc:`ValueError` if there is no such item.
+
+   The optional arguments *start* and *end* are interpreted as in the slice
+   notation and are used to limit the search to a particular subsequence of
+   the list.  The returned index is computed relative to the beginning of the full
+   sequence rather than the *start* argument.
+
+
+.. method:: list.count(value, /)
+   :noindex:
+
+   Return the number of times *value* appears in the list.
+
+
+.. method:: list.sort(*, key=None, reverse=False)
+   :noindex:
+
+   Sort the items of the list in place (the arguments can be used for sort
+   customization, see :func:`sorted` for their explanation).
+
+
+.. method:: list.reverse()
+   :noindex:
+
+   Reverse the elements of the list in place.
+
+
+.. method:: list.copy()
+   :noindex:
+
+   Return a shallow copy of the list.  Similar to ``a[:]``.
+
+
+An example that uses most of the list methods::
+
+    >>> fruits = ['orange', 'apple', 'pear', 'banana', 'kiwi', 'apple', 'banana']
+    >>> fruits.count('apple')
+    2
+    >>> fruits.count('tangerine')
+    0
+    >>> fruits.index('banana')
+    3
+    >>> fruits.index('banana', 4)  # Find next banana starting at position 4
+    6
+    >>> fruits.reverse()
+    >>> fruits
+    ['banana', 'apple', 'kiwi', 'banana', 'pear', 'apple', 'orange']
+    >>> fruits.append('grape')
+    >>> fruits
+    ['banana', 'apple', 'kiwi', 'banana', 'pear', 'apple', 'orange', 'grape']
+    >>> fruits.sort()
+    >>> fruits
+    ['apple', 'apple', 'banana', 'banana', 'grape', 'kiwi', 'orange', 'pear']
+    >>> fruits.pop()
+    'pear'
+
+You might have noticed that methods like ``insert``, ``remove`` or ``sort`` that
+only modify the list have no return value printed -- they return the default
+``None``. [#]_  This is a design principle for all mutable data structures in
+Python.
+
+Another thing you might notice is that not all data can be sorted or
+compared.  For instance, ``[None, 'hello', 10]`` doesn't sort because
+integers can't be compared to strings and ``None`` can't be compared to
+other types.  Also, there are some types that don't have a defined
+ordering relation.  For example, ``3+4j < 5+7j`` isn't a valid
+comparison.
+
+
+.. _tut-lists-as-stacks:
+
+Using Lists as Stacks
+---------------------
+
+The list methods make it very easy to use a list as a stack, where the last
+element added is the first element retrieved ("last-in, first-out").  To add an
+item to the top of the stack, use :meth:`~list.append`.  To retrieve an item from the
+top of the stack, use :meth:`~list.pop` without an explicit index.  For example::
+
+   >>> stack = [3, 4, 5]
+   >>> stack.append(6)
+   >>> stack.append(7)
+   >>> stack
+   [3, 4, 5, 6, 7]
+   >>> stack.pop()
+   7
+   >>> stack
+   [3, 4, 5, 6]
+   >>> stack.pop()
+   6
+   >>> stack.pop()
+   5
+   >>> stack
+   [3, 4]
+
+
+.. _tut-lists-as-queues:
+
+Using Lists as Queues
+---------------------
+
+It is also possible to use a list as a queue, where the first element added is
+the first element retrieved ("first-in, first-out"); however, lists are not
+efficient for this purpose.  While appends and pops from the end of list are
+fast, doing inserts or pops from the beginning of a list is slow (because all
+of the other elements have to be shifted by one).
+
+To implement a queue, use :class:`collections.deque` which was designed to
+have fast appends and pops from both ends.  For example::
+
+   >>> from collections import deque
+   >>> queue = deque(["Eric", "John", "Michael"])
+   >>> queue.append("Terry")           # Terry arrives
+   >>> queue.append("Graham")          # Graham arrives
+   >>> queue.popleft()                 # The first to arrive now leaves
+   'Eric'
+   >>> queue.popleft()                 # The second to arrive now leaves
+   'John'
+   >>> queue                           # Remaining queue in order of arrival
+   deque(['Michael', 'Terry', 'Graham'])
+
+
+.. _tut-listcomps:
+
+List Comprehensions
+-------------------
+
+List comprehensions provide a concise way to create lists.
+Common applications are to make new lists where each element is the result of
+some operations applied to each member of another sequence or iterable, or to
+create a subsequence of those elements that satisfy a certain condition.
+
+For example, assume we want to create a list of squares, like::
+
+   >>> squares = []
+   >>> for x in range(10):
+   ...     squares.append(x**2)
+   ...
+   >>> squares
+   [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+
+Note that this creates (or overwrites) a variable named ``x`` that still exists
+after the loop completes.  We can calculate the list of squares without any
+side effects using::
+
+   squares = list(map(lambda x: x**2, range(10)))
+
+or, equivalently::
+
+   squares = [x**2 for x in range(10)]
+
+which is more concise and readable.
+
+A list comprehension consists of brackets containing an expression followed
+by a :keyword:`!for` clause, then zero or more :keyword:`!for` or :keyword:`!if`
+clauses.  The result will be a new list resulting from evaluating the expression
+in the context of the :keyword:`!for` and :keyword:`!if` clauses which follow it.
+For example, this listcomp combines the elements of two lists if they are not
+equal::
+
+   >>> [(x, y) for x in [1,2,3] for y in [3,1,4] if x != y]
+   [(1, 3), (1, 4), (2, 3), (2, 1), (2, 4), (3, 1), (3, 4)]
+
+and it's equivalent to::
+
+   >>> combs = []
+   >>> for x in [1,2,3]:
+   ...     for y in [3,1,4]:
+   ...         if x != y:
+   ...             combs.append((x, y))
+   ...
+   >>> combs
+   [(1, 3), (1, 4), (2, 3), (2, 1), (2, 4), (3, 1), (3, 4)]
+
+Note how the order of the :keyword:`for` and :keyword:`if` statements is the
+same in both these snippets.
+
+If the expression is a tuple (e.g. the ``(x, y)`` in the previous example),
+it must be parenthesized. ::
+
+   >>> vec = [-4, -2, 0, 2, 4]
+   >>> # create a new list with the values doubled
+   >>> [x*2 for x in vec]
+   [-8, -4, 0, 4, 8]
+   >>> # filter the list to exclude negative numbers
+   >>> [x for x in vec if x >= 0]
+   [0, 2, 4]
+   >>> # apply a function to all the elements
+   >>> [abs(x) for x in vec]
+   [4, 2, 0, 2, 4]
+   >>> # call a method on each element
+   >>> freshfruit = ['  banana', '  loganberry ', 'passion fruit  ']
+   >>> [weapon.strip() for weapon in freshfruit]
+   ['banana', 'loganberry', 'passion fruit']
+   >>> # create a list of 2-tuples like (number, square)
+   >>> [(x, x**2) for x in range(6)]
+   [(0, 0), (1, 1), (2, 4), (3, 9), (4, 16), (5, 25)]
+   >>> # the tuple must be parenthesized, otherwise an error is raised
+   >>> [x, x**2 for x in range(6)]
+     File "<stdin>", line 1
+       [x, x**2 for x in range(6)]
+        ^^^^^^^
+   SyntaxError: did you forget parentheses around the comprehension target?
+   >>> # flatten a list using a listcomp with two 'for'
+   >>> vec = [[1,2,3], [4,5,6], [7,8,9]]
+   >>> [num for elem in vec for num in elem]
+   [1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+List comprehensions can contain complex expressions and nested functions::
+
+   >>> from math import pi
+   >>> [str(round(pi, i)) for i in range(1, 6)]
+   ['3.1', '3.14', '3.142', '3.1416', '3.14159']

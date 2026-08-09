@@ -711,8 +711,9 @@ type TranslationLayerOutput = {
 };
 ```
 
-Translation Group 粒度由 LLM 在 unit 内基于语义决定。后端不设置 group size 上限、
-数字阈值或 "1-3 个 segment" 规则；publisher 只校验事实合同：covered anchor ids
+Translation Group 粒度当前由后端 deterministic planner 决定（不是 LLM）：
+planner 只返回连续 `anchor_segment_ids`，典型 1-3 个短句合并为一个阅读组
+（900/1400/3 校验边界）；publisher 只校验事实合同：covered anchor ids
 存在、按 unit 顺序连续、无 overlap、覆盖完整、source/hash/fingerprint 正确。
 `group_id` 由 server 在 hydrate 阶段基于 unit/group segment range 确定性生成，
 只作为 snapshot/render key；它不是 LLM 输出，也不是 stable source anchor。
@@ -802,13 +803,15 @@ vocabulary / grammar / user highlight / user note 嵌套 span 互相抢 selectio
 
 ## Grammar Note
 
-`grammar_note` 不再渲染为旧式卡片或 accordion，也不默认折叠到 hover popover。它应该像纸质书上的行间批注：在精读模式中常显、低干扰、紧贴相关原文。
+`grammar_note` 渲染为统一**填充卡族**（filled card family）的批注卡：浅底填充（类别色混 surface，grammar 为 grammar-violet）、无边框、8px 圆角、无阴影、12/16px padding；精读模式常显、低干扰、紧贴相关原文。多个连续 grammar note 归并为一张组卡（`语法解析 · N 条`），行内带序号 chip 与细分隔；行间 hover/active 增强关联。
 
 默认形态：
 
 - 原文上的细下划线 / cue 用于说明关联范围。
-- 相关解释渲染为 Plate-native callout / annotation block，位于对应原文/译文组之后。
+- 相关解释渲染为 Plate-native callout / annotation block，位于对应原文/译文组之后（同句 grammar → analysis → supplement 顺序）。
 - callout 可包含 Markdown 内容，但必须通过 Plate-compatible children 渲染，不能退回孤立 HTML 递归。
+- 卡片层级：eyebrow（lucide 16px 图标 + 标签）→ 标题行（grammarPoint 600 + pattern chip）→ Markdown 正文（0.89rem / 1.68 / 68ch）。
+- 卡片可折叠：单 ChevronDown 旋转 160ms，正文 `hidden` 硬切换；展开状态由共享键控 expansion state 持有，增量刷新后保持。
 - 精读模式显示；沉浸模式隐藏 explanation block，仅保留必要的轻量 lexical 标注。
 
 交互：
@@ -833,21 +836,22 @@ Prompt 层面引导 LLM 输出 markdown 格式的讲解内容，提升可读性�
 
 默认形态：
 
-- 精读模式显示 always-open `reader_sentence_analysis_block`。
+- 精读模式显示 `reader_sentence_analysis_block`，同属填充卡族（context-blue 填充，与 grammar 的 violet 区分语义）；默认折叠标题行，可经单 chevron toggle 展开。
 - block 内先展示结构化 `chunks` / 句子成分，再展示 Markdown `analysis`。
 - 沉浸模式默认隐藏。
 - chunk underlines 只在可唯一定位时 best-effort 显示，不能唯一定位时不画错误 underline。
 
-已确认版式：
+已确认版式（填充卡族基线）：
 
-- block 放在对应原文/译文组之后，视觉上像文档内的手写结构笔记，而不是业务卡片。
-- header 使用轻量图标 + `句子成分` 标签，不放折叠箭头，不做 toggle。
+- block 放在对应原文/译文组之后，是文档内的结构笔记卡，不是 side panel，也不是旧式业务卡片。
+- header 使用 lucide 16px 图标 + `长句拆析` 标签 + 单 ChevronDown 折叠 toggle（旋转 160ms，aria-expanded 保持）。
 - `chunks` 区域优先展示，按 `order` 排列；每行包含角色标签、英文片段和中文说明。角色标签可以使用低饱和蓝/紫/青等小号文字，不使用大面积色块。
 - 英文片段使用正文同族字体，字号略小于正文，可用 italic / medium weight 区分；不要做大段彩色背景。
 - Markdown `analysis` 放在 chunk rows 之后，字号略小、行高紧凑，用于补充解释，不抢正文重心。
 - 如果 `analysis` 已经完整覆盖结构说明，chunk rows 仍保留；它们是结构化导航，不只是解析正文的重复展示。
-- block 宽度跟随正文栏，不跨出阅读列；背景使用极浅灰或低透明 tint，边框弱化，radius 不超过正文 callout 的视觉强度。
+- block 宽度跟随正文栏，不跨出阅读列；卡片为无边框 8px 圆角填充卡，与 grammar 卡同族异形（context-blue）。
 - 同一句如果同时有 grammar note 和 sentence analysis，顺序为：原文 -> 译文 -> grammar note -> sentence analysis；除非 grammar note 只解释句析块中的某个成分。
+- Ask supplement 卡同属卡族（grammar-violet 填充 + `Ask 补充` 来源标识 eyebrow），锚点留在原句，卡片置对应块后。
 
 V1 激活后：
 

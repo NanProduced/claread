@@ -1,0 +1,25 @@
+{
+  "id": "short-news-03",
+  "groups": [
+    {
+      "sentence_ns": [1],
+      "reason": "date header standalone"
+    },
+    {
+      "sentence_ns": [2, 3],
+      "reason": "drill suspension and its cause"
+    },
+    {
+      "sentence_ns": [4, 5],
+      "reason": "victim condition and anonymity"
+    },
+    {
+      "sentence_ns": [6, 7],
+      "reason": "investigation and broader questions"
+    },
+    {
+      "sentence_ns": [8, 9],
+      "reason": "confirmation plus prior incident context"
+    }
+  ]
+}

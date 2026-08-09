@@ -1,0 +1,121 @@
+{
+  "id": "short-news-07",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Thursday, March 12, 2026"
+    },
+    {
+      "n": 2,
+      "unit_id": "u2",
+      "anchor_segment_id": "s2",
+      "text": "The government of New South Wales (NSW), Australia announced plans to rezone the 113-hectare Burwood North precinct this Tuesday."
+    },
+    {
+      "n": 3,
+      "unit_id": "u2",
+      "anchor_segment_id": "s3",
+      "text": "The plan included building 18,300 new homes in the area, and building a new metro station."
+    },
+    {
+      "n": 4,
+      "unit_id": "u2",
+      "anchor_segment_id": "s4",
+      "text": "This would position the area as a residential hub between Sydney CBD and Parramatta, shortening commute times down to ten minutes, the proposal said."
+    },
+    {
+      "n": 5,
+      "unit_id": "u3",
+      "anchor_segment_id": "s5",
+      "text": "With allowance for up to 42 storey residential buildings, the government proposal involved a requirement that at least 5% of the new homes were \"affordable housing\", offered at a lower rental price to lower income households."
+    },
+    {
+      "n": 6,
+      "unit_id": "u4",
+      "anchor_segment_id": "s6",
+      "text": "Burwood North Station, scheduled to open in 2032, would provide easier access to retail outlets and businesses located near Parramatta Road, and reduce load on existing train and bus networks."
+    },
+    {
+      "n": 7,
+      "unit_id": "u5",
+      "anchor_segment_id": "s7",
+      "text": "The proposal text noted it would create 3,900 new jobs to implement the changes."
+    },
+    {
+      "n": 8,
+      "unit_id": "u6",
+      "anchor_segment_id": "s8",
+      "text": "The proposal was a part of Parramatta Road Corridor Urban Transformation Strategy."
+    },
+    {
+      "n": 9,
+      "unit_id": "u7",
+      "anchor_segment_id": "s9",
+      "text": "The NSW Department of Planning, Housing and Infrastructure was listed as a contact for inquiries and feedback."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1",
+      "sentence_ns": [
+        1
+      ],
+      "text": "Thursday, March 12, 2026",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs2_s4",
+      "sentence_ns": [
+        2,
+        3,
+        4
+      ],
+      "text": "The government of New South Wales (NSW), Australia announced plans to rezone the 113-hectare Burwood North precinct this Tuesday. The plan included building 18,300 new homes in the area, and building a new metro station. This would position the area as a residential hub between Sydney CBD and Parramatta, shortening commute times down to ten minutes, the proposal said.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs5",
+      "sentence_ns": [
+        5
+      ],
+      "text": "With allowance for up to 42 storey residential buildings, the government proposal involved a requirement that at least 5% of the new homes were \"affordable housing\", offered at a lower rental price to lower income households.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs6",
+      "sentence_ns": [
+        6
+      ],
+      "text": "Burwood North Station, scheduled to open in 2032, would provide easier access to retail outlets and businesses located near Parramatta Road, and reduce load on existing train and bus networks.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u5_gs7",
+      "sentence_ns": [
+        7
+      ],
+      "text": "The proposal text noted it would create 3,900 new jobs to implement the changes.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs8",
+      "sentence_ns": [
+        8
+      ],
+      "text": "The proposal was a part of Parramatta Road Corridor Urban Transformation Strategy.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs9",
+      "sentence_ns": [
+        9
+      ],
+      "text": "The NSW Department of Planning, Housing and Infrastructure was listed as a contact for inquiries and feedback.",
+      "order_index": 1
+    }
+  ],
+  "category": "short-news"
+}

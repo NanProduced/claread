@@ -1,0 +1,485 @@
+{
+  "id": "long-form-01",
+  "sentence_provider": "spacy_en_core_web_sm_parser_v1",
+  "sentences": [
+    {
+      "n": 1,
+      "unit_id": "u1",
+      "anchor_segment_id": "s1",
+      "text": "Vincent Willem van Gogh (Dutch: [ˈvɪnsɛnt ˈʋɪləɱ vɑŋ ˈɣɔx] ; 30 March 1853 – 29 July 1890) was a Dutch Post-Impressionist painter who is among the most famous and influential figures in the history of Western art."
+    },
+    {
+      "n": 2,
+      "unit_id": "u1",
+      "anchor_segment_id": "s2",
+      "text": "In just over a decade he created about 2,100 artworks, including around 860 oil paintings, most of them in the last two years of his life."
+    },
+    {
+      "n": 3,
+      "unit_id": "u1",
+      "anchor_segment_id": "s3",
+      "text": "They include landscapes, still lifes, portraits and self-portraits, and are characterised by bold colours and dramatic, impulsive and expressive brushwork that contributed to the foundations of modern art."
+    },
+    {
+      "n": 4,
+      "unit_id": "u1",
+      "anchor_segment_id": "s4",
+      "text": "His suicide at 37 followed years of mental illness and poverty."
+    },
+    {
+      "n": 5,
+      "unit_id": "u2",
+      "anchor_segment_id": "s5",
+      "text": "Born into an upper-middle-class family in Zundert, Van Gogh drew as a child and was serious, quiet and thoughtful."
+    },
+    {
+      "n": 6,
+      "unit_id": "u2",
+      "anchor_segment_id": "s6",
+      "text": "As a young man he worked as an art dealer, often travelling, but became depressed after he was transferred to London."
+    },
+    {
+      "n": 7,
+      "unit_id": "u2",
+      "anchor_segment_id": "s7",
+      "text": "He turned to religion, and spent time as a Protestant missionary in southern Belgium."
+    },
+    {
+      "n": 8,
+      "unit_id": "u2",
+      "anchor_segment_id": "s8",
+      "text": "He drifted in ill health and solitude before taking up painting in 1881, having moved back home with his parents."
+    },
+    {
+      "n": 9,
+      "unit_id": "u2",
+      "anchor_segment_id": "s9",
+      "text": "His younger brother Theo supported him financially, and the two kept up a long correspondence by letter."
+    },
+    {
+      "n": 10,
+      "unit_id": "u2",
+      "anchor_segment_id": "s10",
+      "text": "His early works, mostly still lifes and depictions of peasant labourers, contain few signs of the vivid colour that distinguished his later work."
+    },
+    {
+      "n": 11,
+      "unit_id": "u2",
+      "anchor_segment_id": "s11",
+      "text": "In 1886, he moved to Paris, where he met members of the avant-garde, including Émile Bernard and Paul Gauguin, who were reacting against the Impressionist sensibility."
+    },
+    {
+      "n": 12,
+      "unit_id": "u2",
+      "anchor_segment_id": "s12",
+      "text": "As his work developed he created a new approach to still lifes and local landscapes."
+    },
+    {
+      "n": 13,
+      "unit_id": "u2",
+      "anchor_segment_id": "s13",
+      "text": "His paintings grew brighter in colour as he developed a style that became fully realised during his stay in Arles in the south of France in 1888."
+    },
+    {
+      "n": 14,
+      "unit_id": "u2",
+      "anchor_segment_id": "s14",
+      "text": "During this period he broadened his subject matter to include series of olive trees, wheat fields and sunflowers."
+    },
+    {
+      "n": 15,
+      "unit_id": "u3",
+      "anchor_segment_id": "s15",
+      "text": "Van Gogh suffered from psychotic episodes and delusions and though he worried about his mental stability, he often neglected his physical health, did not eat properly and drank heavily."
+    },
+    {
+      "n": 16,
+      "unit_id": "u3",
+      "anchor_segment_id": "s16",
+      "text": "His friendship with Gauguin ended after a confrontation with a razor, when in a rage, he severed part of his own left ear."
+    },
+    {
+      "n": 17,
+      "unit_id": "u3",
+      "anchor_segment_id": "s17",
+      "text": "He spent time in psychiatric hospitals, including a period at Saint-Rémy."
+    },
+    {
+      "n": 18,
+      "unit_id": "u3",
+      "anchor_segment_id": "s18",
+      "text": "After he discharged himself and moved to the Auberge Ravoux in Auvers-sur-Oise near Paris, he came under the care of the homoeopathic doctor Paul Gachet."
+    },
+    {
+      "n": 19,
+      "unit_id": "u3",
+      "anchor_segment_id": "s19",
+      "text": "His depression continued and on 27 July 1890, Van Gogh shot himself in the chest with a revolver."
+    },
+    {
+      "n": 20,
+      "unit_id": "u3",
+      "anchor_segment_id": "s20",
+      "text": "He died from his injuries two days later."
+    },
+    {
+      "n": 21,
+      "unit_id": "u4",
+      "anchor_segment_id": "s21",
+      "text": "Van Gogh was unsuccessful during his lifetime and was considered a madman and a failure."
+    },
+    {
+      "n": 22,
+      "unit_id": "u4",
+      "anchor_segment_id": "s22",
+      "text": "He became famous after his suicide, and exists in the public imagination as the quintessential misunderstood genius, the artist \"where discourses on madness and creativity converge\"."
+    },
+    {
+      "n": 23,
+      "unit_id": "u4",
+      "anchor_segment_id": "s23",
+      "text": "His reputation began to grow in the early 20th century as elements of his painting style came to be incorporated by the Fauves and German Expressionists."
+    },
+    {
+      "n": 24,
+      "unit_id": "u4",
+      "anchor_segment_id": "s24",
+      "text": "He attained widespread critical, commercial and popular success over the ensuing decades, and is remembered as an important but tragic painter, whose troubled personality typifies the romantic ideal of the tortured artist."
+    },
+    {
+      "n": 25,
+      "unit_id": "u5",
+      "anchor_segment_id": "s25",
+      "text": "== Letters =="
+    },
+    {
+      "n": 26,
+      "unit_id": "u6",
+      "anchor_segment_id": "s26",
+      "text": "The most comprehensive primary source on Van Gogh is his correspondence with his younger brother, Theo."
+    },
+    {
+      "n": 27,
+      "unit_id": "u6",
+      "anchor_segment_id": "s27",
+      "text": "Their lifelong friendship, and most of what is known of Vincent's thoughts and theories of art, are recorded in the hundreds of letters they exchanged from 1872 until 1890."
+    },
+    {
+      "n": 28,
+      "unit_id": "u6",
+      "anchor_segment_id": "s28",
+      "text": "Theo van Gogh was an art dealer and provided his brother with financial and emotional support as well as access to influential people on the contemporary art scene."
+    },
+    {
+      "n": 29,
+      "unit_id": "u7",
+      "anchor_segment_id": "s29",
+      "text": "Theo kept all of Vincent's letters to him, but Vincent kept only a few of the letters he received."
+    },
+    {
+      "n": 30,
+      "unit_id": "u7",
+      "anchor_segment_id": "s30",
+      "text": "After both had died, Theo's widow Johanna van Gogh-Bonger arranged for the publication of some of their letters."
+    },
+    {
+      "n": 31,
+      "unit_id": "u7",
+      "anchor_segment_id": "s31",
+      "text": "A few appeared in 1906 and 1913; the majority were published in 1914."
+    },
+    {
+      "n": 32,
+      "unit_id": "u7",
+      "anchor_segment_id": "s32",
+      "text": "Vincent's letters are eloquent and expressive, have been described as having a \"diary-like intimacy\", and read in parts like autobiography."
+    },
+    {
+      "n": 33,
+      "unit_id": "u7",
+      "anchor_segment_id": "s33",
+      "text": "Translator Arnold Pomerans wrote that their publication adds a \"fresh dimension to the understanding of Van Gogh's artistic achievement, an understanding granted to us by virtually no other painter.\""
+    },
+    {
+      "n": 34,
+      "unit_id": "u7",
+      "anchor_segment_id": "s34",
+      "text": "The letters are also regarded as an important source for understanding Van Gogh's artistic methods, working practices, and evolving theories of colour and composition."
+    },
+    {
+      "n": 35,
+      "unit_id": "u8",
+      "anchor_segment_id": "s35",
+      "text": "There are more than 600 letters from Vincent to Theo and around 40 from Theo to Vincent."
+    },
+    {
+      "n": 36,
+      "unit_id": "u8",
+      "anchor_segment_id": "s36",
+      "text": "There are 22 to his sister Wil, 58 to the painter Anthon van Rappard, 22 to Émile Bernard as well as individual letters to Paul Signac, Paul Gauguin, and the critic Albert Aurier."
+    },
+    {
+      "n": 37,
+      "unit_id": "u8",
+      "anchor_segment_id": "s37",
+      "text": "Some are illustrated with sketches."
+    },
+    {
+      "n": 38,
+      "unit_id": "u8",
+      "anchor_segment_id": "s38",
+      "text": "Many are undated, but art historians have been able to place most in chronological order."
+    },
+    {
+      "n": 39,
+      "unit_id": "u8",
+      "anchor_segment_id": "s39",
+      "text": "Problems in transcription and dating remain, mainly with those posted from Arles."
+    },
+    {
+      "n": 40,
+      "unit_id": "u8",
+      "anchor_segment_id": "s40",
+      "text": "While there, Vincent wrote around 200 letters in Dutch, French, and English."
+    },
+    {
+      "n": 41,
+      "unit_id": "u8",
+      "anchor_segment_id": "s41",
+      "text": "There is a gap in the record when he lived in Paris as the brothers lived together and had no need to correspond."
+    },
+    {
+      "n": 42,
+      "unit_id": "u9",
+      "anchor_segment_id": "s42",
+      "text": "The highly paid contemporary artist Jules Breton was frequently mentioned in Vincent's letters."
+    },
+    {
+      "n": 43,
+      "unit_id": "u9",
+      "anchor_segment_id": "s43",
+      "text": "In 1875 letters to Theo, Vincent mentions he saw Breton, discusses the Breton paintings he saw at a Salon, and discusses sending one of Breton's books but only on condition that it be returned."
+    },
+    {
+      "n": 44,
+      "unit_id": "u9",
+      "anchor_segment_id": "s44",
+      "text": "In a March 1884 letter to Rappard he discusses one of Breton's poems that had inspired one of his paintings."
+    },
+    {
+      "n": 45,
+      "unit_id": "u9",
+      "anchor_segment_id": "s45",
+      "text": "In 1885, he describes Breton's famous work The Song of the Lark as being \"fine\"."
+    },
+    {
+      "n": 46,
+      "unit_id": "u9",
+      "anchor_segment_id": "s46",
+      "text": "In March 1880, roughly midway between these letters, Van Gogh set out on an 80-kilometre (50 mi) trip on foot to meet Breton in the village of Courrières; he was intimidated by Breton's success and the high wall around his estate, and he returned without making his presence known."
+    },
+    {
+      "n": 47,
+      "unit_id": "u9",
+      "anchor_segment_id": "s47",
+      "text": "It appears Breton was unaware of Van Gogh or his attempted visit."
+    },
+    {
+      "n": 48,
+      "unit_id": "u9",
+      "anchor_segment_id": "s48",
+      "text": "There are no known letters between the two artists and Van Gogh is not one of the contemporary artists discussed by Breton in his 1891 autobiography Life of an Artist."
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "u1_gs1_s3",
+      "sentence_ns": [
+        1,
+        2,
+        3
+      ],
+      "text": "Vincent Willem van Gogh (Dutch: [ˈvɪnsɛnt ˈʋɪləɱ vɑŋ ˈɣɔx] ; 30 March 1853 – 29 July 1890) was a Dutch Post-Impressionist painter who is among the most famous and influential figures in the history of Western art. In just over a decade he created about 2,100 artworks, including around 860 oil paintings, most of them in the last two years of his life. They include landscapes, still lifes, portraits and self-portraits, and are characterised by bold colours and dramatic, impulsive and expressive brushwork that contributed to the foundations of modern art.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u1_gs4",
+      "sentence_ns": [
+        4
+      ],
+      "text": "His suicide at 37 followed years of mental illness and poverty.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u2_gs5_s7",
+      "sentence_ns": [
+        5,
+        6,
+        7
+      ],
+      "text": "Born into an upper-middle-class family in Zundert, Van Gogh drew as a child and was serious, quiet and thoughtful. As a young man he worked as an art dealer, often travelling, but became depressed after he was transferred to London. He turned to religion, and spent time as a Protestant missionary in southern Belgium.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u2_gs8_s10",
+      "sentence_ns": [
+        8,
+        9,
+        10
+      ],
+      "text": "He drifted in ill health and solitude before taking up painting in 1881, having moved back home with his parents. His younger brother Theo supported him financially, and the two kept up a long correspondence by letter. His early works, mostly still lifes and depictions of peasant labourers, contain few signs of the vivid colour that distinguished his later work.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u2_gs11_s13",
+      "sentence_ns": [
+        11,
+        12,
+        13
+      ],
+      "text": "In 1886, he moved to Paris, where he met members of the avant-garde, including Émile Bernard and Paul Gauguin, who were reacting against the Impressionist sensibility. As his work developed he created a new approach to still lifes and local landscapes. His paintings grew brighter in colour as he developed a style that became fully realised during his stay in Arles in the south of France in 1888.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u2_gs14",
+      "sentence_ns": [
+        14
+      ],
+      "text": "During this period he broadened his subject matter to include series of olive trees, wheat fields and sunflowers.",
+      "order_index": 4
+    },
+    {
+      "group_id": "u3_gs15_s17",
+      "sentence_ns": [
+        15,
+        16,
+        17
+      ],
+      "text": "Van Gogh suffered from psychotic episodes and delusions and though he worried about his mental stability, he often neglected his physical health, did not eat properly and drank heavily. His friendship with Gauguin ended after a confrontation with a razor, when in a rage, he severed part of his own left ear. He spent time in psychiatric hospitals, including a period at Saint-Rémy.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u3_gs18_s20",
+      "sentence_ns": [
+        18,
+        19,
+        20
+      ],
+      "text": "After he discharged himself and moved to the Auberge Ravoux in Auvers-sur-Oise near Paris, he came under the care of the homoeopathic doctor Paul Gachet. His depression continued and on 27 July 1890, Van Gogh shot himself in the chest with a revolver. He died from his injuries two days later.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u4_gs21_s23",
+      "sentence_ns": [
+        21,
+        22,
+        23
+      ],
+      "text": "Van Gogh was unsuccessful during his lifetime and was considered a madman and a failure. He became famous after his suicide, and exists in the public imagination as the quintessential misunderstood genius, the artist \"where discourses on madness and creativity converge\". His reputation began to grow in the early 20th century as elements of his painting style came to be incorporated by the Fauves and German Expressionists.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u4_gs24",
+      "sentence_ns": [
+        24
+      ],
+      "text": "He attained widespread critical, commercial and popular success over the ensuing decades, and is remembered as an important but tragic painter, whose troubled personality typifies the romantic ideal of the tortured artist.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u5_gs25",
+      "sentence_ns": [
+        25
+      ],
+      "text": "== Letters ==",
+      "order_index": 1
+    },
+    {
+      "group_id": "u6_gs26_s28",
+      "sentence_ns": [
+        26,
+        27,
+        28
+      ],
+      "text": "The most comprehensive primary source on Van Gogh is his correspondence with his younger brother, Theo. Their lifelong friendship, and most of what is known of Vincent's thoughts and theories of art, are recorded in the hundreds of letters they exchanged from 1872 until 1890. Theo van Gogh was an art dealer and provided his brother with financial and emotional support as well as access to influential people on the contemporary art scene.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs29_s31",
+      "sentence_ns": [
+        29,
+        30,
+        31
+      ],
+      "text": "Theo kept all of Vincent's letters to him, but Vincent kept only a few of the letters he received. After both had died, Theo's widow Johanna van Gogh-Bonger arranged for the publication of some of their letters. A few appeared in 1906 and 1913; the majority were published in 1914.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u7_gs32_s34",
+      "sentence_ns": [
+        32,
+        33,
+        34
+      ],
+      "text": "Vincent's letters are eloquent and expressive, have been described as having a \"diary-like intimacy\", and read in parts like autobiography. Translator Arnold Pomerans wrote that their publication adds a \"fresh dimension to the understanding of Van Gogh's artistic achievement, an understanding granted to us by virtually no other painter.\" The letters are also regarded as an important source for understanding Van Gogh's artistic methods, working practices, and evolving theories of colour and composition.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs35_s37",
+      "sentence_ns": [
+        35,
+        36,
+        37
+      ],
+      "text": "There are more than 600 letters from Vincent to Theo and around 40 from Theo to Vincent. There are 22 to his sister Wil, 58 to the painter Anthon van Rappard, 22 to Émile Bernard as well as individual letters to Paul Signac, Paul Gauguin, and the critic Albert Aurier. Some are illustrated with sketches.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u8_gs38_s40",
+      "sentence_ns": [
+        38,
+        39,
+        40
+      ],
+      "text": "Many are undated, but art historians have been able to place most in chronological order. Problems in transcription and dating remain, mainly with those posted from Arles. While there, Vincent wrote around 200 letters in Dutch, French, and English.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u8_gs41",
+      "sentence_ns": [
+        41
+      ],
+      "text": "There is a gap in the record when he lived in Paris as the brothers lived together and had no need to correspond.",
+      "order_index": 3
+    },
+    {
+      "group_id": "u9_gs42_s44",
+      "sentence_ns": [
+        42,
+        43,
+        44
+      ],
+      "text": "The highly paid contemporary artist Jules Breton was frequently mentioned in Vincent's letters. In 1875 letters to Theo, Vincent mentions he saw Breton, discusses the Breton paintings he saw at a Salon, and discusses sending one of Breton's books but only on condition that it be returned. In a March 1884 letter to Rappard he discusses one of Breton's poems that had inspired one of his paintings.",
+      "order_index": 1
+    },
+    {
+      "group_id": "u9_gs45_s47",
+      "sentence_ns": [
+        45,
+        46,
+        47
+      ],
+      "text": "In 1885, he describes Breton's famous work The Song of the Lark as being \"fine\". In March 1880, roughly midway between these letters, Van Gogh set out on an 80-kilometre (50 mi) trip on foot to meet Breton in the village of Courrières; he was intimidated by Breton's success and the high wall around his estate, and he returned without making his presence known. It appears Breton was unaware of Van Gogh or his attempted visit.",
+      "order_index": 2
+    },
+    {
+      "group_id": "u9_gs48",
+      "sentence_ns": [
+        48
+      ],
+      "text": "There are no known letters between the two artists and Van Gogh is not one of the contemporary artists discussed by Breton in his 1891 autobiography Life of an Artist.",
+      "order_index": 3
+    }
+  ],
+  "category": "long-form"
+}
