@@ -86,6 +86,66 @@ describe("reduceAgenticActivityEvent", () => {
     });
   });
 
+  it("folds the typed citation-check lifecycle into one step", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "validating_evidence", "正在检查引用", {
+        activity: "started",
+        status: "running",
+      }),
+    );
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      phase: "validating_evidence",
+      activity: "started",
+      status: "running",
+    });
+
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "validating_evidence", "已完成引用检查", {
+        activity: "completed",
+        status: "ok",
+        outcome: "success",
+      }),
+    );
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      phase: "validating_evidence",
+      activity: "completed",
+      status: "ok",
+      outcome: "success",
+    });
+  });
+
+  it("settles a running citation-check as failed before terminal", () => {
+    let state = runningState();
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(1, "validating_evidence", "正在检查引用", {
+        activity: "started",
+        status: "running",
+      }),
+    );
+    state = reduceAgenticActivityEvent(
+      state,
+      progress(2, "validating_evidence", "未完成引用检查", {
+        activity: "failed",
+        status: "failed",
+        outcome: "failed",
+      }),
+    );
+
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({
+      phase: "validating_evidence",
+      activity: "failed",
+      status: "failed",
+      outcome: "failed",
+    });
+  });
+
   it("keeps server progress sequence separate from synthetic answer order", () => {
     let state = runningState();
     state = reduceAgenticActivityEvent(

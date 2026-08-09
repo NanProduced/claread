@@ -830,6 +830,7 @@ class _ProgressProjector:
         # touching the agent's tool surface.
         self.web_search_calls = 0
         self._agent_started_emitted = False
+        self._validation_running = False
         # ASK-WEB-R4: per-attempt telemetry context. ``turn_run_id`` and
         # ``model_route`` are server-owned, non-sensitive identifiers
         # logged with each WebSearchResultEvent for per-attempt
@@ -883,6 +884,20 @@ class _ProgressProjector:
             activity="started",
             summary="正在分析当前文章",
             status="running",
+        )
+
+    def fail_running_validation(self) -> ReaderRecordAskProgressDTO | None:
+        """Close an opened citation check before a typed terminal frame."""
+
+        if not self._validation_running:
+            return None
+        self._validation_running = False
+        return self._next(
+            phase="validating_evidence",
+            activity="failed",
+            summary="未完成引用检查",
+            status="failed",
+            outcome="failed",
         )
 
     def project(self, event: RuntimeEvent) -> list[ReaderRecordAskProgressDTO]:
@@ -1168,9 +1183,40 @@ class _ProgressProjector:
             return out
 
         if isinstance(event, ValidatingEvidenceEvent):
-            # The current backend has no public validation completion result.
-            # Keep the internal event for metrics/runtime observers, but do not
-            # expose an unfinishable citation-check step.
+            if event.activity == "started":
+                self._validation_running = True
+                out.append(
+                    self._next(
+                        phase="validating_evidence",
+                        activity="started",
+                        summary="正在检查引用",
+                        status="running",
+                    )
+                )
+                return out
+
+            self._validation_running = False
+            if event.activity == "completed":
+                out.append(
+                    self._next(
+                        phase="validating_evidence",
+                        activity="completed",
+                        summary="已完成引用检查",
+                        status="ok",
+                        outcome="success",
+                    )
+                )
+                return out
+
+            out.append(
+                self._next(
+                    phase="validating_evidence",
+                    activity="failed",
+                    summary="未完成引用检查",
+                    status="failed",
+                    outcome="failed",
+                )
+            )
             return out
 
         if isinstance(event, FinalAnswerEvent):
@@ -1464,7 +1510,7 @@ async def _run_agentic_turn(
         run_status: Literal["failed", "cancelled", "stale"],
         terminal_reason: str | None,
         finalized: FinalizedAskResult | None = None,
-    ) -> tuple[str]:
+    ) -> tuple[str, ...]:
         """Unified fail path: cleanup first, then best-effort terminal DB, then SSE.
 
         Consumers that read the returned frames see terminal only after
@@ -1498,8 +1544,19 @@ async def _run_agentic_turn(
                 turn_run_id,
                 final_status,
             )
+        frames: list[str] = []
+        validation_failure = projector.fail_running_validation()
+        if validation_failure is not None:
+            metrics.mark_validation_done()
+            frames.append(
+                encode_sse(
+                    EVENT_AGENTIC_PROGRESS,
+                    validation_failure.model_dump(mode="json"),
+                )
+            )
         metrics.mark_terminal_sent()
-        return (encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json),)
+        frames.append(encode_sse(EVENT_AGENTIC_TERMINAL, terminal_json))
+        return tuple(frames)
 
     try:
         while True:
@@ -1584,11 +1641,10 @@ async def _run_agentic_turn(
                     turn_run_id=turn["id"],
                 )
                 continue
-            # R3: validation_done marks the end of the agent run loop
-            # (ValidatingEvidenceEvent fires when finalizer starts;
-            # FinalAnswerEvent fires when finalizer completes). Whichever
-            # arrives first closes the validation phase.
-            if isinstance(item, ValidatingEvidenceEvent | FinalAnswerEvent):
+            if (
+                isinstance(item, ValidatingEvidenceEvent)
+                and item.activity != "started"
+            ):
                 metrics.mark_validation_done()
             for progress in projector.project(item):
                 yield encode_sse(
@@ -1649,8 +1705,10 @@ async def _run_agentic_turn(
                         turn_run_id=turn["id"],
                     )
                     continue
-                # R3: validation_done on drain path too.
-                if isinstance(item, ValidatingEvidenceEvent | FinalAnswerEvent):
+                if (
+                    isinstance(item, ValidatingEvidenceEvent)
+                    and item.activity != "started"
+                ):
                     metrics.mark_validation_done()
                 for progress in projector.project(item):
                     yield encode_sse(

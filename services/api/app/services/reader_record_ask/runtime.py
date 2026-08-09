@@ -392,7 +392,8 @@ async def run_reading_record_ask(
     finalizer_kind: ResponseKind = agent_output.response_kind  # type: ignore[assignment]
 
     deps.emit_event(ComposingAnswerEvent())
-    deps.emit_event(ValidatingEvidenceEvent())
+    if finalizer_kind == "grounded_answer":
+        deps.emit_event(ValidatingEvidenceEvent(activity="started"))
 
     if observation is not None:
         observation.execution_stage = "finalizer"
@@ -411,6 +412,13 @@ async def run_reading_record_ask(
         web_evidence_registry=coordinator.web_evidence_registry,
         web_search_outcome=coordinator.web_search_outcome,
     )
+    if finalizer_kind == "grounded_answer":
+        deps.emit_event(
+            ValidatingEvidenceEvent(
+                activity="completed" if finalized.status == "ok" else "failed",
+                outcome=finalized.status,
+            )
+        )
 
     final_text = finalized.answer_text if finalized.status == "ok" else None
     cited_web_citations = [

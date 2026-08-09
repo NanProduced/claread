@@ -454,9 +454,8 @@ export async function consumeReaderAskSse(
  *   learner snapshot is the sole public reasoning marker; provider/raw
  *   reasoning events never drive this metric.
  * - ``message.delta`` → ``first_answer_delta`` / ``last_answer_delta``.
- * - ``agentic.progress`` with phase ``validating_evidence`` →
- *   ``validation_done``. The backend emits this when the agent run
- *   loop ends and host-side validation begins.
+ * - a non-started ``agentic.progress`` row with phase
+ *   ``validating_evidence`` → ``validation_done``.
  * - ``message.completed`` → ``validation_done`` (idempotent) AND
  *   ``persistence_done``. The backend only emits
  *   ``message.completed`` after the canonical answer is durable, so
@@ -479,7 +478,10 @@ function markEventMetrics(
     case "agentic.progress": {
       const data = event.data as Record<string, unknown> | null;
       const phase = data?.phase;
-      if (phase === "validating_evidence") {
+      if (
+        phase === "validating_evidence" &&
+        data?.activity !== "started"
+      ) {
         metrics.markValidationDone();
       }
       break;

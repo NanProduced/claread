@@ -9,7 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.reader_record_ask.finalizer import FinalizeStatus
 
 # Optional live observation hook. Production stream may supply a queue-backed
 # sink so progress can be projected before the agent run finishes.
@@ -147,11 +149,27 @@ class ComposingAnswerEvent(BaseModel):
 
 
 class ValidatingEvidenceEvent(BaseModel):
-    """Internal signal: finalizer is about to validate citations/evidence."""
+    """Grounded-answer-only citation/evidence finalizer lifecycle."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["validating_evidence"] = "validating_evidence"
+    activity: Literal["started", "completed", "failed"]
+    outcome: FinalizeStatus | None = None
+
+    @model_validator(mode="after")
+    def _validate_lifecycle(self) -> ValidatingEvidenceEvent:
+        if self.activity == "started" and self.outcome is not None:
+            raise ValueError("started validation must not have an outcome")
+        if self.activity == "completed" and self.outcome != "ok":
+            raise ValueError("completed validation requires outcome=ok")
+        if self.activity == "failed" and self.outcome not in {
+            "context_stale",
+            "invalid_citations",
+            "unavailable",
+        }:
+            raise ValueError("failed validation requires a failed finalizer outcome")
+        return self
 
 
 class AgenticReasoningStartedEvent(BaseModel):

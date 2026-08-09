@@ -463,13 +463,9 @@ export function reduceAgenticActivityEvent(
   // unknown outcome is a failure, never an implicit success.
   const incomingOutcome =
     parsedOutcome ?? (payload.outcome == null ? null : "failed");
-  // These legacy/internal progress phases are not public lifecycle truth.
-  // Answering is driven by identity-valid message.delta events; citation
-  // checking is accepted only when a future backend sends a real result row.
+  // Answering is driven by identity-valid message.delta events. Citation
+  // checking is driven by the backend's typed started/completed/failed rows.
   if (phase === "composing_answer") {
-    return state;
-  }
-  if (phase === "validating_evidence" && stepStatus === "running") {
     return state;
   }
   const elapsedMs = asNonNegativeInt(payload.elapsed_ms) ?? state.elapsedMs;
@@ -482,7 +478,7 @@ export function reduceAgenticActivityEvent(
   const existingActivityIndex =
     activityId != null
       ? state.steps.findIndex((existing) => existing.activityId === activityId)
-      : phase === "analysis"
+      : phase === "analysis" || phase === "validating_evidence"
         ? state.steps.findIndex((existing) => existing.phase === phase)
         : -1;
   const existingActivity =
