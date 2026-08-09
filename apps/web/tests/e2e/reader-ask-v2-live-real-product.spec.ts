@@ -387,7 +387,7 @@ test.describe("CUTOVER-WEB-LACCEPT Ask v2 live Reader path", () => {
     const citationCard = page.locator('[data-slot="inline-citation-card-body"]');
     await expect(citationCard).toBeVisible();
     await expect(citationCard.locator('[data-slot="inline-citation-source"]')).toContainText(
-      "文章内依据",
+      "文章依据",
     );
     if (typeof hotCitation.title === "string" && hotCitation.title.length > 0) {
       await expect(citationCard.locator('[data-slot="inline-citation-source"]')).toContainText(
