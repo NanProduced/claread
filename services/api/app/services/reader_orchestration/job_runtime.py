@@ -36,6 +36,14 @@ import asyncpg
 
 from app.database import connection as db_connection
 from app.database.json_compat import ensure_json_object, jsonb_param
+from app.services.model_execution_journal.models import (
+    CapturedReceipt,
+    PayloadContractError,
+    RecoveryDisposition,
+)
+from app.services.model_execution_journal.service import (
+    ModelExecutionJournalService,
+)
 from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_CLAIM,
     current_span,
@@ -195,6 +203,14 @@ class ClaimResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CapturedResumeClaim:
+    """Recovery lease plus strict receipts; it carries no provider capability."""
+
+    claim: ClaimResult
+    receipts: tuple[CapturedReceipt, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class JobSnapshot:
     """Returned by ``transition`` to capture the post-transition job state."""
 
@@ -298,6 +314,62 @@ class ReaderJobRuntime:
     # Claim
     # ------------------------------------------------------------------
 
+    async def _inspect_model_execution_attempt(
+        self,
+        conn: asyncpg.Connection,
+        job_row: asyncpg.Record,
+    ) -> RecoveryDisposition:
+        return await ModelExecutionJournalService(
+            self.get_pool()
+        ).inspect_attempt_for_recovery(
+            conn,
+            reader_job_id=job_row["id"],
+            attempt_ordinal=int(job_row["attempt_count"]),
+        )
+
+    async def _pause_for_model_execution(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        job_row: asyncpg.Record,
+        disposition: RecoveryDisposition,
+    ) -> asyncpg.Record:
+        if disposition.kind == "ambiguous":
+            rationale_code = "model_execution_ambiguous"
+            failure_code = "provider_outcome_ambiguous"
+        elif disposition.kind == "captured_resume":
+            rationale_code = "model_execution_captured_resume_required"
+            failure_code = "post_provider_resume_required"
+        else:
+            raise ValueError("model execution pause requires unresolved receipt")
+
+        updated = await self._apply_transition(
+            conn,
+            job_row=job_row,
+            target_status=STATUS_PAUSED,
+            available_at=None,
+            pause_owner="system",
+            output_ref=None,
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=None,
+            rationale_code=rationale_code,
+        )
+        await self._insert_job_event(
+            conn,
+            reading_record_id=updated["reading_record_id"],
+            run_id=updated["run_id"],
+            job_id=updated["id"],
+            event_type="job_action_required",
+            payload={
+                "pause_owner": "system",
+                "rationale_code": rationale_code,
+                "failure_class": "model_execution",
+                "failure_code": failure_code,
+            },
+        )
+        return updated
+
     async def claim_next_job(
         self,
         *,
@@ -363,6 +435,17 @@ class ReaderJobRuntime:
                     )
                     if row is None:
                         return None
+
+                    journal_disposition = (
+                        await self._inspect_model_execution_attempt(conn, row)
+                    )
+                    if journal_disposition.kind != "none":
+                        await self._pause_for_model_execution(
+                            conn,
+                            job_row=row,
+                            disposition=journal_disposition,
+                        )
+                        continue
 
                     fence_error = await self._validate_fence(conn, row)
                     if fence_error is not None:
@@ -541,6 +624,17 @@ class ReaderJobRuntime:
                     if not _fingerprint_matches_base(fp, required_fingerprint_base):
                         return None
 
+                journal_disposition = (
+                    await self._inspect_model_execution_attempt(conn, row)
+                )
+                if journal_disposition.kind != "none":
+                    await self._pause_for_model_execution(
+                        conn,
+                        job_row=row,
+                        disposition=journal_disposition,
+                    )
+                    return None
+
                 fence_error = await self._validate_fence(conn, row)
                 if fence_error is not None:
                     await self._mark_job_superseded(
@@ -603,6 +697,142 @@ class ReaderJobRuntime:
     # ------------------------------------------------------------------
     # Heartbeat
     # ------------------------------------------------------------------
+
+    async def claim_captured_resume(
+        self,
+        *,
+        job_id: UUID,
+        lease_owner: str,
+        lease_duration: timedelta,
+    ) -> CapturedResumeClaim | None:
+        """Private post-provider claim seam; never grants provider capability."""
+        lease_token = uuid4()
+        lease_expires_at = datetime.now(UTC) + lease_duration
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM reader_jobs
+                    WHERE id = $1
+                    FOR UPDATE
+                    """,
+                    job_id,
+                )
+                if row is None:
+                    return None
+                if (
+                    row["status"] != STATUS_PAUSED
+                    or row["pause_owner"] != "system"
+                    or row["rationale_code"]
+                    != "model_execution_captured_resume_required"
+                    or row["failure_class"] != "model_execution"
+                    or row["failure_code"] != "post_provider_resume_required"
+                ):
+                    return None
+                try:
+                    disposition = await self._inspect_model_execution_attempt(
+                        conn, row
+                    )
+                except PayloadContractError:
+                    updated = await self._apply_transition(
+                        conn,
+                        job_row=row,
+                        target_status=STATUS_PAUSED,
+                        available_at=None,
+                        pause_owner="system",
+                        output_ref=None,
+                        failure_class="model_execution",
+                        failure_code="receipt_payload_invalid",
+                        failure_message=None,
+                        rationale_code="model_execution_receipt_invalid",
+                    )
+                    await self._insert_job_event(
+                        conn,
+                        reading_record_id=updated["reading_record_id"],
+                        run_id=updated["run_id"],
+                        job_id=updated["id"],
+                        event_type="job_action_required",
+                        payload={
+                            "pause_owner": "system",
+                            "rationale_code": "model_execution_receipt_invalid",
+                            "failure_class": "model_execution",
+                            "failure_code": "receipt_payload_invalid",
+                        },
+                    )
+                    return None
+                if disposition.kind != "captured_resume":
+                    if disposition.kind == "ambiguous":
+                        await self._pause_for_model_execution(
+                            conn,
+                            job_row=row,
+                            disposition=disposition,
+                        )
+                    return None
+                fence_error = await self._validate_fence(conn, row)
+                if fence_error is not None:
+                    await self._mark_job_superseded(
+                        conn,
+                        job_row=row,
+                        rationale_code=fence_error,
+                    )
+                    return None
+
+                updated = await conn.fetchrow(
+                    """
+                    UPDATE reader_jobs
+                    SET status = 'claimed',
+                        lease_owner = $2,
+                        lease_token = $3,
+                        lease_expires_at = $4,
+                        claimed_at = NOW(),
+                        pause_owner = NULL,
+                        rationale_code = NULL,
+                        failure_class = NULL,
+                        failure_code = NULL,
+                        failure_message = NULL,
+                        updated_at = NOW()
+                    WHERE id = $1 AND status = 'paused'
+                    RETURNING *
+                    """,
+                    job_id,
+                    lease_owner,
+                    lease_token,
+                    lease_expires_at,
+                )
+                if updated is None:
+                    return None
+                await self._insert_job_event(
+                    conn,
+                    reading_record_id=updated["reading_record_id"],
+                    run_id=updated["run_id"],
+                    job_id=updated["id"],
+                    event_type="job_resume_claimed",
+                    payload={
+                        "lease_owner": lease_owner,
+                        "lease_token": str(lease_token),
+                        "lease_expires_at": lease_expires_at.isoformat(),
+                        "attempt_count": int(updated["attempt_count"]),
+                        "invocation_keys": [
+                            receipt.identity.invocation_key
+                            for receipt in disposition.receipts
+                        ],
+                    },
+                )
+                run_envelope_json = await conn.fetchval(
+                    "SELECT envelope_json FROM reader_runs WHERE id = $1",
+                    updated["run_id"],
+                )
+                claim = _claim_result_from_row(
+                    updated,
+                    lease_owner=lease_owner,
+                    lease_token=lease_token,
+                    lease_expires_at=lease_expires_at,
+                    run_envelope_json=run_envelope_json,
+                )
+                return CapturedResumeClaim(
+                    claim=claim,
+                    receipts=disposition.receipts,
+                )
 
     async def heartbeat(
         self,
@@ -1010,6 +1240,17 @@ class ReaderJobRuntime:
                         )
                         continue
 
+                    journal_disposition = (
+                        await self._inspect_model_execution_attempt(conn, row)
+                    )
+                    if journal_disposition.kind != "none":
+                        await self._pause_for_model_execution(
+                            conn,
+                            job_row=row,
+                            disposition=journal_disposition,
+                        )
+                        continue
+
                     attempt_count = int(row["attempt_count"])
                     max_attempts = int(row["max_attempts"])
                     if attempt_count >= max_attempts:
@@ -1291,7 +1532,11 @@ class ReaderJobRuntime:
             params.append(jsonb_param(output_ref))
             param_idx += 1
 
-        if target_status in (STATUS_FAILED_TERMINAL, STATUS_RETRY_LATER):
+        if target_status in (
+            STATUS_FAILED_TERMINAL,
+            STATUS_RETRY_LATER,
+            STATUS_PAUSED,
+        ):
             if failure_class is not None:
                 set_parts.append(f"failure_class = ${param_idx}")
                 params.append(failure_class)

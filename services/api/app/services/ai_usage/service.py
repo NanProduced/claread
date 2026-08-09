@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import asyncpg
+
 from app.database import connection as db_connection
 from app.database.json_compat import jsonb_param
 from app.services.ai_usage.execution_diagnostics import (
@@ -26,6 +28,99 @@ from app.services.ai_usage.execution_diagnostics import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def insert_ai_usage_event_by_invocation_key_in_transaction(
+    conn: asyncpg.Connection,
+    *,
+    invocation_key: str,
+    event: AIUsageEventCreate,
+) -> UUID:
+    """Insert-or-get one usage event inside the caller's transaction."""
+    usage_totals = _extract_usage_totals(event.usage_data)
+    metadata_json = dict(event.metadata_json or {})
+    if event.usage_data is not None:
+        metadata_json.setdefault("usage_snapshot", event.usage_data)
+    inserted_id = await conn.fetchval(
+        """
+        INSERT INTO ai_usage_events (
+            usage_scope, capability_code, billing_mode, status,
+            user_id, reading_record_id,
+            reader_run_id, reader_job_id, enhancement_layer_id,
+            daily_reader_article_id, client_platform, request_id,
+            invocation_key,
+            workflow_name, workflow_version, schema_version, prompt_version,
+            model_route, model_profile_id, model_profile, model_provider,
+            model_name, planner_kind, policy_version, cache_hit, cache_status,
+            cache_class, input_tokens, output_tokens, total_tokens,
+            cache_read_tokens, cache_write_tokens, cached_input_tokens,
+            cache_miss_input_tokens, cache_creation_input_tokens,
+            token_budget_before, token_budget_after, latency_ms, billed_points,
+            billing_policy_version, operation_fingerprint, error_code,
+            error_message, metadata_json, created_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+            $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34,
+            $35, $36, $37, $38, $39, $40, $41, $42, $43, $44::jsonb, $45
+        )
+        ON CONFLICT (invocation_key) WHERE invocation_key IS NOT NULL
+        DO NOTHING
+        RETURNING id
+        """,
+        event.usage_scope,
+        event.capability_code,
+        event.billing_mode,
+        event.status,
+        event.user_id,
+        event.reading_record_id,
+        event.reader_run_id,
+        event.reader_job_id,
+        event.enhancement_layer_id,
+        event.daily_reader_article_id,
+        event.client_platform,
+        event.request_id,
+        invocation_key,
+        event.workflow_name,
+        event.workflow_version,
+        event.schema_version,
+        event.prompt_version,
+        event.model_route,
+        event.model_profile_id,
+        event.model_profile,
+        event.model_provider,
+        event.model_name,
+        event.planner_kind,
+        event.policy_version,
+        event.cache_hit,
+        event.cache_status,
+        event.cache_class,
+        usage_totals["input_tokens"],
+        usage_totals["output_tokens"],
+        usage_totals["total_tokens"],
+        usage_totals["cache_read_tokens"],
+        usage_totals["cache_write_tokens"],
+        event.cached_input_tokens,
+        event.cache_miss_input_tokens,
+        event.cache_creation_input_tokens,
+        event.token_budget_before,
+        event.token_budget_after,
+        event.latency_ms,
+        event.billed_points,
+        event.billing_policy_version,
+        event.operation_fingerprint,
+        event.error_code,
+        (event.error_message or "")[:1000] or None,
+        jsonb_param(metadata_json),
+        datetime.now(UTC),
+    )
+    event_id = inserted_id or await conn.fetchval(
+        "SELECT id FROM ai_usage_events WHERE invocation_key = $1",
+        invocation_key,
+    )
+    if not isinstance(event_id, UUID):
+        raise RuntimeError("ai_usage_event_insert_not_confirmed")
+    return event_id
 
 
 @dataclass(slots=True)

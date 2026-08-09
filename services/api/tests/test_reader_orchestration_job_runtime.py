@@ -11,7 +11,17 @@ import pytest
 
 from app.contracts.annotation import utf16_code_unit_length
 from app.database.connection import init_connection
+from app.services.model_execution_journal import (
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import (
+    ModelExecutionJournalService,
+)
 from app.services.reader_orchestration.job_runtime import (
+    FAKE_JOB_NAMESPACE,
+    JOB_RUNTIME_SCOPE_FAKE,
     STATUS_CLAIMED,
     STATUS_FAILED_TERMINAL,
     STATUS_PAUSED,
@@ -19,8 +29,6 @@ from app.services.reader_orchestration.job_runtime import (
     STATUS_RETRY_LATER,
     STATUS_SUCCEEDED,
     STATUS_SUPERSEDED,
-    FAKE_JOB_NAMESPACE,
-    JOB_RUNTIME_SCOPE_FAKE,
     FenceViolationError,
     IllegalTransitionError,
     LeaseExpiredError,
@@ -305,6 +313,89 @@ async def _seed_active_record(
     await _set_active_base(pool, record_id=record_id, base_id=base_id)
     run_id = await _insert_run(pool, record_id, user_id, record_generation=generation)
     return user_id, record_id, base_id, run_id
+
+
+def _journal_capture_payload(
+    *,
+    user_id: UUID,
+    record_id: UUID,
+    run_id: UUID,
+    job_id: UUID,
+    total_tokens: int = 15,
+):
+    return prepare_capture_envelope(
+        invocation_kind="reader.grammar_batch",
+        resume_payload_kind="reader.grammar_batch.result",
+        resume_payload_schema_version=1,
+        usage_event_draft_schema_version=1,
+        normalized_payload={
+            "outputs": [
+                {
+                    "unit_id": "unit-1",
+                    "output": {
+                        "schema_version": 1,
+                        "grammar_notes": [],
+                        "sentence_analyses": [],
+                    },
+                }
+            ],
+            "diagnostics": None,
+        },
+        usage_event_draft={
+            "usage_scope": "system_internal",
+            "capability_code": "reader_grammar_bundle",
+            "billing_mode": "internal_only",
+            "status": "model_call_completed",
+            "user_id": user_id,
+            "reading_record_id": record_id,
+            "reader_run_id": run_id,
+            "reader_job_id": job_id,
+            "model_route": "reader_layer_grammar_bundle",
+            "model_provider": "fake",
+            "model_name": "fake-grammar",
+            "usage_data": {
+                "input_tokens": total_tokens - 5,
+                "output_tokens": 5,
+                "total_tokens": total_tokens,
+            },
+            "metadata_json": {"unit_count": 1},
+        },
+    )
+
+
+async def _begin_journal_for_claim(
+    pool: asyncpg.Pool,
+    *,
+    claim,
+    captured: bool,
+) -> ExecutionIdentity:
+    identity = ExecutionIdentity(
+        invocation_key=(
+            f"reader:grammar_batch:{claim.job_id}:"
+            f"{claim.attempt_count}:0"
+        ),
+        reader_job_id=claim.job_id,
+        reader_run_id=claim.run_id,
+        attempt_ordinal=claim.attempt_count,
+        execution_slot=0,
+    )
+    journal = ModelExecutionJournalService(pool)
+    begun = await journal.begin_execution(
+        identity=identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    assert begun.provider_call_allowed is True
+    if captured:
+        await journal.capture_execution(
+            identity=identity,
+            prepared=_journal_capture_payload(
+                user_id=claim.user_id,
+                record_id=claim.reading_record_id,
+                run_id=claim.run_id,
+                job_id=claim.job_id,
+            ),
+        )
+    return identity
 
 
 # ---------------------------------------------------------------------------
@@ -2194,6 +2285,466 @@ async def test_transition_in_transaction_requires_active_caller_transaction(
     assert job["status"] == STATUS_CLAIMED
     events_after = await _count_job_events(job_runtime_env, job_id)
     assert events_after == events_before
+
+
+async def test_stale_started_execution_pauses_ambiguous_without_provider_recall(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="stale-started-journal",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="provider-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=False,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+
+    recovered = await runtime.recover_stale_leases()
+    normal_claim = await runtime.claim_next_job(
+        lease_owner="must-not-call-provider",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert recovered == 1
+    assert normal_claim is None
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_PAUSED
+    assert row["pause_owner"] == "system"
+    assert row["rationale_code"] == "model_execution_ambiguous"
+    assert row["failure_class"] == "model_execution"
+    assert row["failure_code"] == "provider_outcome_ambiguous"
+    assert row["attempt_count"] == 1
+    async with job_runtime_env.acquire() as conn:
+        capture_state = await conn.fetchval(
+            """
+            SELECT capture_state FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+    assert capture_state == "ambiguous"
+
+
+async def test_both_normal_claim_seams_fail_closed_for_prior_receipts(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    journal = ModelExecutionJournalService(job_runtime_env)
+
+    started_job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="started-claim-gate",
+        attempt_count=1,
+    )
+    started_identity = ExecutionIdentity(
+        invocation_key=f"reader:grammar_batch:{started_job_id}:1:0",
+        reader_job_id=started_job_id,
+        reader_run_id=run_id,
+        attempt_ordinal=1,
+        execution_slot=0,
+    )
+    await journal.begin_execution(
+        identity=started_identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    assert (
+        await runtime.claim_next_job(
+            lease_owner="normal-next",
+            lease_duration=timedelta(seconds=30),
+        )
+        is None
+    )
+    started_row = await _fetch_job(job_runtime_env, started_job_id)
+    assert started_row["status"] == STATUS_PAUSED
+    assert started_row["failure_code"] == "provider_outcome_ambiguous"
+
+    captured_job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="captured-claim-gate",
+        attempt_count=1,
+    )
+    captured_identity = ExecutionIdentity(
+        invocation_key=f"reader:grammar_batch:{captured_job_id}:1:0",
+        reader_job_id=captured_job_id,
+        reader_run_id=run_id,
+        attempt_ordinal=1,
+        execution_slot=0,
+    )
+    await journal.begin_execution(
+        identity=captured_identity,
+        invocation_kind="reader.grammar_batch",
+    )
+    await journal.capture_execution(
+        identity=captured_identity,
+        prepared=_journal_capture_payload(
+            user_id=user_id,
+            record_id=record_id,
+            run_id=run_id,
+            job_id=captured_job_id,
+        ),
+    )
+    assert (
+        await runtime.claim_job_by_id(
+            job_id=captured_job_id,
+            lease_owner="normal-by-id",
+            lease_duration=timedelta(seconds=30),
+        )
+        is None
+    )
+    captured_row = await _fetch_job(job_runtime_env, captured_job_id)
+    assert captured_row["status"] == STATUS_PAUSED
+    assert captured_row["pause_owner"] == "system"
+    assert (
+        captured_row["rationale_code"]
+        == "model_execution_captured_resume_required"
+    )
+    assert captured_row["failure_code"] == "post_provider_resume_required"
+
+
+async def test_captured_resume_has_one_claimant_new_lease_and_same_attempt(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="captured-resume",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    original = await runtime.claim_next_job(
+        lease_owner="original",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert original is not None and original.job_id == job_id
+    await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=original,
+        captured=True,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+    assert await runtime.recover_stale_leases() == 1
+
+    with pytest.raises(ValueError, match="use claim_next_job for claiming"):
+        await runtime.transition(
+            job_id=job_id,
+            target_status=STATUS_CLAIMED,
+        )
+
+    claims = await asyncio.gather(
+        runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner="resume-a",
+            lease_duration=timedelta(seconds=30),
+        ),
+        runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner="resume-b",
+            lease_duration=timedelta(seconds=30),
+        ),
+    )
+    winners = [claim for claim in claims if claim is not None]
+
+    assert len(winners) == 1
+    recovery = winners[0]
+    assert recovery.claim.attempt_count == original.attempt_count == 1
+    assert recovery.claim.lease_token != original.lease_token
+    assert len(recovery.receipts) == 1
+    assert not hasattr(recovery, "provider_call_allowed")
+    async with job_runtime_env.acquire() as conn:
+        async with conn.transaction():
+            snapshot = await runtime.validate_claim_in_transaction(
+                conn,
+                job_id=job_id,
+                lease_token=recovery.claim.lease_token,
+            )
+            assert snapshot.status == STATUS_CLAIMED
+        async with conn.transaction():
+            with pytest.raises(LeaseTokenMismatchError):
+                await runtime.validate_claim_in_transaction(
+                    conn,
+                    job_id=job_id,
+                    lease_token=original.lease_token,
+                )
+
+
+async def test_capture_conflict_system_pauses_owning_job_atomically(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="capture-conflict",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="provider-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=True,
+    )
+    journal = ModelExecutionJournalService(job_runtime_env)
+
+    with pytest.raises(CaptureEnvelopeConflictError):
+        await journal.capture_execution(
+            identity=identity,
+            prepared=_journal_capture_payload(
+                user_id=user_id,
+                record_id=record_id,
+                run_id=run_id,
+                job_id=job_id,
+                total_tokens=16,
+            ),
+        )
+
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_PAUSED
+    assert row["pause_owner"] == "system"
+    assert row["rationale_code"] == "model_execution_capture_conflict"
+    assert row["failure_code"] == "capture_envelope_conflict"
+
+
+async def test_stale_recovery_and_materializer_converge_without_deadlock(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="stale-materializer-race",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="original",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=True,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+
+    recovered, materialized = await asyncio.gather(
+        runtime.recover_stale_leases(),
+        ModelExecutionJournalService(job_runtime_env).materialize_pending(
+            limit=1
+        ),
+    )
+
+    assert recovered == 1
+    assert materialized.reconciled == 1
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_PAUSED
+    assert job["failure_code"] == "post_provider_resume_required"
+    async with job_runtime_env.acquire() as conn:
+        journal_row = await conn.fetchrow(
+            """
+            SELECT capture_state, usage_delivery_state, ai_usage_event_id
+            FROM ai_model_execution_journal
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+        event_count = await conn.fetchval(
+            "SELECT count(*) FROM ai_usage_events WHERE invocation_key = $1",
+            identity.invocation_key,
+        )
+    assert journal_row["capture_state"] == "captured"
+    assert journal_row["usage_delivery_state"] == "reconciled"
+    assert journal_row["ai_usage_event_id"] is not None
+    assert event_count == 1
+
+
+@pytest.mark.parametrize("claim_seam", ["next", "by_id"])
+async def test_stale_recovery_racing_normal_claim_is_fail_closed(
+    job_runtime_env: asyncpg.Pool,
+    claim_seam: str,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key=f"stale-{claim_seam}-race",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="original",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=claim,
+        captured=False,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+
+    if claim_seam == "next":
+        normal_claim = runtime.claim_next_job(
+            lease_owner="normal",
+            lease_duration=timedelta(seconds=30),
+        )
+    else:
+        normal_claim = runtime.claim_job_by_id(
+            job_id=job_id,
+            lease_owner="normal",
+            lease_duration=timedelta(seconds=30),
+        )
+    recovered, claimant = await asyncio.gather(
+        runtime.recover_stale_leases(),
+        normal_claim,
+    )
+
+    assert recovered == 1
+    assert claimant is None
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_PAUSED
+    assert job["pause_owner"] == "system"
+    assert job["failure_code"] == "provider_outcome_ambiguous"
+    assert job["attempt_count"] == 1
+
+
+async def test_malformed_captured_resume_stays_system_paused_without_provider(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="malformed-captured-resume",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    original = await runtime.claim_next_job(
+        lease_owner="original",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert original is not None and original.job_id == job_id
+    identity = await _begin_journal_for_claim(
+        job_runtime_env,
+        claim=original,
+        captured=True,
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+    assert await runtime.recover_stale_leases() == 1
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = '{"raw_provider_response":{}}'
+            WHERE invocation_key = $1
+            """,
+            identity.invocation_key,
+        )
+
+    recovery = await runtime.claim_captured_resume(
+        job_id=job_id,
+        lease_owner="must-not-call-provider",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert recovery is None
+    job = await _fetch_job(job_runtime_env, job_id)
+    assert job["status"] == STATUS_PAUSED
+    assert job["pause_owner"] == "system"
+    assert job["rationale_code"] == "model_execution_receipt_invalid"
+    assert job["failure_code"] == "receipt_payload_invalid"
 
 
 async def test_transition_retryable_failure_in_transaction_requires_active_caller_transaction(
