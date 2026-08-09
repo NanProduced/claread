@@ -16,6 +16,7 @@ import { makeLogicalTerminalResult } from "./ask/turn-lifecycle";
 import {
   AiWorkspacePanel,
   formatSourceNavigationFeedback,
+  truncateAtWordBoundary,
   type AiWorkspacePanelProps,
 } from "./AiWorkspacePanel";
 import type { AskComposerContext } from "./ask/composer-context";
@@ -70,6 +71,18 @@ const pageIdentity: ReaderAskPageIdentity = {
   hasAnnotations: true,
   hasReaderNotes: true,
 };
+
+describe("truncateAtWordBoundary", () => {
+  it("keeps whole words or punctuation before the hard-cut fallback", () => {
+    expect(truncateAtWordBoundary("Climate change presents an existential challenge", 36)).toBe(
+      "Climate change presents an…",
+    );
+    expect(truncateAtWordBoundary("第一部分说明背景，第二部分解释结论", 10)).toBe(
+      "第一部分说明背景，…",
+    );
+    expect(truncateAtWordBoundary("supercalifragilistic", 10)).toBe("supercali…");
+  });
+});
 
 const attachment: ReaderAskAttachment = {
   kind: "record_ref",
@@ -1566,7 +1579,9 @@ describe("AiWorkspacePanel", () => {
       expect(screen.getByText("Here is the answer.")).not.toBeNull();
     });
 
-    expect(screen.getByLabelText("查看来源 cite-1 详情")).not.toBeNull();
+    const citation = screen.getByLabelText("查看来源 cite-1 详情");
+    expect(citation.textContent).toBe("[1]");
+    expect(screen.queryByText("cite-1")).toBeNull();
   });
 
   it("does not render context anchor cards above user messages", async () => {
@@ -5555,6 +5570,7 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
         final_status: "ok",
         agentic_answer_blocks: [
           { text: "Answer stays.", citation_ids: ["c1", "c2"] },
+          { text: "The first source is cited again.", citation_ids: ["c1"] },
         ],
         agentic_citations: [
           {
@@ -5583,7 +5599,9 @@ describe("AiWorkspacePanel agentic citation UI (no premature jump)", () => {
     expect(screen.queryByText("跳转到原文")).toBeNull();
     expect(screen.queryByText("已定位到文章中的相关位置")).toBeNull();
 
-    const trigger = screen.getByRole("button", { name: /查看来源/ });
+    const triggers = screen.getAllByRole("button", { name: /查看来源/ });
+    expect(triggers.map((item) => item.textContent)).toEqual(["[1,2]", "[1]"]);
+    const trigger = triggers[0];
     fireEvent.mouseEnter(trigger);
     fireEvent.click(trigger);
     await waitFor(() => {
@@ -7762,7 +7780,10 @@ describe("AiWorkspacePanel article citation source navigation", () => {
   it("ignores a second click while a navigation is still in flight", async () => {
     let releaseNavigate: (() => void) | null = null;
     mockThreadMessages([
-      articleCitationMessage([{ citationId: "cite-1", snippet: "引用片段一。" }]),
+      articleCitationMessage([
+        { citationId: "cite-1", snippet: "引用片段一。" },
+        { citationId: "cite-2", snippet: "引用片段二。" },
+      ]),
     ]);
     const base = vi.mocked(global.fetch).getMockImplementation()!;
     let navigateRequestCount = 0;
@@ -7782,12 +7803,16 @@ describe("AiWorkspacePanel article citation source navigation", () => {
     });
     renderPanel({ onNavigateToArticleLocation: navigatedHostCallback() });
 
-    await openCitationCard("cite-1");
+    await openCitationCard("cite-1", 1);
     const button = screen.getByTestId("locate-citation-cite-1");
     fireEvent.click(button);
     await waitFor(() => {
       expect(navigateRequestCount).toBe(1);
     });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(
+      screen.getByTestId("locate-citation-cite-2").hasAttribute("disabled"),
+    ).toBe(true);
     fireEvent.click(screen.getByTestId("locate-citation-cite-1"));
     expect(navigateRequestCount).toBe(1);
     releaseNavigate!();

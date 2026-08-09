@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/cn";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
-import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type {
   ComponentProps,
   HTMLAttributes,
@@ -214,8 +214,8 @@ export function InlineCitationCardTrigger({
           }
         }}
         className={cn(
-          "inline-flex h-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
-          "bg-muted text-muted-foreground hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "inline-flex items-center justify-center text-[12px] font-medium text-muted-foreground underline decoration-transparent underline-offset-2",
+          "transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           className,
         )}
         data-slot="inline-citation-card-trigger"
@@ -286,7 +286,7 @@ export function InlineCitationCardBody({
           }
         }}
         className={cn(
-          "z-50 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md outline-none",
+          "z-50 max-h-64 w-72 max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md outline-none",
           className,
         )}
         data-slot="inline-citation-card-body"
@@ -513,13 +513,11 @@ export function InlineCitationCarouselIndex({
 }
 
 export type InlineCitationSourceProps = HTMLAttributes<HTMLDivElement> & {
-  title?: string;
   description?: string;
   children?: ReactNode;
 };
 
 export function InlineCitationSource({
-  title,
   description,
   children,
   className,
@@ -531,15 +529,9 @@ export function InlineCitationSource({
       data-slot="inline-citation-source"
       {...props}
     >
-      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-        <FileText className="h-3 w-3" aria-hidden="true" />
-        文章内依据
+      <span className="block text-[12px] font-medium text-ink">
+        文章依据
       </span>
-      {title ? (
-        <span className="mt-0.5 block truncate" data-slot="inline-citation-source-title">
-          {title}
-        </span>
-      ) : null}
       {description ? (
         <span
           className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground"
@@ -562,16 +554,33 @@ export function InlineCitationQuote({
   className,
   ...props
 }: InlineCitationQuoteProps) {
+  const [expanded, setExpanded] = useState(false);
+  const expandable = typeof children === "string" && children.trim().length > 120;
+
   return (
-    <blockquote
-      className={cn(
-        "mt-2 border-l border-border pl-2 text-xs leading-5 text-muted-foreground",
-        className,
-      )}
-      data-slot="inline-citation-quote"
-      {...props}
-    >
-      {children}
-    </blockquote>
+    <>
+      <blockquote
+        className={cn(
+          "mt-2 border-l border-border pl-2 text-[12.5px] leading-5 text-muted-foreground",
+          expandable && !expanded && "line-clamp-4",
+          className,
+        )}
+        data-slot="inline-citation-quote"
+        {...props}
+      >
+        {children}
+      </blockquote>
+      {expandable ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? "收起完整证据片段" : "展开完整证据片段"}
+          className="mt-1 text-[12px] text-muted-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "收起" : "展开"}
+        </button>
+      ) : null}
+    </>
   );
 }

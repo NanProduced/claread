@@ -33,8 +33,8 @@ export function AssistantMessage({
 
   return (
     <Message from="assistant" className={cn("max-w-full gap-2", className)}>
-      {reasoning ? <div className={contentColumnClassName}>{reasoning}</div> : null}
-      {process ? <div className={cn(contentColumnClassName, "mb-1")}>{process}</div> : null}
+      {reasoning}
+      {process}
       {answer ? <MessageContent className={contentColumnClassName}>{answer}</MessageContent> : null}
       {children ? (
         <div className={cn(contentColumnClassName, "min-w-0 space-y-3")}>

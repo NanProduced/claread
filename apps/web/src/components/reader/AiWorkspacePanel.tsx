@@ -436,10 +436,7 @@ function SelectionContextChip({
 }) {
   const attachmentKey = askAttachmentKey(attachment);
   const preferredText = attachment.selectedText?.trim() || askAttachmentLabel(attachment);
-  const displayLabel =
-    preferredText.length <= 44
-      ? preferredText
-      : `${preferredText.slice(0, 43).trimEnd()}…`;
+  const displayLabel = truncateAtWordBoundary(preferredText, 36);
   const slotLabel = slot === "auto" ? "自动选区" : "固定选区";
 
   return (
@@ -473,12 +470,38 @@ function SelectionContextChip({
   );
 }
 
-function truncateProvenanceDetail(value: string, max = 80): string {
+export function truncateAtWordBoundary(value: string, max: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= max) {
     return trimmed;
   }
-  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+  if (max <= 0) {
+    return "";
+  }
+  if (max === 1) {
+    return "…";
+  }
+
+  const prefix = trimmed.slice(0, max - 1);
+  let boundary = -1;
+  for (let index = prefix.length - 1; index > 0; index -= 1) {
+    const character = prefix[index];
+    if (/\s/u.test(character)) {
+      boundary = index;
+      break;
+    }
+    if (/[,.!?;:，。！？；：、]/u.test(character)) {
+      boundary = index + 1;
+      break;
+    }
+  }
+
+  const visible = (boundary > 0 ? prefix.slice(0, boundary) : prefix).trimEnd();
+  return `${visible}…`;
+}
+
+function truncateProvenanceDetail(value: string, max = 80): string {
+  return truncateAtWordBoundary(value, max);
 }
 
 function AskProvenanceLine({
@@ -600,10 +623,12 @@ export function formatSourceNavigationFeedback(
 function LocateCitationButton({
   citationId,
   pending,
+  disabled,
   onLocate,
 }: {
   citationId: string;
   pending: boolean;
+  disabled: boolean;
   onLocate: (citationId: string) => void;
 }) {
   return (
@@ -611,7 +636,7 @@ function LocateCitationButton({
       type="button"
       data-testid={`locate-citation-${citationId}`}
       aria-label="定位原文"
-      disabled={pending}
+      disabled={disabled}
       onClick={() => onLocate(citationId)}
       className="mt-2 inline-flex items-center rounded-md border border-border/60 px-2 py-1 text-[12px] leading-4 text-muted-foreground transition-colors hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lens-blue/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
@@ -645,11 +670,14 @@ function AgenticAnswerBlocks({
   pendingCitationId?: string | null;
 }) {
   const citationById = new Map(citations.map((c) => [c.citationId, c]));
+  const citationNumberById = new Map(
+    citations.map((citation, index) => [citation.citationId, index + 1]),
+  );
 
   return (
     <div className="space-y-3" data-testid="agentic-answer-blocks">
       {blocks.map((block, idx) => {
-        const blockCitations = (block.citation_ids ?? [])
+        const blockCitations = [...new Set(block.citation_ids ?? [])]
           .map((citationId) => citationById.get(citationId))
           .filter(
             (citation): citation is AgenticCitationDisplayItem =>
@@ -674,14 +702,15 @@ function AgenticAnswerBlocks({
                           : ""
                       } 详情`}
                     >
-                      {blockCitations.length === 1
-                        ? blockCitations[0].citationId
-                        : `${blockCitations[0].citationId} +${blockCitations.length - 1}`}
+                      [{blockCitations
+                        .map((citation) => citationNumberById.get(citation.citationId))
+                        .filter((number): number is number => number != null)
+                        .join(",")}]
                     </InlineCitationCardTrigger>
                     <InlineCitationCardBody>
                       {blockCitations.length === 1 ? (
                         <>
-                          <InlineCitationSource title={blockCitations[0].title}>
+                          <InlineCitationSource>
                             {blockCitations[0].snippet ? (
                               <InlineCitationQuote>
                                 {blockCitations[0].snippet}
@@ -695,6 +724,7 @@ function AgenticAnswerBlocks({
                                 pending={
                                   pendingCitationId === blockCitations[0].citationId
                                 }
+                                disabled={pendingCitationId != null}
                                 onLocate={onLocateCitation}
                               />
                             </div>
@@ -712,7 +742,7 @@ function AgenticAnswerBlocks({
                           <InlineCitationCarouselContent>
                             {blockCitations.map((citation) => (
                               <InlineCitationCarouselItem key={citation.citationId}>
-                                <InlineCitationSource title={citation.title}>
+                                <InlineCitationSource>
                                   {citation.snippet ? (
                                     <InlineCitationQuote>
                                       {citation.snippet}
@@ -726,6 +756,7 @@ function AgenticAnswerBlocks({
                                       pending={
                                         pendingCitationId === citation.citationId
                                       }
+                                      disabled={pendingCitationId != null}
                                       onLocate={onLocateCitation}
                                     />
                                   </div>
@@ -866,6 +897,7 @@ function MessageBubble({
                     className="px-0.5"
                     reasoning={
                       <LearnerReasoningPanel
+                        className="w-full max-w-[38rem]"
                         text={message.learner_reasoning_text}
                         status={
                           message.status === "streaming"
@@ -882,6 +914,7 @@ function MessageBubble({
                     }
                     process={
                       <TurnProcessDisclosure
+                        className="mb-1 w-full max-w-[38rem]"
                         activity={
                           message.status === "streaming"
                             ? (agenticActivity ?? null)
