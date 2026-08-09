@@ -170,10 +170,12 @@ max chars）/ 3（max sentences per group）：典型 1-3 个短句合并为一�
 `planner_version`。
 
 24 篇盲评（`evals/datasets/translation-grouping-v1`，deterministic planner vs
-盲化语义分组，独立盲评）显示语义分组 overall 胜率 19/24（Wilson 95%
-[0.595, 0.908]），结构复杂文档 8/8、长文 7/8、短新闻持平——语义分组对
-deterministic planner 的初步显著收益成立；两阶段（LLM planner 出 anchor ranges
-→ 既有校验冻结 → translator 只回 `group_id + translated_text`）为后续实施候选。
+盲化语义分组）显示语义分组 overall 胜率 19/24（Wilson 95%
+[0.595, 0.908]），结构复杂文档 8/8、长文 7/8、短新闻持平。这是一项较强的
+探索性方向信号，不是独立模型族或人工 evaluator 的显著性结论：semantic arm
+与 judges 属于同族 sub-agent，semantic arm 也不是生产 candidate planner。
+当前证据不授权生产 two-stage LLM planner；如继续对照，必须使用生产 candidate
+planner、独立模型族或人工 evaluator，并保持 blind side assignment。
 
 D5 vocabulary layer 保留旧 AI Workflow 的三类词汇批注语义，但它们是同一个 `vocabulary` layer 内的 `item_type`，不是三个顶层 layer type：
 
