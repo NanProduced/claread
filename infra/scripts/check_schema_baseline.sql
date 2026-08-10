@@ -1,7 +1,7 @@
 -- DATA-SCHEMA-BASELINE D2 fail-closed guard for the single fresh baseline.
 -- Run with: psql -v ON_ERROR_STOP=1 -f check_schema_baseline.sql
 -- Verifies infra/migrations/0001_initial.sql end state:
---   1. exactly the 52 baseline application tables exist
+--   1. exactly the 53 baseline application tables exist
 --      (directus_* tables are Directus-managed and always allowed, so the
 --      guard passes both before and after Directus bootstrap),
 --   2. legacy analysis / Eval control-plane tables are absent,
@@ -12,6 +12,7 @@
 DO $guard$
 DECLARE
     expected_tables text[] := ARRAY[
+        'ai_model_execution_journal',
         'ai_usage_events',
         'analysis_windows',
         'anchor_segments',

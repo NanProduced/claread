@@ -13,12 +13,13 @@
 -- 且 exam_tags 字段需额外脚本标注,因此重置时必须保留。
 -- eval_example_lab_entries 是受保护的 Example Lab 数据,同样保留。
 -- DATA-SCHEMA-BASELINE D2: DROP 清单与单一基线精确对齐
--- (48 张非保护表;无 legacy analysis / Eval 表残留)。
+-- (49 张非保护表;无 legacy analysis / Eval 表残留)。
 -- ============================================================
 
 BEGIN;
 
 DROP TABLE IF EXISTS
+  ai_model_execution_journal,
   ai_usage_events,
   analysis_windows,
   anchor_segments,
