@@ -2365,8 +2365,6 @@ CREATE INDEX ix_reader_runtime_spans_trace_id ON reader_runtime_spans USING btre
 
 CREATE INDEX ix_reader_runtime_spans_worker_type ON reader_runtime_spans USING btree (worker_type);
 
-CREATE UNIQUE INDEX uq_ai_usage_events_legacy_grammar_request_id ON ai_usage_events USING btree (request_id) WHERE (request_id ~~ 'reader_grammar_batch:%'::text);
-
 CREATE UNIQUE INDEX uq_ai_usage_events_invocation_key ON ai_usage_events USING btree (invocation_key) WHERE (invocation_key IS NOT NULL);
 
 CREATE UNIQUE INDEX uq_ai_model_execution_journal_invocation_key ON ai_model_execution_journal USING btree (invocation_key);

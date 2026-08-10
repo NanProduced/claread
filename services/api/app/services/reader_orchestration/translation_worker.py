@@ -2806,50 +2806,6 @@ class TranslationWorkerService:
                 ),
             )
 
-    async def _record_batch_usage_event(
-        self,
-        *,
-        context: TranslationBatchJobContext,
-        execution: TranslationBatchExecutionResult,
-        published_batch: PublishedTranslationBatch,
-        status: str,
-    ) -> UUID | None:
-        return await record_ai_usage_event(
-            AIUsageEventCreate(
-                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_TRANSLATION,
-                billing_mode=BILLING_MODE_INTERNAL_ONLY,
-                status=status,
-                user_id=context.user_id,
-                reading_record_id=context.reading_record_id,
-                reader_run_id=context.run_id,
-                reader_job_id=context.job_id,
-                enhancement_layer_id=published_batch.layers[0].layer_id
-                if published_batch.layers
-                else None,
-                workflow_name="reader_orchestration",
-                workflow_version="t1-1-translation-batch-worker",
-                prompt_version=execution.prompt_version,
-                model_route=execution.model_route,
-                model_profile_id=execution.model_profile,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name,
-                planner_kind="llm_worker",
-                usage_data=execution.usage_data,
-                operation_fingerprint=context.operation_fingerprint,
-                metadata_json={
-                    "base_id": str(context.base_id),
-                    "target_unit_ids": list(context.target_unit_ids),
-                    "unit_count": len(context.units),
-                    "target_language": context.target_language,
-                    "source_language": context.source_language,
-                    "batch": True,
-                    **_translation_profile_audit_fields(context),
-                },
-            )
-        )
-
     async def _record_batch_failed_usage_event(
         self,
         *,
@@ -3158,46 +3114,6 @@ class TranslationWorkerService:
                 failure_code=failure_code,
                 finished_at=finished_at,
             )
-
-    async def _record_usage_event(
-        self,
-        *,
-        context: TranslationJobContext,
-        execution: TranslationExecutionResult,
-        published_layer: PublishedTranslationLayer,
-        status: str,
-    ) -> UUID | None:
-        return await record_ai_usage_event(
-            AIUsageEventCreate(
-                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_TRANSLATION,
-                billing_mode=BILLING_MODE_INTERNAL_ONLY,
-                status=status,
-                user_id=context.user_id,
-                reading_record_id=context.reading_record_id,
-                reader_run_id=context.run_id,
-                reader_job_id=context.job_id,
-                enhancement_layer_id=published_layer.layer_id,
-                workflow_name="reader_orchestration",
-                workflow_version="d4-p1-translation-worker",
-                prompt_version=execution.prompt_version,
-                model_route=execution.model_route,
-                model_profile_id=execution.model_profile,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name,
-                planner_kind="llm_worker",
-                usage_data=execution.usage_data,
-                operation_fingerprint=context.operation_fingerprint,
-                metadata_json={
-                    "base_id": str(context.base_id),
-                    "unit_id": context.unit_id,
-                    "target_language": context.target_language,
-                    "source_language": context.source_language,
-                    **_translation_profile_audit_fields(context),
-                },
-            )
-        )
 
     async def _record_failed_usage_event(
         self,

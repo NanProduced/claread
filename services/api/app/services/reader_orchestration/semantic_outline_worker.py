@@ -1340,41 +1340,6 @@ class SemanticOutlineWorkerService:
                 failure_code,
             )
 
-    async def _maybe_record_success_usage(
-        self,
-        *,
-        context: SemanticOutlineJobContext,
-        execution: SemanticOutlineExecutionResult,
-    ) -> UUID | None:
-        """Record exactly one usage event when a provider call was made."""
-        if not execution.provider_call_made:
-            return None
-        return await record_ai_usage_event(
-            AIUsageEventCreate(
-                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
-                billing_mode=BILLING_MODE_INTERNAL_ONLY,
-                status=USAGE_STATUS_SUCCEEDED,
-                user_id=context.user_id,
-                reading_record_id=context.reading_record_id,
-                reader_run_id=context.run_id,
-                reader_job_id=context.job_id,
-                workflow_name="reader_orchestration",
-                workflow_version=SEMANTIC_OUTLINE_WORKER_VERSION,
-                prompt_version=execution.prompt_version,
-                model_route=(
-                    execution.model_route or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
-                ),
-                model_profile_id=execution.model_profile,
-                model_profile=execution.model_profile,
-                model_provider=execution.model_provider,
-                model_name=execution.model_name or execution.model,
-                planner_kind="llm_worker",
-                usage_data=execution.usage_data,
-                operation_fingerprint=context.operation_fingerprint,
-            )
-        )
-
     async def _maybe_record_error_usage(
         self,
         *,

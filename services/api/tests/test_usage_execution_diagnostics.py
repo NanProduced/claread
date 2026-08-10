@@ -1841,7 +1841,6 @@ async def _run_window_attempt(
     claim: ClaimResult,
     process_side_effect: Any,
     publisher: Any | None = None,
-    record_usage_side_effect: Any | None = None,
 ) -> Any:
     """Drive ``_run_grammar_window_attempt`` with mocked claim/process/publish."""
     runner = ReaderEnhancementPipelineRunner(
@@ -1880,14 +1879,6 @@ async def _run_window_attempt(
     pub = publisher if publisher is not None else AsyncMock(return_value=_published_window())
     runner._grammar_window_publisher = MagicMock()
     runner._grammar_window_publisher.publish_window_grammar_bundle = pub
-
-    if record_usage_side_effect is not None:
-        runner._record_window_success_usage = AsyncMock(  # type: ignore[method-assign]
-            side_effect=record_usage_side_effect
-        )
-        runner._record_window_failure_usage = AsyncMock(  # type: ignore[method-assign]
-            side_effect=record_usage_side_effect
-        )
 
     return await runner._run_grammar_window_attempt(
         record_id=claim.reading_record_id,

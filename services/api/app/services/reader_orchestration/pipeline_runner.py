@@ -39,7 +39,6 @@ from app.services.reader_orchestration.grammar_window_bootstrap import (
 from app.services.reader_orchestration.grammar_window_publisher import (
     NO_OP_CAUSE_EXECUTION_FAILED,
     GrammarWindowPublisher,
-    PublishedWindowResult,
     WindowCandidateContent,
 )
 from app.services.reader_orchestration.grammar_window_worker import (
@@ -106,7 +105,6 @@ from app.services.reader_orchestration.span_recorder import (
     SPAN_KIND_WORKER_TICK,
     STATUS_FAILED,
     STATUS_SKIPPED,
-    STATUS_SUCCEEDED,
     current_span,
     end_worker_span_execution_error,
     end_worker_span_fence_violation,
@@ -2379,68 +2377,6 @@ class ReaderEnhancementPipelineRunner:
             "target_unit_ids": list(input_data.get("target_unit_ids", [])),
             "target_anchor_ids": target_anchor_ids,
         }
-
-    async def _record_window_success_usage(
-        self,
-        *,
-        claim: ClaimResult,
-        result: dict[str, Any],
-        plan_id: UUID,
-        window_id: UUID,
-        window_meta: dict[str, Any],
-        published: PublishedWindowResult,
-    ) -> UUID | None:
-        """Record a succeeded ``ai_usage_event`` for a grammar-window window publish.
-
-        Requirement 6: ``capability_code`` uses ``reader_grammar_bundle``,
-        ``operation_fingerprint`` uses ``grammar_bundle_window_v1``, and
-        ``metadata`` includes ``plan_id`` / ``window_id`` / ``window_index`` /
-        ``target_unit_ids`` / ``target_anchor_ids`` / ``accepted_count`` /
-        ``no_op`` / ``layer_ids`` so Console can correlate grammar-window window runs
-        with their LLM cost.
-        """
-        layer_ids = list(published.grammar_note_layer_ids) + list(
-            published.sentence_analysis_layer_ids
-        )
-        return await record_ai_usage_event(
-            AIUsageEventCreate(
-                usage_scope=USAGE_SCOPE_SYSTEM_INTERNAL,
-                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
-                billing_mode=BILLING_MODE_INTERNAL_ONLY,
-                status=STATUS_SUCCEEDED,
-                user_id=claim.user_id,
-                reading_record_id=claim.reading_record_id,
-                reader_run_id=claim.run_id,
-                reader_job_id=claim.job_id,
-                workflow_name="reader_orchestration",
-                workflow_version=GRAMMAR_WINDOW_WORKFLOW_VERSION,
-                prompt_version=result.get("prompt_version"),
-                model_route=result.get("model_route"),
-                model_profile_id=result.get("model_profile"),
-                model_profile=result.get("model_profile"),
-                model_provider=result.get("model_provider"),
-                model_name=result.get("model_name"),
-                planner_kind="llm_worker",
-                usage_data=result.get("usage_data"),
-                operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
-                metadata_json={
-                    "plan_id": str(plan_id),
-                    "window_id": str(window_id),
-                    "window_index": window_meta.get("window_index"),
-                    "target_unit_ids": window_meta.get("target_unit_ids", []),
-                    "target_anchor_ids": window_meta.get("target_anchor_ids", []),
-                    "accepted_count": published.accepted_count,
-                    "no_op": published.skipped or published.accepted_count == 0,
-                    "layer_ids": [str(lid) for lid in layer_ids],
-                    "grammar_note_layer_ids": [
-                        str(lid) for lid in published.grammar_note_layer_ids
-                    ],
-                    "sentence_analysis_layer_ids": [
-                        str(lid) for lid in published.sentence_analysis_layer_ids
-                    ],
-                },
-            )
-        )
 
     async def _record_window_failure_usage(
         self,

@@ -31,8 +31,8 @@ Each acceptance test asserts:
   counts for the grammar path.
 
 The fourth test verifies that the grammar batch ``ai_usage_events`` token
-columns match the corresponding ``reader_runtime_spans`` row (the bug fix
-in ``_record_batch_usage_event`` that now passes ``usage_data`` through).
+columns match the corresponding ``reader_runtime_spans`` row after journal
+capture and DB-only materialization.
 
 Note: these tests use fake executors and only verify code-level contract
 closure. Real-LLM cost / quality / latency acceptance is a separate gate.
@@ -84,6 +84,7 @@ from tests.reader_orchestration_test_support import (
     make_pool,
     submit_article_ready,
 )
+from tests.test_grammar_window_bbc_regression import _StaticGrammarWindowExecutor
 from tests.test_reader_orchestration_pipeline_runner import (
     _StaticBatchTranslator,
     _StaticBatchVocabularyExecutor,
@@ -93,7 +94,6 @@ from tests.test_reader_orchestration_pipeline_runner import (
     _StaticTranslator,
     _StaticVocabularyExecutor,
 )
-from tests.test_grammar_window_bbc_regression import _StaticGrammarWindowExecutor
 
 pytestmark = pytest.mark.anyio
 

@@ -10,7 +10,8 @@ LeaseHeartbeat manager:
 - interval clamped strictly below the lease.
 
 Usage persistence (R7-3b):
-- generate returns → usage persisted IMMEDIATELY
+- generate returns → result and usage captured IMMEDIATELY
+  in the journal, then materialized by canonical invocation_key
   (model_call_completed) → publish → SAME row updated
   (layer_published);
 - heartbeat lost before publish → publish skipped, row updated
@@ -22,10 +23,8 @@ Usage persistence (R7-3b):
   exactly one row;
 - model failure before usage → STATUS_FAILED event, usage_data=None
   (never fabricated);
-- same invocation key → one row; different lease token → two rows;
-- real service functions (record_model_invocation_usage_event /
-  update_ai_usage_event_outcome) are idempotent by key against a fake
-  pool.
+- same canonical invocation key → one row;
+- the still-consumed outcome updater patches the same row against a fake pool.
 
 Expiry-aware runtime (real lease_expires_at + publisher fence):
 - positive: 40ms lease / 10ms interval / 120ms generate → published
@@ -213,8 +212,8 @@ class LeaseValidatingPublisher:
 class InMemoryUsageStore:
     """Emulates ai_usage persistence with invocation-key idempotency.
 
-    ``record`` mirrors record_model_invocation_usage_event (SELECT by
-    request_id first; insert otherwise; None on injected failure).
+    ``record`` mirrors the journal materializer's invocation_key conflict
+    handling (insert-or-get; None on injected failure).
     ``record_failed`` mirrors the pre-existing STATUS_FAILED error
     event path (no invocation key, no tokens). ``update`` mirrors
     update_ai_usage_event_outcome (same row, never a second event).
@@ -231,21 +230,26 @@ class InMemoryUsageStore:
         self.record_started = asyncio.Event()
         self.record_release: asyncio.Event | None = None
 
-    async def record(self, event: AIUsageEventCreate) -> UUID | None:
+    async def record(
+        self,
+        event: AIUsageEventCreate,
+        *,
+        invocation_key: str,
+    ) -> UUID | None:
         self.record_attempts += 1
         self.record_started.set()
         if self.record_release is not None:
             await self.record_release.wait()
-        if event.request_id:
-            for row_id, row in self.rows.items():
-                if row["request_id"] == event.request_id:
-                    return row_id  # idempotent: same invocation, same row
+        for row_id, row in self.rows.items():
+            if row["invocation_key"] == invocation_key:
+                return row_id  # idempotent: same invocation, same row
         if self.fail_next_records > 0:
             self.fail_next_records -= 1
             return None  # DB failure: caller must NOT mark as recorded
         self.insert_count += 1
         row_id = uuid4()
         self.rows[row_id] = {
+            "invocation_key": invocation_key,
             "request_id": event.request_id,
             "status": event.status,
             "usage_data": event.usage_data,
@@ -257,6 +261,7 @@ class InMemoryUsageStore:
     async def record_failed(self, event: AIUsageEventCreate) -> UUID | None:
         row_id = uuid4()
         self.rows[row_id] = {
+            "invocation_key": None,
             "request_id": event.request_id,
             "status": event.status,
             "usage_data": event.usage_data,
@@ -336,11 +341,11 @@ class InMemoryJournal:
         for invocation_key, receipt in list(self.receipts.items()):
             if receipt.usage_delivery_state != "pending":
                 continue
-            event = replace(
-                AIUsageEventCreate(**receipt.usage_event_draft),
-                request_id=invocation_key,
+            event = AIUsageEventCreate(**receipt.usage_event_draft)
+            event_id = await self.usage_store.record(
+                event,
+                invocation_key=invocation_key,
             )
-            event_id = await self.usage_store.record(event)
             if event_id is None:
                 continue
             self.receipts[invocation_key] = replace(
@@ -642,7 +647,8 @@ async def test_usage_persisted_immediately_and_outcome_updates_same_row(
     assert usage_store.insert_count == 1
     assert len(usage_store.rows) == 1
     row = next(iter(usage_store.rows.values()))
-    assert row["request_id"] == _expected_invocation_key(claim)
+    assert row["invocation_key"] == _expected_invocation_key(claim)
+    assert row["request_id"] is None
     assert row["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
     assert row["usage_data"] == REAL_USAGE
     assert row["metadata"]["model_call_completed"] is True
@@ -793,15 +799,15 @@ async def test_retry_invocations_are_separate_usage_rows(
     assert result_a.status == "succeeded"
     assert result_b.status == "succeeded"
     assert executor.calls == 2
-    # Two real invocations (different lease tokens) → two rows, never
-    # wrongly deduplicated.
+    # Two logical executions have distinct canonical keys and rows.
     assert usage_store.insert_count == 2
     assert len(usage_store.rows) == 2
-    keys = {row["request_id"] for row in usage_store.rows.values()}
+    keys = {row["invocation_key"] for row in usage_store.rows.values()}
     assert keys == {
         _expected_invocation_key(claim_a),
         _expected_invocation_key(claim_b),
     }
+    assert all(row["request_id"] is None for row in usage_store.rows.values())
     assert all(
         row["status"] == GRAMMAR_USAGE_STATUS_LAYER_PUBLISHED
         for row in usage_store.rows.values()
@@ -1032,21 +1038,27 @@ async def test_outcome_update_failure_retries_same_usage_row(
 async def test_same_invocation_key_never_inserts_twice(
     usage_store: InMemoryUsageStore
 ) -> None:
+    invocation_key = "reader:reader_grammar_bundle:job-1:1:1"
     event = AIUsageEventCreate(
         usage_scope="system_internal",
         capability_code="reader_grammar_bundle",
         billing_mode="internal_only",
         status="model_call_completed",
-        request_id="reader_grammar_batch:j:t",
         usage_data=dict(REAL_USAGE),
         metadata_json={},
     )
-    first = await usage_store.record(event)
-    second = await usage_store.record(event)  # retried persistence
+    first = await usage_store.record(event, invocation_key=invocation_key)
+    second = await usage_store.record(
+        event,
+        invocation_key=invocation_key,
+    )  # retried materialization
     assert first is not None
     assert second == first
     assert usage_store.insert_count == 1
     assert len(usage_store.rows) == 1
+    row = next(iter(usage_store.rows.values()))
+    assert row["invocation_key"] == invocation_key
+    assert row["request_id"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -1090,72 +1102,11 @@ async def test_ownership_lost_retryable_error_writes_neither_job_nor_run(
     assert statuses == ["failed"]
 
 
-# ---------------------------------------------------------------------------
-# R7-3b E: idempotency of the REAL service functions (fake pool)
-# ---------------------------------------------------------------------------
-
-
-_INVOCATION_KEY_PLACEHOLDER_ORDINAL = 12
-
-
-def _ai_usage_insert_row(
-    sql: str, args: tuple[object, ...]
-) -> dict[str, object]:
-    normalized_sql = " ".join(sql.split())
-    prefix = "INSERT INTO ai_usage_events ("
-    assert normalized_sql.startswith(prefix), "expected ai_usage_events INSERT"
-    columns_sql, values_tail = normalized_sql[len(prefix) :].split(
-        ") VALUES (", maxsplit=1
-    )
-    values_sql, suffix = values_tail.split(") RETURNING id", maxsplit=1)
-    assert not suffix, "unexpected SQL after ai_usage_events RETURNING id"
-
-    columns = [column.strip() for column in columns_sql.split(",")]
-    values = [value.strip() for value in values_sql.split(",")]
-    placeholders = [value.partition("::")[0] for value in values]
-    expected_placeholders = [f"${index}" for index in range(1, len(args) + 1)]
-    assert len(columns) == len(args), (
-        f"ai_usage_events INSERT has {len(columns)} columns but {len(args)} arguments"
-    )
-    assert placeholders == expected_placeholders, (
-        "ai_usage_events INSERT placeholders no longer map one-to-one to arguments"
-    )
-
-    placeholder_by_column = dict(zip(columns, placeholders, strict=True))
-    invocation_placeholder = placeholder_by_column.get("request_id")
-    assert invocation_placeholder == f"${_INVOCATION_KEY_PLACEHOLDER_ORDINAL}", (
-        "ai_usage invocation identity moved: expected request_id at "
-        f"${_INVOCATION_KEY_PLACEHOLDER_ORDINAL}, got {invocation_placeholder}"
-    )
-    return dict(zip(columns, args, strict=True))
-
-
 class _FakePoolConn:
-    """SELECT-by-request_id then INSERT ... RETURNING id, in memory."""
+    """Minimal pool connection for the still-consumed outcome updater."""
 
-    def __init__(self, store: dict[str, UUID]) -> None:
-        self.store = store
-        self.inserts = 0
-        self.insert_rows: list[dict[str, object]] = []
+    def __init__(self) -> None:
         self.execute_calls: list[tuple[str, tuple]] = []
-
-    async def fetchval(self, sql: str, *args):
-        if "SELECT id FROM ai_usage_events" in sql:
-            return self.store.get(args[0])
-        if "INSERT INTO ai_usage_events" in sql:
-            row = _ai_usage_insert_row(sql, args)
-            invocation_key = row["request_id"]
-            assert invocation_key is None or isinstance(invocation_key, str)
-            assert invocation_key is None or invocation_key not in self.store, (
-                f"duplicate INSERT for invocation key {invocation_key!r}"
-            )
-            self.inserts += 1
-            new_id = uuid4()
-            self.insert_rows.append(row)
-            if invocation_key is not None:
-                self.store[invocation_key] = new_id
-            return new_id
-        raise AssertionError(f"unexpected fetchval: {sql}")
 
     async def execute(self, sql: str, *args):
         self.execute_calls.append((sql, args))
@@ -1174,101 +1125,9 @@ class _FakePoolConn:
         return _Acquire()
 
 
-def _model_invocation_event(invocation_key: str | None) -> AIUsageEventCreate:
-    return AIUsageEventCreate(
-        usage_scope="system_internal",
-        capability_code="reader_grammar_bundle",
-        billing_mode="internal_only",
-        status="model_call_completed",
-        request_id=invocation_key,
-        model_provider="test-provider",
-        model_name="test-model",
-        usage_data=dict(REAL_USAGE),
-        metadata_json={},
-    )
-
-
-@pytest.mark.anyio
-async def test_real_record_function_is_idempotent_by_invocation_key(monkeypatch):
-    store: dict[str, UUID] = {}
-    conn = _FakePoolConn(store)
-    fake_db = SimpleNamespace(acquire=conn.acquire)
-    monkeypatch.setattr(usage_service_module.db_connection, "DB_POOL", fake_db)
-
-    event = _model_invocation_event("reader_grammar_batch:job-1:lease-1")
-    first = await usage_service_module.record_model_invocation_usage_event(event)
-    second = await usage_service_module.record_model_invocation_usage_event(event)
-    assert first is not None
-    assert second == first
-    assert conn.inserts == 1  # second call answered from SELECT, no insert
-    assert len(conn.insert_rows) == 1
-    row = conn.insert_rows[0]
-    assert (
-        row["request_id"],
-        row["status"],
-        row["model_provider"],
-        row["model_name"],
-        row["input_tokens"],
-        row["output_tokens"],
-        row["total_tokens"],
-    ) == (
-        "reader_grammar_batch:job-1:lease-1",
-        "model_call_completed",
-        "test-provider",
-        "test-model",
-        120,
-        45,
-        165,
-    )
-
-
-@pytest.mark.anyio
-async def test_real_record_function_keeps_distinct_invocation_keys_independent(
-    monkeypatch,
-):
-    conn = _FakePoolConn({})
-    fake_db = SimpleNamespace(acquire=conn.acquire)
-    monkeypatch.setattr(usage_service_module.db_connection, "DB_POOL", fake_db)
-
-    first = await usage_service_module.record_model_invocation_usage_event(
-        _model_invocation_event("reader_grammar_batch:job-1:lease-1")
-    )
-    second = await usage_service_module.record_model_invocation_usage_event(
-        _model_invocation_event("reader_grammar_batch:job-1:lease-2")
-    )
-
-    assert first is not None
-    assert second is not None
-    assert second != first
-    assert conn.inserts == 2
-    assert [row["request_id"] for row in conn.insert_rows] == [
-        "reader_grammar_batch:job-1:lease-1",
-        "reader_grammar_batch:job-1:lease-2",
-    ]
-
-
-@pytest.mark.anyio
-async def test_real_record_function_does_not_deduplicate_without_invocation_key(
-    monkeypatch,
-):
-    conn = _FakePoolConn({})
-    fake_db = SimpleNamespace(acquire=conn.acquire)
-    monkeypatch.setattr(usage_service_module.db_connection, "DB_POOL", fake_db)
-    event = _model_invocation_event(None)
-
-    first = await usage_service_module.record_model_invocation_usage_event(event)
-    second = await usage_service_module.record_model_invocation_usage_event(event)
-
-    assert first is not None
-    assert second is not None
-    assert second != first
-    assert conn.inserts == 2
-    assert all(row["request_id"] is None for row in conn.insert_rows)
-
-
 @pytest.mark.anyio
 async def test_real_outcome_update_patches_same_row(monkeypatch):
-    conn = _FakePoolConn({})
+    conn = _FakePoolConn()
     fake_db = SimpleNamespace(acquire=conn.acquire)
     monkeypatch.setattr(usage_service_module.db_connection, "DB_POOL", fake_db)
     event_id = uuid4()

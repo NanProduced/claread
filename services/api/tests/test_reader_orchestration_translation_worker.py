@@ -574,7 +574,6 @@ async def test_bootstrap_creates_translation_run_and_job_with_expected_fingerpri
 
 async def test_worker_process_hydrates_generation_output_and_passes_durable_output_to_publisher(
     translation_worker_env: asyncpg.Pool,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user_id = await insert_user(translation_worker_env)
     article = await submit_article_ready(translation_worker_env, user_id=user_id)
@@ -596,11 +595,6 @@ async def test_worker_process_hydrates_generation_output_and_passes_durable_outp
         translator=translator,
         layer_publisher=publisher,
     )
-    async def _noop_record_usage_event(**kwargs) -> None:
-        return None
-
-    monkeypatch.setattr(worker, "_record_usage_event", _noop_record_usage_event)
-
     result = await worker.process_next_translation_job(
         lease_owner="worker-1",
         lease_duration=timedelta(seconds=30),

@@ -166,12 +166,21 @@ $guard$;
 DO $guard$
 BEGIN
     IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'ai_usage_events'
+          AND column_name = 'request_id'
+          AND data_type = 'text'
+    ) THEN
+        RAISE EXCEPTION 'ai_usage_events.request_id correlation column must remain';
+    END IF;
+
+    IF EXISTS (
         SELECT 1 FROM pg_indexes
         WHERE schemaname = 'public'
-          AND indexname = 'uq_ai_usage_events_legacy_grammar_request_id'
-          AND indexdef LIKE '%(request_id)%reader_grammar_batch:%'
+          AND indexname = 'uq_ai_usage_events_' || 'legacy_grammar_request_id'
     ) THEN
-        RAISE EXCEPTION 'missing legacy Grammar request_id uniqueness index';
+        RAISE EXCEPTION 'legacy Grammar request_id uniqueness index must be absent';
     END IF;
 
     IF EXISTS (
@@ -187,9 +196,9 @@ BEGIN
         SELECT 1 FROM pg_indexes
         WHERE schemaname = 'public'
           AND indexname = 'uq_ai_usage_events_invocation_key'
-          AND indexdef LIKE '%(invocation_key)%WHERE (invocation_key IS NOT NULL)%'
+          AND indexdef ~ 'USING btree \(invocation_key\) WHERE \(invocation_key IS NOT NULL\)$'
     ) THEN
-        RAISE EXCEPTION 'missing uq_ai_usage_events_invocation_key index';
+        RAISE EXCEPTION 'uq_ai_usage_events_invocation_key must uniquely constrain invocation_key only';
     END IF;
 
     IF NOT EXISTS (
