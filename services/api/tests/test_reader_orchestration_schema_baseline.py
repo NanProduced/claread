@@ -33,12 +33,50 @@ BASELINE_SQL = re.sub(
 )
 
 
+def test_legacy_reader_success_accounting_symbols_are_physically_deleted() -> None:
+    scan_roots = (
+        API_ROOT / "app",
+        API_ROOT / "tests",
+        REPO_ROOT / "infra" / "migrations" / "0001_initial.sql",
+        REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql",
+    )
+    forbidden_tokens = (
+        "_record_" + "usage_event",
+        "_record_batch_" + "usage_event",
+        "_maybe_record_" + "success_usage",
+        "_record_window_" + "success_usage",
+        "_batch_" + "invocation_key",
+        "_per_unit_" + "invocation_key",
+        "reader_grammar_" + "batch:",
+        "fetch_usage_event_id_by_" + "invocation_key",
+        "record_model_invocation_" + "usage_event",
+        "uq_ai_usage_events_" + "legacy_grammar_request_id",
+    )
+
+    hits: list[str] = []
+    for root in scan_roots:
+        paths = (root,) if root.is_file() else root.rglob("*")
+        for path in paths:
+            if not path.is_file() or path.suffix not in {".py", ".sql"}:
+                continue
+            source = path.read_text(encoding="utf-8")
+            for token in forbidden_tokens:
+                if token in source:
+                    hits.append(f"{path.relative_to(REPO_ROOT)}:{token}")
+
+    assert hits == []
+
+
 def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
     schema_check_sql = (
         REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql"
     ).read_text(encoding="utf-8")
+    legacy_request_index = (
+        "uq_ai_usage_events_" + "legacy_grammar_request_id"
+    )
 
     assert "CREATE TABLE ai_model_execution_journal (" in BASELINE_SQL
+    assert "request_id text," in BASELINE_SQL
     assert "invocation_key text" in BASELINE_SQL
     assert "CONSTRAINT ai_model_execution_journal_state_matrix_check" in (
         BASELINE_SQL
@@ -47,17 +85,14 @@ def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
         "CONSTRAINT ai_model_execution_journal_execution_slot_check "
         "CHECK ((execution_slot >= 1))"
     ) in BASELINE_SQL
-    assert (
-        "CREATE UNIQUE INDEX uq_ai_usage_events_legacy_grammar_request_id "
-        "ON ai_usage_events USING btree (request_id)"
-    ) in BASELINE_SQL
+    assert legacy_request_index not in BASELINE_SQL
     assert (
         "CREATE UNIQUE INDEX uq_ai_usage_events_invocation_key "
         "ON ai_usage_events USING btree (invocation_key) "
         "WHERE (invocation_key IS NOT NULL);"
     ) in BASELINE_SQL
     assert "ai_model_execution_journal_state_matrix_check" in schema_check_sql
-    assert "uq_ai_usage_events_legacy_grammar_request_id" in schema_check_sql
+    assert legacy_request_index not in schema_check_sql
 
 
 def _load_database_url() -> str:
@@ -1408,7 +1443,7 @@ async def test_model_execution_journal_schema_has_exact_orthogonal_contract(
 ) -> None:
     conn = await _connect(reader_schema)
     try:
-        columns = {
+        journal_columns = {
             row["column_name"]
             for row in await conn.fetch(
                 """
@@ -1449,7 +1484,21 @@ async def test_model_execution_journal_schema_has_exact_orthogonal_contract(
             "dead_lettered_at",
             "payload_purged_at",
             "business_terminal_at",
-        } <= columns
+        } <= journal_columns
+
+        usage_columns = {
+            row["column_name"]
+            for row in await conn.fetch(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = $1
+                  AND table_name = 'ai_usage_events'
+                """,
+                reader_schema,
+            )
+        }
+        assert "request_id" in usage_columns
 
         constraints = {
             row["conname"]: row["definition"]
@@ -1481,14 +1530,18 @@ async def test_model_execution_journal_schema_has_exact_orthogonal_contract(
                 reader_schema,
             )
         }
-        assert "uq_ai_usage_events_legacy_grammar_request_id" in indexes
-        assert "request_id" in indexes[
-            "uq_ai_usage_events_legacy_grammar_request_id"
-        ]
+        legacy_request_index = (
+            "uq_ai_usage_events_" + "legacy_grammar_request_id"
+        )
+        assert legacy_request_index not in indexes
         assert "uq_ai_usage_events_invocation_key" in indexes
-        assert "invocation_key" in indexes[
-            "uq_ai_usage_events_invocation_key"
-        ]
+        invocation_index = indexes["uq_ai_usage_events_invocation_key"]
+        assert "request_id" not in invocation_index
+        assert re.search(
+            r"USING btree \(invocation_key\) "
+            r"WHERE \(invocation_key IS NOT NULL\)$",
+            invocation_index,
+        )
         assert "uq_ai_model_execution_journal_invocation_key" in indexes
     finally:
         await conn.close()
