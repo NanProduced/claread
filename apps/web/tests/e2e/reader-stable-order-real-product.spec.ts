@@ -1,33 +1,158 @@
-import { expect, test } from "@playwright/test";
+import { execFile } from "node:child_process";
+import { randomInt, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { promisify } from "node:util";
 
-/**
- * Live product acceptance for the Stable Document display-order contract
- * on the frozen multi-translation-group fixture record: source spans stay
- * interleaved with their translation lanes, and the navigation
- * data-attribute contract survives wrapper composition.
- *
- * Read-only against an existing fixture record — nothing is created.
- */
+import { expect, test, type Page } from "@playwright/test";
 
-const FIXTURE_RECORD_ID = "927edede-33e0-4320-9a5b-3e00643ca763";
-const FIXTURE_PHONE = "13900000000";
+const execFileAsync = promisify(execFile);
 
-async function loginWithPhoneAuth(page: import("@playwright/test").Page) {
+type JsonBody = Record<string, unknown>;
+type BrowserJsonResult = { status: number; body: unknown; text: string };
+
+const FIXTURE_ARTICLE_TEXT = [
+  "Calm systems make the first decision visible. A second sentence fixes the opening context.",
+  "Reliable readers preserve source ownership. Another sentence completes the second unit.",
+  "The third unit begins with a stable premise. Its second sentence receives a deterministic analysis. The third sentence receives another deterministic analysis. The final sentence forms its own translation group.",
+  "A fourth unit proves that later source content remains after every u3 overlay.",
+].join("\n\n");
+
+function asObject(value: unknown, label: string): JsonBody {
+  expect(value, label).toBeTruthy();
+  expect(typeof value, label).toBe("object");
+  return value as JsonBody;
+}
+
+function asString(value: unknown, label: string): string {
+  expect(typeof value, label).toBe("string");
+  expect(String(value), label).not.toHaveLength(0);
+  return String(value);
+}
+
+function repoRoot(): string {
+  const configuredRoot = process.env.CLAREAD_E2E_API_REPO_ROOT?.trim();
+  const candidates = [
+    configuredRoot ? resolve(configuredRoot) : null,
+    resolve(process.cwd()),
+    resolve(process.cwd(), "..", ".."),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const root = candidates.find((candidate) =>
+    existsSync(resolve(candidate, "services", "api", "pyproject.toml")),
+  );
+  if (!root) {
+    throw new Error(
+      "Unable to locate the Claread API worktree; set CLAREAD_E2E_API_REPO_ROOT",
+    );
+  }
+  return root;
+}
+
+function fixturePhone(): string {
+  return `199${randomInt(0, 100_000_000).toString().padStart(8, "0")}`;
+}
+
+async function loginWithPhoneAuth(page: Page, phone: string) {
   await page.goto("/login?next=%2Fapp%2Fread");
-  await page.getByLabel("手机号").fill(FIXTURE_PHONE);
+  await page.getByLabel("手机号").fill(phone);
   await page.getByRole("button", { name: "发送验证码" }).click();
   await page.getByLabel("验证码").fill("888888");
   await page.getByRole("button", { name: "登录并继续" }).click();
   await page.waitForURL("**/app/read");
 }
 
+async function browserJson(
+  page: Page,
+  path: string,
+  input?: { method?: string; body?: JsonBody },
+): Promise<BrowserJsonResult> {
+  const serializedBody = input?.body === undefined ? null : JSON.stringify(input.body);
+  return page.evaluate(
+    async ({ requestPath, method, body }) => {
+      const response = await fetch(requestPath, {
+        method,
+        headers: body === null ? undefined : { "content-type": "application/json" },
+        body: body ?? undefined,
+        credentials: "same-origin",
+      });
+      const text = await response.text();
+      let parsed: unknown = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = null;
+      }
+      return { status: response.status, body: parsed, text };
+    },
+    {
+      requestPath: path,
+      method: input?.method ?? "GET",
+      body: serializedBody,
+    },
+  );
+}
+
+async function createLiveRecord(page: Page): Promise<string> {
+  const response = await browserJson(page, "/api/web/reader/records/input", {
+    method: "POST",
+    body: {
+      text: FIXTURE_ARTICLE_TEXT,
+      sourceType: "pasted_text",
+      filename: null,
+      language: "en",
+      clientRecordId: randomUUID(),
+      reading_goal: "daily_reading",
+      reading_variant: "intermediate_reading",
+    },
+  });
+  expect(response.status, `real unified input: ${response.text}`).toBe(200);
+  const payload = asObject(response.body, "unified input payload");
+  expect(payload.ok).toBe(true);
+  expect(payload.outcome).toBe("stable_document_ready");
+  return asString(payload.reading_record_id, "reading_record_id");
+}
+
+async function runFixtureHelper(args: string[]): Promise<JsonBody> {
+  const root = repoRoot();
+  const apiRoot = resolve(root, "services", "api");
+  const helper = resolve(
+    apiRoot,
+    "tests",
+    "reader_stable_order_real_product_fixture.py",
+  );
+  const python = resolve(
+    apiRoot,
+    ".venv",
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
+  );
+  const { stdout, stderr } = await execFileAsync(python, [helper, ...args], {
+    cwd: apiRoot,
+    env: { ...process.env },
+    timeout: 180_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  const output = stdout.trim();
+  if (!output) {
+    throw new Error(`stable-order fixture helper returned no output: ${stderr}`);
+  }
+  return asObject(JSON.parse(output), "stable-order fixture helper result");
+}
+
+async function providerGuardReport(): Promise<JsonBody> {
+  const base = (process.env.CLAREAD_FASTAPI_BASE_URL ?? "").replace(/\/$/, "");
+  expect(base, "deterministic FastAPI base must be explicit").toBe(
+    "http://127.0.0.1:8010",
+  );
+  const response = await fetch(`${base}/__deterministic_guard__/provider-calls`);
+  expect(response.status, "deterministic provider guard status").toBe(200);
+  return asObject(await response.json(), "deterministic provider guard report");
+}
+
 /**
  * Ordered signature of outermost navigable blocks
  * (`node-kind:unit-id`, translation lanes marked).
  */
-async function plateBlockSignature(
-  page: import("@playwright/test").Page,
-): Promise<string[]> {
+async function plateBlockSignature(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const root = document.querySelector(".reader-record-plate-document");
     if (!root) return [];
@@ -47,13 +172,54 @@ async function plateBlockSignature(
   });
 }
 
-test.describe("Stable Document display order (live fixture record)", () => {
+async function expectStableOrder(page: Page): Promise<string[]> {
+  const signature = await plateBlockSignature(page);
+  const u3First = signature.indexOf("paragraph:u3");
+  expect(u3First, "first u3 source span present").toBeGreaterThanOrEqual(0);
+  expect(signature[u3First + 1], "g(s5-s7) translation follows its span").toBe(
+    "blockquote:u3(lane)",
+  );
+
+  const u3Second = signature.indexOf("paragraph:u3", u3First + 1);
+  expect(u3Second, "second u3 source span present").toBeGreaterThan(u3First);
+  const between = signature.slice(u3First + 2, u3Second);
+  expect(between.length, "per-sentence analyses stay between the u3 spans").toBe(
+    2,
+  );
+  for (const entry of between) {
+    expect(entry.startsWith("paragraph:"), "no source span hoisted forward").toBe(
+      false,
+    );
+  }
+  expect(signature[u3Second + 1], "g(s8) translation follows the second span").toBe(
+    "blockquote:u3(lane)",
+  );
+  expect(signature.indexOf("paragraph:u4"), "u4 follows the second u3 translation").toBe(
+    u3Second + 2,
+  );
+
+  const u3SourceNodes = page.locator(
+    '.reader-record-plate-document [data-reader-record-node="paragraph"][data-unit-id="u3"]',
+  );
+  await expect(u3SourceNodes).toHaveCount(2);
+  await expect(u3SourceNodes.first()).toHaveAttribute(
+    "data-reader-record-unit-start",
+    "true",
+  );
+  return signature;
+}
+
+test.describe("Stable Document display order (self-provisioned real product record)", () => {
   test("multi-translation-group unit renders source spans interleaved with their translations", async ({
     page,
   }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
+    expect(process.env.CLAREAD_FASTAPI_BASE_URL).toBe("http://127.0.0.1:8010");
     await page.setViewportSize({ width: 1280, height: 900 });
+    const phone = fixturePhone();
+    let recordId: string | null = null;
     const consoleProblems: string[] = [];
+    const externalRequests: string[] = [];
     page.on("pageerror", (error) => {
       consoleProblems.push(`pageerror: ${error.message}`);
     });
@@ -62,63 +228,67 @@ test.describe("Stable Document display order (live fixture record)", () => {
         consoleProblems.push(`console.error: ${message.text()}`);
       }
     });
-
-    await loginWithPhoneAuth(page);
-    await page.goto(`/app/reader/${FIXTURE_RECORD_ID}`);
-    await expect(page.locator(".reader-record-plate-document")).toBeVisible({
-      timeout: 30_000,
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.protocol.startsWith("http") && !["127.0.0.1", "localhost"].includes(url.hostname)) {
+        externalRequests.push(request.url());
+      }
     });
-    // Enhancement layers materialize after the base snapshot; wait for the
-    // translation lanes of the fixture record before reading the order.
-    await expect(
-      page.locator("[data-reader-record-translation-lane]").first(),
-    ).toBeVisible({ timeout: 30_000 });
 
-    // The frozen fixture's third unit spans s5–s8 with two translation
-    // groups (s5–s7, s8) and per-sentence analyses. The rendered order must
-    // keep each translation/annotation at its own anchor position instead of
-    // hoisting every source span to the front.
-    const signature = await plateBlockSignature(page);
-    const u3First = signature.indexOf("paragraph:u3");
-    expect(u3First, "first u3 source span present").toBeGreaterThanOrEqual(0);
-    expect(signature[u3First + 1], "g(s5-s7) translation follows its span").toBe(
-      "blockquote:u3(lane)",
-    );
+    try {
+      await loginWithPhoneAuth(page, phone);
+      recordId = await createLiveRecord(page);
+      const fixture = await runFixtureHelper(["build", recordId]);
+      console.log(`[stable-order-fixture-build] ${JSON.stringify(fixture)}`);
+      expect(fixture.executor_mode).toBe("fake");
+      const contract = asObject(fixture.contract, "fixture contract");
+      expect(contract.u3_anchor_segment_ids).toEqual(["s5", "s6", "s7", "s8"]);
+      expect(contract.sentence_analysis_anchor_segment_ids).toEqual(["s6", "s7"]);
+      expect(contract.snapshot_reload_equal).toBe(true);
 
-    const u3Second = signature.indexOf("paragraph:u3", u3First + 1);
-    expect(u3Second, "second u3 source span present").toBeGreaterThan(u3First);
-    const between = signature.slice(u3First + 2, u3Second);
-    expect(
-      between.length,
-      "per-sentence analyses stay between the u3 spans",
-    ).toBeGreaterThanOrEqual(2);
-    for (const entry of between) {
-      expect(entry.startsWith("paragraph:"), "no source span hoisted forward").toBe(
-        false,
+      const snapshotResponse = await browserJson(
+        page,
+        `/api/web/reader/records/${recordId}/snapshot`,
       );
+      expect(snapshotResponse.status, `real snapshot BFF: ${snapshotResponse.text}`).toBe(
+        200,
+      );
+      expect(asObject(snapshotResponse.body, "snapshot BFF payload").ok).toBe(true);
+
+      await page.goto(`/app/reader/${recordId}`);
+      await expect(page.locator(".reader-record-plate-document")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        page.locator("[data-reader-record-translation-lane]").first(),
+      ).toBeVisible({ timeout: 30_000 });
+      const beforeReload = await expectStableOrder(page);
+
+      await page.reload();
+      await expect(page.locator(".reader-record-plate-document")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        page.locator("[data-reader-record-translation-lane]").first(),
+      ).toBeVisible({ timeout: 30_000 });
+      expect(await expectStableOrder(page)).toEqual(beforeReload);
+
+      expect(consoleProblems, "no app-level console errors / page errors").toEqual([]);
+      expect(externalRequests, "no browser external requests").toEqual([]);
+    } finally {
+      const guard = await providerGuardReport();
+      console.log(`[stable-order-provider-guard] ${JSON.stringify(guard)}`);
+      expect(guard.installed).toBe(true);
+      expect(guard.blocked_call_count).toBe(0);
+      expect(guard.blocked_attempts).toEqual([]);
+      if (!page.isClosed()) {
+        await page.close();
+      }
+      const cleanupArgs = ["cleanup", "--phone", phone];
+      if (recordId !== null) cleanupArgs.push("--record-id", recordId);
+      const cleanup = await runFixtureHelper(cleanupArgs);
+      console.log(`[stable-order-fixture-cleanup] ${JSON.stringify(cleanup)}`);
+      expect(cleanup.residual_total, "fixture residual rows").toBe(0);
     }
-    expect(
-      signature[u3Second + 1],
-      "g(s8) translation follows the second span",
-    ).toBe("blockquote:u3(lane)");
-    expect(
-      signature.indexOf("paragraph:u4"),
-      "u4 starts only after the second u3 translation",
-    ).toBe(u3Second + 2);
-
-    // Navigation contract: both u3 source spans stay navigable and the
-    // first one carries the unit-start marker.
-    const u3SourceNodes = page.locator(
-      '.reader-record-plate-document [data-reader-record-node="paragraph"][data-unit-id="u3"]',
-    );
-    await expect(u3SourceNodes).toHaveCount(2);
-    await expect(u3SourceNodes.first()).toHaveAttribute(
-      "data-reader-record-unit-start",
-      "true",
-    );
-
-    expect(consoleProblems, "no app-level console errors / page errors").toEqual(
-      [],
-    );
   });
 });
