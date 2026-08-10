@@ -95,6 +95,144 @@ def test_model_execution_journal_logical_schema_is_declared_exactly() -> None:
     assert legacy_request_index not in schema_check_sql
 
 
+PROTECTED_KEEP_DICT_TABLES = frozenset(
+    {
+        "dict_entries",
+        "dict_lookup_targets",
+        "dict_redirects",
+        "eval_example_lab_entries",
+    }
+)
+RESET_FULL_SQL = REPO_ROOT / "infra" / "scripts" / "reset_full_keep_dict.sql"
+RESET_DEV_SQL = REPO_ROOT / "infra" / "scripts" / "reset_dev_keep_dict.sql"
+CHECK_SCHEMA_BASELINE_SQL = REPO_ROOT / "infra" / "scripts" / "check_schema_baseline.sql"
+
+
+def _baseline_table_set() -> set[str]:
+    # Top-level CREATE TABLE statements only; handles the optional
+    # IF NOT EXISTS clause used by the protected dict / Example Lab tables.
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"(?m)^CREATE TABLE (?:IF NOT EXISTS )?([a-z0-9_]+)\s*\(",
+            _RAW_BASELINE_SQL,
+        )
+    }
+
+
+def _checker_expected_table_set() -> set[str]:
+    checker_sql = CHECK_SCHEMA_BASELINE_SQL.read_text(encoding="utf-8")
+    block = re.search(
+        r"expected_tables text\[\] := ARRAY\[\s*\n(.*?)\s*\];", checker_sql, re.DOTALL
+    )
+    assert block is not None, "expected_tables array not found in check_schema_baseline.sql"
+    return set(re.findall(r"'([a-z0-9_]+)'", block.group(1)))
+
+
+def _reset_table_list(sql_path: Path, header: str, terminator: str) -> set[str]:
+    script = sql_path.read_text(encoding="utf-8")
+    pattern = re.escape(header) + r"\s*\n(.*?)\n\s*" + re.escape(terminator)
+    block = re.search(pattern, script, re.DOTALL)
+    assert block is not None, f"reset statement not found in {sql_path.name}"
+    return set(re.findall(r"(?m)^\s*([a-z0-9_]+),?\s*$", block.group(1)))
+
+
+def test_reset_and_checker_table_sets_reconcile_with_fresh_baseline() -> None:
+    baseline = _baseline_table_set()
+    checker = _checker_expected_table_set()
+    full_reset = _reset_table_list(RESET_FULL_SQL, "DROP TABLE IF EXISTS", "CASCADE;")
+    dev_reset = _reset_table_list(RESET_DEV_SQL, "TRUNCATE TABLE", "RESTART IDENTITY CASCADE;")
+    expected_reset_set = baseline - PROTECTED_KEEP_DICT_TABLES
+
+    assert sorted(checker - baseline) == [], "checker expects tables absent from 0001"
+    assert sorted(baseline - checker) == [], "0001 tables missing from checker expected_tables"
+
+    assert not (full_reset & PROTECTED_KEEP_DICT_TABLES), "full reset touches protected tables"
+    assert sorted(full_reset - expected_reset_set) == [], "full reset lists non-baseline tables"
+    assert sorted(expected_reset_set - full_reset) == [], (
+        "full reset misses baseline non-protected tables"
+    )
+
+    assert not (dev_reset & PROTECTED_KEEP_DICT_TABLES), "dev reset touches protected tables"
+    assert sorted(dev_reset - expected_reset_set) == [], "dev reset lists non-baseline tables"
+    assert sorted(expected_reset_set - dev_reset) == [], (
+        "dev reset misses baseline non-protected tables"
+    )
+
+    assert len(baseline) == 53
+    assert len(PROTECTED_KEEP_DICT_TABLES) == 4
+    assert len(expected_reset_set) == 49
+
+
+async def test_reset_scripts_round_trip_in_isolated_schema() -> None:
+    schema_name = f"tmp_{uuid4().hex}"
+    baseline = _baseline_table_set()
+    try:
+        admin_conn = await _connect()
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"PostgreSQL unavailable for reset round-trip test: {exc}")
+
+    async def _schema_tables() -> set[str]:
+        rows = await admin_conn.fetch(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+            """,
+            schema_name,
+        )
+        return {row["table_name"] for row in rows}
+
+    try:
+        await admin_conn.execute(f'CREATE SCHEMA "{schema_name}"')
+        await admin_conn.execute(f'SET search_path TO "{schema_name}", public')
+        await admin_conn.execute(BASELINE_SQL)
+
+        assert await _schema_tables() == baseline
+        assert len(baseline) == 53
+
+        # Sentinel rows: protected data must survive dev and full resets.
+        await admin_conn.execute(
+            """
+            INSERT INTO dict_entries (id, source_entry_key, entry_kind, display_headword)
+            VALUES (990001, 'sentinel', 'entry', 'sentinel')
+            """
+        )
+        await admin_conn.execute(
+            """
+            INSERT INTO eval_example_lab_entries (example_id, example_type, sentence_text)
+            VALUES ('sentinel.r1', 'vocab', 'Sentinel sentence.')
+            """
+        )
+        await admin_conn.execute("INSERT INTO users DEFAULT VALUES")
+
+        # Dev reset: TRUNCATE non-protected tables, keep structure + protected rows.
+        await admin_conn.execute(RESET_DEV_SQL.read_text(encoding="utf-8"))
+        assert await _schema_tables() == baseline
+        assert await admin_conn.fetchval("SELECT COUNT(*) FROM users") == 0
+        assert await admin_conn.fetchval("SELECT COUNT(*) FROM dict_entries") == 1
+        assert await admin_conn.fetchval("SELECT COUNT(*) FROM eval_example_lab_entries") == 1
+
+        # Full reset: only the four protected tables may survive.
+        await admin_conn.execute(RESET_FULL_SQL.read_text(encoding="utf-8"))
+        assert await _schema_tables() == set(PROTECTED_KEEP_DICT_TABLES)
+
+        # Replay the fresh baseline: exact 53-table set, protected rows intact.
+        await admin_conn.execute(BASELINE_SQL)
+        assert await _schema_tables() == baseline
+        assert await admin_conn.fetchval("SELECT COUNT(*) FROM dict_entries") == 1
+        assert await admin_conn.fetchval("SELECT COUNT(*) FROM eval_example_lab_entries") == 1
+    finally:
+        await admin_conn.execute('SET search_path TO public')
+        await admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
+        residual = await admin_conn.fetchval(
+            "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = $1",
+            schema_name,
+        )
+        assert residual == 0
+        await admin_conn.close()
+
+
 def _load_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
     if database_url:

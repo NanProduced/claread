@@ -10,6 +10,7 @@
 BEGIN;
 
 TRUNCATE TABLE
+  ai_model_execution_journal,
   ai_usage_events,
   analysis_windows,
   anchor_segments,
