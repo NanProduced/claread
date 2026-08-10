@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash, utf16_code_unit_length
 from app.database import connection as db_connection
 from app.schemas.reader_orchestration import (
@@ -667,12 +669,37 @@ def _make_runner(
     # enable_grammar_window=True 激活 route-aware grammar split。
     return ReaderEnhancementPipelineRunner(
         pool=pool,
+        # Offline pipeline fixtures must not inherit host model configuration.
+        settings=Settings(
+            _env_file=None,
+            semantic_outline_generation_enabled=False,
+            reader_semantic_outline_model_profile="",
+        ),
         display_title_worker_service=display_title_worker,
         translation_orchestrator=orchestrator,
         translation_batch_worker_service=translation_worker,
         vocabulary_worker_service=vocabulary_worker,
         grammar_worker_service=grammar_worker,
         enable_grammar_window=enable_grammar_window,
+    )
+
+
+def test_make_runner_does_not_read_host_model_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_settings_are_read() -> object:
+        raise AssertionError("offline pipeline fixture must not read host settings")
+
+    monkeypatch.setattr(
+        "app.services.reader_orchestration.pipeline_runner.get_settings",
+        fail_if_settings_are_read,
+    )
+
+    _make_runner(
+        cast(asyncpg.Pool, object()),
+        translator=_StaticTranslator(),
+        vocabulary_executor=_StaticVocabularyExecutor(),
+        grammar_executor=_StaticGrammarExecutor(),
     )
 
 
