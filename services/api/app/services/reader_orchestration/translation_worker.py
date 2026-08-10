@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,16 @@ from app.services.ai_usage import (
     record_ai_usage_event,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
+from app.services.model_execution_journal import (
+    CapturedReceipt,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    PayloadContractError,
+    decode_resume_payload,
+    decode_usage_event_draft,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.prompting.prompt_loader import (
     get_prompt_version,
     load_agent_instructions,
@@ -51,6 +62,7 @@ from .job_bootstrap import (
     TRANSLATION_TARGET_SCOPE,
 )
 from .job_runtime import (
+    CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
@@ -81,9 +93,12 @@ from .translation_prompt_profile import (
     get_translation_prompt_profile,
     resolve_translation_prompt_profile_for_unit,
 )
+from .usage_attribution import ReaderUsageAttributionService
 
 DEFAULT_TRANSLATION_RETRY_DELAY = timedelta(minutes=5)
 TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
+
+logger = logging.getLogger(__name__)
 
 # Dedicated batch-path agent instructions. The per-unit
 # ``reader_layer_translation`` instructions teach the model to choose
@@ -1217,12 +1232,14 @@ class TranslationWorkerService:
         layer_publisher: TranslationLayerPublisher | None = None,
         translator: TranslationExecutor | None = None,
         batch_translator: TranslationBatchExecutor | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
         self._layer_publisher = layer_publisher or TranslationLayerPublisher(pool=pool)
         self._translator = translator or PydanticAITranslationExecutor()
         self._batch_translator = batch_translator or PydanticAITranslationBatchExecutor()
+        self._journal_service = journal_service or ModelExecutionJournalService(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -1302,6 +1319,12 @@ class TranslationWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
     ) -> TranslationJobProcessResult | None:
+        resume = await self._claim_captured_translation_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_translation_resume(resume=resume)
         claim = await self.claim_translation_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
@@ -1323,6 +1346,15 @@ class TranslationWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
     ) -> TranslationJobProcessResult | None:
+        resume = await self._claim_captured_translation_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if resume is not None:
+            return await self._process_captured_translation_resume(resume=resume)
         claim = await self.claim_translation_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -1346,14 +1378,85 @@ class TranslationWorkerService:
     ) -> TranslationJobProcessResult:
         context: TranslationJobContext | None = None
         execution: TranslationExecutionResult | None = None
+        execution_captured = False
 
         try:
             context = await self._load_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.translation_unit",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._translator.translate(context)
             output = hydrate_translation_layer_output(
                 context=context,
                 generation=execution.output,
             )
+            try:
+                event_id = await self._capture_translation_execution(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    output=output,
+                )
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             published_layer = await self._layer_publisher.publish_unit_translation(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
@@ -1364,11 +1467,9 @@ class TranslationWorkerService:
                     context=context,
                 ),
             )
-            event_id = await self._record_usage_event(
-                context=context,
-                execution=execution,
-                published_layer=published_layer,
-                status=STATUS_SUCCEEDED,
+            event_id = await self._reconcile_captured_usage(
+                invocation_key=identity.invocation_key,
+                fallback_event_id=event_id,
             )
             await end_worker_span_success(
                 ai_usage_event_id=event_id,
@@ -1393,16 +1494,6 @@ class TranslationWorkerService:
             )
         except FenceViolationError:
             await end_worker_span_fence_violation()
-            # The model call completed (tokens spent) but the publish fence
-            # failed — record the invocation's usage so the usage table
-            # reflects real model consumption. Mirrors the grammar per-unit
-            # fence path; the failed event never carries a layer id.
-            await self._record_failed_usage_event(
-                context=context,
-                error_code="publish_fence_failed",
-                error_message="translation unit publish fence failed",
-                **_failed_translation_usage_attrs(execution),
-            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1418,6 +1509,18 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if _is_typed_translation_supersede_code(exc.failure_code):
                 # Typed supersede: fence mismatch or automatic layer disallowed.
                 # Never call the model under a reinterpreted policy.
@@ -1507,6 +1610,18 @@ class TranslationWorkerService:
                 status="failed_terminal",
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1584,6 +1699,15 @@ class TranslationWorkerService:
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
     ) -> TranslationBatchJobProcessResult | None:
         """Claim and process the next translation batch job for the record."""
+        resume = await self._claim_captured_translation_batch_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if resume is not None:
+            return await self._process_captured_translation_batch_resume(resume=resume)
         claim = await self.claim_translation_batch_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -1615,14 +1739,85 @@ class TranslationWorkerService:
         """
         context: TranslationBatchJobContext | None = None
         execution: TranslationBatchExecutionResult | None = None
+        execution_captured = False
 
         try:
             context = await self._load_batch_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.translation_batch",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._batch_translator.translate_batch(context)
             outputs = hydrate_translation_batch_output(
                 context=context,
                 generation=execution.output,
             )
+            try:
+                event_id = await self._capture_translation_batch_execution(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    outputs=outputs,
+                )
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             published_batch = await self._layer_publisher.publish_article_translation_batch(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
@@ -1633,11 +1828,9 @@ class TranslationWorkerService:
                     context=context,
                 ),
             )
-            event_id = await self._record_batch_usage_event(
-                context=context,
-                execution=execution,
-                published_batch=published_batch,
-                status=STATUS_SUCCEEDED,
+            event_id = await self._reconcile_captured_usage(
+                invocation_key=identity.invocation_key,
+                fallback_event_id=event_id,
             )
             await end_worker_span_success(
                 ai_usage_event_id=event_id,
@@ -1660,16 +1853,6 @@ class TranslationWorkerService:
                 model_name=execution.model_name,
             )
         except FenceViolationError:
-            # The model call completed (tokens spent) but the publish fence
-            # failed — record the invocation's usage so the usage table
-            # reflects real model consumption. Mirrors the grammar per-unit
-            # fence path; the failed event never carries a layer id.
-            await self._record_batch_failed_usage_event(
-                context=context,
-                error_code="publish_fence_failed",
-                error_message="translation batch publish fence failed",
-                **_failed_translation_usage_attrs(execution),
-            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1685,6 +1868,18 @@ class TranslationWorkerService:
             )
             raise
         except TranslationExecutionError as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if _is_typed_translation_supersede_code(exc.failure_code):
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -1772,6 +1967,18 @@ class TranslationWorkerService:
                 status="failed_terminal",
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1800,6 +2007,479 @@ class TranslationWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+
+    async def _claim_captured_translation_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        return await self._claim_captured_resume(
+            job_type=TRANSLATION_JOB_TYPE,
+            target_type=TRANSLATION_TARGET_SCOPE,
+            operation_fingerprint=TRANSLATION_OPERATION_FINGERPRINT,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+
+    async def _claim_captured_translation_batch_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        return await self._claim_captured_resume(
+            job_type=TRANSLATION_BATCH_JOB_TYPE,
+            target_type=TRANSLATION_BATCH_TARGET_SCOPE,
+            operation_fingerprint=None,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+
+    async def _claim_captured_resume(
+        self,
+        *,
+        job_type: str,
+        target_type: str,
+        operation_fingerprint: str | None,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None,
+        base_id: UUID | None,
+        expected_generation: int | None,
+    ) -> CapturedResumeClaim | None:
+        job_id = await self._job_runtime.find_captured_resume_job_id(
+            job_type=job_type,
+            target_type=target_type,
+            operation_fingerprint=operation_fingerprint,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if job_id is None:
+            return None
+        resume = await self._job_runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            await self._mark_run_running(resume.claim.run_id)
+        return resume
+
+    async def _process_captured_translation_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> TranslationJobProcessResult:
+        claim = resume.claim
+        context: TranslationJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("translation_unit_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, output = self._translation_execution_from_receipt(receipt)
+            context = await self._load_job_context(claim.job_id)
+            published_layer = await self._layer_publisher.publish_unit_translation(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                output=output,
+                quality_json=_build_quality_json(output, execution, context=context),
+            )
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(claim)
+            raise
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return TranslationJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+        event_id = await self._materialize_captured_usage(receipt)
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data=execution.usage_data,
+            model_route=execution.model_route,
+            model_name=execution.model_name,
+            model_provider=execution.model_provider,
+            capability_code=CAPABILITY_READER_TRANSLATION,
+        )
+        return TranslationJobProcessResult(
+            claim=claim,
+            context=context,
+            status="succeeded",
+            output=output,
+            published_layer=published_layer,
+            usage_data=execution.usage_data,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+        )
+
+    async def _process_captured_translation_batch_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> TranslationBatchJobProcessResult:
+        claim = resume.claim
+        context: TranslationBatchJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("translation_batch_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, outputs = self._translation_batch_execution_from_receipt(receipt)
+            context = await self._load_batch_job_context(claim.job_id)
+            published_batch = await self._layer_publisher.publish_article_translation_batch(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                outputs=outputs,
+                quality_json=_build_batch_quality_json(
+                    execution,
+                    unit_count=len(context.units),
+                    context=context,
+                ),
+            )
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(claim)
+            raise
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_resume(claim, exc)
+            return TranslationBatchJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+        event_id = await self._materialize_captured_usage(receipt)
+        await end_worker_span_success(
+            ai_usage_event_id=event_id,
+            usage_data=execution.usage_data,
+            model_route=execution.model_route,
+            model_name=execution.model_name,
+            model_provider=execution.model_provider,
+            capability_code=CAPABILITY_READER_TRANSLATION,
+        )
+        return TranslationBatchJobProcessResult(
+            claim=claim,
+            context=context,
+            status="succeeded",
+            published_batch=published_batch,
+            usage_data=execution.usage_data,
+            prompt_version=execution.prompt_version,
+            model_route=execution.model_route,
+            model_profile=execution.model_profile,
+            model_provider=execution.model_provider,
+            model_name=execution.model_name,
+        )
+
+    @staticmethod
+    def _translation_execution_from_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[TranslationExecutionResult, TranslationLayerOutput]:
+        if receipt.invocation_kind != "reader.translation_unit":
+            raise PayloadContractError("translation_unit_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return (
+            TranslationExecutionResult(
+                output=TranslationLayerGenerationOutput.model_construct(groups=[]),
+                usage_data=usage.usage_data,
+                prompt_version=usage.prompt_version,
+                model_route=usage.model_route,
+                model_profile=usage.model_profile,
+                model_provider=usage.model_provider,
+                model_name=usage.model_name,
+            ),
+            payload.output,
+        )
+
+    @staticmethod
+    def _translation_batch_execution_from_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[
+        TranslationBatchExecutionResult,
+        list[tuple[str, TranslationLayerOutput]],
+    ]:
+        if receipt.invocation_kind != "reader.translation_batch":
+            raise PayloadContractError("translation_batch_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return (
+            TranslationBatchExecutionResult(
+                output=TranslationBatchGenerationOutput.model_construct(units=[]),
+                usage_data=usage.usage_data,
+                prompt_version=usage.prompt_version,
+                model_route=usage.model_route,
+                model_profile=usage.model_profile,
+                model_provider=usage.model_provider,
+                model_name=usage.model_name,
+            ),
+            [(item.unit_id, item.output) for item in payload.outputs],
+        )
+
+    @staticmethod
+    def _execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_TRANSLATION}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_translation_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: TranslationJobContext,
+        execution: TranslationExecutionResult,
+        output: TranslationLayerOutput,
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.translation_unit",
+            resume_payload_kind="reader.translation_unit.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={"output": output.model_dump(mode="json")},
+            usage_event_draft=self._translation_usage_draft(
+                identity=identity,
+                context=context,
+                execution=execution,
+            ),
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_captured_usage(receipt)
+
+    async def _capture_translation_batch_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: TranslationBatchJobContext,
+        execution: TranslationBatchExecutionResult,
+        outputs: list[tuple[str, TranslationLayerOutput]],
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.translation_batch",
+            resume_payload_kind="reader.translation_batch.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "outputs": [
+                    {"unit_id": unit_id, "output": output.model_dump(mode="json")}
+                    for unit_id, output in outputs
+                ]
+            },
+            usage_event_draft=self._translation_batch_usage_draft(
+                identity=identity,
+                context=context,
+                execution=execution,
+            ),
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_captured_usage(receipt)
+
+    @staticmethod
+    def _translation_usage_draft(
+        *,
+        identity: ExecutionIdentity,
+        context: TranslationJobContext,
+        execution: TranslationExecutionResult,
+    ) -> dict[str, Any]:
+        return {
+            "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+            "capability_code": CAPABILITY_READER_TRANSLATION,
+            "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+            "status": STATUS_SUCCEEDED,
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": "d4-p1-translation-worker",
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "unit_id": context.unit_id,
+                "target_language": context.target_language,
+                "source_language": context.source_language,
+                **_translation_profile_audit_fields(context),
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        }
+
+    @staticmethod
+    def _translation_batch_usage_draft(
+        *,
+        identity: ExecutionIdentity,
+        context: TranslationBatchJobContext,
+        execution: TranslationBatchExecutionResult,
+    ) -> dict[str, Any]:
+        return {
+            "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+            "capability_code": CAPABILITY_READER_TRANSLATION,
+            "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+            "status": STATUS_SUCCEEDED,
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": "t1-1-translation-batch-worker",
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "target_unit_ids": list(context.target_unit_ids),
+                "unit_count": len(context.units),
+                "target_language": context.target_language,
+                "source_language": context.source_language,
+                "batch": True,
+                **_translation_profile_audit_fields(context),
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        }
+
+    async def _materialize_captured_usage(self, receipt: CapturedReceipt) -> UUID | None:
+        return await self._reconcile_captured_usage(
+            invocation_key=receipt.identity.invocation_key,
+            fallback_event_id=receipt.ai_usage_event_id,
+        )
+
+    async def _reconcile_captured_usage(
+        self,
+        *,
+        invocation_key: str,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=invocation_key
+            )
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "translation_usage_delivery_deferred: invocation_key=%s error=%s",
+                invocation_key,
+                type(exc).__name__,
+            )
+            return fallback_event_id
+        return receipt.ai_usage_event_id or fallback_event_id
+
+    async def _pause_invalid_or_incomplete_resume(
+        self,
+        claim: ClaimResult,
+        exc: Exception,
+    ) -> None:
+        invalid = isinstance(exc, PayloadContractError)
+        await self._pause_model_execution_claim(
+            claim,
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid
+                else "model_execution_captured_resume_required"
+            ),
+            failure_code=(
+                "receipt_payload_invalid" if invalid else "post_provider_resume_required"
+            ),
+            failure_message=str(exc),
+        )
+
+    async def _mark_claimed_job_superseded(self, claim: ClaimResult) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="superseded",
+            lease_token=claim.lease_token,
+            rationale_code="publish_fence_failed",
+        )
+        await self._mark_run_status(
+            claim.run_id,
+            status="superseded",
+            failure_class="publish_guard",
+            failure_code="publish_fence_failed",
+            finished_at=datetime.now(UTC),
+        )
+
+    async def _pause_model_execution_claim(
+        self,
+        claim: ClaimResult,
+        *,
+        rationale_code: str,
+        failure_code: str,
+        failure_message: str | None = None,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
 
     async def _load_batch_job_context(
         self,

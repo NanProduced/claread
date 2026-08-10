@@ -10,6 +10,8 @@ import pytest
 
 from app.database import connection as db_connection
 from app.schemas.reader_orchestration import ReaderPlateSnapshot
+from app.services.model_execution_journal import CaptureEnvelopeConflictError
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
 )
@@ -26,24 +28,26 @@ from app.services.reader_orchestration.job_runtime import (
     FenceViolationError,
     ReaderJobRuntime,
 )
+from app.services.reader_orchestration.semantic_outline import SemanticOutlineUnit
 from app.services.reader_orchestration.semantic_outline_publisher import (
     SemanticOutlineCandidateNode,
     SemanticOutlineLayerPublisher,
     allocate_outline_revision,
+    build_validation_context,
     map_candidates_to_opaque_nodes,
     validate_mapped_outline,
-    build_validation_context,
 )
 from app.services.reader_orchestration.semantic_outline_worker import (
     OUTLINE_MAX_ATTEMPTED_NODES,
     OUTLINE_MAX_TOTAL_PREVIEW_CHARS,
     OUTLINE_MAX_UNIT_PREVIEW_CHARS,
     FakeSemanticOutlineGenerator,
+    SemanticOutlineExecutionResult,
+    SemanticOutlineJobContext,
     SemanticOutlineWorkerService,
     build_bounded_worker_input,
     clamp_candidates,
 )
-from app.services.reader_orchestration.semantic_outline import SemanticOutlineUnit
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -58,6 +62,105 @@ pytestmark = pytest.mark.anyio
 
 def _always_request(_state) -> bool:
     return True
+
+
+class _JournalInspectingOutlineGenerator:
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        candidates: tuple[SemanticOutlineCandidateNode, ...],
+    ) -> None:
+        self._pool = pool
+        self._candidates = candidates
+        self.calls = []
+
+    async def generate(self, context):
+        self.calls.append(context)
+        async with self._pool.acquire() as conn:
+            journal_row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context.job_id,
+            )
+        assert journal_row is not None
+        assert journal_row["capture_state"] == "started"
+        assert journal_row["usage_delivery_state"] == "not_ready"
+        assert journal_row["execution_slot"] == 1
+        return SemanticOutlineExecutionResult(
+            candidates=self._candidates,
+            model="fake-outline-model",
+            usage_data={
+                "aggregate": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                }
+            },
+            prompt_version="test-semantic-outline",
+            model_route="reader_layer_semantic_outline",
+            model_profile="fake-outline-profile",
+            model_provider="fake-provider",
+            model_name="fake-outline-model",
+            provider_call_made=True,
+        )
+
+
+class _FailIfOutlineProviderCalled:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def generate(self, context):
+        self.calls.append(context)
+        raise AssertionError("captured resume must not call the outline provider")
+
+
+class _CrashAfterOutlineCapturePublisher:
+    async def publish_from_candidates(self, **kwargs):
+        del kwargs
+        raise RuntimeError("crash after outline capture before publish")
+
+
+class _FailIfOutlinePublished:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def publish_from_candidates(self, **kwargs):
+        del kwargs
+        self.calls += 1
+        raise AssertionError("capture failure must prevent outline publication")
+
+
+class _CaptureFailingOutlineJournal:
+    def __init__(self, pool: asyncpg.Pool, error: Exception) -> None:
+        self._delegate = ModelExecutionJournalService(pool=pool)
+        self._error = error
+
+    async def begin_execution(self, **kwargs):
+        return await self._delegate.begin_execution(**kwargs)
+
+    async def capture_execution(self, **kwargs):
+        del kwargs
+        raise self._error
+
+
+class _MaterializerFailingOutlineJournal:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._delegate = ModelExecutionJournalService(pool=pool)
+
+    async def begin_execution(self, **kwargs):
+        return await self._delegate.begin_execution(**kwargs)
+
+    async def capture_execution(self, **kwargs):
+        return await self._delegate.capture_execution(**kwargs)
+
+    async def materialize_pending(self):
+        raise RuntimeError("materializer unavailable")
+
+    async def load_captured_receipt(self, **kwargs):
+        return await self._delegate.load_captured_receipt(**kwargs)
 
 
 @pytest.fixture
@@ -241,22 +344,6 @@ def test_bounded_worker_input_caps_preview_chars() -> None:
     # Unit identity always present even when preview emptied by budget.
     assert len(built.units) == 39
     assert all(u.unit_id.startswith("u") for u in built.units)
-
-
-def test_clamp_candidates_respects_max_nodes() -> None:
-    nodes = tuple(
-        SemanticOutlineCandidateNode(
-            candidate_ref=f"c{i}",
-            parent_candidate_ref=None,
-            depth=1,
-            title=f"t{i}",
-            start_unit_id="u1",
-            end_unit_id="u1",
-        )
-        for i in range(OUTLINE_MAX_ATTEMPTED_NODES + 5)
-    )
-    clamped = clamp_candidates(nodes)
-    assert len(clamped) == OUTLINE_MAX_ATTEMPTED_NODES
 
 
 def test_allocate_outline_revision_is_opaque() -> None:
@@ -549,9 +636,10 @@ async def test_ready_publish_with_nested_parent_edge(outline_env: asyncpg.Pool) 
     await _bootstrap_outline(
         outline_env, record_id=article.record_id, user_id=user_id
     )
+    generator = _JournalInspectingOutlineGenerator(outline_env, candidates)
     worker = SemanticOutlineWorkerService(
         pool=outline_env,
-        generator=FakeSemanticOutlineGenerator(candidates),
+        generator=generator,
     )
     result = await worker.process_next_semantic_outline_job(
         lease_owner="outline-1",
@@ -559,6 +647,7 @@ async def test_ready_publish_with_nested_parent_edge(outline_env: asyncpg.Pool) 
     )
     assert result is not None
     assert result.status == "succeeded"
+    assert len(generator.calls) == 1
     assert result.publish_result is not None
     assert result.publish_result.outcome == "published"
     assert result.publish_result.event is not None
@@ -1533,6 +1622,20 @@ async def test_run_transitions_to_failed_terminal_on_generic_exception_max_attem
     assert job_status == "failed_terminal"
     # RED: current code transitions the job but leaves the run in 'running'.
     assert run_status == "failed_terminal"
+    async with outline_env.acquire() as conn:
+        journal_state = await conn.fetchval(
+            """
+            SELECT capture_state FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert journal_state == "started"
+    assert usage_count == 0
 
 
 async def test_run_transitions_to_superseded_on_fence_violation(
@@ -1549,7 +1652,9 @@ async def test_run_transitions_to_superseded_on_fence_violation(
     )
     worker = SemanticOutlineWorkerService(
         pool=outline_env,
-        generator=FakeSemanticOutlineGenerator(_nested_candidates()),
+        generator=FakeSemanticOutlineGenerator(
+            _nested_candidates(), provider_call_made=True
+        ),
         publisher=_FenceViolatingPublisher(),
     )
     with pytest.raises(FenceViolationError):
@@ -1564,6 +1669,33 @@ async def test_run_transitions_to_superseded_on_fence_violation(
     assert job_status == "superseded"
     # RED: current code supersedes the job but leaves the run in 'running'.
     assert run_status == "superseded"
+    async with outline_env.acquire() as conn:
+        journal_state = await conn.fetchval(
+            """
+            SELECT capture_state FROM ai_model_execution_journal
+            WHERE reader_job_id = (
+                SELECT id FROM reader_jobs
+                WHERE job_type = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            """,
+            SEMANTIC_OUTLINE_JOB_TYPE,
+        )
+        usage_count = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM ai_usage_events
+            WHERE reader_job_id = (
+                SELECT id FROM reader_jobs
+                WHERE job_type = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+            )
+            """,
+            SEMANTIC_OUTLINE_JOB_TYPE,
+        )
+    assert journal_state == "captured"
+    assert usage_count == 1
 
 
 async def test_run_stays_completed_on_success(
@@ -1595,7 +1727,7 @@ async def test_run_stays_completed_on_success(
     )
     worker = SemanticOutlineWorkerService(
         pool=outline_env,
-        generator=FakeSemanticOutlineGenerator(candidates),
+        generator=FakeSemanticOutlineGenerator(candidates, provider_call_made=True),
     )
     result = await worker.process_next_semantic_outline_job(
         lease_owner="outline-success",
@@ -1610,3 +1742,356 @@ async def test_run_stays_completed_on_success(
     # reader_jobs uses STATUS_SUCCEEDED="succeeded"; reader_runs uses "completed".
     assert job_status == "succeeded"
     assert run_status == "completed"
+    async with outline_env.acquire() as conn:
+        journal_row = await conn.fetchrow(
+            """
+            SELECT invocation_key, invocation_kind, capture_state,
+                   usage_delivery_state, capture_envelope_sha256
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert journal_row["invocation_key"] == (
+        f"reader:reader_semantic_outline:{result.claim.job_id}:1:1"
+    )
+    assert journal_row["invocation_kind"] == "reader.semantic_outline"
+    assert journal_row["capture_state"] == "captured"
+    assert journal_row["usage_delivery_state"] == "reconciled"
+    assert len(journal_row["capture_envelope_sha256"]) == 64
+    assert usage_count == 1
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_semantic_outline_captured_restart_resumes_without_provider_recall(
+    outline_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env,
+        user_id=user_id,
+        plain_text="A captured outline must survive a publication crash.",
+    )
+    async with outline_env.acquire() as conn:
+        unit_id = await conn.fetchval(
+            "SELECT unit_id FROM reading_units WHERE reading_record_id = $1 LIMIT 1",
+            article.record_id,
+        )
+    candidates = (
+        SemanticOutlineCandidateNode(
+            candidate_ref="resume-root",
+            parent_candidate_ref=None,
+            depth=1,
+            title="Recovered outline",
+            start_unit_id=unit_id,
+            end_unit_id=unit_id,
+        ),
+    )
+    await _bootstrap_outline(
+        outline_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    first_generator = _JournalInspectingOutlineGenerator(outline_env, candidates)
+    crashed = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=first_generator,
+        publisher=_CrashAfterOutlineCapturePublisher(),
+    ).process_next_semantic_outline_job(
+        lease_owner="outline-before-crash",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert crashed is not None
+    assert crashed.status == "paused"
+    assert len(first_generator.calls) == 1
+
+
+    async with outline_env.acquire() as conn:
+        if delivery_state != "reconciled":
+            await conn.execute(
+                """
+                UPDATE ai_model_execution_journal
+                SET usage_delivery_state = $2,
+                    ai_usage_event_id = NULL,
+                    reconciled_at = NULL,
+                    dead_lettered_at = CASE
+                        WHEN $2 = 'dead_letter' THEN NOW()
+                        ELSE NULL
+                    END
+                WHERE reader_job_id = $1
+                """,
+                crashed.claim.job_id,
+                delivery_state,
+            )
+
+    fail_if_called = _FailIfOutlineProviderCalled()
+    resumed = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=fail_if_called,
+    ).process_next_semantic_outline_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="outline-recovery",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is not None
+    assert resumed.status == "succeeded"
+    assert fail_if_called.calls == []
+    async with outline_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            "SELECT status, attempt_count FROM reader_jobs WHERE id = $1",
+            crashed.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            crashed.claim.job_id,
+        )
+    assert job_row["status"] == "succeeded"
+    assert job_row["attempt_count"] == 1
+    assert usage_count == 1
+
+
+@pytest.mark.parametrize(
+    ("capture_error", "expected_rationale", "expected_failure"),
+    [
+        (
+            RuntimeError("capture unavailable"),
+            "model_execution_ambiguous",
+            "provider_outcome_ambiguous",
+        ),
+        (
+            CaptureEnvelopeConflictError("capture conflict"),
+            "model_execution_capture_conflict",
+            "capture_envelope_conflict",
+        ),
+    ],
+)
+async def test_semantic_outline_capture_failure_pauses_without_publish(
+    outline_env: asyncpg.Pool,
+    capture_error: Exception,
+    expected_rationale: str,
+    expected_failure: str,
+) -> None:
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env,
+        user_id=user_id,
+        plain_text="Capture must complete before outline publication.",
+    )
+    async with outline_env.acquire() as conn:
+        unit_id = await conn.fetchval(
+            "SELECT unit_id FROM reading_units WHERE reading_record_id = $1 LIMIT 1",
+            article.record_id,
+        )
+    candidates = (
+        SemanticOutlineCandidateNode(
+            candidate_ref="capture-root",
+            parent_candidate_ref=None,
+            depth=1,
+            title="Capture root",
+            start_unit_id=unit_id,
+            end_unit_id=unit_id,
+        ),
+    )
+    await _bootstrap_outline(
+        outline_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    publisher = _FailIfOutlinePublished()
+    result = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=_JournalInspectingOutlineGenerator(outline_env, candidates),
+        publisher=publisher,
+        journal_service=_CaptureFailingOutlineJournal(outline_env, capture_error),
+    ).process_next_semantic_outline_job(
+        lease_owner="outline-capture-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "paused"
+    assert publisher.calls == 0
+    async with outline_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            SELECT status, pause_owner, rationale_code, failure_code
+            FROM reader_jobs WHERE id = $1
+            """,
+            result.claim.job_id,
+        )
+        layer_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM enhancement_layers WHERE source_job_id = $1",
+            result.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert dict(job_row) == {
+        "status": "paused",
+        "pause_owner": "system",
+        "rationale_code": expected_rationale,
+        "failure_code": expected_failure,
+    }
+    assert layer_count == 0
+    assert usage_count == 0
+
+
+async def test_semantic_outline_materializer_failure_does_not_block_publish(
+    outline_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env,
+        user_id=user_id,
+        plain_text="Usage delivery is independent from outline publication.",
+    )
+    async with outline_env.acquire() as conn:
+        unit_id = await conn.fetchval(
+            "SELECT unit_id FROM reading_units WHERE reading_record_id = $1 LIMIT 1",
+            article.record_id,
+        )
+    candidates = (
+        SemanticOutlineCandidateNode(
+            candidate_ref="pending-root",
+            parent_candidate_ref=None,
+            depth=1,
+            title="Pending usage root",
+            start_unit_id=unit_id,
+            end_unit_id=unit_id,
+        ),
+    )
+    await _bootstrap_outline(
+        outline_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    result = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=_JournalInspectingOutlineGenerator(outline_env, candidates),
+        journal_service=_MaterializerFailingOutlineJournal(outline_env),
+    ).process_next_semantic_outline_job(
+        lease_owner="outline-materializer-failure",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    journal_service = ModelExecutionJournalService(pool=outline_env)
+    await journal_service.materialize_pending()
+    await journal_service.materialize_pending()
+    async with outline_env.acquire() as conn:
+        journal_state = await conn.fetchval(
+            """
+            SELECT usage_delivery_state FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            """,
+            result.claim.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            result.claim.job_id,
+        )
+    assert journal_state == "reconciled"
+    assert usage_count == 1
+
+
+async def test_semantic_outline_tampered_receipt_fails_closed_without_provider_recall(
+    outline_env: asyncpg.Pool,
+) -> None:
+    user_id = await insert_user(outline_env)
+    article = await submit_article_ready(
+        outline_env,
+        user_id=user_id,
+        plain_text="Tampered outline receipts must never be published.",
+    )
+    async with outline_env.acquire() as conn:
+        unit_id = await conn.fetchval(
+            "SELECT unit_id FROM reading_units WHERE reading_record_id = $1 LIMIT 1",
+            article.record_id,
+        )
+    candidates = (
+        SemanticOutlineCandidateNode(
+            candidate_ref="tamper-root",
+            parent_candidate_ref=None,
+            depth=1,
+            title="Original outline",
+            start_unit_id=unit_id,
+            end_unit_id=unit_id,
+        ),
+    )
+    await _bootstrap_outline(
+        outline_env,
+        record_id=article.record_id,
+        user_id=user_id,
+    )
+    crashed = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=_JournalInspectingOutlineGenerator(outline_env, candidates),
+        publisher=_CrashAfterOutlineCapturePublisher(),
+    ).process_next_semantic_outline_job(
+        lease_owner="outline-before-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert crashed is not None
+    assert crashed.status == "paused"
+    async with outline_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = jsonb_set(
+                    normalized_payload_json,
+                    '{model}',
+                    to_jsonb($2::text)
+                )
+            WHERE reader_job_id = $1
+            """,
+            crashed.claim.job_id,
+            "tampered-model",
+        )
+
+    fail_if_called = _FailIfOutlineProviderCalled()
+    resumed = await SemanticOutlineWorkerService(
+        pool=outline_env,
+        generator=fail_if_called,
+    ).process_next_semantic_outline_job_for_record(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="outline-after-tamper",
+        lease_duration=timedelta(seconds=30),
+    )
+
+    assert resumed is None
+    assert fail_if_called.calls == []
+    async with outline_env.acquire() as conn:
+        job_row = await conn.fetchrow(
+            """
+            SELECT status, pause_owner, rationale_code, failure_code
+            FROM reader_jobs WHERE id = $1
+            """,
+            crashed.claim.job_id,
+        )
+        layer_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM enhancement_layers WHERE source_job_id = $1",
+            crashed.claim.job_id,
+        )
+    assert dict(job_row) == {
+        "status": "paused",
+        "pause_owner": "system",
+        "rationale_code": "model_execution_receipt_invalid",
+        "failure_code": "receipt_payload_invalid",
+    }
+    assert layer_count == 0

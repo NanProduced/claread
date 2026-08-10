@@ -85,6 +85,7 @@ from app.services.reader_orchestration.job_bootstrap import (
     settings_aware_semantic_outline_request_eligibility,
 )
 from app.services.reader_orchestration.job_runtime import (
+    CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
     IllegalTransitionError,
@@ -1522,9 +1523,8 @@ class ReaderEnhancementPipelineRunner:
                 processed_job=False,
             )
 
-        claim = await self._job_runtime.claim_next_job(
-            lease_owner=lease_owner,
-            lease_duration=lease_duration,
+        resume: CapturedResumeClaim | None = None
+        resume_job_id = await self._job_runtime.find_captured_resume_job_id(
             job_type=GRAMMAR_WINDOW_JOB_TYPE,
             target_type=GRAMMAR_WINDOW_TARGET_TYPE,
             operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
@@ -1532,6 +1532,24 @@ class ReaderEnhancementPipelineRunner:
             base_id=base_id,
             expected_generation=expected_generation,
         )
+        if resume_job_id is not None:
+            resume = await self._job_runtime.claim_captured_resume(
+                job_id=resume_job_id,
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+            )
+        claim = resume.claim if resume is not None else None
+        if claim is None:
+            claim = await self._job_runtime.claim_next_job(
+                lease_owner=lease_owner,
+                lease_duration=lease_duration,
+                job_type=GRAMMAR_WINDOW_JOB_TYPE,
+                target_type=GRAMMAR_WINDOW_TARGET_TYPE,
+                operation_fingerprint=GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
+                reading_record_id=record_id,
+                base_id=base_id,
+                expected_generation=expected_generation,
+            )
         if claim is None:
             return ReaderPipelineWorkerAttempt(
                 worker_type="grammar_bundle_window",
@@ -1555,6 +1573,7 @@ class ReaderEnhancementPipelineRunner:
                 plan_id=plan_id,
                 window_id=window_id,
                 retry_delay=retry_delay,
+                captured_resume=resume,
             )
 
     async def _execute_claimed_grammar_window_attempt(
@@ -1564,6 +1583,7 @@ class ReaderEnhancementPipelineRunner:
         plan_id: UUID | None,
         window_id: UUID | None,
         retry_delay: timedelta,
+        captured_resume: CapturedResumeClaim | None = None,
     ) -> ReaderPipelineWorkerAttempt:
         """Run process → publish → usage/span under an active execution scope.
 
@@ -1576,8 +1596,19 @@ class ReaderEnhancementPipelineRunner:
         await self._mark_window_run_running(claim.run_id)
 
         try:
-            result = await self._grammar_window_worker.process_window_job(claim=claim)
+            result = (
+                await self._grammar_window_worker.process_captured_window_job(
+                    resume=captured_resume
+                )
+                if captured_resume is not None
+                else await self._grammar_window_worker.process_window_job(claim=claim)
+            )
         except GrammarWindowExecutionError as exc:
+            if captured_resume is not None:
+                return await self._pause_captured_window_attempt(
+                    claim=claim,
+                    exc=exc,
+                )
             # Requirement 2: route via exc.retryable instead of fixed True.
             return await self._handle_window_job_failure(
                 claim=claim,
@@ -1600,6 +1631,12 @@ class ReaderEnhancementPipelineRunner:
                 end_span="execution_error",
             )
         except ValueError as exc:
+            if captured_resume is not None:
+                return await self._pause_captured_window_attempt(
+                    claim=claim,
+                    exc=exc,
+                    invalid_receipt=True,
+                )
             return await self._handle_window_job_failure(
                 claim=claim,
                 exc=exc,
@@ -1615,6 +1652,11 @@ class ReaderEnhancementPipelineRunner:
                 end_span="execution_error",
             )
         except Exception as exc:
+            if captured_resume is not None:
+                return await self._pause_captured_window_attempt(
+                    claim=claim,
+                    exc=exc,
+                )
             return await self._handle_window_job_failure(
                 claim=claim,
                 exc=exc,
@@ -1631,6 +1673,34 @@ class ReaderEnhancementPipelineRunner:
             )
 
         status = result.get("status")
+
+        if status == "paused":
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="retry_later",
+                processed_job=True,
+                job_id=claim.job_id,
+                run_id=claim.run_id,
+                attention_code=await self._load_job_attention_code(claim.job_id),
+            )
+        if status == "retry_later":
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="retry_later",
+                processed_job=True,
+                job_id=claim.job_id,
+                run_id=claim.run_id,
+            )
+        if status == "superseded":
+            return ReaderPipelineWorkerAttempt(
+                worker_type="grammar_bundle_window",
+                outcome="superseded",
+                processed_job=True,
+                job_id=claim.job_id,
+                run_id=claim.run_id,
+                attention_code=result.get("failure_code"),
+                superseded_jobs=1,
+            )
 
         if status != "candidates_ready":
             # already_terminal: window already completed (no_op / failed /
@@ -1681,29 +1751,13 @@ class ReaderEnhancementPipelineRunner:
         try:
             candidate_contents = _derive_candidate_contents(candidates)
         except ValueError as exc:
-            return await self._handle_window_job_failure(
+            return await self._pause_captured_window_attempt(
                 claim=claim,
                 exc=exc,
-                retryable=False,
-                retry_delay=retry_delay,
-                failure_class="grammar_window_contract_violation",
-                failure_code="candidate_contents_derivation_failed",
-                rationale_code="candidate_contents_derivation_failed",
-                message=str(exc),
-                window_id=window_id,
-                plan_id=plan_id,
-                # Worker returned candidates → publisher-side failure has them
-                raw_candidates=candidates,
-                prompt_version=result.get("prompt_version"),
-                model_route=result.get("model_route"),
-                model_profile=result.get("model_profile"),
-                model_provider=result.get("model_provider"),
-                model_name=result.get("model_name"),
-                usage_data=result.get("usage_data"),
-                end_span="execution_error",
+                invalid_receipt=True,
             )
         try:
-            published = await self._grammar_window_publisher.publish_window_grammar_bundle(
+            _published = await self._grammar_window_publisher.publish_window_grammar_bundle(
                 job_id=claim.job_id,
                 lease_token=claim.lease_token,
                 plan_id=plan_id,
@@ -1780,66 +1834,25 @@ class ReaderEnhancementPipelineRunner:
                 superseded_jobs=1 if transitioned else 0,
             )
         except ValueError as exc:
-            return await self._handle_window_job_failure(
+            return await self._pause_captured_window_attempt(
                 claim=claim,
                 exc=exc,
-                retryable=False,
-                retry_delay=retry_delay,
-                failure_class="grammar_window_contract_violation",
-                failure_code="publisher_fail_closed",
-                rationale_code="publisher_fail_closed",
-                message=str(exc),
-                window_id=window_id,
-                plan_id=plan_id,
-                raw_candidates=candidates,
-                prompt_version=result.get("prompt_version"),
-                model_route=result.get("model_route"),
-                model_profile=result.get("model_profile"),
-                model_provider=result.get("model_provider"),
-                model_name=result.get("model_name"),
-                usage_data=result.get("usage_data"),
-                end_span="execution_error",
+                invalid_receipt=True,
             )
         except Exception as exc:
-            return await self._handle_window_job_failure(
+            return await self._pause_captured_window_attempt(
                 claim=claim,
                 exc=exc,
-                retryable=False,
-                retry_delay=retry_delay,
-                failure_class="grammar_window_publisher_unexpected",
-                failure_code=type(exc).__name__,
-                rationale_code="publisher_unexpected_failure",
-                message=str(exc),
-                window_id=window_id,
-                plan_id=plan_id,
-                raw_candidates=candidates,
-                prompt_version=result.get("prompt_version"),
-                model_route=result.get("model_route"),
-                model_profile=result.get("model_profile"),
-                model_provider=result.get("model_provider"),
-                model_name=result.get("model_name"),
-                usage_data=result.get("usage_data"),
-                end_span="generic_exception",
             )
 
-        # Requirement 6: success path — record ai_usage_events + end worker
-        # span with token / model fields. The event carries plan_id /
-        # window_id / window_index / target_unit_ids / target_anchor_ids /
-        # accepted_count / no_op / layer_ids in metadata so Console can
-        # correlate grammar-window window runs with their LLM cost.
-        window_meta = await self._load_window_publish_metadata(
-            claim.job_id, window_id
-        )
-        event_id = await self._record_window_success_usage(
-            claim=claim,
-            result=result,
-            plan_id=plan_id,
-            window_id=window_id,
-            window_meta=window_meta,
-            published=published,
+        result["ai_usage_event_id"] = (
+            await self._grammar_window_worker.reconcile_published_usage(
+                claim=claim,
+                fallback_event_id=result.get("ai_usage_event_id"),
+            )
         )
         await end_worker_span_success(
-            ai_usage_event_id=event_id,
+            ai_usage_event_id=result.get("ai_usage_event_id"),
             usage_data=result.get("usage_data"),
             model_route=result.get("model_route"),
             model_name=result.get("model_name"),
@@ -1853,6 +1866,29 @@ class ReaderEnhancementPipelineRunner:
             processed_job=True,
             job_id=claim.job_id,
             run_id=claim.run_id,
+        )
+
+    async def _pause_captured_window_attempt(
+        self,
+        *,
+        claim: ClaimResult,
+        exc: Exception,
+        invalid_receipt: bool = False,
+    ) -> ReaderPipelineWorkerAttempt:
+        assert self._grammar_window_worker is not None
+        await self._grammar_window_worker.pause_captured_claim(
+            claim,
+            exc,
+            invalid_receipt=invalid_receipt,
+        )
+        await end_worker_span_generic_exception(layer="grammar_window", exc=exc)
+        return ReaderPipelineWorkerAttempt(
+            worker_type="grammar_bundle_window",
+            outcome="retry_later",
+            processed_job=True,
+            job_id=claim.job_id,
+            run_id=claim.run_id,
+            attention_code=await self._load_job_attention_code(claim.job_id),
         )
 
     async def _handle_window_job_failure(
@@ -2866,7 +2902,7 @@ class ReaderEnhancementPipelineRunner:
     def _normalize_worker_outcome(status: str) -> PipelineAttemptOutcome:
         if status == "succeeded":
             return "succeeded"
-        if status == "retry_later":
+        if status in {"retry_later", "paused"}:
             return "retry_later"
         if status == "failed_terminal":
             return "failed_terminal"

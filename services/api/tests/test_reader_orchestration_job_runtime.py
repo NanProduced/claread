@@ -2349,6 +2349,90 @@ async def test_stale_started_execution_pauses_ambiguous_without_provider_recall(
     assert capture_state == "ambiguous"
 
 
+async def test_partial_two_slot_capture_recovers_as_ambiguous_not_resume(
+    job_runtime_env: asyncpg.Pool,
+) -> None:
+    user_id, record_id, base_id, run_id = await _seed_active_record(
+        job_runtime_env
+    )
+    job_id = await _insert_job(
+        job_runtime_env,
+        record_id=record_id,
+        run_id=run_id,
+        user_id=user_id,
+        base_id=base_id,
+        target_key="partial-two-slot-capture",
+    )
+    runtime = ReaderJobRuntime(pool=job_runtime_env)
+    claim = await runtime.claim_next_job(
+        lease_owner="two-slot-owner",
+        lease_duration=timedelta(seconds=30),
+    )
+    assert claim is not None and claim.job_id == job_id
+    journal = ModelExecutionJournalService(job_runtime_env)
+    identities = [
+        ExecutionIdentity(
+            invocation_key=f"reader:test:{job_id}:{claim.attempt_count}:{slot}",
+            reader_job_id=job_id,
+            reader_run_id=run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=slot,
+        )
+        for slot in (1, 2)
+    ]
+    for identity in identities:
+        await journal.begin_execution(
+            identity=identity,
+            invocation_kind="reader.grammar_batch",
+        )
+    await journal.capture_execution(
+        identity=identities[0],
+        prepared=_journal_capture_payload(
+            user_id=user_id,
+            record_id=record_id,
+            run_id=run_id,
+            job_id=job_id,
+        ),
+    )
+    async with job_runtime_env.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET lease_expires_at = NOW() - INTERVAL '1 second'
+            WHERE id = $1
+            """,
+            job_id,
+        )
+
+    assert await runtime.recover_stale_leases() == 1
+    assert (
+        await runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner="must-not-partially-resume",
+            lease_duration=timedelta(seconds=30),
+        )
+        is None
+    )
+    row = await _fetch_job(job_runtime_env, job_id)
+    assert row["status"] == STATUS_PAUSED
+    assert row["rationale_code"] == "model_execution_ambiguous"
+    assert row["failure_code"] == "provider_outcome_ambiguous"
+    async with job_runtime_env.acquire() as conn:
+        states = await conn.fetch(
+            """
+            SELECT execution_slot, capture_state
+            FROM ai_model_execution_journal
+            WHERE reader_job_id = $1
+            ORDER BY execution_slot
+            """,
+            job_id,
+        )
+    assert [(row["execution_slot"], row["capture_state"]) for row in states] == [
+        (1, "captured"),
+        (2, "ambiguous"),
+    ]
+
+
 async def test_both_normal_claim_seams_fail_closed_for_prior_receipts(
     job_runtime_env: asyncpg.Pool,
 ) -> None:

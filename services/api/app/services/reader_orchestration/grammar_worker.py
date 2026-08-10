@@ -102,6 +102,7 @@ from .span_recorder import (
     end_worker_span_generic_exception,
     end_worker_span_success,
 )
+from .usage_attribution import ReaderUsageAttributionService
 
 DEFAULT_GRAMMAR_RETRY_DELAY = timedelta(minutes=5)
 
@@ -950,6 +951,15 @@ class GrammarBundleWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
     ) -> GrammarJobProcessResult | None:
+        resume = await self._claim_captured_grammar_unit_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_grammar_unit_resume(
+                resume=resume,
+                lease_duration=lease_duration,
+            )
         claim = await self.claim_grammar_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
@@ -971,6 +981,18 @@ class GrammarBundleWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_GRAMMAR_RETRY_DELAY,
     ) -> GrammarJobProcessResult | None:
+        resume = await self._claim_captured_grammar_unit_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if resume is not None:
+            return await self._process_captured_grammar_unit_resume(
+                resume=resume,
+                lease_duration=lease_duration,
+            )
         claim = await self.claim_grammar_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -985,6 +1007,144 @@ class GrammarBundleWorkerService:
             retry_delay=retry_delay,
         )
 
+    async def _claim_captured_grammar_unit_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        job_id = await self._job_runtime.find_captured_resume_job_id(
+            job_type=GRAMMAR_JOB_TYPE,
+            target_type=GRAMMAR_TARGET_SCOPE,
+            operation_fingerprint=GRAMMAR_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if job_id is None:
+            return None
+        resume = await self._job_runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            await self._mark_run_running(resume.claim.run_id)
+        return resume
+
+    async def _process_captured_grammar_unit_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+        lease_duration: timedelta,
+    ) -> GrammarJobProcessResult:
+        """Publish one captured grammar result without provider capability."""
+        claim = resume.claim
+        context: GrammarJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("grammar_unit_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution, output, diagnostics = (
+                self._grammar_unit_execution_from_captured_receipt(receipt)
+            )
+            context = await self._load_job_context(claim.job_id)
+        except Exception as exc:
+            await self._pause_invalid_or_incomplete_grammar_unit_resume(claim, exc)
+            return GrammarJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration,
+            heartbeat_interval=self._batch_heartbeat_interval,
+        )
+        await heartbeat.start()
+        try:
+            event_id = await self._materialize_grammar_unit_usage(receipt)
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
+                )
+            try:
+                published_bundle = await self._publish_grammar_unit(
+                    claim=claim,
+                    output=output,
+                    execution=execution,
+                    diagnostics=diagnostics,
+                )
+            except FenceViolationError:
+                await end_worker_span_fence_violation()
+                if heartbeat.lost:
+                    return GrammarJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
+                await self._mark_claimed_grammar_unit_superseded(claim)
+                raise
+            except Exception as exc:
+                if heartbeat.lost:
+                    return GrammarJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
+                await self._pause_invalid_or_incomplete_grammar_unit_resume(
+                    claim, exc
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+
+            event_id = await self._reconcile_grammar_unit_usage(
+                invocation_key=receipt.identity.invocation_key,
+                fallback_event_id=event_id,
+            )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            )
+            return GrammarJobProcessResult(
+                claim=claim,
+                context=context,
+                status="succeeded",
+                output=output,
+                published_bundle=published_bundle,
+                usage_data=execution.usage_data,
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+            )
+        finally:
+            await heartbeat.stop()
+
     @with_execution_correlation(CAPABILITY_READER_GRAMMAR_BUNDLE)
     async def process_claimed_grammar_job(
         self,
@@ -994,6 +1154,7 @@ class GrammarBundleWorkerService:
     ) -> GrammarJobProcessResult:
         context: GrammarJobContext | None = None
         execution: GrammarExecutionResult | None = None
+        execution_captured = False
 
         # Phase 4: lease renewal for the per-unit generate → publish
         # phase. A generate call longer than the lease let
@@ -1012,109 +1173,148 @@ class GrammarBundleWorkerService:
 
         try:
             context = await self._load_job_context(claim.job_id)
-            await heartbeat.start()
+            identity = self._grammar_unit_execution_identity(claim)
             try:
-                execution = await self._executor.generate(context)
-                try:
-                    bundle_output = GrammarBundleOutput.model_validate(execution.output)
-                except ValidationError as exc:
-                    raise GrammarExecutionError(
-                        f"grammar bundle produced invalid structured output: {exc}",
-                        retryable=False,
-                        failure_class="validation",
-                        failure_code="grammar_bundle_output_invalid",
-                        prompt_version=execution.prompt_version,
-                        model_route=execution.model_route,
-                        model_profile=execution.model_profile,
-                        model_provider=execution.model_provider,
-                        model_name=execution.model_name,
-                    ) from exc
-
-                sanitized_output, diagnostics = _sanitize_grammar_bundle_output(
-                    context,
-                    bundle_output,
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.grammar_unit",
                 )
-                quality_json = _build_quality_json(
-                    sanitized_output,
-                    execution,
-                    diagnostics,
-                )
-                # R7-3b: actively probe ownership before publishing so
-                # a lease lost during generation aborts the attempt
-                # without publishing. The publisher's in-transaction
-                # fence is still the final authoritative check.
-                await heartbeat.verify_ownership()
-                published_bundle = await self._layer_publisher.publish_unit_grammar_bundle(
-                    job_id=claim.job_id,
-                    lease_token=claim.lease_token,
-                    grammar_note_output=(
-                        GrammarNoteLayerOutput(items=sanitized_output.grammar_notes)
-                        if sanitized_output.grammar_notes
-                        else None
-                    ),
-                    sentence_analysis_output=(
-                        SentenceAnalysisLayerOutput(
-                            items=sanitized_output.sentence_analyses
-                        )
-                        if sanitized_output.sentence_analyses
-                        else None
-                    ),
-                    quality_json=quality_json,
-                )
-                event_id = await self._record_usage_event(
-                    context=context,
-                    execution=execution,
-                    published_bundle=published_bundle,
-                    status=STATUS_SUCCEEDED,
-                )
-                await end_worker_span_success(
-                    ai_usage_event_id=event_id,
-                    usage_data=execution.usage_data,
-                    model_route=execution.model_route,
-                    model_name=execution.model_name,
-                    model_provider=execution.model_provider,
-                    capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
                 )
                 return GrammarJobProcessResult(
                     claim=claim,
                     context=context,
-                    status="succeeded",
-                    output=sanitized_output,
-                    published_bundle=published_bundle,
-                    usage_data=execution.usage_data,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+
+            await heartbeat.start()
+            execution = await self._executor.generate(context)
+            try:
+                bundle_output = GrammarBundleOutput.model_validate(execution.output)
+            except ValidationError as exc:
+                raise GrammarExecutionError(
+                    f"grammar bundle produced invalid structured output: {exc}",
+                    retryable=False,
+                    failure_class="validation",
+                    failure_code="grammar_bundle_output_invalid",
                     prompt_version=execution.prompt_version,
                     model_route=execution.model_route,
                     model_profile=execution.model_profile,
                     model_provider=execution.model_provider,
                     model_name=execution.model_name,
+                ) from exc
+
+            sanitized_output, diagnostics = _sanitize_grammar_bundle_output(
+                context,
+                bundle_output,
+            )
+            try:
+                event_id = await self._capture_grammar_unit_execution(
+                    identity=identity,
+                    context=context,
+                    execution=execution,
+                    output=sanitized_output,
+                    diagnostics=diagnostics,
                 )
-            finally:
-                # Cleanup on success, exception AND external
-                # cancellation: the renewal task never survives this
-                # method. Renewal failures stay visible via
-                # heartbeat.lost (logged in the loop); stop() itself
-                # does not raise.
-                await heartbeat.stop()
+                execution_captured = True
+            except CaptureEnvelopeConflictError as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_capture_conflict",
+                    failure_code="capture_envelope_conflict",
+                    failure_message=str(exc),
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_ambiguous",
+                    failure_code="provider_outcome_ambiguous",
+                    failure_message=str(exc),
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
+                )
+
+            published_bundle = await self._publish_grammar_unit(
+                claim=claim,
+                output=sanitized_output,
+                execution=execution,
+                diagnostics=diagnostics,
+            )
+            event_id = await self._reconcile_grammar_unit_usage(
+                invocation_key=identity.invocation_key,
+                fallback_event_id=event_id,
+            )
+            await end_worker_span_success(
+                ai_usage_event_id=event_id,
+                usage_data=execution.usage_data,
+                model_route=execution.model_route,
+                model_name=execution.model_name,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_GRAMMAR_BUNDLE,
+            )
+            return GrammarJobProcessResult(
+                claim=claim,
+                context=context,
+                status="succeeded",
+                output=sanitized_output,
+                published_bundle=published_bundle,
+                usage_data=execution.usage_data,
+                prompt_version=execution.prompt_version,
+                model_route=execution.model_route,
+                model_profile=execution.model_profile,
+                model_provider=execution.model_provider,
+                model_name=execution.model_name,
+            )
         except FenceViolationError:
             await end_worker_span_fence_violation()
-            # The model call completed (tokens spent) but the publish
-            # fence failed — record the invocation's usage so the
-            # usage table reflects real model consumption. The
-            # invocation key namespaces this row within the per-unit
-            # path (distinct from the batch path's
-            # reader_grammar_batch: namespace).
-            await self._record_failed_usage_event(
-                context=context,
-                error_code="publish_fence_failed",
-                error_message="grammar unit publish fence failed",
-                prompt_version=(execution.prompt_version if execution else None),
-                model_route=(execution.model_route if execution else GRAMMAR_MODEL_ROUTE),
-                model_profile=(execution.model_profile if execution else None),
-                model_provider=(execution.model_provider if execution else None),
-                model_name=(execution.model_name if execution else None),
-                usage_data=(execution.usage_data if execution else None),
-                invocation_key=self._per_unit_invocation_key(claim),
-            )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="superseded",
@@ -1130,6 +1330,18 @@ class GrammarBundleWorkerService:
             )
             raise
         except GrammarExecutionError as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if is_semantic_fence_failure_code(exc.failure_code):
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -1217,6 +1429,24 @@ class GrammarBundleWorkerService:
                 status="failed_terminal",
             )
         except Exception as exc:
+            if execution_captured:
+                if heartbeat.lost:
+                    return GrammarJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return GrammarJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             await self._job_runtime.transition(
                 job_id=claim.job_id,
                 target_status="failed_terminal",
@@ -1245,6 +1475,32 @@ class GrammarBundleWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+        finally:
+            await heartbeat.stop()
+
+    async def _publish_grammar_unit(
+        self,
+        *,
+        claim: ClaimResult,
+        output: GrammarBundleOutput,
+        execution: GrammarExecutionResult,
+        diagnostics: dict[str, Any] | None,
+    ) -> PublishedGrammarBundle:
+        return await self._layer_publisher.publish_unit_grammar_bundle(
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            grammar_note_output=(
+                GrammarNoteLayerOutput(items=output.grammar_notes)
+                if output.grammar_notes
+                else None
+            ),
+            sentence_analysis_output=(
+                SentenceAnalysisLayerOutput(items=output.sentence_analyses)
+                if output.sentence_analyses
+                else None
+            ),
+            quality_json=_build_quality_json(output, execution, diagnostics),
+        )
 
     async def _load_job_context(self, job_id: UUID) -> GrammarJobContext:
         async with self.get_pool().acquire() as conn:
@@ -2595,6 +2851,198 @@ class GrammarBundleWorkerService:
             grammar_prompt_lines=strategy_metadata.grammar_prompt_lines,
             article_route=article_route,
             document_features=document_features,
+        )
+
+    @staticmethod
+    def _grammar_unit_execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_GRAMMAR_BUNDLE}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_grammar_unit_execution(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: GrammarJobContext,
+        execution: GrammarExecutionResult,
+        output: GrammarBundleOutput,
+        diagnostics: dict[str, Any] | None,
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.grammar_unit",
+            resume_payload_kind="reader.grammar_unit.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "output": output.model_dump(mode="json"),
+                "diagnostics": diagnostics,
+            },
+            usage_event_draft=self._grammar_unit_usage_draft(
+                identity=identity,
+                context=context,
+                execution=execution,
+                output=output,
+            ),
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._materialize_grammar_unit_usage(receipt)
+
+    @staticmethod
+    def _grammar_unit_usage_draft(
+        *,
+        identity: ExecutionIdentity,
+        context: GrammarJobContext,
+        execution: GrammarExecutionResult,
+        output: GrammarBundleOutput,
+    ) -> dict[str, Any]:
+        published_layer_types = [
+            layer_type
+            for layer_type, items in (
+                ("grammar_note", output.grammar_notes),
+                ("sentence_analysis", output.sentence_analyses),
+            )
+            if items
+        ]
+        return {
+            "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+            "capability_code": CAPABILITY_READER_GRAMMAR_BUNDLE,
+            "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+            "status": STATUS_SUCCEEDED,
+            "user_id": context.user_id,
+            "reading_record_id": context.reading_record_id,
+            "reader_run_id": context.run_id,
+            "reader_job_id": context.job_id,
+            "workflow_name": "reader_orchestration",
+            "workflow_version": GRAMMAR_WORKFLOW_VERSION,
+            "prompt_version": execution.prompt_version,
+            "model_route": execution.model_route,
+            "model_profile_id": execution.model_profile,
+            "model_profile": execution.model_profile,
+            "model_provider": execution.model_provider,
+            "model_name": execution.model_name,
+            "planner_kind": "llm_worker",
+            "usage_data": execution.usage_data,
+            "operation_fingerprint": context.operation_fingerprint,
+            "metadata_json": {
+                "base_id": str(context.base_id),
+                "unit_id": context.unit_id,
+                "source_language": context.source_language,
+                "anchor_segment_count": len(context.anchor_segments),
+                "published_layer_ids": [],
+                "published_layer_types": published_layer_types,
+                "no_op": not published_layer_types,
+                "invocation_key": identity.invocation_key,
+                "attempt_ordinal": identity.attempt_ordinal,
+                "execution_slot": identity.execution_slot,
+            },
+        }
+
+    async def _materialize_grammar_unit_usage(
+        self,
+        receipt: CapturedReceipt,
+    ) -> UUID | None:
+        return await self._reconcile_grammar_unit_usage(
+            invocation_key=receipt.identity.invocation_key,
+            fallback_event_id=receipt.ai_usage_event_id,
+        )
+
+    async def _reconcile_grammar_unit_usage(
+        self,
+        *,
+        invocation_key: str,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=invocation_key
+            )
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "grammar_unit_usage_delivery_deferred: invocation_key=%s error=%s",
+                invocation_key,
+                type(exc).__name__,
+            )
+            return fallback_event_id
+        return receipt.ai_usage_event_id or fallback_event_id
+
+    @staticmethod
+    def _grammar_unit_execution_from_captured_receipt(
+        receipt: CapturedReceipt,
+    ) -> tuple[GrammarExecutionResult, GrammarBundleOutput, dict[str, Any] | None]:
+        if receipt.invocation_kind != "reader.grammar_unit":
+            raise PayloadContractError("grammar_unit_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        execution = GrammarExecutionResult(
+            output=payload.output,
+            usage_data=usage.usage_data,
+            prompt_version=usage.prompt_version,
+            model_route=usage.model_route,
+            model_profile=usage.model_profile,
+            model_provider=usage.model_provider,
+            model_name=usage.model_name,
+            diagnostics=payload.diagnostics,
+        )
+        return execution, payload.output, payload.diagnostics
+
+    async def _pause_invalid_or_incomplete_grammar_unit_resume(
+        self,
+        claim: ClaimResult,
+        exc: Exception,
+    ) -> None:
+        invalid = isinstance(exc, PayloadContractError)
+        await self._pause_model_execution_claim(
+            claim,
+            rationale_code=(
+                "model_execution_receipt_invalid"
+                if invalid
+                else "model_execution_captured_resume_required"
+            ),
+            failure_code=(
+                "receipt_payload_invalid" if invalid else "post_provider_resume_required"
+            ),
+            failure_message=str(exc),
+        )
+
+    async def _mark_claimed_grammar_unit_superseded(
+        self,
+        claim: ClaimResult,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="superseded",
+            lease_token=claim.lease_token,
+            rationale_code="publish_fence_failed",
+        )
+        await self._mark_run_status(
+            claim.run_id,
+            status="superseded",
+            failure_class="publish_guard",
+            failure_code="publish_fence_failed",
+            finished_at=datetime.now(UTC),
         )
 
     @staticmethod

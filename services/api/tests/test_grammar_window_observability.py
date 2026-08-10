@@ -33,14 +33,18 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 
+from app.config.settings import Settings
 from app.contracts.annotation import compute_text_range_hash
 from app.database import connection as db_connection
+from app.database.json_compat import jsonb_param
 from app.observability.langsmith_span_processor import (
     _CURRENT_LANGSMITH_IDS,
     LangSmithIds,
     clear_langsmith_ids,
 )
 from app.schemas.reader_orchestration import ReaderTextRangeAnchor
+from app.services.model_execution_journal import CaptureEnvelopeConflictError
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 from app.services.reader_orchestration.display_title_worker import (
     DisplayTitleWorkerService,
 )
@@ -59,6 +63,9 @@ from app.services.reader_orchestration.pipeline_runner import (
     ReaderEnhancementPipelineRunner,
 )
 from app.services.reader_orchestration.translation_worker import TranslationWorkerService
+from app.services.reader_orchestration.usage_attribution import (
+    ReaderUsageAttributionService,
+)
 from app.services.reader_orchestration.vocabulary_worker import VocabularyWorkerService
 from app.services.reader_orchestration.window_selector import CandidateItem
 from tests.reader_orchestration_test_support import (
@@ -242,6 +249,53 @@ class _ObservabilityMockExecutor:
         )
 
 
+class _JournalOrderWindowExecutor(_ObservabilityMockExecutor):
+    async def generate(
+        self, context: dict[str, Any]
+    ) -> GrammarWindowExecutionResult:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, usage_delivery_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                context["job_id"],
+            )
+        assert row is not None
+        assert row["capture_state"] == "started"
+        assert row["usage_delivery_state"] == "not_ready"
+        assert row["execution_slot"] == 1
+        return await super().generate(context)
+
+
+class _JournalOrderFailWindowPublisher:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self.calls = 0
+
+    async def publish_window_grammar_bundle(self, **kwargs):
+        self.calls += 1
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT capture_state, execution_slot
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                kwargs["job_id"],
+            )
+        assert row is not None
+        assert row["capture_state"] == "captured"
+        assert row["execution_slot"] == 1
+        raise RuntimeError("stop after durable grammar window capture")
+
+
+class _FailingWindowMaterializer(ModelExecutionJournalService):
+    async def materialize_pending(self, **kwargs):
+        raise RuntimeError("grammar window usage sink unavailable")
+
+
 # ---------------------------------------------------------------------------
 # Contract publisher wrapper (injects candidate_contents)
 # ---------------------------------------------------------------------------
@@ -371,12 +425,425 @@ def _make_grammar_window_runner(
         grammar_worker_service=grammar_worker,
         grammar_window_worker_service=window_worker,
         grammar_window_publisher=publisher,  # type: ignore[arg-type]
+        settings=Settings(
+            semantic_outline_generation_enabled=False,
+            reader_semantic_outline_model_profile="",
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
 # Requirement 6: success path writes ai_usage_events + worker_tick span
 # ---------------------------------------------------------------------------
+
+
+async def test_grammar_window_journals_started_then_captured_before_publish(
+    grammar_window_obs_env: asyncpg.Pool,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Journal Order",
+    )
+    executor = _JournalOrderWindowExecutor(pool=pool)
+    publisher = _JournalOrderFailWindowPublisher(pool)
+    runner = _make_grammar_window_runner(pool, executor=executor)
+    runner._grammar_window_publisher = publisher  # type: ignore[assignment]
+    await runner.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+
+    attempt = await runner._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-journal-order",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert attempt.outcome == "retry_later"
+    assert attempt.job_id is not None
+    assert publisher.calls == 1
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code FROM reader_jobs WHERE id = $1",
+            attempt.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_captured_resume_required"
+
+
+@pytest.mark.parametrize(
+    "delivery_state",
+    ["pending", "reconciled", "dead_letter"],
+)
+async def test_grammar_window_captured_restart_is_provider_free_and_delivery_orthogonal(
+    grammar_window_obs_env: asyncpg.Pool,
+    delivery_state: str,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title=f"grammar-window Resume {delivery_state}",
+    )
+    first_executor = _JournalOrderWindowExecutor(pool=pool)
+    first = _make_grammar_window_runner(pool, executor=first_executor)
+    first._grammar_window_publisher = _JournalOrderFailWindowPublisher(  # type: ignore[assignment]
+        pool
+    )
+    await first.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+    paused = await first._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-before-restart",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+    assert paused.job_id is not None and paused.outcome == "retry_later"
+
+    async with pool.acquire() as conn:
+        paused_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            paused.job_id,
+        )
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET usage_delivery_state = $2,
+                ai_usage_event_id = CASE WHEN $2 = 'reconciled'
+                                         THEN ai_usage_event_id ELSE NULL END,
+                delivery_next_attempt_at = NULL,
+                reconciled_at = CASE WHEN $2 = 'reconciled' THEN NOW() ELSE NULL END,
+                dead_lettered_at = CASE WHEN $2 = 'dead_letter' THEN NOW() ELSE NULL END
+            WHERE reader_job_id = $1
+            """,
+            paused.job_id,
+            delivery_state,
+        )
+
+    forbidden = _ObservabilityMockExecutor(pool=pool)
+    resumed = await _make_grammar_window_runner(
+        pool,
+        executor=forbidden,
+    )._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-after-restart",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert resumed.outcome == "succeeded"
+    assert resumed.job_id == paused.job_id
+    assert forbidden.call_count == 0
+    async with pool.acquire() as conn:
+        final_attempt = await conn.fetchval(
+            "SELECT attempt_count FROM reader_jobs WHERE id = $1",
+            paused.job_id,
+        )
+        usage_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            paused.job_id,
+        )
+    assert final_attempt == paused_attempt
+    assert usage_count == 1
+
+
+@pytest.mark.parametrize("failure_kind", ["error", "conflict"])
+async def test_grammar_window_capture_failure_pauses_without_publish(
+    grammar_window_obs_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Capture Failure",
+    )
+    executor = _ObservabilityMockExecutor(pool=pool)
+    publisher = _JournalOrderFailWindowPublisher(pool)
+    runner = _make_grammar_window_runner(pool, executor=executor)
+    runner._grammar_window_publisher = publisher  # type: ignore[assignment]
+    journal = runner._grammar_window_worker._journal_service  # type: ignore[union-attr]
+
+    async def _fail_capture(**kwargs):
+        if failure_kind == "conflict":
+            raise CaptureEnvelopeConflictError("conflicting window capture")
+        raise RuntimeError("window capture unavailable")
+
+    monkeypatch.setattr(journal, "capture_execution", _fail_capture)
+    await runner.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+    attempt = await runner._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-capture-failure",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert attempt.outcome == "retry_later"
+    assert attempt.job_id is not None
+    assert publisher.calls == 0
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code FROM reader_jobs WHERE id = $1",
+            attempt.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == (
+        "model_execution_capture_conflict"
+        if failure_kind == "conflict"
+        else "model_execution_ambiguous"
+    )
+
+
+async def test_grammar_window_begin_failure_never_calls_provider(
+    grammar_window_obs_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Begin Failure",
+    )
+    executor = _ObservabilityMockExecutor(pool=pool)
+    publisher = _JournalOrderFailWindowPublisher(pool)
+    runner = _make_grammar_window_runner(pool, executor=executor)
+    runner._grammar_window_publisher = publisher  # type: ignore[assignment]
+    journal = runner._grammar_window_worker._journal_service  # type: ignore[union-attr]
+
+    async def _fail_begin(**kwargs):
+        raise RuntimeError("grammar window journal begin unavailable")
+
+    monkeypatch.setattr(journal, "begin_execution", _fail_begin)
+    await runner.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+    attempt = await runner._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-begin-failure",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert attempt.outcome == "retry_later"
+    assert attempt.job_id is not None
+    assert executor.call_count == 0
+    assert publisher.calls == 0
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            attempt.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_begin_unconfirmed"
+    assert row["failure_code"] == "journal_begin_failed"
+
+
+async def test_grammar_window_materializer_failure_does_not_block_publish(
+    grammar_window_obs_env: asyncpg.Pool,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Materializer Failure",
+    )
+    executor = _ObservabilityMockExecutor(pool=pool)
+    runner = _make_grammar_window_runner(pool, executor=executor)
+    runner._grammar_window_worker._journal_service = (  # type: ignore[union-attr]
+        _FailingWindowMaterializer(pool)
+    )
+    await runner.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+
+    attempt = await runner._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-materializer-failure",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert attempt.outcome == "succeeded"
+    assert attempt.job_id is not None
+    async with pool.acquire() as conn:
+        before = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            attempt.job_id,
+        )
+    assert before == 0
+    materializer = ModelExecutionJournalService(pool=pool)
+    attribution = ReaderUsageAttributionService(journal_service=materializer)
+    await attribution.materialize_and_reconcile()
+    await attribution.materialize_and_reconcile()
+    async with pool.acquire() as conn:
+        after = await conn.fetchval(
+            "SELECT COUNT(*) FROM ai_usage_events WHERE reader_job_id = $1",
+            attempt.job_id,
+        )
+    assert after == 1
+
+
+async def test_grammar_window_tampered_receipt_fails_closed_without_provider_recall(
+    grammar_window_obs_env: asyncpg.Pool,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Tampered Receipt",
+    )
+    first_executor = _JournalOrderWindowExecutor(pool=pool)
+    first = _make_grammar_window_runner(pool, executor=first_executor)
+    first._grammar_window_publisher = _JournalOrderFailWindowPublisher(  # type: ignore[assignment]
+        pool
+    )
+    await first.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+    paused = await first._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-before-tamper",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+    assert paused.job_id is not None and paused.outcome == "retry_later"
+    async with pool.acquire() as conn:
+        payload = dict(
+            await conn.fetchval(
+                """
+                SELECT normalized_payload_json
+                FROM ai_model_execution_journal
+                WHERE reader_job_id = $1
+                """,
+                paused.job_id,
+            )
+        )
+        payload["candidates"] = []
+        await conn.execute(
+            """
+            UPDATE ai_model_execution_journal
+            SET normalized_payload_json = $2::jsonb
+            WHERE reader_job_id = $1
+            """,
+            paused.job_id,
+            jsonb_param(payload),
+        )
+        await conn.execute(
+            """
+            UPDATE reader_jobs
+            SET status = 'cancelled'
+            WHERE reading_record_id = $1
+              AND job_type = 'build_grammar_bundle_window'
+              AND id <> $2
+            """,
+            article.record_id,
+            paused.job_id,
+        )
+    forbidden = _ObservabilityMockExecutor(pool=pool)
+
+    resumed = await _make_grammar_window_runner(
+        pool,
+        executor=forbidden,
+    )._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-after-tamper",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert resumed.outcome == "no_job"
+    assert forbidden.call_count == 0
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT status, rationale_code, failure_code FROM reader_jobs WHERE id = $1",
+            paused.job_id,
+        )
+    assert row is not None and row["status"] == "paused"
+    assert row["rationale_code"] == "model_execution_receipt_invalid"
+    assert row["failure_code"] == "receipt_payload_invalid"
+
+
+async def test_grammar_window_lease_loss_after_capture_never_publishes(
+    grammar_window_obs_env: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = grammar_window_obs_env
+    user_id = await insert_user(pool)
+    article = await submit_article_ready(
+        pool,
+        user_id=user_id,
+        plain_text=GRAMMAR_WINDOW_OBSERVABILITY_ARTICLE,
+        title="grammar-window Lease Loss",
+    )
+    executor = _ObservabilityMockExecutor(pool=pool)
+    publisher = _JournalOrderFailWindowPublisher(pool)
+    runner = _make_grammar_window_runner(pool, executor=executor)
+    runner._grammar_window_publisher = publisher  # type: ignore[assignment]
+    journal = runner._grammar_window_worker._journal_service  # type: ignore[union-attr]
+    capture = journal.capture_execution
+
+    async def _capture_then_expire(**kwargs):
+        receipt = await capture(**kwargs)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE reader_jobs
+                SET lease_expires_at = NOW() - INTERVAL '1 second'
+                WHERE id = $1
+                """,
+                kwargs["identity"].reader_job_id,
+            )
+        return receipt
+
+    monkeypatch.setattr(journal, "capture_execution", _capture_then_expire)
+    await runner.bootstrap_missing_jobs(record_id=article.record_id, user_id=user_id)
+    attempt = await runner._run_grammar_window_attempt(
+        record_id=article.record_id,
+        base_id=article.base_id,
+        expected_generation=1,
+        lease_owner="grammar-window-expired-after-capture",
+        lease_duration=LEASE_DURATION,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    assert attempt.outcome == "retry_later"
+    assert attempt.job_id is not None
+    assert publisher.calls == 0
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT job.status, journal.capture_state
+            FROM reader_jobs job
+            JOIN ai_model_execution_journal journal
+              ON journal.reader_job_id = job.id
+            WHERE job.id = $1
+            """,
+            attempt.job_id,
+        )
+    assert row is not None and row["status"] == "claimed"
+    assert row["capture_state"] == "captured"
 
 
 async def test_grammar_window_success_writes_ai_usage_event_and_worker_tick_span(
@@ -427,15 +894,19 @@ async def test_grammar_window_success_writes_ai_usage_event_and_worker_tick_span
     async with pool.acquire() as conn:
         usage_row = await conn.fetchrow(
             """
-            SELECT id, user_id, capability_code, operation_fingerprint, status,
-                   input_tokens, output_tokens, total_tokens, metadata_json
-            FROM ai_usage_events
-            WHERE reader_job_id IN (
+            SELECT usage.id, usage.user_id, usage.reader_job_id,
+                   usage.enhancement_layer_id, usage.capability_code,
+                   usage.operation_fingerprint, usage.status,
+                   usage.input_tokens, usage.output_tokens, usage.total_tokens,
+                   usage.metadata_json, job.output_ref_json
+            FROM ai_usage_events usage
+            JOIN reader_jobs job ON job.id = usage.reader_job_id
+            WHERE usage.reader_job_id IN (
                 SELECT id FROM reader_jobs
                 WHERE reading_record_id = $1
                   AND job_type = 'build_grammar_bundle_window'
             )
-            ORDER BY created_at DESC
+            ORDER BY usage.created_at DESC
             LIMIT 1
             """,
             article.record_id,
@@ -483,8 +954,26 @@ async def test_grammar_window_success_writes_ai_usage_event_and_worker_tick_span
     assert "target_anchor_ids" in metadata, (
         "metadata must contain target_anchor_ids"
     )
-    assert "accepted_count" in metadata, "metadata must contain accepted_count"
-    assert "no_op" in metadata, "metadata must contain no_op"
+    assert metadata["candidate_count"] >= metadata["accepted_count"]
+    assert metadata["pre_publish_no_candidates"] is False
+
+    output_ref = usage_row["output_ref_json"]
+    if isinstance(output_ref, str):
+        output_ref = json.loads(output_ref)
+    expected_layer_ids = output_ref["grammar_note_layer_ids"] + output_ref[
+        "sentence_analysis_layer_ids"
+    ]
+    assert metadata["accepted_count"] == output_ref["accepted_count"]
+    assert metadata["no_op"] == output_ref["no_op"]
+    assert metadata["layer_ids"] == expected_layer_ids
+    assert metadata["grammar_note_layer_ids"] == output_ref[
+        "grammar_note_layer_ids"
+    ]
+    assert metadata["sentence_analysis_layer_ids"] == output_ref[
+        "sentence_analysis_layer_ids"
+    ]
+    assert expected_layer_ids
+    assert usage_row["enhancement_layer_id"] == UUID(expected_layer_ids[0])
 
     # Verify worker_tick span carries duration_ms + token fields +
     # ai_usage_event_id. Spans are best-effort; if no span row exists the

@@ -29,6 +29,12 @@ import pytest
 
 from app.contracts.annotation import slice_by_utf16_offsets
 from app.database import connection as db_connection
+from app.services.model_execution_journal import BeginDisposition
+from app.services.reader_orchestration.grammar_window_bootstrap import (
+    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
+    GrammarWindowBootstrapService,
+    _compute_window_budget,
+)
 from app.services.reader_orchestration.grammar_window_worker import (
     GrammarWindowExecutionError,
     GrammarWindowExecutionResult,
@@ -45,11 +51,6 @@ from app.services.reader_orchestration.reading_strategy import (
     resolve_reader_variant_strategy,
 )
 from app.services.reader_orchestration.window_selector import CandidateItem
-from app.services.reader_orchestration.grammar_window_bootstrap import (
-    GRAMMAR_WINDOW_OPERATION_FINGERPRINT,
-    GrammarWindowBootstrapService,
-    _compute_window_budget,
-)
 from tests.reader_orchestration_test_support import (
     BASELINE_SQL,
     connect_admin,
@@ -614,6 +615,18 @@ async def test_process_window_job_calls_executor_and_returns_candidates() -> Non
     service._load_window_context = AsyncMock(  # type: ignore[method-assign]
         return_value={"window_id": "test"}
     )
+    service._journal_service.begin_execution = AsyncMock(
+        return_value=BeginDisposition(
+            journal_id=uuid4(),
+            invocation_key="reader:reader_grammar_bundle:test:1:1",
+            capture_state="started",
+            provider_call_allowed=True,
+        )
+    )
+    service._capture_execution = AsyncMock(  # type: ignore[method-assign]
+        return_value=None
+    )
+    service._job_runtime.heartbeat = AsyncMock(return_value=datetime.now(UTC))  # type: ignore[method-assign]
 
     claim = _make_claim()
     result = await service.process_window_job(claim=claim)

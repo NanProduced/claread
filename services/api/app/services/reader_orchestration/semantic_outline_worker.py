@@ -6,6 +6,7 @@ Model/executor returns candidate refs; publisher maps to opaque ids.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -28,6 +29,16 @@ from app.services.ai_usage import (
     STATUS_SUCCEEDED as USAGE_STATUS_SUCCEEDED,
 )
 from app.services.ai_usage.execution_diagnostics import with_execution_correlation
+from app.services.model_execution_journal import (
+    CapturedReceipt,
+    CaptureEnvelopeConflictError,
+    ExecutionIdentity,
+    PayloadContractError,
+    decode_resume_payload,
+    decode_usage_event_draft,
+    prepare_capture_envelope,
+)
+from app.services.model_execution_journal.service import ModelExecutionJournalService
 
 from .job_bootstrap import (
     SEMANTIC_OUTLINE_JOB_TYPE,
@@ -39,6 +50,7 @@ from .job_runtime import (
     STATUS_RETRY_LATER,
     STATUS_SUCCEEDED,
     STATUS_SUPERSEDED,
+    CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
     ReaderJobRuntime,
@@ -55,6 +67,9 @@ from .span_recorder import (
     end_worker_span_generic_exception,
     end_worker_span_success,
 )
+from .usage_attribution import ReaderUsageAttributionService
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY = timedelta(minutes=5)
 SEMANTIC_OUTLINE_WORKER_VERSION = "reader-semantic-outline-worker-v1"
@@ -208,10 +223,12 @@ class FakeSemanticOutlineGenerator:
         *,
         worker_failure: bool = False,
         model: str = "fake-outline-model",
+        provider_call_made: bool = False,
     ) -> None:
         self.candidates = tuple(candidates or ())
         self.worker_failure = worker_failure
         self.model = model
+        self.provider_call_made = provider_call_made
         self.calls: list[SemanticOutlineJobContext] = []
 
     async def generate(
@@ -229,6 +246,12 @@ class FakeSemanticOutlineGenerator:
                     "total_tokens": 15,
                 }
             },
+            prompt_version="fake-semantic-outline-v1",
+            model_route=MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE,
+            model_profile="fake-semantic-outline-profile",
+            model_provider="fake-provider",
+            model_name=self.model,
+            provider_call_made=self.provider_call_made,
         )
 
 
@@ -305,12 +328,14 @@ class SemanticOutlineWorkerService:
         generator: SemanticOutlineGenerator | None = None,
         publisher: SemanticOutlineLayerPublisher | None = None,
         job_runtime: ReaderJobRuntime | None = None,
+        journal_service: ModelExecutionJournalService | None = None,
     ) -> None:
         self._pool = pool
         # Default is fail-closed Unconfigured — never auto-calls a real LLM.
         self._generator = generator or UnconfiguredSemanticOutlineGenerator()
         self._publisher = publisher or SemanticOutlineLayerPublisher(pool=pool)
         self._job_runtime = job_runtime or ReaderJobRuntime(pool=pool)
+        self._journal_service = journal_service or ModelExecutionJournalService(pool=pool)
 
     def get_pool(self) -> asyncpg.Pool:
         pool = self._pool or db_connection.DB_POOL
@@ -367,6 +392,12 @@ class SemanticOutlineWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
     ) -> SemanticOutlineJobProcessResult | None:
+        resume = await self._claim_captured_semantic_outline_resume(
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_semantic_outline_resume(resume=resume)
         claim = await self.claim_semantic_outline_job(
             lease_owner=lease_owner,
             lease_duration=lease_duration,
@@ -388,6 +419,15 @@ class SemanticOutlineWorkerService:
         lease_duration: timedelta,
         retry_delay: timedelta = DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
     ) -> SemanticOutlineJobProcessResult | None:
+        resume = await self._claim_captured_semantic_outline_resume(
+            record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            return await self._process_captured_semantic_outline_resume(resume=resume)
         claim = await self.claim_semantic_outline_job_for_record(
             record_id=record_id,
             base_id=base_id,
@@ -410,10 +450,83 @@ class SemanticOutlineWorkerService:
         retry_delay: timedelta = DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
     ) -> SemanticOutlineJobProcessResult:
         context: SemanticOutlineJobContext | None = None
+        execution_captured = False
+        event_id: UUID | None = None
         try:
             context = await self._load_job_context(claim.job_id)
+            identity = self._execution_identity(claim)
+            try:
+                begin = await self._journal_service.begin_execution(
+                    identity=identity,
+                    invocation_kind="reader.semantic_outline",
+                )
+            except Exception as exc:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_begin_unconfirmed",
+                    failure_code="journal_begin_failed",
+                    failure_message=str(exc),
+                )
+                return SemanticOutlineJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
+            if not begin.provider_call_allowed:
+                captured = begin.capture_state == "captured"
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code=(
+                        "model_execution_captured_resume_required"
+                        if captured
+                        else "model_execution_ambiguous"
+                    ),
+                    failure_code=(
+                        "post_provider_resume_required"
+                        if captured
+                        else "provider_outcome_ambiguous"
+                    ),
+                )
+                return SemanticOutlineJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             execution = await self._generator.generate(context)
             candidates = clamp_candidates(execution.candidates)
+            if execution.provider_call_made:
+                try:
+                    event_id = await self._capture_execution_usage(
+                        identity=identity,
+                        context=context,
+                        execution=execution,
+                        candidates=candidates,
+                    )
+                    execution_captured = True
+                except CaptureEnvelopeConflictError as exc:
+                    await self._pause_model_execution_claim(
+                        claim,
+                        rationale_code="model_execution_capture_conflict",
+                        failure_code="capture_envelope_conflict",
+                        failure_message=str(exc),
+                    )
+                    return SemanticOutlineJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="paused",
+                    )
+                except Exception as exc:
+                    await self._pause_model_execution_claim(
+                        claim,
+                        rationale_code="model_execution_ambiguous",
+                        failure_code="provider_outcome_ambiguous",
+                        failure_message=str(exc),
+                    )
+                    return SemanticOutlineJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="paused",
+                    )
             units = tuple(
                 SemanticOutlineUnit(unit_id=u.unit_id, order_index=u.order_index)
                 for u in context.worker_input.units
@@ -458,9 +571,11 @@ class SemanticOutlineWorkerService:
                     context=context,
                     publish_result=publish_result,
                 )
-                event_id = await self._maybe_record_success_usage(
-                    context=context, execution=execution
-                )
+                if execution.provider_call_made:
+                    event_id = await self._reconcile_captured_usage(
+                        invocation_key=identity.invocation_key,
+                        fallback_event_id=event_id,
+                    )
                 await end_worker_span_success(
                     ai_usage_event_id=event_id,
                     usage_data=execution.usage_data,
@@ -493,9 +608,6 @@ class SemanticOutlineWorkerService:
                     failure_code=terminal_failure_code,
                 )
                 # Provider already called: still one usage event when usage present.
-                await self._maybe_record_success_usage(
-                    context=context, execution=execution
-                )
                 await end_worker_span_execution_error(
                     failure_class="validation",
                     failure_code=terminal_failure_code,
@@ -513,9 +625,6 @@ class SemanticOutlineWorkerService:
                 context=context,
                 publish_result=publish_result,
                 available_at=datetime.now(UTC) + retry_delay,
-            )
-            await self._maybe_record_success_usage(
-                context=context, execution=execution
             )
             await end_worker_span_execution_error(
                 failure_class="validation",
@@ -582,6 +691,18 @@ class SemanticOutlineWorkerService:
                 error_code=exc.failure_code,
             )
         except Exception as exc:
+            if execution_captured:
+                await self._pause_model_execution_claim(
+                    claim,
+                    rationale_code="model_execution_captured_resume_required",
+                    failure_code="post_provider_resume_required",
+                    failure_message=str(exc),
+                )
+                return SemanticOutlineJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="paused",
+                )
             if context is not None and context.attempt_count >= context.max_attempts:
                 await self._job_runtime.transition(
                     job_id=claim.job_id,
@@ -627,6 +748,340 @@ class SemanticOutlineWorkerService:
                 status="retry_later",
                 error_code=type(exc).__name__,
             )
+
+    @staticmethod
+    def _execution_identity(claim: ClaimResult) -> ExecutionIdentity:
+        execution_slot = 1
+        return ExecutionIdentity(
+            invocation_key=(
+                f"reader:{CAPABILITY_READER_SEMANTIC_OUTLINE}:"
+                f"{claim.job_id}:{claim.attempt_count}:{execution_slot}"
+            ),
+            reader_job_id=claim.job_id,
+            reader_run_id=claim.run_id,
+            attempt_ordinal=claim.attempt_count,
+            execution_slot=execution_slot,
+        )
+
+    async def _capture_execution_usage(
+        self,
+        *,
+        identity: ExecutionIdentity,
+        context: SemanticOutlineJobContext,
+        execution: SemanticOutlineExecutionResult,
+        candidates: tuple[SemanticOutlineCandidateNode, ...],
+    ) -> UUID | None:
+        prepared = prepare_capture_envelope(
+            invocation_kind="reader.semantic_outline",
+            resume_payload_kind="reader.semantic_outline.result",
+            resume_payload_schema_version=1,
+            usage_event_draft_schema_version=1,
+            normalized_payload={
+                "candidates": [
+                    {
+                        "candidate_ref": candidate.candidate_ref,
+                        "parent_candidate_ref": candidate.parent_candidate_ref,
+                        "depth": candidate.depth,
+                        "title": candidate.title,
+                        "start_unit_id": candidate.start_unit_id,
+                        "end_unit_id": candidate.end_unit_id,
+                        "start_anchor_segment_id": candidate.start_anchor_segment_id,
+                        "end_anchor_segment_id": candidate.end_anchor_segment_id,
+                    }
+                    for candidate in candidates
+                ],
+                "worker_failure": execution.worker_failure,
+                "model": execution.model,
+            },
+            usage_event_draft={
+                "usage_scope": USAGE_SCOPE_SYSTEM_INTERNAL,
+                "capability_code": CAPABILITY_READER_SEMANTIC_OUTLINE,
+                "billing_mode": BILLING_MODE_INTERNAL_ONLY,
+                "status": USAGE_STATUS_SUCCEEDED,
+                "user_id": context.user_id,
+                "reading_record_id": context.reading_record_id,
+                "reader_run_id": context.run_id,
+                "reader_job_id": context.job_id,
+                "workflow_name": "reader_orchestration",
+                "workflow_version": SEMANTIC_OUTLINE_WORKER_VERSION,
+                "prompt_version": execution.prompt_version,
+                "model_route": (
+                    execution.model_route or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+                ),
+                "model_profile_id": execution.model_profile,
+                "model_profile": execution.model_profile,
+                "model_provider": execution.model_provider,
+                "model_name": execution.model_name or execution.model,
+                "planner_kind": "llm_worker",
+                "usage_data": execution.usage_data,
+                "operation_fingerprint": context.operation_fingerprint,
+                "metadata_json": {
+                    "invocation_key": identity.invocation_key,
+                    "attempt_ordinal": identity.attempt_ordinal,
+                    "execution_slot": identity.execution_slot,
+                },
+            },
+        )
+        receipt = await self._journal_service.capture_execution(
+            identity=identity,
+            prepared=prepared,
+        )
+        return await self._reconcile_captured_usage(
+            invocation_key=receipt.identity.invocation_key,
+            fallback_event_id=receipt.ai_usage_event_id,
+        )
+
+    async def _reconcile_captured_usage(
+        self,
+        *,
+        invocation_key: str,
+        fallback_event_id: UUID | None,
+    ) -> UUID | None:
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=invocation_key
+            )
+            receipt = await self._journal_service.load_captured_receipt(
+                invocation_key=invocation_key
+            )
+        except Exception as exc:
+            logger.warning(
+                "semantic_outline_usage_delivery_deferred: invocation_key=%s error=%s",
+                invocation_key,
+                type(exc).__name__,
+            )
+            return fallback_event_id
+        return receipt.ai_usage_event_id or fallback_event_id
+
+    async def _claim_captured_semantic_outline_resume(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration: timedelta,
+        record_id: UUID | None = None,
+        base_id: UUID | None = None,
+        expected_generation: int | None = None,
+    ) -> CapturedResumeClaim | None:
+        job_id = await self._job_runtime.find_captured_resume_job_id(
+            job_type=SEMANTIC_OUTLINE_JOB_TYPE,
+            target_type=SEMANTIC_OUTLINE_TARGET_SCOPE,
+            operation_fingerprint=SEMANTIC_OUTLINE_OPERATION_FINGERPRINT,
+            reading_record_id=record_id,
+            base_id=base_id,
+            expected_generation=expected_generation,
+        )
+        if job_id is None:
+            return None
+        resume = await self._job_runtime.claim_captured_resume(
+            job_id=job_id,
+            lease_owner=lease_owner,
+            lease_duration=lease_duration,
+        )
+        if resume is not None:
+            await self._mark_run_running(resume.claim.run_id)
+        return resume
+
+    async def _process_captured_semantic_outline_resume(
+        self,
+        *,
+        resume: CapturedResumeClaim,
+    ) -> SemanticOutlineJobProcessResult:
+        claim = resume.claim
+        context: SemanticOutlineJobContext | None = None
+        try:
+            if len(resume.receipts) != 1:
+                raise PayloadContractError("semantic_outline_receipt_count_invalid")
+            receipt = resume.receipts[0]
+            execution = self._execution_from_captured_receipt(receipt)
+            candidates = clamp_candidates(execution.candidates)
+            context = await self._load_job_context(claim.job_id)
+            units = tuple(
+                SemanticOutlineUnit(unit_id=u.unit_id, order_index=u.order_index)
+                for u in context.worker_input.units
+            )
+            anchors = tuple(
+                SemanticOutlineAnchor(anchor_segment_id=a[0], unit_id=a[1])
+                for a in context.worker_input.anchors
+            )
+            publish_result = await self._publisher.publish_from_candidates(
+                job_id=claim.job_id,
+                lease_token=claim.lease_token,
+                reading_record_id=context.reading_record_id,
+                base_id=context.base_id,
+                generation=context.expected_generation,
+                operation_fingerprint=context.operation_fingerprint,
+                source_run_id=context.run_id,
+                source_job_id=context.job_id,
+                units=units,
+                anchors=anchors,
+                candidates=candidates,
+                worker_failure=execution.worker_failure,
+                model=execution.model,
+            )
+            if publish_result.outcome in {"published", "idempotent_reuse"}:
+                await self._complete_job_success(
+                    claim=claim,
+                    context=context,
+                    publish_result=publish_result,
+                )
+                status = "succeeded"
+                error_code = None
+            elif context.attempt_count >= context.max_attempts or execution.worker_failure:
+                error_code = (
+                    "semantic_outline_validation_failed"
+                    if not execution.worker_failure
+                    else "semantic_outline_worker_failure"
+                )
+                await self._complete_job_failed_terminal(
+                    claim=claim,
+                    context=context,
+                    publish_result=publish_result,
+                    failure_code=error_code,
+                )
+                status = "failed_terminal"
+            else:
+                error_code = "semantic_outline_retryable"
+                await self._complete_job_retry_later(
+                    claim=claim,
+                    context=context,
+                    publish_result=publish_result,
+                    available_at=datetime.now(UTC) + DEFAULT_SEMANTIC_OUTLINE_RETRY_DELAY,
+                )
+                status = "retry_later"
+        except FenceViolationError:
+            await end_worker_span_fence_violation()
+            await self._mark_claimed_job_superseded(
+                claim,
+                rationale_code="publish_fence_failed",
+            )
+            await self._mark_run_superseded(
+                claim.run_id,
+                failure_class="publish_guard",
+                failure_code="publish_fence_failed",
+            )
+            raise
+        except Exception as exc:
+            await self._pause_model_execution_claim(
+                claim,
+                rationale_code=(
+                    "model_execution_receipt_invalid"
+                    if isinstance(exc, PayloadContractError)
+                    else "model_execution_captured_resume_required"
+                ),
+                failure_code=(
+                    "receipt_payload_invalid"
+                    if isinstance(exc, PayloadContractError)
+                    else "post_provider_resume_required"
+                ),
+                failure_message=str(exc),
+            )
+            return SemanticOutlineJobProcessResult(
+                claim=claim,
+                context=context,
+                status="paused",
+            )
+
+        usage_event_id = receipt.ai_usage_event_id
+        try:
+            await ReaderUsageAttributionService(
+                journal_service=self._journal_service
+            ).materialize_and_reconcile(
+                invocation_key=receipt.identity.invocation_key
+            )
+            materialized = await self._journal_service.load_captured_receipt(
+                invocation_key=receipt.identity.invocation_key
+            )
+            usage_event_id = materialized.ai_usage_event_id
+        except Exception as exc:
+            logger.warning(
+                "semantic_outline_usage_delivery_deferred: invocation_key=%s error=%s",
+                receipt.identity.invocation_key,
+                type(exc).__name__,
+            )
+        if status == "succeeded":
+            await end_worker_span_success(
+                ai_usage_event_id=usage_event_id,
+                usage_data=execution.usage_data,
+                model_route=(
+                    execution.model_route or MODEL_ROUTE_READER_LAYER_SEMANTIC_OUTLINE
+                ),
+                model_name=execution.model_name or execution.model,
+                model_provider=execution.model_provider,
+                capability_code=CAPABILITY_READER_SEMANTIC_OUTLINE,
+            )
+        else:
+            await end_worker_span_execution_error(
+                failure_class="validation",
+                failure_code=error_code or "semantic_outline_not_published",
+            )
+        return SemanticOutlineJobProcessResult(
+            claim=claim,
+            context=context,
+            status=status,
+            publish_result=publish_result,
+            error_code=(None if status == "succeeded" else error_code),
+        )
+
+    @staticmethod
+    def _execution_from_captured_receipt(
+        receipt: CapturedReceipt,
+    ) -> SemanticOutlineExecutionResult:
+        if receipt.invocation_kind != "reader.semantic_outline":
+            raise PayloadContractError("semantic_outline_invocation_kind_invalid")
+        payload = decode_resume_payload(
+            kind=receipt.resume_payload_kind,
+            schema_version=receipt.resume_payload_schema_version,
+            payload=receipt.normalized_payload,
+        )
+        usage = decode_usage_event_draft(
+            schema_version=receipt.usage_event_draft_schema_version,
+            payload=receipt.usage_event_draft,
+        )
+        return SemanticOutlineExecutionResult(
+            candidates=tuple(
+                SemanticOutlineCandidateNode(
+                    candidate_ref=item.candidate_ref,
+                    parent_candidate_ref=item.parent_candidate_ref,
+                    depth=item.depth,
+                    title=item.title,
+                    start_unit_id=item.start_unit_id,
+                    end_unit_id=item.end_unit_id,
+                    start_anchor_segment_id=item.start_anchor_segment_id,
+                    end_anchor_segment_id=item.end_anchor_segment_id,
+                )
+                for item in payload.candidates
+            ),
+            worker_failure=payload.worker_failure,
+            model=payload.model,
+            usage_data=usage.usage_data,
+            prompt_version=usage.prompt_version,
+            model_route=usage.model_route,
+            model_profile=usage.model_profile,
+            model_provider=usage.model_provider,
+            model_name=usage.model_name,
+            provider_call_made=True,
+        )
+
+    async def _pause_model_execution_claim(
+        self,
+        claim: ClaimResult,
+        *,
+        rationale_code: str,
+        failure_code: str,
+        failure_message: str | None = None,
+    ) -> None:
+        await self._job_runtime.transition(
+            job_id=claim.job_id,
+            target_status="paused",
+            lease_token=claim.lease_token,
+            pause_owner="system",
+            failure_class="model_execution",
+            failure_code=failure_code,
+            failure_message=failure_message,
+            rationale_code=rationale_code,
+        )
 
     async def _mark_run_running(self, run_id: UUID) -> None:
         async with self.get_pool().acquire() as conn:

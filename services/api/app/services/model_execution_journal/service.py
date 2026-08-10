@@ -223,6 +223,7 @@ class ModelExecutionJournalService:
         *,
         limit: int = 100,
         max_attempts: int = 3,
+        invocation_key: str | None = None,
     ) -> MaterializationSummary:
         scanned = 0
         reconciled = 0
@@ -236,11 +237,13 @@ class ModelExecutionJournalService:
                       AND usage_delivery_state = 'pending'
                       AND (delivery_next_attempt_at IS NULL
                            OR delivery_next_attempt_at <= NOW())
+                      AND ($2::text IS NULL OR invocation_key = $2)
                     ORDER BY created_at ASC, id ASC
                     LIMIT $1
                     FOR UPDATE SKIP LOCKED
                     """,
                     limit,
+                    invocation_key,
                 )
                 for row in rows:
                     scanned += 1
@@ -318,6 +321,41 @@ class ModelExecutionJournalService:
             reconciled=reconciled,
             dead_lettered=dead_lettered,
         )
+
+    async def repair_dead_letter(self, *, invocation_key: str) -> bool:
+        """Explicitly requeue one validated dead-letter without provider recall."""
+        async with self.get_pool().acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM ai_model_execution_journal
+                    WHERE invocation_key = $1
+                    FOR UPDATE
+                    """,
+                    invocation_key,
+                )
+                if row is None:
+                    raise LookupError("model_execution_journal_row_not_found")
+                if row["usage_delivery_state"] != "dead_letter":
+                    return False
+                receipt = self._receipt_from_row(row)
+                decode_usage_event_draft(
+                    schema_version=receipt.usage_event_draft_schema_version,
+                    payload=receipt.usage_event_draft,
+                )
+                updated = await conn.execute(
+                    """
+                    UPDATE ai_model_execution_journal
+                    SET usage_delivery_state = 'pending',
+                        delivery_next_attempt_at = NOW(),
+                        dead_lettered_at = NULL,
+                        updated_at = NOW()
+                    WHERE id = $1
+                      AND usage_delivery_state = 'dead_letter'
+                    """,
+                    row["id"],
+                )
+        return updated == "UPDATE 1"
 
     @staticmethod
     def _assert_identity(
