@@ -179,6 +179,7 @@ class SectionTranslationDrainService:
         process = await self._translation_worker.process_claimed_translation_batch_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
         outcome = _map_process_outcome(process)
         return SectionDrainResult(
