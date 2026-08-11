@@ -66,3 +66,30 @@
 3. **严格的错误处理**：所有脚本首部必须包含 `$ErrorActionPreference = 'Stop'`，确保遇到错误时立即中断并报错，避免静默失败。
 4. **编码规范**：脚本文件生成与读写必须强制指定 `-Encoding UTF8`，防止中文字符或特殊符号乱码。
 5. **管道与对象优先**：在处理数据解析时，优先使用 PowerShell 的对象管道特性（如 `Select-Object`, `Where-Object`），避免过度依赖传统的文本截取。
+
+## Ponytail
+
+本仓库**不** vendoring ponytail 的 ruleset 或 skill 副本。各 agent harness 通过官方 plugin 安装与更新，见 <https://github.com/DietrichGebert/ponytail>。
+
+### 安装（按宿主）
+
+| Host | 安装 |
+|------|------|
+| Grok Build | `grok plugin install DietrichGebert/ponytail --trust`，并在 `~/.grok/config.toml` 中 `[plugins] enabled = ["ponytail"]` |
+| Claude Code | `/plugin marketplace add DietrichGebert/ponytail` 后 `/plugin install ponytail@ponytail` |
+| Codex | `codex plugin marketplace add DietrichGebert/ponytail` 后 `codex plugin add ponytail@ponytail` |
+
+其他宿主按上游 README 的官方路径安装；**不要**把 skill 复制进仓库 `.agents/skills/`，也**不要**把完整 ruleset 粘进本文件。
+
+### 使用约定（本仓库）
+
+- **编码任务**（写代码、改代码、重构、修 bug、选依赖、做设计落地）默认走 ponytail：加载/调用官方 skill，按 skill 内 ladder 取最短可行路径。Grok Build 会按 skill description 自动匹配；未自动触发时用 `/ponytail`（或宿主等价命令）。
+- **显式强度**：`/ponytail lite|full|ultra`；关闭：`/ponytail off` 或用户说 “stop ponytail” / “normal mode”。默认 `full`。
+- **专用技能**（需要时再开，不替代日常 coding 模式）：
+  - `/ponytail-review` — 当前 diff 的 over-engineering 审查
+  - `/ponytail-audit` — 全仓 bloat 审计
+  - `/ponytail-debt` — 收集代码里的 `ponytail:` 欠债注释
+  - `/ponytail-gain` / `/ponytail-help` — 收益看板 / 命令速查
+- **非编码请求**（纯知识、翻译、摘要、产品文案等）不要为了「省字」去开 ponytail。
+- 刻意留下的简化用 `ponytail:` 注释标出天花板与升级路径，便于以后 `/ponytail-debt` 回收。
+- 更新与卸载用宿主官方命令（如 `grok plugin update ponytail` / `grok plugin uninstall ponytail`），不要在仓库内维护第二份副本。
