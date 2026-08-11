@@ -187,6 +187,16 @@ def test_blockquote_carries_inline_marks() -> None:
     )
 
 
+def test_blockquote_preserves_two_paragraph_marks() -> None:
+    block = _first_block("> **Alpha** paragraph\n>\n> *Beta* paragraph")
+
+    assert block.text_content == "Alpha paragraph\nBeta paragraph"
+    assert block.payload_json.get("inline_marks") == [
+        {"type": "strong", "start": 0, "end": 5},
+        {"type": "em", "start": 16, "end": 20},
+    ]
+
+
 def test_table_cell_carries_inline_marks() -> None:
     """table_cell payload_json.inline_marks."""
     blocks = _parse("| H1 |\n|----|\n| **b** |")

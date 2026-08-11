@@ -1,0 +1,31 @@
+{
+  "fixture_name": "ordinary_multi_paragraph_blockquote",
+  "description": "Ordinary flat blockquote preserves three paragraph bodies, inline marks, and safe/unsafe link metadata in source order.",
+  "blocks": [
+    {
+      "block_id": "b1",
+      "block_type": "blockquote",
+      "text_content": "First and opening paragraph keeps the safe label while explaining the quoted source in enough detail for stable reading without ambiguity.\nSecond and middle paragraph keeps the unsafe label as visible text while preserving its diagnostic for careful review and safe display.\nThird and closing paragraph confirms that every earlier quotation remains in source order after the parser aggregates all inline tokens without changing the quotation structure.",
+      "payload_json": {
+        "links": [
+          {"text": "safe label", "href": "https://example.com"}
+        ],
+        "stripped_links": [
+          {"text": "unsafe label", "href": "javascript:bad", "reason": "unsafe_protocol"}
+        ],
+        "inline_marks": [
+          {"type": "strong", "start": 0, "end": 5},
+          {"type": "em", "start": 10, "end": 17},
+          {"type": "link", "start": 38, "end": 48, "href": "https://example.com"},
+          {"type": "strong", "start": 139, "end": 145},
+          {"type": "em", "start": 150, "end": 156},
+          {"type": "strong", "start": 275, "end": 280},
+          {"type": "em", "start": 285, "end": 292}
+        ]
+      },
+      "parent_block_id": null,
+      "order_index": 0,
+      "source_range": {"line_start": 1, "line_end": 5}
+    }
+  ]
+}

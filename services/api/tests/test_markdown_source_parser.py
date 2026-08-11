@@ -41,7 +41,7 @@ _FIXTURES_ROOT = (
     / "markdown_structured_source"
 )
 
-# All 20 fixtures PASS under the M1 production adapter (13 original G0/L1
+# All 21 fixtures PASS under the M1 production adapter (13 original G0/L1
 # fixtures plus source_callout, rich_html_aside, task_list, and
 # definition_list, citation_reference, heading_levels, and gfm_alert).
 # real_list_wrapper added in M3 prerequisite: focused list wrapper +
@@ -55,6 +55,7 @@ _PASSING_FIXTURES = (
     "gfm_table",
     "heading_levels",
     "nested_list",
+    "ordinary_multi_paragraph_blockquote",
     "r14_complex",
     "raw_html",
     "real_list_wrapper",
@@ -474,6 +475,7 @@ def test_all_baseline_parser_fixtures_exist_on_disk() -> None:
         "gfm_table",
         "heading_levels",
         "nested_list",
+        "ordinary_multi_paragraph_blockquote",
         "r14_complex",
         "raw_html",
         "real_list_wrapper",
