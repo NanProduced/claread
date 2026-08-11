@@ -65,6 +65,9 @@ from .job_runtime import (
     CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
+    IllegalTransitionError,
+    LeaseExpiredError,
+    LeaseTokenMismatchError,
     ReaderJobRuntime,
     mark_reader_run_running,
     mark_reader_run_status,
@@ -74,6 +77,7 @@ from .layer_publisher import (
     PublishedTranslationLayer,
     TranslationLayerPublisher,
 )
+from .lease_heartbeat import LeaseHeartbeat
 from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -96,6 +100,7 @@ from .translation_prompt_profile import (
 from .usage_attribution import ReaderUsageAttributionService
 
 DEFAULT_TRANSLATION_RETRY_DELAY = timedelta(minutes=5)
+DEFAULT_TRANSLATION_LEASE_DURATION = timedelta(seconds=120)
 TRANSLATION_PROMPT_AGENT_NAME = "reader_layer_translation"
 
 logger = logging.getLogger(__name__)
@@ -1334,6 +1339,7 @@ class TranslationWorkerService:
         return await self.process_claimed_translation_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     async def process_next_translation_job_for_record(
@@ -1367,6 +1373,7 @@ class TranslationWorkerService:
         return await self.process_claimed_translation_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     @with_execution_correlation(CAPABILITY_READER_TRANSLATION)
@@ -1375,10 +1382,17 @@ class TranslationWorkerService:
         *,
         claim: ClaimResult,
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+        lease_duration: timedelta = DEFAULT_TRANSLATION_LEASE_DURATION,
     ) -> TranslationJobProcessResult:
         context: TranslationJobContext | None = None
         execution: TranslationExecutionResult | None = None
         execution_captured = False
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration,
+        )
 
         try:
             context = await self._load_job_context(claim.job_id)
@@ -1420,6 +1434,7 @@ class TranslationWorkerService:
                     context=context,
                     status="paused",
                 )
+            await heartbeat.start()
             execution = await self._translator.translate(context)
             output = hydrate_translation_layer_output(
                 context=context,
@@ -1456,6 +1471,20 @@ class TranslationWorkerService:
                     claim=claim,
                     context=context,
                     status="paused",
+                )
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return TranslationJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
                 )
             published_layer = await self._layer_publisher.publish_unit_translation(
                 job_id=claim.job_id,
@@ -1611,6 +1640,12 @@ class TranslationWorkerService:
             )
         except Exception as exc:
             if execution_captured:
+                if heartbeat.lost:
+                    return TranslationJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
                 await self._pause_model_execution_claim(
                     claim,
                     rationale_code="model_execution_captured_resume_required",
@@ -1650,6 +1685,8 @@ class TranslationWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+        finally:
+            await heartbeat.stop()
 
     # ------------------------------------------------------------------#
     # T1.1 short-article batch path: claim / process / context loading.
@@ -1720,6 +1757,7 @@ class TranslationWorkerService:
         return await self.process_claimed_translation_batch_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     @with_execution_correlation(CAPABILITY_READER_TRANSLATION)
@@ -1728,6 +1766,7 @@ class TranslationWorkerService:
         *,
         claim: ClaimResult,
         retry_delay: timedelta = DEFAULT_TRANSLATION_RETRY_DELAY,
+        lease_duration: timedelta = DEFAULT_TRANSLATION_LEASE_DURATION,
     ) -> TranslationBatchJobProcessResult:
         """Run the batch LLM call and publish N per-unit translation layers.
 
@@ -1740,6 +1779,12 @@ class TranslationWorkerService:
         context: TranslationBatchJobContext | None = None
         execution: TranslationBatchExecutionResult | None = None
         execution_captured = False
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration,
+        )
 
         try:
             context = await self._load_batch_job_context(claim.job_id)
@@ -1781,6 +1826,7 @@ class TranslationWorkerService:
                     context=context,
                     status="paused",
                 )
+            await heartbeat.start()
             execution = await self._batch_translator.translate_batch(context)
             outputs = hydrate_translation_batch_output(
                 context=context,
@@ -1817,6 +1863,20 @@ class TranslationWorkerService:
                     claim=claim,
                     context=context,
                     status="paused",
+                )
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return TranslationBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
                 )
             published_batch = await self._layer_publisher.publish_article_translation_batch(
                 job_id=claim.job_id,
@@ -1968,6 +2028,12 @@ class TranslationWorkerService:
             )
         except Exception as exc:
             if execution_captured:
+                if heartbeat.lost:
+                    return TranslationBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
                 await self._pause_model_execution_claim(
                     claim,
                     rationale_code="model_execution_captured_resume_required",
@@ -2007,6 +2073,8 @@ class TranslationWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+        finally:
+            await heartbeat.stop()
 
     async def _claim_captured_translation_resume(
         self,
