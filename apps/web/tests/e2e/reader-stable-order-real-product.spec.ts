@@ -218,6 +218,8 @@ test.describe("Stable Document display order (self-provisioned real product reco
     await page.setViewportSize({ width: 1280, height: 900 });
     const phone = fixturePhone();
     let recordId: string | null = null;
+    let ownsPhone = false;
+    let testFailure: unknown = null;
     const consoleProblems: string[] = [];
     const externalRequests: string[] = [];
     page.on("pageerror", (error) => {
@@ -236,6 +238,14 @@ test.describe("Stable Document display order (self-provisioned real product reco
     });
 
     try {
+      const preflight = await runFixtureHelper(["preflight", "--phone", phone]);
+      console.log(`[stable-order-fixture-preflight] ${JSON.stringify(preflight)}`);
+      expect(preflight.status).toBe("PASS");
+      expect(preflight.provider).toBe("phone");
+      expect(preflight.phone).toBe(`+86${phone}`);
+      expect(preflight.identity_count).toBe(0);
+      ownsPhone = true;
+
       await loginWithPhoneAuth(page, phone);
       recordId = await createLiveRecord(page);
       const fixture = await runFixtureHelper(["build", recordId]);
@@ -275,20 +285,59 @@ test.describe("Stable Document display order (self-provisioned real product reco
 
       expect(consoleProblems, "no app-level console errors / page errors").toEqual([]);
       expect(externalRequests, "no browser external requests").toEqual([]);
+    } catch (error) {
+      testFailure = error;
     } finally {
-      const guard = await providerGuardReport();
-      console.log(`[stable-order-provider-guard] ${JSON.stringify(guard)}`);
-      expect(guard.installed).toBe(true);
-      expect(guard.blocked_call_count).toBe(0);
-      expect(guard.blocked_attempts).toEqual([]);
-      if (!page.isClosed()) {
-        await page.close();
+      let guardFailure: unknown = null;
+      let pageCloseFailure: unknown = null;
+      let cleanupFailure: unknown = null;
+
+      try {
+        const guard = await providerGuardReport();
+        console.log(`[stable-order-provider-guard] ${JSON.stringify(guard)}`);
+        expect(guard.installed).toBe(true);
+        expect(guard.blocked_call_count).toBe(0);
+        expect(guard.blocked_attempts).toEqual([]);
+      } catch (error) {
+        guardFailure = error;
       }
-      const cleanupArgs = ["cleanup", "--phone", phone];
-      if (recordId !== null) cleanupArgs.push("--record-id", recordId);
-      const cleanup = await runFixtureHelper(cleanupArgs);
-      console.log(`[stable-order-fixture-cleanup] ${JSON.stringify(cleanup)}`);
-      expect(cleanup.residual_total, "fixture residual rows").toBe(0);
+
+      try {
+        if (!page.isClosed()) {
+          await page.close();
+        }
+      } catch (error) {
+        pageCloseFailure = error;
+      }
+
+      if (ownsPhone) {
+        try {
+          const cleanupArgs = ["cleanup", "--phone", phone];
+          if (recordId !== null) cleanupArgs.push("--record-id", recordId);
+          const cleanup = await runFixtureHelper(cleanupArgs);
+          console.log(`[stable-order-fixture-cleanup] ${JSON.stringify(cleanup)}`);
+          expect(cleanup.residual_total, "fixture residual rows").toBe(0);
+        } catch (error) {
+          cleanupFailure = error;
+        }
+      }
+
+      const failures = [
+        ["cleanup", cleanupFailure],
+        ["test body", testFailure],
+        ["provider guard", guardFailure],
+        ["page close", pageCloseFailure],
+      ].filter((failure): failure is [string, unknown] => failure[1] !== null);
+      if (failures.length > 0) {
+        const details = failures.map(([stage, error]) => {
+          const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          return `${stage}: ${message}`;
+        });
+        throw new AggregateError(
+          failures.map(([, error]) => error),
+          `stable-order test failures after cleanup:\n${details.join("\n")}`,
+        );
+      }
     }
   });
 });
