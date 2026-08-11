@@ -2044,22 +2044,43 @@ class MarkdownSourceParser:
                 # into a single block (no regression for quotations).
                 bq_text = ""
                 bq_marks: list[dict[str, Any]] = []
+                bq_safe_links: list[dict[str, str]] = []
+                bq_unsafe_links: list[dict[str, str]] = []
                 # Consume blockquote content
                 j = i + 1
                 while j < len(tokens) and tokens[j].type != "blockquote_close":
                     if tokens[j].type == "inline":
                         (
-                            bq_text,
-                            bq_marks,
-                            _bq_safe_links,
-                            _bq_unsafe_links,
+                            inline_text,
+                            inline_marks,
+                            safe_links,
+                            unsafe_links,
                             _bq_has_html,
                             _bq_starts_html,
                         ) = _process_inline_with_marks(tokens[j])
-                        if _bq_unsafe_links:
+                        mark_offset = utf16_code_unit_length(bq_text)
+                        if bq_text:
+                            bq_text += "\n"
+                            mark_offset += 1
+                        bq_text += inline_text
+                        bq_marks.extend(
+                            {
+                                **mark,
+                                "start": mark["start"] + mark_offset,
+                                "end": mark["end"] + mark_offset,
+                            }
+                            for mark in inline_marks
+                        )
+                        bq_safe_links.extend(safe_links)
+                        bq_unsafe_links.extend(unsafe_links)
+                        if unsafe_links:
                             flags.has_unsafe_link = True
                     j += 1
                 flat_bq_payload: dict[str, Any] = {}
+                if bq_safe_links or bq_unsafe_links:
+                    flat_bq_payload["links"] = bq_safe_links
+                if bq_unsafe_links:
+                    flat_bq_payload["stripped_links"] = bq_unsafe_links
                 if bq_marks:
                     flat_bq_payload["inline_marks"] = bq_marks
                 blocks.append(

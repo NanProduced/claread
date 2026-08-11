@@ -1,0 +1,11 @@
+{
+  "fixture_name": "ordinary_multi_paragraph_blockquote",
+  "block_policies": [
+    {
+      "block_id": "b1",
+      "default_route": "main_reading",
+      "rag_eligible": true,
+      "allowed_source_scope": ["main_reading_text"]
+    }
+  ]
+}

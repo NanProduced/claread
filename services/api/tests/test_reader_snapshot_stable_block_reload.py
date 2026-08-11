@@ -27,7 +27,9 @@ heading_level / inline_marks / table_role / parent 全部丢失，Reader 把
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,6 +39,9 @@ import pytest
 from app.database.connection import init_connection
 from app.services.reader_orchestration.article_ready_service import (
     ArticleReadyPersistenceService,
+)
+from app.services.reader_orchestration.markdown_source_parser import (
+    MarkdownSourceParser,
 )
 from app.services.reader_orchestration.repository import (
     ReaderOrchestrationRepository,
@@ -1501,3 +1506,93 @@ async def test_snapshot_stable_tree_is_complete_and_has_no_callout_text_duplicat
     assert "🎯" not in rendered_texts
     assert rendered_texts.count("Alignment: emphasis, code and a link.") == 1
     assert rendered_texts.count("First item in the callout list") == 1
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["ordinary_multi_paragraph_blockquote"],
+)
+async def test_ordinary_blockquote_fixture_survives_base_reload_and_plate(
+    reload_env: asyncpg.Pool,
+    fixture_name: str,
+) -> None:
+    fixture_dir = (
+        Path(__file__).parent
+        / "fixtures"
+        / "markdown_structured_source"
+        / fixture_name
+    )
+    markdown = (fixture_dir / "input.md").read_text(encoding="utf-8")
+    expected = json.loads(
+        (fixture_dir / "expected_blocks.json").read_text(encoding="utf-8")
+    )["blocks"][0]
+    expected_text = expected["text_content"]
+    expected_payload = expected["payload_json"]
+
+    parsed = MarkdownSourceParser().parse(markdown)
+    assert [(block.block_type, block.text_content) for block in parsed.blocks] == [
+        ("blockquote", expected_text)
+    ]
+
+    user_id = await _insert_user(reload_env)
+    result = await _freeze_markdown(reload_env, user_id, markdown)
+    stable_blocks = await _load_stable_document_blocks(
+        reload_env, result.stable_document_id
+    )
+    assert [(row["block_type"], row["text_content"]) for row in stable_blocks] == [
+        ("blockquote", expected_text)
+    ]
+    stable_payload = stable_blocks[0]["payload_json"]
+    for key in ("links", "stripped_links", "inline_marks"):
+        assert stable_payload[key] == expected_payload[key]
+
+    async with reload_env.acquire() as conn:
+        base_text = await conn.fetchval(
+            "SELECT text FROM reading_bases WHERE id = $1",
+            result.base_id,
+        )
+    assert base_text == expected_text
+
+    facts = await _load_facts(
+        reload_env, result.reading_record_id, user_id
+    )
+    assert [
+        (unit.stable_block_type, unit.text)
+        for unit in facts.build_result.units
+    ] == [("blockquote", expected_text)]
+
+    reloaded = await _load_snapshot(
+        reload_env, result.reading_record_id, user_id
+    )
+    assert _project_snapshot_stable_tree(
+        result.snapshot.stable_document_tree
+    ) == _project_snapshot_stable_tree(reloaded.stable_document_tree)
+
+    fresh_plate_blocks = _source_blocks_by_unit(result.snapshot)
+    reloaded_plate_blocks = _source_blocks_by_unit(reloaded)
+    assert fresh_plate_blocks == reloaded_plate_blocks
+    plate_fields = next(iter(fresh_plate_blocks.values()))
+    assert plate_fields["stableBlockType"] == "blockquote"
+    assert plate_fields["inlineMarks"] == expected_payload["inline_marks"]
+
+    def projected_text(node: Any) -> str:
+        if isinstance(node, list):
+            return "".join(projected_text(child) for child in node)
+        if isinstance(node, dict):
+            return str(node.get("text", "")) + projected_text(
+                node.get("children", [])
+            )
+        return ""
+
+    fresh_plate_text = projected_text(
+        result.snapshot.model_dump(mode="json")["value"]
+    )
+    reloaded_plate_text = projected_text(reloaded.model_dump(mode="json")["value"])
+    assert fresh_plate_text == reloaded_plate_text == expected_text
+    assert fresh_plate_text.index("First") < fresh_plate_text.index("Second")
+    assert fresh_plate_text.index("Second") < fresh_plate_text.index("Third")
+    link_mark = next(
+        mark for mark in plate_fields["inlineMarks"] if mark["type"] == "link"
+    )
+    assert fresh_plate_text[link_mark["start"] : link_mark["end"]] == "safe label"
+    assert "unsafe label" in fresh_plate_text

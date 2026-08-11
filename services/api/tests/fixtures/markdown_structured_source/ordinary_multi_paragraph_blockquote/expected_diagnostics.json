@@ -1,0 +1,18 @@
+{
+  "fixture_name": "ordinary_multi_paragraph_blockquote",
+  "warnings": [
+    {
+      "code": "unsafe_link_protocol",
+      "message": "Links with unsafe protocols (javascript/data/vbscript) were stripped from paragraph text; link text preserved.",
+      "blocks_freeze": false,
+      "classification": "adaptation_notice"
+    }
+  ],
+  "unsupported": [
+    {
+      "code": "unsafe_link_sanitization",
+      "message": "Unsafe-protocol link sanitization is a first-phase safety measure; full link audit requires candidate review."
+    }
+  ],
+  "outcome": "stable_document_ready"
+}
