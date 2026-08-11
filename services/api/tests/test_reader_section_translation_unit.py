@@ -753,6 +753,7 @@ async def test_bg04_successful_claim_then_process_once() -> None:
     job_id = uuid4()
     record_id = uuid4()
     base_id = uuid4()
+    lease_duration = timedelta(seconds=17)
     claim = ClaimResult(
         job_id=job_id,
         run_id=uuid4(),
@@ -792,13 +793,17 @@ async def test_bg04_successful_claim_then_process_once() -> None:
         result = await service.process_job_id(
             job_id=job_id,
             lease_owner="drain",
+            lease_duration=lease_duration,
             expected_reading_record_id=record_id,
             expected_base_id=base_id,
             expected_generation=1,
         )
     assert result.outcome is SectionDrainOutcome.SUCCEEDED
     runtime.claim_job_by_id.assert_awaited_once()
+    assert runtime.claim_job_by_id.await_args.kwargs["lease_duration"] == lease_duration
     worker.process_claimed_translation_batch_job.assert_awaited_once()
+    worker_call = worker.process_claimed_translation_batch_job.await_args
+    assert worker_call.kwargs["lease_duration"] == lease_duration
     # Claim increments attempt_count once (BG-04 single accounting at claim).
     assert claim.attempt_count == 1
 

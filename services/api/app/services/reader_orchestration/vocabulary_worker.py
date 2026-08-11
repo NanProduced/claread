@@ -68,6 +68,9 @@ from .job_runtime import (
     CapturedResumeClaim,
     ClaimResult,
     FenceViolationError,
+    IllegalTransitionError,
+    LeaseExpiredError,
+    LeaseTokenMismatchError,
     ReaderJobRuntime,
     mark_reader_run_running,
     mark_reader_run_status,
@@ -77,6 +80,7 @@ from .layer_publisher import (
     PublishedVocabularyLayer,
     VocabularyLayerPublisher,
 )
+from .lease_heartbeat import LeaseHeartbeat
 from .reading_strategy import (
     ReaderStrategyResolverError,
     resolve_reader_variant_strategy,
@@ -90,6 +94,7 @@ from .span_recorder import (
 from .usage_attribution import ReaderUsageAttributionService
 
 DEFAULT_VOCABULARY_RETRY_DELAY = timedelta(minutes=5)
+DEFAULT_VOCABULARY_LEASE_DURATION = timedelta(seconds=120)
 VOCABULARY_WORKFLOW_VERSION = "d5-v3-vocabulary-worker"
 VOCABULARY_PROMPT_AGENT_NAME = "reader_layer_vocabulary"
 FAKE_VOCABULARY_PROMPT_VERSION = "fake-vocabulary-worker-v1"
@@ -1275,6 +1280,7 @@ class VocabularyWorkerService:
         return await self.process_claimed_vocabulary_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     async def process_next_vocabulary_job_for_record(
@@ -1308,6 +1314,7 @@ class VocabularyWorkerService:
         return await self.process_claimed_vocabulary_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     @with_execution_correlation(CAPABILITY_READER_VOCABULARY)
@@ -1316,10 +1323,17 @@ class VocabularyWorkerService:
         *,
         claim: ClaimResult,
         retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+        lease_duration: timedelta = DEFAULT_VOCABULARY_LEASE_DURATION,
     ) -> VocabularyJobProcessResult:
         context: VocabularyJobContext | None = None
         execution: VocabularyExecutionResult | None = None
         execution_captured = False
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration,
+        )
 
         try:
             context = await self._load_job_context(claim.job_id)
@@ -1361,6 +1375,7 @@ class VocabularyWorkerService:
                     context=context,
                     status="paused",
                 )
+            await heartbeat.start()
             execution = await self._executor.generate(context)
             output = VocabularyLayerOutput.model_validate(execution.output)
             try:
@@ -1394,6 +1409,20 @@ class VocabularyWorkerService:
                     claim=claim,
                     context=context,
                     status="paused",
+                )
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return VocabularyJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
                 )
             published_layer = await self._layer_publisher.publish_unit_vocabulary(
                 job_id=claim.job_id,
@@ -1543,6 +1572,12 @@ class VocabularyWorkerService:
             )
         except Exception as exc:
             if execution_captured:
+                if heartbeat.lost:
+                    return VocabularyJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
                 await self._pause_model_execution_claim(
                     claim,
                     rationale_code="model_execution_captured_resume_required",
@@ -1582,6 +1617,8 @@ class VocabularyWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+        finally:
+            await heartbeat.stop()
 
     # ------------------------------------------------------------------#
     # T1.1 short-article batch path: claim / process / context loading.
@@ -1652,6 +1689,7 @@ class VocabularyWorkerService:
         return await self.process_claimed_vocabulary_batch_job(
             claim=claim,
             retry_delay=retry_delay,
+            lease_duration=lease_duration,
         )
 
     @with_execution_correlation(CAPABILITY_READER_VOCABULARY)
@@ -1660,6 +1698,7 @@ class VocabularyWorkerService:
         *,
         claim: ClaimResult,
         retry_delay: timedelta = DEFAULT_VOCABULARY_RETRY_DELAY,
+        lease_duration: timedelta = DEFAULT_VOCABULARY_LEASE_DURATION,
     ) -> VocabularyBatchJobProcessResult:
         """Run the batch LLM call and publish N per-unit vocabulary layers.
 
@@ -1672,6 +1711,12 @@ class VocabularyWorkerService:
         context: VocabularyBatchJobContext | None = None
         execution: VocabularyBatchExecutionResult | None = None
         execution_captured = False
+        heartbeat = LeaseHeartbeat(
+            job_runtime=self._job_runtime,
+            job_id=claim.job_id,
+            lease_token=claim.lease_token,
+            lease_duration=lease_duration,
+        )
 
         try:
             context = await self._load_batch_job_context(claim.job_id)
@@ -1713,6 +1758,7 @@ class VocabularyWorkerService:
                     context=context,
                     status="paused",
                 )
+            await heartbeat.start()
             execution = await self._batch_executor.generate_batch(context)
             outputs, batch_diagnostics = _build_vocabulary_batch_outputs(
                 context=context,
@@ -1750,6 +1796,20 @@ class VocabularyWorkerService:
                     claim=claim,
                     context=context,
                     status="paused",
+                )
+            try:
+                await heartbeat.verify_ownership()
+            except (
+                FenceViolationError,
+                IllegalTransitionError,
+                LeaseExpiredError,
+                LeaseTokenMismatchError,
+                LookupError,
+            ):
+                return VocabularyBatchJobProcessResult(
+                    claim=claim,
+                    context=context,
+                    status="retry_later",
                 )
             published_batch = await self._layer_publisher.publish_article_vocabulary_batch(
                 job_id=claim.job_id,
@@ -1901,6 +1961,12 @@ class VocabularyWorkerService:
             )
         except Exception as exc:
             if execution_captured:
+                if heartbeat.lost:
+                    return VocabularyBatchJobProcessResult(
+                        claim=claim,
+                        context=context,
+                        status="retry_later",
+                    )
                 await self._pause_model_execution_claim(
                     claim,
                     rationale_code="model_execution_captured_resume_required",
@@ -1940,6 +2006,8 @@ class VocabularyWorkerService:
                 context=context,
                 status="failed_terminal",
             )
+        finally:
+            await heartbeat.stop()
 
     async def _claim_captured_vocabulary_resume(
         self,
