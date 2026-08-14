@@ -13,7 +13,8 @@
 
 当前 Ask Claread 已冻结为 `article-bound, agent-loop-first, turn-run-backed` 的 Reader 内阅读助手：主回答 agent 直接消费服务端装配的 ContextEnvelope，按需调用受控工具取证，产出带来源标注的回答。旧 planner-first 链路、旧 9-tool registry、旧 supplement/写动作生命周期已物理删除，不在当前架构面内。
 
-## 当前主链
+## Runtime chain and orchestration links与编排交叉引用（含编排交叉引用）
+交叉引用：Ask sidecar action 与 Reader enhancement 共用同一用户级 concurrency / cost envelope（见 `docs/architecture/reader-orchestration.md` 的 Run/Job 模型）。上下文压缩运行参数与回滚入口见 `docs/operations/reader-runtime.md`。Ask 是侧车，不是 orchestration 控制面。
 
 ```text
 route (reader_record_ask.py)

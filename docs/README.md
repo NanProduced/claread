@@ -30,7 +30,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/product/ask-claread.md` | Ask Claread 当前正式产品说明与冻结边界 |
 | `docs/product/learning-annotation-policy.md` | Reader 学习批注（vocabulary / grammar / translation）当前生成质量策略 |
 | `docs/development/mainline.md` | 当前开发主线和近期方向 |
-| `docs/initiatives/reader-agentic-orchestration/` | Reader AI Workflow -> agentic orchestration 重构期间的专项权威上下文 |
+| `docs/architecture/reader-orchestration.md` | Reader AI Workflow -> agentic orchestration 重构期间的专项权威上下文 |
 
 ### 架构
 
@@ -116,7 +116,7 @@ claread/
 ├── evals/             # 评测数据与样本集（旧 Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog）
 ├── docs/
 │   ├── design/
-│   ├── initiatives/  # 当前重构专项文档
+
 │   └── reference/
 └── scripts/           # 后续 / 按需
 ```
