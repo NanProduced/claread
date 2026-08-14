@@ -2,7 +2,7 @@
 
 > **状态**: `CURRENT` | **最后验证**: 2026-08-14
 >
-> 代码事实基线：`0c071e8cf1f4406e357e42fba05f08fcf4066687`。TEST-GOV source：`bdaa32b05620b78a9e64482bbc06cd8caa08d515`。DOC consolidation branch：`codex/orchestration-doc-final-refresh-r2`。符号与代码路径优先；过期行号不是当前 authority。
+> 符号与代码路径优先；过期行号不是当前 authority。
 >
 > 本文描述用户提交内容的 `learning` 主链 Reader orchestration 的当前生产架构：运行时形态、执行策略、run/job 模型、发布围栏、策略与成本控制、失败语义和可观测性。事实以当前代码与测试为准；模块级细节在 `reader-orchestration.md` 的各章节内展开，不再按来源 initiative 文档逐份复制。
 

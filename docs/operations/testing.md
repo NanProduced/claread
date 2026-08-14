@@ -53,16 +53,11 @@ uv run pytest -m "chain_reader_ask and seam_api_contract and not real_llm" -q
 
 ## 任务编号 naming guard
 
-TEST-GOVERNANCE 已本地 landing 的稳定事实（不复制临时 ceiling / matcher，不以 `C:\tmp` 为正式文档 authority）：
+测试治理当前合同：
 
-- TEST-GOV source：`bdaa32b05620b78a9e64482bbc06cd8caa08d515`
-- locally landed compact：`0c071e8cf1f4406e357e42fba05f08fcf4066687`
-- Gate A-C residual：`0`
-- Gate D：`PASS`
-- Gate E：`PASS`
 - Playwright portfolio：18 permanent / 11 core
 - naming guards 保留
-- provider attempts：`0`
+- offline gate 要求 provider attempts 必须为 `0`
 
 任务编号是历史追踪信息，不是业务身份，不应出现在新测试文件名、测试标识符或生产符号中。仓库提供两条静态 guard 阻止其回流：
 
@@ -143,7 +138,7 @@ pnpm exec vitest run
 
 Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
-仓库已有 committed Playwright suite（`apps/web/tests/e2e/*.spec.ts` 共 9 个 spec，`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。本轮 Vitest 专项没有运行 Playwright；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
+仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。本轮 Vitest 专项没有运行 Playwright；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
 
 ## 小程序验证
 

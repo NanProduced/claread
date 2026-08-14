@@ -2,7 +2,7 @@
 
 > **状态**: `CURRENT` | **最后验证**: 2026-08-14
 >
-> 代码事实基线：`0c071e8cf1f4406e357e42fba05f08fcf4066687`。TEST-GOV source：`bdaa32b05620b78a9e64482bbc06cd8caa08d515`。DOC consolidation branch：`codex/orchestration-doc-final-refresh-r2`。符号与代码路径优先；过期行号不是当前 authority。
+> 符号与代码路径优先；过期行号不是当前 authority。
 >
 > 本文记录 Reader orchestration 主链路的本地真实运行方式：
 
