@@ -19,7 +19,7 @@ Usage (run from ``evals/``)::
 
     # Aggregate: load artifacts, run 11 evaluators, generate report.
     uv run python scripts/run_reader_record_ask_eval.py --phase aggregate --run-id <id> \\
-        --report-output ../docs/tmp/reader-orchestration/review/\\
+        --report-output ../evals/tmp/reader-record-ask-r4-a3/review/\\
 TMP-reader-record-ask-r4-a3-eval-2026-07-17.md
 
 Rework closure (spec: `.trae/specs/reader-record-ask-r4-a3-rework-session-
@@ -84,7 +84,7 @@ REPO_ROOT = EVALS_ROOT.parent
 SUGGESTED_DATASET_DIR = EVALS_ROOT / "tmp" / "reader-record-ask-r4-a3"
 DEFAULT_RUNS_DIR = SUGGESTED_DATASET_DIR / "runs"
 DEFAULT_REPORT_OUTPUT = (
-    REPO_ROOT / "docs" / "tmp" / "reader-orchestration" / "review"
+    REPO_ROOT / "evals" / "tmp" / "reader-record-ask-r4-a3" / "review"
     / "TMP-reader-record-ask-r4-a3-eval-2026-07-17.md"
 )
 HARNESS_TEST_PATH = (
@@ -94,7 +94,7 @@ HARNESS_TEST_PATH = (
 HARNESS_CWD = REPO_ROOT / "services" / "api"
 
 _TRACKER_PATH = (
-    "docs/tmp/reader-orchestration/"
+    "evals/tmp/reader-record-ask-r4-a3/"
     "TMP-reader-record-ask-r4-a3-product-ready-tracker-2026-07-17.md"
 )
 

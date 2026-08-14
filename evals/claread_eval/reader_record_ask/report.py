@@ -654,7 +654,7 @@ def _render_next_step_decision(
 
 
 _DEFAULT_TRACKER_PATH = (
-    "docs/tmp/reader-orchestration/"
+    "evals/tmp/reader-record-ask-r4-a3/"
     "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-17.md"
 )
 

@@ -1,6 +1,6 @@
 """Atomic dataset snapshot single-read contract tests.
 
-Spec: ``docs/tmp/reader-orchestration/review/...
+Spec: ``evals/tmp/reader-record-ask-r4-a3/review/...
 TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (snapshot rework).
 
 Background: the prior implementation read the dataset files TWICE —

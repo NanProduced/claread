@@ -532,7 +532,7 @@ def test_report_tracker_section_points_to_tracker_file() -> None:
     report = generate_eval_report(**_default_report_kwargs())
     assert "## 14. tracker 更新" in report
     assert (
-        "docs/tmp/reader-orchestration/"
+        "evals/tmp/reader-record-ask-r4-a3/"
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-17.md"
     ) in report
 
@@ -665,13 +665,13 @@ def test_tracker_path_parameter_used_in_section_14() -> None:
     """``tracker_path`` parameter flows into §14 (tracker path)."""
     kwargs = _default_report_kwargs()
     kwargs["tracker_path"] = (
-        "docs/tmp/reader-orchestration/"
+        "evals/tmp/reader-record-ask-r4-a3/"
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
     )
     kwargs["report_date"] = "2026-07-19"
     report = generate_eval_report(**kwargs)
     assert (
-        "docs/tmp/reader-orchestration/"
+        "evals/tmp/reader-record-ask-r4-a3/"
         "TMP-reader-record-ask-r4-product-ready-tracker-2026-07-19.md"
     ) in report
     assert "日期=2026-07-19" in report

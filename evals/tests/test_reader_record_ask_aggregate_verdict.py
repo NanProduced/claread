@@ -1,6 +1,6 @@
 """Aggregate verdict precedence tests.
 
-Spec: ``docs/tmp/reader-orchestration/review/...
+Spec: ``evals/tmp/reader-record-ask-r4-a3/review/...
 TMP-reader-record-ask-r4-a3-eval-2026-07-17.md`` (aggregate-verdict rework) +
 the accepted aggregate-verdict closure specification
 (7-row verdict/gate table).
