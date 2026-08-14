@@ -290,7 +290,7 @@ Layer Publisher 在单个数据库事务内完成：
 |---|---|---|
 | Policy Planner | deterministic code | 已实现；根据 record state、coverage、failure class、Authorization Envelope 输出 typed plan |
 | Semantic Reviewer | PydanticAI typed worker | 设计目标（D5+），未进入主路径 |
-| LLM Planner | LLM-driven | 不进入本轮 |
+| LLM Planner | LLM-driven | 当前未实现 |
 
 ### Skip Gate
 

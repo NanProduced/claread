@@ -95,7 +95,7 @@ rtk test uv run pytest services/api/tests/test_daily_reader_structure.py service
 
 ## 后续收口清单
 
-以下问题尚未作为本轮 reading unit 密度优化的一部分解决：
+以下问题当前尚未解决：
 
 1. 单一真源
    - 当前 `body_json.paragraphs[].reading_note` 与 `paragraph_notes_json.notes[]` 仍可能形成双源。

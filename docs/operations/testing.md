@@ -138,7 +138,7 @@ pnpm exec vitest run
 
 Web smoke 应覆盖手机号登录、Reader 提交（`/app/read`）、Reader 产品页（`/app/reader/[recordId]`）、历史记录、生词本、复习、收藏、批注、反馈和设置/配额。
 
-仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。本轮 Vitest 专项没有运行 Playwright；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
+仓库已有 committed Playwright suite（当前 tracked E2E spec 集 `apps/web/tests/e2e/*.spec.ts`、`apps/web/playwright.config.ts`，`apps/web` 内 `pnpm test:e2e`）与 Vitest 稳定性专项。Vitest 与 Playwright 是独立验证入口，不得用其中一个替代另一个；Playwright 仍按自身环境、fixture、live/opt-in 条件单独验收，本仓库不宣称这些 E2E 当前全部稳定或全部默认可运行。涉及 SelectionToolbar、lookup preview、route focus 和 `multi_text` 的 UI 改动，仍建议在本地浏览器做交互回归。
 
 ## 小程序验证
 
@@ -159,7 +159,7 @@ pnpm miniprogram:build
 
 ## 旧 Regression Suite
 
-旧仓库曾有脚本式 regression suite，但这条路线不迁移到新仓库。
+旧脚本式 regression suite 不属于当前仓库验证入口。
 
 后续评测应重新设计为：
 

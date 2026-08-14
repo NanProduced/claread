@@ -24,7 +24,7 @@
 - 当前生产链路：input adapter -> Candidate Document -> Stable Reading Base -> Reading Units / Anchor Segments -> Enhancement Layers (translation / vocabulary / grammar / sentence / semantic outline) -> snapshot projection。
 - 修改输出结构时同步更新 Pydantic schema、数据库字段、API 文档、前端消费和测试。
 - 保留 prompt version、source metadata、`reader_runtime_spans` 和 `reader_events`，方便回看和 eval。
-- 专项权威上下文在 `docs/architecture/reader-orchestration.md`；模块合同在对应 `modules/*.md`。
+- 当前架构权威上下文在 `docs/architecture/reader-orchestration.md`。
 
 ## Ask Claread（当前唯一 Ask 生产链）
 

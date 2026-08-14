@@ -16,7 +16,7 @@ Claread 使用一套后端业务内核，服务多个客户端。
 |--------|------|------|
 | Web | `apps/web/` | 新用户提交 Reader orchestration 的唯一客户端（不是 Claread 唯一用户客户端），通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入新 Reader orchestration 主链 |
 | 微信小程序 | `apps/miniprogram/` | 稳定客户端，功能子集，受平台能力限制；旧文章分析已下线，后续按新 contract 单独评估 |
-| Directus / Admin | `apps/directus/` | 当前内部控制面，承接通用 metadata 展示、LLM Config 与后续按新 orchestration 重建的治理化控制面 |
+| Directus / Admin | `apps/directus/` | 当前内部控制面，承接通用 metadata 展示、LLM Config 与尚未实现的治理化控制面 |
 
 小程序是稳定客户端，不是一次性冻结的旧客户端。当前小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
 

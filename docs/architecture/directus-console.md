@@ -182,7 +182,7 @@ Directus / Claread Console 负责：
 - 实际 Reader orchestration 运行
 - model invocation
 - RAG 检索
-- judge / replay / batch eval（重建后）
+- judge / replay / batch eval（规划中）
 - Zilliz collection 重建与 ingestion
 
 ### 数据分层
@@ -216,7 +216,7 @@ Directus / Claread Console 负责：
 - `docs/operations/directus-local-dev.md` — 本地开发与热更新
 - `docs/operations/testing.md` — 测试与验证
 - `docs/product/current-state.md` — 产品当前状态
-- `docs/architecture/reader-orchestration.md` — Reader agentic orchestration 专项权威上下文
+- `docs/architecture/reader-orchestration.md` — Reader orchestration 当前架构权威上下文
 
 ## 历史能力（已物理删除，仅供回看）
 

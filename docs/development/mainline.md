@@ -31,14 +31,14 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 近期重点：
 - 旧 Eval 控制面表与 `analysis_*` 残留本地库清理
-- Console / Eval 按新 orchestration 重建（治理化控制面）
+- Console / Eval 治理化控制面建设（规划中）
 - 统一监测、计费适配、usage/ledger 与新 Reader run/job/layer attribution 闭环
 - 测试治理与代码架构优化
 
 范围边界：
 
 - 当前包含：用户提交内容的 `learning workflow` 已使用 bounded agentic orchestration 生产链
-- 本轮不包含：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；当前不做小程序 Reader orchestration 实现
+- 当前产品范围不包括：`academic workflow`、`daily_reader_workflow` 及 Daily Reader 的文章发现、抽取、评分、定时生产和公开页面生成模式；小程序 Reader orchestration 当前未实现
 - 数据策略：项目未上线，不做旧开发记录迁移；本地数据可重置，但保留 `dict_entries`、`dict_lookup_targets`、`dict_redirects`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger
 - 兼容对象：Daily Reader 公共页面、Reader API、Library、Ask Claread；旧开发数据不作为迁移约束
 
@@ -66,17 +66,17 @@ Web 主产品链路已形成可用基线，后续重点是次要功能补齐、�
 - 公共区页面设计收口
 - 移动 Web 适配
 
-### 副线：Claread Console 控制面治理化重建
+### 副线：Claread Console 控制面治理化建设
 
 Claread Console 当前只保留通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除。治理化控制面尚未实现，后续应按治理价值排序推进，而不是泛化铺开后台功能。
 
 近期重点：
-- Console / Eval 按新 orchestration 重建（治理化控制面），明确与已删除旧 Eval Center 的边界
+- Console / Eval 治理化控制面建设（规划中），明确与已删除旧 Eval Center 的边界
 - 按治理优先级推进：解析治理、RAG promotion、运营工作台
 
 ### 维护线：小程序与多端稳定性维护
 
-小程序是稳定客户端，保持回归约束。Reader 2.0 与 Ask 重构都不应破坏当前小程序主链路。
+小程序是稳定客户端，保持回归约束。Reader 与 Ask 的后续变更都不应破坏当前小程序主链路。
 
 近期重点：
 - 小程序 Reader 结果页对 `reader_notes` 的本地优先回读
@@ -92,10 +92,10 @@ Claread Console 当前只保留通用 metadata 展示 module；旧 Eval Center�
 - Stable Reading Base、Reading Units、Navigation Skeleton、Semantic Outline、Enhancement Layer、Parsed Decision 的最终 schema 和 API 版本化方式。
 - Article Ready、Initial Enhancement Ready、100% Parse Coverage、长文渐进 coverage 的计费、速度、默认推进和用户授权策略。
 - Ask Claread 接入新 Stable Reading Base 后，是否允许低频 sidecar action、如何授权、如何保存为用户资产。
-- 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG；本轮不做全局用户资产整理或跨记录语义 RAG 产品化。
+- 多解析页 / 跨文章检索何时从当前受控扩展升级到 hybrid retrieval / RAG；全局用户资产整理或跨记录语义 RAG 当前不产品化。
 - Grammar X-Ray、分享页、导出和其他 AI 能力的优先级。
 - 是否在 Ask Claread 之外单独产品化"AI 整合总结用户历史数据"能力，以及是否做跨文章/跨资产的长期学习画像。
-- Claread Console 下一阶段优先落哪条工作流：解析治理、RAG promotion、运营工作台，还是 feedback / usage 观察面板。
+- Claread Console 下一优先项落哪条工作流：解析治理、RAG promotion、运营工作台，还是 feedback / usage 观察面板。
 - render snapshot / render profile 是否立即建表（旧 `render_scene_json` 已物理删除，不再作为迁移源）。
 - contracts 生成方式、共享包边界和 CI 门槛。
 

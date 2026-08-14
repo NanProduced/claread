@@ -17,8 +17,7 @@
 
 ## 已验证事实
 
-- 2026-05-21 验证：Reader 标注体系的数据层已收口为"文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用"；数据库基线已压回单一 `0001_initial.sql`，Web 与小程序构建通过。
-- 2026-05-16 验证：Web typecheck / build 通过；本轮通过本地浏览器回归核对 Reader 的 selection toolbar、lookup preview 和 `multi_text` 交互表现；`services/api/tests/test_user_assets.py` 和 `services/api/tests/test_user_annotations.py` 通过。
+- Reader 标注体系的数据层已收口为"文章收藏 + 用户高亮 + 用户笔记 + Ask Claread 显式引用"；数据库基线为单一 `0001_initial.sql`。当前验证入口见 `docs/operations/testing.md`。
 - Web 已接入手机号登录、Reader 提交、Reader、历史记录、生词本、复习、文章收藏、用户高亮、用户笔记、Ask Claread、反馈和设置/配额；设置页已补齐昵称编辑、积分明细、默认透读和 Web 偏好云端同步，Library 已形成搜索/收藏筛选/排序的基础管理体验；公共区已覆盖首页、每日精读、示例文章和分享页；command palette 已实现。旧"分析任务"流程已物理删除。
 - `text_range` / `multi_text` 已稳定到同一套数据契约：Web 通过 `@claread/contracts` 常量对齐，后端按 UTF-16 offset、`fnv1a32-utf16` hash、Anchor Segment / Reading Unit 切片和 unit/segment 顺序校验局部/多段选区。
 - AI 使用审计与结算底座已完成第一轮加固：`ai_usage_events`、capability code、usage scope 和 billing mode 已可承接后续词典 AI 与 Reader AI 能力。
@@ -64,7 +63,7 @@ Claread 已从单一微信小程序开发转为多端产品开发。
 
 当前主线推进重点为：旧 Eval 控制面表与 legacy `analysis_*` 残留本地库清理（范围见 `docs/architecture/workflow-history.md`，保护 `analysis_windows` 与 `layer_analysis_plans`）、尚未实现的 Console / Eval 治理化控制面、统一监测与计费适配、测试治理与代码架构优化。`academic workflow` 尚未实现，需单独设计。
 
-`daily_reader_workflow` 不进入本轮 runtime conversion，保持固定 workflow 形态，与旧 Learning Workflow 已解耦。
+`daily_reader_workflow` 保持固定 workflow 形态，与旧 Learning Workflow 已解耦。
 
 新架构的产品原则继续生效：LLM / planner 承担更多策略判断，代码负责红线边界、结构契约、安全校验、审计、计费、限流和回退。高影响输入适配必须先给用户 Candidate Reading Base 预览、修改和确认；确认后才生成稳定阅读基座与稳定阅读单元，一经确认不可被后续增强改写。
 
@@ -78,13 +77,13 @@ Ask Claread 作为 consumer / sidecar integration 接入 Stable Reading Base 和
 
 Web 主产品链路已形成可用基线，公共区、认证区和私有区路由已完整覆盖。后续重点是次要功能补齐、页面设计收口和体验打磨，而不是继续搭建基础框架。
 
-### 副线：Claread Console 控制面治理化重建
+### 副线：Claread Console 控制面治理化建设
 
 Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除。治理化控制面尚未实现，后续应按治理价值排序推进，而不是泛化铺开后台功能。
 
 ### 维护线：小程序与多端稳定性维护
 
-小程序是稳定客户端，保持回归约束。Reader 2.0 与 Ask 重构都不应破坏当前小程序主链路。多端共享后端和数据库的稳定性是持续维护项。
+小程序是稳定客户端，保持回归约束。Reader 与 Ask 的后续变更都不应破坏当前小程序主链路。多端共享后端和数据库的稳定性是持续维护项。
 
 ## 已知边界
 
@@ -92,9 +91,9 @@ Claread Console 当前只保留 enum-label-display / enum-label-interface 等通
 - `packages/shared-utils/` 仍为预留位置（目录尚未创建）；`apps/directus/` 只承担控制面，不承担核心执行面。
 - 小程序 UI/UX 是当前实现，不代表 Web 端体验上限。
 - 模型输出质量和结构化输出稳定性依赖 `services/api/.env` 中的模型 profile；更换模型后需要重新跑解析链路。
-- 旧脚本式 regression suite 不进入新仓库主线；旧 Eval Center module 已物理删除，评测控制面尚未实现，规划仍走 Directus + 自建 eval harness + LLM-as-a-Judge 路线。
+- 旧脚本式 regression suite 不属于当前仓库验证入口；旧 Eval Center module 已物理删除，评测控制面尚未实现，规划仍走 Directus + 自建 eval harness + LLM-as-a-Judge 路线。
 - Ask Claread 当前以当前文章为绑定上下文，通过受控工具（evidence 展开、文章 RAG 检索、显式授权的 Web search）取证；用户高亮与用户笔记只通过显式引用进入 Ask，不存在独立"用户学习资产自由查询"产品面。
-- Reader orchestration 当前只面向用户提交内容的 `learning workflow`。`academic workflow` 暂缓重构；`daily_reader_workflow` 保持固定 workflow；全局用户资产整理、跨记录语义 RAG、知识库化不进入本轮范围。
+- Reader orchestration 当前只面向用户提交内容的 `learning workflow`。`academic workflow` 尚未实现；`daily_reader_workflow` 保持固定 workflow；当前产品范围不包括全局用户资产整理、跨记录语义 RAG 和知识库化。
 - Reader orchestration 目标架构与模块合同已是当前生产架构事实源；尚未完成事项见 `docs/development/mainline.md`。
 - 旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除，Console / Eval 治理化控制面尚未实现；不把 Directus 变成执行面。`eval_example_lab_entries` 作为 Directus Collection 保留，不属于已删除的 Eval Center module。
 - Example Lab 是 Directus Collection，不是 Eval Center 独立 mode；grammar RAG / Example Lab 契约已收口（无 teaching_goal、无 structure_signals、无 retrieval_version；variant 是硬边界）。
