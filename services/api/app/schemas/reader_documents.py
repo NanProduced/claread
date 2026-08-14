@@ -21,7 +21,7 @@ Scope: schema/domain contract landing only. This module does NOT:
 The Canonical Text Layer is intentionally NOT modeled as a separate table
 here. V1 keeps `reading_bases.text` as the transitional carrier and uses
 UTF-16 offsets to map into it; see
-docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md
+docs/architecture/reader-orchestration.md
 section "Canonical Text Layer transition".
 """
 
@@ -73,7 +73,7 @@ StableDocumentBlockType = Literal[
 ]
 
 # Mirrors interpretation_policy_json.allowed_source_scope values used by
-# docs/.../modules/rag-substrate.md and plate-reader-projection.md.
+apps/web/docs/reader-ia.md + docs/architecture/reader-rag.md
 StableDocumentSourceScope = Literal[
     "main_reading_text",
     "heading",
@@ -102,8 +102,8 @@ _STRUCTURAL_BLOCK_TYPES = frozenset(
 
 # Per-block-type interpretation policy defaults. Mirrors the
 # projection rules in
-# docs/initiatives/reader-agentic-orchestration/modules/plate-reader-projection.md
-# and the RAG scope taxonomy in rag-substrate.md. The textual narrative
+apps/web/docs/reader-ia.md
+docs/architecture/reader-rag.md
 # blocks (paragraph / heading / list_item / blockquote / caption) flow
 # into main grammar / sentence analysis on first freeze. Since the
 # Markdown ecosystem policy treats code_block and the table hierarchy

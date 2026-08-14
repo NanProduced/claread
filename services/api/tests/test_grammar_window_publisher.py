@@ -1,7 +1,7 @@
 """Tests for GrammarWindowPublisher: multi-unit publish transaction.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   §3.3 (unit-scoped publish) + §8.4 (publish transaction) + §8.5 (lock coverage)
 """
 

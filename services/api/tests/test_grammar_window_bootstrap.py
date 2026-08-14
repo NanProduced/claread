@@ -1,7 +1,7 @@
 """Tests for GrammarWindowBootstrapService: bootstrap plan + windows + reader_jobs.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   §3.2 (Window Job contract) + §4.1 (layer_analysis_plans) + §7.3 (budget caps)
 """
 

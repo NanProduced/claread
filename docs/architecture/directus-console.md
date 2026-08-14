@@ -216,11 +216,11 @@ Directus / Claread Console 负责：
 - `docs/operations/directus-local-dev.md` — 本地开发与热更新
 - `docs/operations/testing.md` — 测试与验证
 - `docs/product/current-state.md` — 产品当前状态
-- `docs/initiatives/reader-agentic-orchestration/` — Reader agentic orchestration 专项权威上下文
+docs/README.md
 
 ## 历史能力（已物理删除，仅供回看）
 
-以下 module 已在 cutover 中物理删除，不再作为当前能力。历史细节见 `docs/architecture/eval-center-integration-map.md`（历史文档）和 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`：
+docs/architecture/workflow-history.md + docs/development/mainline.md + docs/product/current-state.md
 
 - Parse Run Observability（原 `analysis_records` 观察台）
 - Render Scene Inspector（原 `analysis_results.render_scene_json` 检查器）

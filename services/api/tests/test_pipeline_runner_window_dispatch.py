@@ -1,7 +1,7 @@
 """Tests for ReaderEnhancementPipelineRunner grammar-window window dispatch (Task C4).
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   §9 (worker migration): ``grammar_bundle_window`` WorkerType registered in
   ``pipeline_runner._dispatch_worker_attempt`` ahead of legacy
   ``grammar_bundle``.

@@ -11,8 +11,8 @@ article into one of three routing modes:
     - ``GROUPED_WINDOWED``   -> per-window batch jobs (translate_article /
                                  build_vocabulary_layer_article windows)
 
-Design contract (see docs/initiatives/reader-agentic-orchestration/
-adaptive-reader-orchestration-design.md §5.2 / §6.1 / §6.3):
+docs/README.md
+docs/architecture/reader-orchestration.md
 
     - Raw ``content_utf16_length`` is NO LONGER the sole short/non-short
       discriminator. ``estimated_word_count`` is the PRIMARY router; the

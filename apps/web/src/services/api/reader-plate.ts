@@ -32,7 +32,7 @@ import type {
 /**
  * Upstream client for the Reader Plate vertical slice.
  *
- * Targets the new endpoints introduced by the reader-agentic-orchestration
+ docs/README.md
  * initiative:
  *   - POST /reader/records/plain-text
  *   - GET  /reader/records/{record_id}/snapshot
@@ -227,7 +227,7 @@ export function getUpstreamReaderCandidateDocument(
 
 // ---------------------------------------------------------------------------
 // Confirmed Source (L2): draft read / resume entry + whole-document update
-// Frozen contract: docs/initiatives/reader-agentic-orchestration/modules/schema-and-domain-contract.md — Confirmed Source 生命周期
+// Frozen contract: docs/architecture/reader-orchestration.md — Confirmed Source 生命周期
 // ---------------------------------------------------------------------------
 
 export function getUpstreamReaderConfirmedSource(

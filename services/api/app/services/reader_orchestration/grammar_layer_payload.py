@@ -12,7 +12,7 @@
   构造 grammar_note 首发的扩展 ``layer_published`` payload。
 
 设计依据：
-  docs/initiatives/reader-agentic-orchestration/modules/representation-event-contract.md
+  docs/architecture/reader-orchestration.md + apps/web/docs/reader-ia.md
 """
 
 from __future__ import annotations

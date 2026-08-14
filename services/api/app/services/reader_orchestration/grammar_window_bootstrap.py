@@ -1,7 +1,7 @@
 """GrammarWindowBootstrapService: bootstrap layer_analysis_plans + analysis_windows + reader_jobs.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   - §3.2 Window Job contract (job_type / target_type / target_key / input_json)
   - §4.1 layer_analysis_plans table (status='active' at creation, no planning phase)
   - §7.3 budget caps (grammar_note / sentence_analysis formulas)

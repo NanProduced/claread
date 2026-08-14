@@ -19,7 +19,7 @@ collapsed into the plain-text output: the composer emits a stable
 structural placeholder for each non-textual block and a literal block_id
 marker, so callers can see where structural truth was elided. Raw
 structural payloads must never be silently inlined as the canonical
-text truth (see schema-and-domain-contract.md "rules" section).
+docs/architecture/reader-orchestration.md
 
 Structural blocks ARE allowed as parents (e.g. `table -> table_row ->
 table_cell`, `image -> image_ocr`, `image -> caption`). The validator

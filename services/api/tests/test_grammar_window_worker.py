@@ -1,7 +1,7 @@
 """Tests for GrammarWindowWorkerService: preflight (§8.2) + heartbeat (§8.6).
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   §8.2 (window claim / preflight pending→running) + §8.6 (heartbeat)
 
 The preflight tests cover all four §8.2 status branches:

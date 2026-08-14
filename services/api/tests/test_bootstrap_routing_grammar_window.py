@@ -1,7 +1,7 @@
 """Tests for grammar-window vs legacy bootstrap routing in ``bootstrap_missing_jobs``.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   §9 worker migration (bootstrap routing)
 
 Routing contract (修正后):

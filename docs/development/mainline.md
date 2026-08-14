@@ -14,7 +14,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 - Reader 词典 AI 已收口为 article-scoped 的前端缓存能力，不改变后端词典 truth layer。
 - AI 使用审计与结算底座已正式化：`ai_usage_events`、capability code、usage scope 与 billing mode 已可承接后续词典 AI、Ask Claread 和其他 Web AI 能力。
 - FastAPI 后端是通用 Claread API，承载小程序、Web 和后续客户端共享的用户、记录、任务、词典、用户资产、配额和反馈能力。
-- Reader 主链已完成从旧固定 AI Workflow 到 bounded agentic orchestration 的硬切换（Architectural Cutover Complete）：旧 `learning_workflow.py`、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）、`analysis_results.render_scene_json` 作为事实源、旧 Reader 产品页与 BFF route、旧 Directus Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability 已物理删除。新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。旧 `analysis_*` 表的精确状态（legacy 孤儿表 / legacy 仍被只读引用表 / 新链在用表 `analysis_windows` 与 `layer_analysis_plans`）见 `docs/initiatives/reader-agentic-orchestration/modules/cutover-and-old-workflow.md`；表 DROP 属于 post-cutover 数据清理 backlog。Operational Readiness（计费、统一监测、Console/Eval 重建等）属于 post-cutover backlog。
+docs/architecture/workflow-history.md + docs/development/mainline.md + docs/product/current-state.md
 - Claread Console 当前只保留 enum-label-display / enum-label-interface 等通用 metadata 展示 module；旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
 - `@claread/contracts` 已先承载批注/收藏/text range 常量，后续再评估完整 OpenAPI DTO 生成。
 - 本地开发基线使用 PostgreSQL、Redis、词典数据和受控测试手机号链路。
@@ -27,7 +27,7 @@ Claread 已完成从单一小程序基线到多端产品基线的推进：
 
 Reader agentic orchestration 的 Architectural Cutover 已完成：用户提交内容的 `learning` 主链已从旧固定 AI Workflow 切换到 bounded agentic orchestration，旧 Learning Workflow、Analysis Ask、Ask legacy lane、旧 Web/Mini 页面、旧 Directus Eval Center / Workflow Lab / Node Lab 已物理删除。新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源，Web 通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入。
 
-本重构的专项权威上下文在 `docs/initiatives/reader-agentic-orchestration/`。该目录的目标架构与模块合同同时是当前生产架构的事实源；Operational Readiness 属于 post-cutover backlog。
+docs/README.md
 
 近期重点（post-cutover backlog）：
 - 旧 Eval 控制面表与 `analysis_*` 残留本地库清理

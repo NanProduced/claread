@@ -11,7 +11,7 @@
  * against the G0 Structured Source Contract
  * (`services/api/tests/fixtures/markdown_structured_source/CONTRACT.md`).
  *
- * Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5 合同与 Fixture
+ apps/web/docs/reader-ia.md
  */
 
 import { cleanup, render, screen } from "@testing-library/react";

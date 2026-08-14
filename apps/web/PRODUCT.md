@@ -50,7 +50,7 @@ Ask 不提供 Reader 内的无上下文全局聊天入口，不直接改写文�
 
 新的 Reading Record / Agentic orchestration 是所有新增 Web UI 的默认承载路径。旧 AI Workflow 在新链路达到既定稳定性、测试与切换门槛前，只作为受控回退存在。
 
-PRODUCT.md 不复制路由、DTO、状态枚举或切换门槛；这些事实由 docs/initiatives/reader-agentic-orchestration/ 及其模块合同维护。旧 AI Workflow 代码移除并完成切换后，必须更新本文件：删除本节的过渡表述，并将新链路描述为稳定产品状态。
+docs/README.md
 
 ## 非目标
 
@@ -61,6 +61,6 @@ PRODUCT.md 不复制路由、DTO、状态枚举或切换门槛；这些事实由
 
 ## 权威来源
 
-- Reader Agentic orchestration 的术语、目标架构、模块合同与任务状态：docs/initiatives/reader-agentic-orchestration/。
+docs/README.md
 - Reader 画布、锚点、Plate 与专项组件规则：docs/design/component-system.md。
 - Web 的视觉 token、组件与交互规范：DESIGN.md。

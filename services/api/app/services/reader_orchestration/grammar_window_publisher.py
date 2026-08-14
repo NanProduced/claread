@@ -1,7 +1,7 @@
 """GrammarWindowPublisher: multi-unit publish transaction for grammar-window windows.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   - §3.3 unit-scoped publish (target_scope='unit', target_key=unit_id)
   - §8.4 publish transaction (manual transition validation + _apply_transition)
   - §8.5 lock coverage (plan → window → reader_jobs, all FOR UPDATE)

@@ -1,7 +1,7 @@
 """Ask Evidence Contract Freeze (v5) regression tests.
 
 Spec:
-    docs/initiatives/reader-agentic-orchestration/modules/ask-claread-agentic-product-runtime-contract.md
+    docs/architecture/ask-claread.md
     (accepted design specification, 2026-07-25)
 
 Purpose

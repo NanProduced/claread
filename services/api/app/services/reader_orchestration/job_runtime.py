@@ -127,7 +127,7 @@ TRANSITION_TARGETS: frozenset[str] = frozenset({
     STATUS_QUEUED,
 })
 
-# Full state machine per schema-and-domain-contract.md.
+docs/architecture/reader-orchestration.md
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     STATUS_QUEUED: frozenset({
         STATUS_CLAIMED, STATUS_PAUSED, STATUS_SKIPPED,

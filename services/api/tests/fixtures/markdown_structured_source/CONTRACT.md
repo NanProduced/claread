@@ -453,7 +453,7 @@ first update this matrix and re-freeze the contract.
 **Authority**: This is the single source of truth for "what the Markdown
 long-document pipeline actually does end-to-end" across parser → DB →
 Snapshot → Reader projection. Untracked notes (e.g.
-`docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md`)
+apps/web/docs/reader-ia.md
 MUST NOT override this matrix when they conflict.
 
 **Legend**:

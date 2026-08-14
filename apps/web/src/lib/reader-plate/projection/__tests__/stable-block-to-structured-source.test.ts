@@ -12,7 +12,7 @@
  *   - empty input → empty output
  *   - text_content: null preserved (not coerced)
  *
- * Reference: docs/initiatives/reader-agentic-orchestration/modules/markdown-adaptation-state.md §5 合同与 Fixture
+ apps/web/docs/reader-ia.md
  */
 
 import { describe, expect, it } from "vitest";

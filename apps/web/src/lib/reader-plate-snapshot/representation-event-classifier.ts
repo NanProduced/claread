@@ -14,7 +14,7 @@
  * consumed as cursor-only.
  *
  * Contract:
- * docs/initiatives/reader-agentic-orchestration/modules/representation-event-contract.md
+ docs/architecture/reader-orchestration.md + apps/web/docs/reader-ia.md
  */
 
 import type { ReaderEventResponseDto, ReaderEventType } from "@/types/api/reader-plate";

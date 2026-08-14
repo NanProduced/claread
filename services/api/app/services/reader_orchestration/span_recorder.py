@@ -18,7 +18,7 @@ best-effort and must not break the worker's main path. Failures are logged
 at warning level and swallowed.
 
 See:
-- docs/tmp/reader-orchestration/TMP-reader-orchestration-observability-gap-2026-07-01.md
+docs/operations/langsmith.md
 - infra/migrations/0014_reader_runtime_spans.sql
 """
 

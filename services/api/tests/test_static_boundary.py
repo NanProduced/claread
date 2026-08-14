@@ -449,9 +449,9 @@ def test_canonical_acceptance_and_runbook_avoid_legacy_article_rag_ask_chain() -
         repo_root
         / "docs"
         / "initiatives"
-        / "reader-agentic-orchestration"
+        docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
         / "modules"
-        / "local-article-rag-runbook.md",
+        docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
     )
     forbidden_tokens = tuple(
         name.split(".")[-1] for name in ARTICLE_RAG_ASK_EXIT_MODULES

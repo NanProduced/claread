@@ -76,7 +76,7 @@ RUNBOOK_DOC = (
     REPO_ROOT
     / "docs"
     / "initiatives"
-    / "reader-agentic-orchestration"
+    docs/operations/reader-runtime.md + docs/architecture/reader-rag.md
     / "modules"
     / "local-article-rag-runbook.md"
 )

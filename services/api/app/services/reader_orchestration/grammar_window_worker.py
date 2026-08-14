@@ -1,7 +1,7 @@
 """GrammarWindowWorkerService: grammar-window grammar window worker.
 
 Design source:
-  docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+  docs/architecture/reader-orchestration.md
   - §8.2 Window claim / preflight (pending → running state transition)
   - §8.3 LLM call (skeleton; full prompt + PydanticAI wiring deferred to C5)
   - §8.6 Heartbeat (asyncio task renewing the lease every ~30s)

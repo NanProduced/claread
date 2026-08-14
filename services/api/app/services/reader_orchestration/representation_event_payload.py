@@ -1,7 +1,7 @@
 """Representation event payload builder and validator.
 
 Implements the Snapshot Representation Event Contract:
-docs/initiatives/reader-agentic-orchestration/modules/representation-event-contract.md
+docs/architecture/reader-orchestration.md + apps/web/docs/reader-ia.md
 
 G1 (User Editorial Assets) and G2 (Ask Supplements) reuse the existing
 ``projection_ops`` event type with ``representation_section`` set to

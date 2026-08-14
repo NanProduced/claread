@@ -9,7 +9,7 @@ Grammar First-Publish Layer Event Payload
 sequence 增量全部回滚。
 
 参考 spec: ``.trae/specs/t42a-pux-r4-r2-2-p2b-r1-grammar-layer-payload/spec.md``
-参考设计: ``docs/initiatives/reader-agentic-orchestration/modules/representation-event-contract.md`` §Q5
+docs/architecture/reader-orchestration.md + apps/web/docs/reader-ia.md
 """
 
 from __future__ import annotations

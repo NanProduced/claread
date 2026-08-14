@@ -1,6 +1,6 @@
 """Window selector: grammar-window analysis candidate hard gates.
 
-设计来源：docs/initiatives/reader-agentic-orchestration/modules/enhancement-layers-and-parsed.md
+设计来源：docs/architecture/reader-orchestration.md
   - §7.1 Dedup Key 设计（两层 + 按 item_type 拆分）
   - §7.2 处理流程（8 个 hard gates，按 item_type 拆分查询）
   - §7.3 Hard Gates 数值
