@@ -20,7 +20,7 @@
 本文不覆盖：
 
 - Daily Reader（固定 workflow，不进入 runtime 转换）。
-- `academic workflow`（cutover 后单独设计）。
+- `academic workflow`（尚未实现，需单独设计）。
 - 小程序 Reader orchestration 实现。
 - 输入适配、Stable Reading Document、Reading Units 与 Anchor Segments 的字段级实现细节；本文只维护其跨模块稳定不变量，精确 schema/DTO 仍以 migration、代码和测试合同为准。
 - 旧 `render_scene_json` 兼容映射（已物理删除，不再作为迁移源）。
@@ -132,7 +132,7 @@
 
 | 非事实源 | 当前状态 | 禁止行为 |
 |---|---|---|
-| `render_scene_json` | 已物理删除（cutover 后） | 不得作为迁移源、兼容映射源或 fallback projection |
+| `render_scene_json` | 已物理删除，当前不存在 | 不得作为迁移源、兼容映射源或 fallback projection |
 | DOM / Slate / Plate path | 当前前端 tree 的临时地址 | 不得持久化为 truth；不得作为 canonical offset 基准 |
 | `sentence_id`（legacy alias） | 仅作兼容 alias | 不得作为权威锚点；权威锚点是 `anchor_segment_id` |
 | `Markdown 标记` | 渲染层 hint | 不得作为 canonical offset 基准；不安全 HTML/link/media 必须 sanitize、降级或转入 Candidate confirmation |
@@ -141,7 +141,7 @@
 | `Plate document JSON` | Web 前端 projection | LLM 不得直出 arbitrary Plate JSON 作为持久事实；必须经 typed schema、allowlist、length cap、source grounding、link protocol policy |
 | `ai_usage_events` 单条记录 | 计费 attribution 事实 | 不是阅读事实源；不得用于重建 snapshot 或 layer 状态 |
 | `reader_runtime_spans` | 可观测性事实 | 不是业务事实源；用于 trace/diagnostic，不参与 layer 发布决策 |
-| 旧 `analysis_*` 表 | cutover 前历史 | 不作为当前事实源；精确状态以 `docs/architecture/workflow-history.md` + `docs/development/mainline.md` 为准 |
+| 旧 `analysis_*` 表 | 旧架构历史 | 不作为当前事实源；精确状态以 `docs/architecture/workflow-history.md` + `docs/development/mainline.md` 为准 |
 
 
 ## 文档事实、冻结与 `article_ready`
@@ -325,7 +325,7 @@ route 翻转由 bootstrap supersede + claim 时 `_validate_fence` -> `_check_rou
 - Span kinds：`pipeline_root`（submit 根 span，承载 `trace_id`）、`claim`（SKIP LOCKED claim，含 `claim_wait_ms`）、`worker_tick`（单 worker tick，LLM token/model 合并至此）、`publish_fence`（发布 fence + DB write；该 span 行 `reading_record_id` 为 NULL 是预期，按 `trace_id` / `reader_job_id` 查询）。
 - Status：`started` / `succeeded` / `failed` / `superseded` / `skipped`；retry class `transient` / `repair` / `replan`。
 - LangSmith：`langsmith.integrations.otel.configure()` + `Agent.instrument_all()` 自动收集 PydanticAI LLM spans；`langsmith_run_id` 用 `"<trace_id>/<span_id>"` 复合格式；`LangSmithIdBridgeProcessor` 在 `on_end` 写入 ContextVar，`ReaderSpanRecorder.end_span` 自动回填。
-- Directus reader-orch bundle 提供 4 个只读 JSON endpoint（trace / run / record summary / dashboard）；无 Console 可视化 UI（重建属于 post-cutover backlog）。
+- Directus reader-orch bundle 提供 4 个只读 JSON endpoint（trace / run / record summary / dashboard）；Console 可视化 UI 尚未实现。
 
 ## 硬约束
 
@@ -344,7 +344,7 @@ route 翻转由 bootstrap supersede + claim 时 `_validate_fence` -> `_check_rou
 - Semantic outline：`semantic_outline` layer / `build_semantic_outline` job / worker 已实现为 durable layer（`layer_type='semantic_outline'`、`target_scope='record'`），默认 request eligibility = false，默认 generator = `UnconfiguredSemanticOutlineGenerator`（permanent fail-closed）；**无真实 LLM executor**（未注册 outline `MODEL_ROUTE` / prompt agent / profile settings），自动 eligibility 阈值未定。不得宣称 outline 已可产品使用。
 - Reader events 无 SSE；当前为 GET poll `after_sequence`。
 - `projection_ops` incremental applier 未端到端启用；snapshot reload 是当前交付链。
-- 统一监测平台 / 完整跨进程 trace 关联产品化：backlog。
+- 统一监测平台 / 完整跨进程 trace 关联产品化：尚未实现。
 - 计费归因按代码支持的粒度描述（`ai_usage_events` + span token/link 字段），不推断完整成本平台；standalone enhancement worker 进程当前不调用 `setup_langsmith()`。
 
 ## 相关文档

@@ -58,7 +58,7 @@ Ask 面板向用户展示"系统正在做什么"（流式进度、上下文压�
 
 ### 模型档位
 
-用户可在 `GET .../ask/model-options` 提供的已启用档位中选择。档位来自 `services/api/config/reader-ask-model-options.json`（当前默认 `deepseek-v4-flash`，备选 `qwen-max`、`deepseek-pro`），每个档位带 `price_multiplier`。档位的加权计费配置已挂载，turn run 的 usage/ledger 落账闭环属于 post-cutover backlog。
+用户可在 `GET .../ask/model-options` 提供的已启用档位中选择。档位来自 `services/api/config/reader-ask-model-options.json`（当前默认 `deepseek-v4-flash`，备选 `qwen-max`、`deepseek-pro`），每个档位带 `price_multiplier`。档位的加权计费配置已挂载，turn run 的 usage/ledger 落账闭环尚未实现。
 
 ## 当前交互模型
 

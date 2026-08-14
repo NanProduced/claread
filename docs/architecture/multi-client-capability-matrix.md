@@ -29,7 +29,7 @@
 
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
-| 粘贴英文文本并发起解析 | 已接入：`/app/read` 提交、快照轮询、进入 `/app/reader/[recordId]` | 未接入：Reader 提交在 cutover 中下线，后续按新 contract 单独评估 | `reading_records`、Reader orchestration | Web 独占 Reader 提交主链 |
+| 粘贴英文文本并发起解析 | 已接入：`/app/read` 提交、快照轮询、进入 `/app/reader/[recordId]` | 未接入：小程序 Reader 提交已下线，后续按新 contract 单独评估 | `reading_records`、Reader orchestration | Web 独占 Reader 提交主链 |
 | 查看解析进度和失败态 | 部分接入：Web baseline 错误态可用，细分恢复流程仍可增强 | 未接入 | reader run/job/event 状态机共享 | Web 后续可做更强的 retry/import 状态 |
 | URL、文件、批量导入 | 未接入 | 未接入 | 后端尚未产品化 | 未来应作为输入源扩展，不 fork workflow |
 
@@ -48,7 +48,7 @@
 | 用户能力 | Web | 小程序 | 后端/数据层 | 备注 |
 |----------|-----|--------|-------------|------|
 | 收藏整篇文章 | 已接入 | 端内能力：Daily Reader 文章收藏仅本地缓存，暂不同步云端 | `favorite_records.target_type=reading_record`（及 `daily_reader_article`） | 收藏云端同步当前只走 Web |
-| 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 未接入：小程序 Reader 标注在 cutover 中下线，后续按新 contract 单独评估 | `quote_mode=sentence`、`reader_notes`、Reading Record anchor | 句子级锚点契约保持共享 |
+| 整句选择后高亮/笔记 | 已接入：toolbar 可选择当前句子，支持高亮、笔记、反显和取消 | 未接入：小程序 Reader 标注已下线，后续按新 contract 单独评估 | `quote_mode=sentence`、`reader_notes`、Reading Record anchor | 句子级锚点契约保持共享 |
 | 句内局部文本高亮/笔记 | 已接入：Web 支持单句内精确选区创建、渲染、反显和取消 | 未接入 | `quote_mode=text_range`、`reader_notes`、`unit_start_utf16`、`unit_end_utf16`、`text_hash` | 坐标系为 UTF-16 code unit；后端按当前 active base 的 anchor segment 切片和 `fnv1a32-utf16` hash 校验 |
 | 选中文本查词/查短语 | 已接入：selection toolbar 触发 | 未接入选区操作；保留点词查词路径 | `/dict` | Web 选区能力增强，不要求小程序复刻交互 |
 | 取消高亮或删除笔记 | 已接入：Web 支持 PATCH/DELETE BFF，toolbar 反显已有状态 | 未接入 | `/user-annotations/{id}`、`/reader-notes/{id}` | 小程序后续按新 contract 恢复时再评估编辑入口 |

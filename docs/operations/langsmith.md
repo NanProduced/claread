@@ -1,6 +1,6 @@
 # LangSmith Tracing
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-08（旧 `/analyze` 分析链与 eval-center 子路径已物理删除，相关 trace 行为描述同步移除）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-14
 
 本文记录 Claread 通用后端的 LangSmith 使用规范。它服务本地调试、Reader orchestration 质量分析和后续 LLM-as-a-Judge 数据回看。
 

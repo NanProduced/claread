@@ -1,6 +1,6 @@
 # Web 实施计划
 
-> **状态**: `CURRENT` | **最后更新**: 2026-08-08（后端依赖已对齐 cutover 后 Reader orchestration 与 Web BFF 事实）
+> **状态**: `CURRENT` | **最后更新**: 2026-08-14
 
 本文记录 Claread Web 当前稳定实施边界，只保留已确认的产品与技术合同。
 

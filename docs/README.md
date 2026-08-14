@@ -30,7 +30,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/product/ask-claread.md` | Ask Claread 当前正式产品说明与冻结边界 |
 | `docs/product/learning-annotation-policy.md` | Reader 学习批注（vocabulary / grammar / translation）当前生成质量策略 |
 | `docs/development/mainline.md` | 当前开发主线和近期方向 |
-| `docs/architecture/reader-orchestration.md` | Reader AI Workflow -> agentic orchestration 重构期间的专项权威上下文 |
+| `docs/architecture/reader-orchestration.md` | Reader orchestration 当前生产架构权威上下文 |
 
 ### 架构
 
@@ -41,7 +41,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/architecture/monorepo-boundaries.md` | monorepo 目录职责和跨端共享边界 |
 | `docs/architecture/multi-client.md` | 多端架构原则：一套后端、多种客户端 |
 | `docs/architecture/multi-client-capability-matrix.md` | 以用户能力为观测点追踪 Web、小程序和后端共享能力差异 |
-| `docs/architecture/directus-console.md` | Claread Console 的当前定位、post-cutover 模块边界与 Example Lab 控制面契约 |
+| `docs/architecture/directus-console.md` | Claread Console 的当前定位、模块边界与 Example Lab 控制面契约 |
 | `docs/architecture/reader-rag.md` | Grammar few-shot RAG 当前运行时契约：output_fragment、retrieval_text、grammar_tags 归一化、Zilliz schema 与联动更新清单 |
 | `docs/architecture/dictionary.md` | 词典架构：数据来源、查询链路与增强方向 |
 | `docs/architecture/ai-usage-audit-and-billing.md` | AI 使用审计与积分结算底座 |
@@ -78,7 +78,7 @@ Claread 是一个多端英文阅读辅助产品。当前基线包含微信小程
 | `docs/documentation-guide.md` | 文档管理与巡检指南 |
 | `docs/design/AGENTS.md` | 跨端设计决策规则 |
 | `docs/architecture/workflow.md` | 旧 v3 workflow 架构历史文档（旧代码已物理删除，本文保留作历史证据） |
-| `docs/architecture/workflow-history.md` | 旧 workflow v0-v3 的经验教训与 cutover 后仍有效的工程原则 |
+| `docs/architecture/workflow-history.md` | 旧 workflow v0-v3 的经验教训与当前仍有效的工程原则 |
 | `docs/architecture/eval-center-integration-map.md` | 旧 Eval Center / Example Lab / grammar RAG 联动说明（历史文档；当前运行时契约见 `docs/architecture/reader-rag.md`） |
 
 `docs/reference/` 子树（differentiated、grammar-xray）是参考资料，由各子目录自身 README 索引，不作为全局真相源。
@@ -113,7 +113,7 @@ claread/
 │   ├── docker/
 │   ├── migrations/
 │   └── deploy/        # 后续
-├── evals/             # 评测数据与样本集（旧 Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog）
+├── evals/             # 评测数据、harness 与样本集（独立 pytest 项目；Console/Eval 控制面尚未实现）
 ├── docs/
 │   ├── design/
 │   └── reference/

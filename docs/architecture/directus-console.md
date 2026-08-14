@@ -1,6 +1,6 @@
 # Claread Console
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Workflow Lab / Node Lab / Render Scene Inspector / Parse Run Observability module 已物理删除，按新 orchestration 重建属于 post-cutover backlog）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-14
 
 ## 定位
 
@@ -9,7 +9,7 @@
 它负责：
 
 - 数据观察与诊断
-- 评测与实验控制面（按新 orchestration 重建属于 post-cutover backlog）
+- 评测与实验控制面（尚未实现，规划中）
 - few-shot / RAG 示例治理
 - 轻量运维触发与审核
 
@@ -24,11 +24,11 @@
 
 ## 当前已实现能力
 
-Claread Console 在 cutover 后只保留通用 metadata 展示 module 和 LLM Config 控制面。旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
+Claread Console 当前只保留通用 metadata 展示 module 和 LLM Config 控制面。旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除；Console / Eval 治理化控制面尚未实现。
 
 ### 通用 metadata 展示 module
 
-cutover 后保留的 Directus custom module：
+当前保留的 Directus custom module：
 
 - `claread-enum-label-display` / `claread-enum-label-interface` — 枚举标签展示
 - `claread-event-type-display` — 事件类型展示
@@ -83,7 +83,7 @@ cutover 后保留的 Directus custom module：
 
 四个路由都从 `reader_runtime_spans` 表读取数据，`run` / `record/:record_id/summary` / `dashboard` 额外 LEFT JOIN `ai_usage_events` 取 `billed_points` / `billing_policy_version`。所有路由要求登录（`accountability.user` 或 `admin`），否则返回 403。
 
-**当前没有 Console heatmap / span-tree / trace 树可视化 UI 组件**。reader-orch 只提供 JSON API，未来按新 orchestration 重建 Console 诊断界面属于 post-cutover backlog。
+**当前没有 Console heatmap / span-tree / trace 树可视化 UI 组件**。reader-orch 只提供 JSON API，Console 诊断界面尚未实现。
 
 ### Example Lab（Directus Collection）
 
@@ -175,7 +175,7 @@ Directus / Claread Console 负责：
 
 - 可视化管理样本、草稿、审核与控制面状态
 - 承载通用 metadata 展示与 LLM Config authoring
-- Console / Eval 按新 orchestration 重建属于 post-cutover backlog
+- Console / Eval 治理化控制面尚未实现
 
 后端 / worker 负责：
 
@@ -190,7 +190,7 @@ Directus / Claread Console 负责：
 | 层 | 表前缀 | 说明 |
 |----|--------|------|
 | 业务层 | 无前缀 | 现有业务表（Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 等），Directus 默认只读 |
-| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理属于 post-cutover 数据清理 backlog |
+| 控制层 | `eval_example_lab_entries` | Example Lab Collection（Directus 可读写）；旧 `eval_node_lab_*` / `eval_workflow_*` 控制面表已退出 baseline schema，残留本地库清理尚未完成 |
 | 配置层 | `llm_*` | LLM Config 控制面表，Directus 可读写 |
 | 系统层 | `directus_*` | Directus 系统表，不手动干预 |
 
@@ -201,11 +201,11 @@ Directus / Claread Console 负责：
 - LangSmith 只负责 trace / run inspection，不替代自建 eval
 - 详细 trace 行为见 `docs/operations/langsmith.md`。
 
-## Post-cutover backlog
+## 尚未实现（规划中）
 
-以下事项属于 post-cutover backlog，不在本文写成已完成：
+以下事项尚未完成，不在本文写成已实现：
 
-- Console / Eval 按新 orchestration 重建（治理化控制面）
+- Console / Eval 治理化控制面
 - 旧 Eval 控制面表与 `analysis_*` 残留本地库清理（这些表已不在 baseline schema 中）
 - 统一监测与计费适配
 
@@ -220,10 +220,10 @@ Directus / Claread Console 负责：
 
 ## 历史能力（已物理删除，仅供回看）
 
-以下 module 已在 cutover 中物理删除，不再作为当前能力。历史细节见 `docs/architecture/eval-center-integration-map.md`（历史文档）和 `docs/architecture/workflow-history.md`：
+以下 module 已物理删除，不再作为当前能力。历史细节见 `docs/architecture/eval-center-integration-map.md`（历史文档）和 `docs/architecture/workflow-history.md`：
 
 - Parse Run Observability（原 `analysis_records` 观察台）
 - Render Scene Inspector（原 `analysis_results.render_scene_json` 检查器）
 - Eval Center / Node Lab / Workflow Lab / Run History（原 eval 实验控制面）
 
-这些 module 依赖的旧 `analysis_*` 数据层、`render_scene_json` 事实源、旧 `/analyze` workflow 已在 cutover 中物理删除。
+这些 module 依赖的旧 `analysis_*` 数据层、`render_scene_json` 事实源和旧 `/analyze` workflow 已物理删除。

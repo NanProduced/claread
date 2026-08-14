@@ -154,7 +154,7 @@ Claread 后端当前使用三层模型配置：
 
 这里的 `description` 既是前端提示文案，也承担“注释”作用。因为配置文件使用严格 JSON，不支持额外注释字段。
 
-结算上，Ask 的加权计费配置已按 model option 挂载；turn run 的 `usage_summary_json` / `usage_event_id` 落账闭环属于 post-cutover backlog，接入前不要把预扣金额当作已生效扣费。
+结算上，Ask 的加权计费配置已按 model option 挂载；turn run 的 `usage_summary_json` / `usage_event_id` 落账闭环尚未实现，接入前不要把预扣金额当作已生效扣费。
 
 ## 环境变量建议
 

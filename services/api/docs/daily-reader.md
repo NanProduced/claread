@@ -89,11 +89,7 @@ Daily Reader 列表使用复合 cursor，避免同一天多篇文章跳项：
 rtk test uv run pytest services/api/tests/test_daily_reader_structure.py services/api/tests/test_daily_reader.py services/api/tests/test_daily_takeaways_schema.py -q
 ```
 
-当前已验证结果：
-
-```text
-67 passed
-```
+验收以上述命令的当前运行结果为准。
 
 真实数据验证时，`run_workflow_only` 会对现有文章原地 `UPDATE`。重跑前应先导出目标文章的 `body_json`、`paragraph_notes_json`、`highlights_json` 和 `takeaways_json` 快照，避免覆盖旧输出后无法比较。
 

@@ -1,6 +1,6 @@
 # 多端架构
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Analysis service 写入路径与 `render_scene_json` 事实源已物理删除，新链以 Reader orchestration 为当前生产架构；旧 `analysis_*` 表的精确状态见 `docs/architecture/workflow-history.md`）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-14
 
 ## 结论
 
@@ -15,10 +15,10 @@ Claread 使用一套后端业务内核，服务多个客户端。
 | 客户端 | 目录 | 定位 |
 |--------|------|------|
 | Web | `apps/web/` | 新用户提交 Reader orchestration 的唯一客户端（不是 Claread 唯一用户客户端），通过 `/app/read` 与 `/app/reader/[recordId]` + BFF `/api/web/reader/records/*` 接入新 Reader orchestration 主链 |
-| 微信小程序 | `apps/miniprogram/` | 稳定客户端，功能子集，受平台能力限制；旧文章分析在 cutover 中下线，后续按新 contract 单独评估 |
+| 微信小程序 | `apps/miniprogram/` | 稳定客户端，功能子集，受平台能力限制；旧文章分析已下线，后续按新 contract 单独评估 |
 | Directus / Admin | `apps/directus/` | 当前内部控制面，承接通用 metadata 展示、LLM Config 与后续按新 orchestration 重建的治理化控制面 |
 
-小程序是稳定客户端，不是一次性冻结的旧客户端。cutover 后小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
+小程序是稳定客户端，不是一次性冻结的旧客户端。当前小程序仍会继续迭代，只是它的新增能力应在多端契约下推进。
 
 ## 后端
 
@@ -52,7 +52,7 @@ services/worker/
 
 PostgreSQL 是事务型数据真相源。
 
-核心数据对象（cutover 后当前生产链）：
+当前生产链的核心数据对象：
 
 - users
 - user_identities
@@ -72,13 +72,13 @@ PostgreSQL 是事务型数据真相源。
 - dict_entries / dict_lookup_targets / dict_redirects
 - ai_usage_events（usage/ledger）
 
-旧 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）已在 cutover 中物理删除；后端代码对 `analysis_records`、`analysis_results`、`analysis_tasks` 的引用已全部迁移到 Reading Record 事实，这些旧表与 legacy 孤儿表（`analysis_debug_snapshots`、`analysis_task_events`、`analysis_overview_tasks`、`analysis_overview_task_events`）已不在 baseline migration（`infra/migrations/0001_initial.sql`）中。`analysis_windows` 与 `layer_analysis_plans` 是新链在用表，必须保护。残留本地开发库中的旧表清理属于 post-cutover 数据清理 backlog。
+旧 Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件）已物理删除；后端代码对 `analysis_records`、`analysis_results`、`analysis_tasks` 的引用已全部迁移到 Reading Record 事实，这些旧表与 legacy 孤儿表（`analysis_debug_snapshots`、`analysis_task_events`、`analysis_overview_tasks`、`analysis_overview_task_events`）已不在 baseline migration（`infra/migrations/0001_initial.sql`）中。`analysis_windows` 与 `layer_analysis_plans` 是新链在用表，必须保护。残留本地开发库中的旧表清理尚未完成。
 
 Redis 用于缓存和多 worker 场景下的共享状态。
 
 Zilliz 用于 grammar few-shot / RAG 示例检索；示例控制面当前由 Directus `Example Lab`（`eval_example_lab_entries` Collection）管理。
 
-## 结果分层（cutover 后）
+## 当前结果分层
 
 Reader orchestration 的结果分层：
 
@@ -123,7 +123,7 @@ Stable Document / Reading Units / Anchor Segments
 
 Reader orchestration 的调试摘要通过 `reader_events` 和 `reader_runtime_spans` 承载，记录 runtime span、job lifecycle、layer publish 事实。
 
-旧 `analysis_debug_snapshots` 表的写入路径已在 cutover 中物理删除；该表属于 legacy 孤儿表，DROP 属于 post-cutover 数据清理 backlog。
+旧 `analysis_debug_snapshots` 表的写入路径已物理删除；该表属于 legacy 孤儿表，DROP 尚未完成。
 
 ## 认证策略
 

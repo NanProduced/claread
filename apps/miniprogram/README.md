@@ -99,7 +99,7 @@ Web 端可以共享业务契约，但应使用 Web 原生实现。
 
 ## 本地缓存
 
-cutover 后小程序本地缓存只保留收藏与生词本片段：
+当前小程序本地缓存只保留收藏与生词本片段：
 
 - `favorite_records`
 - `vocab_ids`
@@ -107,6 +107,6 @@ cutover 后小程序本地缓存只保留收藏与生词本片段：
 - `vocab_lemma_index`
 - `vocab_inspect_entry`
 
-旧 analysis 草稿、记录 identity map、sync queue 和 Reader 标注缓存已随旧分析链移除。小程序 Reader 提交与阅读能力在 cutover 中下线，后续按新 contract 单独评估；当前小程序主链路为每日精读、生词本、复习、查词、反馈和个人中心。
+旧 analysis 草稿、记录 identity map、sync queue 和 Reader 标注缓存已随旧分析链移除。小程序 Reader 提交与阅读能力已下线，后续按新 contract 单独评估；当前小程序主链路为每日精读、生词本、复习、查词、反馈和个人中心。
 
 小程序会继续推进功能和体验增强，但新增能力应服从多端 API 契约。

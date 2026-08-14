@@ -20,13 +20,13 @@
 
 ## Reader Orchestration（当前生产链）
 
-- Architectural Cutover 已完成：旧 `learning_workflow.py` 固定全量 graph、Analysis service 写入路径（`services/api/app/services/analysis/` 整目录 `.py` 源文件已删除，仅留 `__pycache__/*.pyc` 缓存）、`analysis_results.render_scene_json` 作为事实源已物理删除；新链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源。旧 `analysis_*` 表分三类（4 张 legacy 孤儿表、3 张 legacy 仍被只读引用表、2 张新链在用表 `analysis_windows` 与 `layer_analysis_plans`）。DATA-LEGACY-IDENTITY-EXIT 已完成代码层 logical exit + physical deletion：`user_assets/records.py`、`text_anchors.py`、`schemas/user_assets/records.py` 已删除，`quota/ledger.py` 不再 JOIN legacy 表，app 代码零消费 7 张 legacy analysis 表（由 `tests/test_data_legacy_identity_exit_guard.py` 锁定）；仍禁止使用"删除 analysis_*"这类 wildcard 指令，7 张 legacy 表的 DDL DROP 与列删除属于 D2 schema baseline 工作，`analysis_windows` 与 `layer_analysis_plans` 永久保护。
+- 当前生产链以 Reading Record、Stable Document、Reading Units、Anchor Segments、Enhancement Layers、`reader_events` 为事实源；旧 `learning_workflow.py` 固定全量 graph、Analysis service 写入路径（`services/api/app/services/analysis/` 的 `.py` 源文件）和 `analysis_results.render_scene_json` 事实源已物理删除。7 张 legacy analysis 表已不在当前 baseline，`analysis_windows` 与 `layer_analysis_plans` 是当前生产链在用表。`user_assets/records.py`、`text_anchors.py`、`schemas/user_assets/records.py` 已删除，`quota/ledger.py` 不再 JOIN legacy 表，app 代码零消费这 7 张 legacy 表（由 `tests/test_data_legacy_identity_exit_guard.py` 锁定）。仍禁止使用"删除 analysis_*"这类 wildcard 指令；残留本地库清理必须精确列账，并永久保护 `analysis_windows` 与 `layer_analysis_plans`。
 - 当前生产链路：input adapter -> Candidate Document -> Stable Reading Base -> Reading Units / Anchor Segments -> Enhancement Layers (translation / vocabulary / grammar / sentence / semantic outline) -> snapshot projection。
 - 修改输出结构时同步更新 Pydantic schema、数据库字段、API 文档、前端消费和测试。
 - 保留 prompt version、source metadata、`reader_runtime_spans` 和 `reader_events`，方便回看和 eval。
 - 专项权威上下文在 `docs/architecture/reader-orchestration.md`；模块合同在对应 `modules/*.md`。
 
-## Ask Claread（cutover 后唯一 Ask 生产链）
+## Ask Claread（当前唯一 Ask 生产链）
 
 - 旧 Analysis Ask、Ask legacy lane 已物理删除；`reader_record_ask` agentic v2 是唯一 Ask 执行链（article-bound、可回源、可确认写入、统一审计/结算）。
 - `planner_first` 仅作为历史 trace value 保留，不恢复 live path。
@@ -46,7 +46,7 @@
 - 当前唯一 schema 基线是 `infra/migrations/0001_initial.sql`（单一 fresh baseline；legacy analysis 表、旧 Eval 控制面表、`reader_ask_eval_traces` 与共享表 legacy identity 列均不在其中）。
 - 词典三表 `dict_entries`、`dict_lookup_targets`、`dict_redirects` 迁移时优先 dump/restore，不轻易重导。
 - 如果重导词典，必须处理 `vocabulary_book.dict_entry_id` 稳定性和 `exam_tags` 覆盖问题。
-- cutover 后必须保护的数据：`dict_*`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger、Daily Reader、Dictionary、Vocabulary。
+- 当前必须保护的数据：`dict_*`、`reader_ask_*` 共享表、`eval_example_lab_entries`、Reader user assets、usage/ledger、Daily Reader、Dictionary、Vocabulary。
 
 ## 验证
 

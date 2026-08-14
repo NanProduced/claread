@@ -1,6 +1,6 @@
 # Web Reader 信息架构
 
-> **状态**: `CURRENT` | **最后更新**: 2026-08-08（渲染链路与记录接口已对齐 cutover 后 Reader orchestration 事实）
+> **状态**: `CURRENT` | **最后更新**: 2026-08-14
 
 本文设计 Claread Web Reader 的信息架构、页面结构、核心交互、快捷键、词典浮层、批注系统和历史回看。
 
@@ -317,7 +317,7 @@ Library 承载阅读历史列表，提供文章索引和阅读记录管理（继
 
 ### 筛选维度
 
-- `reading_goal`：daily_reading / exam（Reader orchestration 当前枚举；旧 academic 已在 cutover 下线）
+- `reading_goal`：daily_reading / exam（Reader orchestration 当前枚举；academic workflow 尚未实现）
 - `source_type`：pasted_text / txt_file / markdown_file / ocr_text / pdf_text / url_text
 - 日期范围：date_from / date_to
 - 搜索：标题/原文片段客户端搜索；后端语义搜索后置

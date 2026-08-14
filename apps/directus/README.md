@@ -99,7 +99,7 @@ Claude Code 项目级接入配置在仓库根目录 `.mcp.json`（本地文件�
 ## 当前状态
 
 - Directus overlay 连接 Claread 本地 PostgreSQL。
-- Cutover：旧 Console / Eval Center / Workflow Lab / Node Lab / Parse Run Observability / Render Scene Inspector 的 module、panel、endpoint 已注销并物理删除；相关 metadata sync 脚本与 eval-center 数据 reset 脚本已物理删除。
+- 旧 Console / Eval Center / Workflow Lab / Node Lab / Parse Run Observability / Render Scene Inspector 的 module、panel、endpoint 已注销并物理删除；相关 metadata sync 脚本与 eval-center 数据 reset 脚本已物理删除，不应回潮。
 - 保留面：`reader-orch` observability endpoint（`/reader-orch/*`，只读）、`claread-llm-config` module、通用 display/interface 扩展，以及 Example Lab `eval_example_lab_entries` validation hook（其 UI/endpoint 仍注销）。
 - 详细脚本说明见 [scripts/README.md](scripts/README.md)。
 

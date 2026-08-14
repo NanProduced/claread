@@ -127,7 +127,7 @@ pnpm --filter @claread/web lint
 pnpm --filter @claread/web build
 ```
 
-Web vitest 门禁（2026-08-06 基线全绿，159 个测试文件 / 2810 passed / 0 failed；双重运行均绿）：
+Web vitest 门禁以当前运行结果为准：
 
 ```powershell
 cd apps/web
@@ -239,7 +239,7 @@ pnpm --filter @claread/directus-endpoints test
 pnpm directus:llm-config:sync-metadata
 ```
 
-当前 Directus 只保留通用 metadata 展示 module（enum-label-display / enum-label-interface / event-type-display / json-summary / llm-config / record-context-display / status-badge / usage-summary 等）和 reader-orch endpoints bundle。旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
+当前 Directus 只保留通用 metadata 展示 module（enum-label-display / enum-label-interface / event-type-display / json-summary / llm-config / record-context-display / status-badge / usage-summary 等）和 reader-orch endpoints bundle。旧 Eval Center、Workflow Lab、Node Lab、Render Scene Inspector、Parse Run Observability module 已物理删除；Console / Eval 治理化控制面尚未实现。
 
 当前建议的人工 smoke 包括：
 
@@ -265,4 +265,4 @@ uv run pytest services/api/tests/test_rag_readiness.py -q
 
 ## Eval Center 运维脚本（历史）
 
-旧 Eval Center module 及其数据 reset / init 运维脚本已在 cutover 中一并物理删除。Console / Eval 按新 orchestration 重建属于 post-cutover backlog；重建前不存在任何 Eval Center 脚本入口。
+旧 Eval Center module 及其数据 reset / init 运维脚本已物理删除。Console / Eval 治理化控制面尚未实现；当前不存在任何 Eval Center 脚本入口。

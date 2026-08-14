@@ -68,7 +68,7 @@
 | Daily Reader scoring | `system_internal` | `internal_only` | `daily_reader_scoring` | 候选文章 LLM 评分 |
 | Daily Reader workflow / retry | `system_internal` | `internal_only` | `daily_reader_pipeline` | 精读正文生成与重跑 |
 
-Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event_id` 落账）是已预留字段，实际写账接入属于 post-cutover backlog。
+Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event_id` 落账）已预留字段，实际写账接入尚未实现。
 
 ## 计费策略现状
 
@@ -82,7 +82,7 @@ Ask 链路的 usage/ledger 闭环（turn run `usage_summary_json` / `usage_event
   - policy: `analysis_weighted_tokens_v1`
   - 计费配置按 Ask model option 挂载（`price_multiplier` 来自 `reader-ask-model-options.json`）
   - 公式: `ceil((input_tokens * 1 + output_tokens * 5) / 1000)`
-  - turn run 已预留 `usage_summary_json` / `usage_event_id` 字段；实际预扣/结算写账接入属于 post-cutover backlog
+  - turn run 已预留 `usage_summary_json` / `usage_event_id` 字段；实际预扣/结算写账接入尚未实现
 
 `analysis_full` 与 `analysis_weighted_tokens_v1` 的加权公式保留为通用计费策略；Reader orchestration worker 当前按 `system_internal` / `internal_only` 只审计不结算，用户侧计费口径待统一监测与计费适配收口。
 

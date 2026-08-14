@@ -1,6 +1,6 @@
 # Web Agent 指令
 
-`apps/web/` 是 Claread Web 客户端。迁移第一阶段可以为空，后续开发时按本文件扩展。
+`apps/web/` 是 Claread Web 产品客户端，共享 `services/api/` 与跨端数据契约。
 
 ## Web 定位
 

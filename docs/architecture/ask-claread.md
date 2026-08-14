@@ -85,7 +85,7 @@ route (reader_record_ask.py)
 ## 计费与用量
 
 - capability 常量 `reader_ask`；加权计费配置（`analysis_weighted_tokens_v1` 公式 + 每档位 `price_multiplier`）定义在 `app/services/ai_usage/billing.py` 并挂载到 model option。
-- turn run 已预留 `usage_summary_json` / `usage_event_id` 列；实际写账接入（预扣/结算/退款闭环）属于 post-cutover backlog。
+- turn run 已预留 `usage_summary_json` / `usage_event_id` 列；实际写账接入（预扣/结算/退款闭环）尚未实现。
 
 ## 评测
 

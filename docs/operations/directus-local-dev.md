@@ -1,6 +1,6 @@
 # Directus 本地开发
 
-> **状态**: `CURRENT` | **最后验证**: 2026-08-03（Architectural Cutover Complete；旧 Eval Center / Parse Run / Render Scene Inspector module 与 `directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata` 命令已物理删除）
+> **状态**: `CURRENT` | **最后验证**: 2026-08-14
 
 本文描述 `Claread Console` 的本地 Directus runtime、metadata sync 和当前扩展开发方式。
 
@@ -39,7 +39,7 @@ pnpm directus:llm-config:export-bundle
 pnpm directus:llm-config:import-bundle
 ```
 
-旧 `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata` 已在 cutover 中从 root 与 `apps/directus` `package.json` 移除，`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮；不要在文档或脚本中再写成可用命令。
+旧 `directus:parse-run:sync-metadata` 与 `directus:eval-center:sync-metadata` 已从 root 与 `apps/directus` `package.json` 移除，`apps/directus/scripts/check-logical-registration.mjs` 强制禁止回潮；不要在文档或脚本中再写成可用命令。
 
 ## Fresh volume 启动
 
@@ -141,7 +141,7 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 - Directus 只承担控制面。
 - 当前已存在真实扩展与 metadata sync 链路，不再只是空骨架。
 - 业务核心表是否只读保护、如何做原生展示，后续单独设计。
-- 旧 Parse Run Observability / Eval Center module 已在 cutover 中物理删除，相关 metadata sync 命令（`directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata`）已移除；Console / Eval 按新 orchestration 重建属于 post-cutover backlog。
+- 旧 Parse Run Observability / Eval Center module 已物理删除，相关 metadata sync 命令（`directus:parse-run:sync-metadata` / `directus:eval-center:sync-metadata`）已移除；Console / Eval 治理化控制面尚未实现。
 - LLM Config metadata 通过 `pnpm directus:llm-config:sync-metadata` 同步，不直接手改 live Directus metadata。
 - Example Lab 作为 Directus Collection 保留，不属于已删除的 Eval Center module。
 
@@ -152,7 +152,7 @@ MCP 适合辅助 Directus schema / collection / relation / flow 开发，但不�
 需要区分：
 
 - 业务表
-  - `reader_*`、`ai_usage_events`、`reader_ask_*` 等（旧 `analysis_*` 数据层清理属于 post-cutover 数据清理 backlog）
+  - `reader_*`、`ai_usage_events`、`reader_ask_*` 等（旧 `analysis_*` 残留本地数据层清理尚未完成）
 - Directus system tables
   - `directus_collections`
   - `directus_fields`
@@ -194,4 +194,4 @@ pnpm directus:llm-config:sync-metadata
 - Example Lab AI RAG Generator interface（作为 Directus Collection 保留）
 - hooks-bundle 与 panels-bundle 基础能力
 
-旧 Parse Run Observability、Render Scene Inspector、Eval Center module 已在 cutover 中物理删除，按新 orchestration 重建属于 post-cutover backlog。
+旧 Parse Run Observability、Render Scene Inspector、Eval Center module 已物理删除；Console / Eval 治理化控制面尚未实现。
