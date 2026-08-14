@@ -228,9 +228,7 @@ worker / 真实 provider 链路 / snapshot 查询报 schema 缺失时：
 uv run python scripts/check_reader_schema_health.py          # 或 --json
 ```
 
-显式验证 `ai_usage_events` / `user_credit_ledger` 的 D5 attribution columns 与 FK/index、`user_annotations` / `reader_notes` 的 D6 Reading Record anchor columns 与索引。脚本只诊断不自动改库。D5 attribution 检查失败的正确处理是重置/重建本地 DB 后重新应用 `infra/migrations/0001_initial_schema.sql`（无旧库自动迁移兼容层）；D6 user asset schema 检查失败时执行 `infra/migrations/0002_reader_record_anchor_columns.sql`。
-
-旧 `claread_postgres_data` volume 复用时的处理：Docker entrypoint 不会重跑新增 migration，snapshot 查询可能报 `UndefinedColumnError: column ua.reading_record_id does not exist`。保留数据则手动补跑 migration（`docker cp ...` + `docker exec ... psql -f ...`）；可丢弃数据则重建 volume。
+显式验证 `ai_usage_events` / `user_credit_ledger` 的 D5 attribution columns 与 FK/index、`user_annotations` / `reader_notes` 的 D6 Reading Record anchor columns 与索引。脚本只诊断不自动改库。检查失败时，先执行 `infra/scripts/reset_full_keep_dict.sql` DROP 业务表，再重新执行当前唯一基线 `infra/migrations/0001_initial.sql`。详细操作与受保护数据边界见 `services/api/docs/database.md`。
 
 ## 提交与验证
 
@@ -246,13 +244,19 @@ uv run python scripts/check_reader_schema_health.py          # 或 --json
 
 ```powershell
 $headers = @{ Authorization = "Bearer $($session.session_token)" }
-$submit = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/reader/records/plain-text" -Headers $headers -ContentType "application/json" -Body (@{
-  plain_text = "Claread lets developers inspect one reading record at a time."
-  title = "Local Chain Demo"; language = "en"; client_record_id = "local-runbook-demo-001"
+$submit = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/reader/records/input" -Headers $headers -ContentType "application/json" -Body (@{
+  source_type = "plain_text"
+  text = "Claread lets developers inspect one reading record at a time."
 } | ConvertTo-Json)
 ```
 
-成功返回 `record_id` / `base_id` / `article_ready_sequence` / `snapshot`；`article_ready_sequence` 是观察 `reader_events` 的起点。
+请求体对应 `ReaderUnifiedInputSubmitRequest`：必填 `source_type` / `text`，可选 `filename` / `source_metadata` / `client_record_id` / `language` / `reading_goal` / `reading_variant`。响应按 `outcome` 判别：
+
+- `stable_document_ready`：返回 `reading_record_id` / `stable_document_id` / `base_id` / `record_generation` / `document_version` / `title` / `content_sha256` / `canonical_text_sha256` / `block_count` / `article_ready_event_id` / `article_ready_sequence` / `suitability` / `snapshot`。
+- `candidate_document_required`：返回 `reading_record_id` / `candidate_document_id` / `record_generation` / `status` / `title` / `block_count` / `source_type` / `filename` / `original_input_id` / `suitability`。
+- `input_rejected_or_action_required`：仅返回 `outcome` / `suitability`。
+
+只有 `stable_document_ready` 分支才能使用 `article_ready_sequence` 作为观察 `reader_events` 的起点。
 
 ### 观察 events / snapshot
 
